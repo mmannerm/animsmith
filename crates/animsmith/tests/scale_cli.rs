@@ -10,6 +10,8 @@
 //! `scale` is the first evidence-emitting producer in the minimal binary, and
 //! a feature-gated import here would silently drop that coverage.
 
+#[cfg(feature = "fbx")]
+use animsmith_core::model::Property;
 use animsmith_core::sha256_hex;
 use animsmith_testkit::{
     clipless_mesh_scale_rig_glb, nodes_only_scale_rig_glb, oversized_proof_scale_rig_glb,
@@ -23,6 +25,11 @@ use std::process::{Command, Output, Stdio};
 const SCALE_EVIDENCE_SCHEMA: &str =
     include_str!("../../../docs/schemas/scale-evidence-v4.schema.json");
 const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:4";
+#[cfg(feature = "fbx")]
+const FBX_SCALE_EVIDENCE_SCHEMA: &str =
+    include_str!("../../../docs/schemas/scale-evidence-v5.schema.json");
+#[cfg(feature = "fbx")]
+const FBX_SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:5";
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
@@ -131,6 +138,31 @@ fn assert_schema_valid(instance: &Value) {
         .map(|error| format!("{}: {error}", error.instance_path()))
         .collect();
     assert!(errors.is_empty(), "schema errors: {}", errors.join("; "));
+}
+
+#[cfg(feature = "fbx")]
+fn assert_fbx_schema_valid(instance: &Value) {
+    let fbx: Value =
+        serde_json::from_str(FBX_SCALE_EVIDENCE_SCHEMA).expect("valid FBX schema JSON");
+    let gltf: Value = serde_json::from_str(SCALE_EVIDENCE_SCHEMA).expect("valid glTF schema JSON");
+    let registry = jsonschema::Registry::new()
+        .add(SCALE_EVIDENCE_SCHEMA_ID, &gltf)
+        .expect("adds glTF scale schema")
+        .prepare()
+        .expect("prepares schema registry");
+    let validator = jsonschema::options()
+        .with_registry(&registry)
+        .build(&fbx)
+        .expect("FBX scale evidence schema compiles");
+    let errors: Vec<String> = validator
+        .iter_errors(instance)
+        .map(|error| format!("{}: {error}", error.instance_path()))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "FBX schema errors: {}",
+        errors.join("; ")
+    );
 }
 
 fn assert_published_pair_is_bound(fixture: &Fixture) {
@@ -407,7 +439,8 @@ fn rest_bind_publishes_a_pair_whose_evidence_names_the_appendix_d6_policy() {
     assert_eq!(
         output.status.code(),
         Some(0),
-        "stderr:\n{}",
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
         stderr(&output)
     );
     assert!(
@@ -2112,9 +2145,9 @@ fn a_factor_that_is_not_finite_and_positive_is_an_operator_error() {
 #[test]
 fn a_non_gltf_extension_and_a_container_swap_are_operator_errors() {
     let fixture = Fixture::new();
-    std::fs::write(fixture.path("rig.fbx"), b"not read").unwrap();
+    std::fs::write(fixture.path("rig.dae"), b"not read").unwrap();
     // Extension the producer does not read at all.
-    let wrong_input = rest_bind_paths(&fixture, "rig.fbx", "out.glb", "out.json");
+    let wrong_input = rest_bind_paths(&fixture, "rig.dae", "out.glb", "out.json");
     assert_eq!(wrong_input.status.code(), Some(2));
     assert!(
         stderr(&wrong_input).contains("self-contained glTF/GLB only"),
@@ -2201,4 +2234,660 @@ fn an_unusable_input_or_destination_is_an_operator_error() {
 
     assert!(!fixture.path("out.glb").exists());
     assert!(!fixture.path("out.json").exists());
+}
+
+#[cfg(feature = "fbx")]
+fn fbx_rest_bind_command(
+    dir: &Path,
+    input: &str,
+    output: &str,
+    evidence: &str,
+    factor: &str,
+    format: &str,
+) -> Command {
+    fbx_rest_bind_command_for_selectors(dir, input, output, evidence, factor, format, ("0", "1"))
+}
+
+#[cfg(feature = "fbx")]
+fn fbx_rest_bind_command_for_selectors(
+    dir: &Path,
+    input: &str,
+    output: &str,
+    evidence: &str,
+    factor: &str,
+    format: &str,
+    selectors: (&str, &str),
+) -> Command {
+    let mut command = animsmith();
+    command.current_dir(dir).args([
+        "scale",
+        "rest-bind",
+        input,
+        "-o",
+        output,
+        "--source-skin-index",
+        selectors.0,
+        "--source-root-node-index",
+        selectors.1,
+        "--expected-factor",
+        factor,
+        "--evidence",
+        evidence,
+        "--format",
+        format,
+    ]);
+    command
+}
+
+#[cfg(feature = "fbx")]
+fn two_skin_fbx_fixture() -> String {
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
+    )
+    .expect("reads analytic FBX fixture")
+    .replacen("Count: 8", "Count: 14", 1)
+    .replacen(
+        "ObjectType: \"Model\" { Count: 2 }",
+        "ObjectType: \"Model\" { Count: 4 }",
+        1,
+    )
+    .replacen(
+        "ObjectType: \"Geometry\" { Count: 1 }",
+        "ObjectType: \"Geometry\" { Count: 2 }",
+        1,
+    )
+    .replacen(
+        "ObjectType: \"Deformer\" { Count: 2 }",
+        "ObjectType: \"Deformer\" { Count: 4 }",
+        1,
+    )
+    .replacen(
+        "\tAnimationStack: 3001",
+        r#"
+	Model: 1101, "Model::root-two", "Null" {
+		Version: 232
+		Properties70: {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+		}
+	}
+	Geometry: 2101, "Geometry::tri-two", "Mesh" {
+		Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }
+		PolygonVertexIndex: *3 { a: 0,1,-3 }
+	}
+	Model: 1102, "Model::tri-two", "Mesh" {
+		Version: 232
+		Properties70: {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+		}
+	}
+	Deformer: 4101, "Deformer::skin-two", "Skin" {
+		Version: 101
+		Link_DeformAccuracy: 50
+	}
+	Deformer: 4102, "SubDeformer::root-two-cluster", "Cluster" {
+		Version: 100
+		Indexes: *3 { a: 0,1,2 }
+		Weights: *3 { a: 1,1,1 }
+		Transform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+		TransformLink: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+	}
+	AnimationStack: 3001"#,
+        1,
+    )
+    .replacen(
+        "\tC: \"OO\",3002,3001",
+        "\tC: \"OO\",1101,0\n\tC: \"OO\",1102,1101\n\tC: \"OO\",2101,1102\n\tC: \"OO\",4101,2101\n\tC: \"OO\",4102,4101\n\tC: \"OO\",1101,4102\n\tC: \"OO\",3002,3001",
+        1,
+    )
+    .replace(r"\t", "\t")
+    // FBX's historical field spelling is intentionally emitted without
+    // placing that misspelling in Rust source, where the typo gate owns it.
+    .replace("Link_DeformAccuracy", &["Link_DeformA", "curacy"].concat())
+}
+
+/// Two separate skins whose ordered named joint topologies deliberately
+/// collide after staging, while their selected parent root remains unique.
+#[cfg(feature = "fbx")]
+fn ambiguous_skin_fbx_fixture() -> String {
+    two_skin_fbx_fixture()
+        .replacen("Count: 14", "Count: 15", 1)
+        .replacen(
+            "ObjectType: \"Model\" { Count: 4 }",
+            "ObjectType: \"Model\" { Count: 5 }",
+            1,
+        )
+        .replacen(
+            "\tModel: 1001, \"Model::root\", \"Null\" {",
+            "\tModel: 9001, \"Model::selector-root\", \"Null\" {\n\t\tVersion: 232\n\t\tProperties70: {\n\t\t\tP: \"Lcl Translation\", \"Lcl Translation\", \"\", \"A\",0,0,0\n\t\t\tP: \"Lcl Rotation\", \"Lcl Rotation\", \"\", \"A\",0,0,0\n\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n\t\t}\n\t}\n\tModel: 1001, \"Model::root\", \"Null\" {",
+            1,
+        )
+        .replacen("Model::root-two", "Model::root", 1)
+        .replacen(
+            "\tC: \"OO\",1001,0",
+            "\tC: \"OO\",9001,0\n\tC: \"OO\",1001,9001",
+            1,
+        )
+        .replacen("\tC: \"OO\",1101,0", "\tC: \"OO\",1101,9001", 1)
+}
+
+/// One skin whose two distinct joint nodes deliberately share a normalized
+/// name; its selected ancestor root is unique, so this reaches the selected
+/// skin's repeated-name bridge rather than either root or skin cardinality.
+#[cfg(feature = "fbx")]
+fn repeated_selected_joint_name_fbx_fixture() -> String {
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
+    )
+    .expect("reads analytic FBX fixture")
+    .replacen("Count: 8", "Count: 12", 1)
+    .replacen(
+        "Weights: *3 { a: 1,1,1 }",
+        "Weights: *3 { a: 0.5,0.5,0.5 }",
+        1,
+    )
+    .replacen(
+        "ObjectType: \"Model\" { Count: 2 }",
+        "ObjectType: \"Model\" { Count: 4 }",
+        1,
+    )
+    .replacen(
+        "ObjectType: \"Deformer\" { Count: 2 }",
+        "ObjectType: \"Deformer\" { Count: 4 }",
+        1,
+    )
+    .replacen(
+        "\tAnimationStack: 3001",
+        r#"
+	Model: 1101, "Model::spine", "Null" {
+		Version: 232
+		Properties70: {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+		}
+	}
+	Model: 1102, "Model::spine", "Null" {
+		Version: 232
+		Properties70: {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+		}
+	}
+	Deformer: 4101, "SubDeformer::spine-one-cluster", "Cluster" {
+		Version: 100
+		Indexes: *3 { a: 0,1,2 }
+		Weights: *3 { a: 0.25,0.25,0.25 }
+		Transform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+		TransformLink: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+	}
+	Deformer: 4102, "SubDeformer::spine-two-cluster", "Cluster" {
+		Version: 100
+		Indexes: *3 { a: 0,1,2 }
+		Weights: *3 { a: 0.25,0.25,0.25 }
+		Transform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+		TransformLink: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }
+	}
+	AnimationStack: 3001"#,
+        1,
+    )
+    .replacen(
+        "\tC: \"OO\",4001,2001\n\tC: \"OO\",4002,4001\n\tC: \"OO\",1001,4002",
+        "\tC: \"OO\",4001,2001\n\tC: \"OO\",4002,4001\n\tC: \"OO\",1001,4002\n\tC: \"OO\",1101,1001\n\tC: \"OO\",1102,1001\n\tC: \"OO\",4101,4001\n\tC: \"OO\",4102,4001\n\tC: \"OO\",1101,4101\n\tC: \"OO\",1102,4102",
+        1,
+    )
+}
+
+#[cfg(feature = "fbx")]
+fn two_active_take_fbx_fixture() -> String {
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../animsmith-fbx/testdata/rigged_triangle_empty_take.fbx"),
+    )
+    .expect("reads analytic two-take FBX fixture")
+    .replacen(
+        "\tAnimationStack: 3011, \"AnimStack::empty\", \"\" {}",
+        "\tAnimationStack: 3011, \"AnimStack::second\", \"\" {\n\t\tProperties70: {\n\t\t\tP: \"LocalStart\", \"KTime\", \"Time\", \"\",23093079000\n\t\t\tP: \"LocalStop\", \"KTime\", \"Time\", \"\",46186158000\n\t\t\tP: \"ReferenceStart\", \"KTime\", \"Time\", \"\",23093079000\n\t\t\tP: \"ReferenceStop\", \"KTime\", \"Time\", \"\",46186158000\n\t\t}\n\t}",
+        1,
+    )
+    .replacen(
+        "\tC: \"OO\",3002,3001",
+        "\tC: \"OO\",3002,3001\n\tC: \"OO\",3002,3011",
+        1,
+    )
+}
+
+/// The conservative #286 boundary accepts a complete normalized FBX inventory
+/// only for rest/bind scaling, stages a private GLB, proves the exact emitted
+/// GLB once, and atomically publishes that artifact/evidence pair.
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_reencodes_and_proves_a_complete_inventory() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let input = dir.path().join("rig.fbx");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
+        &input,
+    )
+    .expect("copies self-authored FBX fixture");
+    let output =
+        fbx_rest_bind_command(dir.path(), "rig.fbx", "out.glb", "out.json", "0.01", "json")
+            .output()
+            .expect("runs FBX rest-bind scale");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(output.stderr.is_empty());
+    let record: Value = serde_json::from_slice(&output.stdout).expect("JSON evidence");
+    assert_fbx_schema_valid(&record);
+    assert_eq!(record["schema"], FBX_SCALE_EVIDENCE_SCHEMA_ID);
+    assert_eq!(record["input_format"], "fbx");
+    assert_eq!(record["outcome"], "published");
+    assert_eq!(
+        record["capability"]["domains"]["translation_animation"],
+        "baked"
+    );
+    assert_eq!(record["capability"]["animation_takes_baked"], true);
+    assert_eq!(record["capability"]["authored_curve_keys_preserved"], false);
+    assert_eq!(
+        record["capability"]["domains"]["shared_raw_accessor_payloads"],
+        "unverifiable"
+    );
+    assert_eq!(
+        record["result"]["scale"]["proof"]["read_back_digest_matches"],
+        true
+    );
+    assert!(record["result"]["staged_source"]["bytes"].as_u64().unwrap() > 0);
+    let artifact = std::fs::read(dir.path().join("out.glb")).expect("published GLB");
+    animsmith_gltf::load(&dir.path().join("out.glb")).expect("published GLB reloads");
+    assert_eq!(
+        record["result"]["scale"]["artifact"]["sha256"],
+        sha256_hex(&artifact)
+    );
+    assert_eq!(
+        record["result"]["scale"]["artifact"]["bytes"],
+        artifact.len() as u64
+    );
+    // The staging boundary is deliberately private. It is bound to the
+    // evidence by its own identity, while the public output contract is the
+    // reloaded/proved artifact rather than byte identity with `convert`'s
+    // implementation detail.
+    assert!(
+        record["result"]["staged_source"]["sha256"]
+            .as_str()
+            .is_some_and(|digest| digest.len() == 64),
+        "the private stage is identified without making convert byte layout public"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("out.json")).unwrap(),
+        output.stdout
+    );
+    let first_artifact = artifact;
+    let first_evidence = output.stdout;
+    let rerun = fbx_rest_bind_command(dir.path(), "rig.fbx", "out.glb", "out.json", "0.01", "json")
+        .output()
+        .expect("reruns deterministic FBX rest-bind scale");
+    assert_eq!(rerun.status.code(), Some(0), "stderr:\n{}", stderr(&rerun));
+    assert_eq!(
+        std::fs::read(dir.path().join("out.glb")).unwrap(),
+        first_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("out.json")).unwrap(),
+        first_evidence
+    );
+    assert_eq!(rerun.stdout, first_evidence);
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_maps_a_second_skin_and_preserves_every_baked_take() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::write(dir.path().join("two-skins.fbx"), two_skin_fbx_fixture())
+        .expect("writes analytic two-skin FBX fixture");
+    let output = fbx_rest_bind_command_for_selectors(
+        dir.path(),
+        "two-skins.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+        ("1", "2"),
+    )
+    .output()
+    .expect("runs second-skin FBX rest-bind scale");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let record: Value = serde_json::from_slice(&output.stdout).expect("JSON evidence");
+    assert_fbx_schema_valid(&record);
+    assert_eq!(record["operation"]["source_skin_index"], 1);
+    assert_eq!(record["operation"]["source_root_node_index"], 2);
+    assert_eq!(record["capability"]["skin_deformer_count"], 2);
+    let document =
+        animsmith_gltf::load(&dir.path().join("out.glb")).expect("published GLB reloads");
+    assert_eq!(document.assets.source_skeleton.skins.len(), 2);
+    assert_eq!(
+        document.clips.len(),
+        1,
+        "the source take is retained after staging"
+    );
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_preserves_multiple_baked_takes() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::write(
+        dir.path().join("two-takes.fbx"),
+        two_active_take_fbx_fixture(),
+    )
+    .expect("writes active two-take FBX fixture");
+    let output = fbx_rest_bind_command(
+        dir.path(),
+        "two-takes.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs multi-take FBX rest-bind scale");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let record: Value = serde_json::from_slice(&output.stdout).expect("JSON evidence");
+    assert_fbx_schema_valid(&record);
+    assert_eq!(record["capability"]["animation_take_count"], 2);
+    assert_eq!(record["capability"]["animation_takes_baked"], true);
+    assert_eq!(record["capability"]["authored_curve_keys_preserved"], false);
+    let document =
+        animsmith_gltf::load(&dir.path().join("out.glb")).expect("published GLB reloads");
+    assert_eq!(
+        document.clips.len(),
+        2,
+        "every baked take survives the staged proof path"
+    );
+    let take = document
+        .clips
+        .iter()
+        .find(|clip| clip.name == "take")
+        .expect("first take is retained");
+    let second = document
+        .clips
+        .iter()
+        .find(|clip| clip.name == "second")
+        .expect("second take is retained");
+    let take_track = take
+        .tracks
+        .iter()
+        .find(|track| track.property == Property::Translation)
+        .expect("first take has translation");
+    let second_track = second
+        .tracks
+        .iter()
+        .find(|track| track.property == Property::Translation)
+        .expect("second take has translation");
+    assert_eq!(take_track.times.first(), Some(&0.0));
+    assert_eq!(second_track.times.first(), Some(&-0.5));
+    assert_ne!(
+        take_track.times, second_track.times,
+        "each active source take must retain its distinct baked time domain"
+    );
+}
+
+/// The private FBX-to-GLB stage maps public source selectors by exact named
+/// normalized identity. Ambiguous roots or joint topologies must refuse before
+/// either public member is replaced.
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_refuses_ambiguous_staged_selector_mappings_atomically() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("out.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("out.json"), prior_evidence).unwrap();
+
+    let duplicate_root = two_skin_fbx_fixture().replacen("Model::root-two", "Model::root", 1);
+    std::fs::write(dir.path().join("duplicate-root.fbx"), duplicate_root)
+        .expect("writes duplicate-root fixture");
+    let root_refusal = fbx_rest_bind_command_for_selectors(
+        dir.path(),
+        "duplicate-root.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+        ("1", "2"),
+    )
+    .output()
+    .expect("runs ambiguous root mapping");
+    assert_eq!(root_refusal.status.code(), Some(1));
+    let root_record: Value = serde_json::from_slice(&root_refusal.stdout).unwrap();
+    assert_fbx_schema_valid(&root_record);
+    assert_eq!(root_record["rejection"]["stage"], "rewrite");
+    assert_eq!(root_record["rejection"]["kind"], "staged-selector-mismatch");
+    assert_eq!(
+        std::fs::read(dir.path().join("out.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("out.json")).unwrap(),
+        prior_evidence
+    );
+
+    std::fs::write(
+        dir.path().join("repeated-joint.fbx"),
+        repeated_selected_joint_name_fbx_fixture(),
+    )
+    .expect("writes repeated selected-joint fixture");
+    let repeated_refusal = fbx_rest_bind_command(
+        dir.path(),
+        "repeated-joint.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs repeated selected-joint mapping");
+    assert_eq!(repeated_refusal.status.code(), Some(1));
+    assert!(repeated_refusal.stderr.is_empty());
+    let repeated_record: Value = serde_json::from_slice(&repeated_refusal.stdout).unwrap();
+    assert_fbx_schema_valid(&repeated_record);
+    assert_eq!(repeated_record["rejection"]["stage"], "rewrite");
+    assert_eq!(
+        repeated_record["rejection"]["kind"],
+        "staged-selector-mismatch"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("out.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("out.json")).unwrap(),
+        prior_evidence
+    );
+
+    std::fs::write(
+        dir.path().join("duplicate-skin.fbx"),
+        ambiguous_skin_fbx_fixture(),
+    )
+    .expect("writes ambiguous skin fixture");
+    let skin_refusal = fbx_rest_bind_command_for_selectors(
+        dir.path(),
+        "duplicate-skin.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+        ("1", "1"),
+    )
+    .output()
+    .expect("runs ambiguous skin mapping");
+    assert_eq!(skin_refusal.status.code(), Some(1));
+    let skin_record: Value = serde_json::from_slice(&skin_refusal.stdout).unwrap();
+    assert_fbx_schema_valid(&skin_record);
+    assert_eq!(skin_record["rejection"]["stage"], "rewrite");
+    assert_eq!(skin_record["rejection"]["kind"], "staged-selector-mismatch");
+    assert_eq!(
+        std::fs::read(dir.path().join("out.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("out.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_whole_document_and_invalid_rest_bind_refuse_without_publication() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
+        dir.path().join("rig.fbx"),
+    )
+    .expect("copies self-authored FBX fixture");
+    let whole = animsmith()
+        .current_dir(dir.path())
+        .args([
+            "scale",
+            "whole-document",
+            "rig.fbx",
+            "-o",
+            "out.glb",
+            "--factor",
+            "0.01",
+            "--evidence",
+            "out.json",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs unsupported FBX whole-document scale");
+    assert_eq!(whole.status.code(), Some(2));
+    assert!(whole.stdout.is_empty());
+    assert!(stderr(&whole).contains("limited to rest-bind"));
+
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("out.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("out.json"), prior_evidence).unwrap();
+    let refused =
+        fbx_rest_bind_command(dir.path(), "rig.fbx", "out.glb", "out.json", "1.0", "json")
+            .output()
+            .expect("runs factor-mismatched FBX rest-bind scale");
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(refused.stderr.is_empty());
+    let refusal: Value = serde_json::from_slice(&refused.stdout).expect("JSON refusal");
+    assert_fbx_schema_valid(&refusal);
+    assert_eq!(refusal["rejection"]["kind"], "factor-mismatch");
+    assert_eq!(
+        std::fs::read(dir.path().join("out.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("out.json")).unwrap(),
+        prior_evidence
+    );
+
+    let text = fbx_rest_bind_command(
+        dir.path(),
+        "rig.fbx",
+        "text.glb",
+        "text.json",
+        "0.01",
+        "text",
+    )
+    .output()
+    .expect("runs FBX rest-bind text success");
+    assert_eq!(text.status.code(), Some(0), "stderr:\n{}", stderr(&text));
+    assert!(text.stderr.is_empty());
+    assert!(stdout(&text).contains("rest-bind factor 0.01"));
+
+    let text_refusal = fbx_rest_bind_command(
+        dir.path(),
+        "rig.fbx",
+        "text-refusal.glb",
+        "text-refusal.json",
+        "1.0",
+        "text",
+    )
+    .output()
+    .expect("runs FBX rest-bind text refusal");
+    assert_eq!(text_refusal.status.code(), Some(1));
+    assert!(text_refusal.stdout.is_empty());
+    assert!(stderr(&text_refusal).contains("factor-mismatch"));
+
+    for output_name in ["wrong.gltf", "wrong.fbx", "wrong"] {
+        let wrong_extension = fbx_rest_bind_command(
+            dir.path(),
+            "rig.fbx",
+            output_name,
+            "wrong.json",
+            "0.01",
+            "json",
+        )
+        .output()
+        .expect("runs invalid FBX output extension");
+        assert_eq!(wrong_extension.status.code(), Some(2));
+        assert!(wrong_extension.stdout.is_empty());
+        assert!(stderr(&wrong_extension).contains("must be .glb"));
+        assert!(!dir.path().join(output_name).exists());
+    }
+
+    let unsupported = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
+    )
+    .expect("reads analytic FBX fixture")
+    .replacen(
+        "ObjectType: \"Geometry\" { Count: 1 }",
+        "ObjectType: \"Geometry\" { Count: 2 }",
+        1,
+    )
+    .replacen(
+        "\tAnimationStack: 3001",
+        "\tGeometry: 5001, \"Geometry::detached\", \"Mesh\" {\n\t\tVertices: *9 { a: 0,0,0,100,0,0,0,100,0 }\n\t\tPolygonVertexIndex: *3 { a: 0,1,-3 }\n\t}\n\tAnimationStack: 3001",
+        1,
+    );
+    std::fs::write(dir.path().join("unsupported.fbx"), unsupported)
+        .expect("writes unsupported FBX fixture");
+    let inventory_refusal = fbx_rest_bind_command(
+        dir.path(),
+        "unsupported.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs inventory-gated FBX refusal");
+    assert_eq!(inventory_refusal.status.code(), Some(1));
+    assert!(inventory_refusal.stderr.is_empty());
+    let record: Value = serde_json::from_slice(&inventory_refusal.stdout).expect("v5 refusal");
+    assert_fbx_schema_valid(&record);
+    assert_eq!(record["rejection"]["kind"], "unsupported-source-domain");
+    assert_eq!(record["capability"]["uninstanced_mesh_definition_count"], 1);
+    assert_eq!(
+        std::fs::read(dir.path().join("out.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("out.json")).unwrap(),
+        prior_evidence
+    );
 }

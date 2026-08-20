@@ -700,8 +700,9 @@ to *that* frame N. Determinism is the feature.
   same compact normalized definition. They keep their stable ufbx typed
   identity so source-skin attachment joins cannot shift
   when an earlier source mesh emits no primitive.
-  Its core capability projection remains
-  unsupported; neither scale operation is an FBX producer yet, and no raw FBX
+  Its core capability projection remains unsupported for ordinary operations;
+  narrow FBX `rest-bind` instead stages and proves a private GLB under the
+  dedicated v5 contract. `whole-document` remains unsupported, and no raw FBX
   span or artifact-preservation claim is made.
 - **`convert`** emits glTF 2.0 GLB: nodes + skin (computed IBMs) + one
   animation per clip with at least one writable track; mesh + weights when
@@ -844,8 +845,8 @@ These decisions record result-contract ownership after output v3 finalization:
 
 ## Appendix D — decision record: skinned rest/bind scale canonicalization
 
-**Status (2026-08-17): implemented for self-contained glTF/GLB and character
-assembly recipe/evidence v5.** The shared
+**Status (2026-08-19): implemented for self-contained glTF/GLB, the narrow
+FBX rest/bind re-encode path, and character assembly recipe/evidence v5.** The shared
 core plan, typed ledger, exact-source writers, independent core and artifact
 proofs, atomic CLI publisher, and immutable scale-evidence v4 producer are the
 current contract. Character assembly v5 can opt into rest/bind scale with
@@ -854,8 +855,8 @@ and every separate clip; recipe/evidence v1 through v4 remain unchanged.
 Whole-document conversion supports
 raw glTF `POSITION` morph deltas while preserving static JSON weights as
 numeric values and animated weight accessor payloads byte-exactly; other morph
-semantics and every rest/bind morph payload remain refused. FBX scale output
-remains deferred.
+semantics and every rest/bind morph payload remain refused. FBX
+whole-document scaling remains deferred.
 
 ### D.1 Problem and two distinct operations
 
@@ -1948,7 +1949,7 @@ sample set: a bounded proof of a subset would publish evidence for claims it
 did not check. Because the budget lives in the policy identity, it is not a
 per-run flag, and the producer's fixed-policy rule below covers it.
 
-The current producer emits immutable scale-evidence v4 containing
+The glTF/GLB producer emits immutable scale-evidence v4 containing
 the operation kind, declared and observed factors, tolerance policy and
 residuals, affected node/skin identities, raw capability manifest, input/output
 byte digests and counts, proof sample coverage/results, tool identity, and
@@ -1956,6 +1957,20 @@ rejection reason. It is written as an
 atomic artifact/evidence publication pair. Failure leaves no new output; an
 existing pair is restored. The original input is retained so rollback is
 selecting the prior artifact, not attempting an inverse float rewrite.
+
+**Narrow FBX rest/bind path.** With the ufbx feature, `scale rest-bind` may
+accept an `.fbx` input only when its complete inventory proves the normalized
+rest/bind subset: adjusted metre/Y-up coordinates, compensated inheritance,
+complete finite bind provenance, unchanged four-slot influences, and no
+unsupported semantic D.4 row. The three raw-span rows are deliberately
+unverifiable because FBX is not rewritten. The frontend serializes the
+normalized document to a private GLB, maps the selected root and ordered skin
+joint topology by exact unique normalized names, rewrites that GLB with the
+existing raw glTF writer, reloads and semantically proves the exact candidate
+once, read-back-digest checks it, and atomically publishes the resulting GLB
+with immutable scale-evidence v5. V5 records the complete FBX inventory and
+the private staged-GLB identity plus the nested raw-GLB proof; it makes no raw
+FBX span, object-property, or authored-curve preservation claim.
 
 **Two observed factors, and the divergence between them.** For rest/bind
 reparameterization, "observed factor" names two independent witnesses of the
@@ -2040,9 +2055,11 @@ animsmith scale rest-bind INPUT.glb -o OUTPUT.glb \
 All numeric and source-identity arguments shown are required; there is no
 inferred factor, implicit first skin/root, or in-place mode. Artifact and
 evidence paths must be distinct from each other and the input. Initial support
-is glTF/GLB only. The command uses the fixed tolerance-policy version recorded
-in evidence rather than accepting per-run tolerance flags. A future policy
-change requires a new policy identity and compatibility review.
+is self-contained glTF/GLB for both operations, plus the narrow
+inventory-complete FBX `rest-bind` path that emits a `.glb` and v5 evidence.
+The command uses the fixed tolerance-policy version recorded in evidence rather
+than accepting per-run tolerance flags. A future policy change requires a new
+policy identity and compatibility review.
 
 The single-document producer has no `animsmith.toml` key and no separate plan
 file: mutation must not become an incidental effect of a lint configuration.
@@ -2226,15 +2243,14 @@ The implementation status is:
 - shipped: raw glTF/GLB capability preflight, the shared core plan/ledger and
   proof, preservation-safe whole-document and rest/bind exact-source writers,
   artifact proof, and atomic CLI publication with scale-evidence v4;
+- shipped: issue #286's conservative FBX rest/bind re-encode path with the
+  full ufbx inventory, exact staged-GLB rewrite/reload proof, v5 evidence, and
+  atomic GLB/evidence publication; whole-document FBX scaling remains refused;
 - shipped: glTF-only assembly integration in recipe/evidence v5, including the
   versioned basis fingerprint/comparator, pre-remap clip rebasing, exact input
   digests, compatibility evidence, and proof over the exact staged artifact;
 - shipped: issue #286-A's explicit conservative ufbx-side status for every
-  current D.4 domain and documented normalized source-skeleton projection, with
-  both FBX scale operations
-  still refused and no raw-span/artifact-preservation claim;
-- deferred: FBX rest/bind output in the remaining issue #286 enablement slice,
-  after an FBX writer and proof boundary can consume that inventory;
+  current D.4 domain and documented normalized source-skeleton projection;
 - shipped: raw glTF whole-document scaling for dense `f32` morph `POSITION`
   deltas with numeric-value preservation for static JSON weights and byte-exact
   preservation for animated weight accessors (issue #298);

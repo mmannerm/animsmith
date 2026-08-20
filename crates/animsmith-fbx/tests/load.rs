@@ -468,6 +468,127 @@ fn capability_projection_maps_each_core_refusal_domain_independently() {
 }
 
 #[test]
+fn narrow_rest_bind_gate_consumes_every_inventory_refusal_signal() {
+    type InventoryMutation = fn(&mut animsmith_fbx::FbxScaleCapabilityInventory);
+
+    let source = animsmith_fbx::load_scale_source(&fixture()).expect("fixture loads");
+    let baseline = source.inventory();
+    assert!(
+        animsmith_fbx::rest_bind_capability_facts(baseline).is_ok(),
+        "the checked-in normalized fixture is the accepted subset"
+    );
+
+    let cases: &[(&str, InventoryMutation)] = &[
+        ("target-not-y-up", |inventory| {
+            inventory.coordinate_normalization.target_right_handed_y_up = false
+        }),
+        ("target-not-meters", |inventory| {
+            inventory.coordinate_normalization.target_unit_meters = 0.01
+        }),
+        ("unadjusted-transforms", |inventory| {
+            inventory.coordinate_normalization.adjust_transforms = false
+        }),
+        ("takes-not-baked", |inventory| {
+            inventory.animation_takes_baked = false
+        }),
+        ("authored-curves-retained", |inventory| {
+            inventory.authored_curve_keys_preserved = true
+        }),
+        ("missing-normal", |inventory| {
+            inventory.missing_normal_mesh_count = 1
+        }),
+        ("inherited-mode-uncompensated", |inventory| {
+            inventory.inherit_modes_compensated = false
+        }),
+        ("empty-skin", |inventory| {
+            inventory.empty_skin_deformer_count = 1
+        }),
+        ("convenience-bind-overwrite", |inventory| {
+            inventory.bone_convenience_bind_overwrite_count = 1
+        }),
+        ("invented-bind-default", |inventory| {
+            inventory.identity_bind_defaults_invented = true
+        }),
+        ("triangulated-face", |inventory| {
+            inventory.triangulated_face_count = 1
+        }),
+        ("omitted-face", |inventory| {
+            inventory.omitted_non_polygon_face_count = 1
+        }),
+        ("multiple-skins", |inventory| {
+            inventory.multiple_skin_deformer_mesh_count = 1
+        }),
+        ("dual-quaternion", |inventory| {
+            inventory.dual_quaternion_skin_count = 1
+        }),
+        ("blend-deformer", |inventory| {
+            inventory.blend_deformer_count = 1
+        }),
+        ("cache-deformer", |inventory| {
+            inventory.cache_deformer_count = 1
+        }),
+        ("unsupported-vertex-payload", |inventory| {
+            inventory.unsupported_vertex_payload_mesh_count = 1
+        }),
+        ("shared-mesh", |inventory| {
+            inventory.shared_mesh_definition_count = 1
+        }),
+        ("unknown-source-element", |inventory| {
+            inventory.unsupported_source_element_count = 1
+        }),
+        ("source-property", |inventory| {
+            inventory.user_defined_property_count = 1
+        }),
+        ("external-resource", |inventory| {
+            inventory.external_resource_count = 1
+        }),
+        ("truncated-influence", |inventory| {
+            inventory.truncated_influence_vertex_count = 1
+        }),
+        ("discarded-influence", |inventory| {
+            inventory.discarded_influence_count = 1
+        }),
+        ("renormalized-influence", |inventory| {
+            inventory.renormalized_influence_vertex_count = 1
+        }),
+        ("rejected-influence", |inventory| {
+            inventory.rejected_influence_count = 1
+        }),
+        ("missing-influence", |inventory| {
+            inventory.missing_skin_influence_corner_count = 1
+        }),
+        ("incomplete-bind", |inventory| {
+            inventory.incomplete_bind_cluster_count = 1
+        }),
+        ("empty-mesh", |inventory| {
+            inventory.empty_mesh_definition_count = 1
+        }),
+        ("uninstanced-mesh", |inventory| {
+            inventory.uninstanced_mesh_definition_count = 1
+        }),
+        ("weld-mismatch", |inventory| {
+            inventory.post_weld_vertex_count = inventory.pre_weld_vertex_count + 1
+        }),
+        ("camera", |inventory| inventory.camera_count = 1),
+        ("light", |inventory| inventory.light_count = 1),
+        ("unsupported-domain", |inventory| {
+            inventory.domains.morphs = FbxScaleDomainStatus::Unsupported
+        }),
+        ("verifiable-raw-span", |inventory| {
+            inventory.domains.image_payload_aliases = FbxScaleDomainStatus::Absent
+        }),
+    ];
+    for (label, mutate) in cases {
+        let mut inventory = baseline.clone();
+        mutate(&mut inventory);
+        assert!(
+            animsmith_fbx::rest_bind_capability_facts(&inventory).is_err(),
+            "{label} must refuse the narrow rest/bind bridge"
+        );
+    }
+}
+
+#[test]
 fn polygon_triangulation_and_exact_welding_are_inventoried() {
     let source = std::fs::read_to_string(fixture()).expect("read fixture");
     let source = source
@@ -1328,7 +1449,7 @@ fn complete_source_projection_retains_normalized_identity_and_derived_binds() {
 }
 
 #[test]
-fn both_scale_operations_remain_typed_refusals_for_inventory_only_fbx() {
+fn generic_fbx_scale_facts_refuse_but_the_narrow_rest_bind_projection_is_inventory_gated() {
     let source = animsmith_fbx::load_scale_source(&fixture()).expect("fixture loads");
     let facts = animsmith_fbx::capability_facts(source.inventory());
     for operation in [
@@ -1349,6 +1470,26 @@ fn both_scale_operations_remain_typed_refusals_for_inventory_only_fbx() {
             ScaleError::IncompleteCapability
         );
     }
+
+    let rest_bind_facts = animsmith_fbx::rest_bind_capability_facts(source.inventory())
+        .expect("self-authored fixture has the complete narrow rest/bind inventory");
+    plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 1,
+            expected_factor: 0.01,
+        },
+        document: source.document(),
+        capability: &rest_bind_facts,
+    })
+    .expect("narrow projection admits the complete normalized source");
+
+    let mut unsupported = source.inventory().clone();
+    unsupported.domains.morphs = FbxScaleDomainStatus::Unsupported;
+    assert!(
+        animsmith_fbx::rest_bind_capability_facts(&unsupported).is_err(),
+        "a present semantic domain without complete representation remains fail-closed"
+    );
 
     // Source identity is a separate gate: even a fabricated supported
     // capability projection cannot license rest/bind after the sidecar is

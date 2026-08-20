@@ -17,9 +17,11 @@
 //! Appendix D.4 domain an explicit status and records baked curves, normalized
 //! transforms, derived binds, truncated/renormalized influences,
 //! triangulation, welding, generated data, and unavailable raw-span proof.
-//! [`capability_facts`] projects that explicit inventory into core facts, but
-//! the result remains unsupported: both scale operations are intentionally
-//! refused until a later FBX writer and proof boundary exists.
+//! [`capability_facts`] remains the conservative generic refusal projection.
+//! [`rest_bind_capability_facts`] admits only the complete normalized subset
+//! used by the CLI's narrow FBX rest/bind path: it stages a new GLB, proves
+//! that emitted GLB, and never claims raw FBX preservation. Whole-document
+//! FBX scaling remains refused.
 //!
 //! # Quick start
 //!
@@ -64,7 +66,7 @@ mod capability;
 pub use capability::{
     FbxBindMatrixProvenance, FbxCoordinateAxis, FbxCoordinateNormalization,
     FbxScaleCapabilityInventory, FbxScaleDomainInventory, FbxScaleDomainStatus, FbxScaleSource,
-    FbxSourceIdentity, capability_facts,
+    FbxSourceIdentity, capability_facts, rest_bind_capability_facts,
 };
 
 use animsmith_core::model::{

@@ -110,8 +110,8 @@ removes one compensating inherited scale from the skinned hierarchy anchored
 at a declared source skin and source root node, preserving world joint
 translations and orientations, sampled trajectories, and skinned vertex
 positions while removing the composed scale. The
-[scale workflow](scale.md) owns the operation-choice, exact-source rewrite,
-proof, publication, and support-boundary walkthrough; this page remains the
+[scale workflow](scale.md) owns the operation-choice, glTF raw rewrite or
+narrow FBX staging, proof, publication, and support-boundary walkthrough; this page remains the
 installed command/flag/exit reference.
 
 Every numeric and source-identity argument is required. Nothing is inferred
@@ -119,11 +119,12 @@ from mesh bounds, character height, joint lengths, inverse-bind magnitude,
 filename, or asset category; there is no implicit first skin or root, no
 `animsmith.toml` key, no plan file, no in-place mode, and no per-run tolerance
 flag — the tolerance policy is fixed and its identity is recorded in the
-evidence. Input, output, and evidence paths must all be distinct, and the
-output must keep the input's container extension because the rewrite operates
-on the source's own bytes.
+evidence. Input, output, and evidence paths must all be distinct. glTF/GLB
+keeps its input container; the narrow FBX `rest-bind` path emits a new `.glb`.
 
-Accepted inputs are self-contained glTF/GLB. See the
+Accepted inputs are self-contained glTF/GLB for both operations, plus a
+complete-inventory `.fbx` for narrow `rest-bind` when the default FBX feature
+is enabled. See the
 [scale workflow](scale.md#supported-source-boundary) for the complete support
 boundary and rewrite/reload/proof sequence, and the
 [output reference](output.md#scale) for typed refusal
@@ -472,8 +473,8 @@ JSON emits `producer-refusal:1` on stdout, while text emits its stable kind on
 stderr. Operator errors remain exit `2`, stderr-only. A failed stdout delivery
 does not change an already-established success or refusal code.
 
-`scale` writes scale evidence v4 to its required `--evidence` path, with
-immutable identity `urn:animsmith:schema:scale-evidence:4`; see
+`scale` writes scale evidence v4 for glTF/GLB to its required `--evidence`
+path, with immutable identity `urn:animsmith:schema:scale-evidence:4`; see
 [output.md](output.md) and
 [`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json). The
 same record is what `scale --format json` prints to stdout, for a refusal as
@@ -483,6 +484,14 @@ raw JSON locations the walk found different; `omitted` counts locations beyond
 that fixed cap, and the full count is `items.length + omitted`. The field is
 `null` for other artifact-proof claims and for capability refusals, whose
 `violations` array retains its existing meaning.
+
+With the default FBX feature, `scale rest-bind INPUT.fbx -o OUTPUT.glb` is a
+separate narrow producer contract. It accepts only the complete normalized
+ufbx inventory, emits the immutable
+`urn:animsmith:schema:scale-evidence:5` record described by
+[`scale-evidence-v5.schema.json`](schemas/scale-evidence-v5.schema.json), and
+proves the exact re-encoded GLB after reload. It never writes FBX and makes no
+raw-FBX preservation claim. `scale whole-document` remains glTF/GLB-only.
 
 Machine-readable lint rejects `--allow` so it cannot erase evidence. The flag
 remains a presentation and exit-policy convenience for text and Markdown.

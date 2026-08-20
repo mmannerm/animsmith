@@ -2,13 +2,14 @@
 
 use animsmith_core::Document;
 use animsmith_core::scale::{ScaleCapabilityCoverage, ScaleCapabilityFacts};
+use serde::Serialize;
 
 /// How one Appendix D.4 domain reaches the normalized FBX document.
 ///
 /// These values describe semantic ingestion only. None claims raw FBX byte,
 /// object-property, curve-key, or payload-span preservation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FbxScaleDomainStatus {
     /// The source inspection proved that the domain is absent.
     Absent,
@@ -27,8 +28,8 @@ pub enum FbxScaleDomainStatus {
 }
 
 /// Explicit status for every current domain row in DESIGN.md Appendix D.4.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FbxScaleDomainInventory {
     /// Rest hierarchy and local transforms.
     pub rest_hierarchy: FbxScaleDomainStatus,
@@ -105,11 +106,45 @@ impl FbxScaleDomainInventory {
             ("Image payload aliases", self.image_payload_aliases),
         ]
     }
+
+    /// Semantic domains whose normalized representation must be complete
+    /// before the narrow FBX rest/bind bridge may stage a GLB.
+    ///
+    /// The three raw-span rows are deliberately excluded: the bridge never
+    /// rewrites FBX bytes, so it serializes a private GLB and proves that
+    /// GLB's raw spans instead. Keeping this as typed fields rather than
+    /// display labels makes a newly added semantic domain fail closed until
+    /// this policy is deliberately updated.
+    fn rest_bind_semantic_statuses(&self) -> [FbxScaleDomainStatus; 12] {
+        [
+            self.rest_hierarchy,
+            self.translation_animation,
+            self.rotation_and_scale_animation,
+            self.root_motion_and_velocity,
+            self.base_mesh_geometry,
+            self.morphs,
+            self.skin_binds,
+            self.cameras_and_lights,
+            self.collision_and_custom_data,
+            self.other_vertex_and_source_data,
+            self.out_of_contract_node_transforms,
+            self.animation_targeting_matrix_nodes,
+        ]
+    }
+
+    /// The raw-span rows whose FBX status is expected to be unverifiable.
+    fn rest_bind_raw_span_statuses(&self) -> [FbxScaleDomainStatus; 3] {
+        [
+            self.shared_raw_accessor_payloads,
+            self.unreferenced_accessor_payloads,
+            self.image_payload_aliases,
+        ]
+    }
 }
 
 /// A format-independent spelling of one FBX coordinate axis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FbxCoordinateAxis {
     /// Positive X.
     PositiveX,
@@ -142,8 +177,8 @@ impl From<ufbx::CoordinateAxis> for FbxCoordinateAxis {
 }
 
 /// Coordinate and unit normalization applied by the loader.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FbxCoordinateNormalization {
     /// Original source up axis reported by ufbx.
     pub original_up_axis: FbxCoordinateAxis,
@@ -158,8 +193,8 @@ pub struct FbxCoordinateNormalization {
 }
 
 /// Stable source identity retained beside one normalized ufbx element.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FbxSourceIdentity {
     /// Stable index in the relevant ufbx typed list.
     pub source_index: usize,
@@ -173,8 +208,8 @@ pub struct FbxSourceIdentity {
 }
 
 /// Provenance of inverse-bind matrices projected into the source sidecar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FbxBindMatrixProvenance {
     /// ufbx converted cluster bind matrices into target coordinates, then the
     /// loader derived `bind_to_world^-1 * geometry_to_world` per cluster.
@@ -186,9 +221,11 @@ pub enum FbxBindMatrixProvenance {
 /// Every current Appendix D.4 row has a status, but those statuses deliberately
 /// include unsupported and unverifiable states. Call
 /// [`capability_facts`] to project those states into the format-neutral core
-/// gate; #286-A never turns them into operation support.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
+/// gate; #286-A never turns them into operation support. This is also the
+/// frozen source projection serialized by scale-evidence v5: a new inventory
+/// fact requires a new evidence version rather than silently changing v5.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FbxScaleCapabilityInventory {
     /// Every Appendix D.4 domain, in named fields rather than an absence-based map.
     pub domains: FbxScaleDomainInventory,
@@ -358,6 +395,80 @@ pub fn capability_facts(inventory: &FbxScaleCapabilityInventory) -> ScaleCapabil
     facts.unsafe_accessor_layout_present = true;
     facts.external_resources_present = inventory.external_resource_count > 0;
     facts
+}
+
+/// Project the narrow FBX subset that can enter rest/bind scaling.
+///
+/// The accepted operation rewrites a freshly serialized GLB rather than the
+/// FBX container, so the three raw-span rows are intentionally
+/// [`FbxScaleDomainStatus::Unverifiable`]. Every semantic domain must still
+/// be complete: an unsupported row, incomplete bind evidence, altered skin
+/// influences, external resources, or an incomplete coordinate projection is
+/// a stable refusal before the producer can stage any output.
+pub fn rest_bind_capability_facts(
+    inventory: &FbxScaleCapabilityInventory,
+) -> Result<ScaleCapabilityFacts, String> {
+    if inventory
+        .domains
+        .rest_bind_semantic_statuses()
+        .into_iter()
+        .any(|status| {
+            matches!(
+                status,
+                FbxScaleDomainStatus::Unsupported | FbxScaleDomainStatus::Unverifiable
+            )
+        })
+    {
+        return Err("FBX capability inventory leaves a semantic domain incomplete".into());
+    }
+    if inventory
+        .domains
+        .rest_bind_raw_span_statuses()
+        .into_iter()
+        .any(|status| !matches!(status, FbxScaleDomainStatus::Unverifiable))
+    {
+        return Err("FBX capability inventory has an unexpected raw-span projection".into());
+    }
+    if !inventory.coordinate_normalization.target_right_handed_y_up
+        || inventory.coordinate_normalization.target_unit_meters != 1.0
+        || !inventory.coordinate_normalization.adjust_transforms
+        || !inventory.animation_takes_baked
+        || inventory.authored_curve_keys_preserved
+        || !inventory.inherit_modes_compensated
+        || inventory.incomplete_bind_cluster_count != 0
+        || inventory.empty_skin_deformer_count != 0
+        || inventory.missing_normal_mesh_count != 0
+        || inventory.bone_convenience_bind_overwrite_count != 0
+        || inventory.identity_bind_defaults_invented
+        || inventory.truncated_influence_vertex_count != 0
+        || inventory.discarded_influence_count != 0
+        || inventory.renormalized_influence_vertex_count != 0
+        || inventory.rejected_influence_count != 0
+        || inventory.missing_skin_influence_corner_count != 0
+        || inventory.non_triangle_face_count != 0
+        || inventory.triangulated_face_count != 0
+        || inventory.omitted_non_polygon_face_count != 0
+        || inventory.external_resource_count != 0
+    {
+        return Err("FBX capability inventory cannot prove the selected rest/bind domain".into());
+    }
+    // Reuse the complete conservative projection for every counter and
+    // source-domain fact. The two flags it sets solely because this is not a
+    // raw FBX rewriter are discharged by the private GLB staging/proof
+    // boundary below; every other fact continues to gate the operation.
+    let mut facts = capability_facts(inventory);
+    facts.unknown_source_members_present = false;
+    facts.unsafe_accessor_layout_present = false;
+    if !facts.is_supported_for(
+        animsmith_core::scale::ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 0,
+            expected_factor: 1.0,
+        },
+    ) {
+        return Err("FBX capability inventory contains an unsupported rest/bind domain".into());
+    }
+    Ok(facts)
 }
 
 #[derive(Debug, Default)]

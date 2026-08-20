@@ -1,12 +1,13 @@
-# Scaling glTF safely
+# Scaling safely
 
-`animsmith scale` is an evidence-emitting producer for two different
-glTF/GLB operations. Both require an explicit factor and prove the emitted
-artifact before publishing it. Neither operation guesses units or scale policy
-from geometry, names, or asset categories.
+`animsmith scale` is an evidence-emitting producer for two different scale
+operations. glTF/GLB supports both; the narrow FBX boundary supports only
+rest/bind and always emits a new GLB. Neither operation guesses units or scale
+policy from geometry, names, or asset categories.
 
 Use the [CLI reference](cli.md#commands) for the exact command grammar and
-[machine-readable output](output.md#scale) for the scale-evidence v4 schema.
+[machine-readable output](output.md#scale) for the scale-evidence v4/v5
+schemas.
 This guide owns the operator workflow and the boundary between the two
 operations.
 
@@ -38,18 +39,19 @@ animsmith scale rest-bind source.glb -o canonical.glb \
 
 There is no in-place mode, plan file, `animsmith.toml` key, implicit first
 skin/root, or per-run tolerance override. Input, artifact, and evidence paths
-must be three distinct files, and the artifact keeps the input container
-extension.
+must be three distinct files. glTF/GLB artifacts keep the input container;
+narrow FBX `rest-bind` emits a new `.glb`.
 
 ## What one run proves
 
 One invocation performs one ordered transaction:
 
-1. Parse the source and build a complete raw capability inventory.
+1. Parse the source and build a complete capability inventory.
 2. Compile one format-neutral `ScalePlan` containing the exact topology,
    payload shape, field ownership, and proof claims for that source.
-3. Apply that plan directly to the source JSON and buffer bytes. The normalized
-   model writer is not used for scale output.
+3. For glTF/GLB, apply that plan directly to source JSON and buffer bytes; the
+   normalized model writer is not used. Narrow FBX `rest-bind` first writes a
+   private normalized GLB, then applies the plan and proof to that GLB.
 4. Reload the exact emitted bytes and run the independent normalized core
    proof plus the raw artifact proof. The artifact proof also reruns the writer
    and requires deterministic bytes.
@@ -92,7 +94,7 @@ and evidence-field semantics at that boundary.
 
 ## Supported source boundary
 
-Scale currently accepts self-contained glTF/GLB only. A `.gltf` source with an
+Scale accepts self-contained glTF/GLB for both operations. A `.gltf` source with an
 external buffer or image is refused rather than partially converted. Raw
 preflight also refuses any source domain the current model and artifact proof
 cannot preserve completely. Whole-document conversion admits only raw glTF
@@ -109,15 +111,16 @@ capability. The glTF loader projects every accepted node today, and the raw
 writer has no connector-bridge implementation; that path is outside the
 supported source boundary.
 
-FBX scaling is not enabled. The FBX loader now publishes an explicit status
-for every current Appendix D.4 domain and a normalized source-skeleton projection
-when every declared slot is representable,
-but that inventory records consumed coordinate/unit and inheritance semantics,
-baked (not authored) curves, rebuilt geometry, and unavailable raw payload-span
-proof. It therefore keeps both operations refused rather than discharging an
-artifact-preservation boundary that no FBX writer implements. Character
-assembly likewise does not silently apply either scale operation. Its existing
-bind-pose canonicalization remains a distinct, explicit recipe operation.
+With the default FBX feature, `scale rest-bind source.fbx -o canonical.glb`
+accepts only the inventory-complete normalized subset. It requires the same
+explicit skin/root/factor declarations, stages a private normalized GLB,
+maps both selectors by exact unique named identity, then uses the existing raw
+GLB rewrite/reload/proof path. It records the full FBX inventory and staged
+GLB digest in scale-evidence v5. The published artifact is a re-encoded GLB:
+no raw FBX byte, object-property, or authored-curve-key preservation is
+claimed. FBX whole-document conversion remains refused. Character assembly
+likewise does not silently apply either scale operation. Its existing bind-pose
+canonicalization remains a distinct, explicit recipe operation.
 Morph support intentionally remains a raw glTF whole-document capability; it
 does not add morphs to the shared normalized model or enable rest/bind morph
 reparameterization.
@@ -125,7 +128,7 @@ reparameterization.
 ## Outcomes and evidence
 
 The [CLI reference](cli.md#exit-codes) owns exit-status semantics, and the
-[output reference](output.md#scale) owns the scale-evidence v4 wire contract
+[output reference](output.md#scale) owns the scale-evidence v4/v5 wire contract
 and publication outcomes. In brief, `--format json` prints the same record that
 a successful run writes to `--evidence`; a refused run prints its rejection
 record but never writes the evidence destination because there is no

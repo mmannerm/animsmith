@@ -46,13 +46,13 @@ stable ufbx mesh identity even when an earlier source mesh emits no primitive.
 `Complete` is coverage of the adjusted/compensated projection, not a
 claim that raw FBX transform members or object payloads were preserved.
 
-`capability_facts` projects the inventory into `animsmith-core`'s
-format-neutral scale gate. The projection is deliberately unsupported in this
-inventory-only slice: FBX loading has already normalized transform/unit state,
-rebuilt geometry, and baked curves, while ufbx exposes no raw payload spans for
-artifact-preservation proof. Neither rest/bind nor whole-document scaling is
-enabled. No API here claims raw FBX bytes, raw object properties, authored
-curve keys, or source vertex identity are preserved.
+`capability_facts` remains the deliberately unsupported generic projection.
+`rest_bind_capability_facts` is its narrower companion for `animsmith scale
+rest-bind`: it accepts only a complete normalized ufbx inventory and is used
+to stage a private GLB, rewrite and prove the exact emitted GLB, then atomically
+publish a `.glb` artifact/evidence pair. Whole-document FBX scaling remains
+disabled. No API claims raw FBX bytes, raw object properties, authored curve
+keys, or source vertex identity are preserved.
 
 ## Install
 

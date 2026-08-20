@@ -221,7 +221,7 @@ enum Cmd {
     },
     /// Rewrite declared linear scale and publish versioned evidence.
     #[command(
-        long_about = "Rewrite one self-contained glTF/GLB asset's declared linear scale on its own raw bytes and publish the artifact and its versioned evidence as one atomic pair. `whole-document` converts every represented length by a declared factor; `rest-bind` removes one compensating inherited scale from a selected skinned hierarchy. Every factor and source selector is required: nothing is inferred from bounds, height, joint lengths, inverse-bind magnitude, filename, or asset category, there is no in-place mode, and the tolerance policy is fixed and recorded rather than exposed as a flag. Input, output, and evidence paths must be distinct. A refusal publishes nothing, leaves any prior pair byte-identical, and exits 1; an operator error exits 2."
+        long_about = "Rewrite one self-contained glTF/GLB asset's declared linear scale on its own raw bytes, or use the narrow rest-bind FBX path to stage a private normalized GLB, then publish the artifact and its versioned evidence as one atomic pair. `whole-document` converts every represented length by a declared factor; `rest-bind` removes one compensating inherited scale from a selected skinned hierarchy. Every factor and source selector is required: nothing is inferred from bounds, height, joint lengths, inverse-bind magnitude, filename, or asset category, there is no in-place mode, and the tolerance policy is fixed and recorded rather than exposed as a flag. Input, output, and evidence paths must be distinct. A refusal publishes nothing, leaves any prior pair byte-identical, and exits 1; an operator error exits 2."
     )]
     Scale {
         #[command(subcommand)]
@@ -268,12 +268,12 @@ enum ScaleCmd {
     },
     /// Remove one compensating inherited scale from a skinned hierarchy.
     #[command(
-        long_about = "Reparameterize a restricted skinned rest/bind hierarchy so a compensating inherited scale is removed while world joint translations and orientations, sampled trajectories, and skinned vertex positions are preserved. Both source selectors are required raw source-array indices, and the expected common factor is declared and checked against the source rather than inferred."
+        long_about = "Reparameterize a restricted skinned rest/bind hierarchy so a compensating inherited scale is removed while world joint translations and orientations, sampled trajectories, and skinned vertex positions are preserved. Both source selectors are required raw source-array indices, and the expected common factor is declared and checked against the source rather than inferred. glTF/GLB preserves and rewrites its own raw representation; the narrow FBX path accepts only a complete normalized ufbx inventory and emits a newly serialized .glb with v5 evidence."
     )]
     RestBind {
-        /// Input .glb or .gltf file.
+        /// Input .glb/.gltf file, or (with the FBX feature) a complete-inventory .fbx file.
         input: PathBuf,
-        /// Output path; must keep the input's container extension.
+        /// Output path; glTF/GLB keeps its container, while FBX emits .glb.
         #[arg(short, long)]
         output: PathBuf,
         /// Source-skin array index whose joints anchor the affected domain.
