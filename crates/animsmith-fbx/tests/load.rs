@@ -524,6 +524,10 @@ fn narrow_rest_bind_gate_consumes_every_inventory_refusal_signal() {
         ("blend-deformer", |inventory| {
             inventory.blend_deformer_count = 1
         }),
+        ("blend-channel", |inventory| {
+            inventory.blend_channel_count = 1
+        }),
+        ("blend-shape", |inventory| inventory.blend_shape_count = 1),
         ("cache-deformer", |inventory| {
             inventory.cache_deformer_count = 1
         }),
