@@ -77,9 +77,11 @@ mod reference;
 mod validation;
 
 pub use assembly_basis::{
-    ASSEMBLY_SCALE_BASIS_VERSION, AssemblyScaleBasis, AssemblyScaleCompatibilityError,
-    AssemblyScaleNamedNode, AssemblyScaleSourceNode, AssemblyScaleSourceRest,
-    AssemblyScaleTargetPath, assembly_scale_basis, require_assembly_scale_compatibility,
+    ASSEMBLY_SCALE_BASIS_VERSION, AssemblyScaleBasis, AssemblyScaleCompatibilityBasis,
+    AssemblyScaleCompatibilityError, AssemblyScaleNamedNode, AssemblyScaleSelectorRequest,
+    AssemblyScaleSourceNode, AssemblyScaleSourceRest, AssemblyScaleTargetPath,
+    assembly_scale_basis, assembly_scale_compatibility_basis, require_assembly_scale_compatibility,
+    require_assembly_scale_compatibility_with_selectors,
 };
 pub use planning::plan_scale;
 use planning::validate_plan_document_inventory;

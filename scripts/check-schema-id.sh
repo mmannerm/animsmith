@@ -91,12 +91,14 @@ check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith
 check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs
 check_schema docs/schemas/character-assembly-recipe-v4.schema.json urn:animsmith:schema:character-assembly-recipe:4 crates/animsmith/src/assembly.rs
 check_schema docs/schemas/character-assembly-recipe-v5.schema.json urn:animsmith:schema:character-assembly-recipe:5 crates/animsmith/src/assembly.rs
-check_schema docs/schemas/character-assembly-recipe-v6.schema.json urn:animsmith:schema:character-assembly-recipe:6 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
+check_schema docs/schemas/character-assembly-recipe-v6.schema.json urn:animsmith:schema:character-assembly-recipe:6 crates/animsmith/src/assembly.rs
+check_schema docs/schemas/character-assembly-recipe-v7.schema.json urn:animsmith:schema:character-assembly-recipe:7 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
 check_schema docs/schemas/character-assembly-evidence-v2.schema.json urn:animsmith:schema:character-assembly-evidence:2
 check_schema docs/schemas/character-assembly-evidence-v3.schema.json urn:animsmith:schema:character-assembly-evidence:3 crates/animsmith/src/assembly.rs
 check_schema docs/schemas/character-assembly-evidence-v4.schema.json urn:animsmith:schema:character-assembly-evidence:4 crates/animsmith/src/assembly.rs
 check_schema docs/schemas/character-assembly-evidence-v5.schema.json urn:animsmith:schema:character-assembly-evidence:5 crates/animsmith/src/assembly.rs
-check_schema docs/schemas/character-assembly-evidence-v6.schema.json urn:animsmith:schema:character-assembly-evidence:6 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
+check_schema docs/schemas/character-assembly-evidence-v6.schema.json urn:animsmith:schema:character-assembly-evidence:6 crates/animsmith/src/assembly.rs
+check_schema docs/schemas/character-assembly-evidence-v7.schema.json urn:animsmith:schema:character-assembly-evidence:7 crates/animsmith/src/assembly.rs docs/character-assembly.md docs/cli.md docs/output.md
 if ! cmp -s docs/schemas/scale-evidence-v2.schema.json <(
   sed \
     -e 's/urn:animsmith:schema:scale-evidence:3/urn:animsmith:schema:scale-evidence:2/g' \
@@ -266,6 +268,40 @@ if ! cmp -s <(jq -S . docs/schemas/character-assembly-evidence-v5.schema.json) <
   ' docs/schemas/character-assembly-evidence-v6.schema.json
 ); then
   fail 'character-assembly-evidence-v6 must differ from immutable evidence-v5 only by identity and explicit source-projection evidence'
+fi
+if ! cmp -s <(jq -S . docs/schemas/character-assembly-recipe-v6.schema.json) <(
+  jq -S --slurpfile old docs/schemas/character-assembly-recipe-v6.schema.json '
+    .["$id"] = "urn:animsmith:schema:character-assembly-recipe:6"
+    | .title = "animsmith character assembly recipe v6"
+    | .properties.schema_version.const = 6
+    | .properties.schema.const = "urn:animsmith:schema:character-assembly-recipe:6"
+    | .["$defs"].rest_bind_scale.required = $old[0]["$defs"].rest_bind_scale.required
+    | del(.["$defs"].rest_bind_scale.properties.root_node_name)
+    | .["$defs"].rest_bind_scale.properties.source_skin_index = $old[0]["$defs"].rest_bind_scale.properties.source_skin_index
+    | .["$defs"].rest_bind_scale.properties.source_root_node_index = $old[0]["$defs"].rest_bind_scale.properties.source_root_node_index
+  ' docs/schemas/character-assembly-recipe-v7.schema.json
+); then
+  fail 'character-assembly-recipe-v7 must differ from immutable recipe-v6 only by identity and name selector'
+fi
+if ! cmp -s <(jq -S . docs/schemas/character-assembly-evidence-v6.schema.json) <(
+  jq -S --slurpfile old docs/schemas/character-assembly-evidence-v6.schema.json '
+    .["$id"] = "urn:animsmith:schema:character-assembly-evidence:6"
+    | .title = "animsmith character assembly evidence v6"
+    | .properties.schema_version.const = 6
+    | .properties.schema.const = "urn:animsmith:schema:character-assembly-evidence:6"
+    | .["$defs"].rest_bind_scale.required = $old[0]["$defs"].rest_bind_scale.required
+    | del(.["$defs"].rest_bind_scale.properties.declared_root_node_name)
+    | .["$defs"].rest_bind_scale.properties.source_skin_index = $old[0]["$defs"].rest_bind_scale.properties.source_skin_index
+    | .["$defs"].rest_bind_scale.properties.source_root_node_index = $old[0]["$defs"].rest_bind_scale.properties.source_root_node_index
+    | .["$defs"].rest_bind_scale_input.required = $old[0]["$defs"].rest_bind_scale_input.required
+    | del(
+        .["$defs"].rest_bind_scale_input.properties.resolved_root_node_name,
+        .["$defs"].rest_bind_scale_input.properties.resolved_source_skin_index,
+        .["$defs"].rest_bind_scale_input.properties.resolved_source_root_node_index
+      )
+  ' docs/schemas/character-assembly-evidence-v7.schema.json
+); then
+  fail 'character-assembly-evidence-v7 must differ from immutable evidence-v6 only by identity and declared/resolved name-selector evidence'
 fi
 if ! jq -e '
   .["$defs"].residual_comparison_counts.required

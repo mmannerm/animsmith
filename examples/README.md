@@ -624,11 +624,12 @@ files, use the versioned [`character-assembly.toml`](character-assembly.toml)
 recipe instead. `assemble` produces one GLB and evidence pair; source-package
 extraction and project publication stay outside animsmith.
 
-The example uses current recipe v6 without its optional rest/bind operation.
+The example uses current recipe v7 without its optional rest/bind operation.
 For glTF/GLB or inventory-complete normalized/baked FBX assembly, add
-`[rest_bind_scale]` with all three required
-`source_skin_index`, `source_root_node_index`, and `expected_factor` fields;
-the base and every clip must pass basis compatibility before remapping.
+`[rest_bind_scale]` with the required exact `root_node_name` and
+`expected_factor` fields; every base and clip must resolve that name to one
+source node and one containing skin, then pass basis compatibility before
+remapping.
 
 ```console
 $ animsmith assemble examples/character-assembly.toml \

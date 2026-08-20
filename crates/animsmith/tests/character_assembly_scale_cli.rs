@@ -8,7 +8,9 @@ use animsmith_core::scale::{
     AssemblyScaleBasis, ScaleOperation, ScaleRequest, assembly_scale_basis, plan_scale,
 };
 use animsmith_core::sha256_hex;
-use animsmith_testkit::{rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf};
+use animsmith_testkit::{
+    rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf, unaffected_bind_scale_rig_glb,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -27,6 +29,10 @@ const RECIPE_SCHEMA_V6: &str =
     include_str!("../../../docs/schemas/character-assembly-recipe-v6.schema.json");
 const EVIDENCE_SCHEMA_V6: &str =
     include_str!("../../../docs/schemas/character-assembly-evidence-v6.schema.json");
+const RECIPE_SCHEMA_V7: &str =
+    include_str!("../../../docs/schemas/character-assembly-recipe-v7.schema.json");
+const EVIDENCE_SCHEMA_V7: &str =
+    include_str!("../../../docs/schemas/character-assembly-evidence-v7.schema.json");
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
 
 fn recipe(clip: &str) -> String {
@@ -86,6 +92,26 @@ take = "take"
     )
 }
 
+fn fbx_recipe_v7(clip: &str) -> String {
+    format!(
+        r#"schema_version = 7
+schema = "urn:animsmith:schema:character-assembly-recipe:7"
+input_root = "inputs"
+base_input = "base.fbx"
+fps = 30.0
+
+[rest_bind_scale]
+root_node_name = "root"
+expected_factor = 0.01
+
+[[clips]]
+name = "walk"
+input = "{clip}"
+take = "take"
+"#
+    )
+}
+
 fn unsupported_user_property_fbx() -> String {
     RIGGED_TRIANGLE_FBX.replacen(
         "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1",
@@ -99,6 +125,83 @@ fn write_normalized_fbx_glb(path: &Path) {
         animsmith_fbx::load_bytes(Path::new("source.fbx"), RIGGED_TRIANGLE_FBX.as_bytes())
             .expect("analytic FBX fixture loads");
     animsmith_gltf::write::write(&document, path).expect("normalized FBX fixture stages as GLB");
+}
+
+fn normalized_fbx_gltf_value(path: &Path) -> Value {
+    write_normalized_fbx_glb(path);
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+fn remap_gltf_node_indices(value: &mut Value, old_to_new: &[usize]) {
+    let map = |index: &mut Value| {
+        let old = index.as_u64().unwrap() as usize;
+        *index = Value::from(old_to_new[old]);
+    };
+    for node in value["nodes"].as_array_mut().unwrap() {
+        if let Some(children) = node.get_mut("children").and_then(Value::as_array_mut) {
+            for child in children {
+                map(child);
+            }
+        }
+    }
+    for scene in value["scenes"].as_array_mut().unwrap() {
+        for node in scene["nodes"].as_array_mut().unwrap() {
+            map(node);
+        }
+    }
+    for skin in value["skins"].as_array_mut().unwrap() {
+        for joint in skin["joints"].as_array_mut().unwrap() {
+            map(joint);
+        }
+        if let Some(skeleton) = skin.get_mut("skeleton") {
+            map(skeleton);
+        }
+    }
+    for animation in value["animations"].as_array_mut().unwrap() {
+        for channel in animation["channels"].as_array_mut().unwrap() {
+            map(&mut channel["target"]["node"]);
+        }
+    }
+}
+
+fn write_reindexed_and_reskinned_glb(path: &Path) {
+    let source = unaffected_bind_scale_rig_glb();
+    let source_json_len = u32::from_le_bytes(source[12..16].try_into().unwrap()) as usize;
+    let source_bin_header = 20 + source_json_len;
+    let source_bin_len = u32::from_le_bytes(
+        source[source_bin_header..source_bin_header + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let source_bin = &source[source_bin_header + 8..source_bin_header + 8 + source_bin_len];
+    let mut value: Value = serde_json::from_slice(&source[20..20 + source_json_len]).unwrap();
+    let node_count = value["nodes"].as_array().unwrap().len();
+    value["nodes"].as_array_mut().unwrap().swap(0, 1);
+    let mut old_to_new = (0..node_count).collect::<Vec<_>>();
+    old_to_new.swap(0, 1);
+    remap_gltf_node_indices(&mut value, &old_to_new);
+    value["skins"].as_array_mut().unwrap().swap(0, 1);
+    for node in value["nodes"].as_array_mut().unwrap() {
+        if let Some(skin) = node.get_mut("skin") {
+            *skin = Value::from(1 - skin.as_u64().unwrap());
+        }
+    }
+    let mut json = serde_json::to_vec(&value).unwrap();
+    while !json.len().is_multiple_of(4) {
+        json.push(b' ');
+    }
+    let total_len = 12 + 8 + json.len() + 8 + source_bin.len();
+    let mut glb = Vec::with_capacity(total_len);
+    glb.extend_from_slice(&0x4654_6c67u32.to_le_bytes());
+    glb.extend_from_slice(&2u32.to_le_bytes());
+    glb.extend_from_slice(&(total_len as u32).to_le_bytes());
+    glb.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x4e4f_534au32.to_le_bytes());
+    glb.extend_from_slice(&json);
+    glb.extend_from_slice(&(source_bin.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x004e_4942u32.to_le_bytes());
+    glb.extend_from_slice(source_bin);
+    std::fs::write(path, glb).unwrap();
 }
 
 fn write_cubic_asset_from(path: &Path, bytes: &[u8], offset: f32) {
@@ -169,6 +272,23 @@ fn factor_two_rig_glb() -> Vec<u8> {
         bytes[bin_start + 108 + index * 4..bin_start + 112 + index * 4]
             .copy_from_slice(&value.to_le_bytes());
     }
+    bytes
+}
+
+fn factor_two_named_root_rig_glb() -> Vec<u8> {
+    let mut bytes = factor_two_rig_glb();
+    let json_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let json = &mut bytes[20..20 + json_len];
+    let authored = b"\"joints\": [1]";
+    let replacement = b"\"joints\": [0]";
+    let at = json
+        .windows(authored.len())
+        .position(|window| window == authored)
+        .unwrap();
+    json[at..at + authored.len()].copy_from_slice(replacement);
+    let bin_start = 20 + json_len + 8;
+    bytes[bin_start + 108 + 13 * 4..bin_start + 112 + 13 * 4]
+        .copy_from_slice(&0.0f32.to_le_bytes());
     bytes
 }
 
@@ -876,6 +996,7 @@ fn v6_assembles_eligible_fbx_base_and_clip_through_one_proved_glb() {
     );
     assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
     let scale = &evidence["rest_bind_scale"];
+    assert!(scale.get("declared_root_node_name").is_none());
     assert_eq!(scale["read_back_sha256"], evidence["artifact"]["sha256"]);
     assert_eq!(scale["proof"]["proof"]["read_back_digest_matches"], true);
     assert_eq!(scale["inputs"].as_array().unwrap().len(), 2);
@@ -886,6 +1007,9 @@ fn v6_assembles_eligible_fbx_base_and_clip_through_one_proved_glb() {
         assert_eq!(input["role"], role);
         assert_eq!(input["declared_path"], declared);
         assert_eq!(input["input_format"], "fbx");
+        assert!(input.get("resolved_root_node_name").is_none());
+        assert!(input.get("resolved_source_skin_index").is_none());
+        assert!(input.get("resolved_source_root_node_index").is_none());
         let projection = &input["source_projection"];
         assert_eq!(projection["kind"], "normalized-baked-fbx");
         assert_eq!(projection["authored_curve_keys_preserved"], false);
@@ -927,6 +1051,509 @@ fn v6_assembles_eligible_fbx_base_and_clip_through_one_proved_glb() {
 }
 
 #[test]
+fn v7_resolves_each_fbx_input_by_name_and_records_deterministic_selectors() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    let recipe = fbx_recipe_v7("walk.fbx");
+    let recipe_value: toml::Value = toml::from_str(&recipe).unwrap();
+    assert_schema(
+        &serde_json::to_value(recipe_value).unwrap(),
+        RECIPE_SCHEMA_V7,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let first = run(dir.path());
+    assert!(
+        first.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let first_artifact = std::fs::read(dir.path().join("character.glb")).unwrap();
+    let first_evidence = std::fs::read(dir.path().join("character.json")).unwrap();
+    assert_eq!(first.stdout, first_evidence);
+    let evidence: Value = serde_json::from_slice(&first_evidence).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    assert_eq!(evidence["schema_version"], 7);
+    assert_eq!(
+        evidence["schema"],
+        "urn:animsmith:schema:character-assembly-evidence:7"
+    );
+    let scale = &evidence["rest_bind_scale"];
+    assert_eq!(scale["declared_root_node_name"], "root");
+    assert!(scale.get("source_skin_index").is_none());
+    assert!(scale.get("source_root_node_index").is_none());
+    for input in scale["inputs"].as_array().unwrap() {
+        assert_eq!(input["resolved_root_node_name"], "root");
+        assert_eq!(input["resolved_source_skin_index"], 0);
+        assert_eq!(input["resolved_source_root_node_index"], 1);
+        assert_eq!(input["input_format"], "fbx");
+    }
+    assert_eq!(scale["read_back_sha256"], evidence["artifact"]["sha256"]);
+    assert_eq!(
+        scale["proof"]["artifact"]["sha256"],
+        evidence["artifact"]["sha256"]
+    );
+    assert_eq!(scale["proof"]["proof"]["read_back_digest_matches"], true);
+    assert!(
+        scale["residual_comparison_counts"]
+            .as_object()
+            .unwrap()
+            .values()
+            .filter_map(Value::as_u64)
+            .sum::<u64>()
+            > 0
+    );
+
+    let second = run(dir.path());
+    assert!(second.status.success());
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        first_artifact
+    );
+    assert_eq!(second.stdout, first_evidence);
+}
+
+#[test]
+fn v7_named_selector_applies_a_declared_factor_two_and_pins_the_proof() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let authored = factor_two_named_root_rig_glb();
+    std::fs::write(dir.path().join("inputs/base.glb"), &authored).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.glb"), &authored).unwrap();
+    let recipe = fbx_recipe_v7("walk.glb")
+        .replace("base_input = \"base.fbx\"", "base_input = \"base.glb\"")
+        .replace("expected_factor = 0.01", "expected_factor = 2.0")
+        .replace("take = \"take\"", "take = \"clip\"");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let artifact = std::fs::read(dir.path().join("character.glb")).unwrap();
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    let scale = &evidence["rest_bind_scale"];
+    assert_eq!(scale["expected_factor"], 2.0);
+    assert_eq!(scale["proof"]["factors"]["declared"], 2.0);
+    assert_eq!(scale["proof"]["factors"]["planned_observed"], 2.0);
+    assert_eq!(scale["proof"]["factors"]["proved_observed"], 2.0);
+    assert_eq!(scale["proof"]["factors"]["divergence"], 0.0);
+    assert_eq!(scale["read_back_sha256"], sha256_hex(&artifact));
+    assert_eq!(scale["proof"]["artifact"]["sha256"], sha256_hex(&artifact));
+    assert_eq!(scale["proof"]["artifact"]["bytes"], artifact.len());
+    assert_eq!(scale["proof"]["proof"]["read_back_digest_matches"], true);
+    assert!(
+        scale["proof"]["artifact"]["rewritten_json_pointers"]
+            .as_array()
+            .is_some_and(|pointers| !pointers.is_empty())
+    );
+    assert!(
+        scale["residual_comparison_counts"]
+            .as_object()
+            .unwrap()
+            .values()
+            .filter_map(Value::as_u64)
+            .sum::<u64>()
+            > 0
+    );
+
+    let document = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(document.skeleton.bones[0].rest.scale, Vec3::ONE);
+    assert_eq!(document.skeleton.bones[1].rest.translation.y, 200.0);
+    let translation = document.clips[0]
+        .tracks
+        .iter()
+        .find(|track| track.property == Property::Translation)
+        .unwrap();
+    let TrackValues::Vec3s(values) = &translation.values else {
+        panic!("translation values")
+    };
+    assert_eq!(values[0].y, 200.0);
+    assert_eq!(values[1].y, 600.0);
+}
+
+#[test]
+fn v7_uses_the_declared_exact_name_without_a_root_literal_special_case() {
+    let renamed = RIGGED_TRIANGLE_FBX.replace("\"Model::root\"", "\"Model::scale-root\"");
+    for (declared, succeeds) in [("scale-root", true), ("Scale-root", false)] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        std::fs::write(dir.path().join("inputs/base.fbx"), &renamed).unwrap();
+        std::fs::write(dir.path().join("inputs/walk.fbx"), &renamed).unwrap();
+        let recipe = fbx_recipe_v7("walk.fbx").replace(
+            "root_node_name = \"root\"",
+            &format!("root_node_name = {declared:?}"),
+        );
+        std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+        let output = run(dir.path());
+        if succeeds {
+            assert!(output.status.success());
+            let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                evidence["rest_bind_scale"]["declared_root_node_name"],
+                "scale-root"
+            );
+            for input in evidence["rest_bind_scale"]["inputs"].as_array().unwrap() {
+                assert_eq!(input["resolved_root_node_name"], "scale-root");
+            }
+        } else {
+            assert_eq!(output.status.code(), Some(1));
+            assert!(refusal_detail(&output).contains("resolves to 0 source nodes"));
+            assert!(!dir.path().join("character.glb").exists());
+            assert!(!dir.path().join("character.json").exists());
+        }
+    }
+}
+
+#[test]
+fn v7_name_selector_refuses_missing_and_ambiguous_roots_or_skins_atomically() {
+    let mut ambiguous_root: Value = serde_json::from_slice(&rest_bind_scale_rig_gltf()).unwrap();
+    ambiguous_root["nodes"][1]["name"] = Value::String("root".into());
+    let mut ambiguous_skin: Value = serde_json::from_slice(&rest_bind_scale_rig_gltf()).unwrap();
+    let duplicate_skin = ambiguous_skin["skins"][0].clone();
+    ambiguous_skin["skins"]
+        .as_array_mut()
+        .unwrap()
+        .push(duplicate_skin);
+
+    for (ordinal, input_name, base_bytes, root_name, expected) in [
+        (
+            0,
+            "base.fbx",
+            RIGGED_TRIANGLE_FBX.as_bytes().to_vec(),
+            "missing",
+            "resolves to 0 source nodes; expected exactly one",
+        ),
+        (
+            1,
+            "base.gltf",
+            rest_bind_scale_rig_gltf(),
+            "root",
+            "is a joint of 0 source skins; expected exactly one",
+        ),
+        (
+            2,
+            "base.gltf",
+            serde_json::to_vec(&ambiguous_root).unwrap(),
+            "root",
+            "resolves to 2 source nodes; expected exactly one",
+        ),
+        (
+            3,
+            "base.gltf",
+            serde_json::to_vec(&ambiguous_skin).unwrap(),
+            "joint",
+            "is a joint of 2 source skins; expected exactly one",
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        std::fs::write(dir.path().join("inputs").join(input_name), base_bytes).unwrap();
+        std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+        let recipe = fbx_recipe_v7("walk.fbx")
+            .replace(
+                "base_input = \"base.fbx\"",
+                &format!("base_input = {input_name:?}"),
+            )
+            .replace(
+                "root_node_name = \"root\"",
+                &format!("root_node_name = {root_name:?}"),
+            );
+        std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+        let prior_artifact = b"prior artifact";
+        let prior_evidence = b"prior evidence";
+        std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+        std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+        let output = run(dir.path());
+        assert_eq!(output.status.code(), Some(1), "case {ordinal}");
+        let detail = refusal_detail(&output);
+        assert!(
+            detail.contains(expected),
+            "case {ordinal}: expected {expected:?} in {detail:?}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            prior_artifact,
+            "case {ordinal}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+            prior_evidence,
+            "case {ordinal}"
+        );
+    }
+}
+
+#[test]
+fn v7_resolves_every_clip_selector_and_refuses_clip_side_misses_atomically() {
+    for (ordinal, mutation, expected) in [
+        (0, "missing-root", "resolves to 0 source nodes"),
+        (1, "ambiguous-root", "resolves to 2 source nodes"),
+        (2, "missing-skin", "is a joint of 0 source skins"),
+        (3, "ambiguous-skin", "is a joint of 2 source skins"),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+        let clip_path = dir.path().join("inputs/walk.gltf");
+        let mut clip = normalized_fbx_gltf_value(&clip_path);
+        match mutation {
+            "missing-root" => clip["nodes"][1]["name"] = Value::String("other".into()),
+            "ambiguous-root" => clip["nodes"][2]["name"] = Value::String("root".into()),
+            "missing-skin" => clip["skins"][0]["joints"] = serde_json::json!([2]),
+            "ambiguous-skin" => {
+                let duplicate = clip["skins"][0].clone();
+                clip["skins"].as_array_mut().unwrap().push(duplicate);
+            }
+            _ => unreachable!(),
+        }
+        std::fs::write(&clip_path, serde_json::to_vec(&clip).unwrap()).unwrap();
+        std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.gltf")).unwrap();
+        let prior_artifact = b"prior artifact";
+        let prior_evidence = b"prior evidence";
+        std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+        std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+        let output = run(dir.path());
+        assert_eq!(output.status.code(), Some(1), "case {ordinal}");
+        let detail = refusal_detail(&output);
+        assert!(detail.contains("selector rejected input walk.gltf"));
+        assert!(detail.contains(expected), "case {ordinal}: {detail}");
+        assert_eq!(
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            prior_artifact
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+            prior_evidence
+        );
+    }
+}
+
+#[test]
+fn v7_resolves_names_independently_across_mixed_fbx_and_gltf_inputs() {
+    for (base, clip, expected_formats) in [
+        ("base.fbx", "walk.glb", ["fbx", "glb"]),
+        ("base.glb", "walk.fbx", ["glb", "fbx"]),
+        ("base.fbx", "walk.gltf", ["fbx", "gltf"]),
+        ("base.gltf", "walk.fbx", ["gltf", "fbx"]),
+        ("base.glb", "walk.glb", ["glb", "glb"]),
+        ("base.gltf", "walk.gltf", ["gltf", "gltf"]),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        for input in [base, clip] {
+            let path = dir.path().join("inputs").join(input);
+            if input.ends_with(".fbx") {
+                std::fs::write(path, RIGGED_TRIANGLE_FBX).unwrap();
+            } else {
+                write_normalized_fbx_glb(&path);
+            }
+        }
+        let recipe = fbx_recipe_v7(clip).replace(
+            "base_input = \"base.fbx\"",
+            &format!("base_input = {base:?}"),
+        );
+        std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+        let output = run(dir.path());
+        assert!(
+            output.status.success(),
+            "{base} + {clip}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+        let inputs = evidence["rest_bind_scale"]["inputs"].as_array().unwrap();
+        for (input, expected_format) in inputs.iter().zip(expected_formats) {
+            assert_eq!(input["input_format"], expected_format);
+            assert_eq!(input["resolved_root_node_name"], "root");
+            assert!(input["resolved_source_skin_index"].is_u64());
+            assert!(input["resolved_source_root_node_index"].is_u64());
+        }
+    }
+}
+
+#[test]
+fn v7_resolves_a_valid_clip_root_and_skin_in_its_own_source_index_space() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.glb"),
+        unaffected_bind_scale_rig_glb(),
+    )
+    .unwrap();
+    write_reindexed_and_reskinned_glb(&dir.path().join("inputs/walk.glb"));
+    let recipe = fbx_recipe_v7("walk.glb")
+        .replace("base_input = \"base.fbx\"", "base_input = \"base.glb\"")
+        .replace("root_node_name = \"root\"", "root_node_name = \"joint\"")
+        .replace("take = \"take\"", "take = \"clip\"");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    let inputs = evidence["rest_bind_scale"]["inputs"].as_array().unwrap();
+    assert_eq!(inputs[0]["resolved_source_skin_index"], 0);
+    assert_eq!(inputs[1]["resolved_source_skin_index"], 1);
+    assert_eq!(inputs[0]["resolved_source_root_node_index"], 1);
+    assert_eq!(inputs[1]["resolved_source_root_node_index"], 0);
+    assert_eq!(inputs[0]["resolved_root_node_name"], "joint");
+    assert_eq!(inputs[1]["resolved_root_node_name"], "joint");
+}
+
+#[test]
+fn v4_through_v7_keep_selector_forms_required_fields_and_identities_disjoint() {
+    let padded_recipe: toml::Value = toml::from_str(
+        &fbx_recipe_v7("walk.fbx")
+            .replace("root_node_name = \"root\"", "root_node_name = \" root \""),
+    )
+    .unwrap();
+    let schema: Value = serde_json::from_str(RECIPE_SCHEMA_V7).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    assert!(
+        !validator.is_valid(&serde_json::to_value(padded_recipe).unwrap()),
+        "v7 schema must reject boundary whitespace that the CLI refuses"
+    );
+
+    for (ordinal, recipe, expected) in [
+        (
+            0,
+            fbx_recipe_v6("walk.fbx")
+                .replace("source_skin_index = 0\n", "")
+                .replace("source_root_node_index = 1", "root_node_name = \"root\""),
+            Some("character-assembly-recipe v6 rest_bind_scale does not admit root_node_name"),
+        ),
+        (
+            1,
+            fbx_recipe_v7("walk.fbx").replace(
+                "root_node_name = \"root\"",
+                "root_node_name = \"root\"\nsource_skin_index = 0\nsource_root_node_index = 1",
+            ),
+            Some("character-assembly-recipe v7 rest_bind_scale does not admit source indices"),
+        ),
+        (
+            2,
+            fbx_recipe_v7("walk.fbx").replace(
+                "root_node_name = \"root\"",
+                "source_skin_index = 0\nsource_root_node_index = 1",
+            ),
+            Some("character-assembly-recipe v7 rest_bind_scale does not admit source indices"),
+        ),
+        (
+            3,
+            fbx_recipe_v7("walk.fbx").replace("expected_factor = 0.01\n", ""),
+            Some("missing field `expected_factor`"),
+        ),
+        (
+            4,
+            fbx_recipe_v7("walk.fbx").replacen("schema_version = 7", "schema_version = 6", 1),
+            Some("unsupported assembly recipe identity"),
+        ),
+        (
+            5,
+            fbx_recipe_v7("walk.fbx").replacen(
+                "character-assembly-recipe:7",
+                "character-assembly-recipe:6",
+                1,
+            ),
+            Some("unsupported assembly recipe identity"),
+        ),
+        (
+            6,
+            fbx_recipe_v7("walk.fbx").replace("root_node_name = \"root\"\n", ""),
+            Some("missing field `root_node_name`"),
+        ),
+        (
+            7,
+            fbx_recipe_v7("walk.fbx")
+                .replace("root_node_name = \"root\"", "root_node_name = \" root \""),
+            Some("must be non-empty and contain no leading or trailing whitespace"),
+        ),
+        (
+            8,
+            fbx_recipe_v6("walk.fbx")
+                .replacen("schema_version = 6", "schema_version = 4", 1)
+                .replacen(
+                    "character-assembly-recipe:6",
+                    "character-assembly-recipe:4",
+                    1,
+                )
+                .replace("source_skin_index = 0\n", ""),
+            Some("missing field `source_skin_index`"),
+        ),
+        (
+            9,
+            fbx_recipe_v6("walk.fbx")
+                .replacen("schema_version = 6", "schema_version = 5", 1)
+                .replacen(
+                    "character-assembly-recipe:6",
+                    "character-assembly-recipe:5",
+                    1,
+                )
+                .replace("source_root_node_index = 1\n", ""),
+            Some("missing field `source_root_node_index`"),
+        ),
+        (
+            10,
+            fbx_recipe_v6("walk.fbx").replace("expected_factor = 0.01\n", ""),
+            Some("missing field `expected_factor`"),
+        ),
+        (
+            11,
+            fbx_recipe_v7("walk.fbx").replace(
+                "root_node_name = \"root\"",
+                "root_node_name = \"root\"\nsource_node_name = \"root\"",
+            ),
+            Some(
+                "unknown field `source_node_name` in character-assembly-recipe v7 rest_bind_scale",
+            ),
+        ),
+        (
+            12,
+            fbx_recipe_v6("walk.fbx").replace(
+                "source_root_node_index = 1",
+                "source_root_node_index = 1\nsource_node_name = \"root\"",
+            ),
+            Some(
+                "unknown field `source_node_name` in character-assembly-recipe v6 rest_bind_scale",
+            ),
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+        std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+        std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+        let output = run(dir.path());
+        assert_eq!(output.status.code(), Some(2), "case {ordinal}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(expected) = expected {
+            assert!(stderr.contains(expected), "case {ordinal}: {stderr}");
+        }
+        assert!(
+            !stderr.contains("AssemblyRestBindScaleRecipe") && !stderr.contains("untagged enum"),
+            "case {ordinal} leaked a private serde diagnostic: {stderr}"
+        );
+        assert!(!dir.path().join("character.glb").exists());
+        assert!(!dir.path().join("character.json").exists());
+    }
+}
+
+#[test]
 fn v6_refuses_an_incomplete_fbx_clip_inventory_atomically() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
@@ -957,6 +1584,47 @@ fn v6_refuses_an_incomplete_fbx_clip_inventory_atomically() {
         std::fs::read(dir.path().join("character.json")).unwrap(),
         prior_evidence
     );
+}
+
+#[test]
+fn v7_refuses_an_incomplete_fbx_inventory_before_selector_use_or_publication() {
+    for (base, clip, expected_input) in [
+        (
+            unsupported_user_property_fbx(),
+            RIGGED_TRIANGLE_FBX.to_owned(),
+            "base.fbx",
+        ),
+        (
+            RIGGED_TRIANGLE_FBX.to_owned(),
+            unsupported_user_property_fbx(),
+            "walk.fbx",
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        std::fs::write(dir.path().join("inputs/base.fbx"), base).unwrap();
+        std::fs::write(dir.path().join("inputs/walk.fbx"), clip).unwrap();
+        std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+        let prior_artifact = b"prior artifact";
+        let prior_evidence = b"prior evidence";
+        std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+        std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+        let output = run(dir.path());
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            refusal_detail(&output)
+                .contains(&format!("FBX capability rejected input {expected_input}"))
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            prior_artifact
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+            prior_evidence
+        );
+    }
 }
 
 #[test]
@@ -1489,27 +2157,27 @@ fn v4_rest_bind_recipe_fields_factors_and_conflicts_fail_closed() {
     let cases = [
         (
             base.replace("source_skin_index = 0\n", ""),
-            "missing field `source_skin_index`",
+            Some("missing field `source_skin_index`"),
         ),
         (
             base.replace("source_root_node_index = 0\n", ""),
-            "missing field `source_root_node_index`",
+            Some("missing field `source_root_node_index`"),
         ),
         (
             base.replace("expected_factor = 0.01\n", ""),
-            "missing field `expected_factor`",
+            Some("missing field `expected_factor`"),
         ),
         (
             base.replace("expected_factor = 0.01", "expected_factor = 0.0"),
-            "must be finite and greater than zero",
+            Some("must be finite and greater than zero"),
         ),
         (
             base.replace("expected_factor = 0.01", "expected_factor = nan"),
-            "must be finite and greater than zero",
+            Some("must be finite and greater than zero"),
         ),
         (
             base.replacen("fps = 30.0", "fps = 30.0\ncanonicalize_skin = true", 1),
-            "cannot be combined with canonicalize_skin, ground_and_center, or remove_nodes",
+            Some("cannot be combined with canonicalize_skin, ground_and_center, or remove_nodes"),
         ),
         (
             base.replacen(
@@ -1517,18 +2185,18 @@ fn v4_rest_bind_recipe_fields_factors_and_conflicts_fail_closed() {
                 "fps = 30.0\ncanonicalize_skin = true\nground_and_center = true",
                 1,
             ),
-            "cannot be combined with canonicalize_skin, ground_and_center, or remove_nodes",
+            Some("cannot be combined with canonicalize_skin, ground_and_center, or remove_nodes"),
         ),
         (
             base.replacen("fps = 30.0", "fps = 30.0\nremove_nodes = [\"joint\"]", 1),
-            "cannot be combined with canonicalize_skin, ground_and_center, or remove_nodes",
+            Some("cannot be combined with canonicalize_skin, ground_and_center, or remove_nodes"),
         ),
         (
             base.replace(
                 "urn:animsmith:schema:character-assembly-recipe:4",
                 "urn:animsmith:schema:character-assembly-recipe:3",
             ),
-            "unsupported assembly recipe identity",
+            Some("unsupported assembly recipe identity"),
         ),
     ];
     for (ordinal, (invalid, expected)) in cases.into_iter().enumerate() {
@@ -1540,11 +2208,13 @@ fn v4_rest_bind_recipe_fields_factors_and_conflicts_fail_closed() {
         std::fs::write(dir.path().join("recipe.toml"), invalid).unwrap();
         let output = run(dir.path());
         assert_eq!(output.status.code(), Some(2), "case {ordinal}");
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains(expected),
-            "case {ordinal}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        if let Some(expected) = expected {
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(expected),
+                "case {ordinal}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         assert!(!dir.path().join("character.glb").exists());
         assert!(!dir.path().join("character.json").exists());
     }
