@@ -63,31 +63,46 @@ pub struct CheckSettings {
     /// Per-check severity override. `None` leaves the check's default
     /// severity intact.
     pub severity: Option<SeveritySetting>,
-    /// `loop-seam`: ratio above which the seam is a pop (default 1.5).
+    /// `loop-seam`: finite non-negative ratio above which the seam is a pop
+    /// (default 1.5).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub max_ratio: Option<f64>,
-    /// `loop-seam`: stride floor in metres (default 0.02).
+    /// `loop-seam`: finite non-negative stride floor in metres (default 0.02).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub min_stride_step_m: Option<f64>,
-    /// `loop-closure`: maximum model-space position delta in metres
-    /// (default 0.01).
+    /// `loop-closure`: finite non-negative maximum model-space position delta
+    /// in metres (default 0.01).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub max_position_delta_m: Option<f64>,
-    /// `loop-closure`: maximum model-space rotation delta in degrees
-    /// (default 1.0).
+    /// `loop-closure`: finite non-negative maximum model-space rotation delta
+    /// in degrees (default 1.0).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub max_rotation_delta_deg: Option<f64>,
-    /// `loop-seam-vel`: maximum incoming/outgoing model-space linear-velocity
-    /// difference in metres per second (default 0.1).
+    /// `loop-seam-vel`: finite non-negative maximum incoming/outgoing
+    /// model-space linear-velocity difference in metres per second (default
+    /// 0.1).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub max_velocity_delta_mps: Option<f64>,
-    /// `loop-seam-rot`: maximum incoming/outgoing model-space angular-velocity
-    /// difference in degrees per second (default 5.0).
+    /// `loop-seam-rot`: finite non-negative maximum incoming/outgoing
+    /// model-space angular-velocity difference in degrees per second (default
+    /// 5.0).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub max_angular_velocity_delta_degps: Option<f64>,
-    /// `frozen-bone`: rotation floor in degrees (default 1.0).
+    /// `frozen-bone`: finite non-negative rotation floor in degrees (default
+    /// 1.0).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub min_rotation_deg: Option<f64>,
-    /// `bind-pose`: mean first-frame deviation cap in degrees
-    /// (default 45).
+    /// `bind-pose`: finite non-negative mean first-frame deviation cap in
+    /// degrees (default 45).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub max_mean_rest_delta_deg: Option<f64>,
-    /// `foot-slide`: contact height above the per-clip foot minimum
-    /// (default 0.03 m).
+    /// `foot-slide`: finite non-negative contact height above the per-clip foot
+    /// minimum (default 0.03 m).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub contact_height_m: Option<f64>,
-    /// `foot-slide`: allowed stance-speed deviation (default 0.3 m/s).
+    /// `foot-slide`: finite non-negative allowed stance-speed deviation
+    /// (default 0.3 m/s).
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub max_slide_mps: Option<f64>,
     /// `rest-world-scale`: exact names or `*` globs that must each resolve to
     /// one source node before its effective rest-world scale is judged.
@@ -187,7 +202,7 @@ where
 {
     let value = Option::<f64>::deserialize(deserializer)?;
     if let Some(value) = value
-        && !is_valid_loop_cap(value)
+        && !is_nonnegative_finite(value)
     {
         return Err(serde::de::Error::custom(
             "must be a finite non-negative number",
@@ -209,7 +224,7 @@ where
     Ok(value)
 }
 
-fn is_valid_loop_cap(value: f64) -> bool {
+fn is_nonnegative_finite(value: f64) -> bool {
     value.is_finite() && value >= 0.0
 }
 
@@ -267,7 +282,7 @@ where
     D: Deserializer<'de>,
 {
     let value = f64::deserialize(deserializer)?;
-    if !is_valid_loop_cap(value) {
+    if !is_nonnegative_finite(value) {
         return Err(serde::de::Error::custom(
             "must be a finite non-negative number",
         ));
@@ -427,6 +442,56 @@ impl Config {
         for (check_id, settings) in &self.checks {
             for (field, valid) in [
                 (
+                    "max_ratio",
+                    settings.max_ratio.is_none_or(is_nonnegative_finite),
+                ),
+                (
+                    "min_stride_step_m",
+                    settings.min_stride_step_m.is_none_or(is_nonnegative_finite),
+                ),
+                (
+                    "max_position_delta_m",
+                    settings
+                        .max_position_delta_m
+                        .is_none_or(is_nonnegative_finite),
+                ),
+                (
+                    "max_rotation_delta_deg",
+                    settings
+                        .max_rotation_delta_deg
+                        .is_none_or(is_nonnegative_finite),
+                ),
+                (
+                    "max_velocity_delta_mps",
+                    settings
+                        .max_velocity_delta_mps
+                        .is_none_or(is_nonnegative_finite),
+                ),
+                (
+                    "max_angular_velocity_delta_degps",
+                    settings
+                        .max_angular_velocity_delta_degps
+                        .is_none_or(is_nonnegative_finite),
+                ),
+                (
+                    "min_rotation_deg",
+                    settings.min_rotation_deg.is_none_or(is_nonnegative_finite),
+                ),
+                (
+                    "max_mean_rest_delta_deg",
+                    settings
+                        .max_mean_rest_delta_deg
+                        .is_none_or(is_nonnegative_finite),
+                ),
+                (
+                    "contact_height_m",
+                    settings.contact_height_m.is_none_or(is_nonnegative_finite),
+                ),
+                (
+                    "max_slide_mps",
+                    settings.max_slide_mps.is_none_or(is_nonnegative_finite),
+                ),
+                (
                     "expected_uniform_scale",
                     settings
                         .expected_uniform_scale
@@ -436,7 +501,7 @@ impl Config {
                     "uniform_scale_tolerance",
                     settings
                         .uniform_scale_tolerance
-                        .is_none_or(is_valid_loop_cap),
+                        .is_none_or(is_nonnegative_finite),
                 ),
             ] {
                 if !valid {
@@ -466,7 +531,7 @@ impl Config {
                     expectations.max_loop_angular_velocity_delta_degps,
                 ),
             ] {
-                if value.is_some_and(|value| !is_valid_loop_cap(value)) {
+                if value.is_some_and(|value| !is_nonnegative_finite(value)) {
                     return Err(ConfigValidationError::InvalidClipLoopCap {
                         selector: selector.clone(),
                         field,
@@ -479,7 +544,7 @@ impl Config {
                 ("max_duration_delta_s", sync.max_duration_delta_s),
                 ("max_fps_delta", sync.max_fps_delta),
             ] {
-                if !is_valid_loop_cap(value) {
+                if !is_nonnegative_finite(value) {
                     return Err(ConfigValidationError::InvalidSyncGroupTolerance {
                         group: group.clone(),
                         field,
@@ -494,7 +559,7 @@ impl Config {
                     ),
                     (
                         "min_lr_amplitude_m",
-                        is_valid_loop_cap(settings.min_lr_amplitude_m),
+                        is_nonnegative_finite(settings.min_lr_amplitude_m),
                     ),
                 ] {
                     if !valid {
