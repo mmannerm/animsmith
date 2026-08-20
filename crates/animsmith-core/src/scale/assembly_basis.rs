@@ -107,6 +107,50 @@ pub struct AssemblyScaleCompatibilityError {
     pub reason: &'static str,
 }
 
+/// Selector mode requested while deriving an assembly compatibility basis.
+///
+/// The request is not itself compatibility identity. The constructor checks
+/// it against the accepted basis and source document before producing the
+/// validated identity consumed by the comparator.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum AssemblyScaleSelectorRequest<'a> {
+    /// Preserve exact format-local source skin and root indices.
+    Indexed,
+    /// Derive identity from one exact normalized root name.
+    Named {
+        /// Exact, case-sensitive root name already selected by the caller.
+        root_node_name: &'a str,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum AssemblyScaleSelectorIdentity {
+    Indexed,
+    Named {
+        root_node_name: String,
+        skin_joint_names: Vec<String>,
+    },
+}
+
+/// One assembly basis paired with core-validated selector identity.
+///
+/// Named identity cannot be assembled directly by a caller: it is derived
+/// from the source document's unique root and containing-skin facts.
+#[derive(Debug, Clone)]
+pub struct AssemblyScaleCompatibilityBasis {
+    basis: AssemblyScaleBasis,
+    selector: AssemblyScaleSelectorIdentity,
+}
+
+impl AssemblyScaleCompatibilityBasis {
+    /// The immutable evidence basis governed by this validated selector.
+    #[must_use]
+    pub fn basis(&self) -> &AssemblyScaleBasis {
+        &self.basis
+    }
+}
+
 /// Project an accepted rest/bind plan into the versioned assembly basis.
 ///
 /// # Errors
@@ -230,6 +274,96 @@ pub fn assembly_scale_basis(
     })
 }
 
+/// Project one accepted plan and pair it with selector identity derived from
+/// the same document.
+///
+/// # Errors
+///
+/// Returns the plan's validation error, or a plan/document mismatch if a named
+/// request does not resolve to exactly the planned root and skin, or if any
+/// selected skin joint lacks one normalized name.
+pub fn assembly_scale_compatibility_basis(
+    document: &Document,
+    plan: &ScalePlan,
+    selector: AssemblyScaleSelectorRequest<'_>,
+) -> Result<AssemblyScaleCompatibilityBasis, ScaleError> {
+    // Derive both halves from one document/plan pair so callers cannot seal a
+    // selector identity from one document around another document's basis.
+    let basis = assembly_scale_basis(document, plan)?;
+    let selector = match selector {
+        AssemblyScaleSelectorRequest::Indexed => AssemblyScaleSelectorIdentity::Indexed,
+        AssemblyScaleSelectorRequest::Named { root_node_name } => {
+            let root_matches = document
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.bone
+                        .and_then(|bone| document.skeleton.bones.get(bone))
+                        .is_some_and(|bone| bone.name == root_node_name)
+                })
+                .collect::<Vec<_>>();
+            let [root] = root_matches.as_slice() else {
+                return Err(ScaleError::PlanDocumentMismatch {
+                    reason: "assembly_basis_named_selector_root_not_unique",
+                });
+            };
+            if root.source_node_index != basis.source_root_node_index {
+                return Err(ScaleError::PlanDocumentMismatch {
+                    reason: "assembly_basis_named_selector_root_disagrees_with_plan",
+                });
+            }
+            let skin_matches = document
+                .assets
+                .source_skeleton
+                .skins
+                .iter()
+                .filter(|skin| {
+                    skin.joint_source_node_indices
+                        .contains(&root.source_node_index)
+                })
+                .collect::<Vec<_>>();
+            let [skin] = skin_matches.as_slice() else {
+                return Err(ScaleError::PlanDocumentMismatch {
+                    reason: "assembly_basis_named_selector_skin_not_unique",
+                });
+            };
+            if skin.source_skin_index != basis.source_skin_index {
+                return Err(ScaleError::PlanDocumentMismatch {
+                    reason: "assembly_basis_named_selector_skin_disagrees_with_plan",
+                });
+            }
+            let source_nodes = document
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .map(|node| (node.source_node_index, node))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let skin_joint_names = skin
+                .joint_source_node_indices
+                .iter()
+                .map(|source_index| {
+                    source_nodes
+                        .get(source_index)
+                        .and_then(|node| node.bone)
+                        .and_then(|bone| document.skeleton.bones.get(bone))
+                        .map(|bone| bone.name.clone())
+                        .ok_or(ScaleError::PlanDocumentMismatch {
+                            reason: "assembly_basis_named_selector_joint_has_no_name",
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            AssemblyScaleSelectorIdentity::Named {
+                root_node_name: root_node_name.to_owned(),
+                skin_joint_names,
+            }
+        }
+    };
+    Ok(AssemblyScaleCompatibilityBasis { basis, selector })
+}
+
 /// Require two bases to agree on every static semantic field.
 ///
 /// Target paths intentionally remain per-input fingerprint material: clip
@@ -243,7 +377,57 @@ pub fn require_assembly_scale_compatibility(
     base: &AssemblyScaleBasis,
     input: &AssemblyScaleBasis,
 ) -> Result<(), AssemblyScaleCompatibilityError> {
+    require_assembly_scale_compatibility_inner(
+        base,
+        &AssemblyScaleSelectorIdentity::Indexed,
+        input,
+        &AssemblyScaleSelectorIdentity::Indexed,
+    )
+}
+
+/// Require two core-validated compatibility bases to agree.
+///
+/// # Errors
+///
+/// Returns the first stable mismatch category, including selector-mode or
+/// exact named-selector disagreement.
+pub fn require_assembly_scale_compatibility_with_selectors(
+    base: &AssemblyScaleCompatibilityBasis,
+    input: &AssemblyScaleCompatibilityBasis,
+) -> Result<(), AssemblyScaleCompatibilityError> {
+    require_assembly_scale_compatibility_inner(
+        &base.basis,
+        &base.selector,
+        &input.basis,
+        &input.selector,
+    )
+}
+
+fn require_assembly_scale_compatibility_inner(
+    base: &AssemblyScaleBasis,
+    base_selector: &AssemblyScaleSelectorIdentity,
+    input: &AssemblyScaleBasis,
+    input_selector: &AssemblyScaleSelectorIdentity,
+) -> Result<(), AssemblyScaleCompatibilityError> {
     let tolerance = ScaleTolerancePolicy::APPENDIX_D_V6;
+    let named_selectors = match (base_selector, input_selector) {
+        (AssemblyScaleSelectorIdentity::Indexed, AssemblyScaleSelectorIdentity::Indexed) => None,
+        (
+            AssemblyScaleSelectorIdentity::Named {
+                root_node_name: base_root,
+                skin_joint_names: base_joints,
+            },
+            AssemblyScaleSelectorIdentity::Named {
+                root_node_name: input_root,
+                skin_joint_names: input_joints,
+            },
+        ) => Some((base_root, base_joints, input_root, input_joints)),
+        _ => {
+            return Err(AssemblyScaleCompatibilityError {
+                reason: "source-selector-mode",
+            });
+        }
+    };
     let mismatch = if base.version != input.version {
         Some("basis-version")
     } else if base.coordinate_convention != input.coordinate_convention {
@@ -252,10 +436,16 @@ pub fn require_assembly_scale_compatibility(
         || base.tolerance_policy_id != tolerance.id
     {
         Some("tolerance-policy")
-    } else if base.source_skin_index != input.source_skin_index {
+    } else if named_selectors.is_none() && base.source_skin_index != input.source_skin_index {
         Some("source-skin-selector")
-    } else if base.source_root_node_index != input.source_root_node_index {
+    } else if named_selectors.is_none()
+        && base.source_root_node_index != input.source_root_node_index
+    {
         Some("source-root-selector")
+    } else if named_selectors.is_some_and(|(base_root, base_joints, input_root, input_joints)| {
+        base_root != input_root || base_joints != input_joints
+    }) {
+        Some("source-name-selector")
     } else if base.expected_factor_bits != input.expected_factor_bits {
         Some("expected-factor")
     } else if !same_named_topology(&base.named_nodes, &input.named_nodes) {
@@ -264,9 +454,17 @@ pub fn require_assembly_scale_compatibility(
         Some("named-rest-basis")
     } else if !same_named_orientations(&base.named_nodes, &input.named_nodes, &tolerance) {
         Some("named-orientation")
-    } else if !same_source_layout(&base.source_nodes, &input.source_nodes) {
+    } else if (named_selectors.is_some()
+        && !same_named_source_layout(&base.source_nodes, &input.source_nodes))
+        || (named_selectors.is_none()
+            && !same_source_layout(&base.source_nodes, &input.source_nodes))
+    {
         Some("source-helper-layout")
-    } else if !same_source_rest(&base.source_nodes, &input.source_nodes, &tolerance) {
+    } else if (named_selectors.is_some()
+        && !same_named_source_rest(&base.source_nodes, &input.source_nodes, &tolerance))
+        || (named_selectors.is_none()
+            && !same_source_rest(&base.source_nodes, &input.source_nodes, &tolerance))
+    {
         Some("source-helper-rest-basis")
     } else {
         None
@@ -315,6 +513,91 @@ fn same_source_layout(base: &[AssemblyScaleSourceNode], input: &[AssemblyScaleSo
                 && std::mem::discriminant(&base.local_rest)
                     == std::mem::discriminant(&input.local_rest)
         })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct NamedSourcePath(Vec<(Option<String>, String, bool)>);
+
+fn named_source_paths(nodes: &[AssemblyScaleSourceNode]) -> Option<Vec<NamedSourcePath>> {
+    let by_index = nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (node.source_node_index, position))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    nodes
+        .iter()
+        .map(|node| {
+            let mut path = Vec::new();
+            let mut current = Some(node.source_node_index);
+            for _ in 0..=nodes.len() {
+                let Some(index) = current else {
+                    path.reverse();
+                    return Some(NamedSourcePath(path));
+                };
+                let row = nodes.get(*by_index.get(&index)?)?;
+                path.push((
+                    row.name.clone(),
+                    row.role.clone(),
+                    matches!(&row.local_rest, AssemblyScaleSourceRest::Matrix { .. }),
+                ));
+                current = row.parent_source_node_index;
+            }
+            None
+        })
+        .collect()
+}
+
+fn same_named_source_layout(
+    base: &[AssemblyScaleSourceNode],
+    input: &[AssemblyScaleSourceNode],
+) -> bool {
+    let (Some(mut base), Some(mut input)) = (named_source_paths(base), named_source_paths(input))
+    else {
+        return false;
+    };
+    base.sort();
+    input.sort();
+    base == input
+}
+
+fn same_named_source_rest(
+    base: &[AssemblyScaleSourceNode],
+    input: &[AssemblyScaleSourceNode],
+    tolerance: &ScaleTolerancePolicy,
+) -> bool {
+    let (Some(base_paths), Some(input_paths)) =
+        (named_source_paths(base), named_source_paths(input))
+    else {
+        return false;
+    };
+    let mut matched = vec![false; input.len()];
+    base.iter().zip(base_paths).all(|(base_node, base_path)| {
+        input
+            .iter()
+            .zip(&input_paths)
+            .enumerate()
+            .find(|(index, (input_node, input_path))| {
+                !matched[*index]
+                    && **input_path == base_path
+                    && same_source_rest_node(base_node, input_node, tolerance)
+            })
+            .is_some_and(|(index, _)| {
+                matched[index] = true;
+                true
+            })
+    })
+}
+
+fn same_source_rest_node(
+    base: &AssemblyScaleSourceNode,
+    input: &AssemblyScaleSourceNode,
+    tolerance: &ScaleTolerancePolicy,
+) -> bool {
+    same_source_rest(
+        std::slice::from_ref(base),
+        std::slice::from_ref(input),
+        tolerance,
+    )
 }
 
 fn same_source_rest(

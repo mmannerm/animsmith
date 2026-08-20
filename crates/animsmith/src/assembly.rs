@@ -17,8 +17,9 @@ use animsmith_core::model::{
     Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
 };
 use animsmith_core::scale::{
-    AssemblyScaleBasis, ScaleOperation, ScaleRequest, assembly_scale_basis, plan_scale,
-    require_assembly_scale_compatibility,
+    AssemblyScaleBasis, AssemblyScaleCompatibilityBasis, AssemblyScaleSelectorRequest,
+    ScaleOperation, ScaleRequest, assembly_scale_compatibility_basis, plan_scale,
+    require_assembly_scale_compatibility_with_selectors,
 };
 use animsmith_core::{Config, ToolInfo, resolve_configured_roles, sha256_hex};
 use animsmith_fbx::FbxScaleCapabilityInventory;
@@ -41,6 +42,8 @@ const RECIPE_SCHEMA_VERSION_V5: u32 = 5;
 const RECIPE_SCHEMA_ID_V5: &str = "urn:animsmith:schema:character-assembly-recipe:5";
 const RECIPE_SCHEMA_VERSION_V6: u32 = 6;
 const RECIPE_SCHEMA_ID_V6: &str = "urn:animsmith:schema:character-assembly-recipe:6";
+const RECIPE_SCHEMA_VERSION_V7: u32 = 7;
+const RECIPE_SCHEMA_ID_V7: &str = "urn:animsmith:schema:character-assembly-recipe:7";
 const EVIDENCE_SCHEMA_VERSION_V3: u32 = 3;
 const EVIDENCE_SCHEMA_ID_V3: &str = "urn:animsmith:schema:character-assembly-evidence:3";
 const EVIDENCE_SCHEMA_VERSION_V4: u32 = 4;
@@ -49,6 +52,8 @@ const EVIDENCE_SCHEMA_VERSION_V5: u32 = 5;
 const EVIDENCE_SCHEMA_ID_V5: &str = "urn:animsmith:schema:character-assembly-evidence:5";
 const EVIDENCE_SCHEMA_VERSION_V6: u32 = 6;
 const EVIDENCE_SCHEMA_ID_V6: &str = "urn:animsmith:schema:character-assembly-evidence:6";
+const EVIDENCE_SCHEMA_VERSION_V7: u32 = 7;
+const EVIDENCE_SCHEMA_ID_V7: &str = "urn:animsmith:schema:character-assembly-evidence:7";
 
 fn default_fps() -> f64 {
     30.0
@@ -56,8 +61,11 @@ fn default_fps() -> f64 {
 
 /// The stable recipe consumed by `animsmith assemble`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct AssemblyRecipe {
+#[serde(
+    deny_unknown_fields,
+    bound(deserialize = "R: Deserialize<'de>", serialize = "R: Serialize")
+)]
+struct AssemblyRecipe<R = AssemblyRestBindScaleRecipe> {
     schema_version: u32,
     schema: String,
     #[serde(default)]
@@ -80,16 +88,94 @@ struct AssemblyRecipe {
     #[serde(default = "default_fps")]
     fps: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    rest_bind_scale: Option<AssemblyRestBindScaleRecipe>,
+    rest_bind_scale: Option<R>,
     clips: Vec<AssemblyClipRecipe>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+enum AssemblyRestBindScaleRecipe {
+    Indexed(IndexedRestBindScaleRecipe),
+    Named(NamedRestBindScaleRecipe),
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
-struct AssemblyRestBindScaleRecipe {
+struct IndexedRestBindScaleRecipe {
     source_skin_index: usize,
     source_root_node_index: usize,
     expected_factor: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NamedRestBindScaleRecipe {
+    root_node_name: String,
+    expected_factor: f64,
+}
+
+impl AssemblyRestBindScaleRecipe {
+    fn indexed_selector(&self) -> Option<(usize, usize)> {
+        match self {
+            Self::Indexed(IndexedRestBindScaleRecipe {
+                source_skin_index,
+                source_root_node_index,
+                ..
+            }) => Some((*source_skin_index, *source_root_node_index)),
+            Self::Named(_) => None,
+        }
+    }
+
+    fn root_node_name(&self) -> Option<&str> {
+        match self {
+            Self::Indexed(_) => None,
+            Self::Named(NamedRestBindScaleRecipe { root_node_name, .. }) => Some(root_node_name),
+        }
+    }
+
+    fn expected_factor(&self) -> f64 {
+        match self {
+            Self::Indexed(recipe) => recipe.expected_factor,
+            Self::Named(recipe) => recipe.expected_factor,
+        }
+    }
+
+    fn compatibility_selector(&self) -> AssemblyScaleSelectorRequest<'_> {
+        match self {
+            Self::Indexed(_) => AssemblyScaleSelectorRequest::Indexed,
+            Self::Named(recipe) => AssemblyScaleSelectorRequest::Named {
+                root_node_name: &recipe.root_node_name,
+            },
+        }
+    }
+}
+
+impl<R> AssemblyRecipe<R> {
+    fn with_rest_bind_scale<S>(self, rest_bind_scale: Option<S>) -> AssemblyRecipe<S> {
+        AssemblyRecipe {
+            schema_version: self.schema_version,
+            schema: self.schema,
+            input_root: self.input_root,
+            base_input: self.base_input,
+            mesh_instances: self.mesh_instances,
+            material_texture_recipe: self.material_texture_recipe,
+            complete_tracks: self.complete_tracks,
+            prune_constant_tracks: self.prune_constant_tracks,
+            remove_nodes: self.remove_nodes,
+            canonicalize_skin: self.canonicalize_skin,
+            ground_and_center: self.ground_and_center,
+            fps: self.fps,
+            rest_bind_scale,
+            clips: self.clips,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedRestBindScaleSelector {
+    source_skin_index: usize,
+    source_root_node_index: usize,
+    root_node_name: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -250,6 +336,12 @@ struct AssemblyRestBindScaleInputEvidence {
     input_format: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_projection: Option<AssemblyScaleInputProjectionEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_root_node_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_source_skin_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_source_root_node_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -269,8 +361,12 @@ enum AssemblyScaleInputProjectionEvidence {
 
 #[derive(Debug, Serialize)]
 struct AssemblyRestBindScaleEvidence {
-    source_skin_index: usize,
-    source_root_node_index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_skin_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_root_node_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    declared_root_node_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     effective_source_skin_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -286,8 +382,9 @@ struct AssemblyRestBindScaleEvidence {
 struct PreparedScaleInput {
     document: Document,
     rebased_document: Document,
-    basis: AssemblyScaleBasis,
+    compatibility_basis: AssemblyScaleCompatibilityBasis,
     evidence: AssemblyRestBindScaleInputEvidence,
+    selector: ResolvedRestBindScaleSelector,
 }
 
 struct PreparedAssemblyClip {
@@ -409,21 +506,43 @@ fn validate_recipe(recipe: &AssemblyRecipe) -> Result<(), String> {
             | (RECIPE_SCHEMA_VERSION_V4, RECIPE_SCHEMA_ID_V4)
             | (RECIPE_SCHEMA_VERSION_V5, RECIPE_SCHEMA_ID_V5)
             | (RECIPE_SCHEMA_VERSION_V6, RECIPE_SCHEMA_ID_V6)
+            | (RECIPE_SCHEMA_VERSION_V7, RECIPE_SCHEMA_ID_V7)
     );
     if !identity_supported {
         return Err(
-            "unsupported assembly recipe identity; expected schema_version 3/4/5/6 with its matching character-assembly-recipe URN"
+            "unsupported assembly recipe identity; expected schema_version 3/4/5/6/7 with its matching character-assembly-recipe URN"
                 .into(),
         );
     }
     if recipe.schema_version == RECIPE_SCHEMA_VERSION_V3 && recipe.rest_bind_scale.is_some() {
         return Err("assembly recipe v3 does not admit rest_bind_scale; use recipe v4".into());
     }
-    if let Some(scale) = recipe.rest_bind_scale {
-        if !scale.expected_factor.is_finite() || scale.expected_factor <= 0.0 {
+    if let Some(scale) = &recipe.rest_bind_scale {
+        if !scale.expected_factor().is_finite() || scale.expected_factor() <= 0.0 {
             return Err(
                 "rest_bind_scale.expected_factor must be finite and greater than zero".into(),
             );
+        }
+        if recipe.schema_version == RECIPE_SCHEMA_VERSION_V7 {
+            let Some(root_node_name) = scale.root_node_name() else {
+                return Err(
+                    "character-assembly-recipe v7 rest_bind_scale requires root_node_name and does not admit source indices"
+                        .into(),
+                );
+            };
+            if root_node_name.is_empty() || root_node_name.trim() != root_node_name {
+                return Err(
+                    "rest_bind_scale.root_node_name must be non-empty and contain no leading or trailing whitespace"
+                        .into(),
+                );
+            }
+        } else {
+            if scale.root_node_name().is_some() {
+                return Err(format!(
+                    "character-assembly-recipe v{} rest_bind_scale does not admit root_node_name",
+                    recipe.schema_version
+                ));
+            }
         }
         if recipe.schema_version == RECIPE_SCHEMA_VERSION_V4
             && (recipe.canonicalize_skin
@@ -483,22 +602,123 @@ fn validate_recipe(recipe: &AssemblyRecipe) -> Result<(), String> {
 }
 
 fn parse_recipe(text: &str) -> Result<AssemblyRecipe, String> {
-    let value: toml::Value =
+    let wire: AssemblyRecipe<toml::Value> =
         toml::from_str(text).map_err(|error| format!("invalid assembly recipe: {error}"))?;
-    let version = value
-        .get("schema_version")
-        .and_then(toml::Value::as_integer);
-    if version == Some(i64::from(RECIPE_SCHEMA_VERSION_V3))
-        && value.get("rest_bind_scale").is_some()
-    {
+    if !matches!(
+        (wire.schema_version, wire.schema.as_str()),
+        (RECIPE_SCHEMA_VERSION_V3, RECIPE_SCHEMA_ID_V3)
+            | (RECIPE_SCHEMA_VERSION_V4, RECIPE_SCHEMA_ID_V4)
+            | (RECIPE_SCHEMA_VERSION_V5, RECIPE_SCHEMA_ID_V5)
+            | (RECIPE_SCHEMA_VERSION_V6, RECIPE_SCHEMA_ID_V6)
+            | (RECIPE_SCHEMA_VERSION_V7, RECIPE_SCHEMA_ID_V7)
+    ) {
         return Err(
-            "invalid assembly recipe: unknown field `rest_bind_scale` in character-assembly-recipe v3"
+            "invalid assembly recipe: unsupported assembly recipe identity; expected schema_version 3/4/5/6/7 with its matching character-assembly-recipe URN"
                 .into(),
         );
     }
-    value
-        .try_into()
-        .map_err(|error| format!("invalid assembly recipe: {error}"))
+    let rest_bind_scale = wire
+        .rest_bind_scale
+        .as_ref()
+        .map(|scale| parse_rest_bind_scale_wire(scale, wire.schema_version))
+        .transpose()
+        .map_err(|error| format!("invalid assembly recipe: {error}"))?;
+    Ok(wire.with_rest_bind_scale(rest_bind_scale))
+}
+
+fn parse_rest_bind_scale_wire(
+    scale: &toml::Value,
+    version: u32,
+) -> Result<AssemblyRestBindScaleRecipe, String> {
+    if version == RECIPE_SCHEMA_VERSION_V3 {
+        return Err("unknown field `rest_bind_scale` in character-assembly-recipe v3".into());
+    }
+    let table = scale.as_table().ok_or_else(|| {
+        format!("character-assembly-recipe v{version} rest_bind_scale must be a table")
+    })?;
+    let identity = format!("character-assembly-recipe v{version} rest_bind_scale");
+    if version == RECIPE_SCHEMA_VERSION_V7 {
+        if table.contains_key("source_skin_index") || table.contains_key("source_root_node_index") {
+            return Err(format!("{identity} does not admit source indices"));
+        }
+        reject_unknown_scale_fields(table, &["root_node_name", "expected_factor"], &identity)?;
+        require_scale_field(table, "root_node_name", &identity)?;
+        require_scale_field(table, "expected_factor", &identity)?;
+        let root_node_name = table
+            .get("root_node_name")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| "rest_bind_scale.root_node_name must be a string".to_owned())?;
+        Ok(AssemblyRestBindScaleRecipe::Named(
+            NamedRestBindScaleRecipe {
+                root_node_name: root_node_name.to_owned(),
+                expected_factor: scale_expected_factor(table)?,
+            },
+        ))
+    } else {
+        if table.contains_key("root_node_name") {
+            return Err(format!("{identity} does not admit root_node_name"));
+        }
+        reject_unknown_scale_fields(
+            table,
+            &[
+                "source_skin_index",
+                "source_root_node_index",
+                "expected_factor",
+            ],
+            &identity,
+        )?;
+        for field in [
+            "source_skin_index",
+            "source_root_node_index",
+            "expected_factor",
+        ] {
+            require_scale_field(table, field, &identity)?;
+        }
+        Ok(AssemblyRestBindScaleRecipe::Indexed(
+            IndexedRestBindScaleRecipe {
+                source_skin_index: scale_source_index(table, "source_skin_index")?,
+                source_root_node_index: scale_source_index(table, "source_root_node_index")?,
+                expected_factor: scale_expected_factor(table)?,
+            },
+        ))
+    }
+}
+
+fn scale_source_index(table: &toml::Table, field: &str) -> Result<usize, String> {
+    table
+        .get(field)
+        .and_then(toml::Value::as_integer)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| format!("rest_bind_scale.{field} must be a non-negative integer"))
+}
+
+fn scale_expected_factor(table: &toml::Table) -> Result<f64, String> {
+    match table.get("expected_factor") {
+        Some(toml::Value::Float(value)) => Ok(*value),
+        Some(toml::Value::Integer(value)) => Ok(*value as f64),
+        _ => Err("rest_bind_scale.expected_factor must be a number".into()),
+    }
+}
+
+fn reject_unknown_scale_fields(
+    table: &toml::Table,
+    allowed: &[&str],
+    identity: &str,
+) -> Result<(), String> {
+    if let Some(field) = table
+        .keys()
+        .find(|field| !allowed.contains(&field.as_str()))
+    {
+        return Err(format!("unknown field `{field}` in {identity}"));
+    }
+    Ok(())
+}
+
+fn require_scale_field(table: &toml::Table, field: &str, identity: &str) -> Result<(), String> {
+    if !table.contains_key(field) {
+        return Err(format!("missing field `{field}` in {identity}"));
+    }
+    Ok(())
 }
 
 fn unique_nonempty(values: &[String], label: &str) -> Result<(), String> {
@@ -534,19 +754,87 @@ fn load_input(path: &Path) -> Result<Document, crate::producer::Failure> {
     crate::load_bytes_typed(path, format, &bytes).map_err(crate::producer_load_failure)
 }
 
-fn rest_bind_operation(recipe: AssemblyRestBindScaleRecipe) -> ScaleOperation {
+fn rest_bind_operation(
+    selector: &ResolvedRestBindScaleSelector,
+    expected_factor: f64,
+) -> ScaleOperation {
     ScaleOperation::RestBindUniformScale {
-        source_skin_index: recipe.source_skin_index,
-        source_root_node_index: recipe.source_root_node_index,
-        expected_factor: recipe.expected_factor,
+        source_skin_index: selector.source_skin_index,
+        source_root_node_index: selector.source_root_node_index,
+        expected_factor,
     }
+}
+
+fn resolve_rest_bind_scale_selector(
+    document: &Document,
+    scale: &AssemblyRestBindScaleRecipe,
+) -> Result<ResolvedRestBindScaleSelector, String> {
+    if let Some((source_skin_index, source_root_node_index)) = scale.indexed_selector() {
+        let root_node_name = document
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.source_node_index == source_root_node_index)
+            .and_then(|node| node.bone)
+            .and_then(|bone| document.skeleton.bones.get(bone))
+            .map(|bone| bone.name.clone())
+            .unwrap_or_default();
+        return Ok(ResolvedRestBindScaleSelector {
+            source_skin_index,
+            source_root_node_index,
+            root_node_name,
+        });
+    }
+    let root_node_name = scale
+        .root_node_name()
+        .ok_or_else(|| "rest_bind_scale has no selector".to_owned())?;
+    let root_matches = document
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            node.bone
+                .and_then(|bone| document.skeleton.bones.get(bone))
+                .filter(|bone| bone.name == root_node_name)
+                .map(|_| node.source_node_index)
+        })
+        .collect::<Vec<_>>();
+    let [source_root_node_index] = root_matches.as_slice() else {
+        return Err(format!(
+            "rest_bind_scale root_node_name {root_node_name:?} resolves to {} source nodes; expected exactly one",
+            root_matches.len()
+        ));
+    };
+    let skin_matches = document
+        .assets
+        .source_skeleton
+        .skins
+        .iter()
+        .filter(|skin| {
+            skin.joint_source_node_indices
+                .contains(source_root_node_index)
+        })
+        .collect::<Vec<_>>();
+    let [skin] = skin_matches.as_slice() else {
+        return Err(format!(
+            "rest_bind_scale root_node_name {root_node_name:?} is a joint of {} source skins; expected exactly one",
+            skin_matches.len()
+        ));
+    };
+    Ok(ResolvedRestBindScaleSelector {
+        source_skin_index: skin.source_skin_index,
+        source_root_node_index: *source_root_node_index,
+        root_node_name: root_node_name.to_owned(),
+    })
 }
 
 fn prepare_scale_input(
     role: String,
     declared: &Path,
     resolved: &Path,
-    scale: AssemblyRestBindScaleRecipe,
+    scale: &AssemblyRestBindScaleRecipe,
     recipe_version: u32,
     staging_parent: &Path,
     tool: &ToolInfo,
@@ -558,7 +846,7 @@ fn prepare_scale_input(
         .unwrap_or_default();
     let is_gltf = extension.eq_ignore_ascii_case("gltf") || extension.eq_ignore_ascii_case("glb");
     let is_fbx = extension.eq_ignore_ascii_case("fbx");
-    if !is_gltf && !(recipe_version == RECIPE_SCHEMA_VERSION_V6 && is_fbx) {
+    if !is_gltf && !(recipe_version >= RECIPE_SCHEMA_VERSION_V6 && is_fbx) {
         if recipe_version < RECIPE_SCHEMA_VERSION_V6 {
             return Err(Failure::operator(format!(
                 "rest_bind_scale input {} is not glTF/GLB; assembly scale integration is glTF-only",
@@ -577,8 +865,14 @@ fn prepare_scale_input(
     let byte_count = u64::try_from(bytes.len())
         .map_err(|_| format!("input {} size exceeds u64", declared.display()))
         .operator()?;
-    let operation = rest_bind_operation(scale);
-    let (document, rebased_document, basis, input_format, source_projection) = if is_fbx {
+    let (
+        document,
+        rebased_document,
+        compatibility_basis,
+        input_format,
+        source_projection,
+        selector,
+    ) = if is_fbx {
         let fbx_source = animsmith_fbx::load_scale_source_bytes(resolved, &bytes)
             .map_err(|error| {
                 format!(
@@ -595,6 +889,15 @@ fn prepare_scale_input(
                 )
             })
             .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
+        let selector = resolve_rest_bind_scale_selector(fbx_source.document(), scale)
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale selector rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+        let operation = rest_bind_operation(&selector, scale.expected_factor());
         let staged =
             crate::scale::serialize_fbx_rest_bind_stage(fbx_source.document(), staging_parent)
                 .operator()?;
@@ -618,16 +921,17 @@ fn prepare_scale_input(
             )
         })
         .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-        let (rebased_document, basis) = prepare_gltf_scale_projection(
+        let (rebased_document, compatibility_basis) = prepare_gltf_scale_projection(
             declared,
             staged.path(),
             &staged_source,
             staged_operation,
+            scale.compatibility_selector(),
         )?;
         (
             fbx_source.document().clone(),
             rebased_document,
-            basis,
+            compatibility_basis,
             "fbx",
             AssemblyScaleInputProjectionEvidence::NormalizedBakedFbx {
                 authored_curve_keys_preserved: false,
@@ -635,6 +939,7 @@ fn prepare_scale_input(
                 staged_source: staged.identity().clone(),
                 capability: Box::new(fbx_source.inventory().clone()),
             },
+            selector,
         )
     } else {
         let source = preflight_scale_source_bytes(resolved, &bytes)
@@ -645,12 +950,26 @@ fn prepare_scale_input(
                 )
             })
             .refusal(Stage::Load, Kind::UnreadableSource)?;
-        let (rebased_document, basis) =
-            prepare_gltf_scale_projection(declared, resolved, &source, operation)?;
+        let selector = resolve_rest_bind_scale_selector(source.document(), scale)
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale selector rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+        let operation = rest_bind_operation(&selector, scale.expected_factor());
+        let (rebased_document, compatibility_basis) = prepare_gltf_scale_projection(
+            declared,
+            resolved,
+            &source,
+            operation,
+            scale.compatibility_selector(),
+        )?;
         (
             source.document().clone(),
             rebased_document,
-            basis,
+            compatibility_basis,
             if extension.eq_ignore_ascii_case("glb") {
                 "glb"
             } else {
@@ -660,6 +979,7 @@ fn prepare_scale_input(
                 authored_curve_keys_preserved: true,
                 raw_source_spans_preserved: true,
             },
+            selector,
         )
     };
     #[derive(Serialize)]
@@ -673,14 +993,14 @@ fn prepare_scale_input(
         schema: "urn:animsmith:character-assembly-scale-basis:1",
         tool,
         input_sha256: &sha256,
-        basis: &basis,
+        basis: compatibility_basis.basis(),
     })
     .map_err(|error| format!("cannot serialize assembly scale basis: {error}"))
     .operator()?;
     Ok(PreparedScaleInput {
         document,
         rebased_document,
-        basis,
+        compatibility_basis,
         evidence: AssemblyRestBindScaleInputEvidence {
             role,
             declared_path: declared.display().to_string(),
@@ -690,10 +1010,17 @@ fn prepare_scale_input(
             basis_fingerprint: sha256_hex(&fingerprint_bytes),
             compatible: true,
             compatibility: "compatible",
-            input_format: (recipe_version == RECIPE_SCHEMA_VERSION_V6).then_some(input_format),
-            source_projection: (recipe_version == RECIPE_SCHEMA_VERSION_V6)
+            input_format: (recipe_version >= RECIPE_SCHEMA_VERSION_V6).then_some(input_format),
+            source_projection: (recipe_version >= RECIPE_SCHEMA_VERSION_V6)
                 .then_some(source_projection),
+            resolved_root_node_name: (recipe_version == RECIPE_SCHEMA_VERSION_V7)
+                .then(|| selector.root_node_name.clone()),
+            resolved_source_skin_index: (recipe_version == RECIPE_SCHEMA_VERSION_V7)
+                .then_some(selector.source_skin_index),
+            resolved_source_root_node_index: (recipe_version == RECIPE_SCHEMA_VERSION_V7)
+                .then_some(selector.source_root_node_index),
         },
+        selector,
     })
 }
 
@@ -702,7 +1029,8 @@ fn prepare_gltf_scale_projection(
     source_path: &Path,
     source: &animsmith_gltf::GltfScaleSource,
     operation: ScaleOperation,
-) -> Result<(Document, AssemblyScaleBasis), crate::producer::Failure> {
+    selector: AssemblyScaleSelectorRequest<'_>,
+) -> Result<(Document, AssemblyScaleCompatibilityBasis), crate::producer::Failure> {
     use crate::producer::{Classify as _, Kind, Stage};
     let facts = operation_capability_facts(source.manifest(), operation)
         .map_err(|error| {
@@ -724,14 +1052,15 @@ fn prepare_gltf_scale_projection(
         )
     })
     .refusal(Stage::Transform, Kind::TransformRefused)?;
-    let basis = assembly_scale_basis(source.document(), &plan)
-        .map_err(|error| {
-            format!(
-                "rest_bind_scale basis rejected input {}: {error}",
-                declared.display()
-            )
-        })
-        .refusal(Stage::Proof, Kind::ProofFailed)?;
+    let compatibility_basis =
+        assembly_scale_compatibility_basis(source.document(), &plan, selector)
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale compatibility basis rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Proof, Kind::ProofFailed)?;
     let artifact = rewrite_scale_plan(source, &plan)
         .map_err(|error| {
             format!(
@@ -748,7 +1077,15 @@ fn prepare_gltf_scale_projection(
             )
         })
         .refusal(Stage::Proof, Kind::ProofFailed)?;
-    Ok((rebased_document, basis))
+    Ok((rebased_document, compatibility_basis))
+}
+
+fn require_input_scale_compatibility(
+    base: &AssemblyScaleCompatibilityBasis,
+    input: &AssemblyScaleCompatibilityBasis,
+) -> Result<(), String> {
+    require_assembly_scale_compatibility_with_selectors(base, input)
+        .map_err(|error| error.to_string())
 }
 
 /// One parsed `assemble` invocation, including the global `--config` this
@@ -913,7 +1250,7 @@ fn assemble_inner(
     // documents feed assembly; no later reopen can race validation.
     let mut prepared_scale_inputs = BTreeMap::<PathBuf, PreparedScaleInput>::new();
     let mut rest_bind_input_evidence = Vec::new();
-    if let Some(scale) = recipe.rest_bind_scale {
+    if let Some(scale) = &recipe.rest_bind_scale {
         let prepared = prepare_scale_input(
             "base".to_owned(),
             &recipe.base_input,
@@ -923,7 +1260,7 @@ fn assemble_inner(
             output_parent,
             &tool,
         )?;
-        let base_basis = prepared.basis.clone();
+        let base_basis = prepared.compatibility_basis.clone();
         rest_bind_input_evidence.push(prepared.evidence.clone());
         prepared_scale_inputs.insert(base_path.clone(), prepared);
         for clip_recipe in &recipe.clips {
@@ -944,7 +1281,7 @@ fn assemble_inner(
                 output_parent,
                 &tool,
             )?;
-            require_assembly_scale_compatibility(&base_basis, &prepared.basis)
+            require_input_scale_compatibility(&base_basis, &prepared.compatibility_basis)
                 .map_err(|error| {
                     format!(
                         "rest_bind_scale input {} is incompatible with base: {error}",
@@ -1267,7 +1604,7 @@ fn assemble_inner(
     let summary = animsmith_gltf::write::write(&base, &artifact_temp)
         .map_err(crate::conversion_write_failure)?;
     let mut rest_bind_scale_evidence = None;
-    if let Some(scale) = recipe.rest_bind_scale {
+    if let Some(scale) = &recipe.rest_bind_scale {
         let staged_bytes = fs::read(&artifact_temp)
             .map_err(|error| format!("cannot read staged assembly source: {error}"))
             .operator()?;
@@ -1280,9 +1617,17 @@ fn assemble_inner(
             .ok_or_else(|| "missing captured base scale input".to_owned())
             .refusal(Stage::Proof, Kind::ProofFailed)?
             .document;
-        let staged_operation =
-            map_staged_rest_bind_operation(original_base, staged_source.document(), scale)
-                .refusal(Stage::Proof, Kind::ProofFailed)?;
+        let base_selector = &prepared_scale_inputs
+            .get(&base_path)
+            .ok_or_else(|| "missing captured base scale input".to_owned())
+            .refusal(Stage::Proof, Kind::ProofFailed)?
+            .selector;
+        let staged_operation = map_staged_rest_bind_operation(
+            original_base,
+            staged_source.document(),
+            rest_bind_operation(base_selector, scale.expected_factor()),
+        )
+        .refusal(Stage::Proof, Kind::ProofFailed)?;
         let (effective_source_skin_index, effective_source_root_node_index) = match staged_operation
         {
             ScaleOperation::RestBindUniformScale {
@@ -1330,13 +1675,14 @@ fn assemble_inner(
         require_rebased_clips_match(&expected_rebased_clips, &reloaded.clips)
             .refusal(Stage::Proof, Kind::ProofFailed)?;
         rest_bind_scale_evidence = Some(AssemblyRestBindScaleEvidence {
-            source_skin_index: scale.source_skin_index,
-            source_root_node_index: scale.source_root_node_index,
+            source_skin_index: scale.indexed_selector().map(|selector| selector.0),
+            source_root_node_index: scale.indexed_selector().map(|selector| selector.1),
+            declared_root_node_name: scale.root_node_name().map(str::to_owned),
             effective_source_skin_index: (recipe.schema_version >= RECIPE_SCHEMA_VERSION_V5)
                 .then_some(effective_source_skin_index),
             effective_source_root_node_index: (recipe.schema_version >= RECIPE_SCHEMA_VERSION_V5)
                 .then_some(effective_source_root_node_index),
-            expected_factor: scale.expected_factor,
+            expected_factor: scale.expected_factor(),
             inputs: rest_bind_input_evidence,
             staged_source_sha256,
             read_back_sha256,
@@ -1347,7 +1693,9 @@ fn assemble_inner(
     }
     let (artifact_sha256, artifact_bytes) = read_digest(&artifact_temp).operator()?;
     let (evidence_schema_version, evidence_schema) =
-        if recipe.schema_version == RECIPE_SCHEMA_VERSION_V6 {
+        if recipe.schema_version == RECIPE_SCHEMA_VERSION_V7 {
+            (EVIDENCE_SCHEMA_VERSION_V7, EVIDENCE_SCHEMA_ID_V7)
+        } else if recipe.schema_version == RECIPE_SCHEMA_VERSION_V6 {
             (EVIDENCE_SCHEMA_VERSION_V6, EVIDENCE_SCHEMA_ID_V6)
         } else if recipe.schema_version == RECIPE_SCHEMA_VERSION_V5 {
             (EVIDENCE_SCHEMA_VERSION_V5, EVIDENCE_SCHEMA_ID_V5)
@@ -1657,20 +2005,28 @@ fn pruned_track_evidence(
 fn map_staged_rest_bind_operation(
     original: &Document,
     staged: &Document,
-    recipe: AssemblyRestBindScaleRecipe,
+    operation: ScaleOperation,
 ) -> Result<ScaleOperation, String> {
+    let ScaleOperation::RestBindUniformScale {
+        source_skin_index,
+        source_root_node_index,
+        expected_factor,
+    } = operation
+    else {
+        return Err("assembly staging only maps rest/bind operations".into());
+    };
     let original_root = original
         .assets
         .source_skeleton
         .nodes
         .iter()
-        .find(|node| node.source_node_index == recipe.source_root_node_index)
+        .find(|node| node.source_node_index == source_root_node_index)
         .and_then(|node| node.bone)
         .and_then(|bone| original.skeleton.bones.get(bone))
         .ok_or_else(|| {
             format!(
                 "source_root_node_index {} has no named normalized base node",
-                recipe.source_root_node_index
+                source_root_node_index
             )
         })?;
     let staged_root_bone = staged
@@ -1703,11 +2059,11 @@ fn map_staged_rest_bind_operation(
         .source_skeleton
         .skins
         .iter()
-        .find(|skin| skin.source_skin_index == recipe.source_skin_index)
+        .find(|skin| skin.source_skin_index == source_skin_index)
         .ok_or_else(|| {
             format!(
                 "source_skin_index {} is absent from base input",
-                recipe.source_skin_index
+                source_skin_index
             )
         })?;
     let joint_names = original_skin
@@ -1757,7 +2113,7 @@ fn map_staged_rest_bind_operation(
     Ok(ScaleOperation::RestBindUniformScale {
         source_skin_index: *staged_skin_index,
         source_root_node_index: *staged_root_node_index,
-        expected_factor: recipe.expected_factor,
+        expected_factor,
     })
 }
 
@@ -2261,7 +2617,7 @@ mod tests {
         let operation = map_staged_rest_bind_operation(
             &original,
             &staged,
-            AssemblyRestBindScaleRecipe {
+            ScaleOperation::RestBindUniformScale {
                 source_skin_index: 7,
                 source_root_node_index: 10,
                 expected_factor: 0.01,

@@ -40,15 +40,15 @@ An asset-property refusal from `convert` or `assemble` is not success
 evidence. Under `--format json` it uses the separate immutable
 `urn:animsmith:schema:producer-refusal:1` contract, whose retrievable schema is
 [`producer-refusal-v1.schema.json`](schemas/producer-refusal-v1.schema.json).
-This keeps conversion evidence v1/v2, assembly evidence v1-v6, output v1-v7,
+This keeps conversion evidence v1/v2, assembly evidence v1-v7, output v1-v7,
 and scale evidence v1-v5 immutable. The record has `outcome: "rejected"`, a
 null `result`, the command, and a typed `{stage, kind, detail}` rejection.
 
-`assemble` writes a separate character-assembly-evidence v6 document to its
+`assemble` writes a separate character-assembly-evidence v7 document to its
 required `--evidence` path, and prints the same record to stdout under
 `--format json`. Its immutable identity is
-`urn:animsmith:schema:character-assembly-evidence:6`; its retrievable schema is
-[`character-assembly-evidence-v6.schema.json`](schemas/character-assembly-evidence-v6.schema.json).
+`urn:animsmith:schema:character-assembly-evidence:7`; its retrievable schema is
+[`character-assembly-evidence-v7.schema.json`](schemas/character-assembly-evidence-v7.schema.json).
 The paired GLB and evidence are prepared before publication, so an operator
 failure emits neither new destination and restores any prior pair.
 
@@ -284,7 +284,7 @@ recipes](material-texture-recipes.md) for containment and image semantics.
 
 ## `assemble`
 
-`assemble` writes character-assembly evidence v6 beside its GLB. The evidence
+`assemble` writes character-assembly evidence v7 beside its GLB. The evidence
 binds the effective recipe and its SHA-256, every base/clip/recipe/texture input
 and digest, selected source takes and windows, exact track-operation counts,
 removed named-bone translation deltas, mesh and skin canonicalization, tool
@@ -292,7 +292,7 @@ identity, and the final artifact digest and counts. When `prune_constant_tracks`
 is enabled, each clip also records the exact removed tracks in
 `pruned_constant_tracks`, including each track's index in the completed,
 normalized output clip immediately before pruning (the pre-prune authored
-order). In assembly evidence v3 through v6, `bone_index` is the BoneId in the
+order). In assembly evidence v3 through v7, `bone_index` is the BoneId in the
 post-canonicalization/pre-node-removal skeleton; `removed_nodes` provides the
 stable compaction ledger needed to derive a surviving final index. The array
 is empty when pruning is disabled or no track is removed.
@@ -309,8 +309,9 @@ loaded assets exits 1 before publication and uses producer-refusal v1 in JSON
 mode; invalid recipe syntax/schema/values or an input/path/publication I/O
 failure remains exit 2 with empty stdout.
 
-When the optional recipe-v6 `rest_bind_scale` operation is active, evidence
-also pins the requested and effective staged source skin/root selectors and factor, the exact digest
+When the optional recipe-v7 `rest_bind_scale` operation is active, evidence
+also pins the declared root name, every input's resolved root name/source-node
+index/source-skin index, the effective staged source selectors and factor, the exact digest
 and versioned basis fingerprint for the base and every clip input, each
 semantic compatibility result, and the shared scale proof over the exact
 staged artifact bytes. Each input explicitly names the basis fingerprint
@@ -318,20 +319,21 @@ contract as `urn:animsmith:character-assembly-scale-basis:1`.
 `residual_comparison_counts` uses the same twelve stable
 field names as `proof.residuals`, keeping every measured maximum paired with
 the count from the shared proof API without changing immutable scale-evidence
-v4. V6 additionally records each captured input container and either its raw
+v4. V7 retains v6's captured input container and either its raw
 glTF preservation boundary or its normalized/baked FBX capability inventory
 and private staged-GLB identity. Omitting the block omits this operation
-evidence and retains ordinary assembly behavior under the v6 envelope.
+evidence and retains ordinary assembly behavior under the v7 envelope.
 
 The normative recipe and evidence contracts are
-[`character-assembly-recipe-v6.schema.json`](schemas/character-assembly-recipe-v6.schema.json)
+[`character-assembly-recipe-v7.schema.json`](schemas/character-assembly-recipe-v7.schema.json)
 and
-[`character-assembly-evidence-v6.schema.json`](schemas/character-assembly-evidence-v6.schema.json).
+[`character-assembly-evidence-v7.schema.json`](schemas/character-assembly-evidence-v7.schema.json).
 The recipe identity is
-`urn:animsmith:schema:character-assembly-recipe:6`; v1 through v5 remain
+`urn:animsmith:schema:character-assembly-recipe:7`; v1 through v6 remain
 immutable historical contracts.
 See [multi-source character assembly](character-assembly.md) for operation and
-consumer-boundary semantics. Migrate from v5 by selecting recipe/evidence v6;
+consumer-boundary semantics. Migrate from v6 by selecting recipe/evidence v7
+and replacing its two source indices with `root_node_name`;
 an omitted `rest_bind_scale` block retains the existing behavior, while v3
 continues to reject that block as unknown.
 

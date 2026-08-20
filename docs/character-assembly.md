@@ -32,8 +32,8 @@ evidence, and publication. DCC automation is outside this command.
 Start from [`examples/character-assembly.toml`](../examples/character-assembly.toml):
 
 ```toml
-schema_version = 6
-schema = "urn:animsmith:schema:character-assembly-recipe:6"
+schema_version = 7
+schema = "urn:animsmith:schema:character-assembly-recipe:7"
 input_root = "inputs"
 base_input = "base-character.fbx"
 mesh_instances = ["character-mesh"]
@@ -44,11 +44,10 @@ ground_and_center = true
 prune_constant_tracks = false
 fps = 30.0
 
-# Optional for glTF/GLB and the inventory-complete FBX subset; every selector
-# and the factor are required together.
+# Optional for glTF/GLB and the inventory-complete FBX subset; the exact root
+# name and factor are required together.
 # [rest_bind_scale]
-# source_skin_index = 0
-# source_root_node_index = 3
+# root_node_name = "root"
 # expected_factor = 0.01
 
 [[clips]]
@@ -133,28 +132,35 @@ apply:
 
 ### Optional rest/bind scale canonicalization
 
-Recipe v6 can opt into the accepted rest/bind scale operation with one
+Recipe v7 can opt into the accepted rest/bind scale operation with one
 top-level block:
 
 ```toml
 [rest_bind_scale]
-source_skin_index = 0
-source_root_node_index = 3
+root_node_name = "root"
 expected_factor = 0.01
 ```
 
-The block has no defaults: the source skin index, source root node index, and
-finite positive expected factor are all required. Recipe v6 accepts glTF/GLB
-and the narrow FBX subset whose complete ufbx inventory proves the normalized
-metre/Y-up rest hierarchy, derived bind evidence, rebuilt geometry, baked
-animation, and every other modeled domain. Incomplete source-skeleton
-projection, unsupported payload, altered skin influences, incomplete bind
-evidence, external resources, or an incompatible basis fails closed. Nothing
-is inferred from filenames, bounds, character height, inverse-bind magnitudes,
-or source units. Recipes v4/v5 remain immutable and continue to reject FBX
-when `rest_bind_scale` is active.
+The block has no defaults: the exact normalized root-node name and finite
+positive expected factor are both required. In every captured base and clip,
+the name must resolve to exactly one source node and exactly one source skin
+whose joint set contains that node. Missing or repeated names and zero or
+multiple applicable skins fail closed. Leading or trailing whitespace is
+invalid rather than silently trimmed; internal whitespace remains exact. No
+source-array index is reused across files. Recipe v7 accepts glTF/GLB and the
+narrow FBX subset admitted by the existing normalized/baked rest-bind
+capability boundary. That boundary
+requires a complete ufbx inventory for the normalized metre/Y-up hierarchy,
+derived bind evidence, rebuilt geometry, and baked animation. Incomplete
+source-skeleton projection, unsupported payload, altered skin influences,
+incomplete bind evidence, external resources, or an incompatible basis fails
+closed. Nothing is inferred from filenames, bounds, character height,
+inverse-bind magnitudes, or source units. Recipe v6 remains immutable with its
+explicit source indices;
+recipes v4/v5 remain immutable and continue to reject FBX when
+`rest_bind_scale` is active.
 
-Recipe v6 retains recipe v5's composition with `canonicalize_skin`,
+Recipe v7 retains recipe v6's composition with `canonicalize_skin`,
 `ground_and_center`, and
 `remove_nodes`. It captures and validates the raw inputs first, applies the
 same mesh selection and canonical assembly transforms to the staged candidate
@@ -174,7 +180,12 @@ validated and fingerprinted; distinct clips need not contain identical target
 paths. A matching digest alone is not compatibility evidence. Topology,
 orientation, helper-layout, basis, selector, or factor disagreement rejects
 the complete operation before publication.
-Topology, raw identities, selectors, and the declared factor compare exactly.
+Topology, resolved names, and the declared factor compare exactly. V7 compares
+the exact resolved root and ordered selected-skin joint names plus the named
+source/helper parent paths; format-local skin/node numbers remain per-input
+evidence. Each input's selector identity is derived from its accepted plan and
+source document; a declared/resolved disagreement rejects the operation.
+V6 retains exact raw-selector comparison.
 Rest translations, scales, and matrices use the named Appendix D tolerance
 policy, while quaternion orientation uses shortest-path angular distance, so
 equivalent `q`/`-q` spellings do not become false incompatibilities.
@@ -264,16 +275,16 @@ boundary described in [Material texture recipes](material-texture-recipes.md),
 including BaseColor, normal, metallic-roughness, and occlusion slots.
 
 The normative current recipe schema is
-[`character-assembly-recipe-v6.schema.json`](schemas/character-assembly-recipe-v6.schema.json).
-Recipe v1 through v5 remain immutable historical contracts. Migrate from v5
-by changing only `schema_version` and `schema` to v6 when FBX must participate
-in `rest_bind_scale`. Omitting the block remains ordinary assembly behavior;
-v3 continues to reject the block as unknown.
+[`character-assembly-recipe-v7.schema.json`](schemas/character-assembly-recipe-v7.schema.json).
+Recipe v1 through v6 remain immutable historical contracts. Migrate a v6
+rest/bind recipe by changing its identity to v7 and replacing both source-index
+fields with `root_node_name`. Omitting the block remains ordinary assembly
+behavior; v3 continues to reject the block as unknown.
 
 ## Evidence and determinism
 
 The current evidence identity is
-`urn:animsmith:schema:character-assembly-evidence:6`. It records the effective
+`urn:animsmith:schema:character-assembly-evidence:7`. It records the effective
 recipe, recipe and input SHA-256 digests, the selected configuration file's
 declared path and digest (or an explicit built-in-defaults marker), selected takes and windows, exact
 source/base bone remap names and indices, and track
@@ -294,11 +305,12 @@ once in original pre-removal node order: its exact name, original node index,
 nullable original parent index, and whether the recipe selected it directly
 rather than through an ancestor. It is empty when `remove_nodes` is omitted or
 empty. See
-[`character-assembly-evidence-v6.schema.json`](schemas/character-assembly-evidence-v6.schema.json).
+[`character-assembly-evidence-v7.schema.json`](schemas/character-assembly-evidence-v7.schema.json).
 
-When `rest_bind_scale` is active, v6 pins each exact base/clip
-input digest and its versioned basis fingerprint, both the requested source
-selectors and their effective staged selectors after canonicalization/removal,
+When `rest_bind_scale` is active, v7 pins each exact base/clip
+input digest and its versioned basis fingerprint, the declared root name,
+each input's resolved root name/source-node index/source-skin index, and the
+effective staged selectors after canonicalization/removal,
 the factor, every compatibility result, and the shared final-artifact scale proof.
 The staged-source digest and exact emitted-byte read-back digest make the two
 serialization boundaries explicit; the read-back digest equals the published
@@ -312,7 +324,7 @@ records let a consumer verify that assembly validated and transformed every
 participating input before remapping and that proof consumed the exact bytes
 subsequently published.
 
-Each v6 scale-input row also identifies the captured container and its source
+Each v7 scale-input row also identifies the captured container and its source
 projection. `raw-gltf` records authored-curve and raw-span preservation.
 `normalized-baked-fbx` explicitly records both as false, embeds the complete
 FBX capability inventory, and binds the private normalized GLB stage by digest
@@ -320,7 +332,7 @@ and byte count. This stage is not a second public artifact or evidence chain:
 assembly still serializes, rewrites, reloads, proves, digest-checks, and
 atomically publishes one final GLB/evidence pair.
 
-Evidence v1 through v5 remain immutable historical contracts; v1 does not
+Evidence v1 through v6 remain immutable historical contracts; v1 does not
 describe pruning, v1 and v2 do not describe structural node removal, and none
 of them describe rest/bind scale compatibility. Consumers migrating from v2 or
 v3 must verify `removed_nodes` against the effective

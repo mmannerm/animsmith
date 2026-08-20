@@ -171,6 +171,39 @@ fn assembly_basis_fingerprints_target_factors_and_rejects_orientation_or_helper_
     assert_eq!(basis.target_paths.len(), 1);
     assert_eq!(basis.target_paths[0].factor_bits, 0.01f64.to_bits());
 
+    let named_operation = ScaleOperation::RestBindUniformScale {
+        source_skin_index: 0,
+        source_root_node_index: 1,
+        expected_factor: 0.01,
+    };
+    let named_plan = plan_scale(&ScaleRequest {
+        operation: named_operation,
+        document: &document,
+        capability: &capability,
+    })
+    .unwrap();
+    let named = assembly_scale_compatibility_basis(
+        &document,
+        &named_plan,
+        AssemblyScaleSelectorRequest::Named {
+            root_node_name: "bone1",
+        },
+    )
+    .unwrap();
+    require_assembly_scale_compatibility_with_selectors(&named, &named).unwrap();
+    assert!(
+        assembly_scale_compatibility_basis(
+            &document,
+            &plan,
+            AssemblyScaleSelectorRequest::Named {
+                root_node_name: "bone1",
+            },
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("assembly_basis_named_selector_root_disagrees_with_plan")
+    );
+
     let mut orientation = document.clone();
     orientation.skeleton.bones[1].rest.rotation = Quat::from_rotation_z(0.01);
     if let SourceNodeLocalRest::Trs { rotation, .. } =
@@ -348,6 +381,226 @@ fn assembly_basis_fingerprints_target_factors_and_rejects_orientation_or_helper_
             .unwrap_err()
             .reason,
         "source-helper-rest-basis"
+    );
+}
+
+#[test]
+fn named_assembly_compatibility_rejects_a_different_resolved_skin_joint_identity() {
+    let nodes = vec![
+        RigNode {
+            parent: None,
+            source_node_index: 0,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        },
+        rig(Some(0), 1, Vec3::new(0.0, 100.0, 0.0)),
+        rig(Some(1), 2, Vec3::new(0.0, 100.0, 0.0)),
+    ];
+    let base_document = rig_document(&nodes, &[1], 3, Mat4::IDENTITY);
+    let input_document = rig_document(&nodes, &[1, 2], 7, Mat4::IDENTITY);
+    let capability = complete_capability();
+    let base_plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 3,
+            source_root_node_index: 1,
+            expected_factor: 0.01,
+        },
+        document: &base_document,
+        capability: &capability,
+    })
+    .unwrap();
+    let input_plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 7,
+            source_root_node_index: 1,
+            expected_factor: 0.01,
+        },
+        document: &input_document,
+        capability: &capability,
+    })
+    .unwrap();
+    let selector = AssemblyScaleSelectorRequest::Named {
+        root_node_name: "bone1",
+    };
+    let base = assembly_scale_compatibility_basis(&base_document, &base_plan, selector).unwrap();
+    let input = assembly_scale_compatibility_basis(&input_document, &input_plan, selector).unwrap();
+
+    assert_ne!(
+        base.basis().source_skin_index,
+        input.basis().source_skin_index
+    );
+    assert_eq!(
+        require_assembly_scale_compatibility_with_selectors(&base, &input)
+            .unwrap_err()
+            .reason,
+        "source-name-selector"
+    );
+}
+
+#[test]
+fn named_assembly_compatibility_constructor_rejects_a_plan_for_another_skin() {
+    let nodes = vec![
+        RigNode {
+            parent: None,
+            source_node_index: 0,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        },
+        rig(Some(0), 1, Vec3::new(0.0, 100.0, 0.0)),
+        rig(Some(1), 2, Vec3::new(0.0, 100.0, 0.0)),
+    ];
+    let mut document = rig_document(&nodes, &[1], 3, Mat4::IDENTITY);
+    document.assets.source_skeleton.skins.push(SourceSkinAsset {
+        source_skin_index: 7,
+        name: None,
+        skeleton_root_source_node_index: None,
+        joint_source_node_indices: vec![2],
+        inverse_bind_accessor: SourceInverseBindAccessor::default(),
+        attachments: Vec::new(),
+    });
+    let capability = complete_capability();
+    let plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 7,
+            source_root_node_index: 1,
+            expected_factor: 0.01,
+        },
+        document: &document,
+        capability: &capability,
+    })
+    .unwrap();
+
+    assert!(
+        assembly_scale_compatibility_basis(
+            &document,
+            &plan,
+            AssemblyScaleSelectorRequest::Named {
+                root_node_name: "bone1",
+            },
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("assembly_basis_named_selector_skin_disagrees_with_plan")
+    );
+}
+
+#[test]
+fn named_assembly_compatibility_checks_helper_layout_rest_and_semantic_paths() {
+    let nodes = vec![
+        RigNode {
+            parent: None,
+            source_node_index: 0,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        },
+        rig(Some(0), 1, Vec3::new(0.0, 100.0, 0.0)),
+    ];
+    let document = rig_document(&nodes, &[1], 0, Mat4::IDENTITY);
+    let capability = complete_capability();
+    let compatibility = |document: &Document, source_skin_index, source_root_node_index| {
+        let plan = plan_scale(&ScaleRequest {
+            operation: ScaleOperation::RestBindUniformScale {
+                source_skin_index,
+                source_root_node_index,
+                expected_factor: 0.01,
+            },
+            document,
+            capability: &capability,
+        })
+        .unwrap();
+        assembly_scale_compatibility_basis(
+            document,
+            &plan,
+            AssemblyScaleSelectorRequest::Named {
+                root_node_name: "bone1",
+            },
+        )
+        .unwrap()
+    };
+    let base = compatibility(&document, 0, 1);
+
+    let mut changed_name = document.clone();
+    changed_name.assets.source_skeleton.nodes[1].name = Some("changed-helper-name".into());
+    let changed_name = compatibility(&changed_name, 0, 1);
+    assert_eq!(
+        require_assembly_scale_compatibility_with_selectors(&base, &changed_name)
+            .unwrap_err()
+            .reason,
+        "source-helper-layout"
+    );
+
+    let mut connector = document.clone();
+    connector.assets.source_skeleton.nodes[1].parent_source_node_index = Some(2);
+    let mut unnamed = SourceNodeAsset::new(2, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+    unnamed.parent_source_node_index = Some(0);
+    connector.assets.source_skeleton.nodes.push(unnamed);
+    let connector_basis = compatibility(&connector, 0, 1);
+    assert_eq!(
+        require_assembly_scale_compatibility_with_selectors(&base, &connector_basis)
+            .unwrap_err()
+            .reason,
+        "source-helper-layout"
+    );
+
+    let mut changed_matrix = connector.clone();
+    changed_matrix.assets.source_skeleton.nodes[2].local_rest =
+        SourceNodeLocalRest::Matrix(Mat4::from_translation(Vec3::new(0.1, 0.0, 0.0)));
+    let changed_matrix = compatibility(&changed_matrix, 0, 1);
+    assert_eq!(
+        require_assembly_scale_compatibility_with_selectors(&connector_basis, &changed_matrix)
+            .unwrap_err()
+            .reason,
+        "source-helper-rest-basis"
+    );
+
+    let reindexed_nodes = vec![
+        RigNode {
+            parent: None,
+            source_node_index: 10,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        },
+        rig(Some(0), 20, Vec3::new(0.0, 100.0, 0.0)),
+    ];
+    let mut reindexed = rig_document(&reindexed_nodes, &[1], 7, Mat4::IDENTITY);
+    reindexed.assets.source_skeleton.nodes[1].parent_source_node_index = Some(30);
+    let mut reindexed_connector =
+        SourceNodeAsset::new(30, SourceNodeLocalRest::Matrix(Mat4::IDENTITY));
+    reindexed_connector.parent_source_node_index = Some(10);
+    reindexed
+        .assets
+        .source_skeleton
+        .nodes
+        .push(reindexed_connector);
+    let reindexed = compatibility(&reindexed, 7, 20);
+    require_assembly_scale_compatibility_with_selectors(&connector_basis, &reindexed)
+        .expect("equal named helper paths remain compatible across format-local indices");
+
+    let indexed_plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 1,
+            expected_factor: 0.01,
+        },
+        document: &document,
+        capability: &capability,
+    })
+    .unwrap();
+    let indexed = assembly_scale_compatibility_basis(
+        &document,
+        &indexed_plan,
+        AssemblyScaleSelectorRequest::Indexed,
+    )
+    .unwrap();
+    assert_eq!(
+        require_assembly_scale_compatibility_with_selectors(&indexed, &base)
+            .unwrap_err()
+            .reason,
+        "source-selector-mode"
     );
 }
 
