@@ -2282,3 +2282,465 @@ The implementation status is:
 The live implementation sequence is owned by tracker issue #344 and roadmap
 issue #165, not by a numbered future-slice list in this decision record. Work
 beyond this positive-uniform, fail-closed decision remains ADR-gated.
+
+## Appendix E — decision record: engine profiles
+
+This appendix is the accepted design outcome of issue #150. It defines the
+consumer-model boundary required by the 0.4.0 engine-feedback milestone; it
+does not claim that the configuration, checks, or generators described here
+already ship.
+
+### E.1 Decision and ownership
+
+An **engine profile** is a versioned set of externally verified importer or
+runtime facts. It answers *how a named consumer handles a supported input*.
+It is not any of the following:
+
+- a rig profile, which resolves semantic roles to bones;
+- project intent, such as whether a clip should be in-place, looping, or
+  animation-driven root motion;
+- a severity or artistic-quality preset;
+- evidence that a particular engine import actually ran; or
+- authority to rewrite an asset.
+
+Those distinctions are structural. `[rig]` continues to own role resolution,
+`[runtime_nodes]` owns the shared selection of project-declared attachment,
+socket, IK, collision, and other runtime-facing nodes, `[clips]` owns per-clip
+intent plus explicitly nested clip-scoped importer choices, `[checks]` owns
+activation, severity, and project tolerances, engine readback owns observed
+import results, and Appendix D plus each transform's own proof contract owns
+rewriting. An engine profile may describe a hard importer constraint or
+interpretation, but it must not silently change the math, thresholds, or
+findings of an existing consumer-neutral check.
+
+The issue's original suggestion that profiles own loop/contact thresholds is
+therefore rejected. An engine may expose a loop toggle or a compression
+setting; it does not know a project's acceptable seam, contact, or slide
+error. Generated guidance may propose a documented starting value, but the
+effective value remains explicit project policy.
+
+### E.2 Selection and built-ins
+
+The first configuration surface is deliberately small:
+
+```toml
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+convert_units = true
+bake_axis_conversion = true
+root_motion_source = "root"
+
+[clips."locomotion_*"]
+movement_owner_xz = "animation"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "animation"
+
+[clips."locomotion_*".engine_settings]
+root_rotation = "extract"
+root_position_y = "bake"
+root_position_xz = "extract"
+
+[clips.idle]
+movement_owner_xz = "gameplay"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "gameplay"
+
+[clips.idle.engine_settings]
+root_rotation = "bake"
+root_position_y = "bake"
+root_position_xz = "bake"
+
+[runtime_nodes]
+selectors = ["weapon_socket", "ik_*", "collision_anchor"]
+```
+
+`[runtime_nodes].selectors` is project policy, not an importer fact. Exact
+names and `*` globs resolve with the deterministic miss and ambiguity behavior
+already established by issue #268. The existing
+`[checks.rest-world-scale].node_selectors` field remains accepted as a
+compatibility alias and is normalized into this shared selection before
+evaluation. Declaring both forms is a typed configuration error rather than a
+precedence rule. `rest-world-scale` and the selected-node facet of
+`engine-unit-scale` consume the same resolved set; one check never reads the
+other check's private settings. Only the absence of a declared runtime-node
+selector policy makes that engine facet genuinely not applicable. If a
+declared selector misses or is ambiguous, `rest-world-scale` retains its
+existing engine-neutral coverage behavior, while an enabled, otherwise
+applicable `engine-unit-scale` facet emits `required_prediction_unavailable`
+and follows E.4's exit policy. Component/root and mesh-node unit-mapping rules
+may still apply independently.
+
+An absent `[engine]` section means today's engine-neutral behavior. There is no
+`generic` engine profile, no auto-detection, no nearest-version match, and no
+fallback profile. Family, profile revision, engine version, and importer route
+are all required when `[engine]` is present. An unknown or unsupported tuple,
+unknown setting, or setting that is invalid for that importer is a typed
+configuration error. A caller that still wants ordinary engine-neutral linting
+removes `[engine]`; it does not receive a partial prediction under a different
+consumer contract.
+
+Every profile setting descriptor declares its exact value domain, applicability,
+and either document or clip scope. Document-scoped importer choices live only
+under `[engine.settings]`. Clip-scoped importer choices live only under the
+matching `[clips.<selector>.engine_settings]` table and resolve through the
+existing clip-selector rule (exact name over matching globs, later matching
+globs winning ties). For the Unity FBX profiles, the Motion/Root Motion Node
+choice applies to all imported clips and is therefore document-scoped as
+`root_motion_source`; rotation and position bake/extract choices remain
+clip-scoped. `[clips.<selector>]` movement-owner fields remain project intent;
+the sibling `engine_settings` table records the importer state that a prediction
+must compare with that intent. A setting at the wrong scope is a typed
+configuration error, not an override.
+
+Each applicable setting is also classified by the immutable profile facts as
+either required or as having one documented default. Resolution materializes
+every default before rule evaluation and before computing the settings digest.
+Omitting a required setting with no verified default is a typed configuration
+error; it is never guessed, treated as an implementation default, or deferred
+to a coverage gap. The resolved settings record therefore contains one exact
+document value or per-clip value for every applicable setting, including values
+the caller omitted because the profile supplied its documented default.
+
+The initial profile families and their distinct meanings are:
+
+| id | modeled consumer boundary |
+|---|---|
+| `unity-generic` | Unity's Generic animation import mode |
+| `unity-humanoid` | Unity's Humanoid/Avatar import and root-projection mode |
+| `unreal` | Unreal skeletal-animation import and Animation Sequence behavior |
+| `godot` | Godot 3D-scene/animation-library import behavior |
+| `bevy` | Bevy's glTF asset loader and animation runtime |
+
+The two Unity ids are import modes, not skeleton-name maps. Likewise,
+`unreal`, `godot`, and `bevy` do not imply a mannequin, humanoid bone map, or
+other rig profile. glTF is not an engine profile: its specification defines
+format semantics but deliberately does not define looping, playback, import
+options, or other runtime policy. glTF 2.0 compatibility remains a loader and
+consumer-neutral check boundary. Bevy has separate supported-extension,
+asset-addressability, and animation-target behavior.
+
+Each built-in resolves the exact `(family, profile_revision, engine_version,
+importer)` tuple to an immutable identity such as
+`urn:animsmith:engine-profile:unity-generic:1`. Its data record contains exact
+supported engine versions or version ranges, accepted input formats, source
+and target coordinate bases, importer/runtime facts, allowed setting
+vocabulary, and primary-source references with a verification date. For every
+claimed input format it must also enumerate, rather than leave implicit:
+
+- handedness, up/forward axes, and the selected importer's axis-conversion
+  mapping;
+- each applicable clip-boundary predicate (including whole-frame constraints)
+  or an explicit statement that none is known; and
+- supported, dropped, and reinterpreted channels, extensions, and animation
+  constructs, with an explicit unsupported or unknown state where evidence is
+  incomplete.
+
+Changing any such fact requires a new profile revision and normal release
+notes; a historical result never silently resolves through the current
+revision. `[engine.settings]` selects only choices the immutable importer facts
+already expose; it cannot override those facts.
+
+Version one does not accept arbitrary engine-fact overrides in TOML. A user
+cannot safely make an importer support a channel or reinterpret root motion by
+assertion. Embedders may supply namespaced custom checks and keep their own
+consumer contracts, as they do today, without extending the built-in profile
+registry.
+
+Crate ownership is fixed before implementation. A new format-neutral
+`animsmith-engine` library owns the built-in fact registry, strict tuple
+resolution, prediction-rule adapters, and the standalone advisory/readback
+payloads. It depends on `animsmith-core`, but not on format libraries, TOML, a
+filesystem, or engine SDKs. `animsmith-core` continues to own consumer-neutral
+documents, measurements, checks, shared source-evidence value types, every
+measure/lint envelope and URN, and a registry-independent wire projection for
+profile identity, rule basis, prediction state, and shared provenance. The
+engine library populates that core-owned projection; core never depends on the
+engine registry or its concrete profile types. The glTF and FBX libraries
+populate the common raw-source projection while retaining their format-specific
+parsing details. The `animsmith` CLI owns strict TOML mapping and orchestration;
+`animsmith-report` renders the resulting public contracts. This preserves
+Appendix C's envelope ownership, prevents a core/engine dependency cycle, and
+gives embedders the same registry and resolver as the CLI.
+
+### E.3 Rules, checks, and precedence
+
+Engine rules consume engine-neutral measurements plus a dedicated read-only
+raw-source-facts projection; they do not recompute those facts differently per
+engine. The normalized `Document` alone is insufficient because importer-
+sensitive extensions, authored FBX curves and units, take boundaries, and
+other declarations may already have been normalized or discarded. The raw
+projection preserves such facts and their availability without exposing a
+scale operation's private capability ledger as the general engine API.
+
+That projection is the one shared provenance-and-coverage model for raw source
+evidence, not a parallel per-feature copy. Loaders reuse its identity,
+availability, and provenance primitives wherever scale planning needs the same
+source observation. A scale capability inventory and proof ledger remain
+operation-specific derived consumers because they additionally encode a
+requested rewrite's closure and proof obligations; engine rules do not create
+a third representation of the underlying source fact.
+
+A rule declares all of its preconditions: the full resolved profile identity,
+input format and raw-source coverage, required measurement fields, rig roles
+where applicable, and every explicit project intent or importer setting. A
+rule with missing evidence emits a coverage gap rather than a passing finding
+or a guessed value.
+
+New engine prediction checks are grouped by stable concern rather than copied
+once per engine. The initial families are:
+
+- `engine-clip-boundary` for ranges, whole-frame requirements, and slicing;
+- `engine-root-motion` for importer extraction/bake interpretation;
+- `engine-track-support` for channels, extensions, and data an importer drops
+  or reinterprets;
+- `engine-unit-scale` for explicit unit conversion and resulting transform
+  scale; and
+- `engine-addressability` for scenes, animations, targets, and runtime labels.
+
+The selected profile chooses applicable rules within those check ids. Findings
+retain the check id, a stable evidence code, the full resolved profile
+identity, and the exact fact, setting, policy, and measurement basis; they do
+not use `unity-*`, `unreal-*`, and similar duplicate check-id families.
+`[checks.<id>]` remains the only authority for severity and explicit
+enable/disable overrides. Existing checks such as `loop-closure`, `in-place`,
+`foot-slide`, and `root-motion-speed` keep their current behavior under every
+engine profile.
+
+Configuration precedence is consequently:
+
+1. loader and measurement evidence establish what the input contains;
+2. the resolved engine profile supplies immutable verified consumer facts;
+3. resolved document and per-clip importer settings state the configured
+   consumer behavior, while `[clips]` fields state the intended use;
+4. `[checks]` supplies activation, severity, and tolerances; and
+5. the runner evaluates applicable rules or records typed coverage gaps.
+
+No later layer may fabricate evidence missing from an earlier one.
+
+### E.4 Reproducible output and fail-closed coverage
+
+`measure` remains engine-profile-independent: selecting an engine profile or
+its importer settings does not change measurements. Existing measurement
+inputs from `[clips]` and engine-neutral check policy retain their current
+semantics. `lint` and generated-advice outputs that use a profile record, at
+minimum:
+
+- requested family, profile revision, engine version, and importer;
+- resolved immutable profile URN and engine-facts digest;
+- input format, raw-source coverage, and fully materialized document and
+  per-clip importer settings;
+- measurement and outer-output schema identities consumed;
+- each applied rule id, exact fact/policy/measurement basis, and primary-source
+  reference set, including clean evaluations; and
+- coverage gaps for unsupported source content, missing source facts, missing
+  roles, or unavailable measurements.
+
+This record belongs in the next versioned output contract; an existing schema
+identity is never widened in place. Under Appendix C, `animsmith-core` owns that
+outer lint envelope, its URN, and the registry-independent prediction/provenance
+wire types. `animsmith-engine` constructs those wire records through a one-way
+adapter without making core depend on the engine crate. The exact JSON shape is
+fixed by the implementation slice, but it must permit a consumer to distinguish
+a measured fact, a profile prediction, generated advice, and an engine
+readback. Text and HTML views render that model rather than maintaining separate
+conclusions.
+
+Prediction, advice, and readback contracts reuse one versioned provenance
+header for input dependency-closure identity, profile tuple and facts digest,
+settings digest, schema identities, and source references. The primary-file
+`InputIdentity` remains present, but it is not sufficient closure identity for
+a text glTF or any source with external dependencies. The header also carries
+a deterministic source-reference-to-resource map and the exact byte count and
+digest of every distinct external resource declared or consumed by the loader
+or target importer, keyed by a source-relative declaration rather than a host
+absolute path. It records closure coverage as complete, partial, or
+unavailable. If an applicable rule, suggestion, or readback comparison depends
+on a resource whose identity cannot be established, that work is unavailable
+rather than silently bound to primary-file bytes alone.
+
+The three contracts' top-level schema identities and typed payloads remain
+separate because their authorities differ: a shared header must not let advice
+or an observation deserialize as measured or predicted evidence. This
+centralizes common identity plumbing without coupling the contracts'
+independent compatibility rules.
+
+Profile selection never turns unavailable evidence into `not_applicable`.
+`not_applicable` is reserved for a rule whose subject genuinely does not exist
+under the resolved profile and project intent. An engine prediction is
+**required** when the resolved profile and project intent make its rule
+applicable, the run's `CheckSelection` selects its check, and the check remains
+enabled after `[checks]` configuration. An unselected check remains visible as
+`unselected` and is not required; an explicitly disabled check remains visible
+as `disabled`. Once a check is selected and enabled, severity does not change
+whether evidence is required. A required rule with missing or non-finite input
+or incomplete raw-source coverage emits a typed
+`required_prediction_unavailable` evaluation and makes `lint` exit 1. It is
+not rewritten as a content finding, and existing engine-neutral coverage gaps
+remain nonblocking. Advice generation refuses the affected suggestion without
+changing lint status. Unknown profile, version, importer, or setting
+selections fail earlier as configuration errors; they are never downgraded to
+coverage. The next output contract records the requirement state so embedded
+consumers can apply the same policy without parsing CLI exit behavior.
+
+### E.5 Root motion, units, and scale
+
+Profiles keep these independent:
+
+- the source/interchange linear unit captured from normative format semantics
+  or an explicit declaration in the source itself;
+- the target engine's native distance unit;
+- the exact source-to-target distance mapping and whether the importer
+  preserves physical dimensions;
+- source and target handedness, up/forward axes, and the importer's selected
+  axis-conversion behavior;
+- the resulting component/root, mesh-node, selected runtime-facing joint, and
+  attachment transform scales; and
+- the project's movement-ownership policy.
+
+For example, a centimetre-native engine does not imply a component scale of
+`100`, and a metre-native format does not prove that a source hierarchy has
+unit effective scale. Rules consume the coordinate-domain and selected-node
+measurements designed in issues #267 and #268. They may recommend an importer
+setting only when its documented behavior accounts for animation
+translations, bones, sockets, attachments, IK targets, and collision anchors.
+Version one has no TOML or profile override for source units. A loader records
+the format-defined or source-declared unit and its provenance in the shared raw
+projection; if that evidence is absent, an applicable unit prediction is
+unavailable under E.4 rather than inferred from bounds, character height,
+filenames, importer defaults, or a caller assertion.
+They never infer units from bounds, character height, filenames, inverse-bind
+magnitudes, or an observed persistent object scale.
+Animation scale channels are dimensionless and never become length-bearing
+merely because the target engine uses a different world unit.
+
+The contract can therefore state, independently, that one source metre maps
+to 100 target centimetre units, physical dimensions are preserved, and the
+expected imported component/root, mesh-node, and selected-joint transform
+scales are dimensionless `1.0`. A mismatch in any one of those claims cannot
+be hidden by satisfying another.
+
+Issue #269's accepted Appendix D result is incorporated here: whole-document
+unit conversion and rest/bind hierarchy reparameterization are distinct
+operations with separate positive-uniform, closure, and proof contracts.
+Profile selection neither authorizes nor freezes an automatic normalization
+path. It may diagnose the need for, or advise a separately requested,
+Appendix D operation only when that operation's own source coverage and proof
+requirements are satisfied.
+
+Root motion is handled the same way. The profile describes which source or
+projection a configured importer uses and what a bake/extract option means.
+The artifact supplies engine-neutral horizontal displacement, signed vertical
+displacement plus non-collapsing vertical excursion/extrema, and yaw evidence.
+`[clips.<selector>]` independently declares
+`movement_owner_xz`, `movement_owner_y`, and `movement_owner_yaw` as either
+`"gameplay"` (the entity/controller owns world motion and the importer bakes
+that component into pose) or `"animation"` (extracted root motion owns world
+motion). Issue #466 owns these engine-neutral clip-intent fields. The existing
+`in_place` field remains a compatibility alias only for
+horizontal ownership (`true` means gameplay, `false` means animation); declaring
+it together with `movement_owner_xz` is a typed configuration error. A missing
+axis declaration makes only the intent-dependent rule for that axis not
+applicable; it is never inferred from another axis. A filename such as `_RM`,
+small translation magnitude, or the profile alone cannot declare intent.
+Conversion between root motion and in-place remains ADR-gated and is not
+authorized by this profile design.
+
+### E.6 Advice, manifests, and readback
+
+Generated import settings use a separate immutable advisory-sidecar contract.
+They bind the complete input dependency-closure identity, full profile identity
+and facts digest, selected importer settings, measurement/check identities,
+and every suggestion or refusal. They must say when upstream canonicalization
+is required instead of presenting an unsafe importer bake as equivalent. They
+never affect lint exit status or claim to be measured evidence or the engine's
+actual imported state.
+
+The 0.4.0 generation boundary is one input document. The engine-neutral glTF
+inventory may publish source indices, names, targets, and the complete input
+dependency-closure identity.
+A versioned Bevy adapter may derive typed labels and supported-extension
+predictions from that inventory; those fields are not mislabeled as
+engine-version-agnostic. Cross-file clip identity, runtime sets, collection
+manifests, and collection-wide presets consume the file-scoped contract from
+issue #409 in the 0.5.0 milestone rather than inventing a second identity here.
+
+Engine readback has another immutable contract that records the exact engine
+build, project/import-settings digest, observed outputs, and warnings. Smoke
+tests compare a versioned prediction with that captured readback; successful
+parsing alone is not proof that an expected clip, target, or setting survived
+import. Engine SDKs, editor installations, licenses, and runtime harnesses stay
+outside `animsmith-core`. CI fixtures must be synthetic, self-authored, or
+redistribution-safe. Commercial packs may supply local, one-time validation
+evidence, but are never repository fixtures, workflow downloads, caches, or
+uploaded artifacts.
+
+### E.7 Primary-source and version discipline
+
+Engine behavior is mutable external state. Every built-in rule cites a primary
+engine or specification source, records the verified target version and date,
+and is rechecked when that target or rule changes. Marketplace observations
+and local import probes are useful counterexamples, not authority for a
+general engine claim.
+
+The design was reconciled on 2026-08-20 against these current primary sources:
+
+- Unity 6000.3 Animation Clip, Root Motion, and model-import manuals:
+  <https://docs.unity3d.com/6000.3/Documentation/Manual/class-AnimationClip.html>,
+  <https://docs.unity3d.com/6000.3/Documentation/Manual/RootMotion.html>, and
+  <https://docs.unity3d.com/6000.3/Documentation/Manual/FBXImporter-Model.html>;
+- Unreal Engine 5.8 Animation Sequence and FBX import documentation:
+  <https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-sequences-in-unreal-engine?application_version=5.8>
+  and
+  <https://dev.epicgames.com/documentation/en-us/unreal-engine/fbx-import-options-reference-in-unreal-engine?application_version=5.8>;
+- Godot 4.7 advanced 3D import and scene-importer documentation:
+  <https://docs.godotengine.org/en/4.7/tutorials/assets_pipeline/importing_3d_scenes/advanced_import_settings.html>
+  and
+  <https://docs.godotengine.org/en/4.7/classes/class_resourceimporterscene.html>;
+- Bevy 0.19 `GltfAssetLabel`, `AnimationTargetId`, and animation API rustdoc:
+  <https://docs.rs/bevy/0.19.0/bevy/gltf/enum.GltfAssetLabel.html> and
+  <https://docs.rs/bevy/0.19.0/bevy/animation/struct.AnimationTargetId.html>;
+  and
+- the glTF 2.0 specification:
+  <https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html>.
+
+Unversioned `latest` documentation is not retained as profile evidence.
+
+### E.8 Implementation sequence and non-goals
+
+The dependency order is:
+
+1. this decision record;
+2. coordinated engine-neutral measurement work for per-property coverage and
+   horizontal/vertical root trajectory plus yaw (#402 and #408);
+3. independent per-axis clip movement-ownership intent (#466), required before
+   root-motion prediction but not by the measurement/profile substrate;
+4. the dedicated raw importer-sensitive source-facts projection (#463);
+5. strict engine-profile registry, config, and resolution types without
+   prediction behavior (#464);
+6. reproducible output and dependency-closure provenance for the resolved
+   target, facts digest, required-prediction state, and per-check basis (#465);
+7. per-concern prediction rules, split from umbrella issue #154 into bounded
+   engine/rule slices where their input facts differ;
+8. single-document preset advice and separate glTF-inventory/Bevy-adapter
+   generation (#155 and #156);
+9. prediction-versus-readback feasibility and harness decisions (#151); and
+10. per-engine guides generated from the accepted rules and evidence (#157).
+
+The two measurement tickets share schema, diff, rendering, and contract
+surfaces, so they require one version plan and sequential implementation rather
+than sibling branches. They do not depend on profile selection. Bevy graph-
+template demand (#163) remains gated by the manifest and a demonstrated
+consumer; the profile design does not turn it into an implementation
+commitment.
+
+This decision does not add engine dependencies, custom TOML profile
+definitions, automatic unit or root-motion conversion, retargeting,
+compression simulation, artistic thresholds, cross-file collection policy,
+or claims of visual, deformation, artistic, gameplay, or runtime correctness.
+Those require their own evidence and, where they rewrite motion, a separate
+accepted design and proof boundary.
