@@ -5,10 +5,11 @@
 
 ## Overview
 
-`animsmith-report` renders animsmith findings into a single offline HTML
+`animsmith-report` renders typed animsmith check evaluations into a single offline HTML
 report. It is the report-generation crate used by the CLI's `report`
 command: callers provide `MetricGrids` built from the loaded `Document`,
-resolved rig roles, and findings; the crate returns self-contained HTML.
+resolved rig roles, check evaluations, and optional prediction provenance;
+the crate returns self-contained HTML without flattening predictions into findings.
 
 The report embeds the pose-grid frames computed on the Rust side and
 plays back exactly those frames in a small hand-written WebGL viewer.

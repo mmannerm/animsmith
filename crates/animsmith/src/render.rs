@@ -16,8 +16,8 @@ use animsmith_core::measure::{
 };
 use animsmith_core::model::Clip;
 use animsmith_core::{
-    CoverageGap, CoverageGapCode, Document, Finding, LintFileReport, MeasureFileReport,
-    ResolvedRoles, Severity,
+    CoverageGap, CoverageGapCode, Document, EnginePredictionFacetStateV1, EnginePredictionFacetV1,
+    Finding, LintFileReport, MeasureFileReport, ResolvedRoles, Severity,
 };
 use animsmith_gltf::fix::{FixReport, Repair};
 use animsmith_gltf::write::WriteSummary;
@@ -969,15 +969,73 @@ pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> 
     let mut warnings = 0usize;
     let mut notes = 0usize;
     let mut gaps = 0usize;
+    let mut available_predictions = 0usize;
+    let mut unavailable_predictions = 0usize;
     for report in reports {
         let findings = sorted_findings(report, suppressed);
         let coverage_groups = coverage_gap_groups(report);
+        let prediction_facets = prediction_facets(report);
         let file_gap_count: usize = coverage_groups.iter().map(|group| group.gaps.len()).sum();
-        if findings.is_empty() && coverage_groups.is_empty() {
+        if findings.is_empty()
+            && coverage_groups.is_empty()
+            && prediction_facets.is_empty()
+            && report.prediction_provenance().is_none()
+        {
             let _ = writeln!(out, "{}: clean", text_atom(report.path()));
             continue;
         }
         let _ = writeln!(out, "{}:", text_atom(report.path()));
+        if let Some(provenance) = report.prediction_provenance() {
+            let selection = provenance.profile().selection();
+            let _ = writeln!(
+                out,
+                "  engine profile {} revision {} ({} / {})",
+                text_atom(selection.family()),
+                selection.profile_revision(),
+                text_atom(selection.engine_version()),
+                text_atom(selection.importer()),
+            );
+            if prediction_facets.is_empty() {
+                let _ = writeln!(out, "  no engine-backed checks emitted predictions");
+            }
+        }
+        for (check_id, facet) in &prediction_facets {
+            let subject = facet
+                .scope()
+                .subject
+                .as_deref()
+                .map(|subject| format!(" subject {}", text_atom(subject)))
+                .unwrap_or_default();
+            match facet.state() {
+                EnginePredictionFacetStateV1::Available => {
+                    available_predictions += 1;
+                    let _ = writeln!(
+                        out,
+                        "  prediction[{}] {}{}: available",
+                        text_atom(check_id),
+                        facet.scope().code,
+                        subject,
+                    );
+                }
+                EnginePredictionFacetStateV1::RequiredPredictionUnavailable => {
+                    unavailable_predictions += 1;
+                    let reasons = facet
+                        .reasons()
+                        .iter()
+                        .map(|reason| text_atom(reason.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let _ = writeln!(
+                        out,
+                        "  prediction[{}] {}{}: required unavailable ({})",
+                        text_atom(check_id),
+                        facet.scope().code,
+                        subject,
+                        reasons,
+                    );
+                }
+            }
+        }
         for f in &findings {
             match f.severity {
                 Severity::Error => errors += 1,
@@ -1063,9 +1121,27 @@ pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> 
     }
     let _ = writeln!(
         out,
-        "{errors} error(s), {warnings} warning(s), {notes} note(s), {gaps} coverage gap(s)"
+        "{errors} error(s), {warnings} warning(s), {notes} note(s), {gaps} coverage gap(s), {available_predictions} available prediction facet(s), {unavailable_predictions} required-unavailable prediction facet(s)"
     );
     out
+}
+
+fn prediction_facets(report: &LintFileReport) -> Vec<(&str, &EnginePredictionFacetV1)> {
+    report
+        .checks()
+        .iter()
+        .filter_map(|check| {
+            check
+                .engine_prediction()
+                .map(|prediction| (check.check_id(), prediction))
+        })
+        .flat_map(|(check_id, prediction)| {
+            prediction
+                .facets()
+                .iter()
+                .map(move |facet| (check_id, facet))
+        })
+        .collect()
 }
 
 fn sorted_findings<'a>(report: &'a LintFileReport, suppressed: &[String]) -> Vec<&'a Finding> {
@@ -1246,14 +1322,21 @@ pub(crate) fn render_markdown(reports: &[LintFileReport], suppressed: &[String])
     let mut out = String::new();
     let mut total = FindingSummary::default();
     let mut total_gaps = 0usize;
+    let mut total_available_predictions = 0usize;
+    let mut total_unavailable_predictions = 0usize;
 
     let _ = writeln!(out, "## animsmith lint\n");
 
     for report in reports {
         let findings = sorted_findings(report, suppressed);
         let gap_groups = coverage_gap_groups(report);
+        let prediction_facets = prediction_facets(report);
         let gap_count: usize = gap_groups.iter().map(|group| group.gaps.len()).sum();
-        if findings.is_empty() && gap_groups.is_empty() {
+        if findings.is_empty()
+            && gap_groups.is_empty()
+            && prediction_facets.is_empty()
+            && report.prediction_provenance().is_none()
+        {
             let _ = writeln!(out, "### `{}`\n", md_cell(report.path()));
             let _ = writeln!(out, "✅ Clean — no findings or coverage gaps.\n");
             continue;
@@ -1270,6 +1353,62 @@ pub(crate) fn render_markdown(reports: &[LintFileReport], suppressed: &[String])
 
         let _ = writeln!(out, "### `{}`\n", md_cell(report.path()));
         let _ = writeln!(out, "{}\n", severity_line(&file));
+
+        if let Some(provenance) = report.prediction_provenance() {
+            let selection = provenance.profile().selection();
+            let _ = writeln!(
+                out,
+                "Engine profile: `{}` revision `{}` (`{}` / `{}`).\n",
+                md_cell(selection.family()),
+                selection.profile_revision(),
+                md_cell(selection.engine_version()),
+                md_cell(selection.importer()),
+            );
+            if prediction_facets.is_empty() {
+                let _ = writeln!(out, "No engine-backed checks emitted predictions.\n");
+            }
+        }
+
+        if !prediction_facets.is_empty() {
+            let _ = writeln!(out, "| Check | Scope | Subject | Prediction | Reasons |");
+            let _ = writeln!(out, "| --- | --- | --- | --- | --- |");
+            for (check_id, facet) in &prediction_facets {
+                let (state, reasons) = match facet.state() {
+                    EnginePredictionFacetStateV1::Available => {
+                        total_available_predictions += 1;
+                        ("available", "—".to_owned())
+                    }
+                    EnginePredictionFacetStateV1::RequiredPredictionUnavailable => {
+                        total_unavailable_predictions += 1;
+                        (
+                            "required unavailable",
+                            facet
+                                .reasons()
+                                .iter()
+                                .map(|reason| md_cell(reason.as_str()))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        )
+                    }
+                };
+                let subject = facet
+                    .scope()
+                    .subject
+                    .as_deref()
+                    .map(md_cell)
+                    .unwrap_or_else(|| "—".into());
+                let _ = writeln!(
+                    out,
+                    "| `{}` | `{}` | `{}` | {} | `{}` |",
+                    md_cell(check_id),
+                    md_cell(facet.scope().code.as_str()),
+                    subject,
+                    state,
+                    reasons,
+                );
+            }
+            let _ = writeln!(out);
+        }
 
         if !findings.is_empty() {
             let open = if findings.len() <= MARKDOWN_COLLAPSE_AT {
@@ -1400,8 +1539,8 @@ pub(crate) fn render_markdown(reports: &[LintFileReport], suppressed: &[String])
     let _ = writeln!(out, "---\n");
     let _ = writeln!(
         out,
-        "**{files} {file_word}** — {} · {total_gaps} coverage gap(s)",
-        severity_line(&total)
+        "**{files} {file_word}** — {} · {total_gaps} coverage gap(s) · {total_available_predictions} available prediction facet(s) · {total_unavailable_predictions} required-unavailable prediction facet(s)",
+        severity_line(&total),
     );
     out
 }
@@ -1484,8 +1623,10 @@ mod tests {
     use animsmith_core::measure::{AssetMeasurements, measure_assets};
     use animsmith_core::{
         Bone, CheckEvaluation, CheckOutput, Clip, CoverageGap, CoverageGapCode, Document,
-        EvaluationScope, EvaluationScopeCode, Finding, InputIdentity, LintFileReport,
-        MeasureFileReport, MeasurementContract, ResolvedRoles, RigInfo, Role, SourceInfo, Track,
+        EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionV1, EvaluationScope,
+        EvaluationScopeCode, Finding, InputIdentity, LintFileReport, MeasureFileReport,
+        MeasurementContract, PredictionBasisReferenceV1, PredictionProvenanceV1,
+        PredictionUnavailableReasonV1, ResolvedRoles, RigInfo, Role, SourceInfo, Track,
         TrackValues, Transform,
     };
     use animsmith_core::{Interpolation, Property};
@@ -1537,6 +1678,7 @@ mod tests {
             input_identity(path),
             RigInfo::from_resolved(&doc, &ResolvedRoles::default())
                 .expect("empty roles match an empty document"),
+            None,
             checks,
             MeasurementContract::new(
                 BTreeMap::new(),
@@ -1544,12 +1686,140 @@ mod tests {
             )
             .expect("empty measurements are valid"),
         )
+        .expect("test lint file satisfies output bounds")
+    }
+
+    fn prediction_provenance() -> PredictionProvenanceV1 {
+        let fixture =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rig.gltf");
+        let source = animsmith_gltf::load_source(&fixture).expect("fixture source loads");
+        let clip_names = source
+            .document()
+            .clips
+            .iter()
+            .map(|clip| clip.name.clone())
+            .collect::<Vec<_>>();
+        let resolved = animsmith_engine::resolve_static(animsmith_engine::EngineDeclaration {
+            selection: Some(animsmith_engine::ProfileSelection::new(
+                "bevy",
+                1,
+                "0.19.0",
+                "gltf-asset-loader",
+            )),
+            ..Default::default()
+        })
+        .expect("profile declaration is valid")
+        .expect("profile selected")
+        .resolve_input(source.source_facts().format(), &clip_names)
+        .expect("fixture format is accepted");
+        animsmith_engine::project_prediction_provenance_v1(&resolved, &source)
+            .expect("same-load provenance projects")
+    }
+
+    fn prediction_report(
+        path: &str,
+        provenance: &PredictionProvenanceV1,
+        available: bool,
+        unavailable: bool,
+    ) -> LintFileReport {
+        let available_scope = EvaluationScope::new(EvaluationScopeCode::custom("test:available"));
+        let unavailable_scope =
+            EvaluationScope::new(EvaluationScopeCode::custom("test:unavailable"));
+        let mut facets = Vec::new();
+        let mut evaluated = Vec::new();
+        let mut findings = Vec::new();
+        if available {
+            facets.push(
+                EnginePredictionFacetV1::available(
+                    available_scope.clone(),
+                    EnginePredictionBasisV1::new(vec![
+                        PredictionBasisReferenceV1::profile_fact("accepted_inputs")
+                            .expect("known profile fact reference"),
+                    ])
+                    .expect("nonempty basis"),
+                )
+                .expect("available facet"),
+            );
+            evaluated.push(available_scope.clone());
+            findings.push(
+                Finding::new("test:engine", Severity::Warning, "available facet finding")
+                    .prediction_scope(available_scope),
+            );
+        }
+        if unavailable {
+            facets.push(
+                EnginePredictionFacetV1::required_unavailable(
+                    unavailable_scope,
+                    EnginePredictionBasisV1::new(Vec::new())
+                        .expect("empty unavailable basis prefix"),
+                    vec![PredictionUnavailableReasonV1::ProjectIntentUnavailable],
+                )
+                .expect("required-unavailable facet"),
+            );
+        }
+        let prediction = EnginePredictionV1::new(provenance.identity().clone(), facets)
+            .expect("canonical prediction");
+        let check = CheckEvaluation::evaluated(
+            "test:engine",
+            CheckOutput::from_coverage(findings, evaluated, Vec::new())
+                .with_engine_prediction(prediction),
+        )
+        .expect("prediction lifecycle is valid");
+        LintFileReport::new(
+            path,
+            provenance.raw_source().primary_input().clone(),
+            empty_rig(),
+            Some(provenance.clone()),
+            vec![check],
+            MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default())
+                .expect("empty measurements are valid"),
+        )
+        .expect("prediction report is valid")
     }
 
     fn empty_rig() -> RigInfo {
         let doc = Document::default();
         RigInfo::from_resolved(&doc, &ResolvedRoles::default())
             .expect("empty roles match an empty document")
+    }
+
+    #[test]
+    fn text_and_markdown_keep_available_mixed_and_unavailable_predictions_distinct() {
+        let provenance = prediction_provenance();
+        let reports = vec![
+            prediction_report("available.glb", &provenance, true, false),
+            prediction_report("mixed.glb", &provenance, true, true),
+            prediction_report("unavailable.glb", &provenance, false, true),
+        ];
+
+        let text = render_text(&reports, &[]);
+        assert!(text.contains("available.glb:\n  engine profile bevy revision 1"));
+        assert!(text.contains("prediction[test:engine] test:available: available"));
+        assert!(text.contains(
+            "prediction[test:engine] test:unavailable: required unavailable (project_intent_unavailable)"
+        ));
+        assert!(text.contains("warning[test:engine]: available facet finding"));
+        assert!(text.ends_with(
+            "0 error(s), 2 warning(s), 0 note(s), 0 coverage gap(s), 2 available prediction facet(s), 2 required-unavailable prediction facet(s)\n"
+        ));
+
+        let markdown = render_markdown(&reports, &[]);
+        assert!(markdown.contains("Engine profile: `bevy` revision `1`"));
+        assert!(markdown.contains("| `test:engine` | `test:available` | `—` | available | `—` |"));
+        assert!(markdown.contains(
+            "| `test:engine` | `test:unavailable` | `—` | required unavailable | `project_intent_unavailable` |"
+        ));
+        assert!(markdown.contains("available facet finding"));
+        assert!(markdown.ends_with(
+            "2 available prediction facet(s) · 2 required-unavailable prediction facet(s)\n"
+        ));
+
+        let suppressed_text = render_text(&reports, &["test:engine".into()]);
+        assert!(!suppressed_text.contains("available facet finding"));
+        assert!(suppressed_text.contains("required unavailable (project_intent_unavailable)"));
+        let suppressed_markdown = render_markdown(&reports, &["test:engine".into()]);
+        assert!(!suppressed_markdown.contains("available facet finding"));
+        assert!(suppressed_markdown.contains("required unavailable"));
     }
 
     #[test]

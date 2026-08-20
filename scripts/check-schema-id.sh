@@ -39,7 +39,8 @@ check_schema docs/schemas/output-v5.schema.json urn:animsmith:schema:output:5
 check_schema docs/schemas/output-v6.schema.json urn:animsmith:schema:output:6
 check_schema docs/schemas/output-v7.schema.json urn:animsmith:schema:output:7
 check_schema docs/schemas/output-v8.schema.json urn:animsmith:schema:output:8
-check_schema docs/schemas/output-v9.schema.json urn:animsmith:schema:output:9 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/output-v9.schema.json urn:animsmith:schema:output:9
+check_schema docs/schemas/output-v10.schema.json urn:animsmith:schema:output:10 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8
 check_schema docs/schemas/measurements-v9.schema.json urn:animsmith:schema:measurements:9
 check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:measurements:10
@@ -47,7 +48,7 @@ check_schema docs/schemas/measurements-v11.schema.json urn:animsmith:schema:meas
 check_schema docs/schemas/measurements-v12.schema.json urn:animsmith:schema:measurements:12
 check_schema docs/schemas/measurements-v13.schema.json urn:animsmith:schema:measurements:13 docs/schemas/output-v7.schema.json
 check_schema docs/schemas/measurements-v14.schema.json urn:animsmith:schema:measurements:14 docs/schemas/output-v8.schema.json
-check_schema docs/schemas/measurements-v15.schema.json urn:animsmith:schema:measurements:15 crates/animsmith-core/src/contract.rs docs/schemas/output-v9.schema.json docs/output.md
+check_schema docs/schemas/measurements-v15.schema.json urn:animsmith:schema:measurements:15 crates/animsmith-core/src/contract.rs docs/schemas/output-v9.schema.json docs/schemas/output-v10.schema.json docs/output.md
 for historical_output in docs/schemas/output-v4.schema.json docs/schemas/output-v5.schema.json; do
   jq -e --arg expected 'urn:animsmith:schema:measurements:11' \
     '.["$defs"].file_report.properties.measurements["$ref"] == $expected' \
@@ -65,6 +66,31 @@ jq -e --arg expected 'urn:animsmith:schema:measurements:14' \
 jq -e --arg expected 'urn:animsmith:schema:measurements:15' \
   '.["$defs"].file_report.properties.measurements["$ref"] == $expected' \
   docs/schemas/output-v9.schema.json >/dev/null || fail 'docs/schemas/output-v9.schema.json must reference measurements-v15'
+jq -e --arg expected 'urn:animsmith:schema:measurements:15' '
+  .["$defs"].measure_file_report.properties.measurements["$ref"] == $expected
+  and .["$defs"].lint_file_report.properties.measurements["$ref"] == $expected
+' docs/schemas/output-v10.schema.json >/dev/null \
+  || fail 'docs/schemas/output-v10.schema.json measure and lint files must reference measurements-v15'
+if ! jq -e '
+  .["$defs"].prediction_provenance.properties.schema.const
+    == "urn:animsmith:prediction-provenance:1"
+  and .["$defs"].engine_prediction.properties.schema.const
+    == "urn:animsmith:engine-prediction:1"
+  and .["$defs"].resolved_engine_settings.properties.schema.const
+    == "urn:animsmith:resolved-engine-settings:1"
+  and .["$defs"].resolved_engine_profile.properties.schema.const
+    == "urn:animsmith:engine-profile-facts:1"
+  and .["$defs"].consumed_contracts.prefixItems
+    == [
+      {"const":"urn:animsmith:schema:output:10"},
+      {"const":"urn:animsmith:schema:measurements:15"},
+      {"const":"urn:animsmith:raw-source-facts:1"},
+      {"const":"urn:animsmith:dependency-closure:1"},
+      {"const":"urn:animsmith:engine-profile-facts:1"}
+    ]
+' docs/schemas/output-v10.schema.json >/dev/null; then
+  fail 'output-v10 must retain all four adjunct identities and the exact five consumed contracts'
+fi
 if ! cmp -s docs/schemas/measurements-v11.schema.json <(
   sed \
     -e 's/urn:animsmith:schema:measurements:12/urn:animsmith:schema:measurements:11/g' \
@@ -329,10 +355,10 @@ done
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer
 # contract when it advances.
-grep -Fq 'Final output-v9 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
-  || fail 'CheckEvaluation documentation does not identify output v9'
-grep -Fq 'regenerate a current output-v9 report from the original' docs/output.md \
-  || fail 'report migration documentation does not identify output v9'
+grep -Fq 'Final output-v10 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
+  || fail 'CheckEvaluation documentation does not identify output v10'
+grep -Fq 'regenerate a current output-v10 report from the original' docs/output.md \
+  || fail 'report migration documentation does not identify output v10'
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
@@ -498,7 +524,7 @@ legacy_candidate_pattern='"schema_version"'
 
 # Pin the scanner against a normal outer envelope whose schema/tool fields sit
 # between its version and command. Also prove that current nested measurements in a
-# current output-v9 envelope are not mistaken for an outer legacy contract.
+# current output-v10 envelope are not mistaken for an outer legacy contract.
 legacy_scanner_regression=$(
   printf '%s\n' \
     '{' \

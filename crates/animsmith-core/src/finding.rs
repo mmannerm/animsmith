@@ -6,6 +6,8 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::evaluation::EvaluationScope;
+
 /// Severity of a lint finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -109,6 +111,10 @@ pub struct Finding {
     /// distinguishable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<String>,
+    /// Exact prediction facet that produced this finding, when the parent
+    /// check carries an engine-prediction attachment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prediction_scope: Option<EvaluationScope>,
     /// Finite time in seconds associated with the finding, when applicable.
     /// Non-finite values are omitted from serialized output.
     #[serde(skip_serializing_if = "non_finite_time_or_none")]
@@ -137,6 +143,7 @@ impl Finding {
             clip: None,
             bone: None,
             node: None,
+            prediction_scope: None,
             time_s: None,
             measured: None,
             expected: None,
@@ -160,6 +167,16 @@ impl Finding {
     /// Attach a stable source-node path.
     pub fn node(mut self, node: impl Into<String>) -> Self {
         self.node = Some(node.into());
+        self
+    }
+
+    /// Bind this finding to one available engine-prediction facet.
+    ///
+    /// The shared check-evaluation boundary verifies that the scope identifies
+    /// exactly one available facet on the parent check. It rejects a scope that
+    /// is missing or required-unavailable.
+    pub fn prediction_scope(mut self, scope: EvaluationScope) -> Self {
+        self.prediction_scope = Some(scope);
         self
     }
 

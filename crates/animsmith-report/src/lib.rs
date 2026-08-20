@@ -1,6 +1,6 @@
 //! [`render`] turns [`animsmith_core::MetricGrids`],
-//! [`animsmith_core::ResolvedRoles`], and a slice of
-//! [`animsmith_core::Finding`] values into a self-contained HTML report.
+//! [`animsmith_core::ResolvedRoles`], typed check evaluations, and optional
+//! engine-prediction provenance into a self-contained HTML report.
 //! The viewer is driven by the same [`animsmith_core::PoseGrid`] samples
 //! the checks judged.
 //!
@@ -14,10 +14,10 @@
 //! fn write_report(
 //!     doc: &animsmith_core::Document,
 //!     roles: &animsmith_core::ResolvedRoles,
-//!     findings: &[animsmith_core::Finding],
+//!     checks: &[animsmith_core::CheckEvaluation],
 //! ) -> std::io::Result<()> {
 //!     let grids = animsmith_core::MetricGrids::new(doc);
-//!     let html = animsmith_report::render(&grids, roles, findings, None);
+//!     let html = animsmith_report::render(&grids, roles, checks, None, None);
 //!     std::fs::write("report.html", html)
 //! }
 //! ```
@@ -37,10 +37,10 @@
 //!
 #![warn(missing_docs)]
 
-use animsmith_core::finding::Finding;
 use animsmith_core::metrics::MetricGrids;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::PoseGrid;
+use animsmith_core::{CheckEvaluation, PredictionProvenanceV1};
 use base64::Engine as _;
 use serde_json::{Value, json};
 
@@ -65,7 +65,8 @@ fn esc(text: &str) -> String {
 pub fn render(
     grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
-    findings: &[Finding],
+    checks: &[CheckEvaluation],
+    prediction_provenance: Option<&PredictionProvenanceV1>,
     clip_filter: Option<&str>,
 ) -> String {
     let doc = grids.document();
@@ -118,8 +119,9 @@ pub fn render(
         charts_html.push_str(&clip_charts(&clip.name, grid.as_ref(), roles));
     }
 
-    let findings_json: Vec<Value> = findings
+    let findings_json: Vec<Value> = checks
         .iter()
+        .flat_map(CheckEvaluation::findings)
         .filter(|f| clip_filter.is_none() || f.clip.as_deref() == clip_filter || f.clip.is_none())
         .map(|f| {
             json!({
@@ -134,12 +136,41 @@ pub fn render(
         })
         .collect();
 
+    let predictions_json: Vec<Value> = checks
+        .iter()
+        .filter_map(|check| {
+            check.engine_prediction().map(|prediction| {
+                json!({
+                    "check_id": check.check_id(),
+                    "prediction": prediction,
+                })
+            })
+        })
+        .collect();
+
+    let gaps_json: Vec<Value> = checks
+        .iter()
+        .flat_map(|check| {
+            check.gaps().iter().map(|gap| {
+                json!({
+                    "check_id": check.check_id(),
+                    "code": gap.code,
+                    "message": gap.message,
+                    "scope": gap.scope,
+                })
+            })
+        })
+        .collect();
+
     let data = json!({
         "file": doc.source.path,
         "profile": roles.profile,
         "bones": bones,
         "clips": clips_json,
         "findings": findings_json,
+        "gaps": gaps_json,
+        "prediction_provenance": prediction_provenance,
+        "predictions": predictions_json,
     });
 
     let title = esc(doc
@@ -171,6 +202,8 @@ pub fn render(
          </section>\n\
          <section id=\"side\">\n\
            <h2>Findings</h2>\n<ul id=\"findings\"></ul>\n\
+           <h2>Coverage gaps</h2>\n<ul id=\"gaps\"></ul>\n\
+           <h2>Engine predictions</h2>\n<ul id=\"predictions\"></ul>\n\
            <h2>Charts</h2>\n<div id=\"charts\">{charts_html}</div>\n\
          </section>\n\
          </main>\n\
@@ -357,13 +390,13 @@ mod tests {
         let doc = report_document();
         let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
         let config = Config::default();
-        let findings = Vec::new();
+        let checks = Vec::new();
 
-        let fresh = render(&MetricGrids::new(&doc), &roles, &findings, None);
+        let fresh = render(&MetricGrids::new(&doc), &roles, &checks, None, None);
         let grids = MetricGrids::new(&doc);
         let ctx = CheckCtx::new(&grids, &roles, &config);
         assert!(ctx.grid(0).is_some());
-        let shared = render(&grids, &roles, &findings, None);
+        let shared = render(&grids, &roles, &checks, None, None);
 
         assert_eq!(fresh, shared);
         assert!(shared.contains(r#"data-kind="rootpath""#));

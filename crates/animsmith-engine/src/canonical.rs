@@ -1,95 +1,27 @@
 use crate::{
     AnimationAddressability, BakeOrExtract, ConversionControl, DefaultStatus, EngineProfile,
-    FactState, FactValue, ForwardAxis, Handedness, ImportHandling, LinearUnit,
+    FactState, FactValue, ForwardAxis, Handedness, ImportHandling, LinearUnit, ResolvedProfile,
     RootMotionAddressability, SettingApplicability, SettingId, SettingScope, SettingValue,
     TargetAddressability, UpAxis,
+};
+use animsmith_core::engine_contract::{
+    EngineAnimationAddressabilityV1, EngineBakeOrExtractV1, EngineClipSettingsV1,
+    EngineContractError, EngineConversionControlV1, EngineCoordinateBasisV1, EngineDefaultStatusV1,
+    EngineFactIdV1, EngineFactStateV1, EngineFactValueV1, EngineForwardAxisV1, EngineHandednessV1,
+    EngineImportHandlingV1, EngineLinearUnitV1, EnginePrimarySourceV1, EngineProfileFactV1,
+    EngineProfileSelectionV1, EngineRootMotionAddressabilityV1, EngineSettingApplicabilityV1,
+    EngineSettingDescriptorV1, EngineSettingDomainV1, EngineSettingIdV1, EngineSettingRowV1,
+    EngineSettingScopeV1, EngineSettingValueV1, EngineTargetAddressabilityV1, EngineUpAxisV1,
+    ResolvedEngineProfileV1, ResolvedEngineSettingsV1,
 };
 use animsmith_core::{InputIdentity, SourceFormatV1};
 use std::collections::BTreeMap;
 
-/// Fixed-field-order encoding whose every UTF-8 token has an eight-byte
-/// big-endian length prefix. Counts are decimal UTF-8 tokens as well.
-struct CanonicalEncoder(Vec<u8>);
-
-impl CanonicalEncoder {
-    fn new(version: &str) -> Self {
-        let mut encoder = Self(Vec::new());
-        encoder.token(version);
-        encoder
-    }
-
-    fn token(&mut self, token: impl AsRef<str>) {
-        let bytes = token.as_ref().as_bytes();
-        self.0
-            .extend_from_slice(&(bytes.len() as u64).to_be_bytes());
-        self.0.extend_from_slice(bytes);
-    }
-
-    fn count(&mut self, count: usize) {
-        self.token(count.to_string());
-    }
-
-    fn identity(self) -> InputIdentity {
-        InputIdentity::from_bytes(&self.0)
-    }
-}
-
 pub(crate) fn facts_identity(profile: &EngineProfile) -> InputIdentity {
-    let mut encoder = CanonicalEncoder::new("animsmith-engine-facts-v1");
-    encode_profile_key(&mut encoder, profile);
-    encoder.token("fact_bundle_urn");
-    encoder.token(profile.fact_bundle_urn);
-
-    let mut facts: Vec<_> = profile.facts.iter().collect();
-    facts.sort_by_key(|fact| fact.id().as_str());
-    encoder.token("facts");
-    encoder.count(facts.len());
-    for fact in facts {
-        encoder.token(fact.id().as_str());
-        encode_fact_state(&mut encoder, fact.state());
-    }
-
-    let mut settings: Vec<_> = profile.settings.iter().collect();
-    settings.sort_by_key(|descriptor| descriptor.id().as_str());
-    encoder.token("setting_descriptors");
-    encoder.count(settings.len());
-    for descriptor in settings {
-        encoder.token(descriptor.id().as_str());
-        encoder.token(scope_name(descriptor.scope()));
-        encoder.token(domain_name(descriptor.domain()));
-        encoder.token(match descriptor.applicability() {
-            SettingApplicability::Applicable => "applicable",
-            SettingApplicability::NotApplicable => "not_applicable",
-        });
-        encoder.token(match descriptor.default_status() {
-            DefaultStatus::RequiredWithoutDefault => "required_without_default",
-            DefaultStatus::NotApplicable => "not_applicable",
-        });
-    }
-
-    let mut sources: Vec<_> = profile.sources.iter().collect();
-    sources.sort_by_key(|source| source.id());
-    encoder.token("sources");
-    encoder.count(sources.len());
-    for source in sources {
-        encoder.token(source.id());
-        encoder.token(source.target_version());
-        encoder.token(source.url());
-        encoder.token(source.verified_on());
-        let mut facts = source.supported_facts().to_vec();
-        facts.sort_by_key(|id| id.as_str());
-        encoder.count(facts.len());
-        for fact in facts {
-            encoder.token(fact.as_str());
-        }
-        let mut settings = source.supported_settings().to_vec();
-        settings.sort_by_key(|id| id.as_str());
-        encoder.count(settings.len());
-        for setting in settings {
-            encoder.token(setting.as_str());
-        }
-    }
-    encoder.identity()
+    project_profile(profile)
+        .expect("the frozen engine registry must project into its core-owned V1 contract")
+        .facts_identity()
+        .clone()
 }
 
 pub(crate) fn settings_identity<'a>(
@@ -97,151 +29,247 @@ pub(crate) fn settings_identity<'a>(
     document: &BTreeMap<SettingId, SettingValue>,
     clips: impl IntoIterator<Item = (&'a str, &'a BTreeMap<SettingId, SettingValue>)>,
 ) -> InputIdentity {
-    let mut encoder = CanonicalEncoder::new("animsmith-engine-settings-v1");
-    encode_profile_key(&mut encoder, profile);
-    encoder.token("fact_bundle_urn");
-    encoder.token(profile.fact_bundle_urn);
-    encoder.token("document_settings");
-    encoder.count(document.len());
-    let mut document: Vec<_> = document.iter().collect();
-    document.sort_by_key(|(id, _)| id.as_str());
-    for (id, value) in document {
-        encoder.token(id.as_str());
-        encode_setting_value(&mut encoder, value);
-    }
-    let clips: Vec<_> = clips.into_iter().collect();
-    encoder.token("clips");
-    encoder.count(clips.len());
-    for (name, settings) in clips {
-        encoder.token(name);
-        encoder.count(settings.len());
-        let mut settings: Vec<_> = settings.iter().collect();
-        settings.sort_by_key(|(id, _)| id.as_str());
-        for (id, value) in settings {
-            encoder.token(id.as_str());
-            encode_setting_value(&mut encoder, value);
-        }
-    }
-    encoder.identity()
+    let profile = project_profile(profile)
+        .expect("a resolved engine profile must project into its core-owned V1 contract");
+    project_settings(&profile, document, clips)
+        .expect("resolved settings must project into their core-owned V1 contract")
+        .settings_identity()
+        .clone()
 }
 
-fn encode_profile_key(encoder: &mut CanonicalEncoder, profile: &EngineProfile) {
-    encoder.token("selection");
-    encoder.token(profile.selection.family());
-    encoder.token(profile.selection.profile_revision().to_string());
-    encoder.token(profile.selection.engine_version());
-    encoder.token(profile.selection.importer());
+pub(crate) fn project_resolved_profile(
+    resolved: &ResolvedProfile,
+) -> Result<(ResolvedEngineProfileV1, ResolvedEngineSettingsV1), EngineContractError> {
+    let profile = project_profile(resolved.profile())?;
+    let settings = project_settings(
+        &profile,
+        resolved.document_settings(),
+        resolved
+            .clip_settings()
+            .iter()
+            .map(|clip| (clip.clip_name(), clip.settings())),
+    )?;
+    Ok((profile, settings))
 }
 
-fn encode_fact_state(encoder: &mut CanonicalEncoder, state: &FactState) {
+fn project_profile(
+    profile: &EngineProfile,
+) -> Result<ResolvedEngineProfileV1, EngineContractError> {
+    let selection = profile.selection();
+    ResolvedEngineProfileV1::new(
+        EngineProfileSelectionV1::new(
+            selection.family(),
+            selection.profile_revision(),
+            selection.engine_version(),
+            selection.importer(),
+        )?,
+        profile.fact_bundle_urn(),
+        profile
+            .facts()
+            .iter()
+            .map(|fact| EngineProfileFactV1::new(fact_id(fact.id()), fact_state(fact.state())))
+            .collect(),
+        profile
+            .setting_descriptors()
+            .iter()
+            .map(|descriptor| {
+                EngineSettingDescriptorV1::new(
+                    setting_id(descriptor.id()),
+                    match descriptor.scope() {
+                        SettingScope::Document => EngineSettingScopeV1::Document,
+                        SettingScope::Clip => EngineSettingScopeV1::Clip,
+                    },
+                    match descriptor.domain() {
+                        crate::SettingDomain::Boolean => EngineSettingDomainV1::Boolean,
+                        crate::SettingDomain::BakeOrExtract => EngineSettingDomainV1::BakeOrExtract,
+                        crate::SettingDomain::SourceTransformPath => {
+                            EngineSettingDomainV1::SourceTransformPath
+                        }
+                    },
+                    match descriptor.applicability() {
+                        SettingApplicability::Applicable => {
+                            EngineSettingApplicabilityV1::Applicable
+                        }
+                        SettingApplicability::NotApplicable => {
+                            EngineSettingApplicabilityV1::NotApplicable
+                        }
+                    },
+                    match descriptor.default_status() {
+                        DefaultStatus::RequiredWithoutDefault => {
+                            EngineDefaultStatusV1::RequiredWithoutDefault
+                        }
+                        DefaultStatus::NotApplicable => EngineDefaultStatusV1::NotApplicable,
+                    },
+                )
+            })
+            .collect(),
+        profile
+            .sources()
+            .iter()
+            .map(|source| {
+                EnginePrimarySourceV1::new(
+                    source.id(),
+                    source.target_version(),
+                    source.url(),
+                    source.verified_on(),
+                    source
+                        .supported_facts()
+                        .iter()
+                        .copied()
+                        .map(fact_id)
+                        .collect(),
+                    source
+                        .supported_settings()
+                        .iter()
+                        .copied()
+                        .map(setting_id)
+                        .collect(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    )
+}
+
+fn project_settings<'a>(
+    profile: &ResolvedEngineProfileV1,
+    document: &BTreeMap<SettingId, SettingValue>,
+    clips: impl IntoIterator<Item = (&'a str, &'a BTreeMap<SettingId, SettingValue>)>,
+) -> Result<ResolvedEngineSettingsV1, EngineContractError> {
+    ResolvedEngineSettingsV1::new(
+        profile,
+        document
+            .iter()
+            .map(|(id, value)| EngineSettingRowV1::new(setting_id(*id), setting_value(value)))
+            .collect(),
+        clips
+            .into_iter()
+            .map(|(clip_name, values)| {
+                EngineClipSettingsV1::new(
+                    clip_name,
+                    values
+                        .iter()
+                        .map(|(id, value)| {
+                            EngineSettingRowV1::new(setting_id(*id), setting_value(value))
+                        })
+                        .collect(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    )
+}
+
+fn fact_state(state: &FactState) -> EngineFactStateV1 {
     match state {
-        FactState::Unknown => encoder.token("unknown"),
-        FactState::NotApplicable => encoder.token("not_applicable"),
-        FactState::Known(value) => {
-            encoder.token("known");
-            match value {
-                FactValue::AcceptedFormats(formats) => {
-                    encoder.token("accepted_formats");
-                    let mut formats = formats.clone();
-                    formats.sort_by_key(|format| format_name(*format));
-                    encoder.count(formats.len());
-                    for format in formats {
-                        encoder.token(format_name(format));
-                    }
-                }
-                FactValue::AnimationAddressability(value) => {
-                    encoder.token("animation_addressability");
-                    encoder.token(match value {
-                        AnimationAddressability::GltfAssetLabel => "gltf_asset_label",
-                    });
-                }
-                FactValue::CoordinateBasis(value) => {
-                    encoder.token("coordinate_basis");
-                    encoder.token(match value.handedness {
-                        Handedness::Left => "left",
-                        Handedness::Right => "right",
-                    });
-                    encoder.token(match value.up_axis {
-                        UpAxis::X => "x",
-                        UpAxis::Y => "y",
-                        UpAxis::Z => "z",
-                    });
-                    encoder.token(match value.forward_axis {
-                        ForwardAxis::PositiveX => "+x",
-                        ForwardAxis::NegativeX => "-x",
-                        ForwardAxis::PositiveY => "+y",
-                        ForwardAxis::NegativeY => "-y",
-                        ForwardAxis::PositiveZ => "+z",
-                        ForwardAxis::NegativeZ => "-z",
-                    });
-                }
-                FactValue::LinearUnit(value) => {
-                    encoder.token("linear_unit");
-                    encoder.token(match value {
-                        LinearUnit::Metre => "metre",
-                        LinearUnit::Centimetre => "centimetre",
-                    });
-                }
-                FactValue::ConversionControl(value) => {
-                    encoder.token("conversion_control");
-                    match value {
-                        ConversionControl::ProfileSetting(setting) => {
-                            encoder.token("profile_setting");
-                            encoder.token(setting.as_str());
-                        }
-                        ConversionControl::ImporterOption => encoder.token("importer_option"),
-                    }
-                }
-                FactValue::Boolean(value) => {
-                    encoder.token("boolean");
-                    encoder.token(if *value { "true" } else { "false" });
-                }
-                FactValue::ImportHandling(value) => {
-                    encoder.token("import_handling");
-                    encoder.token(match value {
-                        ImportHandling::Preserved => "preserved",
-                        ImportHandling::Converted => "converted",
-                        ImportHandling::Discarded => "discarded",
-                        ImportHandling::Unsupported => "unsupported",
-                    });
-                }
-                FactValue::TargetAddressability(value) => {
-                    encoder.token("target_addressability");
-                    encoder.token(match value {
-                        TargetAddressability::NamePathDerivedId => "name_path_derived_id",
-                    });
-                }
-                FactValue::RootMotionAddressability(value) => {
-                    encoder.token("root_motion_addressability");
-                    encoder.token(match value {
-                        RootMotionAddressability::ExactSourceTransformPath => {
-                            "exact_source_transform_path"
-                        }
-                        RootMotionAddressability::HumanoidAvatarBody => "humanoid_avatar_body",
-                    });
-                }
+        FactState::Known(value) => EngineFactStateV1::Known(fact_value(value)),
+        FactState::Unknown => EngineFactStateV1::Unknown,
+        FactState::NotApplicable => EngineFactStateV1::NotApplicable,
+    }
+}
+
+fn fact_value(value: &FactValue) -> EngineFactValueV1 {
+    match value {
+        FactValue::AcceptedFormats(formats) => EngineFactValueV1::AcceptedFormats(formats.clone()),
+        FactValue::AnimationAddressability(AnimationAddressability::GltfAssetLabel) => {
+            EngineFactValueV1::AnimationAddressability(
+                EngineAnimationAddressabilityV1::GltfAssetLabel,
+            )
+        }
+        FactValue::CoordinateBasis(value) => {
+            EngineFactValueV1::CoordinateBasis(EngineCoordinateBasisV1 {
+                handedness: match value.handedness {
+                    Handedness::Left => EngineHandednessV1::Left,
+                    Handedness::Right => EngineHandednessV1::Right,
+                },
+                up_axis: match value.up_axis {
+                    UpAxis::X => EngineUpAxisV1::X,
+                    UpAxis::Y => EngineUpAxisV1::Y,
+                    UpAxis::Z => EngineUpAxisV1::Z,
+                },
+                forward_axis: match value.forward_axis {
+                    ForwardAxis::PositiveX => EngineForwardAxisV1::PositiveX,
+                    ForwardAxis::NegativeX => EngineForwardAxisV1::NegativeX,
+                    ForwardAxis::PositiveY => EngineForwardAxisV1::PositiveY,
+                    ForwardAxis::NegativeY => EngineForwardAxisV1::NegativeY,
+                    ForwardAxis::PositiveZ => EngineForwardAxisV1::PositiveZ,
+                    ForwardAxis::NegativeZ => EngineForwardAxisV1::NegativeZ,
+                },
+            })
+        }
+        FactValue::LinearUnit(value) => EngineFactValueV1::LinearUnit(match value {
+            LinearUnit::Metre => EngineLinearUnitV1::Metre,
+            LinearUnit::Centimetre => EngineLinearUnitV1::Centimetre,
+        }),
+        FactValue::ConversionControl(value) => EngineFactValueV1::ConversionControl(match value {
+            ConversionControl::ProfileSetting(id) => {
+                EngineConversionControlV1::ProfileSetting(setting_id(*id))
             }
+            ConversionControl::ImporterOption => EngineConversionControlV1::ImporterOption,
+        }),
+        FactValue::Boolean(value) => EngineFactValueV1::Boolean(*value),
+        FactValue::ImportHandling(value) => EngineFactValueV1::ImportHandling(match value {
+            ImportHandling::Preserved => EngineImportHandlingV1::Preserved,
+            ImportHandling::Converted => EngineImportHandlingV1::Converted,
+            ImportHandling::Discarded => EngineImportHandlingV1::Discarded,
+            ImportHandling::Unsupported => EngineImportHandlingV1::Unsupported,
+        }),
+        FactValue::TargetAddressability(TargetAddressability::NamePathDerivedId) => {
+            EngineFactValueV1::TargetAddressability(EngineTargetAddressabilityV1::NamePathDerivedId)
+        }
+        FactValue::RootMotionAddressability(value) => {
+            EngineFactValueV1::RootMotionAddressability(match value {
+                RootMotionAddressability::ExactSourceTransformPath => {
+                    EngineRootMotionAddressabilityV1::ExactSourceTransformPath
+                }
+                RootMotionAddressability::HumanoidAvatarBody => {
+                    EngineRootMotionAddressabilityV1::HumanoidAvatarBody
+                }
+            })
         }
     }
 }
 
-fn encode_setting_value(encoder: &mut CanonicalEncoder, value: &SettingValue) {
+fn setting_value(value: &SettingValue) -> EngineSettingValueV1 {
     match value {
-        SettingValue::Boolean(value) => {
-            encoder.token("boolean");
-            encoder.token(if *value { "true" } else { "false" });
-        }
-        SettingValue::BakeOrExtract(value) => {
-            encoder.token("bake_or_extract");
-            encoder.token(match value {
-                BakeOrExtract::Bake => "bake",
-                BakeOrExtract::Extract => "extract",
-            });
-        }
+        SettingValue::Boolean(value) => EngineSettingValueV1::Boolean(*value),
+        SettingValue::BakeOrExtract(value) => EngineSettingValueV1::BakeOrExtract(match value {
+            BakeOrExtract::Bake => EngineBakeOrExtractV1::Bake,
+            BakeOrExtract::Extract => EngineBakeOrExtractV1::Extract,
+        }),
         SettingValue::SourceTransformPath(value) => {
-            encoder.token("source_transform_path");
-            encoder.token(value);
+            EngineSettingValueV1::SourceTransformPath(value.clone())
         }
+    }
+}
+
+const fn fact_id(id: crate::FactId) -> EngineFactIdV1 {
+    match id {
+        crate::FactId::AcceptedInputs => EngineFactIdV1::AcceptedInputs,
+        crate::FactId::AnimationAddressability => EngineFactIdV1::AnimationAddressability,
+        crate::FactId::TargetCoordinateBasis => EngineFactIdV1::TargetCoordinateBasis,
+        crate::FactId::TargetLinearUnit => EngineFactIdV1::TargetLinearUnit,
+        crate::FactId::UnitConversionControl => EngineFactIdV1::UnitConversionControl,
+        crate::FactId::AxisConversionControl => EngineFactIdV1::AxisConversionControl,
+        crate::FactId::ExactAxisConversion => EngineFactIdV1::ExactAxisConversion,
+        crate::FactId::ResultingHierarchyScale => EngineFactIdV1::ResultingHierarchyScale,
+        crate::FactId::WholeEndFrameRequired => EngineFactIdV1::WholeEndFrameRequired,
+        crate::FactId::AnimationChannelHandling => EngineFactIdV1::AnimationChannelHandling,
+        crate::FactId::ExtensionHandling => EngineFactIdV1::ExtensionHandling,
+        crate::FactId::ConstructHandling => EngineFactIdV1::ConstructHandling,
+        crate::FactId::AnimationTargetAddressability => {
+            EngineFactIdV1::AnimationTargetAddressability
+        }
+        crate::FactId::RootMotionAddressability => EngineFactIdV1::RootMotionAddressability,
+    }
+}
+
+const fn setting_id(id: SettingId) -> EngineSettingIdV1 {
+    match id {
+        SettingId::ConvertUnits => EngineSettingIdV1::ConvertUnits,
+        SettingId::BakeAxisConversion => EngineSettingIdV1::BakeAxisConversion,
+        SettingId::RootMotionSource => EngineSettingIdV1::RootMotionSource,
+        SettingId::RootRotation => EngineSettingIdV1::RootRotation,
+        SettingId::RootPositionY => EngineSettingIdV1::RootPositionY,
+        SettingId::RootPositionXz => EngineSettingIdV1::RootPositionXz,
     }
 }
 
@@ -250,21 +278,6 @@ pub(crate) const fn format_name(format: SourceFormatV1) -> &'static str {
         SourceFormatV1::GltfJson => "gltf_json",
         SourceFormatV1::Glb => "glb",
         SourceFormatV1::Fbx => "fbx",
-    }
-}
-
-pub(crate) const fn scope_name(scope: SettingScope) -> &'static str {
-    match scope {
-        SettingScope::Document => "document",
-        SettingScope::Clip => "clip",
-    }
-}
-
-pub(crate) const fn domain_name(domain: crate::SettingDomain) -> &'static str {
-    match domain {
-        crate::SettingDomain::Boolean => "boolean",
-        crate::SettingDomain::BakeOrExtract => "bake_or_extract",
-        crate::SettingDomain::SourceTransformPath => "source_transform_path",
     }
 }
 
@@ -314,7 +327,11 @@ mod tests {
             .unwrap()
             .clone();
         let expected = facts_identity(&original);
-        let changed = |profile: &EngineProfile| assert_ne!(facts_identity(profile), expected);
+        let changed = |profile: &EngineProfile| {
+            if let Ok(projected) = project_profile(profile) {
+                assert_ne!(projected.facts_identity(), &expected);
+            }
+        };
 
         let mut profile = original.clone();
         profile.selection = crate::ProfileSelection::new(

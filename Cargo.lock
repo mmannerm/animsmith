@@ -112,6 +112,7 @@ name = "animsmith-report"
 version = "0.3.1"
 dependencies = [
  "animsmith-core",
+ "animsmith-engine",
  "animsmith-gltf",
  "base64",
  "serde_json",

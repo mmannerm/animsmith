@@ -6,8 +6,10 @@
 //! [`StaticResolution::resolve_input`] then checks the authoritative
 //! [`animsmith_core::SourceFormatV1`] and materializes per-clip settings.
 //! Unknown engine behavior remains [`FactState::Unknown`]. This crate performs
-//! no filesystem access, parses no TOML, imports no format crate, and produces
-//! no predictions.
+//! no filesystem access, parses no TOML, and imports no format crate. Its
+//! one-way [`project_prediction_provenance_v1`] adapter publishes the already
+//! resolved profile/settings and same-load core source evidence without
+//! predicting engine behavior itself.
 //!
 //! # Example
 //!
@@ -53,11 +55,13 @@
 
 mod canonical;
 mod error;
+mod provenance;
 mod registry;
 mod resolver;
 mod types;
 
 pub use error::{InvalidSettingReason, RegistryValidationError, ResolutionError, SettingLocation};
+pub use provenance::{PredictionProvenanceProjectionError, project_prediction_provenance_v1};
 pub use registry::{profiles_v1, validate_registry_v1};
 pub use resolver::{
     ResolvedClipSettings, ResolvedProfile, SOURCE_TRANSFORM_PATH_MAX_BYTES, StaticResolution,

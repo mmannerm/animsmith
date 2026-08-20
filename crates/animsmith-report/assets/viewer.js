@@ -297,5 +297,45 @@ for (const f of data.findings) {
   list.appendChild(li);
 }
 
+const gapList = document.getElementById("gaps");
+if (!data.gaps.length) {
+  const li = document.createElement("li");
+  li.textContent = "none";
+  gapList.appendChild(li);
+}
+for (const gap of data.gaps) {
+  const li = document.createElement("li");
+  const subject = gap.scope?.subject == null ? "" : ` · ${gap.scope.subject}`;
+  const scope = gap.scope == null ? "" : ` · ${gap.scope.code}${subject}`;
+  li.textContent = `${gap.check_id} · ${gap.code}${scope} — ${gap.message}`;
+  gapList.appendChild(li);
+}
+
+// Prediction facets remain distinct from content findings and ordinary gaps.
+const predictionList = document.getElementById("predictions");
+if (!data.prediction_provenance) {
+  const li = document.createElement("li");
+  li.textContent = "engine-neutral — no profile resolved";
+  predictionList.appendChild(li);
+} else if (!data.predictions.length) {
+  const li = document.createElement("li");
+  const selection = data.prediction_provenance.profile.selection;
+  li.textContent = `profile ${selection.family} revision ${selection.profile_revision} resolved; ` +
+    "no engine-backed checks emitted predictions";
+  predictionList.appendChild(li);
+}
+for (const row of data.predictions) {
+  for (const facet of row.prediction.facets) {
+    const li = document.createElement("li");
+    li.className = "prediction " + facet.state;
+    const subject = facet.scope.subject == null ? "" : ` · ${facet.scope.subject}`;
+    const state = facet.state === "available"
+      ? "available"
+      : `required prediction unavailable: ${facet.reasons.join(", ")}`;
+    li.textContent = `${row.check_id} · ${facet.scope.code}${subject} — ${state}`;
+    predictionList.appendChild(li);
+  }
+}
+
 window.addEventListener("resize", draw);
 if (clip) { selectClip(clip.name); setFrame(0); }

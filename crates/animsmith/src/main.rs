@@ -24,12 +24,13 @@
 use animsmith_core::{
     CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport, MeasureEnvelope,
     MeasureFileReport, MeasurementContract, MeasurementFileError, MeasurementReportError,
-    MeasurementReportInput, MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks,
-    evaluate_checks, resolve_configured_roles,
+    MeasurementReportInput, MeasurementReportReadError, MetricGrids, RigInfo, Severity, ToolInfo,
+    ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
 };
 use animsmith_core::{Document, InputIdentity};
 use animsmith_engine::{
-    BakeOrExtract, EngineDeclaration, ProfileSelection, SettingMap, SettingValue, StaticResolution,
+    BakeOrExtract, EngineDeclaration, ProfileSelection, ResolvedProfile, SettingMap, SettingValue,
+    StaticResolution,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -233,12 +234,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file output-v9 `measure` or `lint` JSON carrying measurements-v15) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file output-v10 `measure` or `lint` JSON carrying measurements-v15) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v9 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v10 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v9 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v10 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -797,13 +798,13 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
 }
 
 impl LoadedConfig {
-    fn validate_engine_input(
+    fn resolve_engine_input(
         &self,
         source_format: animsmith_core::SourceFormatV1,
         document: &Document,
-    ) -> Result<(), String> {
+    ) -> Result<Option<ResolvedProfile>, String> {
         let Some(engine) = &self.engine else {
-            return Ok(());
+            return Ok(None);
         };
         let clip_names = document
             .clips
@@ -812,7 +813,7 @@ impl LoadedConfig {
             .collect::<Vec<_>>();
         engine
             .resolve_input(source_format, &clip_names)
-            .map(|_| ())
+            .map(Some)
             .map_err(|error| match &self.path {
                 Some(path) => format!("bad config {}: {error}", path.display()),
                 None => format!("bad config: {error}"),
@@ -846,9 +847,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let loaded_config = load_config(cli.config.as_deref())?;
             let loaded = load_with_config(&file, &loaded_config)?;
             let config = &loaded_config.config;
-            let doc = loaded.document;
+            let doc = loaded.document();
             let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-            publish::emit_text_lines(render::render_inspect(&doc, &roles));
+            publish::emit_text_lines(render::render_inspect(doc, &roles));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Measure { files, format } => {
@@ -858,24 +859,25 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let mut reports = Vec::new();
             for file in &files {
                 let loaded = load_with_config(file, &loaded_config)?;
-                let doc = loaded.document;
-                let input = loaded.input;
+                let input = loaded.input().clone();
+                let doc = loaded.document();
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-                let grids = MetricGrids::new(&doc);
+                let grids = MetricGrids::new(doc);
                 reports.push(MeasureFileReport::new(
                     file.display().to_string(),
                     input,
-                    RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
+                    RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?,
                     MeasurementContract::new(
                         animsmith_core::measure::measure_document(&grids, &roles, config),
-                        animsmith_core::measure::measure_assets(&doc),
+                        animsmith_core::measure::measure_assets(doc),
                     )
                     .map_err(|error| error.to_string())?,
                 ));
             }
             match format {
                 Format::Json => {
-                    let envelope = MeasureEnvelope::new(current_tool(), reports);
+                    let envelope = MeasureEnvelope::new(current_tool(), reports)
+                        .map_err(|error| error.to_string())?;
                     render::print_json(&envelope)?;
                 }
                 Format::Text => {
@@ -908,39 +910,56 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             } else {
                 CheckSelection::Only(&selected)
             };
+            let fail_at = if deny_warnings {
+                Severity::Warning
+            } else {
+                Severity::Error
+            };
+            let allowed: BTreeSet<String> = allow.iter().cloned().collect();
             let mut reports = Vec::new();
-            let mut worst = Severity::Note;
+            let mut requires_failure = false;
             for file in &files {
                 let loaded = load_with_config(file, &loaded_config)?;
-                let doc = loaded.document;
-                let input = loaded.input;
+                let input = loaded.input().clone();
+                let prediction_provenance = loaded
+                    .engine
+                    .as_ref()
+                    .map(|profile| {
+                        animsmith_engine::project_prediction_provenance_v1(profile, &loaded.source)
+                    })
+                    .transpose()
+                    .map_err(|error| error.to_string())?;
+                let doc = loaded.document();
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-                let grids = MetricGrids::new(&doc);
+                let grids = MetricGrids::new(doc);
                 let ctx = CheckCtx::new(&grids, &roles, config);
                 let evaluations =
                     evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?;
-                for finding in evaluations
-                    .iter()
-                    .flat_map(|check| check.findings())
-                    .filter(|finding| !allow.iter().any(|id| id == finding.check_id))
-                {
-                    worst = worst.max(finding.severity);
-                }
-                reports.push(LintFileReport::new(
-                    file.display().to_string(),
-                    input,
-                    RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
-                    evaluations,
-                    MeasurementContract::new(
-                        animsmith_core::measure::measure_document(&grids, &roles, config),
-                        animsmith_core::measure::measure_assets(&doc),
+                requires_failure |= animsmith_core::evaluation::lint_requires_failure(
+                    &evaluations,
+                    fail_at,
+                    &allowed,
+                );
+                reports.push(
+                    LintFileReport::new(
+                        file.display().to_string(),
+                        input,
+                        RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?,
+                        prediction_provenance,
+                        evaluations,
+                        MeasurementContract::new(
+                            animsmith_core::measure::measure_document(&grids, &roles, config),
+                            animsmith_core::measure::measure_assets(doc),
+                        )
+                        .map_err(|error| error.to_string())?,
                     )
                     .map_err(|error| error.to_string())?,
-                ));
+                );
             }
             match format {
                 LintFormat::Json => {
-                    let envelope = LintEnvelope::new(current_tool(), reports);
+                    let envelope = LintEnvelope::new(current_tool(), reports)
+                        .map_err(|error| error.to_string())?;
                     render::print_json(&envelope)?;
                 }
                 LintFormat::Text => publish::emit_text(&render::render_text(&reports, &allow)),
@@ -948,12 +967,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     publish::emit_text(&render::render_markdown(&reports, &allow));
                 }
             }
-            let fail_at = if deny_warnings {
-                Severity::Warning
-            } else {
-                Severity::Error
-            };
-            Ok(if worst >= fail_at {
+            Ok(if requires_failure {
                 ExitCode::from(EXIT_FINDINGS)
             } else {
                 ExitCode::SUCCESS
@@ -964,22 +978,34 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let loaded_config = load_config(cli.config.as_deref())?;
             let loaded = load_with_config(&file, &loaded_config)?;
             let config = &loaded_config.config;
-            let doc = loaded.document;
+            let doc = loaded.document();
             let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-            let grids = MetricGrids::new(&doc);
+            let grids = MetricGrids::new(doc);
             let ctx = CheckCtx::new(&grids, &roles, config);
-            let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .flat_map(|check| check.findings().to_vec())
-                .collect();
-            let html = animsmith_report::render(&grids, &roles, &findings, clip.as_deref());
+            let evaluations = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
+                .map_err(|error| error.to_string())?;
+            let prediction_provenance = loaded
+                .engine
+                .as_ref()
+                .map(|profile| {
+                    animsmith_engine::project_prediction_provenance_v1(profile, &loaded.source)
+                })
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let finding_count = evaluations.iter().map(|check| check.findings().len()).sum();
+            let html = animsmith_report::render(
+                &grids,
+                &roles,
+                &evaluations,
+                prediction_provenance.as_ref(),
+                clip.as_deref(),
+            );
             std::fs::write(&output, &html)
                 .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
             publish::emit_text(&render::render_report_written(
                 &output,
                 doc.clips.len(),
-                findings.len(),
+                finding_count,
                 html.len(),
             ));
             Ok(ExitCode::SUCCESS)
@@ -998,7 +1024,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let loaded_config = load_config(cli.config.as_deref())?;
             let loaded = load_with_config(&input, &loaded_config)?;
             let config = &loaded_config.config;
-            let mut doc = loaded.document;
+            let mut doc = loaded.into_document();
             let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
             let window = match &slice {
                 None => None,
@@ -1280,7 +1306,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// output-v9 `measure`/`lint` JSON report carrying measurements-v15.
+/// output-v10 `measure`/`lint` JSON report carrying measurements-v15.
 fn load_measurements(
     path: &Path,
     loaded_config: &LoadedConfig,
@@ -1292,28 +1318,15 @@ fn load_measurements(
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     if ext == "json" {
-        if loaded_config.engine.is_some() {
-            let message = format!(
-                "cannot resolve an engine profile from JSON measurement report {}; output-v9 does not carry the loader-owned source format",
-                path.display()
-            );
-            return Err(match &loaded_config.path {
-                Some(config_path) => format!("bad config {}: {message}", config_path.display()),
-                None => format!("bad config: {message}"),
-            });
-        }
-        let text = std::fs::read_to_string(path)
+        let input = std::fs::File::open(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        // Correctly rounded parsing is required by glTF raw-value proof. Keep
-        // the released measurement diagnostic by first retaining any finite
-        // JSON number in the generic representation, then decoding typed
-        // fields; a value outside `f32` reaches contract validation as
-        // non-finite evidence instead of becoming a parser error.
-        let value = serde_json::from_str(&text)
-            .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        let report: MeasurementReportInput = serde_json::from_value(value)
-            .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        // Only the current output-v9 envelope with measurement contract v15 is
+        let report = MeasurementReportInput::read_from(input).map_err(|error| match error {
+            MeasurementReportReadError::InvalidJson { source } => {
+                format!("bad JSON in {}: {source}", path.display())
+            }
+            _ => format!("{} {error}", path.display()),
+        })?;
+        // Only the current output-v10 envelope with measurement contract v15 is
         // accepted. Older report shapes are intentionally not retained while
         // the project is alpha.
         let file_count = report.file_count();
@@ -1330,9 +1343,10 @@ fn load_measurements(
             })?;
         return Ok(file.into_measurements().into_parts().0);
     }
-    let doc = load_with_config(path, loaded_config)?.document;
+    let loaded = load_with_config(path, loaded_config)?;
+    let doc = loaded.document();
     let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-    let grids = MetricGrids::new(&doc);
+    let grids = MetricGrids::new(doc);
     Ok(animsmith_core::measure::measure_document(
         &grids, &roles, config,
     ))
@@ -1547,9 +1561,22 @@ fn load_source_bytes_typed(
 }
 
 struct LoadedInput {
-    document: Document,
-    input: InputIdentity,
-    source_format: animsmith_core::SourceFormatV1,
+    source: animsmith_core::LoadedSource,
+    engine: Option<ResolvedProfile>,
+}
+
+impl LoadedInput {
+    fn document(&self) -> &Document {
+        self.source.document()
+    }
+
+    fn input(&self) -> &InputIdentity {
+        self.source.source_facts().primary_identity()
+    }
+
+    fn into_document(self) -> Document {
+        self.source.into_document()
+    }
 }
 
 /// Read one primary input once, derive its retained-evidence identity from
@@ -1559,19 +1586,16 @@ fn load_with_identity(path: &Path) -> Result<LoadedInput, String> {
     let (format, bytes) = capture_input(path)?;
     let source =
         load_source_bytes_typed(path, format, &bytes).map_err(|error| error.to_string())?;
-    let facts = source.source_facts();
-    let input = facts.primary_identity().clone();
-    let source_format = facts.format();
     Ok(LoadedInput {
-        document: source.into_document(),
-        input,
-        source_format,
+        source,
+        engine: None,
     })
 }
 
 fn load_with_config(path: &Path, config: &LoadedConfig) -> Result<LoadedInput, String> {
-    let loaded = load_with_identity(path)?;
-    config.validate_engine_input(loaded.source_format, &loaded.document)?;
+    let mut loaded = load_with_identity(path)?;
+    let facts = loaded.source.source_facts();
+    loaded.engine = config.resolve_engine_input(facts.format(), loaded.source.document())?;
     Ok(loaded)
 }
 
