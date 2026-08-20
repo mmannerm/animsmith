@@ -50,13 +50,30 @@ cargo run -p animsmith --example embed
 
 ## Integration flow
 
-1. **Load a `Document`.** Use `animsmith_gltf::load` or
-   `animsmith_fbx::load`. glTF animation values remain authored; FBX scenes
-   are normalized to metres, right-handed +Y-up coordinates and baked into
-   linear TRS tracks. Structural failures are loader errors. Semantic
+1. **Load a source.** Use `animsmith_gltf::load_source` or
+   `animsmith_fbx::load_source` when importer-sensitive evidence matters. The
+   immutable result binds the exact primary-file identity and bounded raw
+   facts to one normalized `Document`; borrow them through `document()` and
+   `source_facts()`. Calling `into_document()` explicitly discards that
+   sidecar. Byte-owning hosts use the corresponding `load_source_bytes`
+   functions. The compatibility `load` and `load_bytes` entry points still
+   return only a `Document`.
+
+   glTF animation values remain authored; FBX scenes are normalized to metres,
+   right-handed +Y-up coordinates and baked into linear TRS tracks. Raw FBX
+   facts describe parser-projected source declarations and the AnimSmith
+   loader's treatment, not authored key/tangent/interpolation values reconstructed
+   from those baked tracks. Structural failures are loader errors. Semantic
    defects load and become findings. The same document carries meshes, skins,
    factor-only materials, and available base-color and normal textures for
    scene round-trips.
+
+   Raw-fact row sets have explicit complete, partial, or unavailable coverage;
+   a partial prefix proves presence only. Resource rows inventory bounded
+   declarations but do not open, normalize, deduplicate, or hash the external
+   closure. `SourceInfo.path` is diagnostic metadata, not identity or raw-fact
+   authority.
+
    An FBX host that needs auditable scale-boundary facts uses
    `animsmith_fbx::load_scale_source` instead: the returned wrapper retains the
    document and `FbxScaleCapabilityInventory` from one parse. The inventory

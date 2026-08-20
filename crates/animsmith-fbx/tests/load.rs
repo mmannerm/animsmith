@@ -6,7 +6,13 @@ use animsmith_core::model::{
 use animsmith_core::scale::{
     ScaleCapabilityCoverage, ScaleError, ScaleOperation, ScaleRequest, plan_scale,
 };
-use animsmith_core::{Document, MeasurementContract, TrackValues, validate_document_shape};
+use animsmith_core::{
+    Document, InputIdentity, MeasurementContract, RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES,
+    SourceAxisV1, SourceChannelPropertyV1, SourceConstructKindV1, SourceFormatV1,
+    SourceLoaderDispositionV1, SourceObservationStateV1, SourceResourceKindV1,
+    SourceResourceLocatorV1, SourceSetCoverageStateV1, SourceUnavailableReasonV1, TrackValues,
+    validate_document_shape,
+};
 use animsmith_fbx::{FbxCoordinateAxis, FbxScaleDomainStatus};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -383,6 +389,17 @@ fn connected_stackless_animation_is_unsupported_instead_of_absent() {
         loaded.inventory().domains.animation_targeting_matrix_nodes,
         FbxScaleDomainStatus::Unsupported
     );
+    let constructs = loaded.source_facts().constructs();
+    assert_eq!(
+        constructs.coverage().state(),
+        SourceSetCoverageStateV1::Complete
+    );
+    assert!(constructs.rows().iter().any(|row| {
+        row.kind() == SourceConstructKindV1::UnknownElement
+            && row.name().as_str() == "fbx:stackless-animation"
+            && row.count() > 0
+            && row.disposition() == SourceLoaderDispositionV1::Unsupported
+    }));
 }
 
 #[test]
@@ -1049,6 +1066,25 @@ fn valid_unmodeled_ufbx_typed_lists_are_counted_conservatively() {
         "the detached cache record is unsupported mesh/source payload"
     );
     assert!(animsmith_fbx::capability_facts(loaded.inventory()).unregistered_extensions_present);
+    let constructs = loaded.source_facts().constructs();
+    assert!(constructs.rows().iter().any(|row| {
+        row.kind() == SourceConstructKindV1::UnknownElement
+            && row.name().as_str() == "fbx:unmodeled-elements"
+            && row.count() == 4
+            && row.disposition() == SourceLoaderDispositionV1::Unsupported
+    }));
+    let resources = loaded.source_facts().resources();
+    assert_eq!(
+        resources.coverage().state(),
+        SourceSetCoverageStateV1::Complete
+    );
+    let [cache] = resources.rows() else {
+        panic!("the detached cache declaration is retained");
+    };
+    assert_eq!(cache.source_order_index(), 0);
+    assert_eq!(cache.kind(), SourceResourceKindV1::Cache);
+    assert_eq!(cache.locator(), &SourceResourceLocatorV1::Missing);
+    assert_eq!(cache.disposition(), SourceLoaderDispositionV1::Unsupported);
 }
 
 #[test]
@@ -1456,6 +1492,11 @@ fn complete_source_projection_retains_normalized_identity_and_derived_binds() {
 fn generic_fbx_scale_facts_refuse_but_the_narrow_rest_bind_projection_is_inventory_gated() {
     let source = animsmith_fbx::load_scale_source(&fixture()).expect("fixture loads");
     let facts = animsmith_fbx::capability_facts(source.inventory());
+    assert_eq!(
+        animsmith_fbx::capability_facts_for_source(&source),
+        facts,
+        "clean shared facts preserve the existing conservative projection"
+    );
     for operation in [
         ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
         ScaleOperation::RestBindUniformScale {
@@ -1477,6 +1518,11 @@ fn generic_fbx_scale_facts_refuse_but_the_narrow_rest_bind_projection_is_invento
 
     let rest_bind_facts = animsmith_fbx::rest_bind_capability_facts(source.inventory())
         .expect("self-authored fixture has the complete narrow rest/bind inventory");
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&source)
+            .expect("clean shared facts admit the same narrow subset"),
+        rest_bind_facts
+    );
     plan_scale(&ScaleRequest {
         operation: ScaleOperation::RestBindUniformScale {
             source_skin_index: 0,
@@ -1529,6 +1575,238 @@ fn load_path_and_captured_bytes_are_equivalent() {
 
     assert_eq!(from_path.inventory(), from_bytes.inventory());
     assert_same_loaded_shape(from_path.document(), from_bytes.document());
+}
+
+#[test]
+fn source_facts_path_and_captured_bytes_bind_the_same_exact_input() {
+    let path = fixture();
+    let bytes = std::fs::read(&path).expect("capture fixture");
+
+    let from_path = animsmith_fbx::load_source(&path).expect("source loads by path");
+    let from_bytes =
+        animsmith_fbx::load_source_bytes(&path, &bytes).expect("source loads by bytes");
+    assert_same_loaded_shape(from_path.document(), from_bytes.document());
+
+    let path_facts = from_path.source_facts();
+    let bytes_facts = from_bytes.source_facts();
+    assert_eq!(path_facts.format(), SourceFormatV1::Fbx);
+    assert_eq!(
+        path_facts.primary_identity(),
+        &InputIdentity::from_bytes(&bytes)
+    );
+    assert_eq!(
+        path_facts.primary_identity(),
+        bytes_facts.primary_identity()
+    );
+    assert_eq!(path_facts.linear_unit(), bytes_facts.linear_unit());
+    assert_eq!(
+        path_facts.coordinate_basis(),
+        bytes_facts.coordinate_basis()
+    );
+    assert_eq!(
+        path_facts.frames_per_second(),
+        bytes_facts.frames_per_second()
+    );
+    assert_eq!(path_facts.clips(), bytes_facts.clips());
+    assert_eq!(path_facts.constructs(), bytes_facts.constructs());
+    assert_eq!(path_facts.resources(), bytes_facts.resources());
+    for coverage in [
+        path_facts.clips().coverage(),
+        path_facts.constructs().coverage(),
+        path_facts.resources().coverage(),
+    ] {
+        assert_eq!(coverage.state(), SourceSetCoverageStateV1::Complete);
+    }
+}
+
+#[test]
+fn empty_ufbx_take_name_does_not_overclaim_source_absence() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read self-authored fixture")
+        .replacen("\"AnimStack::take\"", "\"AnimStack::\"", 1);
+    let loaded =
+        animsmith_fbx::load_source_bytes(PathBuf::from("unnamed.fbx").as_path(), source.as_bytes())
+            .expect("unnamed take fixture loads");
+    let [take] = loaded.source_facts().clips().rows() else {
+        panic!("one source take");
+    };
+    assert_eq!(
+        take.source_name().state(),
+        &SourceObservationStateV1::Unavailable(SourceUnavailableReasonV1::ParserUnavailable)
+    );
+}
+
+#[test]
+fn user_defined_properties_are_reported_as_an_unsupported_aggregate() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read self-authored fixture")
+        .replacen(
+            "P: \"Lcl Translation\", \"Lcl Translation\", \"\", \"A\",0,0,0",
+            concat!(
+                "P: \"ExampleProperty\", \"KString\", \"\", \"U\",\"example\"\n",
+                "\t\t\tP: \"Lcl Translation\", \"Lcl Translation\", \"\", \"A\",0,0,0"
+            ),
+            1,
+        );
+    let loaded = animsmith_fbx::load_scale_source_bytes(
+        PathBuf::from("custom-property.fbx").as_path(),
+        source.as_bytes(),
+    )
+    .expect("custom-property fixture loads");
+    assert_eq!(loaded.inventory().user_defined_property_count, 1);
+    let [custom] = loaded.source_facts().constructs().rows() else {
+        panic!("one custom-property aggregate");
+    };
+    assert_eq!(custom.source_order_index(), 0);
+    assert_eq!(custom.kind(), SourceConstructKindV1::CustomProperty);
+    assert_eq!(custom.name().as_str(), "fbx:user-defined-properties");
+    assert_eq!(custom.count(), 1);
+    assert_eq!(custom.disposition(), SourceLoaderDispositionV1::Unsupported);
+}
+
+#[test]
+fn effective_fbx_units_and_basis_do_not_promote_advisory_original_fields() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read self-authored fixture")
+        .replacen(
+            "P: \"OriginalUnitScaleFactor\", \"double\", \"Number\", \"\",1",
+            concat!(
+                "P: \"OriginalUnitScaleFactor\", \"double\", \"Number\", \"\",100\n",
+                "\t\tP: \"OriginalUpAxis\", \"int\", \"Integer\", \"\",2\n",
+                "\t\tP: \"OriginalUpAxisSign\", \"int\", \"Integer\", \"\",1"
+            ),
+            1,
+        );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("advisory-original-fields.fbx");
+    std::fs::write(&path, &source).expect("write analytic advisory fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("advisory fixture loads");
+    assert_eq!(
+        loaded
+            .inventory()
+            .coordinate_normalization
+            .original_unit_meters,
+        1.0
+    );
+    assert_eq!(
+        loaded.inventory().coordinate_normalization.original_up_axis,
+        FbxCoordinateAxis::PositiveZ
+    );
+
+    let facts = loaded.source_facts();
+    let SourceObservationStateV1::Observed(unit) = facts.linear_unit().state() else {
+        panic!("effective unit is available");
+    };
+    assert_eq!(unit.meters_per_source_unit(), 0.01);
+    let SourceObservationStateV1::Observed(basis) = facts.coordinate_basis().state() else {
+        panic!("effective basis is available");
+    };
+    assert_eq!(basis.right(), SourceAxisV1::PositiveX);
+    assert_eq!(basis.up(), SourceAxisV1::PositiveY);
+    assert_eq!(basis.forward(), SourceAxisV1::PositiveZ);
+    assert_eq!(
+        facts.linear_unit().disposition(),
+        SourceLoaderDispositionV1::Normalized
+    );
+    assert_eq!(
+        facts.coordinate_basis().disposition(),
+        SourceLoaderDispositionV1::Normalized
+    );
+    let SourceObservationStateV1::Observed(fps) = facts.frames_per_second().state() else {
+        panic!("finite parser FPS is available");
+    };
+    assert!(fps.get().is_finite() && fps.get() > 0.0);
+}
+
+#[test]
+fn source_take_range_and_translation_property_stay_distinct_from_baked_tracks() {
+    const SECOND: &str = "46186158000";
+    const TWO_SECONDS: &str = "92372316000";
+    let source = std::fs::read_to_string(fixture())
+        .expect("read self-authored fixture")
+        .replacen(
+            "P: \"LocalStart\", \"KTime\", \"Time\", \"\",0",
+            &format!("P: \"LocalStart\", \"KTime\", \"Time\", \"\",{SECOND}"),
+            1,
+        )
+        .replacen(
+            &format!("P: \"LocalStop\", \"KTime\", \"Time\", \"\",{SECOND}"),
+            &format!("P: \"LocalStop\", \"KTime\", \"Time\", \"\",{TWO_SECONDS}"),
+            1,
+        )
+        .replacen(
+            "P: \"ReferenceStart\", \"KTime\", \"Time\", \"\",0",
+            &format!("P: \"ReferenceStart\", \"KTime\", \"Time\", \"\",{SECOND}"),
+            1,
+        )
+        .replacen(
+            &format!("P: \"ReferenceStop\", \"KTime\", \"Time\", \"\",{SECOND}"),
+            &format!("P: \"ReferenceStop\", \"KTime\", \"Time\", \"\",{TWO_SECONDS}"),
+            1,
+        )
+        .replacen(
+            &format!("KeyTime: *2 {{ a: 0,{SECOND} }}"),
+            &format!("KeyTime: *2 {{ a: {SECOND},{TWO_SECONDS} }}"),
+            1,
+        );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("one-to-two-second-take.fbx");
+    std::fs::write(&path, source).expect("write analytic nonzero-range fixture");
+
+    let loaded = animsmith_fbx::load_source(&path).expect("nonzero-range fixture loads");
+    let facts = loaded.source_facts();
+    let [take] = facts.clips().rows() else {
+        panic!("one source take");
+    };
+    let SourceObservationStateV1::Observed(range) = take.source_range().state() else {
+        panic!("ufbx parser-resolved take range");
+    };
+    assert!((range.begin_s() - 1.0).abs() < 1e-9);
+    assert!((range.end_s() - 2.0).abs() < 1e-9);
+    let SourceObservationStateV1::Observed(name) = take.source_name().state() else {
+        panic!("raw optional take name");
+    };
+    assert_eq!(name.as_str(), "take");
+    assert_eq!(
+        take.normalized_clip_index().state(),
+        &SourceObservationStateV1::Observed(0)
+    );
+
+    let [channel] = take.channels().rows() else {
+        panic!("the fixture authors one layer/property binding");
+    };
+    assert_eq!(channel.source_channel_index(), 0);
+    assert_eq!(channel.source_layer_index(), Some(0));
+    assert_eq!(channel.property(), SourceChannelPropertyV1::Translation);
+    assert!(channel.components().x());
+    assert!(!channel.components().y());
+    assert!(!channel.components().z());
+    assert_eq!(channel.disposition(), SourceLoaderDispositionV1::Baked);
+    assert_eq!(
+        channel.interpolation().state(),
+        &SourceObservationStateV1::Unavailable(SourceUnavailableReasonV1::BakedAway)
+    );
+
+    let clip = &loaded.document().clips[0];
+    assert!((clip.duration_s - 1.0).abs() < 1e-6);
+    assert!(
+        clip.tracks
+            .iter()
+            .any(|track| { track.property == Property::Rotation && !track.times.is_empty() })
+    );
+    assert!(
+        clip.tracks
+            .iter()
+            .any(|track| { track.property == Property::Scale && !track.times.is_empty() })
+    );
+    let translation = clip
+        .tracks
+        .iter()
+        .find(|track| track.bone == 1 && track.property == Property::Translation)
+        .expect("baked translation track");
+    assert_eq!(translation.times.first().copied(), Some(0.0));
+    assert_eq!(translation.times.last().copied(), Some(1.0));
 }
 
 #[test]
@@ -1657,6 +1935,103 @@ fn byte_loader_resolves_external_texture_relative_to_supplied_path() {
     assert_eq!(source.inventory().external_resource_count, 2);
     assert!(animsmith_fbx::capability_facts(source.inventory()).external_resources_present);
     assert_normal_texture(source.document());
+}
+
+#[test]
+fn source_facts_keep_texture_and_video_alias_declarations_separate() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
+
+    let loaded = animsmith_fbx::load_source(&path).expect("linked-resource FBX loads");
+    let resources = loaded.source_facts().resources();
+    assert_eq!(
+        resources.coverage().state(),
+        SourceSetCoverageStateV1::Complete
+    );
+    let [texture, video] = resources.rows() else {
+        panic!("texture and video declarations remain separate reference rows");
+    };
+    assert_eq!(texture.source_order_index(), 0);
+    assert_eq!(video.source_order_index(), 1);
+    assert_eq!(texture.kind(), SourceResourceKindV1::Texture);
+    assert_eq!(video.kind(), SourceResourceKindV1::Video);
+    for resource in [texture, video] {
+        let SourceResourceLocatorV1::Relative(locator) = resource.locator() else {
+            panic!("safe relative declaration spelling is retained");
+        };
+        assert_eq!(locator.as_str(), "normal.png");
+    }
+    assert_eq!(texture.disposition(), SourceLoaderDispositionV1::Unknown);
+    assert_eq!(video.disposition(), SourceLoaderDispositionV1::Discarded);
+}
+
+#[test]
+fn resource_projection_n_plus_one_is_partial_without_breaking_legacy_load() {
+    let mut videos = String::new();
+    for index in 0..=RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES {
+        videos.push_str(&format!(
+            concat!(
+                "\tVideo: {}, \"Video::resource{}\", \"Clip\" {{\n",
+                "\t\tType: \"Clip\"\n",
+                "\t\tFileName: \"resource{}.bin\"\n",
+                "\t\tRelativeFilename: \"resource{}.bin\"\n",
+                "\t}}\n"
+            ),
+            10_000 + index,
+            index,
+            index,
+            index
+        ));
+    }
+    let source = std::fs::read_to_string(fixture())
+        .expect("read self-authored fixture")
+        .replace("\r\n", "\n")
+        .replacen(
+            "\tObjectType: \"Deformer\" { Count: 2 }\n}",
+            &format!(
+                "\tObjectType: \"Deformer\" {{ Count: 2 }}\n\tObjectType: \"Video\" {{ Count: {} }}\n}}",
+                RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES + 1
+            ),
+            1,
+        )
+        .replacen("}\nConnections: {", &format!("{videos}}}\nConnections: {{"), 1);
+    let path = PathBuf::from("resource-budget.fbx");
+    let bytes = source.as_bytes();
+
+    let legacy = animsmith_fbx::load_bytes(&path, bytes)
+        .expect("projection overflow must not turn legacy success into failure");
+    assert_eq!(legacy.clips.len(), 1);
+    let loaded = animsmith_fbx::load_source_bytes(&path, bytes)
+        .expect("bounded source projection also succeeds");
+    let resources = loaded.source_facts().resources();
+    assert_eq!(
+        resources.rows().len(),
+        RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES
+    );
+    assert_eq!(
+        resources.coverage().state(),
+        SourceSetCoverageStateV1::Partial
+    );
+    assert_eq!(
+        resources.coverage().reason(),
+        Some(SourceUnavailableReasonV1::ProjectionBudgetExceeded)
+    );
+    assert_eq!(resources.rows()[0].source_index(), 0);
+    assert_eq!(resources.rows()[0].source_order_index(), 0);
+    assert_eq!(
+        resources.rows()[RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES - 1].source_index(),
+        (RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES - 1) as u64
+    );
+    assert_eq!(
+        resources.rows()[RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES - 1].source_order_index(),
+        RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES - 1
+    );
+    assert_eq!(
+        loaded.source_facts().work().inspected_rows(),
+        // One take row, one authored property row, N retained resources, and
+        // the terminal resource inspection that establishes partial coverage.
+        RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES + 3
+    );
 }
 
 #[test]

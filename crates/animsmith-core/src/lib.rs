@@ -8,6 +8,13 @@
 //! ([`contract::MeasureEnvelope`], [`contract::LintEnvelope`]), measurement diffs
 //! ([`diff::diff_measurements`]), structured findings ([`Finding`]), and
 //! check execution ([`CheckCtx`], [`all_checks`], [`evaluate_checks`]).
+//! The [`source_facts`] module owns the bounded, format-neutral V1 vocabulary
+//! that format loaders bind to the exact primary bytes in an immutable
+//! [`LoadedSource`]. A mutable normalized [`Document`] does not reconstruct
+//! importer-sensitive source declarations; consuming the wrapper as a document
+//! deliberately discards those facts. The borrowing view reuses the canonical
+//! [`model::SourceSkeletonAssets`] table and remains separate from scale's
+//! operation-specific capability and proof ledgers.
 //! The opt-in [`bake_static_mesh_transforms`] operation canonicalizes supported
 //! unanimated, unskinned mesh scenes into identity-root geometry and returns
 //! deterministic producer evidence.
@@ -117,6 +124,7 @@ pub mod profile;
 pub mod sample;
 pub mod scale;
 pub mod skinned_canonical;
+pub mod source_facts;
 pub mod static_bake;
 pub mod transform;
 
@@ -170,6 +178,20 @@ pub use skinned_canonical::{
     SkinnedBindPoseCanonicalization, SkinnedBindPoseCanonicalizationError,
     SkinnedBindPoseCanonicalizationOptions, SkinnedBindPosePlacement,
     canonicalize_skinned_bind_pose,
+};
+pub use source_facts::{
+    LoadedSource, RAW_SOURCE_FACTS_V1_ID, RAW_SOURCE_V1_MAX_CLIPS, RAW_SOURCE_V1_MAX_OBSERVATIONS,
+    RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES, RAW_SOURCE_V1_MAX_TEXT_BYTES,
+    RAW_SOURCE_V1_MAX_TOTAL_TEXT_BYTES, RAW_SOURCE_V1_MAX_TRAVERSAL_DEPTH, RawSourceFactsBuilderV1,
+    RawSourceFactsV1, SourceAxisV1, SourceChannelFactV1, SourceChannelPropertyV1, SourceClipFactV1,
+    SourceComponentMaskV1, SourceConstructFactV1, SourceConstructKindV1, SourceCoordinateBasisV1,
+    SourceFactDomainV1, SourceFactSetV1, SourceFactsError, SourceFactsViewV1, SourceFormatV1,
+    SourceFramesPerSecondV1, SourceHandednessV1, SourceInterpolationV1, SourceLinearUnitV1,
+    SourceLoaderDispositionV1, SourceLogicalLocatorV1, SourceObservationStateV1,
+    SourceObservationV1, SourceProjectionWorkV1, SourceProvenanceKindV1, SourceProvenanceV1,
+    SourceRelativeLocatorV1, SourceResourceKindV1, SourceResourceLocatorV1,
+    SourceResourceReferenceV1, SourceSetCoverageStateV1, SourceSetCoverageV1, SourceTargetKindV1,
+    SourceTargetV1, SourceTextV1, SourceTimeRangeV1, SourceUnavailableReasonV1,
 };
 pub use static_bake::{
     StaticMeshBake, StaticMeshBakeError, StaticMeshBakeEvidence, StaticMeshBakeInstanceEvidence,

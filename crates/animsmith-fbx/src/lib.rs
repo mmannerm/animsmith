@@ -1,8 +1,8 @@
-//! [`load`] and [`load_bytes`] read FBX input into an
-//! [`animsmith_core::Document`], normalizing parser errors into
-//! [`LoadError`]. The resulting document carries skeletons, animation
-//! clips, and scene assets in the same core model used by the glTF
-//! loader.
+//! [`load_source`] and [`load_source_bytes`] retain bounded importer-sensitive
+//! source facts beside the normalized [`animsmith_core::Document`] produced
+//! from the same exact FBX bytes. [`load`] and [`load_bytes`] remain the
+//! document-only compatibility APIs and deliberately discard that immutable
+//! sidecar. Parser and projection errors are normalized into [`LoadError`].
 //!
 //! The loader normalizes FBX scenes into animsmith's runtime-oriented
 //! coordinate space before handing them to `animsmith-core`: right-handed
@@ -11,6 +11,16 @@
 //! crate only when your pipeline accepts FBX input; it brings the bundled
 //! `ufbx` C build that `animsmith-core` and `animsmith-gltf` intentionally
 //! avoid.
+//!
+//! The source-facts boundary is deliberately narrower than raw FBX bytes.
+//! Effective units, signed axes, FPS, take ranges, layer/property bindings,
+//! and component-curve presence are parser-projected from ufbx. Advisory
+//! `OriginalUnitScaleFactor`/`OriginalUpAxis` values are not substituted for
+//! the effective settings. Because animation stacks pass through
+//! `ufbx::bake_anim`, the sidecar never claims authored interpolation, keys,
+//! or tangents from baked tracks. Resource rows retain bounded relative
+//! declarations only; unsafe spellings are classified and redacted, and no
+//! dependency is opened solely to build source facts.
 //!
 //! [`load_scale_source`] and [`load_scale_source_bytes`] retain a typed
 //! [`FbxScaleCapabilityInventory`] from the same parse. It gives every current
@@ -62,11 +72,13 @@
 #![warn(missing_docs)]
 
 mod capability;
+mod source_facts;
 
 pub use capability::{
     FbxBindMatrixProvenance, FbxCoordinateAxis, FbxCoordinateNormalization,
     FbxScaleCapabilityInventory, FbxScaleDomainInventory, FbxScaleDomainStatus, FbxScaleSource,
-    FbxSourceIdentity, capability_facts, rest_bind_capability_facts,
+    FbxSourceIdentity, capability_facts, capability_facts_for_source, rest_bind_capability_facts,
+    rest_bind_capability_facts_for_source,
 };
 
 use animsmith_core::model::{
@@ -76,6 +88,7 @@ use animsmith_core::model::{
     SourceNodeLocalRest, SourceSkeletonAssets, SourceSkeletonCoverage, SourceSkinAsset,
     SourceSkinAttachment, TextureAsset, Track, TrackValues, Transform,
 };
+use animsmith_core::{LoadedSource, SourceFactsError};
 use capability::AssetConversionFacts;
 use glam::{Mat4, Quat, Vec3};
 use std::path::Path;
@@ -102,6 +115,9 @@ pub enum LoadError {
         /// Parser-provided bake failure detail.
         message: String,
     },
+    /// The loader produced source facts that violate the core binding contract.
+    #[error("invalid FBX source-facts projection: {0}")]
+    SourceFacts(#[from] SourceFactsError),
 }
 
 fn vec3(v: ufbx::Vec3) -> Vec3 {
@@ -168,21 +184,43 @@ fn project_cluster_bind(cluster: &ufbx::SkinCluster) -> Option<(Mat4, Mat4)> {
 /// Returns [`LoadError::Path`] when the path cannot be passed to `ufbx`,
 /// [`LoadError::Fbx`] when the FBX container cannot be parsed, and
 /// [`LoadError::Bake`] when an animation stack cannot be baked into the
-/// linear TRS tracks that animsmith's checks consume.
+/// linear TRS tracks that animsmith's checks consume, and
+/// [`LoadError::SourceFacts`] when the loader violates a core source-fact
+/// binding invariant.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
-    Ok(load_scale_source(path)?.into_document())
+    Ok(load_source(path)?.into_document())
+}
+
+/// Load an `.fbx` file and retain bounded importer-sensitive source facts.
+///
+/// The returned immutable owner binds the normalized document and source facts
+/// to the exact primary bytes parsed by ufbx. Consuming it as a document
+/// deliberately discards the sidecar.
+///
+/// # Errors
+///
+/// Returns [`LoadError::Path`] when the path cannot be passed to `ufbx`,
+/// [`LoadError::Fbx`] when the FBX container cannot be parsed,
+/// [`LoadError::Bake`] when an animation take cannot be baked, and
+/// [`LoadError::SourceFacts`] when the loader violates a core source-fact
+/// binding invariant.
+pub fn load_source(path: &Path) -> Result<LoadedSource, LoadError> {
+    Ok(load_scale_source(path)?.into_source())
 }
 
 /// Load an `.fbx` file and retain its conservative scale capability inventory.
 ///
-/// The returned source is inventory-only: neither scale operation is enabled
-/// for FBX by this API.
+/// The returned source also owns the shared importer-sensitive source facts;
+/// the inventory remains the operation-specific scale view. Neither scale
+/// operation is enabled for FBX by this API.
 ///
 /// # Errors
 ///
 /// Returns [`LoadError::Path`] when the path cannot be passed to `ufbx`,
 /// [`LoadError::Fbx`] when the FBX container cannot be parsed, and
-/// [`LoadError::Bake`] when an animation take cannot be baked.
+/// [`LoadError::Bake`] when an animation take cannot be baked, and
+/// [`LoadError::SourceFacts`] when the loader violates a core source-fact
+/// binding invariant.
 pub fn load_scale_source(path: &Path) -> Result<FbxScaleSource, LoadError> {
     path.to_str()
         .ok_or_else(|| LoadError::Path(path.display().to_string()))?;
@@ -201,9 +239,28 @@ pub fn load_scale_source(path: &Path) -> Result<FbxScaleSource, LoadError> {
 /// Returns [`LoadError::Path`] when `path` cannot be passed to `ufbx`,
 /// [`LoadError::Fbx`] when the FBX container cannot be parsed, and
 /// [`LoadError::Bake`] when an animation stack cannot be baked into the
-/// linear TRS tracks that animsmith's checks consume.
+/// linear TRS tracks that animsmith's checks consume, and
+/// [`LoadError::SourceFacts`] when the loader violates a core source-fact
+/// binding invariant.
 pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
-    Ok(load_scale_source_bytes(path, bytes)?.into_document())
+    Ok(load_source_bytes(path, bytes)?.into_document())
+}
+
+/// Load captured FBX bytes and retain bounded importer-sensitive source facts.
+///
+/// `path` is diagnostics and legacy resource-resolution context only. Source
+/// identity is computed exclusively from `bytes`; no host path enters the new
+/// facts projection.
+///
+/// # Errors
+///
+/// Returns [`LoadError::Path`] when `path` cannot be passed to `ufbx`,
+/// [`LoadError::Fbx`] when the FBX container cannot be parsed,
+/// [`LoadError::Bake`] when an animation take cannot be baked, and
+/// [`LoadError::SourceFacts`] when the loader violates a core source-fact
+/// binding invariant.
+pub fn load_source_bytes(path: &Path, bytes: &[u8]) -> Result<LoadedSource, LoadError> {
+    Ok(load_scale_source_bytes(path, bytes)?.into_source())
 }
 
 /// Load captured FBX bytes and retain the capability inventory from the same parse.
@@ -215,7 +272,9 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
 ///
 /// Returns [`LoadError::Path`] when `path` cannot be passed to `ufbx`,
 /// [`LoadError::Fbx`] when the FBX container cannot be parsed, and
-/// [`LoadError::Bake`] when an animation take cannot be baked.
+/// [`LoadError::Bake`] when an animation take cannot be baked, and
+/// [`LoadError::SourceFacts`] when the loader violates a core source-fact
+/// binding invariant.
 pub fn load_scale_source_bytes(path: &Path, bytes: &[u8]) -> Result<FbxScaleSource, LoadError> {
     let filename = path
         .to_str()
@@ -350,20 +409,21 @@ pub fn load_scale_source_bytes(path: &Path, bytes: &[u8]) -> Result<FbxScaleSour
     }
 
     let (assets, conversion) = extract_assets(&scene, path.parent());
-    let inventory = capability::inventory(&scene, &conversion);
+    let construct_counts = source_facts::construct_counts(&scene);
+    let inventory = capability::inventory(&scene, &conversion, construct_counts);
 
-    Ok(FbxScaleSource {
-        document: Document {
-            skeleton: Skeleton { bones },
-            clips,
-            assets,
-            source: SourceInfo {
-                path: Some(path.display().to_string()),
-                format: Some("fbx".into()),
-            },
+    let document = Document {
+        skeleton: Skeleton { bones },
+        clips,
+        assets,
+        source: SourceInfo {
+            path: Some(path.display().to_string()),
+            format: Some("fbx".into()),
         },
-        inventory,
-    })
+    };
+    let source = source_facts::build(&scene, construct_counts, bytes, document)?;
+
+    Ok(FbxScaleSource { source, inventory })
 }
 
 /// Read one ufbx texture: embedded FBX content first, else a referenced file

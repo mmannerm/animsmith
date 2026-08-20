@@ -2490,6 +2490,42 @@ parsing details. The `animsmith` CLI owns strict TOML mapping and orchestration;
 Appendix C's envelope ownership, prevents a core/engine dependency cycle, and
 gives embedders the same registry and resolver as the CLI.
 
+Format loaders bind that projection to the normalized document in an opaque,
+immutable `LoadedSource`. Its consumer surface is deliberately limited to
+`document(&self)`, `source_facts(&self)`, and `into_document(self)`: callers
+cannot mutate a document while continuing to present its source facts as
+current, and consuming the document explicitly discards the sidecar. The view
+borrows the canonical `Document.assets.source_skeleton` projection rather than
+copying source-node or skin authority. Existing document-only loader entry
+points remain compatibility conveniences that consume this wrapper.
+
+The V1 projection is bound to the exact primary-file `InputIdentity` and an
+explicit source format established by the loader; `SourceInfo.path` and its
+free-form format label are neither identity nor fact authority. Row sets carry
+independent `complete`, `partial`, or `unavailable` coverage. Rows retained
+under partial coverage prove positive presence only; absence is established
+only by complete coverage. Observation availability, provenance, and AnimSmith
+loader disposition remain orthogonal and never imply target-engine support.
+
+V1 bounds projection work to 65,536 enumerable rows, 4,096 clips/takes, 4,096
+resource-reference declarations, 4,096 UTF-8 bytes per retained source string,
+8 MiB of retained source strings in total, and traversal depth 128. At N+1 the
+loader keeps the deterministic source-order prefix (lexical order only where a
+parser exposes a map without source order), marks the affected domain partial
+with `projection_budget_exceeded`, and stops new work in that domain. A legacy
+load that succeeds does not become a failure merely because this sidecar is
+partial. These are projection limits, not claims that every existing parser,
+resource read, image payload, or bake allocation is globally bounded.
+
+Raw resource facts stop at bounded declaration identity, kind, and a safely
+retained source-relative spelling. They do not open, normalize, deduplicate,
+hash, or map referenced content. Unsafe absolute, remote, data-payload, or
+escaping spellings are classified without being reproduced in the new facts
+surface, its debug/serialization views, or its errors. Legacy diagnostic
+`Document::source.path` remains outside that projection. Resource-closure work
+owns those later operations and may claim complete closure only when this
+declaration domain is complete.
+
 ### E.3 Rules, checks, and precedence
 
 Engine rules consume engine-neutral measurements plus a dedicated read-only

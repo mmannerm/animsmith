@@ -81,8 +81,9 @@ use animsmith_gltf::{
     GltfCapabilityManifest, GltfCapabilityViolation, GltfContainerKind, GltfRawJsonDifference,
     GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary, GltfScaleArtifact,
     GltfScaleArtifactProof, GltfScalePreflightError, GltfScaleRewriteError, GltfScaleSource,
-    operation_capability_facts, preflight_scale_source_bytes, prove_rewritten_artifact,
-    prove_rewritten_rest_bind, rewrite_scale_plan,
+    operation_capability_facts, operation_capability_facts_for_source,
+    preflight_scale_source_bytes, prove_rewritten_artifact, prove_rewritten_rest_bind,
+    rewrite_scale_plan,
 };
 use serde::ser::Error as _;
 use serde::{Serialize, Serializer};
@@ -96,7 +97,7 @@ use std::process::ExitCode;
 use animsmith_core::model::Document;
 #[cfg(feature = "fbx")]
 use animsmith_fbx::{
-    FbxScaleCapabilityInventory, load_scale_source_bytes, rest_bind_capability_facts,
+    FbxScaleCapabilityInventory, load_scale_source_bytes, rest_bind_capability_facts_for_source,
 };
 
 const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 4;
@@ -1049,7 +1050,6 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
 
     let input_bytes = fs::read(&request.input)
         .map_err(|error| format!("cannot read {}: {error}", request.input.display()))?;
-    let identity = InputIdentity::from_bytes(&input_bytes);
     let paths = PathsRecord {
         input: request.input.display().to_string(),
         output: request.output.display().to_string(),
@@ -1077,7 +1077,14 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
                 violations: Vec::new(),
                 artifact_proof_differences: None,
             };
-            return emit_rejection(request, tool, &paths, identity, None, rejection);
+            return emit_rejection(
+                request,
+                tool,
+                &paths,
+                InputIdentity::from_bytes(&input_bytes),
+                None,
+                rejection,
+            );
         }
         Err(GltfScalePreflightError::Unsupported {
             manifest,
@@ -1110,7 +1117,14 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
                 violations,
                 artifact_proof_differences: None,
             };
-            return emit_rejection(request, tool, &paths, identity, Some(&manifest), rejection);
+            return emit_rejection(
+                request,
+                tool,
+                &paths,
+                InputIdentity::from_bytes(&input_bytes),
+                Some(&manifest),
+                rejection,
+            );
         }
         // `GltfScalePreflightError` is `#[non_exhaustive]`, so this arm is
         // required. It classifies an unknown future preflight rejection as a
@@ -1126,9 +1140,17 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
                 violations: Vec::new(),
                 artifact_proof_differences: None,
             };
-            return emit_rejection(request, tool, &paths, identity, None, rejection);
+            return emit_rejection(
+                request,
+                tool,
+                &paths,
+                InputIdentity::from_bytes(&input_bytes),
+                None,
+                rejection,
+            );
         }
     };
+    let identity = source.source_facts().primary_identity().clone();
 
     if source.manifest().container != input_container {
         return Err(format!(
@@ -1185,7 +1207,6 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
 
     let input_bytes = fs::read(&request.input)
         .map_err(|error| format!("cannot read {}: {error}", request.input.display()))?;
-    let identity = InputIdentity::from_bytes(&input_bytes);
     let paths = PathsRecord {
         input: request.input.display().to_string(),
         output: request.output.display().to_string(),
@@ -1198,7 +1219,7 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
                 request,
                 tool,
                 &paths,
-                identity,
+                InputIdentity::from_bytes(&input_bytes),
                 None,
                 FbxRejectionRecord {
                     stage: Stage::Preflight,
@@ -1208,7 +1229,8 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
             );
         }
     };
-    match rest_bind_capability_facts(source.inventory()) {
+    let identity = source.source_facts().primary_identity().clone();
+    match rest_bind_capability_facts_for_source(&source) {
         Ok(_) => {}
         Err(detail) => {
             return emit_fbx_rejection(
@@ -1310,7 +1332,7 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
         &paths,
         identity,
         source.inventory(),
-        staged.identity().clone(),
+        staged_source.source_facts().primary_identity().clone(),
         produced,
     )
 }
@@ -1322,7 +1344,6 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
 pub(crate) struct FbxRestBindStage {
     path: tempfile::TempPath,
     bytes: Vec<u8>,
-    identity: InputIdentity,
 }
 
 #[cfg(feature = "fbx")]
@@ -1333,10 +1354,6 @@ impl FbxRestBindStage {
 
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.bytes
-    }
-
-    pub(crate) fn identity(&self) -> &InputIdentity {
-        &self.identity
     }
 }
 
@@ -1357,12 +1374,7 @@ pub(crate) fn serialize_fbx_rest_bind_stage(
         .map_err(|error| format!("cannot serialize normalized FBX staging source: {error}"))?;
     let bytes = fs::read(&path)
         .map_err(|error| format!("cannot read temporary FBX staging source: {error}"))?;
-    let identity = InputIdentity::from_bytes(&bytes);
-    Ok(FbxRestBindStage {
-        path,
-        bytes,
-        identity,
-    })
+    Ok(FbxRestBindStage { path, bytes })
 }
 
 #[cfg(feature = "fbx")]
@@ -1608,7 +1620,7 @@ struct Produced {
 /// including publication.
 fn produce(request: &Request, source: &GltfScaleSource) -> Result<Produced, Failure> {
     let operation = request.operation.core();
-    let facts = operation_capability_facts(source.manifest(), operation)
+    let facts = operation_capability_facts_for_source(source, operation)
         .map_err(|error| rewrite_failure(Stage::Preflight, error))?;
     let plan = plan_scale(&ScaleRequest {
         operation,

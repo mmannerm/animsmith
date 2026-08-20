@@ -25,7 +25,7 @@ use animsmith_core::{Config, ToolInfo, resolve_configured_roles, sha256_hex};
 use animsmith_fbx::FbxScaleCapabilityInventory;
 use animsmith_gltf::write::WriteSummary;
 use animsmith_gltf::{
-    operation_capability_facts, preflight_scale_source_bytes, prove_rewritten_rest_bind,
+    operation_capability_facts_for_source, preflight_scale_source_bytes, prove_rewritten_rest_bind,
     rewrite_scale_plan,
 };
 use serde::{Deserialize, Serialize};
@@ -861,11 +861,9 @@ fn prepare_scale_input(
     let bytes = fs::read(resolved)
         .map_err(|error| format!("cannot read input {}: {error}", declared.display()))
         .operator()?;
-    let sha256 = sha256_hex(&bytes);
-    let byte_count = u64::try_from(bytes.len())
-        .map_err(|_| format!("input {} size exceeds u64", declared.display()))
-        .operator()?;
     let (
+        sha256,
+        byte_count,
         document,
         rebased_document,
         compatibility_basis,
@@ -881,7 +879,10 @@ fn prepare_scale_input(
                 )
             })
             .refusal(Stage::Load, Kind::UnreadableSource)?;
-        animsmith_fbx::rest_bind_capability_facts(fbx_source.inventory())
+        let primary_identity = fbx_source.source_facts().primary_identity();
+        let sha256 = primary_identity.sha256().to_owned();
+        let byte_count = primary_identity.bytes();
+        animsmith_fbx::rest_bind_capability_facts_for_source(&fbx_source)
             .map_err(|error| {
                 format!(
                     "rest_bind_scale FBX capability rejected input {}: {error}",
@@ -929,6 +930,8 @@ fn prepare_scale_input(
             scale.compatibility_selector(),
         )?;
         (
+            sha256,
+            byte_count,
             fbx_source.document().clone(),
             rebased_document,
             compatibility_basis,
@@ -936,7 +939,7 @@ fn prepare_scale_input(
             AssemblyScaleInputProjectionEvidence::NormalizedBakedFbx {
                 authored_curve_keys_preserved: false,
                 raw_source_spans_preserved: false,
-                staged_source: staged.identity().clone(),
+                staged_source: staged_source.source_facts().primary_identity().clone(),
                 capability: Box::new(fbx_source.inventory().clone()),
             },
             selector,
@@ -950,6 +953,9 @@ fn prepare_scale_input(
                 )
             })
             .refusal(Stage::Load, Kind::UnreadableSource)?;
+        let primary_identity = source.source_facts().primary_identity();
+        let sha256 = primary_identity.sha256().to_owned();
+        let byte_count = primary_identity.bytes();
         let selector = resolve_rest_bind_scale_selector(source.document(), scale)
             .map_err(|error| {
                 format!(
@@ -967,6 +973,8 @@ fn prepare_scale_input(
             scale.compatibility_selector(),
         )?;
         (
+            sha256,
+            byte_count,
             source.document().clone(),
             rebased_document,
             compatibility_basis,
@@ -1032,7 +1040,7 @@ fn prepare_gltf_scale_projection(
     selector: AssemblyScaleSelectorRequest<'_>,
 ) -> Result<(Document, AssemblyScaleCompatibilityBasis), crate::producer::Failure> {
     use crate::producer::{Classify as _, Kind, Stage};
-    let facts = operation_capability_facts(source.manifest(), operation)
+    let facts = operation_capability_facts_for_source(source, operation)
         .map_err(|error| {
             format!(
                 "rest_bind_scale capability rejected input {}: {error}",
@@ -1608,10 +1616,14 @@ fn assemble_inner(
         let staged_bytes = fs::read(&artifact_temp)
             .map_err(|error| format!("cannot read staged assembly source: {error}"))
             .operator()?;
-        let staged_source_sha256 = sha256_hex(&staged_bytes);
         let staged_source = preflight_scale_source_bytes(&artifact_temp, &staged_bytes)
             .map_err(|error| format!("staged assembly scale preflight failed: {error}"))
             .refusal(Stage::Proof, Kind::ProofFailed)?;
+        let staged_source_sha256 = staged_source
+            .source_facts()
+            .primary_identity()
+            .sha256()
+            .to_owned();
         let original_base = &prepared_scale_inputs
             .get(&base_path)
             .ok_or_else(|| "missing captured base scale input".to_owned())
@@ -1643,7 +1655,7 @@ fn assemble_inner(
                 .refusal(Stage::Proof, Kind::ProofFailed);
             }
         };
-        let facts = operation_capability_facts(staged_source.manifest(), staged_operation)
+        let facts = operation_capability_facts_for_source(&staged_source, staged_operation)
             .map_err(|error| format!("staged assembly scale capability failed: {error}"))
             .refusal(Stage::Proof, Kind::ProofFailed)?;
         let plan = plan_scale(&ScaleRequest {

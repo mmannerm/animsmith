@@ -6,9 +6,10 @@
 //! candidate document exists.
 
 use crate::{
-    LoadError, load_bytes, resolve_buffers, topology, validate_animations, validate_glb_framing,
+    LoadError, load_source_bytes, resolve_buffers, topology, validate_animations,
+    validate_document, validate_glb_framing,
 };
-use animsmith_core::Document;
+use animsmith_core::{Document, LoadedSource, SourceFactsViewV1};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -292,7 +293,9 @@ pub struct GltfCapabilityViolation {
 /// consume its manifest and captured bytes without reopening the input.
 #[derive(Debug)]
 pub struct GltfScaleSource {
-    document: Document,
+    loaded_source: LoadedSource,
+    #[cfg(test)]
+    document_override: Option<Document>,
     manifest: GltfCapabilityManifest,
     source_bytes: Vec<u8>,
     raw_json: Value,
@@ -302,7 +305,16 @@ pub struct GltfScaleSource {
 impl GltfScaleSource {
     /// The normalized read-only document built from the captured bytes.
     pub fn document(&self) -> &Document {
-        &self.document
+        #[cfg(test)]
+        if let Some(document) = self.document_override.as_ref() {
+            return document;
+        }
+        self.loaded_source.document()
+    }
+
+    /// Importer-sensitive raw source facts bound to the normalized document.
+    pub fn source_facts(&self) -> SourceFactsViewV1<'_> {
+        self.loaded_source.source_facts()
     }
 
     /// The deterministic raw capability manifest.
@@ -457,9 +469,11 @@ fn capture_scale_source(
         });
     }
 
-    let document = load_bytes(path, bytes)?;
+    let loaded_source = load_source_bytes(path, bytes)?;
     Ok(GltfScaleSource {
-        document,
+        loaded_source,
+        #[cfg(test)]
+        document_override: None,
         manifest,
         source_bytes: bytes.to_vec(),
         raw_json,
@@ -504,25 +518,11 @@ pub(crate) fn scale_source_past_the_gate(
 /// It is not a public API and not reachable from an integration test.
 #[cfg(test)]
 pub(crate) fn scale_source_with_document(
-    source: GltfScaleSource,
+    mut source: GltfScaleSource,
     document: Document,
 ) -> GltfScaleSource {
-    GltfScaleSource { document, ..source }
-}
-
-fn validate_document(document: &gltf::Document) -> Result<(), gltf::Error> {
-    use gltf::json::validation::{Error, Validate};
-
-    let root = document.as_json();
-    let mut errors = Vec::new();
-    root.validate(root, gltf::json::Path::new, &mut |path, error| {
-        errors.push((path(), error));
-    });
-    if errors.iter().all(|(_, error)| *error == Error::Unsupported) {
-        Ok(())
-    } else {
-        Err(gltf::Error::Validation(errors))
-    }
+    source.document_override = Some(document);
+    source
 }
 
 /// Split a captured container into its kind and its top-level JSON bytes.
