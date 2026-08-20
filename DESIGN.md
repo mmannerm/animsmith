@@ -2364,9 +2364,13 @@ compatibility alias and is normalized into this shared selection before
 evaluation. Declaring both forms is a typed configuration error rather than a
 precedence rule. `rest-world-scale` and the selected-node facet of
 `engine-unit-scale` consume the same resolved set; one check never reads the
-other check's private settings. With no resolved runtime-node selection, that
-facet is genuinely not applicable while component/root and mesh-node unit
-mapping rules may still apply.
+other check's private settings. Only the absence of a declared runtime-node
+selector policy makes that engine facet genuinely not applicable. If a
+declared selector misses or is ambiguous, `rest-world-scale` retains its
+existing engine-neutral coverage behavior, while an enabled, otherwise
+applicable `engine-unit-scale` facet emits `required_prediction_unavailable`
+and follows E.4's exit policy. Component/root and mesh-node unit-mapping rules
+may still apply independently.
 
 An absent `[engine]` section means today's engine-neutral behavior. There is no
 `generic` engine profile, no auto-detection, no nearest-version match, and no
