@@ -1,6 +1,7 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -90,6 +91,30 @@ fn explicit_bin_only_policy_accepts_the_cli_and_library_contract() {
     assert!(
         output.status.success(),
         "valid policy fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn target_paths_match_when_the_checkout_is_reached_through_a_symlink() {
+    let fixture = fixture();
+    let link_parent = tempfile::tempdir().expect("create symlink parent");
+    let linked_workspace = link_parent.path().join("workspace");
+    symlink(fixture.path(), &linked_workspace).expect("link fixture workspace");
+
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(
+            "cd \"$1\" && ANIMSMITH_PACKAGE_INVENTORY_TARGET_POLICY_ONLY=1 \
+             bash scripts/check-package-inventory.sh",
+        )
+        .arg("package-inventory-policy")
+        .arg(&linked_workspace)
+        .output()
+        .expect("run package target policy through symlink");
+    assert!(
+        output.status.success(),
+        "symlinked policy fixture failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
