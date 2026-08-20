@@ -81,7 +81,10 @@ for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
   crate="${publishable_crates[$i]}"
   manifest="${publishable_manifests[$i]}"
   member="${publishable_members[$i]}"
-  mapfile -t library_sources < <(
+  library_sources=()
+  while IFS= read -r source; do
+    library_sources+=("$source")
+  done < <(
     jq -r --arg crate "$crate" '
       .packages[]
       | select(.name == $crate)
@@ -90,7 +93,10 @@ for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
       | .src_path
     ' <<<"$workspace_metadata"
   )
-  mapfile -t binary_sources < <(
+  binary_sources=()
+  while IFS= read -r source; do
+    binary_sources+=("$source")
+  done < <(
     jq -r --arg crate "$crate" '
       .packages[]
       | select(.name == $crate)
