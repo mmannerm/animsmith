@@ -2306,11 +2306,12 @@ It is not any of the following:
 Those distinctions are structural. `[rig]` continues to own role resolution,
 `[runtime_nodes]` owns the shared selection of project-declared attachment,
 socket, IK, collision, and other runtime-facing nodes, `[clips]` owns per-clip
-intent, `[checks]` owns activation, severity, and project tolerances, engine
-readback owns observed import results, and Appendix D plus each transform's
-own proof contract owns rewriting. An engine profile may describe a hard
-importer constraint or interpretation, but it must not silently change the
-math, thresholds, or findings of an existing consumer-neutral check.
+intent plus explicitly nested clip-scoped importer choices, `[checks]` owns
+activation, severity, and project tolerances, engine readback owns observed
+import results, and Appendix D plus each transform's own proof contract owns
+rewriting. An engine profile may describe a hard importer constraint or
+interpretation, but it must not silently change the math, thresholds, or
+findings of an existing consumer-neutral check.
 
 The issue's original suggestion that profiles own loop/contact thresholds is
 therefore rejected. An engine may expose a loop toggle or a compression
@@ -2332,10 +2333,24 @@ importer = "fbx-model-importer"
 [engine.settings]
 convert_units = true
 bake_axis_conversion = true
+
+[clips."locomotion_*"]
+in_place = false
+
+[clips."locomotion_*".engine_settings]
 root_motion_source = "root"
 root_rotation = "extract"
 root_position_y = "bake"
 root_position_xz = "extract"
+
+[clips.idle]
+in_place = true
+
+[clips.idle.engine_settings]
+root_motion_source = "root"
+root_rotation = "bake"
+root_position_y = "bake"
+root_position_xz = "bake"
 
 [runtime_nodes]
 selectors = ["weapon_socket", "ik_*", "collision_anchor"]
@@ -2361,6 +2376,25 @@ unknown setting, or setting that is invalid for that importer is a typed
 configuration error. A caller that still wants ordinary engine-neutral linting
 removes `[engine]`; it does not receive a partial prediction under a different
 consumer contract.
+
+Every profile setting descriptor declares its exact value domain, applicability,
+and either document or clip scope. Document-scoped importer choices live only
+under `[engine.settings]`. Clip-scoped importer choices live only under the
+matching `[clips.<selector>.engine_settings]` table and resolve through the
+existing clip-selector rule (exact name over matching globs, later matching
+globs winning ties). `[clips.<selector>]` fields such as `in_place` remain
+project intent; the sibling `engine_settings` table records the importer state
+that the prediction must compare with that intent. A setting at the wrong scope
+is a typed configuration error, not an override.
+
+Each applicable setting is also classified by the immutable profile facts as
+either required or as having one documented default. Resolution materializes
+every default before rule evaluation and before computing the settings digest.
+Omitting a required setting with no verified default is a typed configuration
+error; it is never guessed, treated as an implementation default, or deferred
+to a coverage gap. The resolved settings record therefore contains one exact
+document value or per-clip value for every applicable setting, including values
+the caller omitted because the profile supplied its documented default.
 
 The initial profile families and their distinct meanings are:
 
@@ -2467,7 +2501,8 @@ Configuration precedence is consequently:
 
 1. loader and measurement evidence establish what the input contains;
 2. the resolved engine profile supplies immutable verified consumer facts;
-3. `[engine.settings]` and `[clips]` policy state the intended use;
+3. resolved document and per-clip importer settings state the configured
+   consumer behavior, while `[clips]` fields state the intended use;
 4. `[checks]` supplies activation, severity, and tolerances; and
 5. the runner evaluates applicable rules or records typed coverage gaps.
 
@@ -2475,13 +2510,16 @@ No later layer may fabricate evidence missing from an earlier one.
 
 ### E.4 Reproducible output and fail-closed coverage
 
-`measure` remains policy-free and does not change its numbers when an engine
-profile is selected. `lint` and generated-advice outputs that use a profile
-record, at minimum:
+`measure` remains engine-profile-independent: selecting an engine profile or
+its importer settings does not change measurements. Existing measurement
+inputs from `[clips]` and engine-neutral check policy retain their current
+semantics. `lint` and generated-advice outputs that use a profile record, at
+minimum:
 
 - requested family, profile revision, engine version, and importer;
 - resolved immutable profile URN and engine-facts digest;
-- input format, raw-source coverage, and relevant importer settings;
+- input format, raw-source coverage, and fully materialized document and
+  per-clip importer settings;
 - measurement and outer-output schema identities consumed;
 - each applied rule id, exact fact/policy/measurement basis, and primary-source
   reference set, including clean evaluations; and
@@ -2533,8 +2571,8 @@ consumers can apply the same policy without parsing CLI exit behavior.
 
 Profiles keep these independent:
 
-- the source/interchange linear unit, either format-defined or explicitly
-  supplied;
+- the source/interchange linear unit captured from normative format semantics
+  or an explicit declaration in the source itself;
 - the target engine's native distance unit;
 - the exact source-to-target distance mapping and whether the importer
   preserves physical dimensions;
@@ -2550,6 +2588,11 @@ unit effective scale. Rules consume the coordinate-domain and selected-node
 measurements designed in issues #267 and #268. They may recommend an importer
 setting only when its documented behavior accounts for animation
 translations, bones, sockets, attachments, IK targets, and collision anchors.
+Version one has no TOML or profile override for source units. A loader records
+the format-defined or source-declared unit and its provenance in the shared raw
+projection; if that evidence is absent, an applicable unit prediction is
+unavailable under E.4 rather than inferred from bounds, character height,
+filenames, importer defaults, or a caller assertion.
 They never infer units from bounds, character height, filenames, inverse-bind
 magnitudes, or an observed persistent object scale.
 Animation scale channels are dimensionless and never become length-bearing
