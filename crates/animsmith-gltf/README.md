@@ -6,7 +6,10 @@
 ## Overview
 
 `animsmith-gltf` loads `.gltf` and `.glb` files into
-`animsmith-core`'s `Document` model. It is the glTF/GLB boundary for
+`animsmith-core`'s `Document` model. `load_source` and `load_source_bytes`
+add an immutable, bounded raw-source-facts view bound to the exact primary
+bytes; the longstanding `load` and `load_bytes` functions remain the
+document-only convenience surface. It is the glTF/GLB boundary for
 embedding animsmith in a Rust pipeline: this crate handles container
 ingestion, while `animsmith-core` owns checks, measurements, config, and
 findings.
@@ -16,6 +19,15 @@ quaternions, resample tracks, or clean data on the way in, so the
 mechanical checks judge the same animation data that shipped in the
 file. Buffers support GLB BIN chunks, `data:` URIs, and sibling external
 files; unsafe external-buffer paths are rejected.
+
+The raw facts identify JSON glTF versus GLB from the container bytes, record
+glTF's format-defined metre unit and signed coordinate basis, prove that glTF
+declares no FPS or take range, and retain bounded source-order animation,
+channel/accessor, extension, and resource-declaration evidence. Resource
+locators are classified without opening or hashing additional dependencies;
+unsafe, remote, malformed, data-URI, and oversized spellings are redacted.
+The facts are importer evidence, not target-engine support policy or a
+dependency-closure claim.
 
 `load` also fills `Document::assets` with the file's geometry — meshes
 (triangle lists), skins (joints + inverse bind matrices), and

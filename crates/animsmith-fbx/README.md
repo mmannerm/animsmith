@@ -19,12 +19,55 @@ Scene assets carry triangulated meshes, skins, factor-only materials, and
 linked or embedded PNG/JPEG base-color and normal textures into the shared
 format-independent model.
 
+## Importer-sensitive source facts
+
+`load_source` and `load_source_bytes` return an immutable `LoadedSource` that
+binds the normalized `Document` to bounded source evidence from the same ufbx
+parse and the SHA-256/byte count of the exact primary bytes. The legacy `load`
+and `load_bytes` APIs remain available when only the normalized document is
+needed; consuming a `LoadedSource` as a document deliberately discards its
+source sidecar.
+
+The V1 FBX projection records ufbx's effective source unit, signed coordinate
+basis, finite frame rate, animation-stack identity and parser-resolved time
+range, raw layer/property/component presence, aggregate custom or unmodeled
+domains, and texture/video/cache resource declarations. Unit and basis facts
+come from `scene.settings.unit_meters` and `scene.settings.axes`;
+`OriginalUnitScaleFactor` and `OriginalUpAxis` remain advisory and are not
+promoted into effective evidence. Stack ranges remain separate from baked
+clips whose start may be trimmed to zero.
+
+Animation property rows come from ufbx layer bindings, not baked `Document`
+tracks. Local translation, rotation, and scale bindings are marked `Baked`;
+authored interpolation, keys, and tangents are explicitly unavailable after
+the bake boundary. Other source properties remain unsupported instead of being
+reconstructed from normalized samples.
+
+Resource rows retain only bounded safe relative spellings, preferring ufbx's
+`relative_filename` and then `filename`. Absolute, escaping, remote, malformed,
+and oversized spellings are classified and redacted; `absolute_filename` is
+used only as a redacted presence signal and is never copied into the
+source-facts surface. Texture and video declarations that refer to the same
+spelling remain separate reference rows. Resolution,
+normalization, deduplication, file opening, and dependency-closure identity are
+outside this crate's V1 projection.
+
+Projection limits bound only this added evidence walk and retained rows/text.
+V1 retains at most 65,536 observation rows, 4,096 clip identities, 4,096
+resource declarations, 4,096 bytes per source text, and 8 MiB of aggregate
+text; the shared traversal-depth ceiling is 128. The FBX resource projection
+merges only the texture, video, and cache typed lists, so unrelated scene
+elements do not add to that evidence walk. At N+1 the deterministic prefix is
+marked partial while loading still succeeds; the limits do not certify ufbx,
+animation baking, or legacy resource reads as globally memory-bounded.
+
 ## Scale capability inventory
 
 `load_scale_source` and `load_scale_source_bytes` return the normalized
 `Document` together with a deterministic `FbxScaleCapabilityInventory` from
 the same ufbx parse. The inventory gives every current DESIGN.md Appendix D.4
-domain an explicit status and records the ingestion boundary: original/target units and axes,
+domain an explicit status and records the ingestion boundary: advisory
+`Original*` coordinate fields and target units/axes,
 adjusted transforms, helper nodes and inherit-mode compensation, baked takes
 and discarded authored curve keys (including unsupported stackless curves),
 generated normals, cluster-derived bind

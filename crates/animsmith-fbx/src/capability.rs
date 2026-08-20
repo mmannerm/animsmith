@@ -1,7 +1,10 @@
 //! Conservative ufbx-side scale capability inventory.
 
-use animsmith_core::Document;
 use animsmith_core::scale::{ScaleCapabilityCoverage, ScaleCapabilityFacts};
+use animsmith_core::{
+    Document, LoadedSource, SourceConstructKindV1, SourceFactsViewV1, SourceResourceLocatorV1,
+    SourceSetCoverageStateV1,
+};
 use serde::Serialize;
 
 /// How one Appendix D.4 domain reaches the normalized FBX document.
@@ -180,9 +183,13 @@ impl From<ufbx::CoordinateAxis> for FbxCoordinateAxis {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FbxCoordinateNormalization {
-    /// Original source up axis reported by ufbx.
+    /// Advisory `OriginalUpAxis` value reported by ufbx.
+    ///
+    /// This is not the effective `UpAxis`/`FrontAxis`/`CoordAxis` basis.
     pub original_up_axis: FbxCoordinateAxis,
-    /// Original source unit in metres reported by ufbx.
+    /// Advisory `OriginalUnitScaleFactor` value in metres reported by ufbx.
+    ///
+    /// This is not the effective `UnitScaleFactor` source unit.
     pub original_unit_meters: f64,
     /// Target is right-handed, +Y up, and -Z forward.
     pub target_right_handed_y_up: bool,
@@ -328,17 +335,23 @@ pub struct FbxScaleCapabilityInventory {
     pub source_skins: Vec<FbxSourceIdentity>,
 }
 
-/// One FBX document and the capability inventory captured from the same parse.
-#[derive(Debug, Clone)]
+/// One immutable FBX source/document owner and scale capability inventory
+/// captured from the same parse.
+#[derive(Debug)]
 pub struct FbxScaleSource {
-    pub(crate) document: Document,
+    pub(crate) source: LoadedSource,
     pub(crate) inventory: FbxScaleCapabilityInventory,
 }
 
 impl FbxScaleSource {
     /// The normalized document carrying the documented ufbx source projection.
     pub fn document(&self) -> &Document {
-        &self.document
+        self.source.document()
+    }
+
+    /// The bounded importer-sensitive facts retained from the same ufbx parse.
+    pub fn source_facts(&self) -> SourceFactsViewV1<'_> {
+        self.source.source_facts()
     }
 
     /// The conservative ufbx-side inventory.
@@ -348,7 +361,11 @@ impl FbxScaleSource {
 
     /// Consume the source wrapper and retain its normalized document.
     pub fn into_document(self) -> Document {
-        self.document
+        self.source.into_document()
+    }
+
+    pub(crate) fn into_source(self) -> LoadedSource {
+        self.source
     }
 }
 
@@ -394,6 +411,49 @@ pub fn capability_facts(inventory: &FbxScaleCapabilityInventory) -> ScaleCapabil
     // inventory route; #286-A cannot declare the source layout rewrite-safe.
     facts.unsafe_accessor_layout_present = true;
     facts.external_resources_present = inventory.external_resource_count > 0;
+    facts
+}
+
+/// Project scale capabilities from one immutable captured FBX source.
+///
+/// The operation inventory keeps its detailed normalization/bake ledger. The
+/// shared raw-source facts independently supply custom/unknown construct and
+/// resource presence, and partial shared coverage always fails closed.
+pub fn capability_facts_for_source(source: &FbxScaleSource) -> ScaleCapabilityFacts {
+    join_source_facts(source, capability_facts(source.inventory()))
+}
+
+fn join_source_facts(
+    source: &FbxScaleSource,
+    mut facts: ScaleCapabilityFacts,
+) -> ScaleCapabilityFacts {
+    let source_facts = source.source_facts();
+    if [
+        source_facts.constructs().coverage().state(),
+        source_facts.resources().coverage().state(),
+    ]
+    .into_iter()
+    .any(|state| state != SourceSetCoverageStateV1::Complete)
+    {
+        facts.coverage = ScaleCapabilityCoverage::Unavailable;
+    }
+    for row in source_facts.constructs().rows() {
+        match row.kind() {
+            SourceConstructKindV1::CustomProperty => facts.extras_present = true,
+            SourceConstructKindV1::UnknownElement => {
+                facts.unknown_source_members_present = true;
+            }
+            SourceConstructKindV1::Extension => facts.unregistered_extensions_present = true,
+        }
+    }
+    if source_facts.resources().rows().iter().any(|row| {
+        !matches!(
+            row.locator(),
+            SourceResourceLocatorV1::Embedded | SourceResourceLocatorV1::DataUri
+        )
+    }) {
+        facts.external_resources_present = true;
+    }
     facts
 }
 
@@ -471,6 +531,44 @@ pub fn rest_bind_capability_facts(
     Ok(facts)
 }
 
+/// Project the narrow FBX rest/bind subset from one captured source.
+///
+/// Shared construct/resource coverage is checked before the older
+/// operation-specific inventory. This prevents a truncated positive-only raw
+/// projection from being treated as proof of absence.
+///
+/// # Errors
+///
+/// Returns a stable refusal when shared raw facts or the scale inventory
+/// cannot prove the selected domain.
+pub fn rest_bind_capability_facts_for_source(
+    source: &FbxScaleSource,
+) -> Result<ScaleCapabilityFacts, String> {
+    let mut shared = ScaleCapabilityFacts::default();
+    shared.coverage = ScaleCapabilityCoverage::Complete;
+    shared = join_source_facts(source, shared);
+    if shared.coverage != ScaleCapabilityCoverage::Complete
+        || shared.extras_present
+        || shared.unknown_source_members_present
+        || shared.unregistered_extensions_present
+        || shared.external_resources_present
+    {
+        return Err("FBX raw-source facts cannot prove the selected rest/bind domain".into());
+    }
+    let facts = join_source_facts(source, rest_bind_capability_facts(source.inventory())?);
+    if facts.is_supported_for(
+        animsmith_core::scale::ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 0,
+            expected_factor: 1.0,
+        },
+    ) {
+        Ok(facts)
+    } else {
+        Err("FBX raw-source facts contain an unsupported rest/bind domain".into())
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct AssetConversionFacts {
     pub(crate) truncated_influence_vertex_count: usize,
@@ -493,6 +591,7 @@ fn identity(index: usize, element: &ufbx::Element) -> FbxSourceIdentity {
 pub(crate) fn inventory(
     scene: &ufbx::Scene,
     conversion: &AssetConversionFacts,
+    construct_counts: crate::source_facts::SourceConstructCounts,
 ) -> FbxScaleCapabilityInventory {
     let non_triangle_face_count = scene
         .meshes
@@ -585,13 +684,8 @@ pub(crate) fn inventory(
         .map(|(index, mesh)| identity(index, &mesh.element))
         .collect::<Vec<_>>();
     let uninstanced_mesh_definition_count = uninstanced_source_meshes.len();
-    let user_defined_property_count = scene
-        .elements
-        .iter()
-        .flat_map(|element| element.props.props.iter())
-        .filter(|prop| prop.flags.has_any(ufbx::PropFlags::USER_DEFINED))
-        .count();
-    let unsupported_source_element_count = unsupported_source_element_count(scene);
+    let user_defined_property_count = construct_counts.user_defined_property_count;
+    let unsupported_source_element_count = construct_counts.unsupported_source_element_count;
     let external_resource_count = scene
         .textures
         .iter()
@@ -882,102 +976,91 @@ fn mesh_has_unsupported_source_payload(mesh: &ufbx::Mesh) -> bool {
         || *from_tessellated_nurbs
 }
 
-/// Classify every field in `ufbx::Scene` at one exhaustive structural
-/// boundary. Omitting `..` is deliberate: a ufbx upgrade that adds a typed
-/// list must fail to compile until that list receives a classification.
-fn unsupported_source_element_count(scene: &ufbx::Scene) -> usize {
-    let ufbx::Scene {
-        metadata: _,
-        settings: _,
-        root_node: _,
-        anim: _,
-        // Unknown and source kinds without a normalized core representation.
-        unknowns,
-        nodes: _,
-        meshes: _,
-        // Cameras and lights have dedicated counts/core facts.
-        lights: _,
-        cameras: _,
-        // Bone/empty attributes normalize into the complete node projection.
-        bones: _,
-        empties: _,
-        line_curves,
-        nurbs_curves,
-        nurbs_surfaces,
-        nurbs_trim_surfaces,
-        nurbs_trim_boundaries,
-        procedural_geometries,
-        stereo_cameras,
-        camera_switchers,
-        markers,
-        lod_groups,
-        // Skin rows have dedicated bind/influence counts and sidecars.
-        skin_deformers: _,
-        skin_clusters: _,
-        // Deformers are counted separately; their subordinate payload rows
-        // are still unmodeled source elements.
-        blend_deformers: _,
-        blend_channels,
-        blend_shapes,
-        cache_deformers: _,
-        cache_files,
-        // The loader rebuilds its documented material/texture subset;
-        // external payload absence is counted separately.
-        materials: _,
-        textures: _,
-        videos: _,
-        shaders,
-        shader_bindings,
-        // Animation lists are evaluated through bake_anim.
-        anim_stacks: _,
-        anim_layers: _,
-        anim_values: _,
-        anim_curves: _,
-        display_layers,
-        selection_sets,
-        selection_nodes,
-        characters,
-        constraints,
-        audio_layers,
-        audio_clips,
-        poses,
-        metadata_objects,
-        // Texture-file records carry source linkage beyond the rebuilt
-        // texture subset, so they are conservatively unmodeled.
-        texture_files,
-        // Scene-wide structural indexes are parser-derived views, not source
-        // element domains that need independent semantic counting.
-        elements: _,
-        connections_src: _,
-        connections_dst: _,
-        elements_by_name: _,
-        dom_root: _,
-    } = scene;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use animsmith_core::{
+        InputIdentity, RawSourceFactsBuilderV1, SourceConstructFactV1, SourceFactDomainV1,
+        SourceFormatV1, SourceLoaderDispositionV1, SourceLogicalLocatorV1, SourceProvenanceV1,
+        SourceResourceKindV1, SourceResourceReferenceV1, SourceTextV1,
+    };
+    use std::path::PathBuf;
 
-    unknowns.len()
-        + line_curves.len()
-        + nurbs_curves.len()
-        + nurbs_surfaces.len()
-        + nurbs_trim_surfaces.len()
-        + nurbs_trim_boundaries.len()
-        + procedural_geometries.len()
-        + stereo_cameras.len()
-        + camera_switchers.len()
-        + markers.len()
-        + lod_groups.len()
-        + blend_channels.len()
-        + blend_shapes.len()
-        + cache_files.len()
-        + shaders.len()
-        + shader_bindings.len()
-        + display_layers.len()
-        + selection_sets.len()
-        + selection_nodes.len()
-        + characters.len()
-        + constraints.len()
-        + audio_layers.len()
-        + audio_clips.len()
-        + poses.len()
-        + metadata_objects.len()
-        + texture_files.len()
+    fn captured_with(configure: impl FnOnce(&mut RawSourceFactsBuilderV1)) -> FbxScaleSource {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rigged_triangle.fbx");
+        let baseline = crate::load_scale_source(&fixture).expect("checked-in FBX fixture loads");
+        let document = baseline.document().clone();
+        let inventory = baseline.inventory().clone();
+        let identity: InputIdentity = baseline.source_facts().primary_identity().clone();
+        let mut builder = RawSourceFactsBuilderV1::new(SourceFormatV1::Fbx, identity);
+        configure(&mut builder);
+        let source = builder.finish(document).expect("synthetic raw facts bind");
+        FbxScaleSource { source, inventory }
+    }
+
+    fn parser_provenance(path: &str) -> SourceProvenanceV1 {
+        SourceProvenanceV1::parser_projected(
+            SourceLogicalLocatorV1::fbx_parser_path(path).expect("test parser path is valid"),
+        )
+    }
+
+    #[test]
+    fn source_aware_rest_bind_rejects_partial_relevant_coverage() {
+        for source in [
+            captured_with(|builder| {
+                builder.mark_budget_exceeded(SourceFactDomainV1::Constructs);
+                builder.mark_complete(SourceFactDomainV1::Resources);
+            }),
+            captured_with(|builder| {
+                builder.mark_complete(SourceFactDomainV1::Constructs);
+                builder.mark_budget_exceeded(SourceFactDomainV1::Resources);
+            }),
+        ] {
+            assert!(
+                rest_bind_capability_facts_for_source(&source).is_err(),
+                "partial construct/resource coverage must fail before the operation inventory"
+            );
+        }
+    }
+
+    #[test]
+    fn source_aware_rest_bind_rejects_positive_shared_domains() {
+        for kind in [
+            SourceConstructKindV1::CustomProperty,
+            SourceConstructKindV1::UnknownElement,
+        ] {
+            let source = captured_with(|builder| {
+                builder.push_construct(
+                    SourceConstructFactV1::new(
+                        0,
+                        kind,
+                        SourceTextV1::new("synthetic").expect("bounded test name"),
+                        false,
+                        1,
+                        SourceLoaderDispositionV1::Unsupported,
+                        parser_provenance("fbx:synthetic/construct"),
+                    )
+                    .expect("positive test construct"),
+                );
+                builder.mark_complete(SourceFactDomainV1::Constructs);
+                builder.mark_complete(SourceFactDomainV1::Resources);
+            });
+            assert!(rest_bind_capability_facts_for_source(&source).is_err());
+        }
+
+        let external = captured_with(|builder| {
+            builder.mark_complete(SourceFactDomainV1::Constructs);
+            builder.push_resource(SourceResourceReferenceV1::new(
+                0,
+                SourceResourceKindV1::Texture,
+                0,
+                SourceResourceLocatorV1::classify("texture.png"),
+                SourceLoaderDispositionV1::Unknown,
+                parser_provenance("fbx:textures/0/filename"),
+            ));
+            builder.mark_complete(SourceFactDomainV1::Resources);
+        });
+        assert!(rest_bind_capability_facts_for_source(&external).is_err());
+    }
 }

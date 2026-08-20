@@ -1,5 +1,7 @@
-//! [`load`] and [`load_bytes`] read `.gltf`/`.glb` input into an
-//! [`animsmith_core::Document`], [`write::write`] emits a document as
+//! [`load_source`] and [`load_source_bytes`] read `.gltf`/`.glb` input into
+//! an immutable normalized-document plus raw-source-facts owner. [`load`] and
+//! [`load_bytes`] retain the legacy document-only surface, and [`write::write`]
+//! emits a document as
 //! glTF/GLB, and the [`fix`] module provides byte-surgical quaternion
 //! repairs. [`preflight_scale_source`] inventories the original raw source and
 //! fails closed on domains that current scale producers cannot preserve.
@@ -86,8 +88,9 @@ pub use capability::{
 pub use scale::{
     GltfRawJsonDifference, GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary,
     GltfScaleArtifact, GltfScaleArtifactProof, GltfScaleRewriteError, capability_facts,
-    operation_capability_facts, prove_rewritten_artifact, prove_rewritten_rest_bind,
-    rewrite_linear_units, rewrite_rest_bind, rewrite_scale_plan,
+    capability_facts_for_source, operation_capability_facts, operation_capability_facts_for_source,
+    prove_rewritten_artifact, prove_rewritten_rest_bind, rewrite_linear_units, rewrite_rest_bind,
+    rewrite_scale_plan,
 };
 
 use animsmith_core::model::{
@@ -100,6 +103,16 @@ use animsmith_core::model::{
     SourceNodeAsset, SourceNodeLocalRest, SourceSkeletonAssets, SourceSkeletonCoverage,
     SourceSkinAsset, SourceSkinAttachment, SourceTextureAsset, TextureAsset, Track, TrackValues,
     Transform,
+};
+use animsmith_core::{
+    InputIdentity, LoadedSource, RAW_SOURCE_V1_MAX_TEXT_BYTES, RawSourceFactsBuilderV1,
+    SourceAxisV1, SourceChannelFactV1, SourceChannelPropertyV1, SourceClipFactV1,
+    SourceComponentMaskV1, SourceConstructFactV1, SourceConstructKindV1, SourceCoordinateBasisV1,
+    SourceFactDomainV1, SourceFactSetV1, SourceFactsError, SourceFormatV1, SourceInterpolationV1,
+    SourceLinearUnitV1, SourceLoaderDispositionV1, SourceLogicalLocatorV1, SourceObservationV1,
+    SourceProvenanceKindV1, SourceProvenanceV1, SourceResourceKindV1, SourceResourceLocatorV1,
+    SourceResourceReferenceV1, SourceTargetKindV1, SourceTargetV1, SourceTextV1, SourceTimeRangeV1,
+    SourceUnavailableReasonV1,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
@@ -128,6 +141,9 @@ pub enum LoadError {
     /// The `gltf` parser rejected the container.
     #[error("glTF parse error: {0}")]
     Gltf(#[from] gltf::Error),
+    /// The format-neutral source-facts projection contradicted a core invariant.
+    #[error("invalid raw-source facts: {0}")]
+    SourceFacts(#[from] SourceFactsError),
     /// Buffer resolution or GLB framing failed.
     #[error("buffer resolution failed: {0}")]
     Buffer(String),
@@ -290,31 +306,23 @@ pub enum WriteError {
 pub(crate) fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, LoadError> {
     let decoded = decode_external_uri_path(uri)?;
     if decoded.is_empty() || decoded.contains('\\') {
-        return Err(LoadError::Buffer(format!(
-            "unsafe external buffer URI {uri:?}: expected a relative child path"
-        )));
+        return Err(unsafe_external_uri());
     }
     let path = Path::new(&decoded);
     if path.is_absolute() {
-        return Err(LoadError::Buffer(format!(
-            "unsafe external buffer URI {uri:?}: absolute paths are not supported"
-        )));
+        return Err(unsafe_external_uri());
     }
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
             Component::Normal(part) => out.push(part),
             _ => {
-                return Err(LoadError::Buffer(format!(
-                    "unsafe external buffer URI {uri:?}: expected a relative child path"
-                )));
+                return Err(unsafe_external_uri());
             }
         }
     }
     if out.as_os_str().is_empty() {
-        return Err(LoadError::Buffer(format!(
-            "unsafe external buffer URI {uri:?}: expected a relative child path"
-        )));
+        return Err(unsafe_external_uri());
     }
     Ok(out)
 }
@@ -333,21 +341,21 @@ fn decode_external_uri_path(uri: &str) -> Result<String, LoadError> {
             continue;
         }
         let Some((&high, &low)) = bytes.get(index + 1).zip(bytes.get(index + 2)) else {
-            return Err(unsafe_external_uri(uri));
+            return Err(unsafe_external_uri());
         };
         let Some(value) = hex_value(high)
             .zip(hex_value(low))
             .map(|(high, low)| high << 4 | low)
         else {
-            return Err(unsafe_external_uri(uri));
+            return Err(unsafe_external_uri());
         };
         if matches!(value, b'/' | b'\\' | 0) {
-            return Err(unsafe_external_uri(uri));
+            return Err(unsafe_external_uri());
         }
         decoded.push(value);
         index += 3;
     }
-    String::from_utf8(decoded).map_err(|_| unsafe_external_uri(uri))
+    String::from_utf8(decoded).map_err(|_| unsafe_external_uri())
 }
 
 fn hex_value(value: u8) -> Option<u8> {
@@ -359,10 +367,8 @@ fn hex_value(value: u8) -> Option<u8> {
     }
 }
 
-fn unsafe_external_uri(uri: &str) -> LoadError {
-    LoadError::Buffer(format!(
-        "unsafe external buffer URI {uri:?}: expected a relative child path"
-    ))
+fn unsafe_external_uri() -> LoadError {
+    LoadError::Buffer("unsafe external buffer URI: expected a relative child path".to_owned())
 }
 
 /// Reject a GLB whose 12-byte header declares a total length the file
@@ -436,6 +442,25 @@ pub(crate) fn validate_animation_channels(root: &gltf::json::Root) -> Result<(),
 pub(crate) fn validate_animations(doc: &gltf::Document) -> Result<(), LoadError> {
     validate_animation_channels(doc.as_json())?;
     validate_animation_accessor_encodings(doc)
+}
+
+/// Apply the typed glTF validation boundary while admitting declarations for
+/// extensions this loader inventories but does not implement. The `gltf`
+/// crate reports those required-extension declarations as `Unsupported`; all
+/// structural validation failures remain load errors.
+pub(crate) fn validate_document(document: &gltf::Document) -> Result<(), gltf::Error> {
+    use gltf::json::validation::{Error, Validate};
+
+    let root = document.as_json();
+    let mut errors = Vec::new();
+    root.validate(root, gltf::json::Path::new, &mut |path, error| {
+        errors.push((path(), error));
+    });
+    if errors.iter().all(|(_, error)| *error == Error::Unsupported) {
+        Ok(())
+    } else {
+        Err(gltf::Error::Validation(errors))
+    }
 }
 
 /// The element encoding one `gltf` reader can decode: the single accessor
@@ -1169,11 +1194,27 @@ fn validate_track_lengths(
 /// the selected reader cannot decode or laid out so it cannot walk them, or
 /// node graphs that cannot be represented as a skeleton forest.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
+    load_source(path).map(LoadedSource::into_document)
+}
+
+/// Load a `.gltf` or `.glb` file with immutable importer-sensitive source facts.
+///
+/// The returned owner binds the normalized document and raw facts to the exact
+/// primary bytes read here. It intentionally exposes no mutable document
+/// access; consume it with [`LoadedSource::into_document`] to discard the
+/// sidecar and recover the legacy document-only value.
+///
+/// # Errors
+///
+/// Returns [`LoadError`] under the same conditions as [`load`]. Projection
+/// budget exhaustion is represented as partial fact coverage and is never a
+/// load failure.
+pub fn load_source(path: &Path) -> Result<LoadedSource, LoadError> {
     let bytes = std::fs::read(path).map_err(|source| LoadError::Io {
         path: path.display().to_string(),
         source,
     })?;
-    load_bytes(path, &bytes)
+    load_source_bytes(path, &bytes)
 }
 
 /// Load a `.glb` or `.gltf` byte slice into a core [`Document`].
@@ -1190,6 +1231,22 @@ pub fn load(path: &Path) -> Result<Document, LoadError> {
 /// cannot decode or laid out so it cannot walk them, or node graphs that
 /// cannot be represented as a skeleton forest.
 pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
+    load_source_bytes(path, bytes).map(LoadedSource::into_document)
+}
+
+/// Load captured `.gltf` or `.glb` bytes with immutable raw-source facts.
+///
+/// `bytes` is both the parser input and the authority for
+/// [`animsmith_core::InputIdentity`]. `path` remains diagnostics-only and is
+/// used to resolve sibling resources; it never contributes to source identity
+/// or container-kind detection.
+///
+/// # Errors
+///
+/// Returns [`LoadError`] under the same conditions as [`load_bytes`]. A
+/// source-facts projection limit produces a successful value with partial
+/// coverage.
+pub fn load_source_bytes(path: &Path, bytes: &[u8]) -> Result<LoadedSource, LoadError> {
     // Parse from the supplied slice rather than via `Gltf::open`: the reader
     // path (`Glb::from_reader`) trusts the GLB header's declared length and
     // pre-allocates `vec![0; declared_len]` before reading a byte, so a
@@ -1198,6 +1255,10 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     // within invariant-1 (LoadError, never an unbounded allocation). This
     // mirrors what `fix` already does.
     validate_glb_framing(bytes)?;
+    // Keep the legacy loader's strict validation boundary: required
+    // extensions the parser cannot implement remain load errors. The
+    // permissive validator is reserved for scale preflight, which must
+    // inventory unsupported declarations before refusing an operation.
     let gltf = gltf::Gltf::from_slice(bytes)?;
     validate_animations(&gltf.document)?;
     let buffers = resolve_buffers(&gltf, path.parent())?;
@@ -1207,12 +1268,196 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     // also where malformed graphs are rejected (so that runs once too).
     let topo = topology(&gltf.document)?;
     let source_skeleton = extract_source_skeleton(&gltf.document, &buffers, &topo);
-    let mut doc = build_document(&gltf, &buffers, path, &topo)?;
+    let mut facts = source_facts_builder(bytes)?;
+    let mut doc = build_document(&gltf, &buffers, path, &topo, &mut facts)?;
     doc.assets = extract_assets(&gltf.document, &buffers, path.parent(), &topo.bone_of_node);
     doc.assets.scenes = extract_scenes(&gltf.document, &topo.bone_of_node);
     doc.assets.default_scene = gltf.document.default_scene().map(|scene| scene.index());
     doc.assets.source_skeleton = source_skeleton;
-    Ok(doc)
+    project_extension_facts(&gltf.document, &mut facts);
+    project_resource_facts(&gltf.document, &mut facts);
+    facts.finish(doc).map_err(LoadError::from)
+}
+
+fn source_facts_builder(primary_bytes: &[u8]) -> Result<RawSourceFactsBuilderV1, SourceFactsError> {
+    let format = if primary_bytes.starts_with(b"glTF") {
+        SourceFormatV1::Glb
+    } else {
+        SourceFormatV1::GltfJson
+    };
+    let mut facts = RawSourceFactsBuilderV1::new(format, InputIdentity::from_bytes(primary_bytes));
+    facts.set_linear_unit(SourceObservationV1::observed(
+        SourceLinearUnitV1::new(1.0)?,
+        SourceProvenanceV1::format_defined(),
+        SourceLoaderDispositionV1::Preserved,
+    ));
+    facts.set_coordinate_basis(SourceObservationV1::observed(
+        SourceCoordinateBasisV1::new(
+            SourceAxisV1::PositiveX,
+            SourceAxisV1::PositiveY,
+            SourceAxisV1::PositiveZ,
+        )?,
+        SourceProvenanceV1::format_defined(),
+        SourceLoaderDispositionV1::Preserved,
+    ));
+    facts.set_frames_per_second(SourceObservationV1::proven_absent(
+        SourceProvenanceV1::format_defined(),
+    ));
+
+    Ok(facts)
+}
+
+fn project_extension_facts(document: &gltf::Document, facts: &mut RawSourceFactsBuilderV1) {
+    let mut source_order_index = 0;
+    for name in document.extensions_used() {
+        if !project_extension_declaration(name, false, "/extensionsUsed", source_order_index, facts)
+        {
+            return;
+        }
+        source_order_index += 1;
+    }
+    for name in document.extensions_required() {
+        if !project_extension_declaration(
+            name,
+            true,
+            "/extensionsRequired",
+            source_order_index,
+            facts,
+        ) {
+            return;
+        }
+        source_order_index += 1;
+    }
+    facts.mark_complete(SourceFactDomainV1::Constructs);
+}
+
+fn project_extension_declaration(
+    name: &str,
+    required: bool,
+    provenance: &'static str,
+    source_order_index: usize,
+    facts: &mut RawSourceFactsBuilderV1,
+) -> bool {
+    if facts.remaining_observation_rows() == 0 {
+        facts.mark_budget_exceeded(SourceFactDomainV1::Constructs);
+        return false;
+    }
+    if name.len().saturating_add(provenance.len()) > facts.remaining_text_bytes()
+        || name.len() > RAW_SOURCE_V1_MAX_TEXT_BYTES
+    {
+        facts.mark_budget_exceeded(SourceFactDomainV1::Constructs);
+        return false;
+    }
+    let row = SourceConstructFactV1::new(
+        source_order_index,
+        SourceConstructKindV1::Extension,
+        SourceTextV1::new(name).expect("extension name was checked against the text bound"),
+        required,
+        1,
+        SourceLoaderDispositionV1::Unsupported,
+        located_provenance(
+            SourceProvenanceKindV1::SourceDeclared,
+            provenance.to_owned(),
+        ),
+    )
+    .expect("an extension declaration has a positive count");
+    facts.push_construct(row)
+}
+
+fn project_resource_facts(document: &gltf::Document, facts: &mut RawSourceFactsBuilderV1) {
+    let mut source_order_index = 0;
+    for buffer in document.buffers() {
+        if facts.remaining_resource_rows() == 0 || facts.remaining_observation_rows() == 0 {
+            facts.mark_budget_exceeded(SourceFactDomainV1::Resources);
+            return;
+        }
+        let (possible_locator_bytes, pointer_len) = match buffer.source() {
+            gltf::buffer::Source::Bin => (0, "/buffers/".len() + decimal_len(buffer.index())),
+            gltf::buffer::Source::Uri(uri) => (
+                SourceResourceLocatorV1::retained_relative_bytes(uri),
+                "/buffers/".len() + decimal_len(buffer.index()) + "/uri".len(),
+            ),
+        };
+        if possible_locator_bytes.saturating_add(pointer_len) > facts.remaining_text_bytes() {
+            facts.mark_budget_exceeded(SourceFactDomainV1::Resources);
+            return;
+        }
+        let (locator, pointer) = match buffer.source() {
+            gltf::buffer::Source::Bin => (
+                SourceResourceLocatorV1::Embedded,
+                format!("/buffers/{}", buffer.index()),
+            ),
+            gltf::buffer::Source::Uri(uri) => (
+                SourceResourceLocatorV1::classify(uri),
+                format!("/buffers/{}/uri", buffer.index()),
+            ),
+        };
+        if !facts.push_resource(SourceResourceReferenceV1::new(
+            source_order_index,
+            SourceResourceKindV1::Buffer,
+            buffer.index() as u64,
+            locator,
+            SourceLoaderDispositionV1::Preserved,
+            located_provenance(SourceProvenanceKindV1::SourceDeclared, pointer),
+        )) {
+            return;
+        }
+        source_order_index += 1;
+    }
+    for image in document.images() {
+        if facts.remaining_resource_rows() == 0 || facts.remaining_observation_rows() == 0 {
+            facts.mark_budget_exceeded(SourceFactDomainV1::Resources);
+            return;
+        }
+        let (possible_locator_bytes, pointer_len) = match image.source() {
+            gltf::image::Source::View { .. } => (0, "/images/".len() + decimal_len(image.index())),
+            gltf::image::Source::Uri { uri, .. } => (
+                SourceResourceLocatorV1::retained_relative_bytes(uri),
+                "/images/".len() + decimal_len(image.index()) + "/uri".len(),
+            ),
+        };
+        if possible_locator_bytes.saturating_add(pointer_len) > facts.remaining_text_bytes() {
+            facts.mark_budget_exceeded(SourceFactDomainV1::Resources);
+            return;
+        }
+        let (locator, pointer) = match image.source() {
+            gltf::image::Source::View { .. } => (
+                SourceResourceLocatorV1::Embedded,
+                format!("/images/{}", image.index()),
+            ),
+            gltf::image::Source::Uri { uri, .. } => (
+                SourceResourceLocatorV1::classify(uri),
+                format!("/images/{}/uri", image.index()),
+            ),
+        };
+        if !facts.push_resource(SourceResourceReferenceV1::new(
+            source_order_index,
+            SourceResourceKindV1::Image,
+            image.index() as u64,
+            locator,
+            SourceLoaderDispositionV1::Preserved,
+            located_provenance(SourceProvenanceKindV1::SourceDeclared, pointer),
+        )) {
+            return;
+        }
+        source_order_index += 1;
+    }
+    facts.mark_complete(SourceFactDomainV1::Resources);
+}
+
+fn located_provenance(kind: SourceProvenanceKindV1, locator: String) -> SourceProvenanceV1 {
+    let locator = SourceLogicalLocatorV1::gltf_json_pointer(locator)
+        .expect("generated glTF locator is valid and bounded");
+    match kind {
+        SourceProvenanceKindV1::SourceDeclared => SourceProvenanceV1::source_declared(locator),
+        SourceProvenanceKindV1::ParserProjected => SourceProvenanceV1::parser_projected(locator),
+        SourceProvenanceKindV1::DerivedFromSource => {
+            SourceProvenanceV1::derived_from_source(locator)
+        }
+        SourceProvenanceKindV1::FormatDefined => {
+            unreachable!("located glTF provenance is never format-defined")
+        }
+    }
 }
 
 pub(crate) fn resolve_buffers(
@@ -1233,9 +1478,7 @@ pub(crate) fn resolve_buffers(
                             .split_once("base64,")
                             .map(|(_, p)| p)
                             .ok_or_else(|| {
-                                LoadError::Buffer(format!(
-                                    "unsupported data URI in buffer: {uri:.40}"
-                                ))
+                                LoadError::Buffer("unsupported data URI in buffer".to_owned())
                             })?;
                     base64::engine::general_purpose::STANDARD
                         .decode(payload)
@@ -1245,7 +1488,10 @@ pub(crate) fn resolve_buffers(
                         .unwrap_or(Path::new("."))
                         .join(safe_external_buffer_path(uri)?);
                     std::fs::read(&path).map_err(|source| LoadError::Io {
-                        path: path.display().to_string(),
+                        // Do not reproduce a source-controlled resource
+                        // locator or its resolved host path through the new
+                        // evidence-aware API's error surface.
+                        path: "<external glTF buffer>".to_owned(),
                         source,
                     })?
                 }
@@ -1256,11 +1502,260 @@ pub(crate) fn resolve_buffers(
     Ok(buffers)
 }
 
+struct PendingGltfClipFacts {
+    animation_index: usize,
+    source_name: SourceObservationV1<SourceTextV1>,
+    normalized_clip_provenance: SourceProvenanceV1,
+    range_provenance: SourceProvenanceV1,
+    channels: Vec<SourceChannelFactV1>,
+    channel_limit: usize,
+    remaining_text: usize,
+    minimum: f64,
+    maximum: f64,
+    saw_input: bool,
+    sampler_inputs_available: bool,
+    sampler_inputs_finite: bool,
+    truncated: bool,
+}
+
+impl PendingGltfClipFacts {
+    fn begin(
+        animation: &gltf::Animation<'_>,
+        builder: &mut RawSourceFactsBuilderV1,
+    ) -> Option<Self> {
+        if builder.remaining_clip_rows() == 0 || builder.remaining_observation_rows() == 0 {
+            builder.mark_budget_exceeded(SourceFactDomainV1::Clips);
+            return None;
+        }
+        let animation_index = animation.index();
+        let prefix_len = "/animations/".len() + decimal_len(animation_index);
+        let name_locator_len = prefix_len + "/name".len();
+        let normalized_locator_len = prefix_len;
+        let range_locator_len = prefix_len + "/samplers/*/input".len();
+        let retained_name_len = animation.name().map_or(0, |name| {
+            if name.len() <= RAW_SOURCE_V1_MAX_TEXT_BYTES {
+                name.len()
+            } else {
+                0
+            }
+        });
+        let fixed_text_len = name_locator_len
+            .saturating_add(retained_name_len)
+            .saturating_add(normalized_locator_len)
+            .saturating_add(range_locator_len);
+        if fixed_text_len > builder.remaining_text_bytes() {
+            builder.mark_budget_exceeded(SourceFactDomainV1::Clips);
+            return None;
+        }
+
+        let name_locator = format!("/animations/{animation_index}/name");
+        let name_provenance =
+            located_provenance(SourceProvenanceKindV1::SourceDeclared, name_locator);
+        let source_name = match animation.name() {
+            Some(name) if name.len() <= RAW_SOURCE_V1_MAX_TEXT_BYTES => {
+                SourceObservationV1::observed(
+                    SourceTextV1::new(name).expect("source name length checked before cloning"),
+                    name_provenance,
+                    SourceLoaderDispositionV1::Preserved,
+                )
+            }
+            Some(_) => SourceObservationV1::unavailable(
+                SourceUnavailableReasonV1::ProjectionBudgetExceeded,
+                Some(name_provenance),
+                SourceLoaderDispositionV1::Preserved,
+            ),
+            None => SourceObservationV1::proven_absent(name_provenance),
+        };
+
+        Some(Self {
+            animation_index,
+            source_name,
+            normalized_clip_provenance: located_provenance(
+                SourceProvenanceKindV1::ParserProjected,
+                format!("/animations/{animation_index}"),
+            ),
+            range_provenance: located_provenance(
+                SourceProvenanceKindV1::DerivedFromSource,
+                format!("/animations/{animation_index}/samplers/*/input"),
+            ),
+            channels: Vec::new(),
+            channel_limit: builder.remaining_observation_rows().saturating_sub(1),
+            remaining_text: builder.remaining_text_bytes() - fixed_text_len,
+            minimum: f64::INFINITY,
+            maximum: f64::NEG_INFINITY,
+            saw_input: false,
+            sampler_inputs_available: true,
+            sampler_inputs_finite: true,
+            truncated: false,
+        })
+    }
+
+    fn record_channel(&mut self, channel: &gltf::animation::Channel<'_>, times: Option<&[f32]>) {
+        if self.channels.len() >= self.channel_limit {
+            self.truncated = true;
+            return;
+        }
+        let sampler = channel.sampler();
+        let channel_index = channel.index();
+        let interpolation_locator_len = "/animations/".len()
+            + decimal_len(self.animation_index)
+            + "/samplers/".len()
+            + decimal_len(sampler.index())
+            + "/interpolation".len();
+        let channel_locator_len = "/animations/".len()
+            + decimal_len(self.animation_index)
+            + "/channels/".len()
+            + decimal_len(channel_index);
+        let row_text_len = interpolation_locator_len.saturating_add(channel_locator_len);
+        if row_text_len > self.remaining_text {
+            self.truncated = true;
+            return;
+        }
+
+        let (property, components, disposition) = match channel.target().property() {
+            gltf::animation::Property::Translation => (
+                SourceChannelPropertyV1::Translation,
+                SourceComponentMaskV1::new(true, true, true),
+                SourceLoaderDispositionV1::Preserved,
+            ),
+            gltf::animation::Property::Rotation => (
+                SourceChannelPropertyV1::Rotation,
+                SourceComponentMaskV1::new(true, true, true),
+                SourceLoaderDispositionV1::Preserved,
+            ),
+            gltf::animation::Property::Scale => (
+                SourceChannelPropertyV1::Scale,
+                SourceComponentMaskV1::new(true, true, true),
+                SourceLoaderDispositionV1::Preserved,
+            ),
+            gltf::animation::Property::MorphTargetWeights => (
+                SourceChannelPropertyV1::Weights,
+                SourceComponentMaskV1::new(false, false, false),
+                SourceLoaderDispositionV1::Discarded,
+            ),
+        };
+        let interpolation = match sampler.interpolation() {
+            gltf::animation::Interpolation::Linear => SourceInterpolationV1::Linear,
+            gltf::animation::Interpolation::Step => SourceInterpolationV1::Step,
+            gltf::animation::Interpolation::CubicSpline => SourceInterpolationV1::CubicSpline,
+        };
+        let interpolation_provenance = located_provenance(
+            // `gltf` projects an omitted interpolation member to LINEAR, so
+            // this typed value is parser-effective rather than proof that the
+            // JSON member was explicitly authored.
+            SourceProvenanceKindV1::ParserProjected,
+            format!(
+                "/animations/{}/samplers/{}/interpolation",
+                self.animation_index,
+                sampler.index()
+            ),
+        );
+        let channel_provenance = located_provenance(
+            SourceProvenanceKindV1::SourceDeclared,
+            format!(
+                "/animations/{}/channels/{channel_index}",
+                self.animation_index
+            ),
+        );
+        self.channels.push(
+            SourceChannelFactV1::new(
+                channel_index,
+                SourceTargetV1::new(
+                    SourceTargetKindV1::Node,
+                    channel.target().node().index() as u64,
+                ),
+                property,
+                components,
+                SourceObservationV1::observed(interpolation, interpolation_provenance, disposition),
+                disposition,
+                channel_provenance,
+            )
+            .with_accessors(sampler.input().index(), sampler.output().index()),
+        );
+        self.remaining_text -= row_text_len;
+
+        match times {
+            Some(times) => {
+                for &time in times {
+                    self.saw_input = true;
+                    if time.is_finite() {
+                        self.minimum = self.minimum.min(f64::from(time));
+                        self.maximum = self.maximum.max(f64::from(time));
+                    } else {
+                        self.sampler_inputs_finite = false;
+                    }
+                }
+            }
+            None => self.sampler_inputs_available = false,
+        }
+    }
+
+    fn finish(self) -> Result<SourceClipFactV1, SourceFactsError> {
+        let sampler_range = if self.truncated {
+            SourceObservationV1::unavailable(
+                SourceUnavailableReasonV1::ProjectionBudgetExceeded,
+                Some(self.range_provenance),
+                SourceLoaderDispositionV1::Preserved,
+            )
+        } else if !self.sampler_inputs_available {
+            SourceObservationV1::unavailable(
+                SourceUnavailableReasonV1::ParserUnavailable,
+                Some(self.range_provenance),
+                SourceLoaderDispositionV1::Unknown,
+            )
+        } else if !self.sampler_inputs_finite {
+            SourceObservationV1::unavailable(
+                SourceUnavailableReasonV1::Malformed,
+                Some(self.range_provenance),
+                SourceLoaderDispositionV1::Preserved,
+            )
+        } else if self.saw_input {
+            SourceObservationV1::observed(
+                SourceTimeRangeV1::new(self.minimum, self.maximum)?,
+                self.range_provenance,
+                SourceLoaderDispositionV1::Preserved,
+            )
+        } else {
+            SourceObservationV1::proven_absent(self.range_provenance)
+        };
+        let channels = if self.truncated {
+            SourceFactSetV1::partial(
+                self.channels,
+                SourceUnavailableReasonV1::ProjectionBudgetExceeded,
+            )
+        } else {
+            SourceFactSetV1::complete(self.channels)
+        };
+        Ok(SourceClipFactV1::new(
+            self.animation_index,
+            self.source_name,
+            SourceObservationV1::observed(
+                self.animation_index,
+                self.normalized_clip_provenance,
+                SourceLoaderDispositionV1::Preserved,
+            ),
+            SourceObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+            sampler_range,
+            channels,
+        ))
+    }
+}
+
+fn decimal_len(mut value: usize) -> usize {
+    let mut len = 1;
+    while value >= 10 {
+        value /= 10;
+        len += 1;
+    }
+    len
+}
+
 fn build_document(
     gltf: &gltf::Gltf,
     buffers: &[Vec<u8>],
     path: &Path,
     topo: &Topology,
+    source_facts: &mut RawSourceFactsBuilderV1,
 ) -> Result<Document, LoadError> {
     let doc = &gltf.document;
 
@@ -1317,7 +1812,16 @@ fn build_document(
     // Animations → clips. Unnamed clips get stable positional names.
     let mut clips = Vec::new();
     let mut name_uses: BTreeMap<String, usize> = BTreeMap::new();
+    let mut facts_complete = true;
     for animation in doc.animations() {
+        let mut pending_facts = if facts_complete {
+            PendingGltfClipFacts::begin(&animation, source_facts)
+        } else {
+            None
+        };
+        if pending_facts.is_none() {
+            facts_complete = false;
+        }
         let base_name = animation
             .name()
             .map(str::to_owned)
@@ -1356,7 +1860,13 @@ fn build_document(
             check_sampler_accessor(&name, node, "input", &sampler.input())?;
             check_sampler_accessor(&name, node, "output", &sampler.output())?;
             let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
-            let Some(times) = reader.read_inputs().map(|it| it.collect::<Vec<f32>>()) else {
+            let times = reader.read_inputs().map(|it| it.collect::<Vec<f32>>());
+            if let Some(pending) = pending_facts.as_mut()
+                && !pending.truncated
+            {
+                pending.record_channel(&channel, times.as_deref());
+            }
+            let Some(times) = times else {
                 continue;
             };
             let (property, values) = match reader.read_outputs() {
@@ -1401,6 +1911,15 @@ fn build_document(
             duration_s: duration,
             tracks,
         });
+        if let Some(pending) = pending_facts {
+            let truncated = pending.truncated;
+            if !source_facts.push_clip(pending.finish()?) || truncated {
+                facts_complete = false;
+            }
+        }
+    }
+    if facts_complete {
+        source_facts.mark_complete(SourceFactDomainV1::Clips);
     }
 
     Ok(Document {

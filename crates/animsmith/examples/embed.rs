@@ -9,19 +9,19 @@ use animsmith_core::config::{ClipExpectations, MovementOwner, Pinned};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, InputIdentity, LintEnvelope, LintFileReport,
-    MeasurementContract, MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks,
-    evaluate_checks,
+    CheckCtx, CheckSelection, Config, LintEnvelope, LintFileReport, MeasurementContract,
+    MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks,
 };
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Read and load: retain primary-file bytes so reported identity covers
-    // the exact payload this embedding judged.
+    // 1. Read and load once: the immutable source wrapper binds the normalized
+    // document and bounded raw facts to the exact primary-file bytes judged.
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/rig.gltf");
     let bytes = std::fs::read(&path)?;
-    let input = InputIdentity::from_bytes(&bytes);
-    let doc = animsmith_gltf::load_bytes(&path, &bytes)?;
+    let source = animsmith_gltf::load_source_bytes(&path, &bytes)?;
+    let input = source.source_facts().primary_identity().clone();
+    let doc = source.document();
     println!(
         "loaded {} bones, {} clip(s)",
         doc.skeleton.bones.len(),
@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4a. Measure: the raw metric map, no judgment. Share the metric
     //     grids with linting so each clip is sampled once.
-    let grids = MetricGrids::new(&doc);
+    let grids = MetricGrids::new(doc);
     let measurements = measure_document(&grids, &roles, &config);
     for (clip, m) in &measurements {
         println!(
@@ -117,9 +117,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vec![LintFileReport::new(
             path.display().to_string(),
             input,
-            RigInfo::from_resolved(&doc, &roles)?,
+            RigInfo::from_resolved(doc, &roles)?,
             evaluations,
-            MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(&doc))?,
+            MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(doc))?,
         )],
     );
     println!("result contract: {}", serde_json::to_string(&report)?);

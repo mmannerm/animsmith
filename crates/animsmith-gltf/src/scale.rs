@@ -17,13 +17,13 @@
 //!     ScaleCandidate, ScaleOperation, ScaleRequest, plan_scale, prove_scale,
 //! };
 //! use animsmith_gltf::{
-//!     capability_facts, load_bytes, preflight_scale_source, prove_rewritten_artifact,
-//!     rewrite_linear_units,
+//!     capability_facts_for_source, load_bytes, preflight_scale_source,
+//!     prove_rewritten_artifact, rewrite_linear_units,
 //! };
 //!
 //! let factor = 0.01;
 //! let source = preflight_scale_source(path)?;
-//! let facts = capability_facts(source.manifest());
+//! let facts = capability_facts_for_source(&source);
 //! let plan = plan_scale(&ScaleRequest {
 //!     operation: ScaleOperation::WholeDocumentLinearUnits { factor },
 //!     document: source.document(),
@@ -86,6 +86,9 @@ use animsmith_core::scale::{
     ScaleCapabilityCoverage, ScaleCapabilityFacts, ScaleError, ScaleOperation, ScaleRequest,
     plan_scale,
 };
+use animsmith_core::{
+    SourceConstructKindV1, SourceFactsViewV1, SourceResourceLocatorV1, SourceSetCoverageStateV1,
+};
 use bytes::{AccessorSpan, ComponentExtrema};
 use rules::{AccessorRule, JsonArrayRule};
 use serde_json::{Map, Value};
@@ -133,6 +136,62 @@ pub use rest_bind_proof::prove_rewritten_rest_bind;
 pub fn capability_facts(manifest: &GltfCapabilityManifest) -> ScaleCapabilityFacts {
     let violations = manifest_violations(manifest);
     capability_facts_from_violations(manifest, &violations)
+}
+
+/// Project scale capability facts from one immutable captured source.
+///
+/// The operation manifest remains authoritative for located rewrite details,
+/// while the shared raw-source projection supplies construct presence,
+/// resource presence, and the coverage boundary. Producer evidence reads the
+/// wrapper's already-established primary identity directly.
+/// Any partial shared construct/resource projection fails closed.
+pub fn capability_facts_for_source(source: &GltfScaleSource) -> ScaleCapabilityFacts {
+    join_source_facts(source, capability_facts(source.manifest()))
+}
+
+fn join_source_facts(
+    source: &GltfScaleSource,
+    mut facts: ScaleCapabilityFacts,
+) -> ScaleCapabilityFacts {
+    let source_facts = source.source_facts();
+    if relevant_source_coverage_incomplete(source_facts) {
+        facts.coverage = ScaleCapabilityCoverage::Unavailable;
+    }
+    for row in source_facts.constructs().rows() {
+        if row.kind() != SourceConstructKindV1::Extension {
+            continue;
+        }
+        match row.name().as_str() {
+            "KHR_lights_punctual" => facts.lights_present = true,
+            "EXT_mesh_gpu_instancing" => facts.instancing_present = true,
+            _ => facts.unregistered_extensions_present = true,
+        }
+    }
+    if source_facts
+        .resources()
+        .rows()
+        .iter()
+        .any(|row| resource_is_external(row.locator()))
+    {
+        facts.external_resources_present = true;
+    }
+    facts
+}
+
+fn relevant_source_coverage_incomplete(source: SourceFactsViewV1<'_>) -> bool {
+    [
+        source.constructs().coverage().state(),
+        source.resources().coverage().state(),
+    ]
+    .into_iter()
+    .any(|state| state != SourceSetCoverageStateV1::Complete)
+}
+
+fn resource_is_external(locator: &SourceResourceLocatorV1) -> bool {
+    !matches!(
+        locator,
+        SourceResourceLocatorV1::Embedded | SourceResourceLocatorV1::DataUri
+    )
 }
 
 fn capability_facts_from_violations(
@@ -397,6 +456,35 @@ pub fn operation_capability_facts(
     }
     let count = violations.len();
     Err(GltfScaleRewriteError::Capability { violations, count })
+}
+
+/// Validate one captured glTF source for a selected scale operation.
+///
+/// This is the source-bearing production adapter. It joins the shared V1 raw
+/// facts with the richer operation manifest without widening either frozen
+/// evidence shape.
+///
+/// # Errors
+///
+/// Returns the existing located capability error for manifest violations, or
+/// [`ScaleError::IncompleteCapability`] when shared source-fact coverage or an
+/// overlapping shared domain fails closed.
+pub fn operation_capability_facts_for_source(
+    source: &GltfScaleSource,
+    operation: ScaleOperation,
+) -> Result<ScaleCapabilityFacts, GltfScaleRewriteError> {
+    if relevant_source_coverage_incomplete(source.source_facts()) {
+        return Err(ScaleError::IncompleteCapability.into());
+    }
+    let facts = join_source_facts(
+        source,
+        operation_capability_facts(source.manifest(), operation)?,
+    );
+    if facts.is_supported_for(operation) {
+        Ok(facts)
+    } else {
+        Err(ScaleError::IncompleteCapability.into())
+    }
 }
 
 fn is_secondary_influence(semantic: &str) -> bool {
@@ -830,7 +918,7 @@ pub fn rewrite_linear_units(
     factor: f64,
 ) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
     let operation = ScaleOperation::WholeDocumentLinearUnits { factor };
-    let facts = operation_capability_facts(source.manifest(), operation)?;
+    let facts = operation_capability_facts_for_source(source, operation)?;
     let plan = plan_scale(&ScaleRequest {
         operation,
         document: source.document(),
@@ -858,7 +946,7 @@ pub fn rewrite_scale_plan(
     source: &GltfScaleSource,
     plan: &animsmith_core::scale::ScalePlan,
 ) -> Result<GltfScaleArtifact, GltfScaleRewriteError> {
-    operation_capability_facts(source.manifest(), plan.operation())?;
+    operation_capability_facts_for_source(source, plan.operation())?;
     match plan.operation() {
         ScaleOperation::WholeDocumentLinearUnits { .. } => rewrite_linear_units_plan(source, plan),
         ScaleOperation::RestBindUniformScale { .. } => {
@@ -1268,6 +1356,30 @@ mod tests {
         let facts = capability_facts(&manifest());
         assert_eq!(facts.coverage, ScaleCapabilityCoverage::Complete);
         assert!(facts.is_supported());
+    }
+
+    #[test]
+    fn shared_extension_presence_preserves_manifest_semantic_classification() {
+        for (name, lights, instancing, unregistered) in [
+            ("KHR_lights_punctual", true, false, false),
+            ("EXT_mesh_gpu_instancing", false, true, false),
+            ("ACME_opaque", false, false, true),
+        ] {
+            let source = past_the_gate(
+                "shared-extension.gltf",
+                serde_json::json!({
+                    "asset": { "version": "2.0" },
+                    "extensionsUsed": [name]
+                }),
+            );
+            let facts = capability_facts_for_source(&source);
+            assert_eq!(facts.lights_present, lights, "{name}");
+            assert_eq!(facts.instancing_present, instancing, "{name}");
+            assert_eq!(
+                facts.unregistered_extensions_present, unregistered,
+                "{name}"
+            );
+        }
     }
 
     #[test]

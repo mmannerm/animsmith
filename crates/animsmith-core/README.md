@@ -10,6 +10,23 @@ README is a compact crates.io and repository index; the crate-root
 rustdoc owns the embedding flow, API status, extension points, and
 panic/error contracts.
 
+## Raw Source Facts
+
+The core crate owns a bounded, format-neutral V1 vocabulary for importer-
+sensitive source evidence. Format crates can return an immutable
+`LoadedSource` that binds those facts to the exact primary bytes while lending
+read-only access to the normalized `Document`; `into_document()` deliberately
+discards the sidecar. The facts reuse the existing `SourceSkeletonAssets`
+projection instead of copying source node/skin authority. They describe
+AnimSmith loader evidence and availability, not engine support policy,
+filesystem/resource-closure policy, or a scale operation's private proof
+ledger. Complete, partial, and unavailable row coverage is explicit; a partial
+prefix proves presence only. V1 limits projection to 65,536 enumerable rows,
+4,096 clips/takes, 4,096 resource declarations, 4,096 bytes per retained
+source string, 8 MiB of retained source strings, and traversal depth 128.
+Budget N+1 preserves the deterministic prefix and marks the affected set
+partial without turning a successful legacy load into an error.
+
 ## Install
 
 ```toml
