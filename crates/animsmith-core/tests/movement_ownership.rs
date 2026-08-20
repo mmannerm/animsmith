@@ -10,6 +10,13 @@ fn parse_config(source: &str) -> Config {
     config
 }
 
+fn direct_config(entries: impl IntoIterator<Item = (String, ClipExpectations)>) -> Config {
+    let mut config = Config::default();
+    config.clips.extend(entries);
+    config.validate().expect("valid direct config entries");
+    config
+}
+
 #[test]
 fn toml_accepts_both_owners_for_each_axis() {
     for (value, expected) in [
@@ -157,14 +164,16 @@ in_place = true
 
 #[test]
 fn unknown_owner_values_and_fields_are_rejected_at_deserialization() {
-    let unknown_value = toml::from_str::<Config>(
-        r#"
+    for value in ["engine", "controller", "GAMEPLAY", ""] {
+        let unknown_value = toml::from_str::<Config>(&format!(
+            r#"
 [clips.walk]
-movement_owner_xz = "engine"
+movement_owner_xz = "{value}"
 "#,
-    )
-    .expect_err("unknown owner must fail");
-    assert!(unknown_value.to_string().contains("unknown variant"));
+        ))
+        .expect_err("unknown owner must fail");
+        assert!(unknown_value.to_string().contains("unknown variant"));
+    }
 
     let unknown_field = toml::from_str::<Config>(
         r#"
@@ -221,8 +230,7 @@ movement_owner_yaw = "animation"
 #[test]
 fn direct_api_uses_the_same_canonical_owner_values() {
     for owner in [MovementOwner::Gameplay, MovementOwner::Animation] {
-        let mut config = Config::default();
-        config.clips.insert(
+        let config = direct_config([(
             "motion".into(),
             ClipExpectations {
                 movement_owner_xz: Some(owner),
@@ -230,12 +238,103 @@ fn direct_api_uses_the_same_canonical_owner_values() {
                 movement_owner_yaw: Some(owner),
                 ..ClipExpectations::default()
             },
-        );
-        config.validate().expect("valid direct config");
+        )]);
 
         let effective = config.expectations_for("motion");
         assert_eq!(effective.normalized_movement_owner_xz(), Some(owner));
         assert_eq!(effective.movement_owner_y, Some(owner));
         assert_eq!(effective.movement_owner_yaw, Some(owner));
+    }
+}
+
+#[test]
+fn direct_api_preserves_alias_partial_and_layering_contracts() {
+    for (in_place, expected) in [
+        (true, MovementOwner::Gameplay),
+        (false, MovementOwner::Animation),
+    ] {
+        let config = direct_config([(
+            "motion".into(),
+            ClipExpectations {
+                in_place: Some(in_place),
+                ..ClipExpectations::default()
+            },
+        )]);
+        let effective = config.expectations_for("motion");
+        assert_eq!(effective.movement_owner_xz, Some(expected));
+        assert_eq!(effective.movement_owner_y, None);
+        assert_eq!(effective.movement_owner_yaw, None);
+        assert_eq!(effective.in_place, None);
+    }
+
+    let alias_glob = direct_config([
+        (
+            "walk_*".into(),
+            ClipExpectations {
+                in_place: Some(true),
+                movement_owner_y: Some(MovementOwner::Animation),
+                ..ClipExpectations::default()
+            },
+        ),
+        (
+            "walk_forward".into(),
+            ClipExpectations {
+                movement_owner_xz: Some(MovementOwner::Animation),
+                movement_owner_yaw: Some(MovementOwner::Gameplay),
+                ..ClipExpectations::default()
+            },
+        ),
+    ]);
+    let walk = alias_glob.expectations_for("walk_forward");
+    assert_eq!(walk.movement_owner_xz, Some(MovementOwner::Animation));
+    assert_eq!(walk.movement_owner_y, Some(MovementOwner::Animation));
+    assert_eq!(walk.movement_owner_yaw, Some(MovementOwner::Gameplay));
+    assert_eq!(walk.in_place, None);
+
+    let canonical_glob = direct_config([
+        (
+            "turn_*".into(),
+            ClipExpectations {
+                movement_owner_xz: Some(MovementOwner::Animation),
+                movement_owner_yaw: Some(MovementOwner::Animation),
+                ..ClipExpectations::default()
+            },
+        ),
+        (
+            "turn_left".into(),
+            ClipExpectations {
+                in_place: Some(true),
+                ..ClipExpectations::default()
+            },
+        ),
+    ]);
+    let turn = canonical_glob.expectations_for("turn_left");
+    assert_eq!(turn.movement_owner_xz, Some(MovementOwner::Gameplay));
+    assert_eq!(turn.movement_owner_y, None);
+    assert_eq!(turn.movement_owner_yaw, Some(MovementOwner::Animation));
+    assert_eq!(turn.in_place, None);
+
+    let partial = direct_config([(
+        "jump".into(),
+        ClipExpectations {
+            movement_owner_y: Some(MovementOwner::Animation),
+            ..ClipExpectations::default()
+        },
+    )]);
+    let jump = partial.expectations_for("jump");
+    assert_eq!(jump.movement_owner_xz, None);
+    assert_eq!(jump.movement_owner_y, Some(MovementOwner::Animation));
+    assert_eq!(jump.movement_owner_yaw, None);
+}
+
+#[test]
+fn undeclared_movement_ownership_is_not_inferred_from_clip_names() {
+    let config = Config::default();
+    for clip in ["run_RM", "jump_in_place", "turn_90", "ordinary"] {
+        let effective = config.expectations_for(clip);
+        assert_eq!(effective.movement_owner_xz, None, "clip {clip}");
+        assert_eq!(effective.movement_owner_y, None, "clip {clip}");
+        assert_eq!(effective.movement_owner_yaw, None, "clip {clip}");
+        assert_eq!(effective.in_place, None, "clip {clip}");
     }
 }
