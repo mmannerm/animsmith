@@ -1900,11 +1900,21 @@ where
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MeasurementReportSummaryInput {
+    #[serde(rename = "files")]
+    _files: Option<Box<RawValue>>,
+    #[serde(rename = "findings")]
+    _findings: Option<Box<RawValue>>,
+    #[serde(rename = "checks")]
+    _checks: Option<Box<RawValue>>,
+    #[serde(rename = "deltas")]
+    _deltas: Option<Box<RawValue>>,
     prediction_facets: Option<PredictionFacetSummaryInput>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PredictionFacetSummaryInput {
     available: usize,
     required_prediction_unavailable: usize,
@@ -4122,6 +4132,26 @@ mod measurement_report_input_tests {
                     reason,
                 },
             } if reason.contains("unknown field `unknown_check`")
+        ));
+
+        let provenance = prediction_test_provenance();
+        let mut summary = validated_lint_wire(&provenance, vec![empty_check("test:reader")]);
+        summary["summary"]["prediction_facets"]["unknown_prediction_total"] = serde_json::json!(0);
+        let bytes = serde_json::to_vec(&summary).unwrap();
+        assert!(matches!(
+            MeasurementReportInput::read_from(bytes.as_slice()).unwrap_err(),
+            MeasurementReportReadError::InvalidJson { source }
+                if source.to_string().contains("unknown field `unknown_prediction_total`")
+        ));
+
+        let provenance = prediction_test_provenance();
+        let mut summary = validated_lint_wire(&provenance, vec![empty_check("test:reader")]);
+        summary["summary"]["unknown_summary"] = serde_json::json!(0);
+        let bytes = serde_json::to_vec(&summary).unwrap();
+        assert!(matches!(
+            MeasurementReportInput::read_from(bytes.as_slice()).unwrap_err(),
+            MeasurementReportReadError::InvalidJson { source }
+                if source.to_string().contains("unknown field `unknown_summary`")
         ));
     }
 

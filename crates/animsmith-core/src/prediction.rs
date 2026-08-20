@@ -2091,6 +2091,7 @@ impl RawSourceBindingV1 {
         if self.work.inspected_rows > u64::try_from(max_inspected).unwrap_or(u64::MAX)
             || self.work.retained_rows
                 > u64::try_from(RAW_SOURCE_V1_MAX_OBSERVATIONS).unwrap_or(u64::MAX)
+            || self.work.retained_rows > self.work.inspected_rows
             || self.work.max_traversal_depth
                 > u64::try_from(RAW_SOURCE_V1_MAX_TRAVERSAL_DEPTH.saturating_add(1))
                     .unwrap_or(u64::MAX)
@@ -4817,6 +4818,18 @@ mod tests {
                 "raw coverage {field}"
             );
         }
+
+        let mut wire = raw_binding_wire();
+        wire["work"]["retained_rows"] = json!(1);
+        let error = serde_json::from_value::<RawSourceBindingV1>(wire).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            PredictionContractError::RawSourceFieldUnavailable(
+                "raw-source work counters".to_owned()
+            )
+            .to_string(),
+            "retained rows cannot exceed inspected rows"
+        );
 
         let mut provenance = minimal_provenance();
         provenance.raw_source.source_skeleton_coverage = SourceSkeletonCoverage::Complete;
