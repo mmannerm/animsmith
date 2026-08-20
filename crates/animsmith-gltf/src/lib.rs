@@ -366,6 +366,106 @@ pub(crate) fn validate_glb_framing(bytes: &[u8]) -> Result<(), LoadError> {
     Ok(())
 }
 
+/// Detect an `extensions` object key anywhere in the exact JSON payload.
+///
+/// `gltf-json` discards unknown extension payloads when its optional
+/// `extensions` feature is disabled, and it does not require payload names to
+/// appear in `extensionsUsed`. This allocation-free, nonrecursive scan keeps
+/// dependency closure coverage conservative even for that undeclared shape.
+/// It runs only after the ordinary glTF parser has accepted the JSON.
+fn has_extension_object(primary_bytes: &[u8]) -> bool {
+    let Some(json) = source_json_payload(primary_bytes) else {
+        return true;
+    };
+    json_has_object_key(json, b"extensions")
+}
+
+fn source_json_payload(primary_bytes: &[u8]) -> Option<&[u8]> {
+    if !primary_bytes.starts_with(b"glTF") {
+        return Some(primary_bytes);
+    }
+    const GLB_JSON_OFFSET: usize = 20;
+    let length = u32::from_le_bytes(primary_bytes.get(12..16)?.try_into().ok()?) as usize;
+    primary_bytes.get(GLB_JSON_OFFSET..GLB_JSON_OFFSET.checked_add(length)?)
+}
+
+fn json_has_object_key(json: &[u8], target: &[u8]) -> bool {
+    let mut cursor = 0;
+    while cursor < json.len() {
+        if json[cursor] != b'"' {
+            cursor += 1;
+            continue;
+        }
+        cursor += 1;
+        let mut target_index = 0;
+        let mut candidate = true;
+        loop {
+            let Some(&byte) = json.get(cursor) else {
+                return true;
+            };
+            if byte == b'"' {
+                cursor += 1;
+                break;
+            }
+            let decoded = if byte == b'\\' {
+                cursor += 1;
+                let Some(&escape) = json.get(cursor) else {
+                    return true;
+                };
+                match escape {
+                    b'u' => {
+                        let Some(hex) = json.get(cursor + 1..cursor + 5) else {
+                            return true;
+                        };
+                        cursor += 5;
+                        decode_json_hex_quad(hex).and_then(|value| u8::try_from(value).ok())
+                    }
+                    b'"' | b'\\' | b'/' => {
+                        cursor += 1;
+                        Some(escape)
+                    }
+                    b'b' | b'f' | b'n' | b'r' | b't' => {
+                        cursor += 1;
+                        None
+                    }
+                    _ => return true,
+                }
+            } else {
+                cursor += 1;
+                Some(byte)
+            };
+            if candidate {
+                match decoded {
+                    Some(decoded) if target.get(target_index) == Some(&decoded) => {
+                        target_index += 1;
+                    }
+                    _ => candidate = false,
+                }
+            }
+        }
+        let mut delimiter = cursor;
+        while matches!(json.get(delimiter), Some(b' ' | b'\t' | b'\r' | b'\n')) {
+            delimiter += 1;
+        }
+        if candidate && target_index == target.len() && json.get(delimiter).copied() == Some(b':') {
+            return true;
+        }
+    }
+    false
+}
+
+fn decode_json_hex_quad(hex: &[u8]) -> Option<u16> {
+    hex.iter().try_fold(0_u16, |value, byte| {
+        let digit = match byte {
+            b'0'..=b'9' => u16::from(*byte - b'0'),
+            b'a'..=b'f' => u16::from(*byte - b'a' + 10),
+            b'A'..=b'F' => u16::from(*byte - b'A' + 10),
+            _ => return None,
+        };
+        Some((value << 4) | digit)
+    })
+}
+
 /// Reject animation data the `gltf` crate leaves un-validated but then
 /// panics on. Its hand-written `Animation::validate` checks samplers and
 /// the sampler *index*, but not the pieces below — each slips past
@@ -1292,7 +1392,8 @@ where
     let mut facts = source_facts_builder(bytes)?;
     project_extension_facts(&gltf.document, &mut facts);
     project_resource_facts(&gltf.document, &mut facts);
-    let has_unmodeled_extension_domain = gltf.document.extensions_used().next().is_some()
+    let has_unmodeled_extension_domain = has_extension_object(bytes)
+        || gltf.document.extensions_used().next().is_some()
         || gltf.document.extensions_required().next().is_some();
     let (dependency_closure, mut resources) = capture_dependency_closure(
         &facts,
@@ -3559,6 +3660,18 @@ mod dependency_capture_tests {
             ],
             "the Document consumes the recorded capture, not the on-disk decoy"
         );
+    }
+
+    #[test]
+    fn raw_extension_key_scan_handles_nesting_escaping_and_non_key_text() {
+        assert!(json_has_object_key(
+            br#"{"meshes":[{"primitives":[{"extensio\u006es":{"X":{}}}]}]}"#,
+            b"extensions"
+        ));
+        assert!(!json_has_object_key(
+            br#"{"extras":{"label":"extensions","note":"\"extensions\":"}}"#,
+            b"extensions"
+        ));
     }
 
     #[test]

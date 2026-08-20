@@ -365,6 +365,40 @@ fn used_extensions_keep_declaration_order_and_loader_unsupported() {
 }
 
 #[test]
+fn undeclared_nested_extension_cannot_produce_a_complete_closure() {
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "materials": [{
+            "extensions": {
+                "X_custom_undeclared": { "uri": "UNDECLARED_SECRET_SIDECAR.bin" }
+            }
+        }]
+    });
+    for (label, bytes) in [
+        ("JSON", json_bytes(&document)),
+        ("GLB", glb(document.clone(), &[])),
+    ] {
+        let loaded = animsmith_gltf::load_source_bytes(Path::new("undeclared.gltf"), &bytes)
+            .unwrap_or_else(|error| panic!("{label} extension fixture loads: {error}"));
+        let closure = loaded.dependency_closure();
+        assert!(!closure.coverage().is_complete(), "{label}");
+        assert!(closure.identity().is_none(), "{label}");
+        assert_eq!(closure.work().external_open_attempts(), 0, "{label}");
+        assert!(
+            closure
+                .coverage()
+                .reasons()
+                .contains(&DependencyClosureCoverageReasonV1::UnmodeledResourceDomain),
+            "{label}"
+        );
+        assert!(
+            !format!("{closure:?}").contains("UNDECLARED_SECRET_SIDECAR"),
+            "{label}"
+        );
+    }
+}
+
+#[test]
 fn required_unsupported_extensions_preserve_strict_legacy_rejection() {
     let bytes = json_bytes(&json!({
         "asset": { "version": "2.0" },

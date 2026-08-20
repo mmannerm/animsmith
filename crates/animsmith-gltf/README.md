@@ -45,7 +45,8 @@ the same bounded read used by the loader and deduplicates aliases. Its fixed
 limits cover declarations, normalized keys, open/hash bytes, and alias probes;
 an N+1 limit produces typed partial evidence rather than resuming capture.
 Because V1 does not inspect extension payloads for additional locators, any
-declared extension also keeps dependency-closure coverage partial.
+declared extension or embedded `extensions` object also keeps dependency-
+closure coverage partial.
 
 `load` also fills `Document::assets` with the file's geometry — meshes
 (triangle lists), skins (joints + inverse bind matrices), and
