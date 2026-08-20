@@ -2182,6 +2182,61 @@ fn measurement_contract_rejects_availability_status_value_mismatches() {
     );
 }
 
+/// Both absent nested phase states are valid wire shapes. `not_applicable`
+/// means no phase subject; `unavailable` remains reserved for a future or
+/// defensive applicable-but-underivable phase failure.
+#[test]
+fn measurement_contract_roundtrips_absent_nested_gait_phase_states() {
+    for (availability, amplitude) in [
+        (MeasurementAvailability::NotApplicable, 0.0),
+        (MeasurementAvailability::Unavailable, 0.2),
+    ] {
+        let mut clip = valid_clip_measurements();
+        let gait = clip.gait.as_mut().expect("fixture gait");
+        gait.phase = None;
+        gait.phase_availability = availability;
+        gait.lr_amplitude_m = amplitude;
+        let measurements = MeasurementContract::new(
+            BTreeMap::from([("walk".into(), clip)]),
+            AssetMeasurements::default(),
+        )
+        .expect("absent nested phase status is structurally valid");
+        let envelope = MeasureEnvelope::new(
+            tool(),
+            vec![MeasureFileReport::new(
+                "walk.glb",
+                input(b"gait phase"),
+                rig(),
+                measurements,
+            )],
+        )
+        .expect("measurement envelope is valid");
+        let wire = serde_json::to_value(envelope).expect("measurement envelope serializes");
+        assert!(
+            wire["files"][0]["measurements"]["clips"]["walk"]["gait"]
+                .get("phase")
+                .is_none()
+        );
+
+        let input: MeasurementReportInput =
+            serde_json::from_value(wire).expect("measurement envelope deserializes");
+        let recovered = input
+            .into_files()
+            .expect("measurement envelope validates")
+            .into_iter()
+            .next()
+            .expect("one measurement file")
+            .into_measurements();
+        let recovered_gait = recovered.clips()["walk"]
+            .gait
+            .as_ref()
+            .expect("gait present");
+        assert_eq!(recovered_gait.phase, None);
+        assert_eq!(recovered_gait.phase_availability, availability);
+        assert_eq!(recovered_gait.lr_amplitude_m, amplitude);
+    }
+}
+
 #[test]
 fn measurement_contract_rejects_invalid_root_trajectory_structure() {
     let invalid = |mutate: fn(&mut ClipMeasurements), path: &str, reason: &str| {

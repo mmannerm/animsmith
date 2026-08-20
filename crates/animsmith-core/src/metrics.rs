@@ -92,14 +92,42 @@ pub struct FootCycleMetrics {
     /// [`Self::loop_seam_ratio`]'s absence is an expected "no subject"
     /// (a planted/idle clip), not a derivation failure.
     pub has_real_stride: bool,
-    /// Cycle position `[0,1)` of the trough of the fundamental harmonic
-    /// of the left-minus-right foot-height signal — a stride-phase
-    /// anchor encoding handedness + cycle alignment. `None` when a side
-    /// is missing.
+    /// Cycle position `[0,1)` of the trough of the fundamental harmonic of the
+    /// left-minus-right foot-height signal — a stride-phase anchor encoding
+    /// handedness + cycle alignment. `None` when a side is missing, the
+    /// sampled signal has exact zero peak-to-peak swing, or the harmonic fit
+    /// fails.
     pub gait_phase: Option<f64>,
     /// Peak-to-peak swing of the L−R foot-height signal (metres); near
     /// zero means no detectable alternation and the phase is noise.
     pub lr_amplitude_m: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum GaitPhaseOutcome {
+    MissingBilateralFootRoles,
+    NoFootHeightSwing,
+    Measured(f64),
+    Unavailable,
+}
+
+impl FootCycleMetrics {
+    pub(crate) fn gait_phase_outcome(&self, roles: &ResolvedRoles) -> GaitPhaseOutcome {
+        let has_left = roles.get(Role::LeftFoot).is_some() || roles.get(Role::LeftToe).is_some();
+        let has_right = roles.get(Role::RightFoot).is_some() || roles.get(Role::RightToe).is_some();
+        GaitPhaseOutcome::classify(self.gait_phase, self.lr_amplitude_m, has_left && has_right)
+    }
+}
+
+impl GaitPhaseOutcome {
+    fn classify(gait_phase: Option<f64>, lr_amplitude_m: f64, has_bilateral_roles: bool) -> Self {
+        match gait_phase {
+            _ if !has_bilateral_roles => Self::MissingBilateralFootRoles,
+            _ if lr_amplitude_m == 0.0 => Self::NoFootHeightSwing,
+            Some(phase) => Self::Measured(phase),
+            None => Self::Unavailable,
+        }
+    }
 }
 
 /// Model-space loop-continuity measurements for one skeleton bone.
@@ -594,7 +622,9 @@ pub fn foot_cycle_metrics(
         let max = diff.iter().copied().fold(f64::MIN, f64::max);
         let min = diff.iter().copied().fold(f64::MAX, f64::min);
         lr_amplitude_m = max - min;
-        gait_phase = fundamental_trough_phase(&diff);
+        if lr_amplitude_m > 0.0 {
+            gait_phase = fundamental_trough_phase(&diff);
+        }
     }
 
     Some(FootCycleMetrics {
@@ -723,6 +753,26 @@ mod tests {
     use crate::profile::{ResolvedRoles, Role};
     use glam::{EulerRot, Mat3, Quat, Vec3};
     use std::rc::Rc;
+
+    #[test]
+    fn gait_phase_outcome_retains_the_defensive_derivation_failure_state() {
+        assert_eq!(
+            GaitPhaseOutcome::classify(None, 0.01, true),
+            GaitPhaseOutcome::Unavailable
+        );
+        assert_eq!(
+            GaitPhaseOutcome::classify(Some(0.25), 0.01, true),
+            GaitPhaseOutcome::Measured(0.25)
+        );
+        assert_eq!(
+            GaitPhaseOutcome::classify(None, 0.0, true),
+            GaitPhaseOutcome::NoFootHeightSwing
+        );
+        assert_eq!(
+            GaitPhaseOutcome::classify(None, 0.0, false),
+            GaitPhaseOutcome::MissingBilateralFootRoles
+        );
+    }
 
     fn document_with_metric_clip() -> Document {
         Document {

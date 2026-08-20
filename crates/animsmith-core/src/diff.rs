@@ -1655,6 +1655,28 @@ mod tests {
         assert_eq!(delta.note, "became unavailable");
     }
 
+    #[test]
+    fn regenerated_flat_gait_reports_phase_disappearance_and_non_applicability() {
+        let mut before = clip_measurements();
+        before.gait.as_mut().unwrap().lr_amplitude_m = 0.0;
+
+        let mut after = before.clone();
+        after.gait.as_mut().unwrap().phase = None;
+        after.gait.as_mut().unwrap().phase_availability = MeasurementAvailability::NotApplicable;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before),
+            &measurement_map("walk", after),
+        );
+
+        assert_eq!(deltas.len(), 2, "{:?}", delta_metrics(&deltas));
+        assert_eq!(delta_for(&deltas, "gait.phase").note, "disappeared");
+        assert_eq!(
+            delta_for(&deltas, "gait.phase_availability").note,
+            "no longer applicable"
+        );
+    }
+
     /// `gait.phase_availability` is a field nested inside the `gait` object,
     /// so it exists only when `gait` itself is present (schema invariant:
     /// `gait` is `Some` exactly when `gait_availability == measured`).

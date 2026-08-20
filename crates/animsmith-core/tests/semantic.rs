@@ -656,6 +656,104 @@ fn every_below_amplitude_group_member_retains_clip_attribution() {
     assert_eq!(member_subjects, ["walk", "walk_b"]);
 }
 
+/// A zero L-R amplitude has no phase subject, even when the optional group
+/// evidence floor is zero. Positive values exactly at that floor remain
+/// accepted by the separate inclusive-boundary behavior.
+#[test]
+fn zero_amplitude_group_members_are_not_phase_subjects_at_a_zero_evidence_floor() {
+    let mut doc = doc_with_periods(0.0);
+    let mut second = doc.clips[0].clone();
+    second.name = "walk_b".into();
+    doc.clips.push(second);
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": {
+            "clips": ["walk", "walk_b"],
+            "max_gait_phase_spread": 0.1,
+            "min_lr_amplitude_m": 0.0
+        }}
+    }));
+    let roles = roles(&doc.skeleton);
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let records = evaluate_checks(&ctx, &all_checks(), CheckSelection::All).unwrap();
+    let gait = check(&records, "gait-group");
+
+    assert_eq!(gait.evaluation(), EvaluationState::Partial, "{gait:#?}");
+    assert!(gait.findings().is_empty(), "{gait:#?}");
+    assert!(
+        gait.evaluated_scopes()
+            .iter()
+            .all(|scope| scope.code != EvaluationScopeCode::PHASE_COHERENCE),
+        "zero-swing members must not be consumed as a completed phase comparison: {gait:#?}"
+    );
+    let subjects: Vec<_> = gait
+        .gaps()
+        .iter()
+        .filter(|gap| {
+            gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE
+                && gap.message == "gait phase has no left/right foot-height swing"
+        })
+        .map(|gap| gap.scope.as_ref().unwrap().subject.as_deref().unwrap())
+        .collect();
+    assert_eq!(subjects, ["walk", "walk_b"]);
+}
+
+#[test]
+fn positive_group_amplitude_at_the_configured_floor_is_inclusive() {
+    let mut doc = walk_doc();
+    let mut second = doc.clips[0].clone();
+    second.name = "walk_b".into();
+    let left = doc
+        .skeleton
+        .bones
+        .iter()
+        .position(|bone| bone.name == BONES.left_foot)
+        .expect("left foot");
+    let right = doc
+        .skeleton
+        .bones
+        .iter()
+        .position(|bone| bone.name == BONES.right_foot)
+        .expect("right foot");
+    for track in &mut second.tracks {
+        track.bone = match track.bone {
+            bone if bone == left => right,
+            bone if bone == right => left,
+            bone => bone,
+        };
+    }
+    doc.clips.push(second);
+    let roles = roles(&doc.skeleton);
+    let grids = MetricGrids::new(&doc);
+    let measured = animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+    let exact_floor = measured["walk"]
+        .gait
+        .as_ref()
+        .expect("analytic gait")
+        .lr_amplitude_m;
+    assert!(exact_floor > 0.0);
+
+    let config = json_config(serde_json::json!({
+        "gait_groups": { "ring": {
+            "clips": ["walk", "walk_b"],
+            "max_gait_phase_spread": 0.1,
+            "min_lr_amplitude_m": exact_floor
+        }}
+    }));
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let records = evaluate_checks(&ctx, &all_checks(), CheckSelection::All).unwrap();
+    let gait = check(&records, "gait-group");
+
+    assert_eq!(gait.evaluation(), EvaluationState::Complete, "{gait:#?}");
+    assert_eq!(gait.findings().len(), 1, "{gait:#?}");
+    assert_eq!(gait.findings()[0].check_id, "gait-group");
+    assert!(
+        matches!(gait.findings()[0].measured, Some(Value::Number(spread)) if (spread - 0.25).abs() < 1.0e-6),
+        "the exact-floor members must be consumed in the phase comparison: {gait:#?}"
+    );
+    assert!(gait.gaps().is_empty(), "{gait:#?}");
+}
+
 #[test]
 fn one_sided_group_member_without_a_phase_retains_clip_attribution() {
     let doc = walk_doc();
@@ -688,7 +786,7 @@ fn one_sided_group_member_without_a_phase_retains_clip_attribution() {
                 })
         })
         .expect("unfittable per-member phase retains clip attribution");
-    assert!(gap.message.contains("could not be fitted"));
+    assert!(gap.message.contains("no bilateral foot-role subject"));
 }
 
 /// Foot-slide reports its own role gap from its `speed_mps` applicability.
