@@ -437,6 +437,85 @@ animsmith fix clip.glb --in-place
 animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 ```
 
+## Engine profiles and importer settings
+
+An optional `[engine]` section selects one exact, versioned importer contract.
+There is no generic, automatic, nearest-version, or fallback profile. V1
+accepts only these tuples:
+
+| profile | revision | engine version | importer | accepted source |
+|---|---:|---|---|---|
+| `unity-generic` | 1 | `6000.3` | `fbx-model-importer` | FBX |
+| `unity-humanoid` | 1 | `6000.3` | `fbx-model-importer` | FBX |
+| `unreal` | 1 | `5.8` | `fbx-importer` | FBX |
+| `godot` | 1 | `4.7` | `resource-importer-scene` | glTF, GLB, or FBX |
+| `bevy` | 1 | `0.19.0` | `gltf-asset-loader` | glTF or GLB |
+
+The accepted-source column is AnimSmith's V1 profile boundary, not a claim
+that the named engine supports no other source formats. An absent `[engine]`
+keeps the existing engine-neutral behavior.
+
+Unity exposes the only V1 setting vocabulary. Every applicable setting is
+required because the cited Unity 6000.3 documentation does not establish a
+default that AnimSmith can safely materialize:
+
+```toml
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+convert_units = true
+bake_axis_conversion = true
+root_motion_source = "Reference/Root"
+
+[clips."locomotion_*".engine_settings]
+root_rotation = "extract"
+root_position_y = "bake"
+root_position_xz = "extract"
+
+[clips.idle.engine_settings]
+root_rotation = "bake"
+root_position_y = "bake"
+root_position_xz = "bake"
+```
+
+`root_motion_source` is an exact document-scoped source-transform path for
+Unity Generic. It is not applicable to Unity Humanoid. The three
+`bake | extract` choices are clip-scoped for both Unity profiles and resolve
+with the normal field-by-field rule: matching globs in lexical order, then an
+exact clip name last. Every real clip must resolve all three choices. Unreal,
+Godot, and Bevy expose no V1 settings, so supplying any setting is an error.
+
+All statically knowable tuple, setting, value, scope, and applicability errors
+are reported before input I/O. Accepted input format and required per-clip
+materialization are checked after loading. Profile selection never changes
+`measure` values or the output-v9 schema; this registry slice emits no engine
+prediction.
+
+An output-v9 JSON measurement report does not retain the loader-owned source
+format needed for phase-two resolution. Consequently, `diff` rejects JSON
+report operands while an engine profile is selected; compare the source assets
+instead, or omit `[engine]` for an engine-neutral report comparison.
+
+Runtime-facing attachment/socket/IK nodes have one shared engine-neutral
+policy:
+
+```toml
+[runtime_nodes]
+selectors = ["weapon_socket", "ik_*_target"]
+
+[checks.rest-world-scale]
+expected_uniform_scale = 1.0
+uniform_scale_tolerance = 0.0001
+```
+
+The older `[checks.rest-world-scale].node_selectors` field remains a
+compatibility alias. Declaring both spellings is a configuration error. An
+absent selector field or explicit empty list means no runtime-node policy.
+
 ## Machine Output
 
 `measure`, `lint`, and `diff` support `--format json`. The native JSON
@@ -459,7 +538,8 @@ regression facts from the shared uniform metric grid, not continuous-curve or
 engine root-motion extraction proof; see [output.md](output.md#measure-and-lint)
 for the full coordinate, sampling, and availability contract.
 
-`rest-world-scale` is quiet until its config supplies `node_selectors`.
+`rest-world-scale` is quiet until its config resolves a nonempty shared or
+legacy runtime-node selector policy.
 Each exact name or `*` glob must resolve to one source node; findings include
 the stable source-node path and ancestry so attachment/import policies can be
 traced back to the source projection. For glTF that projection is authored

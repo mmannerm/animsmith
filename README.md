@@ -71,6 +71,7 @@ animsmith-core = "0.3"
 animsmith-gltf = "0.3"
 # Optional:
 animsmith-fbx = "0.3"
+animsmith-engine = "0.3"
 animsmith-report = "0.3"
 ```
 
@@ -79,6 +80,7 @@ Published library API documentation uses these stable docs.rs URLs:
 - [animsmith-core](https://docs.rs/animsmith-core)
 - [animsmith-gltf](https://docs.rs/animsmith-gltf)
 - [animsmith-fbx](https://docs.rs/animsmith-fbx)
+- [animsmith-engine](https://docs.rs/animsmith-engine)
 - [animsmith-report](https://docs.rs/animsmith-report)
 
 The bin-only [`animsmith` package page](https://docs.rs/animsmith) exposes
@@ -129,7 +131,8 @@ shows how.
 
 Pair `animsmith-core` with the format crates you need:
 `animsmith-gltf` for glTF/GLB and `animsmith-fbx` for FBX. Add
-`animsmith-report` when you want to generate the standalone HTML report.
+`animsmith-engine` for the strict built-in consumer-profile registry and
+resolver, and `animsmith-report` when you want to generate the standalone HTML report.
 The CLI crate is not the library API; it is one frontend over the same core.
 
 ## Checks
@@ -213,9 +216,12 @@ max_velocity_delta_mps = 0.1
 [checks.loop-seam-rot]
 max_angular_velocity_delta_degps = 5.0
 
+[runtime_nodes]
+# Shared attachment/socket/IK policy. Each exact name or `*` glob must resolve
+# to exactly one source node.
+selectors = ["weapon_socket", "ik_*_target"]
+
 [checks.rest-world-scale]
-# Each exact name or `*` glob must resolve to exactly one source node.
-node_selectors = ["weapon_socket", "ik_*_target"]
 expected_uniform_scale = 1.0
 uniform_scale_tolerance = 0.0001
 
@@ -271,9 +277,11 @@ both spellings. Alias and canonical declarations in different glob/exact
 layers are normalized first, then use the same field-by-field precedence as
 the other clip expectations.
 
-`rest-world-scale` is quiet until `node_selectors` is nonempty. Each selector
-uses a deterministic `*` glob and must resolve exactly once; a miss or multiple
-matches is a typed coverage gap rather than a guessed node. The check compares
+`rest-world-scale` is quiet until `[runtime_nodes].selectors` is nonempty. The
+legacy `[checks.rest-world-scale].node_selectors` spelling remains an alias, but
+declaring both is a configuration error. Each selector uses a deterministic
+`*` glob and must resolve exactly once; a miss or multiple matches is a typed
+coverage gap rather than a guessed node. The check compares
 the selected node's inherited rest-world uniform factor with
 `expected_uniform_scale` (default `1.0`) using the inclusive
 `uniform_scale_tolerance` (default `0.0001`). Non-uniform, sheared, reflected,

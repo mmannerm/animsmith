@@ -27,6 +27,16 @@ source string, 8 MiB of retained source strings, and traversal depth 128.
 Budget N+1 preserves the deterministic prefix and marks the affected set
 partial without turning a successful legacy load into an error.
 
+## Shared runtime-node policy
+
+`Config::runtime_nodes` is the engine-neutral selector authority for
+attachments, sockets, IK targets, and other runtime-facing source nodes.
+`rest-world-scale` consumes it; its older per-check `node_selectors` field is a
+compatibility alias and cannot be declared at the same time. An absent field
+or empty list means no policy. This added public field is an intentional
+pre-1.0 struct-literal break: exhaustive `Config` literals must add it or use
+`..Config::default()`.
+
 ## Install
 
 ```toml

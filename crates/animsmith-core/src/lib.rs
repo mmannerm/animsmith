@@ -131,7 +131,8 @@ pub mod transform;
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use config::{
     ClipExpectations, Config, ConfigValidationError, GaitGroup, MovementOwner, Pinned,
-    SeveritySetting, SyncGroup, TimeComplementSettings,
+    RuntimeNodeSelectorResolution, RuntimeNodeSelectors, RuntimeNodesConfig, SeveritySetting,
+    SyncGroup, TimeComplementSettings,
 };
 pub use contract::{
     DiffEnvelope, InputIdentity, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,

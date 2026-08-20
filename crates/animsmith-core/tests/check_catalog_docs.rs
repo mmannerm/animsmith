@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "animsmith",
     "animsmith-core",
+    "animsmith-engine",
     "animsmith-fbx",
     "animsmith-gltf",
     "animsmith-report",

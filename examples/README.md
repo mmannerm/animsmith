@@ -500,8 +500,10 @@ Presence and transform policy are separate. To require a runtime-facing node
 to inherit a unit effective rest scale, select it explicitly:
 
 ```toml
+[runtime_nodes]
+selectors = ["weapon_socket", "ik_*_target"]
+
 [checks.rest-world-scale]
-node_selectors = ["weapon_socket", "ik_*_target"]
 expected_uniform_scale = 1.0
 uniform_scale_tolerance = 0.0001
 ```
@@ -511,7 +513,8 @@ multiple matches produces explicit coverage instead of guessing. The finding's
 `node` path includes source indices and ancestors, so a local scale of `1` can
 still be traced to a non-unit effective scale inherited from a parent. This
 does not inspect animation scale keys, infer units from geometry, or rescale
-the file.
+the file. The legacy `[checks.rest-world-scale].node_selectors` spelling is an
+alias; declaring it together with `[runtime_nodes]` is a configuration error.
 
 ### Scaling up to a full character
 
@@ -531,8 +534,9 @@ max_rotation_delta_deg = 1.0
 max_velocity_delta_mps = 0.1
 [checks.loop-seam-rot]
 max_angular_velocity_delta_degps = 5.0
+[runtime_nodes]
+selectors = ["weapon_socket", "ik_*_target"]
 [checks.rest-world-scale]
-node_selectors = ["weapon_socket", "ik_*_target"]
 expected_uniform_scale = 1.0
 uniform_scale_tolerance = 0.0001
 [checks.frozen-bone]

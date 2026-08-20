@@ -135,8 +135,8 @@ and CI.
 
 Use `just doc` for rustdoc warnings-as-errors and missing-docs
 enforcement. It renders workspace docs and the CLI crate without default
-features with `-D warnings -D missing_docs`, so all five publishable
-crates keep documented public surfaces.
+features with `-D warnings -D missing_docs`, so all six publishable crates
+keep documented public surfaces.
 
 When editing public docs, `cargo test --workspace` validates Markdown
 link targets and `#anchor`s in the gated doc set (the `docs_links`

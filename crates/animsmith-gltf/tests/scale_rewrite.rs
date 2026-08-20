@@ -70,8 +70,10 @@ fn u16_bytes(values: &[u16]) -> Vec<u8> {
 
 fn read_f32(slice: &[u8]) -> Vec<f32> {
     slice
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four bytes")))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| f32::from_le_bytes(*chunk))
         .collect()
 }
 
@@ -489,7 +491,7 @@ fn morph_position_aliases_are_scaled_once_per_unique_accessor() {
 fn an_interleaved_morph_position_accessor_is_refused_at_its_own_location() {
     let (mut value, mut buffer) = morph_json();
     let interleaved_offset = buffer.len();
-    for vector in MORPH_A.chunks_exact(3) {
+    for vector in MORPH_A.as_chunks::<3>().0 {
         buffer.extend(f32_bytes(vector));
         buffer.extend(f32::to_le_bytes(1234.0));
     }

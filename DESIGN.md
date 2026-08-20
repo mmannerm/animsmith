@@ -2356,7 +2356,7 @@ importer = "fbx-model-importer"
 [engine.settings]
 convert_units = true
 bake_axis_conversion = true
-root_motion_source = "root"
+root_motion_source = "Reference/Root"
 
 [clips."locomotion_*"]
 movement_owner_xz = "animation"
@@ -2390,8 +2390,10 @@ compatibility alias and is normalized into this shared selection before
 evaluation. Declaring both forms is a typed configuration error rather than a
 precedence rule. `rest-world-scale` and the selected-node facet of
 `engine-unit-scale` consume the same resolved set; one check never reads the
-other check's private settings. Only the absence of a declared runtime-node
-selector policy makes that engine facet genuinely not applicable. If a
+other check's private settings. An absent selector field and an explicit empty
+selector list both mean no declared policy, preserving the legacy check's
+behavior. Only that state makes the selected-node engine facet genuinely not
+applicable. If a
 declared selector misses or is ambiguous, `rest-world-scale` retains its
 existing engine-neutral coverage behavior, while an enabled, otherwise
 applicable `engine-unit-scale` facet emits `required_prediction_unavailable`
@@ -2412,32 +2414,44 @@ and either document or clip scope. Document-scoped importer choices live only
 under `[engine.settings]`. Clip-scoped importer choices live only under the
 matching `[clips.<selector>.engine_settings]` table and resolve through the
 existing clip-selector rule (exact name over matching globs, later matching
-globs winning ties). For the Unity FBX profiles, the Motion/Root Motion Node
-choice applies to all imported clips and is therefore document-scoped as
-`root_motion_source`; rotation and position bake/extract choices remain
-clip-scoped. `[clips.<selector>]` movement-owner fields remain project intent;
+globs winning ties). For the Unity Generic FBX profile, the Motion/Root Motion
+Node choice is an exact source-transform path that applies to all imported
+clips and is therefore document-scoped as `root_motion_source`. It is
+explicitly not applicable to the Unity Humanoid profile, whose importer uses
+Avatar/body semantics. Rotation and position bake/extract choices remain
+clip-scoped for both Unity profiles. `[clips.<selector>]` movement-owner fields remain project intent;
 the sibling `engine_settings` table records the importer state that a prediction
 must compare with that intent. A setting at the wrong scope is a typed
 configuration error, not an override.
 
 Each applicable setting is also classified by the immutable profile facts as
-either required or as having one documented default. Resolution materializes
-every default before rule evaluation and before computing the settings digest.
+either required or as having one documented default. The initial Unity
+settings are all required without a verified default; values in the example
+are not defaults. Resolution materializes any future verified defaults before
+rule evaluation and before computing the settings digest.
 Omitting a required setting with no verified default is a typed configuration
 error; it is never guessed, treated as an implementation default, or deferred
 to a coverage gap. The resolved settings record therefore contains one exact
 document value or per-clip value for every applicable setting, including values
 the caller omitted because the profile supplied its documented default.
 
-The initial profile families and their distinct meanings are:
+The initial registry contains exactly five singleton tuples:
 
-| id | modeled consumer boundary |
-|---|---|
-| `unity-generic` | Unity's Generic animation import mode |
-| `unity-humanoid` | Unity's Humanoid/Avatar import and root-projection mode |
-| `unreal` | Unreal skeletal-animation import and Animation Sequence behavior |
-| `godot` | Godot 3D-scene/animation-library import behavior |
-| `bevy` | Bevy's glTF asset loader and animation runtime |
+| family | revision | engine version | importer | AnimSmith V1 input boundary |
+|---|---:|---|---|---|
+| `unity-generic` | 1 | `6000.3` | `fbx-model-importer` | FBX |
+| `unity-humanoid` | 1 | `6000.3` | `fbx-model-importer` | FBX |
+| `unreal` | 1 | `5.8` | `fbx-importer` | FBX |
+| `godot` | 1 | `4.7` | `resource-importer-scene` | glTF JSON, GLB, FBX |
+| `bevy` | 1 | `0.19.0` | `gltf-asset-loader` | glTF JSON, GLB |
+
+These are exact versions, not ranges. The Godot row is AnimSmith's bounded V1
+profile boundary rather than a claim that Godot cannot import other formats.
+The two Unity profiles expose document booleans `convert_units` and
+`bake_axis_conversion`, plus per-clip `root_rotation`, `root_position_y`, and
+`root_position_xz` values in the closed `bake | extract` domain. Only Generic
+also exposes the document-scoped `root_motion_source` path. Unreal, Godot, and
+Bevy expose no V1 setting vocabulary, so every supplied key is rejected.
 
 The two Unity ids are import modes, not skeleton-name maps. Likewise,
 `unreal`, `godot`, and `bevy` do not imply a mannequin, humanoid bone map, or
@@ -2447,10 +2461,10 @@ options, or other runtime policy. glTF 2.0 compatibility remains a loader and
 consumer-neutral check boundary. Bevy has separate supported-extension,
 asset-addressability, and animation-target behavior.
 
-Each built-in resolves the exact `(family, profile_revision, engine_version,
-importer)` tuple to an immutable identity such as
+Each built-in resolves its exact `(family, profile_revision, engine_version,
+importer)` tuple to an immutable fact-bundle identity such as
 `urn:animsmith:engine-profile:unity-generic:1`. Its data record contains exact
-supported engine versions or version ranges, accepted input formats, source
+engine version and importer values, accepted input formats, source
 and target coordinate bases, importer/runtime facts, allowed setting
 vocabulary, and primary-source references with a verification date. For every
 claimed input format it must also enumerate, rather than leave implicit:
@@ -2467,6 +2481,18 @@ Changing any such fact requires a new profile revision and normal release
 notes; a historical result never silently resolves through the current
 revision. `[engine.settings]` selects only choices the immutable importer facts
 already expose; it cannot override those facts.
+
+Facts use explicit known, unknown, and genuinely not-applicable states. The
+accepted-format fact is the sole input-format authority. The facts digest is
+the core `InputIdentity` of a versioned, fixed-field-order, length-prefixed
+UTF-8 encoding of the full tuple, URN, every fact state and value (including
+accepted formats), every setting descriptor/domain/scope/applicability and
+default status, verification metadata, and source references sorted by stable
+id. Source references bind stable fact/setting ids to one target version, URL,
+and verification date; live documentation bytes are never digest input. The
+settings digest uses the same encoding over the full resolved identity and
+fully materialized document settings plus actual clip names/settings in lexical
+order, never TOML spelling, selector patterns, or map insertion order.
 
 Version one does not accept arbitrary engine-fact overrides in TOML. A user
 cannot safely make an importer support a channel or reinterpret root motion by

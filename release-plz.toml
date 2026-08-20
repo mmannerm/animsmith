@@ -54,15 +54,15 @@ commit_parsers = [
     { message = "^.*", skip = true },
 ]
 
-# The five crates ship as one unit at a single shared version
+# The six crates ship as one unit at a single shared version
 # (`version.workspace = true`). `version_group` forces one version across
 # the whole group — the highest next-version among them.
 #
 # Changelog ownership: only the top-level `animsmith` crate writes the
-# single root CHANGELOG.md; it folds the four libraries' entries in via
+# single root CHANGELOG.md; it folds the five libraries' entries in via
 # `changelog_include`. The libraries set `changelog_update = false` — if
 # every crate wrote to the shared CHANGELOG.md, each would append its own
-# copy of the (shared) history, duplicating it five times.
+# copy of the (shared) history, duplicating it six times.
 
 [[package]]
 name = "animsmith-core"
@@ -80,6 +80,11 @@ version_group = "animsmith"
 changelog_update = false
 
 [[package]]
+name = "animsmith-engine"
+version_group = "animsmith"
+changelog_update = false
+
+[[package]]
 name = "animsmith-report"
 version_group = "animsmith"
 changelog_update = false
@@ -92,11 +97,12 @@ changelog_include = [
     "animsmith-core",
     "animsmith-gltf",
     "animsmith-fbx",
+    "animsmith-engine",
     "animsmith-report",
 ]
 # The one crate that carries the workspace's single `vX.Y.Z` tag and
 # GitHub Release (tags/releases are disabled workspace-wide above), and
-# the one that owns CHANGELOG.md. crates.io publishing of all five crates
+# the one that owns CHANGELOG.md. crates.io publishing of all six crates
 # is unaffected — that is the separate `publish` field, left at default.
 git_tag_enable = true
 git_release_enable = true

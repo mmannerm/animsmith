@@ -605,12 +605,15 @@ same parent-scale failure mode described by Unity's
 [Transform documentation](https://docs.unity3d.com/6000.1/Documentation/Manual/class-Transform.html#non-uniform-scaling),
 although the exact runtime consequences remain engine-specific.
 
-Use `rest-world-scale` only for source nodes your runtime contract cares
-about:
+Declare only source nodes your runtime contract cares about. The shared policy
+also supplies future engine-unit-scale evaluation; `rest-world-scale` consumes
+the same resolved set:
 
 ```toml
+[runtime_nodes]
+selectors = ["weapon_socket", "ik_*_target"]
+
 [checks.rest-world-scale]
-node_selectors = ["weapon_socket", "ik_*_target"]
 expected_uniform_scale = 1.0
 uniform_scale_tolerance = 0.0001
 ```
@@ -621,6 +624,9 @@ an ancestor path with source indices and reports either the measured uniform
 factor or the distinct non-uniform, sheared, reflected, or singular affine
 class. The tolerance is inclusive for uniform factors. Unavailable/non-finite
 rest evidence remains a coverage gap.
+
+The older `[checks.rest-world-scale].node_selectors` field remains a
+compatibility alias. Do not declare it together with `[runtime_nodes]`.
 
 Fix an unintended result in the source hierarchy or exporter, then rerun lint
 against the exported asset. AnimSmith does not rescale the file, decide which
@@ -742,7 +748,7 @@ order; they are not general animation cleanup.
 | Same-time pair looks mirrored or swaps footfall timing | `time-complement` | align contacts in DCC, add markers, or phase-remap in the runtime | `[sync_groups.<name>.time_complement]` | [A blend pair is time-complementary](#a-blend-pair-is-time-complementary) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
-| Attachment, socket, or helper imports at the wrong size | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[checks.rest-world-scale] node_selectors`, `expected_uniform_scale`, `uniform_scale_tolerance` | [Attachment nodes and inherited rest-world scale](#attachment-nodes-and-inherited-rest-world-scale) |
+| Attachment, socket, or helper imports at the wrong size | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[runtime_nodes] selectors`; `[checks.rest-world-scale] expected_uniform_scale`, `uniform_scale_tolerance` | [Attachment nodes and inherited rest-world scale](#attachment-nodes-and-inherited-rest-world-scale) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Skeleton signatures or cross-file clip identities disagree | per-file structural inspection and measurement; no cross-file contract yet ([#409](https://github.com/mmannerm/animsmith/issues/409)) | configure and test the retarget path; retain exact `(file, clip)` manifest identities | `[rig]`; collection contract is future work | [Skeleton and clip identity](#files-disagree-about-skeleton-or-clip-identity) |
 | Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | inspect `constant-track`, then use `transform --prune-constant-tracks` only after reviewing transition coverage; otherwise clean/re-export in DCC | `[checks.<id>]` severity; `[clips.<name>] animates_bones` protects declared motion tracks | [Editing a clip](../examples/README.md#3-editing-a-clip) |
