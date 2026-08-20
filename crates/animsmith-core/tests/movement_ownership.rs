@@ -58,10 +58,12 @@ fn exact_and_glob_layers_resolve_movement_fields_independently() {
         r#"
 [clips."walk_*"]
 in_place = true
-movement_owner_y = "animation"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "animation"
 
 [clips.walk_forward]
 movement_owner_xz = "animation"
+movement_owner_y = "animation"
 movement_owner_yaw = "gameplay"
 "#,
     );
@@ -73,8 +75,8 @@ movement_owner_yaw = "gameplay"
 
     let inherited = config.expectations_for("walk_left");
     assert_eq!(inherited.movement_owner_xz, Some(MovementOwner::Gameplay));
-    assert_eq!(inherited.movement_owner_y, Some(MovementOwner::Animation));
-    assert_eq!(inherited.movement_owner_yaw, None);
+    assert_eq!(inherited.movement_owner_y, Some(MovementOwner::Gameplay));
+    assert_eq!(inherited.movement_owner_yaw, Some(MovementOwner::Animation));
 }
 
 #[test]
