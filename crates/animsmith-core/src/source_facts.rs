@@ -1149,14 +1149,14 @@ impl SourceResourceLocatorV1 {
 }
 
 fn redacted_resource_locator(value: &str) -> Option<SourceResourceLocatorV1> {
-    if value.len() > RAW_SOURCE_V1_MAX_TEXT_BYTES {
-        return Some(SourceResourceLocatorV1::Oversized);
-    }
     if value
         .get(..5)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
     {
         return Some(SourceResourceLocatorV1::DataUri);
+    }
+    if value.len() > RAW_SOURCE_V1_MAX_TEXT_BYTES {
+        return Some(SourceResourceLocatorV1::Oversized);
     }
     if value.is_empty() || value.chars().any(char::is_control) || malformed_percent_escape(value) {
         return Some(SourceResourceLocatorV1::Malformed);
@@ -2259,6 +2259,18 @@ mod tests {
         assert_eq!(
             SourceResourceLocatorV1::classify("DATA:image/png;base64,private"),
             SourceResourceLocatorV1::DataUri
+        );
+        let oversized_data_uri = format!(
+            "data:application/octet-stream;base64,{}",
+            "A".repeat(RAW_SOURCE_V1_MAX_TEXT_BYTES)
+        );
+        assert_eq!(
+            SourceResourceLocatorV1::classify(&oversized_data_uri),
+            SourceResourceLocatorV1::DataUri
+        );
+        assert_eq!(
+            SourceResourceLocatorV1::retained_relative_bytes(&oversized_data_uri),
+            0
         );
         assert_eq!(
             SourceResourceLocatorV1::classify(r"C:\private\texture.png"),

@@ -491,6 +491,31 @@ fn unsafe_resource_uris_do_not_consume_retained_locator_budget() {
 }
 
 #[test]
+fn oversized_data_uri_remains_embedded_for_source_aware_scale() {
+    let payload = vec![0u8; RAW_SOURCE_V1_MAX_TEXT_BYTES];
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "scene": 0,
+        "scenes": [{ "nodes": [0] }],
+        "nodes": [{ "translation": [1.0, 2.0, 3.0] }],
+        "buffers": [{ "uri": data_uri(&payload), "byteLength": payload.len() }]
+    }));
+    let source =
+        animsmith_gltf::preflight_scale_source_bytes(Path::new("oversized-data-uri.gltf"), &bytes)
+            .expect("self-contained data URI source preflights");
+    assert!(matches!(
+        source.source_facts().resources().rows()[0].locator(),
+        SourceResourceLocatorV1::DataUri
+    ));
+    let operation = ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 };
+    let facts = animsmith_gltf::operation_capability_facts_for_source(&source, operation)
+        .expect("redacted data URI stays self-contained");
+    assert!(!facts.external_resources_present);
+    animsmith_gltf::rewrite_linear_units(&source, 2.0)
+        .expect("oversized embedded payload does not regress scaling");
+}
+
+#[test]
 fn source_aware_scale_fails_closed_on_partial_resource_projection() {
     let images = (0..=animsmith_core::RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES)
         .map(|_| json!({ "uri": "data:image/png;base64," }))

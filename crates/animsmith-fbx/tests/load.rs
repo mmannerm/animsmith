@@ -1966,6 +1966,33 @@ fn source_facts_keep_texture_and_video_alias_declarations_separate() {
 }
 
 #[test]
+fn file_name_only_fbx_resources_are_present_but_redacted() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
+    let source = std::fs::read_to_string(&path)
+        .expect("read analytic FBX")
+        .replace("\t\tRelativeFilename: \"normal.png\"\n", "");
+    std::fs::write(&path, source).expect("write FileName-only FBX");
+
+    let loaded = animsmith_fbx::load_source(&path).expect("FileName-only FBX loads");
+    let resources = loaded.source_facts().resources();
+    assert_eq!(
+        resources.coverage().state(),
+        SourceSetCoverageStateV1::Complete
+    );
+    let [texture, video] = resources.rows() else {
+        panic!("texture and video declarations remain present");
+    };
+    assert!(matches!(
+        texture.locator(),
+        SourceResourceLocatorV1::Absolute
+    ));
+    assert!(matches!(video.locator(), SourceResourceLocatorV1::Absolute));
+    let debug = format!("{:?}", loaded.source_facts());
+    assert!(!debug.contains("normal.png"), "{debug}");
+}
+
+#[test]
 fn resource_projection_n_plus_one_is_partial_without_breaking_legacy_load() {
     let mut videos = String::new();
     for index in 0..=RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES {

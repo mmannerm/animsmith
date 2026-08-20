@@ -514,6 +514,7 @@ fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1)
                     embedded: !texture.content.is_empty(),
                     relative_filename: texture.relative_filename.as_ref(),
                     filename: texture.filename.as_ref(),
+                    absolute_filename_present: !texture.absolute_filename.is_empty(),
                     disposition: SourceLoaderDispositionV1::Unknown,
                     type_name: "textures",
                 }
@@ -527,6 +528,7 @@ fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1)
                     embedded: !video.content.is_empty(),
                     relative_filename: video.relative_filename.as_ref(),
                     filename: video.filename.as_ref(),
+                    absolute_filename_present: !video.absolute_filename.is_empty(),
                     disposition: SourceLoaderDispositionV1::Discarded,
                     type_name: "videos",
                 }
@@ -540,20 +542,27 @@ fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1)
                     embedded: false,
                     relative_filename: cache.relative_filename.as_ref(),
                     filename: cache.filename.as_ref(),
+                    absolute_filename_present: !cache.absolute_filename.is_empty(),
                     disposition: SourceLoaderDispositionV1::Unsupported,
                     type_name: "cache_files",
                 }
             }
         };
 
-        let (value, field) = if resource.embedded {
-            (None, "content")
+        let (value, field, redacted_locator) = if resource.embedded {
+            (None, "content", Some(SourceResourceLocatorV1::Embedded))
         } else if !resource.relative_filename.is_empty() {
-            (Some(resource.relative_filename), "relative_filename")
+            (Some(resource.relative_filename), "relative_filename", None)
         } else if !resource.filename.is_empty() {
-            (Some(resource.filename), "filename")
+            (Some(resource.filename), "filename", None)
+        } else if resource.absolute_filename_present {
+            (
+                None,
+                "absolute_filename",
+                Some(SourceResourceLocatorV1::Absolute),
+            )
         } else {
-            (None, "filename")
+            (None, "filename", Some(SourceResourceLocatorV1::Missing))
         };
         // Reserve exactly what classification retains before the only possible
         // source-string clone. Unsafe, absolute, remote, data, malformed, and
@@ -577,13 +586,11 @@ fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1)
             "fbx:{}/{}/{field}",
             resource.type_name, resource.source_index
         );
-        let locator = if resource.embedded {
-            SourceResourceLocatorV1::Embedded
-        } else {
+        let locator = redacted_locator.unwrap_or_else(|| {
             value.map_or(SourceResourceLocatorV1::Missing, |value| {
                 SourceResourceLocatorV1::classify(value)
             })
-        };
+        });
         let row = SourceResourceReferenceV1::new(
             source_order_index,
             resource.kind,
@@ -649,6 +656,7 @@ struct ResourceDeclaration<'a> {
     embedded: bool,
     relative_filename: &'a str,
     filename: &'a str,
+    absolute_filename_present: bool,
     disposition: SourceLoaderDispositionV1,
     type_name: &'static str,
 }

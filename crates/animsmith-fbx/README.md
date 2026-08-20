@@ -46,8 +46,9 @@ reconstructed from normalized samples.
 Resource rows retain only bounded safe relative spellings, preferring ufbx's
 `relative_filename` and then `filename`. Absolute, escaping, remote, malformed,
 and oversized spellings are classified and redacted; `absolute_filename` is
-never copied into the source-facts surface. Texture and video declarations that
-refer to the same spelling remain separate reference rows. Resolution,
+used only as a redacted presence signal and is never copied into the
+source-facts surface. Texture and video declarations that refer to the same
+spelling remain separate reference rows. Resolution,
 normalization, deduplication, file opening, and dependency-closure identity are
 outside this crate's V1 projection.
 
