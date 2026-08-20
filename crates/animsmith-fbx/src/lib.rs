@@ -88,10 +88,26 @@ use animsmith_core::model::{
     SourceNodeLocalRest, SourceSkeletonAssets, SourceSkeletonCoverage, SourceSkinAsset,
     SourceSkinAttachment, TextureAsset, Track, TrackValues, Transform,
 };
-use animsmith_core::{LoadedSource, SourceFactsError};
+use animsmith_core::{
+    DependencyClosureBuilderV1, DependencyResourceKeyV1, DependencyResourceRefusalReasonV1,
+    DependencyResourceUnavailableReasonV1, InputIdentity, LoadedSource, RawSourceFactsBuilderV1,
+    ResourceKeySyntaxV1, SourceFactsError, SourceResourceKindV1, SourceResourceLocatorV1,
+    SourceResourceReferenceV1,
+};
 use capability::AssetConversionFacts;
 use glam::{Mat4, Quat, Vec3};
-use std::path::Path;
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+/// Independent ceiling for texture bytes retained in normalized assets.
+///
+/// Dependency identity has its own core-owned capture budgets. This cap
+/// prevents multiple material aliases from multiplying retained image bytes.
+const FBX_MAX_ASSET_TEXTURE_BYTES: usize = 256 * 1024 * 1024;
 
 /// Errors returned while loading an FBX scene into the core model.
 ///
@@ -225,14 +241,18 @@ pub fn load_scale_source(path: &Path) -> Result<FbxScaleSource, LoadError> {
     path.to_str()
         .ok_or_else(|| LoadError::Path(path.display().to_string()))?;
     let bytes = std::fs::read(path).map_err(|error| LoadError::Fbx(error.to_string()))?;
-    load_scale_source_bytes(path, &bytes)
+    let resource_root = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    load_scale_source_bytes_with_resource_root(path, &bytes, resource_root)
 }
 
 /// Load an FBX byte slice into a core [`Document`].
 ///
 /// `bytes` supplies the top-level container exactly as captured by the
-/// caller. `path` is retained for source provenance, diagnostics, and
-/// resolving external resources relative to its parent directory.
+/// caller. This legacy byte-only entry point does not permit external resource
+/// I/O; use [`load_bytes_with_resource_root`] when a trusted root is available.
 ///
 /// # Errors
 ///
@@ -246,11 +266,31 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     Ok(load_source_bytes(path, bytes)?.into_document())
 }
 
+/// Load captured FBX bytes with one explicit trusted resource root.
+///
+/// External declarations are resolved only below `resource_root`, after
+/// lexical normalization and component-by-component symbolic-link refusal.
+/// The exact bytes captured here are used both for dependency identity and
+/// optional normalized texture assets.
+///
+/// # Errors
+///
+/// Returns the same parser and source-facts errors as [`load_bytes`]. Resource
+/// failures are represented in the dependency closure rather than as a loader
+/// error.
+pub fn load_bytes_with_resource_root(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: &Path,
+) -> Result<Document, LoadError> {
+    Ok(load_source_bytes_with_resource_root(path, bytes, resource_root)?.into_document())
+}
+
 /// Load captured FBX bytes and retain bounded importer-sensitive source facts.
 ///
-/// `path` is diagnostics and legacy resource-resolution context only. Source
-/// identity is computed exclusively from `bytes`; no host path enters the new
-/// facts projection.
+/// `path` is diagnostics and parser context only. Source identity is computed
+/// exclusively from `bytes`; no host path enters the dependency closure. This
+/// entry point deliberately performs no external resource I/O.
 ///
 /// # Errors
 ///
@@ -260,13 +300,33 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
 /// [`LoadError::SourceFacts`] when the loader violates a core source-fact
 /// binding invariant.
 pub fn load_source_bytes(path: &Path, bytes: &[u8]) -> Result<LoadedSource, LoadError> {
-    Ok(load_scale_source_bytes(path, bytes)?.into_source())
+    Ok(load_scale_source_bytes_inner(path, bytes, None)?.into_source())
+}
+
+/// Load captured FBX bytes and retain source facts plus a rooted dependency
+/// closure.
+///
+/// `resource_root` is the sole filesystem authority for external FBX
+/// resources. It is not serialized or included in diagnostics, reports, or
+/// dependency identity.
+///
+/// # Errors
+///
+/// Returns the same parser and source-facts errors as [`load_source_bytes`].
+pub fn load_source_bytes_with_resource_root(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: &Path,
+) -> Result<LoadedSource, LoadError> {
+    Ok(load_scale_source_bytes_inner(path, bytes, Some(resource_root))?.into_source())
 }
 
 /// Load captured FBX bytes and retain the capability inventory from the same parse.
 ///
-/// `path` supplies source provenance and the base for external resources;
-/// `bytes` is the exact captured top-level FBX container.
+/// `path` supplies source provenance and parser context; `bytes` is the exact
+/// captured top-level FBX container. This legacy byte-only entry point does
+/// not permit external resource I/O; use
+/// [`load_scale_source_bytes_with_resource_root`] for rooted capture.
 ///
 /// # Errors
 ///
@@ -276,6 +336,33 @@ pub fn load_source_bytes(path: &Path, bytes: &[u8]) -> Result<LoadedSource, Load
 /// [`LoadError::SourceFacts`] when the loader violates a core source-fact
 /// binding invariant.
 pub fn load_scale_source_bytes(path: &Path, bytes: &[u8]) -> Result<FbxScaleSource, LoadError> {
+    load_scale_source_bytes_inner(path, bytes, None)
+}
+
+/// Load captured FBX bytes with a trusted external-resource root and retain
+/// its scale capability inventory.
+///
+/// The loader captures an accepted external file at most once by normalized
+/// logical key. It never follows a symbolic link or treats ufbx's resolved
+/// absolute-path field as a path.
+///
+/// # Errors
+///
+/// Returns the same parser and source-facts errors as
+/// [`load_scale_source_bytes`].
+pub fn load_scale_source_bytes_with_resource_root(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: &Path,
+) -> Result<FbxScaleSource, LoadError> {
+    load_scale_source_bytes_inner(path, bytes, Some(resource_root))
+}
+
+fn load_scale_source_bytes_inner(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: Option<&Path>,
+) -> Result<FbxScaleSource, LoadError> {
     let filename = path
         .to_str()
         .ok_or_else(|| LoadError::Path(path.display().to_string()))?;
@@ -291,6 +378,10 @@ pub fn load_scale_source_bytes(path: &Path, bytes: &[u8]) -> Result<FbxScaleSour
         // so standard composition is correct.
         inherit_mode_handling: ufbx::InheritModeHandling::Compensate,
         generate_missing_normals: true,
+        // All external capture is rooted, bounded, and accounted for below.
+        // Letting ufbx open resources would create an untracked second reader.
+        load_external_files: false,
+        ignore_missing_external_files: false,
         filename: filename.into(),
         ..Default::default()
     };
@@ -408,8 +499,11 @@ pub fn load_scale_source_bytes(path: &Path, bytes: &[u8]) -> Result<FbxScaleSour
         });
     }
 
-    let (assets, conversion) = extract_assets(&scene, path.parent());
     let construct_counts = source_facts::construct_counts(&scene);
+    let raw_facts = source_facts::project(&scene, construct_counts, bytes);
+    let (dependency_closure, resource_capture) =
+        capture_dependency_closure(&scene, &raw_facts, resource_root)?;
+    let (assets, conversion) = extract_assets(&scene, &resource_capture);
     let inventory = capability::inventory(&scene, &conversion, construct_counts);
 
     let document = Document {
@@ -421,69 +515,450 @@ pub fn load_scale_source_bytes(path: &Path, bytes: &[u8]) -> Result<FbxScaleSour
             format: Some("fbx".into()),
         },
     };
-    let source = source_facts::build(&scene, construct_counts, bytes, document)?;
+    let source = raw_facts.finish_with_dependency_closure(document, dependency_closure)?;
 
     Ok(FbxScaleSource { source, inventory })
 }
 
-/// Read one ufbx texture: embedded FBX content first, else a referenced file
-/// next to the source. Only PNG/JPEG pass through (glTF's mandated formats).
-fn texture_asset(texture: &ufbx::Texture, base_dir: Option<&Path>) -> Option<TextureAsset> {
-    let bytes: Vec<u8> = if !texture.content.is_empty() {
-        texture.content.to_vec()
-    } else {
-        let mut found = None;
-        for candidate in [
-            texture.absolute_filename.as_ref(),
-            texture.relative_filename.as_ref(),
-            texture.filename.as_ref(),
-        ] {
-            if candidate.is_empty() {
-                continue;
+/// The per-key capture result retained for later aliases without another open.
+#[derive(Debug, Clone, Copy)]
+enum ExternalCaptureOutcome {
+    Captured,
+    Refused(DependencyResourceRefusalReasonV1),
+    Unavailable(DependencyResourceUnavailableReasonV1),
+}
+
+/// Exact external bytes captured once, indexed by normalized logical key.
+#[derive(Debug, Default)]
+struct FbxResourceCapture {
+    outcomes: BTreeMap<DependencyResourceKeyV1, ExternalCaptureOutcome>,
+    bytes_by_key: BTreeMap<DependencyResourceKeyV1, Vec<u8>>,
+    texture_keys: BTreeMap<u64, DependencyResourceKeyV1>,
+}
+
+impl FbxResourceCapture {
+    fn record_resource_key(
+        &mut self,
+        kind: SourceResourceKindV1,
+        source_index: u64,
+        key: &DependencyResourceKeyV1,
+        outcome: ExternalCaptureOutcome,
+    ) {
+        if kind == SourceResourceKindV1::Texture
+            && matches!(outcome, ExternalCaptureOutcome::Captured)
+        {
+            self.texture_keys.insert(source_index, key.clone());
+        }
+    }
+
+    fn texture_bytes(&self, source_index: u64) -> Option<&[u8]> {
+        self.texture_keys
+            .get(&source_index)
+            .and_then(|key| self.bytes_by_key.get(key))
+            .map(Vec::as_slice)
+    }
+}
+
+/// The outcome of one rooted file read without retaining host error text.
+#[derive(Debug)]
+enum RootedCaptureError {
+    Refused(DependencyResourceRefusalReasonV1),
+    Unavailable(DependencyResourceUnavailableReasonV1),
+}
+
+/// Capture the exact dependency closure after the raw resource prefix exists.
+fn capture_dependency_closure(
+    scene: &ufbx::Scene,
+    facts: &RawSourceFactsBuilderV1,
+    resource_root: Option<&Path>,
+) -> Result<(animsmith_core::DependencyClosureV1, FbxResourceCapture), SourceFactsError> {
+    let mut closure = DependencyClosureBuilderV1::new(
+        facts.primary_identity().clone(),
+        facts.resource_coverage(),
+        facts.resource_rows().len(),
+    );
+    if !scene.texture_files.is_empty() || !scene.audio_clips.is_empty() {
+        // ufbx exposes texture-file linkage and audio clips as additional
+        // resource-bearing domains, but the normalized document has no
+        // one-to-one row shape for either yet. Never claim a complete closure
+        // while either is present.
+        closure.mark_unmodeled_resource_domain();
+    }
+
+    let mut capture = FbxResourceCapture::default();
+    for resource in facts.resource_rows() {
+        if !capture_reference(resource, resource_root, &mut closure, &mut capture)? {
+            break;
+        }
+    }
+    Ok((closure.finish()?, capture))
+}
+
+fn capture_reference(
+    resource: &SourceResourceReferenceV1,
+    resource_root: Option<&Path>,
+    closure: &mut DependencyClosureBuilderV1,
+    capture: &mut FbxResourceCapture,
+) -> Result<bool, SourceFactsError> {
+    let order = resource.source_order_index();
+    let kind = resource.kind();
+    let source_index = resource.source_index();
+    match resource.locator() {
+        SourceResourceLocatorV1::Embedded | SourceResourceLocatorV1::DataUri => {
+            if !closure.begin_reference(0, 0) {
+                return Ok(false);
             }
-            let direct = Path::new(candidate);
-            let path = if direct.is_absolute() {
-                direct.to_path_buf()
-            } else {
-                base_dir.unwrap_or(Path::new(".")).join(direct)
+            closure.push_primary(order, kind, source_index)?;
+        }
+        SourceResourceLocatorV1::Relative(locator) => {
+            if !closure.begin_reference(
+                locator.as_str().len(),
+                DependencyResourceKeyV1::source_component_count(locator),
+            ) {
+                return Ok(false);
+            }
+            let key = match DependencyResourceKeyV1::from_relative(
+                locator,
+                ResourceKeySyntaxV1::ParserRelativePath,
+            ) {
+                Ok(key) => key,
+                Err(animsmith_core::DependencyClosureError::ResourceKeyTooLong { .. }) => {
+                    closure.push_refused(
+                        order,
+                        kind,
+                        source_index,
+                        DependencyResourceRefusalReasonV1::Oversized,
+                    )?;
+                    return Ok(true);
+                }
+                Err(_) => {
+                    closure.push_refused(
+                        order,
+                        kind,
+                        source_index,
+                        DependencyResourceRefusalReasonV1::Malformed,
+                    )?;
+                    return Ok(true);
+                }
             };
-            if let Ok(data) = std::fs::read(&path) {
-                found = Some(data);
-                break;
+            match closure.prepare_external_key(&key)? {
+                None => return Ok(false),
+                Some(false) => {
+                    let outcome =
+                        capture.outcomes.get(&key).copied().ok_or(
+                            animsmith_core::DependencyClosureError::ExternalIdentityMissing,
+                        )?;
+                    match outcome {
+                        ExternalCaptureOutcome::Captured => {
+                            closure.push_external_alias(order, kind, source_index, key.clone())?;
+                        }
+                        ExternalCaptureOutcome::Refused(reason) => {
+                            closure.push_refused(order, kind, source_index, reason)?;
+                        }
+                        ExternalCaptureOutcome::Unavailable(reason) => {
+                            closure.push_unavailable(
+                                order,
+                                kind,
+                                source_index,
+                                Some(key.clone()),
+                                reason,
+                            )?;
+                        }
+                    }
+                    capture.record_resource_key(kind, source_index, &key, outcome);
+                }
+                Some(true) => {
+                    let outcome = match resource_root {
+                        None => ExternalCaptureOutcome::Unavailable(
+                            DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
+                        ),
+                        Some(root) => {
+                            let byte_limit = closure
+                                .max_resource_bytes()
+                                .min(closure.remaining_external_bytes());
+                            // A zero remaining budget still reads at most one
+                            // byte. That bounded N+1 witness lets core retain
+                            // the current unavailable row and terminally stop
+                            // the prefix without a synthetic identity.
+                            let read = match checked_rooted_resource_path(root, &key) {
+                                Ok(path) => {
+                                    // Record exactly at the actual open boundary, after all
+                                    // root/component symlink refusals. A refused path is not
+                                    // an open attempt.
+                                    closure.record_external_open_attempt(&key)?;
+                                    read_file_bounded_path(path, byte_limit)
+                                }
+                                Err(error) => Err(error),
+                            };
+                            match read {
+                                Ok(bytes) => {
+                                    let identity = InputIdentity::from_bytes(&bytes);
+                                    if !closure.push_captured_external(
+                                        order,
+                                        kind,
+                                        source_index,
+                                        key.clone(),
+                                        identity,
+                                    )? {
+                                        return Ok(false);
+                                    }
+                                    capture.bytes_by_key.insert(key.clone(), bytes);
+                                    ExternalCaptureOutcome::Captured
+                                }
+                                Err(RootedCaptureError::Refused(reason)) => {
+                                    closure.push_refused(order, kind, source_index, reason)?;
+                                    ExternalCaptureOutcome::Refused(reason)
+                                }
+                                Err(RootedCaptureError::Unavailable(reason)) => {
+                                    closure.push_unavailable(
+                                        order,
+                                        kind,
+                                        source_index,
+                                        Some(key.clone()),
+                                        reason,
+                                    )?;
+                                    ExternalCaptureOutcome::Unavailable(reason)
+                                }
+                            }
+                        }
+                    };
+                    if resource_root.is_none() {
+                        closure.push_unavailable(
+                            order,
+                            kind,
+                            source_index,
+                            Some(key.clone()),
+                            DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
+                        )?;
+                    }
+                    capture.outcomes.insert(key.clone(), outcome);
+                    capture.record_resource_key(kind, source_index, &key, outcome);
+                }
             }
         }
-        found?
+        locator => {
+            if !closure.begin_reference(0, 0) {
+                return Ok(false);
+            }
+            let reason = match locator {
+                SourceResourceLocatorV1::Absolute => DependencyResourceRefusalReasonV1::Absolute,
+                SourceResourceLocatorV1::Escaping => DependencyResourceRefusalReasonV1::Escaping,
+                SourceResourceLocatorV1::Remote => DependencyResourceRefusalReasonV1::Remote,
+                SourceResourceLocatorV1::Malformed => DependencyResourceRefusalReasonV1::Malformed,
+                // Redacted oversized strings consume no normalization work;
+                // their typed row remains visible instead of stopping capture.
+                SourceResourceLocatorV1::Oversized => DependencyResourceRefusalReasonV1::Oversized,
+                SourceResourceLocatorV1::Missing => {
+                    closure.push_unavailable(
+                        order,
+                        kind,
+                        source_index,
+                        None,
+                        DependencyResourceUnavailableReasonV1::Missing,
+                    )?;
+                    return Ok(true);
+                }
+                SourceResourceLocatorV1::Embedded
+                | SourceResourceLocatorV1::DataUri
+                | SourceResourceLocatorV1::Relative(_) => unreachable!(),
+            };
+            closure.push_refused(order, kind, source_index, reason)?;
+        }
+    }
+    Ok(true)
+}
+
+/// Validate a safe logical key below one trusted root without following symlinks.
+///
+/// This protects the intended root at lookup time. Like ordinary portable
+/// filesystem APIs, it assumes the root tree is not concurrently replaced
+/// between component inspection and open.
+fn checked_rooted_resource_path(
+    root: &Path,
+    key: &DependencyResourceKeyV1,
+) -> Result<PathBuf, RootedCaptureError> {
+    let root_metadata = std::fs::symlink_metadata(root).map_err(root_metadata_error)?;
+    if root_metadata.file_type().is_symlink() {
+        return Err(RootedCaptureError::Refused(
+            DependencyResourceRefusalReasonV1::Symlink,
+        ));
+    }
+    if !root_metadata.is_dir() {
+        return Err(RootedCaptureError::Unavailable(
+            DependencyResourceUnavailableReasonV1::Unreadable,
+        ));
+    }
+
+    let mut path = PathBuf::from(root);
+    let component_count = key.as_str().split('/').count();
+    for (index, component) in key.as_str().split('/').enumerate() {
+        path.push(component);
+        let metadata = std::fs::symlink_metadata(&path).map_err(resource_metadata_error)?;
+        if metadata.file_type().is_symlink() {
+            return Err(RootedCaptureError::Refused(
+                DependencyResourceRefusalReasonV1::Symlink,
+            ));
+        }
+        if index + 1 < component_count && !metadata.is_dir() {
+            return Err(RootedCaptureError::Unavailable(
+                DependencyResourceUnavailableReasonV1::Unreadable,
+            ));
+        }
+        if index + 1 == component_count && !metadata.is_file() {
+            // Devices, FIFOs, sockets, and directories are not dependency
+            // files. Refuse before File::open() so they cannot block or cause
+            // format-loader side effects.
+            return Err(RootedCaptureError::Unavailable(
+                DependencyResourceUnavailableReasonV1::Unreadable,
+            ));
+        }
+    }
+    Ok(path)
+}
+
+fn root_metadata_error(error: std::io::Error) -> RootedCaptureError {
+    let reason = if error.kind() == std::io::ErrorKind::NotFound {
+        DependencyResourceUnavailableReasonV1::ResourceRootUnavailable
+    } else {
+        DependencyResourceUnavailableReasonV1::Unreadable
+    };
+    RootedCaptureError::Unavailable(reason)
+}
+
+fn resource_metadata_error(error: std::io::Error) -> RootedCaptureError {
+    let reason = if error.kind() == std::io::ErrorKind::NotFound {
+        DependencyResourceUnavailableReasonV1::Missing
+    } else {
+        DependencyResourceUnavailableReasonV1::Unreadable
+    };
+    RootedCaptureError::Unavailable(reason)
+}
+
+fn read_file_bounded_path(path: PathBuf, byte_limit: u64) -> Result<Vec<u8>, RootedCaptureError> {
+    let mut file = File::open(path).map_err(resource_metadata_error)?;
+    let limit = usize::try_from(byte_limit).map_err(|_| {
+        RootedCaptureError::Unavailable(
+            DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+        )
+    })?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve(limit.min(8 * 1024)).map_err(|_| {
+        RootedCaptureError::Unavailable(DependencyResourceUnavailableReasonV1::Unreadable)
+    })?;
+    file.by_ref()
+        .take(byte_limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| {
+            RootedCaptureError::Unavailable(DependencyResourceUnavailableReasonV1::Unreadable)
+        })?;
+    Ok(bytes)
+}
+
+#[derive(Debug)]
+struct AssetTextureMaterializer {
+    remaining: usize,
+}
+
+impl Default for AssetTextureMaterializer {
+    fn default() -> Self {
+        Self {
+            remaining: FBX_MAX_ASSET_TEXTURE_BYTES,
+        }
+    }
+}
+
+impl AssetTextureMaterializer {
+    fn materialize(&mut self, bytes: &[u8], mime: &'static str) -> Option<TextureAsset> {
+        if bytes.len() > self.remaining {
+            return None;
+        }
+        let mut retained = Vec::new();
+        retained.try_reserve_exact(bytes.len()).ok()?;
+        retained.extend_from_slice(bytes);
+        self.remaining -= bytes.len();
+        Some(TextureAsset {
+            bytes: retained,
+            mime: mime.into(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod asset_materializer_tests {
+    use super::{AssetTextureMaterializer, FBX_MAX_ASSET_TEXTURE_BYTES};
+    use std::io::Write;
+
+    #[test]
+    fn aliases_cannot_multiply_retained_texture_bytes_past_the_cap() {
+        let bytes = [7u8; 4];
+        let mut materializer = AssetTextureMaterializer { remaining: 8 };
+
+        assert!(materializer.materialize(&bytes, "image/png").is_some());
+        assert!(materializer.materialize(&bytes, "image/png").is_some());
+        assert!(materializer.materialize(&bytes, "image/png").is_none());
+        assert_eq!(materializer.remaining, 0);
+        assert_eq!(
+            AssetTextureMaterializer::default().remaining,
+            FBX_MAX_ASSET_TEXTURE_BYTES
+        );
+    }
+
+    #[test]
+    fn bounded_reader_returns_the_cap_plus_one_budget_witness() {
+        let mut file = tempfile::NamedTempFile::new().expect("temporary resource file");
+        file.write_all(&[1, 2, 3]).expect("write resource bytes");
+        file.flush().expect("flush resource bytes");
+
+        let bytes = super::read_file_bounded_path(file.path().to_path_buf(), 2)
+            .expect("bounded read succeeds");
+        assert_eq!(bytes, [1, 2, 3]);
+    }
+}
+
+/// Materialize one embedded or previously captured texture without re-opening
+/// any path. Only PNG/JPEG pass through (glTF's mandated formats).
+fn texture_asset(
+    texture: &ufbx::Texture,
+    capture: &FbxResourceCapture,
+    materializer: &mut AssetTextureMaterializer,
+) -> Option<TextureAsset> {
+    let bytes: &[u8] = if !texture.content.is_empty() {
+        texture.content.as_ref()
+    } else {
+        capture.texture_bytes(u64::from(texture.element.typed_id))?
     };
     let mime = match bytes.get(..3) {
         Some([0x89, b'P', b'N']) => "image/png",
         Some([0xFF, 0xD8, _]) => "image/jpeg",
         _ => return None,
     };
-    Some(TextureAsset {
-        bytes,
-        mime: mime.into(),
-    })
+    materializer.materialize(bytes, mime)
 }
 
-fn base_color_texture(material: &ufbx::Material, base_dir: Option<&Path>) -> Option<TextureAsset> {
+fn base_color_texture(
+    material: &ufbx::Material,
+    capture: &FbxResourceCapture,
+    materializer: &mut AssetTextureMaterializer,
+) -> Option<TextureAsset> {
     let texture = material.pbr.base_color.texture.as_ref().or(material
         .fbx
         .diffuse_color
         .texture
         .as_ref())?;
-    texture_asset(texture, base_dir)
+    texture_asset(texture, capture, materializer)
 }
 
 fn normal_texture(
     material: &ufbx::Material,
-    base_dir: Option<&Path>,
+    capture: &FbxResourceCapture,
+    materializer: &mut AssetTextureMaterializer,
 ) -> Option<NormalTextureAsset> {
     let texture = material.pbr.normal_map.texture.as_ref().or(material
         .fbx
         .normal_map
         .texture
         .as_ref())?;
-    texture_asset(texture, base_dir).map(|texture| NormalTextureAsset {
+    texture_asset(texture, capture, materializer).map(|texture| NormalTextureAsset {
         texture,
         // ufbx exposes the linked image but no glTF-compatible normal X/Y
         // scalar for ordinary FBX materials. Preserve the image and use the
@@ -644,10 +1119,11 @@ fn extract_source_skeleton(scene: &ufbx::Scene) -> SourceSkeletonAssets {
 /// per source vertex and are renormalized.
 fn extract_assets(
     scene: &ufbx::Scene,
-    base_dir: Option<&Path>,
+    capture: &FbxResourceCapture,
 ) -> (SceneAssets, AssetConversionFacts) {
     let mut assets = SceneAssets::default();
     let mut conversion = AssetConversionFacts::default();
+    let mut materializer = AssetTextureMaterializer::default();
     let mut material_index: std::collections::BTreeMap<u32, usize> =
         std::collections::BTreeMap::new();
     let mut normalized_mesh_index_by_source = std::collections::BTreeMap::<u32, usize>::new();
@@ -669,8 +1145,8 @@ fn extract_assets(
                         } else {
                             m.fbx.diffuse_color.value_vec4
                         };
-                        let texture = base_color_texture(m, base_dir);
-                        let normal_texture = normal_texture(m, base_dir);
+                        let texture = base_color_texture(m, capture, &mut materializer);
+                        let normal_texture = normal_texture(m, capture, &mut materializer);
                         assets.materials.push(MaterialAsset {
                             name: m.element.name.to_string(),
                             // Exporter convention: a texture replaces

@@ -16,16 +16,22 @@ use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Read and load once: the immutable source wrapper binds the normalized
-    // document and bounded raw facts to the exact primary-file bytes judged.
+    // document, bounded raw facts, and same-load dependency closure to the
+    // exact primary-file bytes judged.
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/rig.gltf");
     let bytes = std::fs::read(&path)?;
     let source = animsmith_gltf::load_source_bytes(&path, &bytes)?;
-    let input = source.source_facts().primary_identity().clone();
+    let input = source.dependency_closure().primary_input().clone();
     let doc = source.document();
     println!(
         "loaded {} bones, {} clip(s)",
         doc.skeleton.bones.len(),
         doc.clips.len()
+    );
+    println!(
+        "dependency closure: {} declaration(s), complete={}",
+        source.dependency_closure().references().len(),
+        source.dependency_closure().coverage().is_complete()
     );
 
     // 2. Resolve rig roles: auto-detect a built-in profile, or — as

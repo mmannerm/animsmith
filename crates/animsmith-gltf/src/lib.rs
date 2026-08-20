@@ -105,14 +105,16 @@ use animsmith_core::model::{
     Transform,
 };
 use animsmith_core::{
-    InputIdentity, LoadedSource, RAW_SOURCE_V1_MAX_TEXT_BYTES, RawSourceFactsBuilderV1,
-    SourceAxisV1, SourceChannelFactV1, SourceChannelPropertyV1, SourceClipFactV1,
-    SourceComponentMaskV1, SourceConstructFactV1, SourceConstructKindV1, SourceCoordinateBasisV1,
-    SourceFactDomainV1, SourceFactSetV1, SourceFactsError, SourceFormatV1, SourceInterpolationV1,
-    SourceLinearUnitV1, SourceLoaderDispositionV1, SourceLogicalLocatorV1, SourceObservationV1,
-    SourceProvenanceKindV1, SourceProvenanceV1, SourceResourceKindV1, SourceResourceLocatorV1,
-    SourceResourceReferenceV1, SourceTargetKindV1, SourceTargetV1, SourceTextV1, SourceTimeRangeV1,
-    SourceUnavailableReasonV1,
+    DependencyClosureBuilderV1, DependencyClosureError, DependencyClosureV1,
+    DependencyResourceKeyV1, DependencyResourceRefusalReasonV1,
+    DependencyResourceUnavailableReasonV1, InputIdentity, LoadedSource,
+    RAW_SOURCE_V1_MAX_TEXT_BYTES, RawSourceFactsBuilderV1, ResourceKeySyntaxV1, SourceAxisV1,
+    SourceChannelFactV1, SourceChannelPropertyV1, SourceClipFactV1, SourceComponentMaskV1,
+    SourceConstructFactV1, SourceConstructKindV1, SourceCoordinateBasisV1, SourceFactDomainV1,
+    SourceFactSetV1, SourceFactsError, SourceFormatV1, SourceInterpolationV1, SourceLinearUnitV1,
+    SourceLoaderDispositionV1, SourceLogicalLocatorV1, SourceObservationV1, SourceProvenanceKindV1,
+    SourceProvenanceV1, SourceResourceKindV1, SourceResourceLocatorV1, SourceResourceReferenceV1,
+    SourceTargetKindV1, SourceTargetV1, SourceTextV1, SourceTimeRangeV1, SourceUnavailableReasonV1,
 };
 use base64::Engine as _;
 use glam::{Mat4, Quat, Vec3};
@@ -120,7 +122,7 @@ use gltf::accessor::{DataType as ComponentType, Dimensions as AccessorType};
 use image::{ColorType, ImageError, ImageFormat, ImageReader, Limits};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Errors returned while loading `.gltf` or `.glb` input.
 ///
@@ -138,6 +140,9 @@ pub enum LoadError {
         /// Underlying filesystem error.
         source: std::io::Error,
     },
+    /// A rooted external dependency required to construct the document failed.
+    #[error("external resource load failed: {0}")]
+    ExternalResource(ExternalResourceFailure),
     /// The `gltf` parser rejected the container.
     #[error("glTF parse error: {0}")]
     Gltf(#[from] gltf::Error),
@@ -256,6 +261,23 @@ pub enum LoadError {
     },
 }
 
+/// Sanitized failure classes for external resources required by the loader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ExternalResourceFailure {
+    /// Captured bytes did not authorize a filesystem root.
+    #[error("external resource requires an explicit trusted root")]
+    ResourceRootRequired,
+    /// The source-controlled locator or resolved path crossed the refusal boundary.
+    #[error("unsafe external buffer resource")]
+    Refused,
+    /// The resource exceeded the bounded closure-capture limits.
+    #[error("external buffer resource exceeds capture limits")]
+    CaptureLimitExceeded,
+    /// The accepted resource was missing, unreadable, or changed before capture.
+    #[error("external buffer resource is unavailable")]
+    Unavailable,
+}
+
 /// `fix` errors are classified by defect, not by phase: [`LoadError`]
 /// means the *input* was unreadable or malformed (even when detected
 /// while assembling the output, e.g. re-deriving GLB chunk bounds or
@@ -299,72 +321,15 @@ pub enum WriteError {
     },
 }
 
-/// Contain an external-resource URI to a relative child path: absolute
-/// paths, `..`, backslashes, and non-normal components are rejected after
-/// percent-decoding. Encoded path separators are rejected rather than treated
-/// as hierarchy, so every accepted separator was present in the source URI.
+/// Convert an external-resource URI to the shared safe relative key.
+///
+/// This legacy helper is retained for writer and repair paths. Loader-side
+/// resource capture additionally validates a trusted root and rejects
+/// symlinks before opening the key.
 pub(crate) fn safe_external_buffer_path(uri: &str) -> Result<PathBuf, LoadError> {
-    let decoded = decode_external_uri_path(uri)?;
-    if decoded.is_empty() || decoded.contains('\\') {
-        return Err(unsafe_external_uri());
-    }
-    let path = Path::new(&decoded);
-    if path.is_absolute() {
-        return Err(unsafe_external_uri());
-    }
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(part) => out.push(part),
-            _ => {
-                return Err(unsafe_external_uri());
-            }
-        }
-    }
-    if out.as_os_str().is_empty() {
-        return Err(unsafe_external_uri());
-    }
-    Ok(out)
-}
-
-/// Decode percent-encoded bytes in a URI path without permitting an escape to
-/// introduce a path separator. glTF URIs are Unicode strings, so decoded bytes
-/// must form UTF-8 before they become an OS path.
-fn decode_external_uri_path(uri: &str) -> Result<String, LoadError> {
-    let bytes = uri.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'%' {
-            decoded.push(bytes[index]);
-            index += 1;
-            continue;
-        }
-        let Some((&high, &low)) = bytes.get(index + 1).zip(bytes.get(index + 2)) else {
-            return Err(unsafe_external_uri());
-        };
-        let Some(value) = hex_value(high)
-            .zip(hex_value(low))
-            .map(|(high, low)| high << 4 | low)
-        else {
-            return Err(unsafe_external_uri());
-        };
-        if matches!(value, b'/' | b'\\' | 0) {
-            return Err(unsafe_external_uri());
-        }
-        decoded.push(value);
-        index += 3;
-    }
-    String::from_utf8(decoded).map_err(|_| unsafe_external_uri())
-}
-
-fn hex_value(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
+    DependencyResourceKeyV1::from_source_str(uri, ResourceKeySyntaxV1::GltfUri)
+        .map(|key| PathBuf::from(key.as_str()))
+        .map_err(|_| unsafe_external_uri())
 }
 
 fn unsafe_external_uri() -> LoadError {
@@ -399,6 +364,106 @@ pub(crate) fn validate_glb_framing(bytes: &[u8]) -> Result<(), LoadError> {
         )));
     }
     Ok(())
+}
+
+/// Detect an `extensions` object key anywhere in the exact JSON payload.
+///
+/// `gltf-json` discards unknown extension payloads when its optional
+/// `extensions` feature is disabled, and it does not require payload names to
+/// appear in `extensionsUsed`. This allocation-free, nonrecursive scan keeps
+/// dependency closure coverage conservative even for that undeclared shape.
+/// It runs only after the ordinary glTF parser has accepted the JSON.
+fn has_extension_object(primary_bytes: &[u8]) -> bool {
+    let Some(json) = source_json_payload(primary_bytes) else {
+        return true;
+    };
+    json_has_object_key(json, b"extensions")
+}
+
+fn source_json_payload(primary_bytes: &[u8]) -> Option<&[u8]> {
+    if !primary_bytes.starts_with(b"glTF") {
+        return Some(primary_bytes);
+    }
+    const GLB_JSON_OFFSET: usize = 20;
+    let length = u32::from_le_bytes(primary_bytes.get(12..16)?.try_into().ok()?) as usize;
+    primary_bytes.get(GLB_JSON_OFFSET..GLB_JSON_OFFSET.checked_add(length)?)
+}
+
+fn json_has_object_key(json: &[u8], target: &[u8]) -> bool {
+    let mut cursor = 0;
+    while cursor < json.len() {
+        if json[cursor] != b'"' {
+            cursor += 1;
+            continue;
+        }
+        cursor += 1;
+        let mut target_index = 0;
+        let mut candidate = true;
+        loop {
+            let Some(&byte) = json.get(cursor) else {
+                return true;
+            };
+            if byte == b'"' {
+                cursor += 1;
+                break;
+            }
+            let decoded = if byte == b'\\' {
+                cursor += 1;
+                let Some(&escape) = json.get(cursor) else {
+                    return true;
+                };
+                match escape {
+                    b'u' => {
+                        let Some(hex) = json.get(cursor + 1..cursor + 5) else {
+                            return true;
+                        };
+                        cursor += 5;
+                        decode_json_hex_quad(hex).and_then(|value| u8::try_from(value).ok())
+                    }
+                    b'"' | b'\\' | b'/' => {
+                        cursor += 1;
+                        Some(escape)
+                    }
+                    b'b' | b'f' | b'n' | b'r' | b't' => {
+                        cursor += 1;
+                        None
+                    }
+                    _ => return true,
+                }
+            } else {
+                cursor += 1;
+                Some(byte)
+            };
+            if candidate {
+                match decoded {
+                    Some(decoded) if target.get(target_index) == Some(&decoded) => {
+                        target_index += 1;
+                    }
+                    _ => candidate = false,
+                }
+            }
+        }
+        let mut delimiter = cursor;
+        while matches!(json.get(delimiter), Some(b' ' | b'\t' | b'\r' | b'\n')) {
+            delimiter += 1;
+        }
+        if candidate && target_index == target.len() && json.get(delimiter).copied() == Some(b':') {
+            return true;
+        }
+    }
+    false
+}
+
+fn decode_json_hex_quad(hex: &[u8]) -> Option<u16> {
+    hex.iter().try_fold(0_u16, |value, byte| {
+        let digit = match byte {
+            b'0'..=b'9' => u16::from(*byte - b'0'),
+            b'a'..=b'f' => u16::from(*byte - b'a' + 10),
+            b'A'..=b'F' => u16::from(*byte - b'A' + 10),
+            _ => return None,
+        };
+        Some((value << 4) | digit)
+    })
 }
 
 /// Reject animation data the `gltf` crate leaves un-validated but then
@@ -1214,14 +1279,16 @@ pub fn load_source(path: &Path) -> Result<LoadedSource, LoadError> {
         path: path.display().to_string(),
         source,
     })?;
-    load_source_bytes(path, &bytes)
+    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    load_source_bytes_with_resource_root(path, &bytes, root)
 }
 
 /// Load a `.glb` or `.gltf` byte slice into a core [`Document`].
 ///
 /// `bytes` supplies the top-level container exactly as captured by the
-/// caller. `path` is retained for source provenance, diagnostics, and
-/// resolving external buffers and images relative to its parent directory.
+/// caller. `path` is retained for source provenance and diagnostics only;
+/// captured-byte inputs need an explicit root API before any external
+/// resource may be resolved.
 ///
 /// # Errors
 ///
@@ -1234,12 +1301,32 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     load_source_bytes(path, bytes).map(LoadedSource::into_document)
 }
 
+/// Load captured bytes with an explicit trusted local root for external resources.
+///
+/// The root is capability input from the caller; it is never retained in raw
+/// facts, the dependency closure, diagnostics for source-controlled locators,
+/// or its digest.
+///
+/// # Errors
+///
+/// Returns [`LoadError`] under the same conditions as [`load_bytes`], while
+/// allowing safe external resources to resolve under `resource_root`.
+pub fn load_bytes_with_resource_root(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: &Path,
+) -> Result<Document, LoadError> {
+    load_source_bytes_with_resource_root(path, bytes, resource_root)
+        .map(LoadedSource::into_document)
+}
+
 /// Load captured `.gltf` or `.glb` bytes with immutable raw-source facts.
 ///
 /// `bytes` is both the parser input and the authority for
-/// [`animsmith_core::InputIdentity`]. `path` remains diagnostics-only and is
-/// used to resolve sibling resources; it never contributes to source identity
-/// or container-kind detection.
+/// [`animsmith_core::InputIdentity`]. This self-contained entry point refuses
+/// safe relative external declarations because captured bytes alone do not
+/// authorize a local filesystem root; use
+/// [`load_source_bytes_with_resource_root`] for such inputs.
 ///
 /// # Errors
 ///
@@ -1247,6 +1334,47 @@ pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
 /// source-facts projection limit produces a successful value with partial
 /// coverage.
 pub fn load_source_bytes(path: &Path, bytes: &[u8]) -> Result<LoadedSource, LoadError> {
+    load_source_bytes_inner(path, bytes, None)
+}
+
+/// Load captured bytes with an explicit trusted local root for external resources.
+///
+/// `resource_root` is an authority supplied by the caller, not a source fact.
+/// Resource keys are normalized and opened only beneath that root. The final
+/// root and every locator-derived symlink component are refused; ancestors of
+/// the explicitly supplied root are part of the caller's capability path. The
+/// root itself never enters public evidence.
+///
+/// # Errors
+///
+/// Returns [`LoadError`] for a malformed source, an essential unavailable
+/// external buffer, or an unsafe resource declaration. Missing/unreadable
+/// external images remain typed unavailable source evidence.
+pub fn load_source_bytes_with_resource_root(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: &Path,
+) -> Result<LoadedSource, LoadError> {
+    load_source_bytes_inner(path, bytes, Some(resource_root))
+}
+
+fn load_source_bytes_inner(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: Option<&Path>,
+) -> Result<LoadedSource, LoadError> {
+    load_source_bytes_inner_with_reader(path, bytes, resource_root, read_external_file)
+}
+
+fn load_source_bytes_inner_with_reader<F>(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: Option<&Path>,
+    mut read_external: F,
+) -> Result<LoadedSource, LoadError>
+where
+    F: FnMut(&Path, u64) -> CapturedResource,
+{
     // Parse from the supplied slice rather than via `Gltf::open`: the reader
     // path (`Glb::from_reader`) trusts the GLB header's declared length and
     // pre-allocates `vec![0; declared_len]` before reading a byte, so a
@@ -1261,22 +1389,33 @@ pub fn load_source_bytes(path: &Path, bytes: &[u8]) -> Result<LoadedSource, Load
     // inventory unsupported declarations before refusing an operation.
     let gltf = gltf::Gltf::from_slice(bytes)?;
     validate_animations(&gltf.document)?;
-    let buffers = resolve_buffers(&gltf, path.parent())?;
+    let mut facts = source_facts_builder(bytes)?;
+    project_extension_facts(&gltf.document, &mut facts);
+    project_resource_facts(&gltf.document, &mut facts);
+    let has_unmodeled_extension_domain = has_extension_object(bytes)
+        || gltf.document.extensions_used().next().is_some()
+        || gltf.document.extensions_required().next().is_some();
+    let (dependency_closure, mut resources) = capture_dependency_closure(
+        &facts,
+        resource_root,
+        has_unmodeled_extension_domain,
+        &mut read_external,
+    )?;
+    let buffers = resolve_captured_buffers(&gltf, &mut resources)?;
     validate_primitive_accessors(&gltf.document, &buffers)?;
     // Derive the node topology once and share it: the skeleton build and
     // asset extraction must agree on which bone each node became, and it is
     // also where malformed graphs are rejected (so that runs once too).
     let topo = topology(&gltf.document)?;
     let source_skeleton = extract_source_skeleton(&gltf.document, &buffers, &topo);
-    let mut facts = source_facts_builder(bytes)?;
     let mut doc = build_document(&gltf, &buffers, path, &topo, &mut facts)?;
-    doc.assets = extract_assets(&gltf.document, &buffers, path.parent(), &topo.bone_of_node);
+    doc.assets = extract_assets(&gltf.document, &buffers, &mut resources, &topo.bone_of_node);
     doc.assets.scenes = extract_scenes(&gltf.document, &topo.bone_of_node);
     doc.assets.default_scene = gltf.document.default_scene().map(|scene| scene.index());
     doc.assets.source_skeleton = source_skeleton;
-    project_extension_facts(&gltf.document, &mut facts);
-    project_resource_facts(&gltf.document, &mut facts);
-    facts.finish(doc).map_err(LoadError::from)
+    facts
+        .finish_with_dependency_closure(doc, dependency_closure)
+        .map_err(LoadError::from)
 }
 
 fn source_facts_builder(primary_bytes: &[u8]) -> Result<RawSourceFactsBuilderV1, SourceFactsError> {
@@ -1484,9 +1623,8 @@ pub(crate) fn resolve_buffers(
                         .decode(payload)
                         .map_err(|e| LoadError::Buffer(format!("bad base64 data URI: {e}")))?
                 } else {
-                    let path = base
-                        .unwrap_or(Path::new("."))
-                        .join(safe_external_buffer_path(uri)?);
+                    let root = base.ok_or_else(resource_root_required)?;
+                    let path = root.join(safe_external_buffer_path(uri)?);
                     std::fs::read(&path).map_err(|source| LoadError::Io {
                         // Do not reproduce a source-controlled resource
                         // locator or its resolved host path through the new
@@ -1500,6 +1638,628 @@ pub(crate) fn resolve_buffers(
         buffers.push(data);
     }
     Ok(buffers)
+}
+
+/// Loader-private cap on duplicate external `Vec` slots. Closure I/O records
+/// unique opened/hashed bytes separately, so aliases cannot multiply memory.
+const MAX_EXTERNAL_MATERIALIZED_BYTES: u64 = 256 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+enum CapturedResourceFailure {
+    Refused(DependencyResourceRefusalReasonV1),
+    Unavailable(DependencyResourceUnavailableReasonV1),
+}
+
+enum CapturedResource {
+    Bytes(Vec<u8>),
+    Failure(CapturedResourceFailure),
+}
+
+#[derive(Clone)]
+enum CapturedReference {
+    Primary,
+    External(DependencyResourceKeyV1),
+    Failure(CapturedResourceFailure),
+}
+
+/// One bounded local-file resource capture tied to a single loader invocation.
+///
+/// The map keeps exact bytes only until all document consumers have reused
+/// them. The resulting core closure receives identities and safe logical keys,
+/// never this root or any resolved host path.
+struct ResourceCaptureSession {
+    root: TrustedResourceRoot,
+    resources: BTreeMap<DependencyResourceKeyV1, CapturedResource>,
+    references: BTreeMap<(SourceResourceKindV1, u64), CapturedReference>,
+    materialized_external_bytes: u64,
+    materialized_external_limit: u64,
+}
+
+enum TrustedResourceRoot {
+    Absent,
+    Available(PathBuf),
+    Failure(CapturedResourceFailure),
+}
+
+impl ResourceCaptureSession {
+    fn new(root: Option<&Path>) -> Self {
+        Self {
+            root: trusted_resource_root(root),
+            resources: BTreeMap::new(),
+            references: BTreeMap::new(),
+            materialized_external_bytes: 0,
+            materialized_external_limit: MAX_EXTERNAL_MATERIALIZED_BYTES,
+        }
+    }
+
+    fn insert_reference(
+        &mut self,
+        kind: SourceResourceKindV1,
+        source_index: u64,
+        reference: CapturedReference,
+    ) {
+        self.references.insert((kind, source_index), reference);
+    }
+
+    fn reference(&self, kind: SourceResourceKindV1, source_index: u64) -> CapturedReference {
+        self.references
+            .get(&(kind, source_index))
+            .cloned()
+            .unwrap_or(CapturedReference::Failure(
+                CapturedResourceFailure::Unavailable(
+                    DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+                ),
+            ))
+    }
+
+    /// Validate every resource component before an external open. This makes a
+    /// symlink a pure refusal: no source-controlled file is opened first.
+    fn preflight_external(
+        &self,
+        key: &DependencyResourceKeyV1,
+    ) -> Result<PathBuf, CapturedResourceFailure> {
+        let root = match &self.root {
+            TrustedResourceRoot::Available(root) => root,
+            TrustedResourceRoot::Absent => {
+                return Err(CapturedResourceFailure::Unavailable(
+                    DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
+                ));
+            }
+            TrustedResourceRoot::Failure(failure) => return Err(*failure),
+        };
+        let mut path = root.clone();
+        let mut components = key.as_str().split('/').peekable();
+        while let Some(component) = components.next() {
+            let is_final = components.peek().is_none();
+            path.push(component);
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(CapturedResourceFailure::Refused(
+                        DependencyResourceRefusalReasonV1::Symlink,
+                    ));
+                }
+                Ok(metadata)
+                    if (!is_final && metadata.is_dir()) || (is_final && metadata.is_file()) => {}
+                Ok(_) => {
+                    return Err(CapturedResourceFailure::Unavailable(
+                        DependencyResourceUnavailableReasonV1::Unreadable,
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(CapturedResourceFailure::Unavailable(
+                        DependencyResourceUnavailableReasonV1::Missing,
+                    ));
+                }
+                Err(_) => {
+                    return Err(CapturedResourceFailure::Unavailable(
+                        DependencyResourceUnavailableReasonV1::Unreadable,
+                    ));
+                }
+            }
+        }
+        Ok(path)
+    }
+
+    fn materialize_external(
+        &mut self,
+        kind: SourceResourceKindV1,
+        source_index: u64,
+    ) -> Result<Vec<u8>, CapturedResourceFailure> {
+        let CapturedReference::External(key) = self.reference(kind, source_index) else {
+            return Err(reference_failure(self.reference(kind, source_index)));
+        };
+        let length = match self.resources.get(&key) {
+            Some(CapturedResource::Bytes(bytes)) => bytes.len() as u64,
+            Some(CapturedResource::Failure(failure)) => return Err(*failure),
+            None => {
+                return Err(CapturedResourceFailure::Unavailable(
+                    DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+                ));
+            }
+        };
+        let Some(next) = self.materialized_external_bytes.checked_add(length) else {
+            return Err(CapturedResourceFailure::Unavailable(
+                DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+            ));
+        };
+        if next > self.materialized_external_limit {
+            return Err(CapturedResourceFailure::Unavailable(
+                DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+            ));
+        }
+        let bytes = match self.resources.get(&key) {
+            Some(CapturedResource::Bytes(bytes)) => bytes.clone(),
+            _ => unreachable!("captured resource state changed without mutation"),
+        };
+        self.materialized_external_bytes = next;
+        Ok(bytes)
+    }
+
+    fn external_image_payload(
+        &self,
+        image_index: usize,
+    ) -> (Option<&[u8]>, ImageUnavailableReason) {
+        let CapturedReference::External(key) =
+            self.reference(SourceResourceKindV1::Image, image_index as u64)
+        else {
+            return (None, ImageUnavailableReason::SourceUnavailable);
+        };
+        match self.resources.get(&key) {
+            Some(CapturedResource::Bytes(bytes)) => (
+                Some(bytes.as_slice()),
+                ImageUnavailableReason::SourceUnavailable,
+            ),
+            _ => (None, ImageUnavailableReason::SourceUnavailable),
+        }
+    }
+
+    fn external_image_is_available(&self, image_index: usize) -> bool {
+        self.external_image_payload(image_index).0.is_some()
+    }
+
+    fn clone_image_for_material(
+        &mut self,
+        image_index: usize,
+        texture: &TextureAsset,
+    ) -> Option<TextureAsset> {
+        if matches!(
+            self.reference(SourceResourceKindV1::Image, image_index as u64),
+            CapturedReference::External(_)
+        ) {
+            let length = texture.bytes.len() as u64;
+            let next = self.materialized_external_bytes.checked_add(length)?;
+            if next > self.materialized_external_limit {
+                return None;
+            }
+            self.materialized_external_bytes = next;
+        }
+        Some(texture.clone())
+    }
+}
+
+/// Read one already-preflighted resource exactly once. `limit + 1` is a
+/// bounded witness for the core closure's terminal resource-budget row.
+fn read_external_file(path: &Path, limit: u64) -> CapturedResource {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return CapturedResource::Failure(CapturedResourceFailure::Unavailable(
+                DependencyResourceUnavailableReasonV1::Missing,
+            ));
+        }
+        Err(_) => {
+            return CapturedResource::Failure(CapturedResourceFailure::Unavailable(
+                DependencyResourceUnavailableReasonV1::Unreadable,
+            ));
+        }
+    };
+    let max_read = limit.saturating_add(1);
+    let mut bytes = Vec::new();
+    let read = file.take(max_read).read_to_end(&mut bytes);
+    if read.is_err() {
+        return CapturedResource::Failure(CapturedResourceFailure::Unavailable(
+            DependencyResourceUnavailableReasonV1::Unreadable,
+        ));
+    }
+    CapturedResource::Bytes(bytes)
+}
+
+/// Validate the caller-supplied root itself without inspecting its ancestors.
+///
+/// Ancestors are part of the capability path the caller explicitly supplied;
+/// only the final root and locator-derived children belong to this loader's
+/// symlink-refusal boundary. A relative root is made absolute once here, never
+/// inferred from a source locator.
+fn trusted_resource_root(root: Option<&Path>) -> TrustedResourceRoot {
+    let Some(root) = root else {
+        return TrustedResourceRoot::Absent;
+    };
+    let root = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(current) => current.join(root),
+            Err(_) => {
+                return TrustedResourceRoot::Failure(CapturedResourceFailure::Unavailable(
+                    DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
+                ));
+            }
+        }
+    };
+    match std::fs::symlink_metadata(&root) {
+        Ok(metadata) if metadata.is_dir() => TrustedResourceRoot::Available(root),
+        Ok(metadata) if metadata.file_type().is_symlink() => TrustedResourceRoot::Failure(
+            CapturedResourceFailure::Refused(DependencyResourceRefusalReasonV1::Symlink),
+        ),
+        Ok(_) | Err(_) => TrustedResourceRoot::Failure(CapturedResourceFailure::Unavailable(
+            DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
+        )),
+    }
+}
+
+fn reference_failure(reference: CapturedReference) -> CapturedResourceFailure {
+    match reference {
+        CapturedReference::Failure(failure) => failure,
+        CapturedReference::Primary | CapturedReference::External(_) => {
+            CapturedResourceFailure::Unavailable(
+                DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+            )
+        }
+    }
+}
+
+fn capture_dependency_closure<F>(
+    facts: &RawSourceFactsBuilderV1,
+    root: Option<&Path>,
+    has_unmodeled_resource_domain: bool,
+    read_external: &mut F,
+) -> Result<(DependencyClosureV1, ResourceCaptureSession), LoadError>
+where
+    F: FnMut(&Path, u64) -> CapturedResource,
+{
+    let mut closure = DependencyClosureBuilderV1::new(
+        facts.primary_identity().clone(),
+        facts.resource_coverage(),
+        facts.resource_rows().len(),
+    );
+    if has_unmodeled_resource_domain {
+        closure.mark_unmodeled_resource_domain();
+    }
+    let mut session = ResourceCaptureSession::new(root);
+    for row in facts.resource_rows() {
+        let (locator_bytes, components) = match row.locator() {
+            SourceResourceLocatorV1::Relative(locator) => (
+                locator.as_str().len(),
+                DependencyResourceKeyV1::source_component_count(locator),
+            ),
+            _ => (0, 0),
+        };
+        if !closure.begin_reference(locator_bytes, components) {
+            break;
+        }
+        let kind = row.kind();
+        let source_index = row.source_index();
+        let source_order_index = row.source_order_index();
+        match row.locator() {
+            SourceResourceLocatorV1::Embedded | SourceResourceLocatorV1::DataUri => {
+                closure
+                    .push_primary(source_order_index, kind, source_index)
+                    .map_err(SourceFactsError::from)?;
+                session.insert_reference(kind, source_index, CapturedReference::Primary);
+            }
+            SourceResourceLocatorV1::Absolute => {
+                record_refused(
+                    &mut closure,
+                    &mut session,
+                    source_order_index,
+                    kind,
+                    source_index,
+                    DependencyResourceRefusalReasonV1::Absolute,
+                )?;
+            }
+            SourceResourceLocatorV1::Escaping => {
+                record_refused(
+                    &mut closure,
+                    &mut session,
+                    source_order_index,
+                    kind,
+                    source_index,
+                    DependencyResourceRefusalReasonV1::Escaping,
+                )?;
+            }
+            SourceResourceLocatorV1::Remote => {
+                record_refused(
+                    &mut closure,
+                    &mut session,
+                    source_order_index,
+                    kind,
+                    source_index,
+                    DependencyResourceRefusalReasonV1::Remote,
+                )?;
+            }
+            SourceResourceLocatorV1::Malformed => {
+                record_refused(
+                    &mut closure,
+                    &mut session,
+                    source_order_index,
+                    kind,
+                    source_index,
+                    DependencyResourceRefusalReasonV1::Malformed,
+                )?;
+            }
+            SourceResourceLocatorV1::Oversized => {
+                record_refused(
+                    &mut closure,
+                    &mut session,
+                    source_order_index,
+                    kind,
+                    source_index,
+                    DependencyResourceRefusalReasonV1::Oversized,
+                )?;
+            }
+            SourceResourceLocatorV1::Missing => {
+                closure
+                    .push_unavailable(
+                        source_order_index,
+                        kind,
+                        source_index,
+                        None,
+                        DependencyResourceUnavailableReasonV1::Missing,
+                    )
+                    .map_err(SourceFactsError::from)?;
+                session.insert_reference(
+                    kind,
+                    source_index,
+                    CapturedReference::Failure(CapturedResourceFailure::Unavailable(
+                        DependencyResourceUnavailableReasonV1::Missing,
+                    )),
+                );
+            }
+            SourceResourceLocatorV1::Relative(locator) => {
+                // Captured bytes carry no ambient filesystem authority. This
+                // applies to optional images as well as essential buffers.
+                if root.is_none() {
+                    return Err(resource_root_required());
+                }
+                let key = match DependencyResourceKeyV1::from_relative(
+                    locator,
+                    ResourceKeySyntaxV1::GltfUri,
+                ) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        let reason = match error {
+                            DependencyClosureError::ResourceKeyTooLong { .. }
+                            | DependencyClosureError::TooManyPathComponents { .. } => {
+                                DependencyResourceRefusalReasonV1::Oversized
+                            }
+                            _ => DependencyResourceRefusalReasonV1::Malformed,
+                        };
+                        record_refused(
+                            &mut closure,
+                            &mut session,
+                            source_order_index,
+                            kind,
+                            source_index,
+                            reason,
+                        )?;
+                        continue;
+                    }
+                };
+                match closure
+                    .prepare_external_key(&key)
+                    .map_err(SourceFactsError::from)?
+                {
+                    None => break,
+                    Some(false) => {
+                        let reference = session
+                            .resources
+                            .get(&key)
+                            .map(|resource| match resource {
+                                CapturedResource::Bytes(_) => {
+                                    CapturedReference::External(key.clone())
+                                }
+                                CapturedResource::Failure(failure) => {
+                                    CapturedReference::Failure(*failure)
+                                }
+                            })
+                            .unwrap_or(CapturedReference::Failure(
+                                CapturedResourceFailure::Unavailable(
+                                    DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+                                ),
+                            ));
+                        record_cached_reference(
+                            &mut closure,
+                            &mut session,
+                            source_order_index,
+                            kind,
+                            source_index,
+                            key,
+                            reference,
+                        )?;
+                    }
+                    Some(true) => {
+                        let limit = closure
+                            .max_resource_bytes()
+                            .min(closure.remaining_external_bytes());
+                        let resource = match session.preflight_external(&key) {
+                            Ok(path) => {
+                                // Count the attempt immediately before the
+                                // only File::open, after all refusal checks.
+                                closure
+                                    .record_external_open_attempt(&key)
+                                    .map_err(SourceFactsError::from)?;
+                                read_external(&path, limit)
+                            }
+                            Err(failure) => CapturedResource::Failure(failure),
+                        };
+                        let reference = match &resource {
+                            CapturedResource::Bytes(bytes) => {
+                                let identity = InputIdentity::from_bytes(bytes);
+                                let captured = closure
+                                    .push_captured_external(
+                                        source_order_index,
+                                        kind,
+                                        source_index,
+                                        key.clone(),
+                                        identity,
+                                    )
+                                    .map_err(SourceFactsError::from)?;
+                                if captured {
+                                    CapturedReference::External(key.clone())
+                                } else {
+                                    CapturedReference::Failure(
+                                        CapturedResourceFailure::Unavailable(
+                                            DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+                                        ),
+                                    )
+                                }
+                            }
+                            CapturedResource::Failure(failure) => {
+                                record_failure(
+                                    &mut closure,
+                                    source_order_index,
+                                    kind,
+                                    source_index,
+                                    Some(key.clone()),
+                                    *failure,
+                                )?;
+                                CapturedReference::Failure(*failure)
+                            }
+                        };
+                        let resource = match reference {
+                            CapturedReference::Failure(failure)
+                                if matches!(&resource, CapturedResource::Bytes(_)) =>
+                            {
+                                CapturedResource::Failure(failure)
+                            }
+                            _ => resource,
+                        };
+                        session.resources.insert(key, resource);
+                        session.insert_reference(kind, source_index, reference);
+                    }
+                }
+            }
+        }
+    }
+    let closure = closure.finish().map_err(SourceFactsError::from)?;
+    Ok((closure, session))
+}
+
+fn record_refused(
+    closure: &mut DependencyClosureBuilderV1,
+    session: &mut ResourceCaptureSession,
+    source_order_index: usize,
+    kind: SourceResourceKindV1,
+    source_index: u64,
+    reason: DependencyResourceRefusalReasonV1,
+) -> Result<(), LoadError> {
+    closure
+        .push_refused(source_order_index, kind, source_index, reason)
+        .map_err(SourceFactsError::from)?;
+    session.insert_reference(
+        kind,
+        source_index,
+        CapturedReference::Failure(CapturedResourceFailure::Refused(reason)),
+    );
+    Ok(())
+}
+
+fn record_failure(
+    closure: &mut DependencyClosureBuilderV1,
+    source_order_index: usize,
+    kind: SourceResourceKindV1,
+    source_index: u64,
+    key: Option<DependencyResourceKeyV1>,
+    failure: CapturedResourceFailure,
+) -> Result<(), LoadError> {
+    match failure {
+        CapturedResourceFailure::Refused(reason) => closure
+            .push_refused(source_order_index, kind, source_index, reason)
+            .map_err(SourceFactsError::from)?,
+        CapturedResourceFailure::Unavailable(reason) => closure
+            .push_unavailable(source_order_index, kind, source_index, key, reason)
+            .map_err(SourceFactsError::from)?,
+    }
+    Ok(())
+}
+
+fn record_cached_reference(
+    closure: &mut DependencyClosureBuilderV1,
+    session: &mut ResourceCaptureSession,
+    source_order_index: usize,
+    kind: SourceResourceKindV1,
+    source_index: u64,
+    key: DependencyResourceKeyV1,
+    reference: CapturedReference,
+) -> Result<(), LoadError> {
+    match &reference {
+        CapturedReference::External(_) => closure
+            .push_external_alias(source_order_index, kind, source_index, key)
+            .map_err(SourceFactsError::from)?,
+        CapturedReference::Failure(failure) => record_failure(
+            closure,
+            source_order_index,
+            kind,
+            source_index,
+            Some(key),
+            *failure,
+        )?,
+        CapturedReference::Primary => unreachable!("external aliases never map to primary"),
+    }
+    session.insert_reference(kind, source_index, reference);
+    Ok(())
+}
+
+fn resolve_captured_buffers(
+    gltf: &gltf::Gltf,
+    resources: &mut ResourceCaptureSession,
+) -> Result<Vec<Vec<u8>>, LoadError> {
+    let mut buffers = Vec::new();
+    for buffer in gltf.buffers() {
+        let data = match buffer.source() {
+            gltf::buffer::Source::Bin => gltf
+                .blob
+                .clone()
+                .ok_or_else(|| LoadError::Buffer("GLB has no BIN chunk".into()))?,
+            gltf::buffer::Source::Uri(uri) if uri.starts_with("data:") => {
+                let payload = uri
+                    .strip_prefix("data:")
+                    .and_then(|encoded| encoded.split_once("base64,").map(|(_, payload)| payload))
+                    .ok_or_else(|| {
+                        LoadError::Buffer("unsupported data URI in buffer".to_owned())
+                    })?;
+                base64::engine::general_purpose::STANDARD
+                    .decode(payload)
+                    .map_err(|_| LoadError::Buffer("invalid data URI in buffer".to_owned()))?
+            }
+            gltf::buffer::Source::Uri(_) => resources
+                .materialize_external(SourceResourceKindV1::Buffer, buffer.index() as u64)
+                .map_err(buffer_capture_error)?,
+        };
+        buffers.push(data);
+    }
+    Ok(buffers)
+}
+
+fn buffer_capture_error(failure: CapturedResourceFailure) -> LoadError {
+    match failure {
+        CapturedResourceFailure::Refused(_) => {
+            LoadError::ExternalResource(ExternalResourceFailure::Refused)
+        }
+        CapturedResourceFailure::Unavailable(
+            DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
+        ) => resource_root_required(),
+        CapturedResourceFailure::Unavailable(
+            DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+        ) => LoadError::ExternalResource(ExternalResourceFailure::CaptureLimitExceeded),
+        CapturedResourceFailure::Unavailable(_) => {
+            LoadError::ExternalResource(ExternalResourceFailure::Unavailable)
+        }
+    }
+}
+
+fn resource_root_required() -> LoadError {
+    LoadError::ExternalResource(ExternalResourceFailure::ResourceRootRequired)
 }
 
 struct PendingGltfClipFacts {
@@ -2194,12 +2954,12 @@ fn extract_source_skeleton(
 fn extract_assets(
     doc: &gltf::Document,
     buffers: &[Vec<u8>],
-    base: Option<&Path>,
+    resources: &mut ResourceCaptureSession,
     bone_of_node: &[Option<usize>],
 ) -> SceneAssets {
     let mut assets = SceneAssets::default();
 
-    let source_images = extract_source_images(doc, buffers, base);
+    let source_images = extract_source_images(doc, buffers, resources);
     let (raw_images, source_image_records): (Vec<_>, Vec<_>) = source_images
         .into_iter()
         .map(|image| (image.texture, image.record))
@@ -2229,32 +2989,26 @@ fn extract_assets(
                 texture_bindings: source_material_texture_bindings(&material),
             });
         let base_color_texture = pbr.base_color_texture().and_then(|info| {
-            raw_images
-                .get(info.texture().source().index())
-                .and_then(|image| image.clone())
+            material_texture(&raw_images, info.texture().source().index(), resources)
         });
         let normal_texture = material.normal_texture().and_then(|info| {
-            raw_images
-                .get(info.texture().source().index())
-                .and_then(|image| image.clone())
-                .map(|texture| NormalTextureAsset {
+            material_texture(&raw_images, info.texture().source().index(), resources).map(
+                |texture| NormalTextureAsset {
                     texture,
                     scale: info.scale(),
-                })
+                },
+            )
         });
         let metallic_roughness_texture = pbr.metallic_roughness_texture().and_then(|info| {
-            raw_images
-                .get(info.texture().source().index())
-                .and_then(|image| image.clone())
+            material_texture(&raw_images, info.texture().source().index(), resources)
         });
         let occlusion_texture = material.occlusion_texture().and_then(|info| {
-            raw_images
-                .get(info.texture().source().index())
-                .and_then(|image| image.clone())
-                .map(|texture| OcclusionTextureAsset {
+            material_texture(&raw_images, info.texture().source().index(), resources).map(
+                |texture| OcclusionTextureAsset {
                     texture,
                     strength: info.strength(),
-                })
+                },
+            )
         });
         assets.materials.push(MaterialAsset {
             name: material.name().unwrap_or("material").to_string(),
@@ -2444,6 +3198,15 @@ fn extract_assets(
     assets
 }
 
+fn material_texture(
+    raw_images: &[Option<TextureAsset>],
+    image_index: usize,
+    resources: &mut ResourceCaptureSession,
+) -> Option<TextureAsset> {
+    let texture = raw_images.get(image_index)?.as_ref()?;
+    resources.clone_image_for_material(image_index, texture)
+}
+
 /// Preserve declared glTF scene membership separately from the all-node
 /// skeleton topology. A node can be reachable from the forest yet absent from
 /// any declared scene, so membership must not be inferred from `Bone::parent`.
@@ -2479,7 +3242,7 @@ struct LoadedSourceImage {
 fn extract_source_images(
     doc: &gltf::Document,
     buffers: &[Vec<u8>],
-    base: Option<&Path>,
+    resources: &mut ResourceCaptureSession,
 ) -> Vec<LoadedSourceImage> {
     let writer_images = writer_image_indices(doc);
     doc.images()
@@ -2487,65 +3250,97 @@ fn extract_source_images(
             let image_index = image.index();
             let retain_raw = writer_images.contains(&image_index);
             let name = image.name().map(str::to_owned);
-            let (source_kind, declared_mime_type, raw, unavailable_reason) = match image.source() {
-                gltf::image::Source::View { view, mime_type } => {
-                    let bytes = buffers.get(view.buffer().index()).and_then(|buffer| {
-                        // A view with no `view_end` has no bytes here: an
-                        // image is source evidence, so a failed range is an
-                        // explicit source gap rather than a refusal.
-                        view_end(&view).and_then(|end| buffer.get(view.offset()..end))
-                    });
-                    let (raw, reason) = match bytes {
-                        Some(bytes) if !retain_raw && bytes.len() > MAX_IMAGE_ENCODED_BYTES => {
-                            (None, ImageUnavailableReason::ResourceLimit)
-                        }
-                        Some(bytes) => (
-                            Some(TextureAsset {
-                                bytes: bytes.to_vec(),
-                                mime: mime_type.to_string(),
-                            }),
-                            ImageUnavailableReason::SourceUnavailable,
-                        ),
-                        None => (None, ImageUnavailableReason::SourceUnavailable),
-                    };
-                    (
-                        ImageSourceKind::Embedded,
-                        Some(mime_type.to_string()),
-                        raw,
-                        reason,
-                    )
-                }
-                gltf::image::Source::Uri { uri, mime_type } => {
-                    if let Some(encoded) = uri.strip_prefix("data:") {
-                        let (mime_from_uri, raw, reason) =
-                            read_data_uri_image(encoded, mime_type, retain_raw);
-                        (
-                            ImageSourceKind::DataUri,
-                            mime_type.map(str::to_owned).or(mime_from_uri),
-                            raw,
-                            reason,
-                        )
-                    } else {
-                        let path = base.and_then(|base| {
-                            safe_external_buffer_path(uri)
-                                .ok()
-                                .map(|path| base.join(path))
+            let (source_kind, declared_mime_type, raw, unavailable_reason, inspected) =
+                match image.source() {
+                    gltf::image::Source::View { view, mime_type } => {
+                        let bytes = buffers.get(view.buffer().index()).and_then(|buffer| {
+                            // A view with no `view_end` has no bytes here: an
+                            // image is source evidence, so a failed range is an
+                            // explicit source gap rather than a refusal.
+                            view_end(&view).and_then(|end| buffer.get(view.offset()..end))
                         });
-                        let (raw, reason) = path
-                            .map_or((None, ImageUnavailableReason::SourceUnavailable), |path| {
-                                read_external_image(&path, mime_type, retain_raw)
-                            });
+                        let (raw, reason) = match bytes {
+                            Some(bytes) if !retain_raw && bytes.len() > MAX_IMAGE_ENCODED_BYTES => {
+                                (None, ImageUnavailableReason::ResourceLimit)
+                            }
+                            Some(bytes) => (
+                                Some(TextureAsset {
+                                    bytes: bytes.to_vec(),
+                                    mime: mime_type.to_string(),
+                                }),
+                                ImageUnavailableReason::SourceUnavailable,
+                            ),
+                            None => (None, ImageUnavailableReason::SourceUnavailable),
+                        };
                         (
-                            ImageSourceKind::External,
-                            mime_type.map(str::to_owned),
+                            ImageSourceKind::Embedded,
+                            Some(mime_type.to_string()),
                             raw,
                             reason,
+                            None,
                         )
                     }
-                }
-            };
-            let (detected_container, inspection) =
-                inspect_source_image(raw.as_ref(), unavailable_reason);
+                    gltf::image::Source::Uri { uri, mime_type } => {
+                        if let Some(encoded) = uri.strip_prefix("data:") {
+                            let (mime_from_uri, raw, reason) =
+                                read_data_uri_image(encoded, mime_type, retain_raw);
+                            (
+                                ImageSourceKind::DataUri,
+                                mime_type.map(str::to_owned).or(mime_from_uri),
+                                raw,
+                                reason,
+                                None,
+                            )
+                        } else {
+                            let (detected_container, inspection) = {
+                                let (bytes, reason) = resources.external_image_payload(image_index);
+                                inspect_source_image(bytes, reason)
+                            };
+                            let raw = retain_raw.then(|| {
+                                resources
+                                    .materialize_external(
+                                        SourceResourceKindV1::Image,
+                                        image_index as u64,
+                                    )
+                                    .ok()
+                                    .map(|bytes| TextureAsset {
+                                        bytes,
+                                        mime: mime_type.unwrap_or_default().to_owned(),
+                                    })
+                            });
+                            let raw = raw.flatten();
+                            let materialization_limited = retain_raw
+                                && raw.is_none()
+                                && resources.external_image_is_available(image_index);
+                            (
+                                ImageSourceKind::External,
+                                mime_type.map(str::to_owned),
+                                raw,
+                                if materialization_limited {
+                                    ImageUnavailableReason::ResourceLimit
+                                } else {
+                                    ImageUnavailableReason::SourceUnavailable
+                                },
+                                Some(if materialization_limited {
+                                    (
+                                        None,
+                                        SourceImageInspection::Unavailable {
+                                            reason: ImageUnavailableReason::ResourceLimit,
+                                        },
+                                    )
+                                } else {
+                                    (detected_container, inspection)
+                                }),
+                            )
+                        }
+                    }
+                };
+            let (detected_container, inspection) = inspected.unwrap_or_else(|| {
+                inspect_source_image(
+                    raw.as_ref().map(|texture| texture.bytes.as_slice()),
+                    unavailable_reason,
+                )
+            });
             LoadedSourceImage {
                 record: SourceImageAsset {
                     image_index,
@@ -2625,38 +3420,6 @@ fn estimated_base64_decoded_len(encoded_len: usize) -> usize {
     encoded_len.saturating_add(3) / 4 * 3
 }
 
-fn read_external_image(
-    path: &Path,
-    mime_type: Option<&str>,
-    retain_raw: bool,
-) -> (Option<TextureAsset>, ImageUnavailableReason) {
-    let bytes = if retain_raw {
-        std::fs::read(path).ok()
-    } else {
-        let file = std::fs::File::open(path).ok();
-        file.and_then(|file| {
-            let mut bytes = Vec::new();
-            file.take((MAX_IMAGE_ENCODED_BYTES + 1) as u64)
-                .read_to_end(&mut bytes)
-                .ok()
-                .map(|_| bytes)
-        })
-    };
-    let Some(bytes) = bytes else {
-        return (None, ImageUnavailableReason::SourceUnavailable);
-    };
-    if !retain_raw && bytes.len() > MAX_IMAGE_ENCODED_BYTES {
-        return (None, ImageUnavailableReason::ResourceLimit);
-    }
-    (
-        Some(TextureAsset {
-            bytes,
-            mime: mime_type.unwrap_or_default().to_owned(),
-        }),
-        ImageUnavailableReason::SourceUnavailable,
-    )
-}
-
 /// Extract one material's bindings in fixed semantic order. This is called
 /// from the single source-material walk that also keeps writer-facing slots.
 fn source_material_texture_bindings(
@@ -2711,10 +3474,10 @@ fn extract_source_textures(doc: &gltf::Document) -> Vec<SourceTextureAsset> {
 /// bounds. Inspection decodes only long enough to obtain metadata; the decoded
 /// image is immediately dropped and never becomes part of the core model.
 fn inspect_source_image(
-    texture: Option<&TextureAsset>,
+    bytes: Option<&[u8]>,
     unavailable_reason: ImageUnavailableReason,
 ) -> (Option<ImageContainerFormat>, SourceImageInspection) {
-    let Some(texture) = texture else {
+    let Some(bytes) = bytes else {
         return (
             None,
             SourceImageInspection::Unavailable {
@@ -2722,15 +3485,15 @@ fn inspect_source_image(
             },
         );
     };
-    if texture.bytes.len() > MAX_IMAGE_ENCODED_BYTES {
+    if bytes.len() > MAX_IMAGE_ENCODED_BYTES {
         return (
-            detect_container(&texture.bytes),
+            detect_container(bytes),
             SourceImageInspection::Unavailable {
                 reason: ImageUnavailableReason::ResourceLimit,
             },
         );
     }
-    let Some((format, detected_container)) = image_format(&texture.bytes) else {
+    let Some((format, detected_container)) = image_format(bytes) else {
         return (
             None,
             SourceImageInspection::Unavailable {
@@ -2738,7 +3501,7 @@ fn inspect_source_image(
             },
         );
     };
-    let mut reader = ImageReader::new(Cursor::new(&texture.bytes));
+    let mut reader = ImageReader::new(Cursor::new(bytes));
     reader.set_format(format);
     let mut limits = Limits::default();
     limits.max_alloc = Some(MAX_IMAGE_DECODE_ALLOC_BYTES);
@@ -2804,4 +3567,163 @@ fn image_format(bytes: &[u8]) -> Option<(ImageFormat, ImageContainerFormat)> {
 /// Detect only the container formats the bounded inspector supports.
 fn detect_container(bytes: &[u8]) -> Option<ImageContainerFormat> {
     image_format(bytes).map(|(_, container)| container)
+}
+
+#[cfg(test)]
+mod dependency_capture_tests {
+    use super::*;
+
+    fn key() -> DependencyResourceKeyV1 {
+        DependencyResourceKeyV1::from_source_str("shared.bin", ResourceKeySyntaxV1::GltfUri)
+            .expect("safe test key")
+    }
+
+    fn session_with_aliases(limit: u64) -> ResourceCaptureSession {
+        let key = key();
+        let mut session = ResourceCaptureSession::new(None);
+        session.materialized_external_limit = limit;
+        session
+            .resources
+            .insert(key.clone(), CapturedResource::Bytes(vec![1, 2]));
+        for (kind, index) in [
+            (SourceResourceKindV1::Buffer, 0),
+            (SourceResourceKindV1::Buffer, 1),
+            (SourceResourceKindV1::Image, 0),
+            (SourceResourceKindV1::Image, 1),
+        ] {
+            session.insert_reference(kind, index, CapturedReference::External(key.clone()));
+        }
+        session
+    }
+
+    #[test]
+    fn recording_reader_binds_one_capture_to_the_digest_and_document() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let external_path = dir.path().join("shared.bin");
+        std::fs::write(&external_path, [0_u8; 36]).expect("decoy external bytes");
+
+        let mut captured = Vec::new();
+        for value in [0.0_f32, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0, 0.0] {
+            captured.extend_from_slice(&value.to_le_bytes());
+        }
+        let primary = serde_json::to_vec(&serde_json::json!({
+            "asset": { "version": "2.0" },
+            "buffers": [
+                { "uri": "shared.bin", "byteLength": captured.len() },
+                { "uri": "shared.bin", "byteLength": captured.len() }
+            ],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": captured.len() }],
+            "accessors": [{
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [0.0, 0.0, 0.0],
+                "max": [2.0, 3.0, 0.0]
+            }],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+            "nodes": [{ "mesh": 0 }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }))
+        .expect("analytic glTF JSON");
+        let mut opens = 0;
+        let loaded = load_source_bytes_inner_with_reader(
+            &dir.path().join("recorded.gltf"),
+            &primary,
+            Some(dir.path()),
+            |path, limit| {
+                opens += 1;
+                assert_eq!(path, external_path);
+                assert!(limit >= captured.len() as u64);
+                CapturedResource::Bytes(captured.clone())
+            },
+        )
+        .expect("recorded external capture loads");
+
+        assert_eq!(opens, 1, "two aliases cause one resolver open");
+        let closure = loaded.dependency_closure();
+        assert!(closure.coverage().is_complete());
+        assert_eq!(closure.references().len(), 2);
+        assert_eq!(closure.external_resources().len(), 1);
+        assert_eq!(
+            closure.external_resources()[0].identity(),
+            &InputIdentity::from_bytes(&captured),
+            "the closure hashes the resolver-returned capture"
+        );
+        assert_eq!(
+            loaded.document().assets.meshes[0].primitives[0].positions,
+            [
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(0.0, 3.0, 0.0),
+            ],
+            "the Document consumes the recorded capture, not the on-disk decoy"
+        );
+    }
+
+    #[test]
+    fn raw_extension_key_scan_handles_nesting_escaping_and_non_key_text() {
+        assert!(json_has_object_key(
+            br#"{"meshes":[{"primitives":[{"extensio\u006es":{"X":{}}}]}]}"#,
+            b"extensions"
+        ));
+        assert!(!json_has_object_key(
+            br#"{"extras":{"label":"extensions","note":"\"extensions\":"}}"#,
+            b"extensions"
+        ));
+    }
+
+    #[test]
+    fn materialization_cap_refuses_essential_buffer_alias_without_leaking_a_path() {
+        let gltf = gltf::Gltf::from_slice(
+            br#"{
+                "asset":{"version":"2.0"},
+                "buffers":[
+                    {"uri":"shared.bin","byteLength":2},
+                    {"uri":"shared.bin","byteLength":2}
+                ]
+            }"#,
+        )
+        .expect("test glTF");
+        let mut session = session_with_aliases(3);
+        let error = resolve_captured_buffers(&gltf, &mut session)
+            .expect_err("second essential clone exceeds the internal cap");
+        assert!(
+            error
+                .to_string()
+                .contains("external buffer resource exceeds capture limits"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn materialization_cap_omits_optional_image_alias_while_its_capture_stays_reusable() {
+        let gltf = gltf::Gltf::from_slice(
+            br#"{
+                "asset":{"version":"2.0"},
+                "images":[
+                    {"uri":"shared.bin"},
+                    {"uri":"shared.bin"}
+                ],
+                "textures":[{"source":0},{"source":1}],
+                "materials":[
+                    {"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}},
+                    {"pbrMetallicRoughness":{"baseColorTexture":{"index":1}}}
+                ]
+            }"#,
+        )
+        .expect("test glTF");
+        let mut session = session_with_aliases(3);
+        let images = extract_source_images(&gltf.document, &[], &mut session);
+        assert!(images[0].texture.is_some());
+        assert!(images[1].texture.is_none());
+        assert!(matches!(
+            images[1].record.inspection,
+            SourceImageInspection::Unavailable {
+                reason: ImageUnavailableReason::ResourceLimit
+            }
+        ));
+        assert!(session.external_image_is_available(1));
+    }
 }

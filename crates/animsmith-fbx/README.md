@@ -44,13 +44,41 @@ the bake boundary. Other source properties remain unsupported instead of being
 reconstructed from normalized samples.
 
 Resource rows retain only bounded safe relative spellings, preferring ufbx's
-`relative_filename` and then `filename`. Absolute, escaping, remote, malformed,
-and oversized spellings are classified and redacted; `absolute_filename` is
-used only as a redacted presence signal and is never copied into the
-source-facts surface. Texture and video declarations that refer to the same
-spelling remain separate reference rows. Resolution,
-normalization, deduplication, file opening, and dependency-closure identity are
-outside this crate's V1 projection.
+`relative_filename` and then its parser filename field. Values that are not
+safe relative declarations are classified without retaining their spelling;
+the parser-resolved absolute-path field contributes only a boolean declaration
+presence marker for a redacted `Absolute` row. It is never retained, emitted,
+normalized, turned into a host path, or opened. Texture and video declarations
+that refer to the same spelling remain separate reference rows.
+
+## Dependency closure and external resources
+
+Each `LoadedSource` also carries the core-owned V1 dependency closure. Path
+loaders use the primary file's parent as their trusted resource root. The
+byte-only loaders deliberately perform no external resource I/O; callers that
+have separately captured bytes and a trusted root must use
+`load_source_bytes_with_resource_root`,
+`load_scale_source_bytes_with_resource_root`, or
+`load_bytes_with_resource_root`.
+
+ufbx external-file loading is disabled. The FBX loader processes the retained
+texture, video, and cache declaration prefix once in deterministic order.
+Accepted relative declarations are normalized as parser-relative keys and each
+distinct key is opened and hashed once below the supplied root. The root itself
+and every key-derived component/final target must be non-symlink; unsafe,
+missing, unreadable, or budget-exceeded declarations become typed closure
+outcomes without host path or error text. The shared V1 limits cap one external
+read at 64 MiB, distinct captured bytes at 256 MiB, and distinct keys at 1,024;
+the first N+1 boundary retains only its deterministic prefix. `texture_files`
+and audio clips remain conservatively unmodeled, so their presence makes
+closure coverage partial even when the represented rows were captured.
+
+The exact captured bytes are reused for optional PNG/JPEG `TextureAsset`s;
+there is no post-load reread or path fallback. A separate 256 MiB FBX asset
+materialization ceiling prevents material aliases from multiplying retained
+texture vectors. An optional texture past that ceiling is absent from the
+normalized document while the closure identity remains based on the one
+captured resource.
 
 Projection limits bound only this added evidence walk and retained rows/text.
 V1 retains at most 65,536 observation rows, 4,096 clip identities, 4,096
@@ -58,8 +86,8 @@ resource declarations, 4,096 bytes per source text, and 8 MiB of aggregate
 text; the shared traversal-depth ceiling is 128. The FBX resource projection
 merges only the texture, video, and cache typed lists, so unrelated scene
 elements do not add to that evidence walk. At N+1 the deterministic prefix is
-marked partial while loading still succeeds; the limits do not certify ufbx,
-animation baking, or legacy resource reads as globally memory-bounded.
+marked partial while loading still succeeds; the limits do not certify ufbx or
+animation baking as globally memory-bounded.
 
 ## Scale capability inventory
 

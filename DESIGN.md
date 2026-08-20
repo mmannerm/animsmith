@@ -2518,12 +2518,13 @@ gives embedders the same registry and resolver as the CLI.
 
 Format loaders bind that projection to the normalized document in an opaque,
 immutable `LoadedSource`. Its consumer surface is deliberately limited to
-`document(&self)`, `source_facts(&self)`, and `into_document(self)`: callers
-cannot mutate a document while continuing to present its source facts as
-current, and consuming the document explicitly discards the sidecar. The view
-borrows the canonical `Document.assets.source_skeleton` projection rather than
-copying source-node or skin authority. Existing document-only loader entry
-points remain compatibility conveniences that consume this wrapper.
+`document(&self)`, `source_facts(&self)`, `dependency_closure(&self)`, and
+`into_document(self)`: callers cannot mutate a document while continuing to
+present its source facts or captured closure as current, and consuming the
+document explicitly discards both sidecars. The facts view borrows the
+canonical `Document.assets.source_skeleton` projection rather than copying
+source-node or skin authority. Existing document-only loader entry points
+remain compatibility conveniences that consume this wrapper.
 
 The V1 projection is bound to the exact primary-file `InputIdentity` and an
 explicit source format established by the loader; `SourceInfo.path` and its
@@ -2544,13 +2545,47 @@ partial. These are projection limits, not claims that every existing parser,
 resource read, image payload, or bake allocation is globally bounded.
 
 Raw resource facts stop at bounded declaration identity, kind, and a safely
-retained source-relative spelling. They do not open, normalize, deduplicate,
-hash, or map referenced content. Unsafe absolute, remote, data-payload, or
-escaping spellings are classified without being reproduced in the new facts
-surface, its debug/serialization views, or its errors. Legacy diagnostic
-`Document::source.path` remains outside that projection. Resource-closure work
-owns those later operations and may claim complete closure only when this
-declaration domain is complete.
+retained source-relative spelling. They do not themselves open, normalize,
+deduplicate, hash, or map referenced content. Unsafe absolute, remote,
+data-payload, or escaping spellings are classified without being reproduced in
+the new facts surface, its debug/serialization views, or its errors. Legacy
+diagnostic `Document::source.path` remains outside that projection.
+
+The separate dependency-closure v1 sidecar is exact only over that versioned
+declaration domain. Format loaders construct it during the same load that
+consumes the resource bytes; a post-load reopen cannot establish the identity
+of bytes already parsed. Embedded/data/BIN/view-backed declarations map to the
+primary identity. Safe relative declarations map through a normalized
+source-relative key to one captured `InputIdentity`; aliases of one key are
+opened and hashed once, while different keys remain distinct even when their
+bytes match. The source-order reference map and key-sorted distinct-resource
+table form a domain-separated canonical closure identity. Only complete raw
+declaration coverage with an identity for every declaration produces a
+complete closure identity. Unsupported extensions or unmodelled FBX
+resource-bearing domains keep the result conservative rather than turning a
+known subset into a whole-document or target-importer claim.
+
+Each reference also records a purpose derived from its source kind:
+loader-essential buffers, nonessential images/textures, or target-only
+video/cache declarations. This is source/loader evidence, not a prediction of
+whether a selected engine profile will import the resource.
+
+Closure capture has its own immutable v1 budget: at most 4,096 declarations,
+1,024 distinct external keys, 4,096 UTF-8 bytes for each source spelling and
+normalized key, 128 path components per spelling, 8 MiB of aggregate
+normalization input, 64 MiB read and hashed per external resource, 256 MiB in
+aggregate, and one bounded non-quadratic deduplication probe per declaration.
+The loader checks N+1 before allocation or opening, retains the deterministic
+prefix and work counters, and stops the affected capture. Absolute, escaping,
+out-of-root, remote, malformed, oversized, and symlink-mediated locators are
+typed refusals and are never opened or reproduced. A trusted resource root
+comes from path-based loading or an explicit byte-loader API; byte loading
+never falls back to the process working directory. Missing loader-essential
+bytes remain a load/operator error, while unavailable nonessential or
+target-only bytes may leave typed partial closure. No captured resource is
+recursively parsed for more declarations. The limits bound this closure walk;
+they do not certify the primary parser or a concurrently mutating trusted
+filesystem.
 
 ### E.3 Rules, checks, and precedence
 
@@ -2809,14 +2844,16 @@ The dependency order is:
 4. the dedicated raw importer-sensitive source-facts projection (#463);
 5. strict engine-profile registry, config, and resolution types without
    prediction behavior (#464);
-6. reproducible output and dependency-closure provenance for the resolved
-   target, facts digest, required-prediction state, and per-check basis (#465);
-7. per-concern prediction rules, split from umbrella issue #154 into bounded
+6. bounded, rooted dependency-closure capture from the raw resource domain
+   (#475);
+7. reproducible output-v10 provenance for the resolved target, facts digest,
+   required-prediction state, and per-check basis (#465);
+8. per-concern prediction rules, split from umbrella issue #154 into bounded
    engine/rule slices where their input facts differ;
-8. single-document preset advice and separate glTF-inventory/Bevy-adapter
+9. single-document preset advice and separate glTF-inventory/Bevy-adapter
    generation (#155 and #156);
-9. prediction-versus-readback feasibility and harness decisions (#151); and
-10. per-engine guides generated from the accepted rules and evidence (#157).
+10. prediction-versus-readback feasibility and harness decisions (#151); and
+11. per-engine guides generated from the accepted rules and evidence (#157).
 
 The two measurement tickets share schema, diff, rendering, and contract
 surfaces, so they require one version plan and sequential implementation rather

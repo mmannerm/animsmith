@@ -2,10 +2,12 @@
 
 use animsmith_core::scale::{ScaleError, ScaleOperation};
 use animsmith_core::{
-    InputIdentity, RAW_SOURCE_V1_MAX_TEXT_BYTES, SourceAxisV1, SourceChannelPropertyV1,
-    SourceFormatV1, SourceHandednessV1, SourceInterpolationV1, SourceLoaderDispositionV1,
-    SourceObservationStateV1, SourceProvenanceKindV1, SourceResourceKindV1,
-    SourceResourceLocatorV1, SourceSetCoverageStateV1, SourceUnavailableReasonV1,
+    DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, DependencyReferenceTargetV1,
+    DependencyResourceRefusalReasonV1, DependencyResourceUnavailableReasonV1, InputIdentity,
+    RAW_SOURCE_V1_MAX_TEXT_BYTES, SourceAxisV1, SourceChannelPropertyV1, SourceFormatV1,
+    SourceHandednessV1, SourceInterpolationV1, SourceLoaderDispositionV1, SourceObservationStateV1,
+    SourceProvenanceKindV1, SourceResourceKindV1, SourceResourceLocatorV1,
+    SourceSetCoverageStateV1, SourceUnavailableReasonV1,
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -73,7 +75,9 @@ fn channel_fixture() -> Vec<u8> {
 }
 
 fn glb(mut value: Value, bin: &[u8]) -> Vec<u8> {
-    value["buffers"] = json!([{ "byteLength": bin.len() }]);
+    if value.get("buffers").is_none() {
+        value["buffers"] = json!([{ "byteLength": bin.len() }]);
+    }
     let mut json = json_bytes(&value);
     while !json.len().is_multiple_of(4) {
         json.push(b' ');
@@ -317,7 +321,10 @@ fn oversized_optional_name_does_not_turn_legacy_success_into_failure() {
 fn used_extensions_keep_declaration_order_and_loader_unsupported() {
     let bytes = json_bytes(&json!({
         "asset": { "version": "2.0" },
-        "extensionsUsed": ["Z_vendor", "A_vendor"]
+        "extensionsUsed": ["Z_vendor", "A_vendor"],
+        "extensions": {
+            "Z_vendor": { "uri": "unmodeled-vendor-sidecar.bin" }
+        }
     }));
     let loaded = animsmith_gltf::load_source_bytes(Path::new("extensions.gltf"), &bytes)
         .expect("extension declarations load");
@@ -344,6 +351,51 @@ fn used_extensions_keep_declaration_order_and_loader_unsupported() {
         rows.iter()
             .all(|row| row.disposition() == SourceLoaderDispositionV1::Unsupported)
     );
+    let closure = loaded.dependency_closure();
+    assert!(!closure.coverage().is_complete());
+    assert!(closure.identity().is_none());
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(
+        closure
+            .coverage()
+            .reasons()
+            .contains(&DependencyClosureCoverageReasonV1::UnmodeledResourceDomain)
+    );
+    assert!(!format!("{closure:?}").contains("unmodeled-vendor-sidecar.bin"));
+}
+
+#[test]
+fn undeclared_nested_extension_cannot_produce_a_complete_closure() {
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "materials": [{
+            "extensions": {
+                "X_custom_undeclared": { "uri": "UNDECLARED_SECRET_SIDECAR.bin" }
+            }
+        }]
+    });
+    for (label, bytes) in [
+        ("JSON", json_bytes(&document)),
+        ("GLB", glb(document.clone(), &[])),
+    ] {
+        let loaded = animsmith_gltf::load_source_bytes(Path::new("undeclared.gltf"), &bytes)
+            .unwrap_or_else(|error| panic!("{label} extension fixture loads: {error}"));
+        let closure = loaded.dependency_closure();
+        assert!(!closure.coverage().is_complete(), "{label}");
+        assert!(closure.identity().is_none(), "{label}");
+        assert_eq!(closure.work().external_open_attempts(), 0, "{label}");
+        assert!(
+            closure
+                .coverage()
+                .reasons()
+                .contains(&DependencyClosureCoverageReasonV1::UnmodeledResourceDomain),
+            "{label}"
+        );
+        assert!(
+            !format!("{closure:?}").contains("UNDECLARED_SECRET_SIDECAR"),
+            "{label}"
+        );
+    }
 }
 
 #[test]
@@ -412,7 +464,8 @@ fn resources_cover_bin_data_relative_and_redacted_unsafe_locators() {
         ]
     }));
     let path = dir.path().join("resources.gltf");
-    let loaded = animsmith_gltf::load_source_bytes(&path, &bytes).expect("resources load");
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(&path, &bytes, dir.path())
+        .expect("resources load");
     let rows = loaded.source_facts().resources().rows();
     assert_eq!(rows.len(), 8);
     assert_eq!(
@@ -460,6 +513,541 @@ fn resources_cover_bin_data_relative_and_redacted_unsafe_locators() {
         loaded.source_facts().resources().rows()[0].locator(),
         SourceResourceLocatorV1::Embedded
     ));
+}
+
+#[test]
+fn dependency_closure_captures_one_external_key_and_its_aliases_once() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let shared = [1_u8, 2, 3, 4];
+    std::fs::write(dir.path().join("shared.bin"), shared).expect("external resource");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": "shared.bin", "byteLength": shared.len() }],
+        "images": [{ "uri": "shared.bin" }]
+    }));
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("captured.gltf"),
+        &bytes,
+        dir.path(),
+    )
+    .expect("rooted byte load");
+
+    let closure = loaded.dependency_closure();
+    assert!(matches!(
+        closure.coverage(),
+        DependencyClosureCoverageV1::Complete
+    ));
+    assert!(closure.identity().is_some());
+    assert_eq!(closure.external_resources().len(), 1);
+    assert_eq!(
+        closure.external_resources()[0].identity().bytes(),
+        shared.len() as u64
+    );
+    assert_eq!(closure.work().external_open_attempts(), 1);
+    assert_eq!(closure.work().captured_external_resources(), 1);
+    assert_eq!(
+        closure.work().external_bytes_read_hashed(),
+        shared.len() as u64
+    );
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "shared.bin"
+    ));
+    assert!(matches!(
+        closure.references()[1].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "shared.bin"
+    ));
+    assert!(!format!("{closure:?}").contains(&dir.path().display().to_string()));
+}
+
+#[test]
+fn dependency_closure_refuses_key_syntax_before_any_open() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": [{ "uri": "image.png?untrusted-query" }]
+    }));
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("captured.gltf"),
+        &bytes,
+        dir.path(),
+    )
+    .expect("optional image remains a source row");
+
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::Refused {
+            reason: DependencyResourceRefusalReasonV1::Malformed,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn dependency_closure_rejects_non_regular_external_targets_before_any_open() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::create_dir(dir.path().join("directory-target")).expect("directory target");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": [{ "uri": "directory-target" }]
+    }));
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("captured.gltf"),
+        &bytes,
+        dir.path(),
+    )
+    .expect("optional directory target remains observable");
+
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::Unavailable {
+            reason: DependencyResourceUnavailableReasonV1::Unreadable,
+            ..
+        }
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn dependency_closure_refuses_resource_and_root_symlinks_before_any_open() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("target.png"), b"not an image").expect("target");
+    symlink(dir.path().join("target.png"), dir.path().join("linked.png")).expect("symlink");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": [{ "uri": "linked.png" }]
+    }));
+
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("captured.gltf"),
+        &bytes,
+        dir.path(),
+    )
+    .expect("optional symlinked image remains observable");
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::Refused {
+            reason: DependencyResourceRefusalReasonV1::Symlink,
+            ..
+        }
+    ));
+
+    let root_link = dir.path().with_extension("root-link");
+    symlink(dir.path(), &root_link).expect("root symlink");
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("captured.gltf"),
+        &bytes,
+        &root_link,
+    )
+    .expect("optional image remains observable");
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::Refused {
+            reason: DependencyResourceRefusalReasonV1::Symlink,
+            ..
+        }
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_root_capability_may_traverse_a_symlinked_ancestor() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let real_parent = dir.path().join("real-parent");
+    let real_root = real_parent.join("resources");
+    std::fs::create_dir_all(&real_root).expect("real resource root");
+    std::fs::write(real_root.join("image.bin"), b"captured").expect("external image");
+    let linked_parent = dir.path().join("linked-parent");
+    symlink(&real_parent, &linked_parent).expect("ancestor symlink");
+    let explicit_root = linked_parent.join("resources");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": [{ "uri": "image.bin" }]
+    }));
+
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("captured.gltf"),
+        &bytes,
+        &explicit_root,
+    )
+    .expect("the caller explicitly authorized the root path");
+    let closure = loaded.dependency_closure();
+    assert!(closure.coverage().is_complete());
+    assert_eq!(closure.work().external_open_attempts(), 1);
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "image.bin"
+    ));
+}
+
+#[test]
+fn path_loading_preserves_a_caller_supplied_lexical_parent_in_the_root() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let capability = dir.path().join("capability");
+    let unused = capability.join("unused");
+    let resources = capability.join("resources");
+    std::fs::create_dir_all(&unused).expect("lexical parent component exists");
+    std::fs::create_dir_all(&resources).expect("resource root");
+    std::fs::write(resources.join("image.bin"), b"captured").expect("external image");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": [{ "uri": "image.bin" }]
+    }));
+    let source = resources.join("source.gltf");
+    std::fs::write(&source, bytes).expect("primary source");
+    let supplied_path = unused.join("..").join("resources").join("source.gltf");
+
+    let loaded = animsmith_gltf::load_source(&supplied_path)
+        .expect("the input parent is the caller-authorized resource root");
+    let closure = loaded.dependency_closure();
+    assert!(closure.coverage().is_complete());
+    assert_eq!(closure.work().external_open_attempts(), 1);
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "image.bin"
+    ));
+}
+
+#[test]
+fn dependency_closure_stops_after_bounded_external_read_witness() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let oversized = dir.path().join("oversized.png");
+    let file = std::fs::File::create(&oversized).expect("create sparse resource");
+    file.set_len(64 * 1024 * 1024 + 1)
+        .expect("set bounded-overflow length");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": [
+            { "uri": "oversized.png" },
+            { "uri": "must-not-be-inspected.png" }
+        ]
+    }));
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("captured.gltf"),
+        &bytes,
+        dir.path(),
+    )
+    .expect("optional resource limit is not a load error");
+
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.references().len(), 1);
+    assert_eq!(closure.work().external_open_attempts(), 1);
+    assert_eq!(
+        closure.work().external_bytes_read_hashed(),
+        64 * 1024 * 1024 + 1
+    );
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::Unavailable {
+            reason: DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn dependency_closure_deduplicates_four_thousand_alias_rows() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("shared.bin"), b"x").expect("shared resource");
+    let images = (0..4_096)
+        .map(|_| json!({ "uri": "shared.bin" }))
+        .collect::<Vec<_>>();
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": images
+    }));
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("captured.gltf"),
+        &bytes,
+        dir.path(),
+    )
+    .expect("all aliases are bounded and reusable");
+
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.references().len(), 4_096);
+    assert_eq!(closure.work().dedup_probes(), 4_096);
+    assert_eq!(closure.work().external_open_attempts(), 1);
+    assert_eq!(closure.work().distinct_external_keys(), 1);
+    assert_eq!(closure.external_resources().len(), 1);
+}
+
+#[test]
+fn dependency_closure_maps_json_data_glb_primary_and_mixed_glb_external_rows() {
+    let json_data = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": data_uri(&[1, 2, 3, 4]), "byteLength": 4 }]
+    }));
+    let loaded = animsmith_gltf::load_source_bytes(Path::new("data.gltf"), &json_data)
+        .expect("data URI is primary-backed");
+    assert!(matches!(
+        loaded.dependency_closure().references()[0].target(),
+        DependencyReferenceTargetV1::Primary
+    ));
+
+    let embedded_glb = glb(
+        json!({
+            "asset": { "version": "2.0" },
+            "buffers": [{ "byteLength": 4 }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 4 }],
+            "images": [{ "bufferView": 0, "mimeType": "image/png" }]
+        }),
+        &[0, 0, 0, 0],
+    );
+    let loaded = animsmith_gltf::load_source_bytes(Path::new("embedded.glb"), &embedded_glb)
+        .expect("GLB BIN and image view are primary-backed");
+    assert!(
+        loaded
+            .dependency_closure()
+            .references()
+            .iter()
+            .all(|reference| matches!(reference.target(), DependencyReferenceTargetV1::Primary))
+    );
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("external.bin"), [9_u8; 4]).expect("external buffer");
+    let mixed = glb(
+        json!({
+            "asset": { "version": "2.0" },
+            "buffers": [
+                { "byteLength": 4 },
+                { "uri": "external.bin", "byteLength": 4 }
+            ]
+        }),
+        &[0, 0, 0, 0],
+    );
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("mixed.glb"),
+        &mixed,
+        dir.path(),
+    )
+    .expect("mixed GLB uses the primary and one rooted external capture");
+    assert!(matches!(
+        loaded.dependency_closure().references()[0].target(),
+        DependencyReferenceTargetV1::Primary
+    ));
+    assert!(matches!(
+        loaded.dependency_closure().references()[1].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "external.bin"
+    ));
+}
+
+#[test]
+fn dependency_closure_identity_changes_for_each_independent_external_input() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": "buffer.bin", "byteLength": 4 }],
+        "images": [{ "uri": "image.bin" }]
+    }));
+    let path = dir.path().join("captured.gltf");
+    let load = || {
+        animsmith_gltf::load_source_bytes_with_resource_root(&path, &bytes, dir.path())
+            .expect("rooted source")
+    };
+
+    std::fs::write(dir.path().join("buffer.bin"), [1_u8; 4]).expect("buffer bytes");
+    std::fs::write(dir.path().join("image.bin"), [2_u8; 4]).expect("image bytes");
+    let baseline = load();
+    std::fs::write(dir.path().join("buffer.bin"), [3_u8; 4]).expect("mutated buffer");
+    let changed_buffer = load();
+    std::fs::write(dir.path().join("buffer.bin"), [1_u8; 4]).expect("restored buffer");
+    std::fs::write(dir.path().join("image.bin"), [4_u8; 4]).expect("mutated image");
+    let changed_image = load();
+
+    assert_eq!(
+        baseline.dependency_closure().primary_input(),
+        changed_buffer.dependency_closure().primary_input()
+    );
+    assert_eq!(
+        baseline.dependency_closure().primary_input(),
+        changed_image.dependency_closure().primary_input()
+    );
+    assert_ne!(
+        baseline.dependency_closure().identity(),
+        changed_buffer.dependency_closure().identity()
+    );
+    assert_ne!(
+        baseline.dependency_closure().identity(),
+        changed_image.dependency_closure().identity()
+    );
+}
+
+#[test]
+fn dependency_closure_normalizes_percent_aliases_but_keeps_equal_byte_keys_distinct() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("shared name.bin"), [7_u8; 4]).expect("shared resource");
+    let aliases = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": "shared%20name.bin", "byteLength": 4 }],
+        "images": [{ "uri": "shared name.bin" }]
+    }));
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("aliases.gltf"),
+        &aliases,
+        dir.path(),
+    )
+    .expect("percent-equivalent aliases load once");
+    assert_eq!(loaded.dependency_closure().external_resources().len(), 1);
+    assert_eq!(
+        loaded.dependency_closure().work().external_open_attempts(),
+        1
+    );
+
+    std::fs::write(dir.path().join("left.bin"), [8_u8; 4]).expect("left bytes");
+    std::fs::write(dir.path().join("right.bin"), [8_u8; 4]).expect("right bytes");
+    let distinct = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": "left.bin", "byteLength": 4 }],
+        "images": [{ "uri": "right.bin" }]
+    }));
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("distinct.gltf"),
+        &distinct,
+        dir.path(),
+    )
+    .expect("equal content under distinct keys remains distinct");
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.external_resources().len(), 2);
+    assert_ne!(
+        closure.external_resources()[0].key(),
+        closure.external_resources()[1].key()
+    );
+    assert_eq!(
+        closure.external_resources()[0].identity(),
+        closure.external_resources()[1].identity()
+    );
+}
+
+#[test]
+fn dependency_closure_keeps_optional_missing_rows_but_fails_essential_buffers() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let optional = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": [{ "uri": "missing.png" }]
+    }));
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("optional.gltf"),
+        &optional,
+        dir.path(),
+    )
+    .expect("optional missing image remains typed evidence");
+    assert!(matches!(
+        loaded.dependency_closure().coverage(),
+        DependencyClosureCoverageV1::Partial { .. }
+    ));
+    assert!(matches!(
+        loaded.dependency_closure().references()[0].target(),
+        DependencyReferenceTargetV1::Unavailable {
+            reason: DependencyResourceUnavailableReasonV1::Missing,
+            ..
+        }
+    ));
+
+    let essential = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": "missing.bin", "byteLength": 4 }]
+    }));
+    let error = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("essential.gltf"),
+        &essential,
+        dir.path(),
+    )
+    .expect_err("missing essential buffer is a load error");
+    assert!(
+        error
+            .to_string()
+            .contains("external buffer resource is unavailable"),
+        "{error}"
+    );
+    assert!(!error.to_string().contains("missing.bin"), "{error}");
+}
+
+#[test]
+fn dependency_closure_identity_includes_source_declaration_order() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("first.bin"), [1_u8]).expect("first bytes");
+    std::fs::write(dir.path().join("second.bin"), [2_u8]).expect("second bytes");
+    let load = |images: Value| {
+        let bytes = json_bytes(&json!({
+            "asset": { "version": "2.0" },
+            "images": images
+        }));
+        animsmith_gltf::load_source_bytes_with_resource_root(
+            &dir.path().join("ordered.gltf"),
+            &bytes,
+            dir.path(),
+        )
+        .expect("ordered resources")
+    };
+    let first_then_second = load(json!([
+        { "uri": "first.bin" },
+        { "uri": "second.bin" }
+    ]));
+    let second_then_first = load(json!([
+        { "uri": "second.bin" },
+        { "uri": "first.bin" }
+    ]));
+    assert!(matches!(
+        first_then_second.dependency_closure().references()[0].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "first.bin"
+    ));
+    assert!(matches!(
+        second_then_first.dependency_closure().references()[0].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "second.bin"
+    ));
+    assert_ne!(
+        first_then_second.dependency_closure().identity(),
+        second_then_first.dependency_closure().identity()
+    );
+}
+
+#[test]
+fn dependency_closure_refusal_table_never_opens_or_retains_unsafe_spellings() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    for (uri, expected) in [
+        ("../escape.png", DependencyResourceRefusalReasonV1::Escaping),
+        ("/absolute.png", DependencyResourceRefusalReasonV1::Absolute),
+        (
+            "https://example.invalid/image.png",
+            DependencyResourceRefusalReasonV1::Remote,
+        ),
+        ("malformed%2", DependencyResourceRefusalReasonV1::Malformed),
+        (
+            "query.png?value",
+            DependencyResourceRefusalReasonV1::Malformed,
+        ),
+    ] {
+        let bytes = json_bytes(&json!({
+            "asset": { "version": "2.0" },
+            "images": [{ "uri": uri }]
+        }));
+        let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+            &dir.path().join("refusal.gltf"),
+            &bytes,
+            dir.path(),
+        )
+        .expect("optional unsafe image is typed evidence");
+        let closure = loaded.dependency_closure();
+        assert_eq!(closure.work().external_open_attempts(), 0, "{uri}");
+        assert!(matches!(
+            closure.references()[0].target(),
+            DependencyReferenceTargetV1::Refused { reason, .. } if *reason == expected
+        ));
+        assert!(!format!("{closure:?}").contains(uri), "{uri}");
+        assert!(!format!("{closure:?}").contains(&dir.path().display().to_string()));
+    }
 }
 
 #[test]

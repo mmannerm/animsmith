@@ -98,7 +98,7 @@ fn captured_self_contained_bytes_survive_primary_path_removal() {
 }
 
 #[test]
-fn byte_loader_resolves_external_buffers_relative_to_supplied_path() {
+fn byte_loader_requires_explicit_root_for_external_buffers() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("scene.gltf");
     let positions: [u8; 36] = [
@@ -114,7 +114,14 @@ fn byte_loader_resolves_external_buffers_relative_to_supplied_path() {
         "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }]
     }"#;
 
-    let doc = animsmith_gltf::load_bytes(&path, bytes).expect("resolves sibling buffer");
+    let error = animsmith_gltf::load_bytes(&path, bytes).expect_err("ambient path is refused");
+    assert!(
+        error.to_string().contains("explicit trusted root"),
+        "{error}"
+    );
+
+    let doc = animsmith_gltf::load_bytes_with_resource_root(&path, bytes, dir.path())
+        .expect("resolves resource beneath supplied root");
 
     assert_eq!(doc.assets.meshes[0].primitives[0].positions.len(), 3);
 }

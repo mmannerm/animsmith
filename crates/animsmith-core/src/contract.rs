@@ -98,8 +98,12 @@ pub struct InputIdentity {
 /// re-deriving the encoding.
 #[must_use]
 pub fn sha256_hex(bytes: &[u8]) -> String {
+    sha256_digest_hex(Sha256::digest(bytes).into())
+}
+
+fn sha256_digest_hex(digest: [u8; 32]) -> String {
     let mut hex = String::with_capacity(64);
-    for byte in Sha256::digest(bytes) {
+    for byte in digest {
         let _ = write!(hex, "{byte:02x}");
     }
     hex
@@ -111,6 +115,17 @@ impl InputIdentity {
         Self {
             sha256: sha256_hex(bytes),
             bytes: bytes.len() as u64,
+        }
+    }
+
+    /// Construct an identity from an already-computed SHA-256 digest and exact byte count.
+    ///
+    /// This keeps streaming and bounded readers on the same lowercase digest
+    /// authority without exposing an unchecked string constructor.
+    pub fn from_sha256_digest(digest: [u8; 32], bytes: u64) -> Self {
+        Self {
+            sha256: sha256_digest_hex(digest),
+            bytes,
         }
     }
 
