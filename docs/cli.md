@@ -492,13 +492,15 @@ Godot, and Bevy expose no V1 settings, so supplying any setting is an error.
 All statically knowable tuple, setting, value, scope, and applicability errors
 are reported before input I/O. Accepted input format and required per-clip
 materialization are checked after loading. Profile selection never changes
-`measure` values or the output-v9 schema; this registry slice emits no engine
-prediction.
+`measure` values. Output v10 records resolved profile provenance on lint files;
+this substrate slice emits no production engine prediction yet.
 
-An output-v9 JSON measurement report does not retain the loader-owned source
-format needed for phase-two resolution. Consequently, `diff` rejects JSON
-report operands while an engine profile is selected; compare the source assets
-instead, or omit `[engine]` for an engine-neutral report comparison.
+An output-v10 measure report deliberately has no engine provenance or
+loader-owned source format. `diff` also ignores the provenance on lint reports.
+When its operands are JSON reports, `diff` validates the complete v10 records
+and compares only measurements-v15; a selected engine profile does not change
+that report meaning. When its operands are source assets, the profile is still
+resolved against each loader-owned source format before measurement.
 
 Runtime-facing attachment/socket/IK nodes have one shared engine-neutral
 policy:
@@ -521,11 +523,11 @@ absent selector field or explicit empty list means no runtime-node policy.
 `measure`, `lint`, and `diff` support `--format json`. The native JSON
 contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
-[`output-v9.schema.json`](schemas/output-v9.schema.json). Nested measurement
+[`output-v10.schema.json`](schemas/output-v10.schema.json). Nested measurement
 evidence has its own
 [`measurements-v15.schema.json`](schemas/measurements-v15.schema.json) contract.
-Output-v8 and earlier reports, including reports carrying measurements v14,
-are historical contracts; regenerate a current output-v9 report from the
+Output-v9 and earlier reports, including reports carrying measurements v14,
+are historical contracts; regenerate a current output-v10 report from the
 original asset with the current CLI before using `diff`.
 
 Measurements v15 adds canonical per-bone local TRS channel coverage and
@@ -599,8 +601,9 @@ Each JSON `measure` and `lint` file row records an `input` SHA-256 and byte
 count for the exact primary file bytes parsed. Keep that row with retained
 review, promotion, or publication evidence; multi-file runs calculate one
 identity per argument in order. For `.gltf`, the identity deliberately does
-not cover external buffer or image files, so retain dependency provenance
-separately when that scope matters.
+not cover external buffer or image files. Profiled lint embeds the bounded
+same-load dependency closure in `prediction_provenance`; other workflows must
+retain dependency provenance separately when that scope matters.
 
 Human-readable command output keeps asset-derived names, messages, and paths
 on visibly ordered lines: terminal controls, Unicode line separators, and

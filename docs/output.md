@@ -2,14 +2,14 @@
 
 animsmith's native JSON is the stable source of truth for pipeline adapters.
 Text and Markdown lint output are presentation views over the same evaluation
-results. The HTML report remains a sampled-motion view with content findings;
-future machine serializers should project the JSON contract.
+results. The HTML report renders the same typed findings, coverage gaps, and
+prediction facets beside its sampled-motion view.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v9 with the immutable protocol
-identity `urn:animsmith:schema:output:9`. The retrievable schema is
-[`output-v9.schema.json`](schemas/output-v9.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v10 with the
+immutable protocol identity `urn:animsmith:schema:output:10`. The retrievable
+schema is [`output-v10.schema.json`](schemas/output-v10.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
@@ -24,14 +24,14 @@ a distinction a bare optional value cannot express. Version 13 retains each
 per-joint source-declaration inverse-bind matrix beside the observations
 derived from it, refuses non-affine sources, and publishes a scale-free
 reciprocal infinity-norm condition number before trusting an inversion.
-Measurements v14 and earlier, and output v8 and earlier, remain immutable
+Measurements v14 and earlier, and output v9 and earlier, remain immutable
 historical contracts.
-Because each output schema statically pins its nested measurement URN,
-advancing the nested contract also requires the new output-v9 identity; it
-does not redesign the envelope shape.
+Output v9 first pinned measurements-v15. Output v10 retains measurements-v15
+and adds the prediction-provenance substrate described below; any future
+nested measurement revision will likewise require a new outer identity.
 
 `convert --format json` is deliberately a separate conversion-evidence
-contract, not another command in the output-v9 envelope. Its immutable
+contract, not another command in the output-v10 envelope. Its immutable
 identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
@@ -42,7 +42,7 @@ An asset-property refusal from `convert` or `assemble` is not success
 evidence. Under `--format json` it uses the separate immutable
 `urn:animsmith:schema:producer-refusal:1` contract, whose retrievable schema is
 [`producer-refusal-v1.schema.json`](schemas/producer-refusal-v1.schema.json).
-This keeps conversion evidence v1/v2, assembly evidence v1-v7, output v1-v8,
+This keeps conversion evidence v1/v2, assembly evidence v1-v7, output v1-v9,
 and scale evidence v1-v5 immutable. The record has `outcome: "rejected"`, a
 null `result`, the command, and a typed `{stage, kind, detail}` rejection.
 
@@ -95,18 +95,19 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 [`output-v4`](schemas/output-v4.schema.json),
 [`output-v5`](schemas/output-v5.schema.json),
 [`output-v6`](schemas/output-v6.schema.json),
-[`output-v7`](schemas/output-v7.schema.json), and
-[`output-v8`](schemas/output-v8.schema.json) remain historical immutable
+[`output-v7`](schemas/output-v7.schema.json),
+[`output-v8`](schemas/output-v8.schema.json), and
+[`output-v9`](schemas/output-v9.schema.json) remain historical immutable
 contracts. The current CLI emits and
-`diff` reads output-v9; regenerate a current output-v9 report from the original
+`diff` reads output-v10; regenerate a current output-v10 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
 ```json
 {
-  "schema_version": 9,
-  "schema": "urn:animsmith:schema:output:9",
+  "schema_version": 10,
+  "schema": "urn:animsmith:schema:output:10",
   "tool": {
     "name": "animsmith",
     "version": "0.3.1",
@@ -134,14 +135,17 @@ or publishes an asset: it proves which primary payload the recorded result
 describes. For multi-file invocations, rows stay in argument order and each
 has its own independently calculated identity.
 
-The identity covers only the named primary input file. In particular, for a
-text `.gltf`, external buffers and images loaded beside it are not included in
-the digest or byte count. Pipelines that need complete dependency provenance
-must retain and identify those resources separately.
+The `input` identity covers only the named primary input file. For profiled
+lint output, the sibling prediction provenance carries the bounded same-load
+dependency closure, including identities for captured external resources when
+coverage is complete. A primary-file digest alone remains insufficient closure
+evidence for text glTF or another source with external dependencies.
 
 Operator failures do not emit a JSON envelope. They exit 2, write a diagnostic
 to stderr, and leave stdout empty. Content findings exit 1 at the configured
-threshold; coverage gaps are evidence and are nonblocking by default.
+threshold. Any `required_prediction_unavailable` facet also exits 1 and cannot
+be suppressed by severity or `--allow`; ordinary engine-neutral coverage gaps
+remain nonblocking.
 
 `convert` and `assemble` asset refusals exit 1. JSON mode emits exactly one
 producer-refusal v1 document on stdout and leaves stderr empty; text mode
@@ -923,6 +927,54 @@ scope vocabulary.
 same total. `summary.checks.gaps` counts typed gaps, while
 `summary.findings` counts content findings by severity.
 
+### Engine-prediction provenance and scoped facets
+
+Every lint file has required nullable `prediction_provenance`. It is `null`
+when no exact engine profile was resolved. Otherwise it carries immutable
+prediction-provenance v1 (`urn:animsmith:prediction-provenance:1`): the full
+typed profile facts and sources, authoritative input format, fully materialized
+document/per-clip settings, raw-source scalar observations and independent
+coverage states, the same-load dependency closure, and the exact five consumed
+contract identities. The header, profile, settings, closure, and primary input
+identities are cross-validated; host paths and arbitrary JSON are forbidden.
+
+Output v10 defines the substrate but adds no production engine rule. Therefore
+the current profiled CLI emits nonnull provenance with zero check predictions.
+Future engine-backed checks attach one `prediction` object to their existing
+check record. Its canonical `facets` are keyed by the existing
+`EvaluationScope` so one check can retain an available result for one clip or
+selector and a required-unavailable result for another.
+
+A facet state is exactly `available` or
+`required_prediction_unavailable`. Available facets have nonempty typed basis
+and no reasons. Required-unavailable facets keep any available basis prefix and
+one or more stable reason codes; they are not content findings or generic
+coverage gaps. Available scopes occur in `evaluated_scopes`; unavailable
+scopes occur in neither completed scopes nor gaps. Consequently an
+all-available check is `complete`, mixed available/unavailable work is
+`partial`, and all-unavailable work is `not_evaluated` under the existing
+single evaluation lifecycle.
+
+Findings on a prediction-bearing check include `prediction_scope` and must bind
+to exactly one available facet. Severity and `--allow` may filter or block a
+content finding but never suppress required-unavailable prediction work.
+`summary.prediction_facets` contains explicit `available` and
+`required_prediction_unavailable` counts; any nonzero unavailable count makes
+lint exit 1.
+
+Basis rows are closed typed references to embedded profile facts, resolved
+settings, project/config fields, raw-source facts, measurements-v15 scalars, or
+primary sources. Measurement references use bounded canonical JSON pointers
+and exact scalar values. A schema-valid measurement availability of
+`unavailable` may make prediction work unavailable. A malformed or non-finite
+present measurement remains a contract error and exit 2.
+
+The report reader caps each serialized input at 256 MiB before UTF-8 or JSON
+parsing. It validates provenance and measurement-independent prediction links,
+then the complete measurements-v15 contract, then measurement-pointer values,
+before `diff` can extract measurements. Output v9 and earlier inputs receive
+the normal regeneration guidance.
+
 `lint --format json` deliberately rejects `--allow` so machine evidence is
 never deleted. `--allow` remains available for text and Markdown presentation
 and their exit policy. Text and Markdown render coverage gaps separately from
@@ -954,13 +1006,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v9 header and emits `inputs`, a
+`diff --format json` uses the same output v10 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 9,
-  "schema": "urn:animsmith:schema:output:9",
+  "schema_version": 10,
+  "schema": "urn:animsmith:schema:output:10",
   "tool": {
     "name": "animsmith",
     "version": "0.3.1",
@@ -975,7 +1027,7 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v9 `measure`/`lint` reports carrying
+`diff` accepts asset files or one-file v10 `measure`/`lint` reports carrying
 measurement contract v15. v14 and earlier reports are historical and are rejected with
 guidance to regenerate them from the original asset. Multi-file reports and
 other unsupported contract versions are also rejected as operator errors.

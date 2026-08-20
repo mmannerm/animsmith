@@ -342,22 +342,27 @@ fn opt_in_check_is_disabled_until_an_explicit_severity_enables_it() {
 fn builtin_evidence_codes_reject_undeclared_emitters() {
     const UNDECLARED: &str = "test:undeclared";
 
-    for &builtin in BUILTIN_EVALUATION_SCOPE_CODES {
-        let code = EvaluationScopeCode::custom(builtin.as_str());
+    for builtin in BUILTIN_EVALUATION_SCOPE_CODES {
+        let code = builtin.clone();
         assert_eq!(
-            code, builtin,
+            code,
+            builtin.clone(),
             "custom() must preserve built-in scope identity"
         );
         let completed_scope = CheckEvaluation::evaluated(
             UNDECLARED,
-            CheckOutput::from_coverage(Vec::new(), vec![EvaluationScope::new(code)], Vec::new()),
+            CheckOutput::from_coverage(
+                Vec::new(),
+                vec![EvaluationScope::new(code.clone())],
+                Vec::new(),
+            ),
         )
         .expect_err("every built-in completed scope must enforce its declared emitters");
         assert_eq!(
             completed_scope,
             EvaluationError::BuiltinEvaluationScopeEmitterMismatch {
                 check_id: UNDECLARED,
-                code,
+                code: code.clone(),
             }
         );
 
@@ -368,7 +373,7 @@ fn builtin_evidence_codes_reject_undeclared_emitters() {
                 Vec::new(),
                 vec![
                     CoverageGap::new(CoverageGapCode::custom("test:gap"), "gap")
-                        .scope(EvaluationScope::new(code)),
+                        .scope(EvaluationScope::new(code.clone())),
                 ],
             ),
         )

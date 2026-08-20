@@ -129,7 +129,7 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
-animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v9 measure/lint JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v10 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
@@ -322,8 +322,10 @@ animsmith/
 ```
 
 - **animsmith-core**: deps `glam` (the de-facto Rust game-math crate — do
-  not hand-roll mat4/quat as the Python did), `serde`, `thiserror`. No
-  file-format knowledge, no I/O. This is what embedding pipelines link.
+  not hand-roll mat4/quat as the Python did), `serde`, `serde_json`, `sha2`,
+  and `thiserror`. It owns strict versioned JSON contract validation but no
+  file-format knowledge or filesystem/network I/O. This is what embedding
+  pipelines link.
 - **animsmith-gltf**: the `gltf` crate with trimmed features (no image
   decoding); owns GLB emission via `gltf-json`.
 - **animsmith-fbx**: `ufbx` (official bindings, v0.11.x, actively
@@ -582,8 +584,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v9, identified by
-  `urn:animsmith:schema:output:9`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): final output v10, identified by
+  `urn:animsmith:schema:output:10`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -605,8 +607,9 @@ learns an embedder's contract schema.
   and vertical extrema, and fixed-basis net/unwrapped/travel yaw in normalized
   right-handed +Y-up metre space. These are shared uniform-grid regression
   observations, not continuous-curve extrema or transform-correctness proof.
-  The nested change advances the outer envelope to output v9; measurements
-  v14 and output v8 remain immutable historical contracts.
+  Output v10 adds the registry-independent engine-prediction provenance and
+  scoped-facet substrate described in Appendix E. Measurements remain v15;
+  output v9 and earlier remain immutable historical contracts.
   Measurements v14 gives every clip fact that is not applicable to every
   clip (loop continuity, loop endpoint mode, frame grid, loop seam ratio,
   gait and its phase, and root-motion speed) a required sibling
@@ -623,9 +626,10 @@ learns an embedder's contract schema.
   with source/output identities and applied world transforms, and deterministic
   material-texture recipe provenance when requested. v1 remains historical;
   the current CLI emits v2 exclusively.
-  CLI exit status derives only from content severity (warnings block only
-  with `--deny-warnings`); coverage gaps are nonblocking evidence.
-  The output-v9 envelope types and immutable identities live in
+  CLI exit status derives from content severity (warnings block only with
+  `--deny-warnings`) plus required-unavailable engine-prediction facets;
+  ordinary coverage gaps remain nonblocking evidence.
+  The output-v10 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -2424,16 +2428,13 @@ the sibling `engine_settings` table records the importer state that a prediction
 must compare with that intent. A setting at the wrong scope is a typed
 configuration error, not an override.
 
-Each applicable setting is also classified by the immutable profile facts as
-either required or as having one documented default. The initial Unity
-settings are all required without a verified default; values in the example
-are not defaults. Resolution materializes any future verified defaults before
-rule evaluation and before computing the settings digest.
-Omitting a required setting with no verified default is a typed configuration
+Each applicable V1 setting is classified as required without a verified
+default; values in the example are not defaults. Adding a documented default
+requires a later profile revision and settings-contract revision rather than a
+silent registry edit. Omitting a required setting is a typed configuration
 error; it is never guessed, treated as an implementation default, or deferred
 to a coverage gap. The resolved settings record therefore contains one exact
-document value or per-clip value for every applicable setting, including values
-the caller omitted because the profile supplied its documented default.
+document value or per-clip value for every applicable setting.
 
 The initial registry contains exactly five singleton tuples:
 
@@ -2608,8 +2609,9 @@ a third representation of the underlying source fact.
 A rule declares all of its preconditions: the full resolved profile identity,
 input format and raw-source coverage, required measurement fields, rig roles
 where applicable, and every explicit project intent or importer setting. A
-rule with missing evidence emits a coverage gap rather than a passing finding
-or a guessed value.
+required engine-prediction facet with missing evidence records scoped
+`required_prediction_unavailable` rather than a passing finding, guessed
+value, or generic engine-neutral coverage gap.
 
 New engine prediction checks are grouped by stable concern rather than copied
 once per engine. The initial families are:
@@ -2622,10 +2624,13 @@ once per engine. The initial families are:
   scale; and
 - `engine-addressability` for scenes, animations, targets, and runtime labels.
 
-The selected profile chooses applicable rules within those check ids. Findings
-retain the check id, a stable evidence code, the full resolved profile
-identity, and the exact fact, setting, policy, and measurement basis; they do
-not use `unity-*`, `unreal-*`, and similar duplicate check-id families.
+The selected profile chooses applicable rules within those check ids. The
+file-scoped provenance retains the full resolved profile and source identity;
+each check retains prediction facets keyed by the existing evaluation scope,
+with the exact fact, setting, policy, and measurement basis for clean and
+finding-bearing work alike. Findings bind to an available facet rather than
+introducing another applied-rule id. Checks do not use `unity-*`, `unreal-*`,
+and similar duplicate families.
 `[checks.<id>]` remains the only authority for severity and explicit
 enable/disable overrides. Existing checks such as `loop-closure`, `in-place`,
 `foot-slide`, and `root-motion-speed` keep their current behavior under every
@@ -2638,7 +2643,8 @@ Configuration precedence is consequently:
 3. resolved document and per-clip importer settings state the configured
    consumer behavior, while `[clips]` fields state the intended use;
 4. `[checks]` supplies activation, severity, and tolerances; and
-5. the runner evaluates applicable rules or records typed coverage gaps.
+5. the runner evaluates each applicable facet or records its typed
+   required-unavailable prediction state.
 
 No later layer may fabricate evidence missing from an earlier one.
 
@@ -2655,17 +2661,17 @@ minimum:
 - input format, raw-source coverage, and fully materialized document and
   per-clip importer settings;
 - measurement and outer-output schema identities consumed;
-- each applied rule id, exact fact/policy/measurement basis, and primary-source
-  reference set, including clean evaluations; and
-- coverage gaps for unsupported source content, missing source facts, missing
-  roles, or unavailable measurements.
+- each check id plus facet scope, exact fact/policy/measurement basis, and
+  primary-source reference set, including clean evaluations; and
+- scoped required-unavailable reasons for prediction evidence that is missing,
+  distinct from ordinary engine-neutral coverage gaps.
 
-This record belongs in the next versioned output contract; an existing schema
-identity is never widened in place. Under Appendix C, `animsmith-core` owns that
-outer lint envelope, its URN, and the registry-independent prediction/provenance
+Output v10 publishes this record; output v9 remains immutable. Under Appendix
+C, `animsmith-core` owns the outer lint envelope, its URN, and the
+registry-independent prediction/provenance
 wire types. `animsmith-engine` constructs those wire records through a one-way
 adapter without making core depend on the engine crate. The exact JSON shape is
-fixed by the implementation slice, but it must permit a consumer to distinguish
+fixed by the v10 contract and permits a consumer to distinguish
 a measured fact, a profile prediction, generated advice, and an engine
 readback. Text and HTML views render that model rather than maintaining separate
 conclusions.
@@ -2697,14 +2703,16 @@ applicable, the run's `CheckSelection` selects its check, and the check remains
 enabled after `[checks]` configuration. An unselected check remains visible as
 `unselected` and is not required; an explicitly disabled check remains visible
 as `disabled`. Once a check is selected and enabled, severity does not change
-whether evidence is required. A required rule with missing or non-finite input
-or incomplete raw-source coverage emits a typed
-`required_prediction_unavailable` evaluation and makes `lint` exit 1. It is
-not rewritten as a content finding, and existing engine-neutral coverage gaps
+whether evidence is required. A required facet with schema-valid unavailable
+measurement evidence or incomplete raw-source coverage emits typed
+`required_prediction_unavailable` and makes `lint` exit 1. Malformed or
+non-finite present measurement data remains a contract/operator error and exit
+2; it is not prediction unavailability. The facet is not rewritten as a
+content finding, and existing engine-neutral coverage gaps
 remain nonblocking. Advice generation refuses the affected suggestion without
 changing lint status. Unknown profile, version, importer, or setting
 selections fail earlier as configuration errors; they are never downgraded to
-coverage. The next output contract records the requirement state so embedded
+coverage. Output v10 records the requirement state so embedded
 consumers can apply the same policy without parsing CLI exit behavior.
 
 ### E.5 Root motion, units, and scale

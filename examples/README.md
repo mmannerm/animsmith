@@ -93,20 +93,29 @@ should fail on warnings too:
 $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
-For machine consumption, `--format json` emits the v9 result envelope
+For machine consumption, `--format json` emits the v10 result envelope
 (see [output.md](../docs/output.md)). This `jq` projection keeps the example
 short while showing where retained/promotion evidence, content findings, and
 independently versioned measurement evidence live:
 
 ```console
 $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
-    '{schema_version, schema, command, input: .files[0].input,
-      check: (.files[0].checks[] | select(.check_id == "quat-norm")),
+    '{schema_version, schema, command,
+      prediction_facets: .summary.prediction_facets,
+      prediction_provenance: .files[0].prediction_provenance,
+      input: .files[0].input,
+      check: (.files[0].checks[] | select(.check_id == "quat-norm") |
+        {check_id, selection, configuration, applicability, evaluation, findings}),
       measurements: (.files[0].measurements | {schema_version, schema})}'
 {
-  "schema_version": 9,
-  "schema": "urn:animsmith:schema:output:9",
+  "schema_version": 10,
+  "schema": "urn:animsmith:schema:output:10",
   "command": "lint",
+  "prediction_facets": {
+    "available": 0,
+    "required_prediction_unavailable": 0
+  },
+  "prediction_provenance": null,
   "input": {
     "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "bytes": 123456
@@ -345,8 +354,8 @@ all trajectory values are zero while the selected source remains explicit:
 ```console
 $ animsmith measure --format json examples/assets/walk.glb
 {
-  "schema_version": 9,
-  "schema": "urn:animsmith:schema:output:9",
+  "schema_version": 10,
+  "schema": "urn:animsmith:schema:output:10",
   "tool": { "name": "animsmith", "version": "0.3.1",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",

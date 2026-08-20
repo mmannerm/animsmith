@@ -13,7 +13,10 @@ actual clip names.
 
 The crate performs no filesystem access, parses no configuration format, and
 does not depend on an animation format crate or engine SDK. Unknown facts stay
-explicitly unknown; the registry does not predict engine output.
+explicitly unknown; the registry does not predict engine output. A one-way
+adapter can publish an already-resolved profile and its same-load
+`animsmith-core::LoadedSource` evidence as prediction-provenance V1 without
+rerunning resolution or reading source bytes.
 
 ## Install
 

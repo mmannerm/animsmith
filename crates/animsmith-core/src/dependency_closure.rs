@@ -9,7 +9,8 @@ use crate::{
     SourceResourceLocatorV1, SourceResourceReferenceV1, SourceSetCoverageStateV1,
     SourceSetCoverageV1,
 };
-use serde::Serialize;
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Semantic identity of the dependency-closure V1 value contract.
@@ -45,6 +46,44 @@ pub struct ResourceClosureBudgetV1 {
     max_resource_bytes: u64,
     max_total_resource_bytes: u64,
     max_dedup_probes: usize,
+}
+
+impl<'de> Deserialize<'de> for ResourceClosureBudgetV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct WireBudget {
+            schema: String,
+            max_references: usize,
+            max_external_resources: usize,
+            max_key_bytes: usize,
+            max_path_components: usize,
+            max_normalization_bytes: usize,
+            max_resource_bytes: u64,
+            max_total_resource_bytes: u64,
+            max_dedup_probes: usize,
+        }
+        let wire = WireBudget::deserialize(deserializer)?;
+        let expected = Self::VALUE;
+        if wire.schema != expected.schema
+            || wire.max_references != expected.max_references
+            || wire.max_external_resources != expected.max_external_resources
+            || wire.max_key_bytes != expected.max_key_bytes
+            || wire.max_path_components != expected.max_path_components
+            || wire.max_normalization_bytes != expected.max_normalization_bytes
+            || wire.max_resource_bytes != expected.max_resource_bytes
+            || wire.max_total_resource_bytes != expected.max_total_resource_bytes
+            || wire.max_dedup_probes != expected.max_dedup_probes
+        {
+            return Err(D::Error::custom(
+                "dependency-closure budget must equal immutable V1",
+            ));
+        }
+        Ok(expected)
+    }
 }
 
 impl ResourceClosureBudgetV1 {
@@ -108,7 +147,7 @@ impl ResourceClosureBudgetV1 {
 }
 
 /// Format-neutral consumer purpose derived from a source resource kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DependencyResourcePurposeV1 {
     /// The loader requires these bytes to construct its normalized document.
@@ -199,6 +238,19 @@ impl DependencyResourceKeyV1 {
     }
 }
 
+impl<'de> Deserialize<'de> for DependencyResourceKeyV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_source_str(
+            &String::deserialize(deserializer)?,
+            ResourceKeySyntaxV1::ParserRelativePath,
+        )
+        .map_err(D::Error::custom)
+    }
+}
+
 fn decode_percent_utf8(raw: &str) -> Result<String, DependencyClosureError> {
     let bytes = raw.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -277,7 +329,7 @@ fn has_uri_scheme(value: &str) -> bool {
 }
 
 /// Why a source-controlled locator was refused without opening it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DependencyResourceRefusalReasonV1 {
     /// Absolute or drive-qualified locator.
@@ -295,7 +347,7 @@ pub enum DependencyResourceRefusalReasonV1 {
 }
 
 /// Why a safe declaration could not be assigned a content identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DependencyResourceUnavailableReasonV1 {
     /// The byte-loading caller supplied no trusted resource root.
@@ -309,8 +361,8 @@ pub enum DependencyResourceUnavailableReasonV1 {
 }
 
 /// One declaration's closure mapping.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DependencyReferenceTargetV1 {
     /// Bytes are carried by the exact primary input.
     Primary,
@@ -345,6 +397,57 @@ pub struct DependencyClosureReferenceV1 {
     purpose: DependencyResourcePurposeV1,
     source_index: u64,
     target: DependencyReferenceTargetV1,
+}
+
+impl<'de> Deserialize<'de> for DependencyClosureReferenceV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Debug, Clone, Copy, Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum WireResourceKind {
+            Buffer,
+            Image,
+            Texture,
+            Video,
+            Cache,
+        }
+        impl From<WireResourceKind> for SourceResourceKindV1 {
+            fn from(value: WireResourceKind) -> Self {
+                match value {
+                    WireResourceKind::Buffer => Self::Buffer,
+                    WireResourceKind::Image => Self::Image,
+                    WireResourceKind::Texture => Self::Texture,
+                    WireResourceKind::Video => Self::Video,
+                    WireResourceKind::Cache => Self::Cache,
+                }
+            }
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct WireReference {
+            source_order_index: usize,
+            kind: WireResourceKind,
+            purpose: DependencyResourcePurposeV1,
+            source_index: u64,
+            target: DependencyReferenceTargetV1,
+        }
+        let wire = WireReference::deserialize(deserializer)?;
+        let kind = SourceResourceKindV1::from(wire.kind);
+        let reference = Self::new(
+            wire.source_order_index,
+            kind,
+            wire.source_index,
+            wire.target,
+        );
+        if reference.purpose != wire.purpose {
+            return Err(D::Error::custom(
+                "dependency reference purpose must be derived from kind",
+            ));
+        }
+        Ok(reference)
+    }
 }
 
 impl DependencyClosureReferenceV1 {
@@ -390,7 +493,8 @@ impl DependencyClosureReferenceV1 {
 }
 
 /// One distinct external logical key and the exact bytes captured once.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExternalResourceIdentityV1 {
     key: DependencyResourceKeyV1,
     identity: InputIdentity,
@@ -409,7 +513,7 @@ impl ExternalResourceIdentityV1 {
 }
 
 /// Why the closure as a whole is not complete.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DependencyClosureCoverageReasonV1 {
     /// Raw declaration projection retained only a positive prefix.
@@ -429,8 +533,8 @@ pub enum DependencyClosureCoverageReasonV1 {
 }
 
 /// Complete, partial, or unavailable closure coverage.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DependencyClosureCoverageV1 {
     /// Every retained source declaration maps to exact content and the source domain is complete.
     Complete,
@@ -462,7 +566,7 @@ impl DependencyClosureCoverageV1 {
 }
 
 /// Domain-separated identity of one complete canonical closure record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DependencyClosureIdentityV1(InputIdentity);
 
@@ -474,7 +578,8 @@ impl DependencyClosureIdentityV1 {
 }
 
 /// Bounded capture work, including the N+1 stop witness.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DependencyClosureWorkV1 {
     inspected_references: usize,
     retained_references: usize,
@@ -548,7 +653,63 @@ pub struct DependencyClosureV1 {
     work: DependencyClosureWorkV1,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DependencyClosureWireV1 {
+    schema: String,
+    budget: ResourceClosureBudgetV1,
+    primary_input: InputIdentity,
+    coverage: DependencyClosureCoverageV1,
+    identity: Option<DependencyClosureIdentityV1>,
+    references: Vec<DependencyClosureReferenceV1>,
+    external_resources: Vec<ExternalResourceIdentityV1>,
+    work: DependencyClosureWorkV1,
+}
+
+#[derive(Debug)]
+pub(crate) enum DependencyClosureDecodeError {
+    Shape(serde_json::Error),
+    Semantic(String),
+}
+
+pub(crate) fn decode_dependency_closure_v1(
+    raw: &str,
+) -> Result<DependencyClosureV1, DependencyClosureDecodeError> {
+    let wire = serde_json::from_str(raw).map_err(DependencyClosureDecodeError::Shape)?;
+    DependencyClosureV1::from_wire(wire).map_err(DependencyClosureDecodeError::Semantic)
+}
+
+impl<'de> Deserialize<'de> for DependencyClosureV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_wire(DependencyClosureWireV1::deserialize(deserializer)?)
+            .map_err(D::Error::custom)
+    }
+}
+
 impl DependencyClosureV1 {
+    fn from_wire(wire: DependencyClosureWireV1) -> Result<Self, String> {
+        if wire.schema != DEPENDENCY_CLOSURE_V1_ID {
+            return Err(format!(
+                "dependency closure schema must be {DEPENDENCY_CLOSURE_V1_ID:?}"
+            ));
+        }
+        let closure = Self {
+            schema: DEPENDENCY_CLOSURE_V1_ID,
+            budget: wire.budget,
+            primary_input: wire.primary_input,
+            coverage: wire.coverage,
+            identity: wire.identity,
+            references: wire.references,
+            external_resources: wire.external_resources,
+            work: wire.work,
+        };
+        closure.validate_wire()?;
+        Ok(closure)
+    }
+
     /// Safe fail-closed value for a loader that has no resource projection.
     pub fn unavailable(primary_input: InputIdentity) -> Self {
         Self {
@@ -631,6 +792,198 @@ impl DependencyClosureV1 {
     /// Explicit bounded capture work counters.
     pub const fn work(&self) -> DependencyClosureWorkV1 {
         self.work
+    }
+
+    fn validate_wire(&self) -> Result<(), String> {
+        if self.budget != ResourceClosureBudgetV1::VALUE {
+            return Err("dependency closure budget is not immutable V1".to_owned());
+        }
+        if self.references.len() > DEPENDENCY_CLOSURE_V1_MAX_REFERENCES {
+            return Err("dependency closure has too many references".to_owned());
+        }
+        if self.external_resources.len() > DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES {
+            return Err("dependency closure has too many external resources".to_owned());
+        }
+        for (expected, reference) in self.references.iter().enumerate() {
+            if reference.source_order_index != expected {
+                return Err(format!(
+                    "dependency reference order {} is not expected prefix index {expected}",
+                    reference.source_order_index
+                ));
+            }
+            if reference.purpose != DependencyResourcePurposeV1::from_kind(reference.kind) {
+                return Err("dependency reference purpose disagrees with kind".to_owned());
+            }
+            match &reference.target {
+                DependencyReferenceTargetV1::Refused {
+                    key: Some(_),
+                    reason: DependencyResourceRefusalReasonV1::Symlink,
+                }
+                | DependencyReferenceTargetV1::Refused {
+                    key: None,
+                    reason:
+                        DependencyResourceRefusalReasonV1::Absolute
+                        | DependencyResourceRefusalReasonV1::Escaping
+                        | DependencyResourceRefusalReasonV1::Remote
+                        | DependencyResourceRefusalReasonV1::Malformed
+                        | DependencyResourceRefusalReasonV1::Oversized,
+                } => {}
+                DependencyReferenceTargetV1::Refused { .. } => {
+                    return Err(
+                        "dependency refused target has an invalid key/reason pair".to_owned()
+                    );
+                }
+                _ => {}
+            }
+        }
+        if self
+            .external_resources
+            .windows(2)
+            .any(|rows| rows[0].key >= rows[1].key)
+        {
+            return Err("dependency external resources must be strictly key ordered".to_owned());
+        }
+        let reasons = self.coverage.reasons();
+        if reasons.windows(2).any(|rows| rows[0] >= rows[1]) {
+            return Err("dependency coverage reasons must be strictly ordered".to_owned());
+        }
+        match &self.coverage {
+            DependencyClosureCoverageV1::Complete if !reasons.is_empty() => {
+                return Err("complete dependency closure cannot have reasons".to_owned());
+            }
+            DependencyClosureCoverageV1::Partial { .. }
+            | DependencyClosureCoverageV1::Unavailable { .. }
+                if reasons.is_empty() =>
+            {
+                return Err("incomplete dependency closure requires reasons".to_owned());
+            }
+            _ => {}
+        }
+        if self.coverage.is_complete()
+            && self.references.iter().any(|reference| {
+                !matches!(
+                    reference.target,
+                    DependencyReferenceTargetV1::Primary
+                        | DependencyReferenceTargetV1::External { .. }
+                )
+            })
+        {
+            return Err("complete dependency closure has an incomplete target".to_owned());
+        }
+        for reference in &self.references {
+            if let DependencyReferenceTargetV1::External { key } = &reference.target
+                && self
+                    .external_resources
+                    .binary_search_by(|resource| resource.key.cmp(key))
+                    .is_err()
+            {
+                return Err("dependency reference names an absent external row".to_owned());
+            }
+        }
+        for resource in &self.external_resources {
+            if !self.references.iter().any(|reference| {
+                matches!(
+                    &reference.target,
+                    DependencyReferenceTargetV1::External { key } if key == &resource.key
+                )
+            }) {
+                return Err("dependency external row is not referenced".to_owned());
+            }
+        }
+        let has_refused = self.references.iter().any(|reference| {
+            matches!(
+                reference.target,
+                DependencyReferenceTargetV1::Refused { .. }
+            )
+        });
+        let has_unavailable = self.references.iter().any(|reference| {
+            matches!(
+                reference.target,
+                DependencyReferenceTargetV1::Unavailable { .. }
+            )
+        });
+        if has_refused != reasons.contains(&DependencyClosureCoverageReasonV1::RefusedResource)
+            || has_unavailable
+                != reasons.contains(&DependencyClosureCoverageReasonV1::UnavailableResource)
+        {
+            return Err(
+                "dependency closure target states disagree with coverage reasons".to_owned(),
+            );
+        }
+        if reasons.contains(&DependencyClosureCoverageReasonV1::CaptureUnavailable)
+            && (!matches!(
+                self.coverage,
+                DependencyClosureCoverageV1::Unavailable { .. }
+            ) || !self.references.is_empty()
+                || !self.external_resources.is_empty())
+        {
+            return Err(
+                "capture-unavailable dependency closure must retain no closure rows".to_owned(),
+            );
+        }
+        if self.coverage.is_complete() != self.identity.is_some() {
+            return Err(
+                "dependency closure identity must be present exactly for complete coverage"
+                    .to_owned(),
+            );
+        }
+        if let Some(identity) = &self.identity
+            && identity
+                != &canonical_identity(
+                    &self.primary_input,
+                    &self.references,
+                    &self.external_resources,
+                )
+        {
+            return Err("dependency closure identity does not match its preimage".to_owned());
+        }
+        let work = self.work;
+        let retained_or_terminal = self.references.len()..=self.references.len().saturating_add(1);
+        let mut target_keys = BTreeSet::new();
+        for reference in &self.references {
+            match &reference.target {
+                DependencyReferenceTargetV1::External { key }
+                | DependencyReferenceTargetV1::Refused { key: Some(key), .. }
+                | DependencyReferenceTargetV1::Unavailable { key: Some(key), .. } => {
+                    target_keys.insert(key);
+                }
+                DependencyReferenceTargetV1::Primary
+                | DependencyReferenceTargetV1::Refused { key: None, .. }
+                | DependencyReferenceTargetV1::Unavailable { key: None, .. } => {}
+            }
+        }
+        let captured_bytes = self
+            .external_resources
+            .iter()
+            .try_fold(0_u64, |total, row| total.checked_add(row.identity.bytes()));
+        if work.inspected_references > DEPENDENCY_CLOSURE_V1_MAX_REFERENCES + 1
+            || !retained_or_terminal.contains(&work.inspected_references)
+            || (work.inspected_references != self.references.len()
+                && !reasons.contains(&DependencyClosureCoverageReasonV1::ResourceBudgetExceeded))
+            || work.retained_references != self.references.len()
+            || work.normalization_bytes_inspected
+                > DEPENDENCY_CLOSURE_V1_MAX_NORMALIZATION_BYTES + 1
+            || work.dedup_probes > DEPENDENCY_CLOSURE_V1_MAX_DEDUP_PROBES + 1
+            || work.dedup_probes != work.inspected_references
+            || work.path_components_inspected
+                > DEPENDENCY_CLOSURE_V1_MAX_REFERENCES
+                    .saturating_mul(DEPENDENCY_CLOSURE_V1_MAX_PATH_COMPONENTS)
+                    .saturating_add(DEPENDENCY_CLOSURE_V1_MAX_PATH_COMPONENTS + 1)
+            || work.external_open_attempts > DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES
+            || work.distinct_external_keys != target_keys.len()
+            || work.external_open_attempts < self.external_resources.len()
+            || work.external_open_attempts > work.distinct_external_keys
+            || work.captured_external_resources != self.external_resources.len()
+            || captured_bytes.is_none()
+            || work.external_bytes_read_hashed < captured_bytes.unwrap_or(u64::MAX)
+            || (work.external_bytes_read_hashed != captured_bytes.unwrap_or(u64::MAX)
+                && !reasons.contains(&DependencyClosureCoverageReasonV1::ResourceBudgetExceeded))
+            || work.external_bytes_read_hashed
+                > DEPENDENCY_CLOSURE_V1_MAX_TOTAL_RESOURCE_BYTES.saturating_add(1)
+        {
+            return Err("dependency closure work counters are invalid".to_owned());
+        }
+        Ok(())
     }
 
     pub(crate) fn validate_against(
@@ -1676,6 +2029,39 @@ mod tests {
             "43fccaa09b2616c57863a1186b88d8d674cb404b4e99c35b18a239a4d4b782ad"
         );
 
+        let round_trip: DependencyClosureV1 =
+            serde_json::from_value(wire.clone()).expect("builder work reads back");
+        assert_eq!(round_trip, first);
+        for (field, value) in [
+            ("inspected_references", serde_json::json!(0)),
+            ("dedup_probes", serde_json::json!(0)),
+            ("distinct_external_keys", serde_json::json!(0)),
+            ("external_open_attempts", serde_json::json!(0)),
+            ("external_bytes_read_hashed", serde_json::json!(0)),
+        ] {
+            let mut impossible = wire.clone();
+            impossible["work"][field] = value;
+            let error = serde_json::from_value::<DependencyClosureV1>(impossible)
+                .expect_err("impossible complete work must fail strict readback");
+            assert!(
+                error
+                    .to_string()
+                    .contains("dependency closure work counters are invalid"),
+                "field {field} produced {error}"
+            );
+        }
+        let mut impossible_terminal = wire.clone();
+        impossible_terminal["work"]["inspected_references"] = serde_json::json!(3);
+        impossible_terminal["work"]["dedup_probes"] = serde_json::json!(3);
+        let error = serde_json::from_value::<DependencyClosureV1>(impossible_terminal)
+            .expect_err("complete work cannot claim a terminal N+1 inspection");
+        assert!(
+            error
+                .to_string()
+                .contains("dependency closure work counters are invalid"),
+            "unexpected terminal-work error: {error}"
+        );
+
         let mut changed =
             DependencyClosureBuilderV1::new(primary, SourceSetCoverageV1::complete(), 2);
         assert!(changed.begin_reference(5, 1));
@@ -1732,6 +2118,17 @@ mod tests {
             DependencyClosureCoverageV1::Partial { .. }
         ));
         assert!(partial.identity().is_none());
+        let mut impossible_terminal = serde_json::to_value(&partial).unwrap();
+        impossible_terminal["work"]["inspected_references"] = serde_json::json!(2);
+        impossible_terminal["work"]["dedup_probes"] = serde_json::json!(2);
+        let error = serde_json::from_value::<DependencyClosureV1>(impossible_terminal)
+            .expect_err("non-budget partial work cannot claim N+1 inspection");
+        assert!(
+            error
+                .to_string()
+                .contains("dependency closure work counters are invalid"),
+            "unexpected partial terminal-work error: {error}"
+        );
 
         let unavailable = DependencyClosureV1::unavailable(primary);
         assert!(matches!(
@@ -1775,6 +2172,10 @@ mod tests {
             DependencyClosureCoverageV1::Partial { reasons }
                 if reasons.contains(&DependencyClosureCoverageReasonV1::ResourceBudgetExceeded)
         ));
+        let wire = serde_json::to_value(&closure).unwrap();
+        let round_trip: DependencyClosureV1 =
+            serde_json::from_value(wire).expect("budget N+1 work reads back");
+        assert_eq!(round_trip, closure);
     }
 
     #[test]

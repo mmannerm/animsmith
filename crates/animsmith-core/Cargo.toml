@@ -19,13 +19,13 @@ targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 [features]
 # Exposes `fixtures`: analytic walk-cycle and scale-reference builders shared
 # with this crate's integration tests and animsmith-testkit. Off by default so
-# published builds expose no fixture API. Enabling it adds no dependency (core
-# stays glam + serde + sha2 + thiserror only).
+# published builds expose no fixture API. Enabling it adds no dependency.
 fixtures = []
 
 [dependencies]
 glam = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 
@@ -33,5 +33,4 @@ thiserror = { workspace = true }
 # Self-dependency so this crate's own tests (e.g. tests/semantic.rs) build
 # with the `fixtures` feature enabled.
 animsmith-core = { path = ".", features = ["fixtures"] }
-serde_json = { workspace = true }
 toml = { workspace = true }

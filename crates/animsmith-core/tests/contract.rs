@@ -17,9 +17,10 @@ use animsmith_core::{
     MEASUREMENTS_SCHEMA_VERSION, MaterialResourceCoverage, MaterialTextureSlot, MeasureEnvelope,
     MeasureFileReport, MeasurementContract, MeasurementContractError, MeasurementFileError,
     MeasurementReportError, MeasurementReportFile, MeasurementReportInput, MetricGrids,
-    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, Property, ResolvedRoles, RigInfo, RigInfoError, Role,
-    Severity, SourceInverseBindAccessorStatus, SourceSkeletonCoverage, ToolInfo, ToolSource,
-    Transform, evaluate_checks, sha256_hex,
+    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, OUTPUT_V10_MAX_CHECKS_PER_FILE, OUTPUT_V10_MAX_FILES,
+    OutputContractError, Property, ResolvedRoles, RigInfo, RigInfoError, Role, Severity,
+    SourceInverseBindAccessorStatus, SourceSkeletonCoverage, ToolInfo, ToolSource, Transform,
+    evaluate_checks, sha256_hex,
 };
 
 fn tool() -> ToolInfo {
@@ -82,17 +83,23 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
             rig(),
             measurements(),
         )],
-    );
+    )
+    .expect("bounded measure envelope");
     let lint = LintEnvelope::new(
         tool(),
-        vec![LintFileReport::new(
-            "lint.glb",
-            input(b"lint input"),
-            rig(),
-            Vec::new(),
-            measurements(),
-        )],
-    );
+        vec![
+            LintFileReport::new(
+                "lint.glb",
+                input(b"lint input"),
+                rig(),
+                None,
+                Vec::new(),
+                measurements(),
+            )
+            .expect("bounded lint file"),
+        ],
+    )
+    .expect("bounded lint envelope");
     let measure = serde_json::to_value(measure).expect("measure envelope serializes");
     let lint = serde_json::to_value(lint).expect("lint envelope serializes");
     assert!(measure["files"][0].get("checks").is_none());
@@ -110,6 +117,116 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
             .measurements()
             .clips()
             .is_empty()
+    );
+}
+
+#[test]
+fn output_v10_file_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
+    let file = MeasureFileReport::new("limit.glb", input(b"limit"), rig(), measurements());
+    let at_limit_files = vec![file; OUTPUT_V10_MAX_FILES];
+    let at_limit =
+        MeasureEnvelope::new(tool(), at_limit_files).expect("exact output-v10 file limit is valid");
+    let at_limit_wire = serde_json::to_value(&at_limit).expect("bounded envelope serializes");
+    let at_limit_read: MeasurementReportInput =
+        serde_json::from_value(at_limit_wire.clone()).expect("bounded envelope reads");
+    assert_eq!(at_limit_read.file_count(), Some(OUTPUT_V10_MAX_FILES));
+    assert_eq!(
+        at_limit_read
+            .into_files()
+            .expect("exact output-v10 file limit validates")
+            .len(),
+        OUTPUT_V10_MAX_FILES
+    );
+
+    let extra = MeasureFileReport::new("extra.glb", input(b"extra"), rig(), measurements());
+    assert_eq!(
+        MeasureEnvelope::new(tool(), vec![extra; OUTPUT_V10_MAX_FILES + 1])
+            .expect_err("N+1 output files must fail on write"),
+        OutputContractError::TooManyFiles {
+            found: OUTPUT_V10_MAX_FILES + 1,
+            limit: OUTPUT_V10_MAX_FILES,
+        }
+    );
+
+    let mut above_limit_wire = at_limit_wire;
+    let first = above_limit_wire["files"][0].clone();
+    above_limit_wire["files"]
+        .as_array_mut()
+        .expect("files array")
+        .push(first);
+    let above_limit_read: MeasurementReportInput =
+        serde_json::from_value(above_limit_wire).expect("N+1 shape remains readable");
+    assert_eq!(
+        above_limit_read
+            .into_files()
+            .expect_err("N+1 output files must fail on read"),
+        MeasurementReportError::TooManyFiles {
+            found: OUTPUT_V10_MAX_FILES + 1,
+            limit: OUTPUT_V10_MAX_FILES,
+        }
+    );
+}
+
+#[test]
+fn output_v10_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
+    let check = CheckEvaluation::evaluated(
+        "limit",
+        CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new()),
+    )
+    .expect("empty active check is valid");
+    let at_limit_file = LintFileReport::new(
+        "limit.glb",
+        input(b"limit"),
+        rig(),
+        None,
+        vec![check.clone(); OUTPUT_V10_MAX_CHECKS_PER_FILE],
+        measurements(),
+    )
+    .expect("exact output-v10 check limit is valid");
+    let at_limit = LintEnvelope::new(tool(), vec![at_limit_file])
+        .expect("exact output-v10 check limit forms an envelope");
+    let at_limit_wire = serde_json::to_value(&at_limit).expect("bounded envelope serializes");
+    let at_limit_read: MeasurementReportInput =
+        serde_json::from_value(at_limit_wire.clone()).expect("bounded envelope reads");
+    at_limit_read
+        .into_files()
+        .expect("exact output-v10 check limit validates");
+
+    assert_eq!(
+        LintFileReport::new(
+            "limit.glb",
+            input(b"limit"),
+            rig(),
+            None,
+            vec![check; OUTPUT_V10_MAX_CHECKS_PER_FILE + 1],
+            measurements(),
+        )
+        .expect_err("N+1 output checks must fail on write"),
+        OutputContractError::TooManyChecks {
+            found: OUTPUT_V10_MAX_CHECKS_PER_FILE + 1,
+            limit: OUTPUT_V10_MAX_CHECKS_PER_FILE,
+        }
+    );
+
+    let mut above_limit_wire = at_limit_wire;
+    let first = above_limit_wire["files"][0]["checks"][0].clone();
+    above_limit_wire["files"][0]["checks"]
+        .as_array_mut()
+        .expect("checks array")
+        .push(first);
+    let above_limit_read: MeasurementReportInput =
+        serde_json::from_value(above_limit_wire).expect("N+1 shape remains readable");
+    assert_eq!(
+        above_limit_read
+            .into_files()
+            .expect_err("N+1 output checks must fail on read"),
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::TooManyChecks {
+                found: OUTPUT_V10_MAX_CHECKS_PER_FILE + 1,
+                limit: OUTPUT_V10_MAX_CHECKS_PER_FILE,
+            },
+        }
     );
 }
 
@@ -184,18 +301,23 @@ fn lint_summary_aggregates_every_axis_and_finding_bucket_across_files() {
                 "first.glb",
                 input(b"first input"),
                 rig(),
+                None,
                 vec![partial, disabled_evaluation()],
                 measurements(),
-            ),
+            )
+            .expect("bounded first lint file"),
             LintFileReport::new(
                 "second.glb",
                 input(b"second input"),
                 rig(),
+                None,
                 vec![complete],
                 measurements(),
-            ),
+            )
+            .expect("bounded second lint file"),
         ],
-    );
+    )
+    .expect("bounded lint envelope");
     let report = serde_json::to_value(report).expect("lint envelope serializes");
 
     assert_eq!(
@@ -203,6 +325,10 @@ fn lint_summary_aggregates_every_axis_and_finding_bucket_across_files() {
         serde_json::json!({
             "files": 2,
             "findings": { "error": 1, "warning": 1, "note": 2 },
+            "prediction_facets": {
+                "available": 0,
+                "required_prediction_unavailable": 0
+            },
             "checks": {
                 "total": 3,
                 "selection": { "selected": 3, "unselected": 0 },
@@ -219,6 +345,7 @@ fn current_measure_report() -> serde_json::Value {
     serde_json::json!({
         "schema_version": OUTPUT_SCHEMA_VERSION,
         "schema": OUTPUT_SCHEMA_ID,
+        "tool": {},
         "command": "measure",
         "files": [{
             "path": "clip.glb",
@@ -226,6 +353,7 @@ fn current_measure_report() -> serde_json::Value {
                 "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
                 "bytes": 0,
             },
+            "rig": {},
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -688,6 +816,7 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
                 "bytes": 1,
             },
+            "rig": {},
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -710,6 +839,7 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
                 "bytes": 2,
             },
+            "rig": {},
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,
@@ -732,6 +862,7 @@ fn measurement_report_input_recovers_every_file_without_cardinality_policy() {
                 "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
                 "bytes": 3,
             },
+            "rig": {},
             "measurements": {
                 "schema_version": MEASUREMENTS_SCHEMA_VERSION,
                 "schema": MEASUREMENTS_SCHEMA_ID,

@@ -5,15 +5,17 @@
 //! module are the single execution/result boundary for both CLI and embedded
 //! consumers.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
 
 use serde::ser::SerializeStruct;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::check::{Check, CheckCtx};
 use crate::config::{ConfigValidationError, SeveritySetting};
 use crate::finding::Finding;
+use crate::prediction::{EnginePredictionV1, PredictionContractError};
 
 /// One authoritative built-in evidence-code definition.
 ///
@@ -36,7 +38,7 @@ macro_rules! builtin_codes {
             emitted_by = [$($emitter:literal),+ $(,)?]),+ $(,)?
     ) => {
         impl $kind {
-            $(#[doc = $meaning] pub const $name: Self = Self($value);)+
+            $(#[doc = $meaning] pub const $name: Self = Self::from_static($value);)+
         }
 
         #[doc = $registry_doc]
@@ -51,18 +53,22 @@ macro_rules! builtin_codes {
         ];
 
         impl $kind {
-            fn builtin_definition(self) -> Option<&'static BuiltinEvidenceCode> {
-                $definitions.iter().find(|definition| definition.code == self.0)
+            #[allow(dead_code)]
+            fn builtin_definition(&self) -> Option<&'static BuiltinEvidenceCode> {
+                $definitions
+                    .iter()
+                    .find(|definition| definition.code == self.as_str())
             }
 
-            fn validate_emitter(self, check_id: &'static str) -> Result<(), EvaluationError> {
+            #[allow(dead_code)]
+            fn validate_emitter(&self, check_id: &'static str) -> Result<(), EvaluationError> {
                 if self
                     .builtin_definition()
                     .is_some_and(|definition| !definition.emitted_by.contains(&check_id))
                 {
                     return Err(EvaluationError::$error {
                         check_id,
-                        code: self,
+                        code: self.clone(),
                     });
                 }
                 Ok(())
@@ -72,7 +78,7 @@ macro_rules! builtin_codes {
 }
 
 /// Whether a check was selected for this invocation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SelectionState {
     /// Selected explicitly or through the default full catalog.
@@ -82,7 +88,7 @@ pub enum SelectionState {
 }
 
 /// Whether configuration enabled the check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigurationState {
     /// The check is enabled.
@@ -93,7 +99,7 @@ pub enum ConfigurationState {
 }
 
 /// Whether a check applies to the supplied document and declarations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Applicability {
     /// The check has work for this document/configuration.
@@ -103,7 +109,7 @@ pub enum Applicability {
 }
 
 /// How much applicable work was evaluated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvaluationState {
     /// All modelled work completed.
@@ -118,9 +124,9 @@ pub enum EvaluationState {
 ///
 /// Built-in codes are constants. Custom checks may construct namespaced codes
 /// without forcing animsmith's built-in registry to become a closed enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct EvaluationScopeCode(&'static str);
+pub struct EvaluationScopeCode(Cow<'static, str>);
 
 builtin_codes!(
     EvaluationScopeCode,
@@ -188,27 +194,32 @@ builtin_codes!(
 );
 
 impl EvaluationScopeCode {
+    const fn from_static(code: &'static str) -> Self {
+        Self(Cow::Borrowed(code))
+    }
+
     /// Construct a stable custom scope code.
     ///
     /// Custom checks should use a namespaced value such as `acme:reference`.
     pub const fn custom(code: &'static str) -> Self {
-        Self(code)
+        Self(Cow::Borrowed(code))
     }
 
     /// Return the serialized snake-case or namespaced code.
-    pub const fn as_str(self) -> &'static str {
-        self.0
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
 impl fmt::Display for EvaluationScopeCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
+        f.write_str(&self.0)
     }
 }
 
 /// A stable identifier for work that completed or could not be evaluated.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluationScope {
     /// Consumer-neutral work-unit code such as `member_existence`.
     pub code: EvaluationScopeCode,
@@ -281,6 +292,10 @@ builtin_codes!(
 );
 
 impl CoverageGapCode {
+    const fn from_static(code: &'static str) -> Self {
+        Self(code)
+    }
+
     /// Construct a stable custom code.
     ///
     /// Custom checks should use a namespaced value such as
@@ -339,6 +354,7 @@ pub struct CheckOutput {
     findings: Vec<Finding>,
     evaluated_scopes: Vec<EvaluationScope>,
     gaps: Vec<CoverageGap>,
+    engine_prediction: Option<EnginePredictionV1>,
 }
 
 impl CheckOutput {
@@ -356,7 +372,17 @@ impl CheckOutput {
             findings,
             evaluated_scopes,
             gaps,
+            engine_prediction: None,
         }
+    }
+
+    /// Attach one engine-prediction record to this check output.
+    ///
+    /// The shared evaluation boundary validates facet/scope/finding
+    /// relationships after it knows the authoritative parent check id.
+    pub fn with_engine_prediction(mut self, prediction: EnginePredictionV1) -> Self {
+        self.engine_prediction = Some(prediction);
+        self
     }
 
     /// Content findings emitted by evaluated work.
@@ -373,9 +399,176 @@ impl CheckOutput {
     pub fn gaps(&self) -> &[CoverageGap] {
         &self.gaps
     }
+
+    /// Engine-prediction facets emitted by this check, when any.
+    pub const fn engine_prediction(&self) -> Option<&EnginePredictionV1> {
+        self.engine_prediction.as_ref()
+    }
+
+    fn has_missing_work(&self) -> bool {
+        !self.gaps.is_empty()
+            || self
+                .engine_prediction
+                .as_ref()
+                .is_some_and(EnginePredictionV1::has_required_unavailable)
+    }
 }
 
-/// Final output-v9 record for one catalog check.
+/// Borrowed coverage-gap fields used by the shared producer/readback
+/// evaluation validator.
+pub(crate) struct CheckEvaluationGapRef<'a> {
+    pub(crate) code: &'a str,
+    pub(crate) scope: Option<&'a EvaluationScope>,
+}
+
+pub(crate) struct CheckEvaluationValidationInput<'a> {
+    pub(crate) check_id: &'a str,
+    pub(crate) selection: SelectionState,
+    pub(crate) configuration: ConfigurationState,
+    pub(crate) applicability: Applicability,
+    pub(crate) finding_check_ids: &'a [&'a str],
+    pub(crate) evaluated_scopes: &'a [EvaluationScope],
+    pub(crate) gaps: &'a [CheckEvaluationGapRef<'a>],
+    pub(crate) prediction_scopes: &'a [&'a EvaluationScope],
+    pub(crate) has_prediction: bool,
+    pub(crate) prediction_has_required_unavailable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CheckEvaluationValidationError {
+    InvalidCheckId,
+    InvalidOutput(&'static str),
+    FindingCheckIdMismatch { finding_index: usize },
+    EvaluatedScopeEmitterMismatch { scope_index: usize },
+    GapScopeEmitterMismatch { gap_index: usize },
+    GapEmitterMismatch { gap_index: usize },
+    PredictionScopeEmitterMismatch { facet_index: usize },
+}
+
+impl CheckEvaluationValidationError {
+    pub(crate) const fn reason(self) -> &'static str {
+        match self {
+            Self::InvalidCheckId => "check id cannot be empty",
+            Self::InvalidOutput(reason) => reason,
+            Self::FindingCheckIdMismatch { .. } => "finding check_id must match its parent check",
+            Self::EvaluatedScopeEmitterMismatch { .. } => {
+                "evaluated scope code is invalid for its parent check"
+            }
+            Self::GapScopeEmitterMismatch { .. } => {
+                "coverage gap scope code is invalid for its parent check"
+            }
+            Self::GapEmitterMismatch { .. } => "coverage gap code is invalid for its parent check",
+            Self::PredictionScopeEmitterMismatch { .. } => {
+                "prediction facet scope code is invalid for its parent check"
+            }
+        }
+    }
+}
+
+/// Validate the sole check-evaluation lifecycle and derive its serialized
+/// coverage state. Both producer construction and output-v10 readback use this
+/// authority.
+pub(crate) fn validate_and_derive_check_evaluation(
+    input: CheckEvaluationValidationInput<'_>,
+) -> Result<EvaluationState, CheckEvaluationValidationError> {
+    let CheckEvaluationValidationInput {
+        check_id,
+        selection,
+        configuration,
+        applicability,
+        finding_check_ids,
+        evaluated_scopes,
+        gaps,
+        prediction_scopes,
+        has_prediction,
+        prediction_has_required_unavailable,
+    } = input;
+    if check_id.is_empty() {
+        return Err(CheckEvaluationValidationError::InvalidCheckId);
+    }
+    if let Some(finding_index) = finding_check_ids
+        .iter()
+        .position(|finding_check_id| *finding_check_id != check_id)
+    {
+        return Err(CheckEvaluationValidationError::FindingCheckIdMismatch { finding_index });
+    }
+    for (scope_index, scope) in evaluated_scopes.iter().enumerate() {
+        if scope.code.as_str().is_empty()
+            || scope
+                .code
+                .builtin_definition()
+                .is_some_and(|definition| !definition.emitted_by.contains(&check_id))
+        {
+            return Err(
+                CheckEvaluationValidationError::EvaluatedScopeEmitterMismatch { scope_index },
+            );
+        }
+    }
+    for (gap_index, gap) in gaps.iter().enumerate() {
+        if gap.code.is_empty()
+            || BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS
+                .iter()
+                .find(|definition| definition.code == gap.code)
+                .is_some_and(|definition| !definition.emitted_by.contains(&check_id))
+        {
+            return Err(CheckEvaluationValidationError::GapEmitterMismatch { gap_index });
+        }
+        if gap.scope.is_some_and(|scope| {
+            scope.code.as_str().is_empty()
+                || scope
+                    .code
+                    .builtin_definition()
+                    .is_some_and(|definition| !definition.emitted_by.contains(&check_id))
+        }) {
+            return Err(CheckEvaluationValidationError::GapScopeEmitterMismatch { gap_index });
+        }
+    }
+    for (facet_index, scope) in prediction_scopes.iter().enumerate() {
+        if scope.code.as_str().is_empty()
+            || scope
+                .code
+                .builtin_definition()
+                .is_some_and(|definition| !definition.emitted_by.contains(&check_id))
+        {
+            return Err(
+                CheckEvaluationValidationError::PredictionScopeEmitterMismatch { facet_index },
+            );
+        }
+    }
+
+    let inactive = selection == SelectionState::Unselected
+        || configuration == ConfigurationState::Disabled
+        || applicability == Applicability::NotApplicable;
+    if inactive {
+        if !finding_check_ids.is_empty()
+            || !evaluated_scopes.is_empty()
+            || !gaps.is_empty()
+            || has_prediction
+        {
+            return Err(CheckEvaluationValidationError::InvalidOutput(
+                "inactive check must have empty output",
+            ));
+        }
+        return Ok(EvaluationState::NotEvaluated);
+    }
+
+    let missing = !gaps.is_empty() || prediction_has_required_unavailable;
+    let derived = if !missing {
+        EvaluationState::Complete
+    } else if evaluated_scopes.is_empty() {
+        EvaluationState::NotEvaluated
+    } else {
+        EvaluationState::Partial
+    };
+    if derived == EvaluationState::NotEvaluated && !finding_check_ids.is_empty() {
+        return Err(CheckEvaluationValidationError::InvalidOutput(
+            "not-evaluated output cannot carry content findings",
+        ));
+    }
+    Ok(derived)
+}
+
+/// Final output-v10 record for one catalog check.
 #[derive(Debug, Clone)]
 pub struct CheckEvaluation {
     check_id: &'static str,
@@ -395,54 +588,125 @@ impl CheckEvaluation {
     /// built-in evidence emitted by an undeclared check, or when a nested
     /// finding names a different check.
     pub fn evaluated(check_id: &'static str, output: CheckOutput) -> Result<Self, EvaluationError> {
-        if check_id.is_empty() {
-            return Err(EvaluationError::InvalidCheckId(check_id));
-        }
-        if !output.gaps.is_empty()
-            && output.evaluated_scopes.is_empty()
-            && !output.findings.is_empty()
+        let gap_refs = output
+            .gaps
+            .iter()
+            .map(|gap| CheckEvaluationGapRef {
+                code: gap.code.as_str(),
+                scope: gap.scope.as_ref(),
+            })
+            .collect::<Vec<_>>();
+        let finding_check_ids = output
+            .findings
+            .iter()
+            .map(|finding| finding.check_id)
+            .collect::<Vec<_>>();
+        let prediction_scopes = output
+            .engine_prediction
+            .as_ref()
+            .into_iter()
+            .flat_map(EnginePredictionV1::facets)
+            .map(|facet| facet.scope())
+            .collect::<Vec<_>>();
+        validate_and_derive_check_evaluation(CheckEvaluationValidationInput {
+            check_id,
+            selection: SelectionState::Selected,
+            configuration: ConfigurationState::Enabled,
+            applicability: Applicability::Applicable,
+            finding_check_ids: &finding_check_ids,
+            evaluated_scopes: &output.evaluated_scopes,
+            gaps: &gap_refs,
+            prediction_scopes: &prediction_scopes,
+            has_prediction: output.engine_prediction.is_some(),
+            prediction_has_required_unavailable: output.has_missing_work()
+                && output.gaps.is_empty(),
+        })
+        .map_err(|error| match error {
+            CheckEvaluationValidationError::InvalidCheckId => {
+                EvaluationError::InvalidCheckId(check_id)
+            }
+            CheckEvaluationValidationError::InvalidOutput(reason) => {
+                EvaluationError::InvalidCheckOutput { check_id, reason }
+            }
+            CheckEvaluationValidationError::FindingCheckIdMismatch { finding_index } => {
+                EvaluationError::FindingCheckIdMismatch {
+                    check_id,
+                    finding_check_id: output.findings[finding_index].check_id,
+                }
+            }
+            CheckEvaluationValidationError::EvaluatedScopeEmitterMismatch { scope_index } => {
+                let code = output.evaluated_scopes[scope_index].code.clone();
+                if code.as_str().is_empty() {
+                    EvaluationError::InvalidCheckOutput {
+                        check_id,
+                        reason: "evaluated scope code cannot be empty",
+                    }
+                } else {
+                    EvaluationError::BuiltinEvaluationScopeEmitterMismatch { check_id, code }
+                }
+            }
+            CheckEvaluationValidationError::GapScopeEmitterMismatch { gap_index } => {
+                let code = output.gaps[gap_index]
+                    .scope
+                    .as_ref()
+                    .expect("the validator reports only present gap scopes")
+                    .code
+                    .clone();
+                if code.as_str().is_empty() {
+                    EvaluationError::InvalidCheckOutput {
+                        check_id,
+                        reason: "coverage gap scope code cannot be empty",
+                    }
+                } else {
+                    EvaluationError::BuiltinEvaluationScopeEmitterMismatch { check_id, code }
+                }
+            }
+            CheckEvaluationValidationError::GapEmitterMismatch { gap_index } => {
+                let code = output.gaps[gap_index].code;
+                if code.as_str().is_empty() {
+                    EvaluationError::InvalidCheckOutput {
+                        check_id,
+                        reason: "coverage gap code cannot be empty",
+                    }
+                } else {
+                    EvaluationError::BuiltinCoverageGapEmitterMismatch { check_id, code }
+                }
+            }
+            CheckEvaluationValidationError::PredictionScopeEmitterMismatch { facet_index } => {
+                let code = output
+                    .engine_prediction
+                    .as_ref()
+                    .expect("the validator reports only present prediction scopes")
+                    .facets()[facet_index]
+                    .scope()
+                    .code
+                    .clone();
+                if code.as_str().is_empty() {
+                    EvaluationError::InvalidCheckOutput {
+                        check_id,
+                        reason: "prediction facet scope code cannot be empty",
+                    }
+                } else {
+                    EvaluationError::BuiltinEvaluationScopeEmitterMismatch { check_id, code }
+                }
+            }
+        })?;
+        if let Some(prediction) = &output.engine_prediction {
+            prediction.validate_for_check(
+                check_id,
+                &output.evaluated_scopes,
+                &output.gaps,
+                &output.findings,
+            )?;
+        } else if output
+            .findings
+            .iter()
+            .any(|finding| finding.prediction_scope.is_some())
         {
             return Err(EvaluationError::InvalidCheckOutput {
                 check_id,
-                reason: "not-evaluated output cannot carry content findings",
+                reason: "finding has prediction_scope without an engine prediction",
             });
-        }
-        if let Some(finding) = output
-            .findings
-            .iter()
-            .find(|finding| finding.check_id != check_id)
-        {
-            return Err(EvaluationError::FindingCheckIdMismatch {
-                check_id,
-                finding_check_id: finding.check_id,
-            });
-        }
-        for scope in &output.evaluated_scopes {
-            if scope.code.as_str().is_empty() {
-                return Err(EvaluationError::InvalidCheckOutput {
-                    check_id,
-                    reason: "evaluated scope code cannot be empty",
-                });
-            }
-            scope.code.validate_emitter(check_id)?;
-        }
-        for gap in &output.gaps {
-            if gap.code.as_str().is_empty() {
-                return Err(EvaluationError::InvalidCheckOutput {
-                    check_id,
-                    reason: "coverage gap code cannot be empty",
-                });
-            }
-            gap.code.validate_emitter(check_id)?;
-            if let Some(scope) = &gap.scope {
-                if scope.code.as_str().is_empty() {
-                    return Err(EvaluationError::InvalidCheckOutput {
-                        check_id,
-                        reason: "coverage gap scope code cannot be empty",
-                    });
-                }
-                scope.code.validate_emitter(check_id)?;
-            }
         }
         Ok(Self {
             check_id,
@@ -473,14 +737,15 @@ impl CheckEvaluation {
         self.applicability
     }
 
-    /// Derive evaluation coverage from activation, completed scopes, and gaps.
+    /// Derive evaluation coverage from activation, completed scopes, ordinary
+    /// gaps, and required-unavailable prediction facets.
     pub fn evaluation(&self) -> EvaluationState {
         if self.selection == SelectionState::Unselected
             || self.configuration == ConfigurationState::Disabled
             || self.applicability == Applicability::NotApplicable
         {
             EvaluationState::NotEvaluated
-        } else if self.output.gaps.is_empty() {
+        } else if !self.output.has_missing_work() {
             EvaluationState::Complete
         } else if self.output.evaluated_scopes.is_empty() {
             EvaluationState::NotEvaluated
@@ -502,6 +767,11 @@ impl CheckEvaluation {
     /// Typed reasons work was not evaluated.
     pub fn gaps(&self) -> &[CoverageGap] {
         self.output.gaps()
+    }
+
+    /// Engine-prediction facets attached to this check, when any.
+    pub const fn engine_prediction(&self) -> Option<&EnginePredictionV1> {
+        self.output.engine_prediction()
     }
 
     fn inactive(
@@ -541,6 +811,7 @@ impl Serialize for CheckEvaluation {
         let mut fields = 6;
         fields += usize::from(!self.output.evaluated_scopes.is_empty());
         fields += usize::from(!self.output.gaps.is_empty());
+        fields += usize::from(self.output.engine_prediction.is_some());
         let mut state = serializer.serialize_struct("CheckEvaluation", fields)?;
         state.serialize_field("check_id", &self.check_id)?;
         state.serialize_field("selection", &self.selection)?;
@@ -553,6 +824,9 @@ impl Serialize for CheckEvaluation {
         }
         if !self.output.gaps.is_empty() {
             state.serialize_field("gaps", &self.output.gaps)?;
+        }
+        if let Some(prediction) = &self.output.engine_prediction {
+            state.serialize_field("prediction", prediction)?;
         }
         state.end()
     }
@@ -583,6 +857,9 @@ pub enum EvaluationError {
     /// The supplied programmatic configuration contains an invalid value.
     #[error("invalid configuration: {0}")]
     InvalidConfiguration(#[from] ConfigValidationError),
+    /// Engine-prediction evidence violates its wire or lifecycle contract.
+    #[error("invalid engine prediction: {0}")]
+    InvalidPrediction(#[from] PredictionContractError),
     /// A catalog or directly constructed check record used an empty id.
     #[error("check id cannot be empty")]
     InvalidCheckId(&'static str),
@@ -624,6 +901,25 @@ pub enum EvaluationError {
         /// Built-in gap code that does not declare this emitter.
         code: CoverageGapCode,
     },
+}
+
+/// Apply the shared lint gate policy to validated check records.
+///
+/// Allowed check ids suppress content findings only. Required-unavailable
+/// prediction facets always block, independent of severity or allow policy.
+pub fn lint_requires_failure(
+    checks: &[CheckEvaluation],
+    fail_at: crate::finding::Severity,
+    allowed_content_check_ids: &BTreeSet<String>,
+) -> bool {
+    checks.iter().any(|check| {
+        check
+            .engine_prediction()
+            .is_some_and(EnginePredictionV1::has_required_unavailable)
+            || check.findings().iter().any(|finding| {
+                finding.severity >= fail_at && !allowed_content_check_ids.contains(finding.check_id)
+            })
+    })
 }
 
 /// Evaluate a full catalog into one record per check.
@@ -712,7 +1008,15 @@ mod authority_contract {
     use super::{
         BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS, BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
         BuiltinEvidenceCode, CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode,
-        EvaluationError, EvaluationScope, EvaluationScopeCode,
+        EvaluationError, EvaluationScope, EvaluationScopeCode, EvaluationState,
+        lint_requires_failure,
+    };
+    use crate::InputIdentity;
+    use crate::finding::{Finding, Severity};
+    use crate::prediction::{
+        EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionV1,
+        PredictionBasisReferenceV1, PredictionProvenanceIdentityV1, PredictionScalarV1,
+        PredictionUnavailableReasonV1,
     };
 
     fn assert_reference_table(docs: &str, heading: &str, entries: &[BuiltinEvidenceCode]) {
@@ -850,7 +1154,7 @@ mod authority_contract {
                     check_id,
                     CheckOutput::from_coverage(
                         Vec::new(),
-                        vec![EvaluationScope::new(code)],
+                        vec![EvaluationScope::new(code.clone())],
                         Vec::new(),
                     ),
                 );
@@ -861,7 +1165,7 @@ mod authority_contract {
                         Vec::new(),
                         vec![
                             CoverageGap::new(CoverageGapCode::custom("test:gap"), "gap")
-                                .scope(EvaluationScope::new(code)),
+                                .scope(EvaluationScope::new(code.clone())),
                         ],
                     ),
                 );
@@ -906,6 +1210,123 @@ mod authority_contract {
                 }
             }
         }
+    }
+
+    #[test]
+    fn mixed_prediction_facets_use_the_existing_evaluation_and_exit_lifecycle() {
+        const CHECK_ID: &str = "test:engine-prediction";
+        let code = EvaluationScopeCode::custom("test:prediction-work");
+        let available_scope = EvaluationScope::new(code.clone()).subject("available-clip");
+        let unavailable_scope = EvaluationScope::new(code).subject("unavailable-clip");
+        let available_basis = EnginePredictionBasisV1::new(vec![
+            PredictionBasisReferenceV1::project_field(
+                "project.mode",
+                PredictionScalarV1::token("generic").unwrap(),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let unavailable_basis = EnginePredictionBasisV1::new(Vec::new()).unwrap();
+        let prediction = EnginePredictionV1::new(
+            PredictionProvenanceIdentityV1::from_input_identity(InputIdentity::from_bytes(
+                b"profile",
+            )),
+            vec![
+                EnginePredictionFacetV1::available(available_scope.clone(), available_basis)
+                    .unwrap(),
+                EnginePredictionFacetV1::required_unavailable(
+                    unavailable_scope,
+                    unavailable_basis,
+                    vec![PredictionUnavailableReasonV1::MeasurementUnavailable],
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let finding = Finding::new(CHECK_ID, Severity::Note, "available subject finding")
+            .prediction_scope(available_scope.clone());
+        let check = CheckEvaluation::evaluated(
+            CHECK_ID,
+            CheckOutput::from_coverage(vec![finding], vec![available_scope], Vec::new())
+                .with_engine_prediction(prediction),
+        )
+        .unwrap();
+
+        assert_eq!(check.evaluation(), EvaluationState::Partial);
+        assert!(lint_requires_failure(
+            &[check],
+            Severity::Error,
+            &BTreeSet::from([CHECK_ID.to_owned()]),
+        ));
+    }
+
+    #[test]
+    fn available_only_prediction_does_not_fail_without_a_threshold_finding() {
+        const CHECK_ID: &str = "test:available-prediction";
+        let scope = EvaluationScope::new(EvaluationScopeCode::custom("test:prediction-work"));
+        let basis = EnginePredictionBasisV1::new(vec![
+            PredictionBasisReferenceV1::project_field(
+                "project.mode",
+                PredictionScalarV1::token("generic").unwrap(),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let prediction = EnginePredictionV1::new(
+            PredictionProvenanceIdentityV1::from_input_identity(InputIdentity::from_bytes(
+                b"profile",
+            )),
+            vec![EnginePredictionFacetV1::available(scope.clone(), basis).unwrap()],
+        )
+        .unwrap();
+        let finding = Finding::new(CHECK_ID, Severity::Note, "nonblocking available finding")
+            .prediction_scope(scope.clone());
+        let check = CheckEvaluation::evaluated(
+            CHECK_ID,
+            CheckOutput::from_coverage(vec![finding], vec![scope], Vec::new())
+                .with_engine_prediction(prediction),
+        )
+        .unwrap();
+
+        assert_eq!(check.evaluation(), EvaluationState::Complete);
+        assert!(!lint_requires_failure(
+            &[check],
+            Severity::Error,
+            &BTreeSet::new(),
+        ));
+    }
+
+    #[test]
+    fn required_unavailable_prediction_fails_despite_allow_and_severity() {
+        const CHECK_ID: &str = "test:unavailable-prediction";
+        let scope = EvaluationScope::new(EvaluationScopeCode::custom("test:prediction-work"));
+        let prediction = EnginePredictionV1::new(
+            PredictionProvenanceIdentityV1::from_input_identity(InputIdentity::from_bytes(
+                b"profile",
+            )),
+            vec![
+                EnginePredictionFacetV1::required_unavailable(
+                    scope,
+                    EnginePredictionBasisV1::new(Vec::new()).unwrap(),
+                    vec![PredictionUnavailableReasonV1::MeasurementUnavailable],
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let check = CheckEvaluation::evaluated(
+            CHECK_ID,
+            CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
+                .with_engine_prediction(prediction),
+        )
+        .unwrap();
+
+        assert_eq!(check.evaluation(), EvaluationState::NotEvaluated);
+        assert!(lint_requires_failure(
+            &[check],
+            Severity::Error,
+            &BTreeSet::from([CHECK_ID.to_owned()]),
+        ));
     }
 
     #[test]

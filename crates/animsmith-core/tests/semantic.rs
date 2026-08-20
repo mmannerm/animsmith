@@ -793,7 +793,7 @@ fn required_bones_reports_an_empty_skeleton_as_typed_unavailable_work() {
     let gap = &required.gaps()[0];
     assert_eq!(gap.code.as_str(), "skeleton_unavailable");
     assert_eq!(
-        gap.scope.as_ref().map(|scope| scope.code),
+        gap.scope.as_ref().map(|scope| scope.code.clone()),
         Some(EvaluationScopeCode::REQUIRED_BONE_PRESENCE)
     );
 }

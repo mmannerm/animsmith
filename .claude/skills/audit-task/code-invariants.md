@@ -43,8 +43,10 @@ blocker.
 
 ## invariant-4: Engine-agnostic core
 
-`animsmith-core` depends on glam + serde + sha2 + thiserror ONLY. No file
-formats, no filesystem, no gltf/ufbx/toml types in its public API.
+`animsmith-core` depends on glam + serde + serde_json + sha2 + thiserror ONLY.
+Production serde_json use is confined to strict, bounded decoding of core-owned
+versioned wire contracts. No file formats, no filesystem, no gltf/ufbx/toml
+types in its public API.
 Format crates depend on core, never the reverse. The TOML config is one
 constructor of `Config`; embedding pipelines build it programmatically
 — core must never parse a config file itself.

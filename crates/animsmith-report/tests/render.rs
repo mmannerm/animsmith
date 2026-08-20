@@ -1,7 +1,14 @@
 use animsmith_core::metrics::{MetricGrids, metric_frame_count};
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::sample_clip;
-use animsmith_core::{Finding, Severity};
+use animsmith_core::{
+    CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode, Finding, Severity,
+};
+use animsmith_core::{
+    EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionV1, EvaluationScope,
+    EvaluationScopeCode, PredictionBasisReferenceV1, PredictionProvenanceV1,
+    PredictionUnavailableReasonV1,
+};
 use base64::Engine as _;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -89,14 +96,100 @@ fn chart_roles(doc: &animsmith_core::Document) -> ResolvedRoles {
     )
 }
 
+fn evaluations(findings: Vec<Finding>) -> Vec<CheckEvaluation> {
+    let Some(check_id) = findings.first().map(|finding| finding.check_id) else {
+        return Vec::new();
+    };
+    assert!(findings.iter().all(|finding| finding.check_id == check_id));
+    vec![
+        CheckEvaluation::evaluated(
+            check_id,
+            CheckOutput::from_coverage(findings, Vec::new(), Vec::new()),
+        )
+        .expect("test findings form one valid evaluation"),
+    ]
+}
+
+fn prediction_provenance() -> (animsmith_core::LoadedSource, PredictionProvenanceV1) {
+    let source = animsmith_gltf::load_source(&fixture()).expect("fixture source loads");
+    let clip_names = source
+        .document()
+        .clips
+        .iter()
+        .map(|clip| clip.name.clone())
+        .collect::<Vec<_>>();
+    let resolved = animsmith_engine::resolve_static(animsmith_engine::EngineDeclaration {
+        selection: Some(animsmith_engine::ProfileSelection::new(
+            "bevy",
+            1,
+            "0.19.0",
+            "gltf-asset-loader",
+        )),
+        ..Default::default()
+    })
+    .expect("profile declaration is valid")
+    .expect("profile selected")
+    .resolve_input(source.source_facts().format(), &clip_names)
+    .expect("fixture format is accepted");
+    let provenance = animsmith_engine::project_prediction_provenance_v1(&resolved, &source)
+        .expect("same-load provenance projects");
+    (source, provenance)
+}
+
+fn prediction_check(
+    provenance: &PredictionProvenanceV1,
+    available: bool,
+    unavailable: bool,
+) -> CheckEvaluation {
+    let available_scope = EvaluationScope::new(EvaluationScopeCode::custom("test:available"));
+    let unavailable_scope = EvaluationScope::new(EvaluationScopeCode::custom("test:unavailable"));
+    let mut facets = Vec::new();
+    let mut evaluated = Vec::new();
+    let mut findings = Vec::new();
+    if available {
+        let basis = EnginePredictionBasisV1::new(vec![
+            PredictionBasisReferenceV1::profile_fact("accepted_inputs")
+                .expect("known profile fact reference"),
+        ])
+        .expect("nonempty basis");
+        facets.push(
+            EnginePredictionFacetV1::available(available_scope.clone(), basis)
+                .expect("available facet"),
+        );
+        evaluated.push(available_scope.clone());
+        findings.push(
+            Finding::new("test:engine", Severity::Warning, "available facet finding")
+                .prediction_scope(available_scope),
+        );
+    }
+    if unavailable {
+        facets.push(
+            EnginePredictionFacetV1::required_unavailable(
+                unavailable_scope,
+                EnginePredictionBasisV1::new(Vec::new()).expect("empty unavailable prefix"),
+                vec![PredictionUnavailableReasonV1::ProjectIntentUnavailable],
+            )
+            .expect("required-unavailable facet"),
+        );
+    }
+    let prediction = EnginePredictionV1::new(provenance.identity().clone(), facets)
+        .expect("canonical prediction");
+    CheckEvaluation::evaluated(
+        "test:engine",
+        CheckOutput::from_coverage(findings, evaluated, Vec::new())
+            .with_engine_prediction(prediction),
+    )
+    .expect("prediction lifecycle is valid")
+}
+
 #[test]
 fn render_embeds_pose_grid_and_uses_no_external_urls() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::default();
-    let findings: Vec<Finding> = Vec::new();
+    let checks = Vec::new();
 
-    let html = animsmith_report::render(&grids, &roles, &findings, None);
+    let html = animsmith_report::render(&grids, &roles, &checks, None, None);
     assert_self_contained(&html);
     let data = report_data(&html);
     let clips = data["clips"].as_array().expect("clips array");
@@ -131,15 +224,15 @@ fn render_self_contained_with_roles_findings_and_charts() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
-    let findings = vec![
+    let checks = evaluations(vec![
         Finding::new("fixture-check", Severity::Warning, "fixture finding")
             .clip("walk")
             .bone("hips")
             .node("#0(root)/#1(hips)")
             .time(0.5),
-    ];
+    ]);
 
-    let html = animsmith_report::render(&grids, &roles, &findings, None);
+    let html = animsmith_report::render(&grids, &roles, &checks, None, None);
     assert_self_contained(&html);
     assert!(
         html.contains(r#"data-kind="gait""#),
@@ -177,9 +270,9 @@ fn render_respects_clip_filter() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::default();
-    let findings: Vec<Finding> = Vec::new();
+    let checks = Vec::new();
 
-    let html = animsmith_report::render(&grids, &roles, &findings, Some("missing"));
+    let html = animsmith_report::render(&grids, &roles, &checks, None, Some("missing"));
     assert_self_contained(&html);
     let data = report_data(&html);
     assert_eq!(
@@ -189,7 +282,7 @@ fn render_respects_clip_filter() {
     );
 
     for name in ["walk", "idle"] {
-        let html = animsmith_report::render(&grids, &roles, &findings, Some(name));
+        let html = animsmith_report::render(&grids, &roles, &checks, None, Some(name));
         let data = report_data(&html);
         let clips = data["clips"].as_array().expect("clips array");
         assert_eq!(clips.len(), 1);
@@ -198,5 +291,61 @@ fn render_respects_clip_filter() {
             .decode(clips[0]["positions"].as_str().expect("encoded positions"))
             .expect("pose grid base64");
         assert_eq!(decoded, pose_grid_bytes(&doc, name));
+    }
+}
+
+#[test]
+fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
+    let (source, provenance) = prediction_provenance();
+    let grids = MetricGrids::new(source.document());
+    let roles = ResolvedRoles::default();
+
+    for (available, unavailable, expected_states) in [
+        (true, false, vec!["available"]),
+        (
+            true,
+            true,
+            vec!["available", "required_prediction_unavailable"],
+        ),
+        (false, true, vec!["required_prediction_unavailable"]),
+    ] {
+        let gap_scope = EvaluationScope::new(EvaluationScopeCode::custom("test:gap-scope"))
+            .subject("clip with a gap");
+        let gap_check = CheckEvaluation::evaluated(
+            "test:gap",
+            CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                vec![
+                    CoverageGap::new(CoverageGapCode::custom("test:gap"), "ordinary gap")
+                        .scope(gap_scope),
+                ],
+            ),
+        )
+        .expect("ordinary coverage gap is valid");
+        let checks = vec![
+            prediction_check(&provenance, available, unavailable),
+            gap_check,
+        ];
+        let html = animsmith_report::render(&grids, &roles, &checks, Some(&provenance), None);
+        let data = report_data(&html);
+        let states = data["predictions"][0]["prediction"]["facets"]
+            .as_array()
+            .expect("facet array")
+            .iter()
+            .map(|facet| facet["state"].as_str().expect("state"))
+            .collect::<Vec<_>>();
+        assert_eq!(states, expected_states);
+        assert_eq!(data["gaps"][0]["check_id"], "test:gap");
+        assert_eq!(data["gaps"][0]["code"], "test:gap");
+        assert_eq!(data["gaps"][0]["scope"]["code"], "test:gap-scope");
+        assert_eq!(data["gaps"][0]["message"], "ordinary gap");
+        assert_eq!(
+            data["prediction_provenance"]["identity"],
+            serde_json::to_value(provenance.identity()).expect("identity serializes")
+        );
+        assert!(html.contains("required prediction unavailable"));
+        assert!(html.contains("available"));
+        assert!(html.contains("Coverage gaps"));
     }
 }
