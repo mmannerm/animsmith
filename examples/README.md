@@ -16,9 +16,10 @@ provenance and how to regenerate them). The conversion and reporting
 section operates on assets you supply, using placeholder filenames —
 `export.fbx`, `old.glb` — for your own exports and baselines.
 
-Transcripts are real command output. Long finding messages are elided as
-`...` and the JSON envelope is shown abridged; everything else is
-verbatim, including the exit-code annotations in `# comments`.
+Console transcripts are real command output, with long finding messages
+elided as `...`. JSON envelopes are abridged illustrative projections with
+placeholder digests, byte counts, and build provenance; capture those
+identity fields from your own run. Exit-code annotations remain `# comments`.
 
 ## Running the commands
 
@@ -92,7 +93,7 @@ should fail on warnings too:
 $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
-For machine consumption, `--format json` emits the v8 result envelope
+For machine consumption, `--format json` emits the v9 result envelope
 (see [output.md](../docs/output.md)). This `jq` projection keeps the example
 short while showing where retained/promotion evidence, content findings, and
 independently versioned measurement evidence live:
@@ -103,8 +104,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
       check: (.files[0].checks[] | select(.check_id == "quat-norm")),
       measurements: (.files[0].measurements | {schema_version, schema})}'
 {
-  "schema_version": 8,
-  "schema": "urn:animsmith:schema:output:8",
+  "schema_version": 9,
+  "schema": "urn:animsmith:schema:output:9",
   "command": "lint",
   "input": {
     "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -123,19 +124,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 14,
-    "schema": "urn:animsmith:schema:measurements:14",
-    "clips": {},
-    "mesh_definitions": [],
-    "node_instances": [],
-    "scenes": [],
-    "skeleton_source_coverage": "unavailable",
-    "skeleton_nodes": [],
-    "skins": [],
-    "material_resource_coverage": "complete",
-    "material_definitions": [],
-    "textures": [],
-    "images": []
+    "schema_version": 15,
+    "schema": "urn:animsmith:schema:measurements:15"
   }
 }
 ```
@@ -348,13 +338,15 @@ clips: 1
 
 `measure` reports the semantic metrics the checks judge — per-bone C0 pose
 closure and C1 seam velocity, the feet-relative loop-seam ratio (≈ 0 here,
-since this cycle returns its feet exactly), gait phase, and L/R foot amplitude:
+since this cycle returns its feet exactly), gait phase, L/R foot amplitude,
+and sampled Hips-fallback trajectory. This fixture's pelvis stays fixed, so
+all trajectory values are zero while the selected source remains explicit:
 
 ```console
-$ animsmith measure examples/assets/walk.glb          # --format json
+$ animsmith measure --format json examples/assets/walk.glb
 {
-  "schema_version": 8,
-  "schema": "urn:animsmith:schema:output:8",
+  "schema_version": 9,
+  "schema": "urn:animsmith:schema:output:9",
   "tool": { "name": "animsmith", "version": "0.3.1",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -369,11 +361,17 @@ $ animsmith measure examples/assets/walk.glb          # --format json
       "rig": { "profile": "ue-mannequin", "resolved_roles": {
         "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" } },
       "measurements": {
-        "schema_version": 14,
-        "schema": "urn:animsmith:schema:measurements:14",
+        "schema_version": 15,
+        "schema": "urn:animsmith:schema:measurements:15",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],
+          "bone_channels": [
+            { "bone_index": 1, "bone_name": "foot_l",
+              "properties": ["translation"] },
+            { "bone_index": 2, "bone_name": "foot_r",
+              "properties": ["translation"] }
+          ],
           "bone_rotation_range_deg": {},
           "loop_continuity": { "bones": [
             { "bone_index": 0, "bone_name": "pelvis",
@@ -396,6 +394,25 @@ $ animsmith measure examples/assets/walk.glb          # --format json
           "loop_seam_ratio_availability": "measured",
           "gait": { "phase": 0.75, "phase_availability": "measured", "lr_amplitude_m": 0.2 },
           "gait_availability": "measured",
+          "root_trajectory": {
+            "bone_index": 0, "bone_name": "pelvis",
+            "source_role": "hips_fallback",
+            "translation": {
+              "horizontal_displacement_x_m": 0.0,
+              "horizontal_displacement_z_m": 0.0,
+              "horizontal_travel_m": 0.0,
+              "vertical_displacement_m": 0.0,
+              "vertical_min_displacement_m": 0.0,
+              "vertical_max_displacement_m": 0.0
+            },
+            "translation_availability": "measured",
+            "yaw": {
+              "heading_axis": "positive_z", "net_yaw_deg": 0.0,
+              "unwrapped_yaw_deg": 0.0, "yaw_travel_deg": 0.0
+            },
+            "yaw_availability": "measured"
+          },
+          "root_trajectory_availability": "measured",
           "speed_mps": 0.0,
           "speed_mps_availability": "measured"
         } },

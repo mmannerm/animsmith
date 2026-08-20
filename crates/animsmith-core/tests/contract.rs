@@ -17,9 +17,9 @@ use animsmith_core::{
     MEASUREMENTS_SCHEMA_VERSION, MaterialResourceCoverage, MaterialTextureSlot, MeasureEnvelope,
     MeasureFileReport, MeasurementContract, MeasurementContractError, MeasurementFileError,
     MeasurementReportError, MeasurementReportFile, MeasurementReportInput, MetricGrids,
-    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, ResolvedRoles, RigInfo, RigInfoError, Role, Severity,
-    SourceInverseBindAccessorStatus, SourceSkeletonCoverage, ToolInfo, ToolSource, Transform,
-    evaluate_checks, sha256_hex,
+    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, Property, ResolvedRoles, RigInfo, RigInfoError, Role,
+    Severity, SourceInverseBindAccessorStatus, SourceSkeletonCoverage, ToolInfo, ToolSource,
+    Transform, evaluate_checks, sha256_hex,
 };
 
 fn tool() -> ToolInfo {
@@ -950,6 +950,11 @@ fn valid_clip_measurements() -> ClipMeasurements {
         "duration_s": 1.0,
         "frame_count": 2,
         "animated_bones": ["hips"],
+        "bone_channels": [{
+            "bone_index": 0,
+            "bone_name": "hips",
+            "properties": ["translation", "rotation"]
+        }],
         "bone_rotation_range_deg": { "hips": 10.0 },
         "loop_continuity": { "bones": [{
             "bone_index": 0,
@@ -966,10 +971,109 @@ fn valid_clip_measurements() -> ClipMeasurements {
         "loop_seam_ratio_availability": "measured",
         "gait": { "phase": 0.25, "phase_availability": "measured", "lr_amplitude_m": 0.2 },
         "gait_availability": "measured",
+        "root_trajectory": {
+            "bone_index": 0,
+            "bone_name": "hips",
+            "source_role": "hips_fallback",
+            "translation": {
+                "horizontal_displacement_x_m": 0.0,
+                "horizontal_displacement_z_m": 1.0,
+                "horizontal_travel_m": 1.0,
+                "vertical_displacement_m": 0.0,
+                "vertical_min_displacement_m": 0.0,
+                "vertical_max_displacement_m": 0.0
+            },
+            "translation_availability": "measured",
+            "yaw": {
+                "heading_axis": "positive_z",
+                "net_yaw_deg": 0.0,
+                "unwrapped_yaw_deg": 0.0,
+                "yaw_travel_deg": 0.0
+            },
+            "yaw_availability": "measured"
+        },
+        "root_trajectory_availability": "measured",
         "speed_mps": 1.0,
         "speed_mps_availability": "measured",
     }))
     .expect("valid clip measurement fixture")
+}
+
+#[test]
+fn measurement_contract_enforces_canonical_bone_channel_coverage() {
+    let invalid = |mutate: &dyn Fn(&mut ClipMeasurements), path: &str, reason: &str| {
+        let mut clip = valid_clip_measurements();
+        mutate(&mut clip);
+        assert_eq!(
+            MeasurementContract::new(
+                BTreeMap::from([("walk".into(), clip)]),
+                AssetMeasurements::default(),
+            )
+            .expect_err("non-canonical bone channel coverage"),
+            MeasurementContractError::InvalidStructure {
+                path: path.into(),
+                reason: reason.into(),
+            }
+        );
+    };
+
+    invalid(
+        &|clip| clip.bone_channels.push(clip.bone_channels[0].clone()),
+        "clips[\"walk\"].bone_channels[1].bone_index",
+        "bone channel entries must use strictly increasing unique bone indices",
+    );
+    invalid(
+        &|clip| {
+            let lower_index = clip.bone_channels[0].clone();
+            let mut higher_index = lower_index.clone();
+            higher_index.bone_index = 1;
+            clip.bone_channels = vec![higher_index, lower_index];
+        },
+        "clips[\"walk\"].bone_channels[1].bone_index",
+        "bone channel entries must use strictly increasing unique bone indices",
+    );
+    invalid(
+        &|clip| clip.bone_channels[0].properties.clear(),
+        "clips[\"walk\"].bone_channels[0].properties",
+        "bone channel coverage must contain at least one property",
+    );
+    invalid(
+        &|clip| {
+            clip.bone_channels[0].properties = vec![Property::Rotation, Property::Translation];
+        },
+        "clips[\"walk\"].bone_channels[0].properties",
+        "channel properties must be unique and ordered translation, rotation, scale",
+    );
+    invalid(
+        &|clip| {
+            clip.bone_channels[0].properties = vec![Property::Translation, Property::Translation];
+        },
+        "clips[\"walk\"].bone_channels[0].properties",
+        "channel properties must be unique and ordered translation, rotation, scale",
+    );
+    invalid(
+        &|clip| clip.animated_bones = vec!["pelvis".into()],
+        "clips[\"walk\"].animated_bones",
+        "animated_bones must equal the sorted unique bone names in bone_channels",
+    );
+    invalid(
+        &|clip| {
+            clip.bone_rotation_range_deg.insert("pelvis".into(), 45.0);
+        },
+        "clips[\"walk\"].bone_rotation_range_deg[\"pelvis\"]",
+        "rotation-range bones must be present in animated_bones",
+    );
+
+    let mut duplicate_name = valid_clip_measurements();
+    let mut second_bone = duplicate_name.bone_channels[0].clone();
+    second_bone.bone_index = 1;
+    second_bone.properties = vec![Property::Scale];
+    duplicate_name.bone_channels.push(second_bone);
+    MeasurementContract::new(
+        BTreeMap::from([("walk".into(), duplicate_name)]),
+        AssetMeasurements::default(),
+    )
+    .expect("duplicate display names remain valid when bone indices differ");
 }
 
 fn frame_grid(fps: &str, frame_intervals: u32) -> FrameGridMeasurement {
@@ -1676,6 +1780,120 @@ fn measurement_contract_rejects_every_non_finite_numeric_branch() {
         |clip| clip.gait.as_mut().expect("fixture gait").lr_amplitude_m = f64::INFINITY,
         "clips[\"walk\"].gait.lr_amplitude_m",
     );
+    type RootNumericCase = (fn(&mut ClipMeasurements), &'static str);
+    let root_numeric_cases: [RootNumericCase; 9] = [
+        (
+            |clip| {
+                clip.root_trajectory
+                    .as_mut()
+                    .unwrap()
+                    .translation
+                    .as_mut()
+                    .unwrap()
+                    .horizontal_displacement_x_m = f64::NAN
+            },
+            "clips[\"walk\"].root_trajectory.translation.horizontal_displacement_x_m",
+        ),
+        (
+            |clip| {
+                clip.root_trajectory
+                    .as_mut()
+                    .unwrap()
+                    .translation
+                    .as_mut()
+                    .unwrap()
+                    .horizontal_displacement_z_m = f64::INFINITY
+            },
+            "clips[\"walk\"].root_trajectory.translation.horizontal_displacement_z_m",
+        ),
+        (
+            |clip| {
+                clip.root_trajectory
+                    .as_mut()
+                    .unwrap()
+                    .translation
+                    .as_mut()
+                    .unwrap()
+                    .horizontal_travel_m = f64::NEG_INFINITY
+            },
+            "clips[\"walk\"].root_trajectory.translation.horizontal_travel_m",
+        ),
+        (
+            |clip| {
+                clip.root_trajectory
+                    .as_mut()
+                    .unwrap()
+                    .translation
+                    .as_mut()
+                    .unwrap()
+                    .vertical_displacement_m = f64::NAN
+            },
+            "clips[\"walk\"].root_trajectory.translation.vertical_displacement_m",
+        ),
+        (
+            |clip| {
+                clip.root_trajectory
+                    .as_mut()
+                    .unwrap()
+                    .translation
+                    .as_mut()
+                    .unwrap()
+                    .vertical_min_displacement_m = f64::NEG_INFINITY
+            },
+            "clips[\"walk\"].root_trajectory.translation.vertical_min_displacement_m",
+        ),
+        (
+            |clip| {
+                clip.root_trajectory
+                    .as_mut()
+                    .unwrap()
+                    .translation
+                    .as_mut()
+                    .unwrap()
+                    .vertical_max_displacement_m = f64::INFINITY
+            },
+            "clips[\"walk\"].root_trajectory.translation.vertical_max_displacement_m",
+        ),
+        (
+            |clip| {
+                clip.root_trajectory
+                    .as_mut()
+                    .unwrap()
+                    .yaw
+                    .as_mut()
+                    .unwrap()
+                    .net_yaw_deg = f64::NAN
+            },
+            "clips[\"walk\"].root_trajectory.yaw.net_yaw_deg",
+        ),
+        (
+            |clip| {
+                clip.root_trajectory
+                    .as_mut()
+                    .unwrap()
+                    .yaw
+                    .as_mut()
+                    .unwrap()
+                    .unwrapped_yaw_deg = f64::INFINITY
+            },
+            "clips[\"walk\"].root_trajectory.yaw.unwrapped_yaw_deg",
+        ),
+        (
+            |clip| {
+                clip.root_trajectory
+                    .as_mut()
+                    .unwrap()
+                    .yaw
+                    .as_mut()
+                    .unwrap()
+                    .yaw_travel_deg = f64::NEG_INFINITY
+            },
+            "clips[\"walk\"].root_trajectory.yaw.yaw_travel_deg",
+        ),
+    ];
+    for (mutate, path) in root_numeric_cases {
+        assert_invalid_clip(mutate, path);
+    }
     assert_invalid_clip(
         |clip| clip.speed_mps = Some(f64::NAN),
         "clips[\"walk\"].speed_mps",
@@ -1784,6 +2002,26 @@ fn measurement_contract_rejects_availability_status_value_mismatches() {
         "clips[\"walk\"].gait",
     );
     invalid(
+        |clip| clip.root_trajectory_availability = MeasurementAvailability::Unavailable,
+        "clips[\"walk\"].root_trajectory",
+    );
+    invalid(
+        |clip| {
+            clip.root_trajectory
+                .as_mut()
+                .unwrap()
+                .translation_availability = MeasurementAvailability::Unavailable
+        },
+        "clips[\"walk\"].root_trajectory.translation",
+    );
+    invalid(
+        |clip| {
+            clip.root_trajectory.as_mut().unwrap().yaw_availability =
+                MeasurementAvailability::Unavailable
+        },
+        "clips[\"walk\"].root_trajectory.yaw",
+    );
+    invalid(
         |clip| clip.speed_mps_availability = MeasurementAvailability::NotApplicable,
         "clips[\"walk\"].speed_mps",
     );
@@ -1810,6 +2048,145 @@ fn measurement_contract_rejects_availability_status_value_mismatches() {
                 MeasurementAvailability::NotApplicable
         },
         "clips[\"walk\"].gait.phase",
+    );
+}
+
+#[test]
+fn measurement_contract_rejects_invalid_root_trajectory_structure() {
+    let invalid = |mutate: fn(&mut ClipMeasurements), path: &str, reason: &str| {
+        let mut clip = valid_clip_measurements();
+        mutate(&mut clip);
+        assert_eq!(
+            MeasurementContract::new(
+                BTreeMap::from([("walk".into(), clip)]),
+                AssetMeasurements::default(),
+            )
+            .expect_err("invalid root-trajectory structure must fail"),
+            MeasurementContractError::InvalidStructure {
+                path: path.into(),
+                reason: reason.into(),
+            }
+        );
+    };
+
+    invalid(
+        |clip| {
+            clip.root_trajectory
+                .as_mut()
+                .unwrap()
+                .translation
+                .as_mut()
+                .unwrap()
+                .horizontal_travel_m = -0.1
+        },
+        "clips[\"walk\"].root_trajectory.translation.horizontal_travel_m",
+        "sampled horizontal travel must be non-negative",
+    );
+    invalid(
+        |clip| {
+            clip.root_trajectory
+                .as_mut()
+                .unwrap()
+                .translation
+                .as_mut()
+                .unwrap()
+                .horizontal_travel_m = 0.5
+        },
+        "clips[\"walk\"].root_trajectory.translation.horizontal_travel_m",
+        "sampled horizontal travel must contain endpoint displacement",
+    );
+    invalid(
+        |clip| {
+            clip.root_trajectory
+                .as_mut()
+                .unwrap()
+                .translation
+                .as_mut()
+                .unwrap()
+                .vertical_min_displacement_m = 0.1
+        },
+        "clips[\"walk\"].root_trajectory.translation",
+        "vertical extrema must include zero and the endpoint displacement",
+    );
+    invalid(
+        |clip| {
+            clip.root_trajectory
+                .as_mut()
+                .unwrap()
+                .translation
+                .as_mut()
+                .unwrap()
+                .vertical_displacement_m = 1.0
+        },
+        "clips[\"walk\"].root_trajectory.translation",
+        "vertical extrema must include zero and the endpoint displacement",
+    );
+    invalid(
+        |clip| {
+            clip.root_trajectory
+                .as_mut()
+                .unwrap()
+                .yaw
+                .as_mut()
+                .unwrap()
+                .net_yaw_deg = 181.0
+        },
+        "clips[\"walk\"].root_trajectory.yaw.net_yaw_deg",
+        "net yaw must be in the inclusive range [-180, 180]",
+    );
+    invalid(
+        |clip| {
+            clip.root_trajectory
+                .as_mut()
+                .unwrap()
+                .yaw
+                .as_mut()
+                .unwrap()
+                .net_yaw_deg = 1.0
+        },
+        "clips[\"walk\"].root_trajectory.yaw.net_yaw_deg",
+        "net yaw must be the canonical endpoint-equivalent unwrapped yaw",
+    );
+    invalid(
+        |clip| {
+            clip.root_trajectory
+                .as_mut()
+                .unwrap()
+                .yaw
+                .as_mut()
+                .unwrap()
+                .yaw_travel_deg = -0.1
+        },
+        "clips[\"walk\"].root_trajectory.yaw.yaw_travel_deg",
+        "sampled yaw travel must be non-negative",
+    );
+    invalid(
+        |clip| {
+            let yaw = clip.root_trajectory.as_mut().unwrap().yaw.as_mut().unwrap();
+            yaw.net_yaw_deg = 90.0;
+            yaw.unwrapped_yaw_deg = 90.0;
+            yaw.yaw_travel_deg = 89.0;
+        },
+        "clips[\"walk\"].root_trajectory.yaw.yaw_travel_deg",
+        "sampled yaw travel must contain signed unwrapped yaw",
+    );
+    invalid(
+        |clip| {
+            let trajectory = clip.root_trajectory.as_mut().unwrap();
+            trajectory.translation = None;
+            trajectory.translation_availability = MeasurementAvailability::NotApplicable;
+        },
+        "clips[\"walk\"].root_trajectory.translation_availability",
+        "translation remains applicable when a root-trajectory bone is selected",
+    );
+    invalid(
+        |clip| {
+            let trajectory = clip.root_trajectory.as_mut().unwrap();
+            trajectory.yaw = None;
+            trajectory.yaw_availability = MeasurementAvailability::NotApplicable;
+        },
+        "clips[\"walk\"].root_trajectory.yaw_availability",
+        "yaw remains applicable when a root-trajectory bone is selected",
     );
 }
 

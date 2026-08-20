@@ -1,7 +1,8 @@
 use animsmith_core::diff::{
     AMPLITUDE_THRESHOLD_M, DURATION_THRESHOLD_S, LOOP_ANGULAR_VELOCITY_THRESHOLD_DEGPS,
     LOOP_POSITION_THRESHOLD_M, LOOP_ROTATION_THRESHOLD_DEG, LOOP_VELOCITY_THRESHOLD_MPS,
-    MetricDelta, PHASE_THRESHOLD, ROTATION_RANGE_THRESHOLD_DEG, SEAM_THRESHOLD,
+    MetricDelta, PHASE_THRESHOLD, ROOT_TRAJECTORY_TRANSLATION_THRESHOLD_M,
+    ROOT_TRAJECTORY_YAW_THRESHOLD_DEG, ROTATION_RANGE_THRESHOLD_DEG, SEAM_THRESHOLD,
     SPEED_THRESHOLD_MPS, diff_measurements,
 };
 use animsmith_core::measure::ClipMeasurements;
@@ -19,6 +20,11 @@ fn measurements(duration_s: f64) -> MeasurementMap {
             "duration_s": duration_s,
             "frame_count": 31,
             "animated_bones": ["hips"],
+            "bone_channels": [{
+                "bone_index": 0,
+                "bone_name": "hips",
+                "properties": ["translation"]
+            }],
             "bone_rotation_range_deg": { "hips": 10.0 },
             "loop_continuity": { "bones": [{
                 "bone_index": 0,
@@ -39,6 +45,28 @@ fn measurements(duration_s: f64) -> MeasurementMap {
                 "lr_amplitude_m": 0.1
             },
             "gait_availability": "measured",
+            "root_trajectory": {
+                "bone_index": 0,
+                "bone_name": "hips",
+                "source_role": "hips_fallback",
+                "translation": {
+                    "horizontal_displacement_x_m": 0.0,
+                    "horizontal_displacement_z_m": 1.0,
+                    "horizontal_travel_m": 1.0,
+                    "vertical_displacement_m": 0.0,
+                    "vertical_min_displacement_m": 0.0,
+                    "vertical_max_displacement_m": 0.0
+                },
+                "translation_availability": "measured",
+                "yaw": {
+                    "heading_axis": "positive_z",
+                    "net_yaw_deg": 0.0,
+                    "unwrapped_yaw_deg": 0.0,
+                    "yaw_travel_deg": 0.0
+                },
+                "yaw_availability": "measured"
+            },
+            "root_trajectory_availability": "measured",
             "speed_mps": 1.0,
             "speed_mps_availability": "measured"
         }
@@ -71,6 +99,8 @@ fn threshold_constants_are_public_and_unchanged() {
     assert_eq!(PHASE_THRESHOLD, 0.05);
     assert_eq!(AMPLITUDE_THRESHOLD_M, 0.005);
     assert_eq!(SPEED_THRESHOLD_MPS, 0.1);
+    assert_eq!(ROOT_TRAJECTORY_TRANSLATION_THRESHOLD_M, 0.001);
+    assert_eq!(ROOT_TRAJECTORY_YAW_THRESHOLD_DEG, 0.1);
 }
 
 #[test]

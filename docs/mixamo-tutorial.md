@@ -232,13 +232,15 @@ The mechanical checks passing does not make the clip game-ready — a
 walk whose loop pops or whose feet skate is mechanically pristine (see
 [a valid file is not a usable clip](game-ready-clips.md#a-valid-file-is-not-a-usable-clip)).
 The semantic checks need *your* expectations declared. Start from what
-`measure` reports:
+`measure` reports. The shortened JSON below is illustrative; capture and retain
+the exact numbers from your own downloaded asset rather than treating these
+sample values as vendor evidence:
 
 ```console
 $ animsmith measure --format json walking.glb
 {
-  "schema_version": 8,
-  "schema": "urn:animsmith:schema:output:8",
+  "schema_version": 9,
+  "schema": "urn:animsmith:schema:output:9",
   "tool": { "name": "animsmith", "version": "0.3.1",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -254,11 +256,19 @@ $ animsmith measure --format json walking.glb
         "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
         "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
       "measurements": {
-        "schema_version": 14,
-        "schema": "urn:animsmith:schema:measurements:14",
+        "schema_version": 15,
+        "schema": "urn:animsmith:schema:measurements:15",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],
+          "bone_channels": [
+            { "bone_index": 0, "bone_name": "mixamorig:Hips",
+              "properties": ["translation", "rotation"] },
+            { "bone_index": 1, "bone_name": "mixamorig:LeftFoot",
+              "properties": ["translation"] },
+            { "bone_index": 2, "bone_name": "mixamorig:RightFoot",
+              "properties": ["translation"] }
+          ],
           "bone_rotation_range_deg": { "mixamorig:Hips": 3.2 },
           "loop_continuity": { "bones": [
             { "bone_index": 0, "bone_name": "mixamorig:Hips",
@@ -281,6 +291,25 @@ $ animsmith measure --format json walking.glb
           "loop_seam_ratio_availability": "measured",
           "gait": { "phase": 0.75, "phase_availability": "measured", "lr_amplitude_m": 0.2 },
           "gait_availability": "measured",
+          "root_trajectory": {
+            "bone_index": 0, "bone_name": "mixamorig:Hips",
+            "source_role": "hips_fallback",
+            "translation": {
+              "horizontal_displacement_x_m": 0.0,
+              "horizontal_displacement_z_m": 0.0,
+              "horizontal_travel_m": 0.0,
+              "vertical_displacement_m": 0.0,
+              "vertical_min_displacement_m": 0.0,
+              "vertical_max_displacement_m": 0.0
+            },
+            "translation_availability": "measured",
+            "yaw": {
+              "heading_axis": "positive_z", "net_yaw_deg": 0.0,
+              "unwrapped_yaw_deg": 0.0, "yaw_travel_deg": 0.0
+            },
+            "yaw_availability": "measured"
+          },
+          "root_trajectory_availability": "measured",
           "speed_mps": 0.0,
           "speed_mps_availability": "measured"
         } },

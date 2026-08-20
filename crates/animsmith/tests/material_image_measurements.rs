@@ -8,15 +8,15 @@ use std::path::Path;
 use std::process::Command;
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v14.schema.json");
+    include_str!("../../../docs/schemas/measurements-v15.schema.json");
 
 fn assert_valid_measurements(value: &Value) {
-    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v14 schema JSON");
+    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v15 schema JSON");
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     let errors = validator.iter_errors(value).collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "v14 measurement schema errors: {errors:#?}"
+        "v15 measurement schema errors: {errors:#?}"
     );
 }
 

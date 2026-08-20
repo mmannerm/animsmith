@@ -22,6 +22,7 @@ use crate::measure::{
     SkinDerivedMatrixMeasurements, SkinDerivedMatrixUnavailableReason, TextureMeasurements,
     assess_inverse_bind, measure_linear_transform, summarize_skin_bind_linear,
 };
+use crate::metrics::canonical_net_yaw_deg;
 use crate::model::{
     DecodedImageColorType, MaterialResourceCoverage, SourceInverseBindAccessorStatus,
     SourceSkeletonCoverage,
@@ -30,13 +31,13 @@ use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 8;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 9;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:8";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:9";
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 14;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 15;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:14";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -51,7 +52,7 @@ impl ToolSource {
     /// Packaged or otherwise provenance-free builds use `None` for fields they
     /// cannot establish rather than claiming a clean checkout. Revisions that
     /// are not full 40-character hexadecimal Git object ids are dropped so an
-    /// envelope constructed through this API remains within output v8.
+    /// envelope constructed through this API remains within output v9.
     pub fn new(revision: Option<String>, dirty: Option<bool>) -> Self {
         let revision = revision.filter(|revision| {
             revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -280,6 +281,10 @@ fn validate_measurements(
             .then_some(())
             .ok_or(MeasurementContractError::NonFiniteValue { path })
     };
+    let permits_roundoff = |observed: f64, lower_bound: f64| {
+        let tolerance = 1.0e-9 * observed.abs().max(lower_bound.abs()).max(1.0);
+        observed + tolerance >= lower_bound
+    };
     let check_availability = |value_present: bool,
                               availability: MeasurementAvailability,
                               path: String| {
@@ -297,7 +302,53 @@ fn validate_measurements(
     };
     for (clip_name, clip) in clips {
         finite(clip.duration_s, format!("clips[{clip_name:?}].duration_s"))?;
+        let mut previous_bone_index = None;
+        let mut covered_bone_names = BTreeSet::new();
+        for (offset, bone) in clip.bone_channels.iter().enumerate() {
+            let path = format!("clips[{clip_name:?}].bone_channels[{offset}]");
+            if previous_bone_index.is_some_and(|previous| previous >= bone.bone_index) {
+                return Err(MeasurementContractError::InvalidStructure {
+                    path: format!("{path}.bone_index"),
+                    reason: "bone channel entries must use strictly increasing unique bone indices"
+                        .into(),
+                });
+            }
+            previous_bone_index = Some(bone.bone_index);
+            if bone.properties.is_empty() {
+                return Err(MeasurementContractError::InvalidStructure {
+                    path: format!("{path}.properties"),
+                    reason: "bone channel coverage must contain at least one property".into(),
+                });
+            }
+            if bone
+                .properties
+                .windows(2)
+                .any(|properties| properties[0] >= properties[1])
+            {
+                return Err(MeasurementContractError::InvalidStructure {
+                    path: format!("{path}.properties"),
+                    reason:
+                        "channel properties must be unique and ordered translation, rotation, scale"
+                            .into(),
+                });
+            }
+            covered_bone_names.insert(bone.bone_name.clone());
+        }
+        let expected_animated_bones: Vec<_> = covered_bone_names.into_iter().collect();
+        if clip.animated_bones != expected_animated_bones {
+            return Err(MeasurementContractError::InvalidStructure {
+                path: format!("clips[{clip_name:?}].animated_bones"),
+                reason: "animated_bones must equal the sorted unique bone names in bone_channels"
+                    .into(),
+            });
+        }
         for (bone, value) in &clip.bone_rotation_range_deg {
+            if clip.animated_bones.binary_search(bone).is_err() {
+                return Err(MeasurementContractError::InvalidStructure {
+                    path: format!("clips[{clip_name:?}].bone_rotation_range_deg[{bone:?}]"),
+                    reason: "rotation-range bones must be present in animated_bones".into(),
+                });
+            }
             finite(
                 *value,
                 format!("clips[{clip_name:?}].bone_rotation_range_deg[{bone:?}]"),
@@ -329,6 +380,11 @@ fn validate_measurements(
             format!("clips[{clip_name:?}].gait"),
         )?;
         check_availability(
+            clip.root_trajectory.is_some(),
+            clip.root_trajectory_availability,
+            format!("clips[{clip_name:?}].root_trajectory"),
+        )?;
+        check_availability(
             clip.speed_mps.is_some(),
             clip.speed_mps_availability,
             format!("clips[{clip_name:?}].speed_mps"),
@@ -339,6 +395,120 @@ fn validate_measurements(
                 gait.phase_availability,
                 format!("clips[{clip_name:?}].gait.phase"),
             )?;
+        }
+        if let Some(trajectory) = &clip.root_trajectory {
+            let path = format!("clips[{clip_name:?}].root_trajectory");
+            check_availability(
+                trajectory.translation.is_some(),
+                trajectory.translation_availability,
+                format!("{path}.translation"),
+            )?;
+            check_availability(
+                trajectory.yaw.is_some(),
+                trajectory.yaw_availability,
+                format!("{path}.yaw"),
+            )?;
+            if trajectory.translation_availability == MeasurementAvailability::NotApplicable {
+                return Err(MeasurementContractError::InvalidStructure {
+                    path: format!("{path}.translation_availability"),
+                    reason:
+                        "translation remains applicable when a root-trajectory bone is selected"
+                            .into(),
+                });
+            }
+            if trajectory.yaw_availability == MeasurementAvailability::NotApplicable {
+                return Err(MeasurementContractError::InvalidStructure {
+                    path: format!("{path}.yaw_availability"),
+                    reason: "yaw remains applicable when a root-trajectory bone is selected".into(),
+                });
+            }
+            if let Some(translation) = trajectory.translation {
+                for (field, value) in [
+                    (
+                        "horizontal_displacement_x_m",
+                        translation.horizontal_displacement_x_m,
+                    ),
+                    (
+                        "horizontal_displacement_z_m",
+                        translation.horizontal_displacement_z_m,
+                    ),
+                    ("horizontal_travel_m", translation.horizontal_travel_m),
+                    (
+                        "vertical_displacement_m",
+                        translation.vertical_displacement_m,
+                    ),
+                    (
+                        "vertical_min_displacement_m",
+                        translation.vertical_min_displacement_m,
+                    ),
+                    (
+                        "vertical_max_displacement_m",
+                        translation.vertical_max_displacement_m,
+                    ),
+                ] {
+                    finite(value, format!("{path}.translation.{field}"))?;
+                }
+                if translation.horizontal_travel_m < 0.0 {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.translation.horizontal_travel_m"),
+                        reason: "sampled horizontal travel must be non-negative".into(),
+                    });
+                }
+                let horizontal_displacement_m = translation
+                    .horizontal_displacement_x_m
+                    .hypot(translation.horizontal_displacement_z_m);
+                if !permits_roundoff(translation.horizontal_travel_m, horizontal_displacement_m) {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.translation.horizontal_travel_m"),
+                        reason: "sampled horizontal travel must contain endpoint displacement"
+                            .into(),
+                    });
+                }
+                if translation.vertical_min_displacement_m > 0.0
+                    || translation.vertical_max_displacement_m < 0.0
+                    || translation.vertical_displacement_m < translation.vertical_min_displacement_m
+                    || translation.vertical_displacement_m > translation.vertical_max_displacement_m
+                {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.translation"),
+                        reason: "vertical extrema must include zero and the endpoint displacement"
+                            .into(),
+                    });
+                }
+            }
+            if let Some(yaw) = trajectory.yaw {
+                finite(yaw.net_yaw_deg, format!("{path}.yaw.net_yaw_deg"))?;
+                finite(
+                    yaw.unwrapped_yaw_deg,
+                    format!("{path}.yaw.unwrapped_yaw_deg"),
+                )?;
+                finite(yaw.yaw_travel_deg, format!("{path}.yaw.yaw_travel_deg"))?;
+                if !(-180.0..=180.0).contains(&yaw.net_yaw_deg) {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.yaw.net_yaw_deg"),
+                        reason: "net yaw must be in the inclusive range [-180, 180]".into(),
+                    });
+                }
+                if yaw.net_yaw_deg != canonical_net_yaw_deg(yaw.unwrapped_yaw_deg) {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.yaw.net_yaw_deg"),
+                        reason: "net yaw must be the canonical endpoint-equivalent unwrapped yaw"
+                            .into(),
+                    });
+                }
+                if yaw.yaw_travel_deg < 0.0 {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.yaw.yaw_travel_deg"),
+                        reason: "sampled yaw travel must be non-negative".into(),
+                    });
+                }
+                if !permits_roundoff(yaw.yaw_travel_deg, yaw.unwrapped_yaw_deg.abs()) {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.yaw.yaw_travel_deg"),
+                        reason: "sampled yaw travel must contain signed unwrapped yaw".into(),
+                    });
+                }
+            }
         }
         if let Some(loop_continuity) = &clip.loop_continuity {
             if loop_continuity.bones.is_empty() {
@@ -2075,6 +2245,7 @@ mod measurement_report_input_tests {
             duration_s: f64::NAN,
             frame_count: 1,
             animated_bones: Vec::new(),
+            bone_channels: Vec::new(),
             bone_rotation_range_deg: BTreeMap::new(),
             loop_continuity: None,
             loop_continuity_availability: MeasurementAvailability::NotApplicable,
@@ -2086,6 +2257,8 @@ mod measurement_report_input_tests {
             loop_seam_ratio_availability: MeasurementAvailability::NotApplicable,
             gait: None,
             gait_availability: MeasurementAvailability::NotApplicable,
+            root_trajectory: None,
+            root_trajectory_availability: MeasurementAvailability::NotApplicable,
             speed_mps: None,
             speed_mps_availability: MeasurementAvailability::NotApplicable,
         };

@@ -11,7 +11,8 @@
 use animsmith_core::diff::MetricDelta;
 use animsmith_core::measure::{
     LinearTransformClassification, LinearTransformMeasurements, LinearTransformOrientation,
-    SkeletonNodeLocalRestMeasurements, SkinBindLinearSummaryClassification,
+    MeasurementAvailability, SkeletonNodeLocalRestMeasurements,
+    SkinBindLinearSummaryClassification,
 };
 use animsmith_core::model::Clip;
 use animsmith_core::{
@@ -201,6 +202,51 @@ pub(crate) fn render_measure_text(
                                 format!(" gait φ={phase:.2} ({:.1}cm)", amplitude * 100.0)
                             })
                             .unwrap_or_default();
+                        let root_trajectory = match measurement.root_trajectory.as_ref() {
+                            Some(trajectory) => {
+                                let translation = trajectory
+                                    .translation
+                                    .as_ref()
+                                    .map(|translation| {
+                                        format!(
+                                            " Δxz=({:.3},{:.3})m xzΣ={:.3}m Δy={:.3}m y=[{:.3},{:.3}]m",
+                                            translation.horizontal_displacement_x_m,
+                                            translation.horizontal_displacement_z_m,
+                                            translation.horizontal_travel_m,
+                                            translation.vertical_displacement_m,
+                                            translation.vertical_min_displacement_m,
+                                            translation.vertical_max_displacement_m,
+                                        )
+                                    })
+                                    .unwrap_or_else(|| " translation=unavailable".into());
+                                let yaw = trajectory
+                                    .yaw
+                                    .as_ref()
+                                    .map(|yaw| {
+                                        format!(
+                                            " yaw[{}]={:.2}° unwrap={:.2}° travel={:.2}°",
+                                            yaw.heading_axis.label(),
+                                            yaw.net_yaw_deg,
+                                            yaw.unwrapped_yaw_deg,
+                                            yaw.yaw_travel_deg,
+                                        )
+                                    })
+                                    .unwrap_or_else(|| " yaw=unavailable".into());
+                                format!(
+                                    " root {}#{}:{}{translation}{yaw}",
+                                    trajectory.source_role.as_str(),
+                                    trajectory.bone_index,
+                                    quoted_text_atom(&trajectory.bone_name),
+                                )
+                            }
+                            None
+                                if measurement.root_trajectory_availability
+                                    == MeasurementAvailability::Unavailable =>
+                            {
+                                " root=unavailable".into()
+                            }
+                            None => String::new(),
+                        };
                         let endpoint = measurement
                             .loop_endpoint_mode
                             .map(|mode| format!(" endpoint={}", mode.as_str()))
@@ -209,8 +255,13 @@ pub(crate) fn render_measure_text(
                             .frame_grid
                             .map(|grid| format!(" grid={:.3}fps/{} intervals", grid.fps, grid.frame_intervals))
                             .unwrap_or_default();
+                        let bone_channel_count = measurement
+                            .bone_channels
+                            .iter()
+                            .map(|bone| bone.properties.len())
+                            .sum::<usize>();
                         format!(
-                            "  {}: {:.3}s, {} frames, {} animated bones{endpoint}{frame_grid}{continuity}{seam}{gait}",
+                            "  {}: {:.3}s, {} frames, {} animated bones, {bone_channel_count} bone channels{endpoint}{frame_grid}{continuity}{seam}{gait}{root_trajectory}",
                             text_atom(clip),
                             measurement.duration_s,
                             measurement.frame_count,
@@ -1430,7 +1481,7 @@ fn md_cell(text: &str) -> String {
 mod tests {
     use super::*;
     use animsmith_core::glam::{Mat4, Quat, Vec3};
-    use animsmith_core::measure::measure_assets;
+    use animsmith_core::measure::{AssetMeasurements, measure_assets};
     use animsmith_core::{
         Bone, CheckEvaluation, CheckOutput, Clip, CoverageGap, CoverageGapCode, Document,
         EvaluationScope, EvaluationScopeCode, Finding, InputIdentity, LintFileReport,
@@ -1508,6 +1559,11 @@ mod tests {
                 "duration_s": 1.0,
                 "frame_count": 2,
                 "animated_bones": ["hips"],
+                "bone_channels": [{
+                    "bone_index": 0,
+                    "bone_name": "hips",
+                    "properties": ["translation"]
+                }],
                 "bone_rotation_range_deg": {},
                 "loop_continuity": { "bones": [
                     {
@@ -1534,6 +1590,28 @@ mod tests {
                 "loop_seam_ratio_availability": "measured",
                 "gait": { "phase": 0.5, "phase_availability": "measured", "lr_amplitude_m": 0.1 },
                 "gait_availability": "measured",
+                "root_trajectory": {
+                    "bone_index": 0,
+                    "bone_name": "hips",
+                    "source_role": "hips_fallback",
+                    "translation": {
+                        "horizontal_displacement_x_m": 0.25,
+                        "horizontal_displacement_z_m": -1.0,
+                        "horizontal_travel_m": 1.5,
+                        "vertical_displacement_m": 0.1,
+                        "vertical_min_displacement_m": -0.05,
+                        "vertical_max_displacement_m": 0.3
+                    },
+                    "translation_availability": "measured",
+                    "yaw": {
+                        "heading_axis": "positive_z",
+                        "net_yaw_deg": 90.0,
+                        "unwrapped_yaw_deg": 450.0,
+                        "yaw_travel_deg": 540.0
+                    },
+                    "yaw_availability": "measured"
+                },
+                "root_trajectory_availability": "measured",
                 "speed_mps_availability": "not_applicable"
             }
         }))
@@ -1598,7 +1676,7 @@ mod tests {
             render_measure_text(&reports).collect::<Vec<_>>(),
             vec![
                 "asset\\npath.glb:",
-                "  walk\\nclip: 1.000s, 2 frames, 1 animated bones loop Δp=1.20cm Δr=3.50° Δv=0.346m/s Δω=67.89°/s seam×0.25 gait φ=0.50 (10.0cm)",
+                "  walk\\nclip: 1.000s, 2 frames, 1 animated bones, 1 bone channels loop Δp=1.20cm Δr=3.50° Δv=0.346m/s Δω=67.89°/s seam×0.25 gait φ=0.50 (10.0cm) root hips_fallback#0:\"hips\" Δxz=(0.250,-1.000)m xzΣ=1.500m Δy=0.100m y=[-0.050,0.300]m yaw[+Z]=90.00° unwrap=450.00° travel=540.00°",
                 "  material resources: 1 materials, 1 textures, 1 images (complete)",
                 "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000 geometry centroid (0.250, 1.000, -0.500), ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
                 "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",
@@ -1608,18 +1686,114 @@ mod tests {
     }
 
     #[test]
-    fn measure_renderer_preserves_optional_absence_and_report_order() {
+    fn measure_renderer_keeps_root_translation_and_yaw_availability_independent() {
         let clips = serde_json::from_value(json!({
-            "idle": {
-                "duration_s": 2.0,
-                "frame_count": 1,
+            "translation_missing": {
+                "duration_s": 1.0,
+                "frame_count": 3,
                 "animated_bones": [],
+                "bone_channels": [],
                 "bone_rotation_range_deg": {},
                 "loop_continuity_availability": "not_applicable",
                 "loop_endpoint_mode_availability": "not_applicable",
                 "frame_grid_availability": "not_applicable",
                 "loop_seam_ratio_availability": "not_applicable",
                 "gait_availability": "not_applicable",
+                "root_trajectory": {
+                    "bone_index": 0,
+                    "bone_name": "root",
+                    "source_role": "root",
+                    "translation_availability": "unavailable",
+                    "yaw": {
+                        "heading_axis": "positive_z",
+                        "net_yaw_deg": 0.0,
+                        "unwrapped_yaw_deg": 0.0,
+                        "yaw_travel_deg": 0.0
+                    },
+                    "yaw_availability": "measured"
+                },
+                "root_trajectory_availability": "measured",
+                "speed_mps_availability": "unavailable"
+            },
+            "yaw_missing": {
+                "duration_s": 1.0,
+                "frame_count": 3,
+                "animated_bones": [],
+                "bone_channels": [],
+                "bone_rotation_range_deg": {},
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio_availability": "not_applicable",
+                "gait_availability": "not_applicable",
+                "root_trajectory": {
+                    "bone_index": 0,
+                    "bone_name": "root",
+                    "source_role": "root",
+                    "translation": {
+                        "horizontal_displacement_x_m": 0.0,
+                        "horizontal_displacement_z_m": 0.0,
+                        "horizontal_travel_m": 0.0,
+                        "vertical_displacement_m": 0.0,
+                        "vertical_min_displacement_m": 0.0,
+                        "vertical_max_displacement_m": 0.0
+                    },
+                    "translation_availability": "measured",
+                    "yaw_availability": "unavailable"
+                },
+                "root_trajectory_availability": "measured",
+                "speed_mps_availability": "unavailable"
+            }
+        }))
+        .expect("clip measurements deserialize");
+        let reports = [MeasureFileReport::new(
+            "asset.glb",
+            input_identity("asset.glb"),
+            empty_rig(),
+            MeasurementContract::new(clips, AssetMeasurements::default())
+                .expect("mixed root availability is valid"),
+        )];
+
+        assert_eq!(
+            render_measure_text(&reports).collect::<Vec<_>>(),
+            vec![
+                "asset.glb:",
+                "  translation_missing: 1.000s, 3 frames, 0 animated bones, 0 bone channels root root#0:\"root\" translation=unavailable yaw[+Z]=0.00° unwrap=0.00° travel=0.00°",
+                "  yaw_missing: 1.000s, 3 frames, 0 animated bones, 0 bone channels root root#0:\"root\" Δxz=(0.000,0.000)m xzΣ=0.000m Δy=0.000m y=[0.000,0.000]m yaw=unavailable",
+                "  material resources: 0 materials, 0 textures, 0 images (unavailable)",
+            ]
+        );
+    }
+
+    #[test]
+    fn measure_renderer_preserves_optional_absence_and_report_order() {
+        let clips = serde_json::from_value(json!({
+            "broken": {
+                "duration_s": 1.0,
+                "frame_count": 3,
+                "animated_bones": [],
+                "bone_channels": [],
+                "bone_rotation_range_deg": {},
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio_availability": "not_applicable",
+                "gait_availability": "not_applicable",
+                "root_trajectory_availability": "unavailable",
+                "speed_mps_availability": "not_applicable"
+            },
+            "idle": {
+                "duration_s": 2.0,
+                "frame_count": 1,
+                "animated_bones": [],
+                "bone_channels": [],
+                "bone_rotation_range_deg": {},
+                "loop_continuity_availability": "not_applicable",
+                "loop_endpoint_mode_availability": "not_applicable",
+                "frame_grid_availability": "not_applicable",
+                "loop_seam_ratio_availability": "not_applicable",
+                "gait_availability": "not_applicable",
+                "root_trajectory_availability": "not_applicable",
                 "speed_mps_availability": "not_applicable"
             }
         }))
@@ -1663,7 +1837,8 @@ mod tests {
             render_measure_text(&reports).collect::<Vec<_>>(),
             vec![
                 "first.glb:",
-                "  idle: 2.000s, 1 frames, 0 animated bones",
+                "  broken: 1.000s, 3 frames, 0 animated bones, 0 bone channels root=unavailable",
+                "  idle: 2.000s, 1 frames, 0 animated bones, 0 bone channels",
                 "  material resources: 0 materials, 0 textures, 0 images (unavailable)",
                 "  mesh definition #0 plain: 0 verts geometry bbox unavailable geometry centroid unavailable",
                 "second.glb:",
@@ -1782,12 +1957,14 @@ mod tests {
                 "duration_s": 1.0,
                 "frame_count": 2,
                 "animated_bones": [],
+                "bone_channels": [],
                 "bone_rotation_range_deg": {},
                 "loop_continuity_availability": "not_applicable",
                 "loop_endpoint_mode_availability": "not_applicable",
                 "frame_grid_availability": "not_applicable",
                 "loop_seam_ratio_availability": "not_applicable",
                 "gait_availability": "not_applicable",
+                "root_trajectory_availability": "not_applicable",
                 "speed_mps_availability": "not_applicable"
             }
         }))
@@ -1797,12 +1974,14 @@ mod tests {
                 "duration_s": 1.1,
                 "frame_count": 2,
                 "animated_bones": [],
+                "bone_channels": [],
                 "bone_rotation_range_deg": {},
                 "loop_continuity_availability": "not_applicable",
                 "loop_endpoint_mode_availability": "not_applicable",
                 "frame_grid_availability": "not_applicable",
                 "loop_seam_ratio_availability": "not_applicable",
                 "gait_availability": "not_applicable",
+                "root_trajectory_availability": "not_applicable",
                 "speed_mps_availability": "not_applicable"
             }
         }))
@@ -1824,18 +2003,21 @@ mod tests {
                 "duration_s": 1.0,
                 "frame_count": 1,
                 "animated_bones": [],
+                "bone_channels": [],
                 "bone_rotation_range_deg": {},
                 "loop_continuity_availability": "not_applicable",
                 "loop_endpoint_mode_availability": "not_applicable",
                 "frame_grid_availability": "not_applicable",
                 "loop_seam_ratio_availability": "not_applicable",
                 "gait_availability": "not_applicable",
+                "root_trajectory_availability": "not_applicable",
                 "speed_mps_availability": "not_applicable"
             },
             "b_shared": {
                 "duration_s": 1.0,
                 "frame_count": 1,
                 "animated_bones": [],
+                "bone_channels": [],
                 "bone_rotation_range_deg": {},
                 "loop_continuity_availability": "not_applicable",
                 "loop_endpoint_mode_availability": "not_applicable",
@@ -1843,6 +2025,7 @@ mod tests {
                 "loop_seam_ratio": 1.0,
                 "loop_seam_ratio_availability": "measured",
                 "gait_availability": "not_applicable",
+                "root_trajectory_availability": "not_applicable",
                 "speed_mps_availability": "not_applicable"
             }
         }))
@@ -1852,12 +2035,14 @@ mod tests {
                 "duration_s": 1.0,
                 "frame_count": 1,
                 "animated_bones": [],
+                "bone_channels": [],
                 "bone_rotation_range_deg": {},
                 "loop_continuity_availability": "not_applicable",
                 "loop_endpoint_mode_availability": "not_applicable",
                 "frame_grid_availability": "not_applicable",
                 "loop_seam_ratio_availability": "not_applicable",
                 "gait_availability": "not_applicable",
+                "root_trajectory_availability": "not_applicable",
                 "speed_mps": 2.0,
                 "speed_mps_availability": "measured"
             },
@@ -1865,12 +2050,14 @@ mod tests {
                 "duration_s": 1.0,
                 "frame_count": 1,
                 "animated_bones": [],
+                "bone_channels": [],
                 "bone_rotation_range_deg": {},
                 "loop_continuity_availability": "not_applicable",
                 "loop_endpoint_mode_availability": "not_applicable",
                 "frame_grid_availability": "not_applicable",
                 "loop_seam_ratio_availability": "not_applicable",
                 "gait_availability": "not_applicable",
+                "root_trajectory_availability": "not_applicable",
                 "speed_mps_availability": "not_applicable"
             }
         }))
