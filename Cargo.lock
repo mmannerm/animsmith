@@ -76,6 +76,7 @@ version = "0.3.1"
 dependencies = [
  "animsmith-core",
  "glam",
+ "serde",
  "tempfile",
  "thiserror",
  "ufbx",

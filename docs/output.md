@@ -52,12 +52,15 @@ required `--evidence` path, and prints the same record to stdout under
 The paired GLB and evidence are prepared before publication, so an operator
 failure emits neither new destination and restores any prior pair.
 
-`scale` writes a separate scale-evidence v4 document to its required
+`scale` writes scale-evidence v4 for glTF/GLB and the separate v5 FBX
+rest/bind record for the narrow FBX path to its required
 `--evidence` path, and prints the same record to stdout under
-`--format json`. Its immutable identity is
-`urn:animsmith:schema:scale-evidence:4`; its retrievable schema is
-[`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json). The
-artifact and its evidence are prepared as temporaries and published as one
+`--format json`. Their immutable identities are
+`urn:animsmith:schema:scale-evidence:4` and
+`urn:animsmith:schema:scale-evidence:5`; their retrievable schemas are
+[`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json) and
+[`scale-evidence-v5.schema.json`](schemas/scale-evidence-v5.schema.json).
+The artifact and its evidence are prepared as temporaries and published as one
 pair, so a refusal or an operator failure emits neither destination and
 restores any prior pair.
 
@@ -336,7 +339,7 @@ The [scale workflow](scale.md) explains when to choose each operation and how
 the rewrite/reload/proof/publication transaction produces this record. This
 section is the wire-format authority.
 
-`scale` writes scale evidence v4 beside its artifact. One record serves both
+glTF/GLB `scale` writes scale evidence v4 beside its artifact. One record serves both
 outcomes, discriminated by `outcome`:
 
 | `outcome` | `result` | `rejection` | Published | Exit |
@@ -394,13 +397,24 @@ computed only for the three-way input/output/evidence distinctness check and
 are deliberately not serialized, so identical arguments produce byte-identical
 evidence. Nothing in the record carries a timestamp.
 
-The normative contract is
+The normative glTF/GLB contract is
 [`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json).
-The current CLI emits v4 exclusively; immutable
+The CLI emits v4 for glTF/GLB; immutable
 [`scale-evidence-v1.schema.json`](schemas/scale-evidence-v1.schema.json),
 [`scale-evidence-v2.schema.json`](schemas/scale-evidence-v2.schema.json), and
 [`scale-evidence-v3.schema.json`](schemas/scale-evidence-v3.schema.json)
 remain available for historical records.
+
+The narrow FBX `scale rest-bind` path emits v5,
+[`scale-evidence-v5.schema.json`](schemas/scale-evidence-v5.schema.json), and
+always writes a new `.glb` artifact. Its `capability` is the complete ufbx
+normalized-domain inventory, not a raw FBX accessor manifest. `result` binds
+the private staged GLB identity and then nests the v4-shaped exact GLB rewrite,
+reload/proof, and read-back record for the published candidate. This is a
+re-encoding proof, not a claim that FBX bytes, object properties, or authored
+curve keys were preserved. The inventory projection is frozen with v5: a new
+FBX fact requires a new evidence identity rather than silently changing this
+wire record. Whole-document FBX scaling remains refused.
 
 A whole-document factor of one has no raw write set. Its v4
 `result.artifact.rewritten_accessors`, `rewritten_json_pointers`, and

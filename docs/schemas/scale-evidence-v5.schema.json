@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:scale-evidence:5",
+  "title": "animsmith FBX rest/bind scale evidence v5",
+  "description": "Evidence for the narrow FBX rest/bind producer. The input is inventoried as normalized FBX; the private staged_source is a freshly serialized GLB, and scale is the immutable raw-GLB scale proof over the exact published candidate. v5 makes no raw-FBX byte-preservation claim.",
+  "type": "object",
+  "required": ["schema_version", "schema", "tool", "command", "input_format", "outcome", "operation", "paths", "input", "capability", "result", "rejection"],
+  "properties": {
+    "schema_version": { "const": 5 },
+    "schema": { "const": "urn:animsmith:schema:scale-evidence:5" },
+    "tool": { "$ref": "urn:animsmith:schema:scale-evidence:4#/$defs/tool" },
+    "command": { "const": "scale" },
+    "input_format": { "const": "fbx" },
+    "outcome": { "enum": ["published", "rejected"] },
+    "operation": { "$ref": "urn:animsmith:schema:scale-evidence:4#/$defs/operation" },
+    "paths": { "$ref": "urn:animsmith:schema:scale-evidence:4#/$defs/paths" },
+    "input": { "$ref": "urn:animsmith:schema:scale-evidence:4#/$defs/identity" },
+    "capability": { "oneOf": [{ "$ref": "#/$defs/fbx_capability" }, { "type": "null" }] },
+    "result": { "oneOf": [{ "$ref": "#/$defs/result" }, { "type": "null" }] },
+    "rejection": { "oneOf": [{ "$ref": "#/$defs/rejection" }, { "type": "null" }] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "const": "published" } }, "required": ["outcome"] },
+      "then": {
+        "properties": {
+          "capability": { "$ref": "#/$defs/fbx_capability" },
+          "result": { "$ref": "#/$defs/result" },
+          "rejection": { "type": "null" }
+        }
+      },
+      "else": {
+        "properties": {
+          "result": { "type": "null" },
+          "rejection": { "$ref": "#/$defs/rejection" }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "identity": { "$ref": "urn:animsmith:schema:scale-evidence:4#/$defs/identity" },
+    "result": {
+      "type": "object",
+      "required": ["staged_source", "scale"],
+      "properties": {
+        "staged_source": { "$ref": "#/$defs/identity" },
+        "scale": { "$ref": "urn:animsmith:schema:scale-evidence:4#/$defs/result" }
+      },
+      "additionalProperties": false
+    },
+    "rejection": {
+      "type": "object",
+      "required": ["stage", "kind", "detail"],
+      "properties": {
+        "stage": { "enum": ["preflight", "plan", "rewrite", "proof", "read-back"] },
+        "kind": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "detail": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "status": { "enum": ["absent", "normalized", "baked", "derived", "rebuilt", "unsupported", "unverifiable"] },
+    "source_identity": {
+      "type": "object",
+      "required": ["source_index", "ufbx_typed_id", "ufbx_element_id"],
+      "properties": {
+        "source_index": { "type": "integer", "minimum": 0 },
+        "ufbx_typed_id": { "type": "integer", "minimum": 0 },
+        "ufbx_element_id": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "fbx_capability": {
+      "type": "object",
+      "required": ["domains", "coordinate_normalization", "animation_takes_baked", "authored_curve_keys_preserved", "animation_take_count", "source_animation_curve_count", "generated_geometry_helper_node_count", "generated_scale_helper_node_count", "inherit_modes_compensated", "compensated_inherit_node_count", "generated_normal_mesh_count", "missing_normal_mesh_count", "skin_deformer_count", "skin_cluster_count", "empty_skin_deformer_count", "bind_matrix_provenance", "incomplete_bind_cluster_count", "bone_convenience_bind_overwrite_count", "identity_bind_defaults_invented", "truncated_influence_vertex_count", "discarded_influence_count", "renormalized_influence_vertex_count", "rejected_influence_count", "missing_skin_influence_corner_count", "non_triangle_face_count", "triangulated_face_count", "omitted_non_polygon_face_count", "empty_mesh_definition_count", "empty_source_meshes", "pre_weld_vertex_count", "post_weld_vertex_count", "multiple_skin_deformer_mesh_count", "dual_quaternion_skin_count", "blend_deformer_count", "blend_channel_count", "blend_shape_count", "cache_deformer_count", "unsupported_vertex_payload_mesh_count", "camera_count", "light_count", "shared_mesh_definition_count", "uninstanced_mesh_definition_count", "uninstanced_source_meshes", "user_defined_property_count", "unsupported_source_element_count", "external_resource_count", "source_nodes", "source_meshes", "source_skins"],
+      "properties": {
+        "domains": {
+          "type": "object",
+          "required": ["rest_hierarchy", "translation_animation", "rotation_and_scale_animation", "root_motion_and_velocity", "base_mesh_geometry", "morphs", "skin_binds", "cameras_and_lights", "collision_and_custom_data", "other_vertex_and_source_data", "out_of_contract_node_transforms", "animation_targeting_matrix_nodes", "shared_raw_accessor_payloads", "unreferenced_accessor_payloads", "image_payload_aliases"],
+          "additionalProperties": false,
+          "properties": {
+            "rest_hierarchy": { "$ref": "#/$defs/status" }, "translation_animation": { "$ref": "#/$defs/status" }, "rotation_and_scale_animation": { "$ref": "#/$defs/status" }, "root_motion_and_velocity": { "$ref": "#/$defs/status" }, "base_mesh_geometry": { "$ref": "#/$defs/status" }, "morphs": { "$ref": "#/$defs/status" }, "skin_binds": { "$ref": "#/$defs/status" }, "cameras_and_lights": { "$ref": "#/$defs/status" }, "collision_and_custom_data": { "$ref": "#/$defs/status" }, "other_vertex_and_source_data": { "$ref": "#/$defs/status" }, "out_of_contract_node_transforms": { "$ref": "#/$defs/status" }, "animation_targeting_matrix_nodes": { "$ref": "#/$defs/status" }, "shared_raw_accessor_payloads": { "$ref": "#/$defs/status" }, "unreferenced_accessor_payloads": { "$ref": "#/$defs/status" }, "image_payload_aliases": { "$ref": "#/$defs/status" }
+          }
+        },
+        "coordinate_normalization": { "type": "object", "required": ["original_up_axis", "original_unit_meters", "target_right_handed_y_up", "target_unit_meters", "adjust_transforms"], "properties": { "original_up_axis": { "enum": ["positive-x", "negative-x", "positive-y", "negative-y", "positive-z", "negative-z", "unknown"] }, "original_unit_meters": { "type": "number" }, "target_right_handed_y_up": { "type": "boolean" }, "target_unit_meters": { "type": "number" }, "adjust_transforms": { "type": "boolean" } }, "additionalProperties": false },
+        "animation_takes_baked": { "type": "boolean" }, "authored_curve_keys_preserved": { "type": "boolean" }, "inherit_modes_compensated": { "type": "boolean" }, "identity_bind_defaults_invented": { "type": "boolean" },
+        "bind_matrix_provenance": { "const": "ufbx-converted-cluster-matrices" },
+        "animation_take_count": { "$ref": "#/$defs/count" }, "source_animation_curve_count": { "$ref": "#/$defs/count" }, "generated_geometry_helper_node_count": { "$ref": "#/$defs/count" }, "generated_scale_helper_node_count": { "$ref": "#/$defs/count" }, "compensated_inherit_node_count": { "$ref": "#/$defs/count" }, "generated_normal_mesh_count": { "$ref": "#/$defs/count" }, "missing_normal_mesh_count": { "$ref": "#/$defs/count" }, "skin_deformer_count": { "$ref": "#/$defs/count" }, "skin_cluster_count": { "$ref": "#/$defs/count" }, "empty_skin_deformer_count": { "$ref": "#/$defs/count" }, "incomplete_bind_cluster_count": { "$ref": "#/$defs/count" }, "bone_convenience_bind_overwrite_count": { "$ref": "#/$defs/count" }, "truncated_influence_vertex_count": { "$ref": "#/$defs/count" }, "discarded_influence_count": { "$ref": "#/$defs/count" }, "renormalized_influence_vertex_count": { "$ref": "#/$defs/count" }, "rejected_influence_count": { "$ref": "#/$defs/count" }, "missing_skin_influence_corner_count": { "$ref": "#/$defs/count" }, "non_triangle_face_count": { "$ref": "#/$defs/count" }, "triangulated_face_count": { "$ref": "#/$defs/count" }, "omitted_non_polygon_face_count": { "$ref": "#/$defs/count" }, "empty_mesh_definition_count": { "$ref": "#/$defs/count" }, "pre_weld_vertex_count": { "$ref": "#/$defs/count" }, "post_weld_vertex_count": { "$ref": "#/$defs/count" }, "multiple_skin_deformer_mesh_count": { "$ref": "#/$defs/count" }, "dual_quaternion_skin_count": { "$ref": "#/$defs/count" }, "blend_deformer_count": { "$ref": "#/$defs/count" }, "blend_channel_count": { "$ref": "#/$defs/count" }, "blend_shape_count": { "$ref": "#/$defs/count" }, "cache_deformer_count": { "$ref": "#/$defs/count" }, "unsupported_vertex_payload_mesh_count": { "$ref": "#/$defs/count" }, "camera_count": { "$ref": "#/$defs/count" }, "light_count": { "$ref": "#/$defs/count" }, "shared_mesh_definition_count": { "$ref": "#/$defs/count" }, "uninstanced_mesh_definition_count": { "$ref": "#/$defs/count" }, "user_defined_property_count": { "$ref": "#/$defs/count" }, "unsupported_source_element_count": { "$ref": "#/$defs/count" }, "external_resource_count": { "$ref": "#/$defs/count" },
+        "empty_source_meshes": { "type": "array", "items": { "$ref": "#/$defs/source_identity" } }, "uninstanced_source_meshes": { "type": "array", "items": { "$ref": "#/$defs/source_identity" } }, "source_nodes": { "type": "array", "items": { "$ref": "#/$defs/source_identity" } }, "source_meshes": { "type": "array", "items": { "$ref": "#/$defs/source_identity" } }, "source_skins": { "type": "array", "items": { "$ref": "#/$defs/source_identity" } }
+      },
+      "additionalProperties": false
+    },
+    "count": { "type": "integer", "minimum": 0 }
+  }
+}

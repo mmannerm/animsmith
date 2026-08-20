@@ -60,7 +60,9 @@ cargo run -p animsmith --example embed
    An FBX host that needs auditable scale-boundary facts uses
    `animsmith_fbx::load_scale_source` instead: the returned wrapper retains the
    document and `FbxScaleCapabilityInventory` from one parse. The inventory
-   and normalized source-skeleton sidecar do not enable FBX scaling. `Complete`
+   and normalized source-skeleton sidecar enable only the CLI's narrow
+   rest/bind re-encode path when `rest_bind_capability_facts` accepts them;
+   whole-document FBX scaling remains refused. `Complete`
    means the documented ufbx projection covers every representable node/skin
    identity and joint slot; a missing cluster bone downgrades the sidecar to
    `Unavailable` instead of dropping that slot. Unreadable ordered bind
@@ -236,12 +238,12 @@ For an embedded producer:
 6. Publish only the proved artifact and matching evidence as one coordinated
    pair, preserving the CLI's rollback and documented process-crash semantics.
 
-Those producer steps currently apply to glTF/GLB only. FBX embedders may call
-`animsmith_fbx::capability_facts` to inspect the conservative projection, but
-it remains unsupported for both operations. The FBX inventory makes the later
-writer/proof work explicit; it is not authority to substitute a normalized
-writer or claim raw FBX spans, object properties, curve keys, or vertex
-identity were preserved.
+Those producer steps apply directly to glTF/GLB. With the default FBX feature,
+the narrow `rest-bind` producer first requires a complete normalized FBX
+inventory, stages a private GLB, and then runs the same raw-GLB plan/rewrite/
+proof transaction; `whole-document` remains unsupported for FBX. The FBX
+inventory is not authority to claim raw FBX spans, object properties, curve
+keys, or vertex identity were preserved.
 
 `ScaleCandidate` grants no authority: proof independently validates the
 source, plan inventory, candidate structure, and numeric claims. A frontend

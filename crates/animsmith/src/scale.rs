@@ -68,8 +68,8 @@
 //! for the raw manifest and a digest of one is not a manifest.
 
 use crate::publish::{
-    destination_identity, emit, emit_text, input_identity, parent_or_current, publish_pair,
-    read_digest, require_writable_destination, serialize_record,
+    destination_identity, emit, emit_error_text, emit_text, input_identity, parent_or_current,
+    publish_pair, read_digest, require_writable_destination, serialize_record,
 };
 use crate::{Format, render};
 use animsmith_core::scale::{
@@ -86,12 +86,25 @@ use animsmith_gltf::{
 };
 use serde::ser::Error as _;
 use serde::{Serialize, Serializer};
+#[cfg(feature = "fbx")]
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+#[cfg(feature = "fbx")]
+use animsmith_core::model::Document;
+#[cfg(feature = "fbx")]
+use animsmith_fbx::{
+    FbxScaleCapabilityInventory, load_scale_source_bytes, rest_bind_capability_facts,
+};
+
 const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 4;
 pub(crate) const SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:4";
+#[cfg(feature = "fbx")]
+const FBX_SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 5;
+#[cfg(feature = "fbx")]
+const FBX_SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:5";
 
 // --- Request ---------------------------------------------------------------
 
@@ -660,6 +673,49 @@ struct ScaleEvidence<'a> {
     rejection: Option<RejectionRecord>,
 }
 
+/// A scale-evidence v5 record for the narrow FBX rest/bind producer.
+///
+/// v4 remains the immutable raw-glTF evidence contract. FBX cannot make
+/// claims about preserving raw FBX spans, so v5 records the complete ufbx
+/// inventory, the re-encoded GLB identity, and the one semantic proof over
+/// the reloaded emitted GLB instead.
+#[cfg(feature = "fbx")]
+#[derive(Debug, Clone, Serialize)]
+struct FbxScaleEvidence<'a> {
+    schema_version: u32,
+    schema: &'static str,
+    tool: ToolInfo,
+    command: &'static str,
+    input_format: &'static str,
+    outcome: Outcome,
+    operation: OperationRecord,
+    paths: PathsRecord,
+    input: InputIdentity,
+    capability: Option<&'a FbxScaleCapabilityInventory>,
+    result: Option<FbxScaleResult>,
+    rejection: Option<FbxRejectionRecord>,
+}
+
+#[cfg(feature = "fbx")]
+#[derive(Debug, Clone, Serialize)]
+struct FbxScaleResult {
+    /// Exact bytes of the temporary GLB synthesized from the normalized FBX
+    /// document. This is an audit boundary, never a published artifact.
+    staged_source: InputIdentity,
+    /// The existing raw-glTF rewrite/evidence projection. Its source is the
+    /// staged GLB above and its artifact is the exact candidate that was
+    /// reloaded, semantically proved, read back, then atomically published.
+    scale: SharedScaleEvidence,
+}
+
+#[cfg(feature = "fbx")]
+#[derive(Debug, Clone, Serialize)]
+struct FbxRejectionRecord {
+    stage: Stage,
+    kind: &'static str,
+    detail: String,
+}
+
 // --- Failure classification -------------------------------------------------
 
 /// Everything that can stop a run short of publication.
@@ -906,6 +962,13 @@ fn declared_container(path: &Path, role: &str) -> Result<GltfContainerKind, Stri
     }
 }
 
+#[cfg(feature = "fbx")]
+fn is_fbx(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("fbx"))
+}
+
 fn container_name(container: GltfContainerKind) -> &'static str {
     match container {
         GltfContainerKind::Glb => "glb",
@@ -965,6 +1028,10 @@ fn require_distinct_paths(request: &Request) -> Result<(), String> {
 /// or rollback failure. A refusal that is a property of the input asset is
 /// not an error here: it prints its record and returns exit `1`.
 pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String> {
+    #[cfg(feature = "fbx")]
+    if is_fbx(&request.input) {
+        return run_fbx_rest_bind(request, tool);
+    }
     let input_container = declared_container(&request.input, "input")?;
     let output_container = declared_container(&request.output, "output")?;
     if input_container != output_container {
@@ -1084,6 +1151,408 @@ pub(crate) fn run(request: &Request, tool: ToolInfo) -> Result<ExitCode, String>
             rejection,
         ),
     }
+}
+
+/// Run the intentionally narrow FBX rest/bind path.
+///
+/// FBX is never rewritten in place. After the complete ufbx inventory admits
+/// the selected normalized subset, core reparameterizes the document, the
+/// glTF frontend serializes one GLB candidate, and core proves the reload of
+/// those exact bytes against the normalized FBX source. Nothing is published
+/// before the read-back digest and semantic proof both succeed.
+#[cfg(feature = "fbx")]
+fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, String> {
+    let Operation::RestBind { .. } = request.operation else {
+        return Err(
+            "scale whole-document does not support .fbx input; FBX support is limited to rest-bind reparameterization"
+                .into(),
+        );
+    };
+    if !request
+        .output
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("glb"))
+    {
+        return Err(format!(
+            "scale rest-bind FBX output {} must be .glb",
+            request.output.display()
+        ));
+    }
+    require_writable_destination(&request.output)?;
+    require_writable_destination(&request.evidence)?;
+    require_distinct_paths(request)?;
+
+    let input_bytes = fs::read(&request.input)
+        .map_err(|error| format!("cannot read {}: {error}", request.input.display()))?;
+    let identity = InputIdentity::from_bytes(&input_bytes);
+    let paths = PathsRecord {
+        input: request.input.display().to_string(),
+        output: request.output.display().to_string(),
+        evidence: request.evidence.display().to_string(),
+    };
+    let source = match load_scale_source_bytes(&request.input, &input_bytes) {
+        Ok(source) => source,
+        Err(error) => {
+            return emit_fbx_rejection(
+                request,
+                tool,
+                &paths,
+                identity,
+                None,
+                FbxRejectionRecord {
+                    stage: Stage::Preflight,
+                    kind: "unreadable-source",
+                    detail: error.to_string(),
+                },
+            );
+        }
+    };
+    match rest_bind_capability_facts(source.inventory()) {
+        Ok(_) => {}
+        Err(detail) => {
+            return emit_fbx_rejection(
+                request,
+                tool,
+                &paths,
+                identity,
+                Some(source.inventory()),
+                FbxRejectionRecord {
+                    stage: Stage::Preflight,
+                    kind: "unsupported-source-domain",
+                    detail,
+                },
+            );
+        }
+    };
+    // The first GLB is private staging, not an output. It is the canonical
+    // raw representation whose bytes the existing glTF rest/bind writer can
+    // rewrite exactly. The v5 record binds its identity explicitly so this
+    // does not masquerade as raw FBX preservation.
+    let staged_temp = tempfile::Builder::new()
+        .prefix(".animsmith-fbx-stage-")
+        .suffix(".glb")
+        .tempfile_in(parent_or_current(&request.output))
+        .map_err(|error| format!("cannot create temporary FBX staging source: {error}"))?
+        .into_temp_path();
+    animsmith_gltf::write::write(source.document(), &staged_temp)
+        .map_err(|error| format!("cannot serialize normalized FBX staging source: {error}"))?;
+    let staged_bytes = fs::read(&staged_temp)
+        .map_err(|error| format!("cannot read temporary FBX staging source: {error}"))?;
+    let staged_identity = InputIdentity::from_bytes(&staged_bytes);
+    let staged_source = match preflight_scale_source_bytes(&staged_temp, &staged_bytes) {
+        Ok(source) => source,
+        Err(error) => {
+            return emit_fbx_rejection(
+                request,
+                tool,
+                &paths,
+                identity,
+                Some(source.inventory()),
+                FbxRejectionRecord {
+                    stage: Stage::Rewrite,
+                    kind: "unreadable-staged-source",
+                    detail: error.to_string(),
+                },
+            );
+        }
+    };
+    let staged_operation = match map_fbx_staged_rest_bind_operation(
+        source.document(),
+        staged_source.document(),
+        request.operation.core(),
+    ) {
+        Ok(operation) => operation,
+        Err(detail) => {
+            return emit_fbx_rejection(
+                request,
+                tool,
+                &paths,
+                identity,
+                Some(source.inventory()),
+                FbxRejectionRecord {
+                    stage: Stage::Rewrite,
+                    kind: "staged-selector-mismatch",
+                    detail,
+                },
+            );
+        }
+    };
+    let ScaleOperation::RestBindUniformScale {
+        source_skin_index,
+        source_root_node_index,
+        expected_factor,
+    } = staged_operation
+    else {
+        return Err("FBX staging produced a non-rest/bind operation".into());
+    };
+    // Both glTF and FBX now feed the one plan → rewrite → proof → read-back
+    // transaction. The only FBX-specific work is adapting a normalized scene
+    // into that raw GLB source and projecting its distinct v5 evidence.
+    let mut staged_request = request.clone();
+    staged_request.operation = Operation::RestBind {
+        source_skin_index,
+        source_root_node_index,
+        expected_factor,
+    };
+    let produced = match produce(&staged_request, &staged_source) {
+        Ok(produced) => produced,
+        Err(Failure::Operator(detail)) => return Err(detail),
+        Err(Failure::Refusal(rejection)) => {
+            return emit_fbx_rejection(
+                request,
+                tool,
+                &paths,
+                identity,
+                Some(source.inventory()),
+                FbxRejectionRecord {
+                    stage: rejection.stage,
+                    kind: rejection.kind,
+                    detail: rejection.detail,
+                },
+            );
+        }
+    };
+    publish_fbx(
+        request,
+        tool,
+        &paths,
+        identity,
+        source.inventory(),
+        staged_identity,
+        produced,
+    )
+}
+
+#[cfg(feature = "fbx")]
+fn publish_fbx(
+    request: &Request,
+    tool: ToolInfo,
+    paths: &PathsRecord,
+    identity: InputIdentity,
+    capability: &FbxScaleCapabilityInventory,
+    staged_identity: InputIdentity,
+    produced: Produced,
+) -> Result<ExitCode, String> {
+    let Produced {
+        plan,
+        artifact,
+        proof,
+        artifact_temp,
+    } = produced;
+    let record = FbxScaleEvidence {
+        schema_version: FBX_SCALE_EVIDENCE_SCHEMA_VERSION,
+        schema: FBX_SCALE_EVIDENCE_SCHEMA_ID,
+        tool,
+        command: "scale",
+        input_format: "fbx",
+        outcome: Outcome::Published,
+        operation: request.operation.into(),
+        paths: paths.clone(),
+        input: identity,
+        capability: Some(capability),
+        result: Some(FbxScaleResult {
+            staged_source: staged_identity,
+            scale: shared_scale_evidence(&plan, &artifact, &proof)?,
+        }),
+        rejection: None,
+    };
+    let evidence_bytes = serialize_record(&record)?;
+    let evidence_temp = tempfile::Builder::new()
+        .prefix(".animsmith-scale-evidence-")
+        .suffix(".json")
+        .tempfile_in(parent_or_current(&request.evidence))
+        .map_err(|error| format!("cannot create temporary evidence: {error}"))?
+        .into_temp_path();
+    fs::write(&evidence_temp, &evidence_bytes)
+        .map_err(|error| format!("cannot write temporary evidence: {error}"))?;
+    publish_pair(
+        &artifact_temp,
+        &request.output,
+        &evidence_temp,
+        &request.evidence,
+        false,
+    )?;
+    match request.format {
+        Format::Json => emit(&evidence_bytes),
+        Format::Text => emit_text(&render::render_scale_published(
+            &request.output,
+            &request.evidence,
+            request.operation.label(),
+            request.operation.declared_factor(),
+            artifact.affected_source_nodes().len(),
+            artifact.affected_source_skins().len(),
+            proof.core.sample_time_count,
+        )),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(feature = "fbx")]
+fn emit_fbx_rejection(
+    request: &Request,
+    tool: ToolInfo,
+    paths: &PathsRecord,
+    identity: InputIdentity,
+    capability: Option<&FbxScaleCapabilityInventory>,
+    rejection: FbxRejectionRecord,
+) -> Result<ExitCode, String> {
+    let summary = render::render_scale_rejected(
+        &request.input,
+        request.operation.label(),
+        rejection.kind,
+        &rejection.detail,
+    );
+    let record = FbxScaleEvidence {
+        schema_version: FBX_SCALE_EVIDENCE_SCHEMA_VERSION,
+        schema: FBX_SCALE_EVIDENCE_SCHEMA_ID,
+        tool,
+        command: "scale",
+        input_format: "fbx",
+        outcome: Outcome::Rejected,
+        operation: request.operation.into(),
+        paths: paths.clone(),
+        input: identity,
+        capability,
+        result: None,
+        rejection: Some(rejection),
+    };
+    match request.format {
+        Format::Json => emit(&serialize_record(&record)?),
+        Format::Text => emit_error_text(&summary),
+    }
+    Ok(ExitCode::from(crate::EXIT_FINDINGS))
+}
+
+/// Map the FBX source selectors through the private normalized-FBX-to-GLB
+/// staging conversion by stable named skeleton identity, never by a newly
+/// assigned raw glTF array index. Both the root and the complete ordered skin
+/// joint topology must map exactly once.
+#[cfg(feature = "fbx")]
+fn map_fbx_staged_rest_bind_operation(
+    original: &Document,
+    staged: &Document,
+    operation: ScaleOperation,
+) -> Result<ScaleOperation, String> {
+    let ScaleOperation::RestBindUniformScale {
+        source_skin_index,
+        source_root_node_index,
+        expected_factor,
+    } = operation
+    else {
+        return Err("FBX staging only maps rest/bind operations".into());
+    };
+    let original_root = original
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .find(|node| node.source_node_index == source_root_node_index)
+        .and_then(|node| node.bone)
+        .and_then(|bone| original.skeleton.bones.get(bone))
+        .ok_or_else(|| {
+            format!(
+                "FBX source_root_node_index {source_root_node_index} has no named normalized node"
+            )
+        })?;
+    let staged_root_bones = staged
+        .skeleton
+        .bones
+        .iter()
+        .enumerate()
+        .filter_map(|(index, bone)| (bone.name == original_root.name).then_some(index))
+        .collect::<Vec<_>>();
+    let [staged_root_bone] = staged_root_bones.as_slice() else {
+        return Err(format!(
+            "staged GLB does not map root {:?} to exactly one normalized bone",
+            original_root.name
+        ));
+    };
+    let staged_root_nodes = staged
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .filter(|node| node.bone == Some(*staged_root_bone))
+        .map(|node| node.source_node_index)
+        .collect::<Vec<_>>();
+    let [staged_root_node_index] = staged_root_nodes.as_slice() else {
+        return Err(format!(
+            "staged GLB does not map root {:?} to exactly one raw node",
+            original_root.name
+        ));
+    };
+    let original_skin = original
+        .assets
+        .source_skeleton
+        .skins
+        .iter()
+        .find(|skin| skin.source_skin_index == source_skin_index)
+        .ok_or_else(|| format!("FBX source_skin_index {source_skin_index} is absent"))?;
+    let joint_names = original_skin
+        .joint_source_node_indices
+        .iter()
+        .map(|source_index| {
+            original
+                .assets
+                .source_skeleton
+                .nodes
+                .iter()
+                .find(|node| node.source_node_index == *source_index)
+                .and_then(|node| node.bone)
+                .and_then(|bone| original.skeleton.bones.get(bone))
+                .map(|bone| bone.name.as_str())
+                .ok_or_else(|| format!("FBX skin joint {source_index} is not named"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    require_unique_fbx_staged_joint_names(&joint_names)?;
+    let staged_skins = staged
+        .assets
+        .source_skeleton
+        .skins
+        .iter()
+        .filter(|skin| {
+            skin.joint_source_node_indices
+                .iter()
+                .map(|source_index| {
+                    staged
+                        .assets
+                        .source_skeleton
+                        .nodes
+                        .iter()
+                        .find(|node| node.source_node_index == *source_index)
+                        .and_then(|node| node.bone)
+                        .and_then(|bone| staged.skeleton.bones.get(bone))
+                        .map(|bone| bone.name.as_str())
+                })
+                .collect::<Option<Vec<_>>>()
+                .is_some_and(|names| names == joint_names)
+        })
+        .map(|skin| skin.source_skin_index)
+        .collect::<Vec<_>>();
+    let [staged_skin_index] = staged_skins.as_slice() else {
+        return Err(
+            "staged GLB does not contain exactly one skin with the selected named joint topology"
+                .into(),
+        );
+    };
+    Ok(ScaleOperation::RestBindUniformScale {
+        source_skin_index: *staged_skin_index,
+        source_root_node_index: *staged_root_node_index,
+        expected_factor,
+    })
+}
+
+/// The FBX staging bridge uses names as its stable cross-format identity, so
+/// an ordered skin topology cannot contain an ambiguous repeated name.
+#[cfg(feature = "fbx")]
+fn require_unique_fbx_staged_joint_names(joint_names: &[&str]) -> Result<(), String> {
+    (joint_names.iter().copied().collect::<HashSet<_>>().len() == joint_names.len())
+        .then_some(())
+        .ok_or_else(|| {
+            "FBX selected skin has duplicate normalized joint names; staging identity is ambiguous"
+                .into()
+        })
 }
 
 /// The plan, artifact and proof one successful run produced.
@@ -1263,7 +1732,7 @@ fn emit_rejection(
         // record that serialized fine is only a reporting failure, so the
         // refusal keeps exit `1` rather than inverting into `2`.
         Format::Json => emit(&serialize_record(&record)?),
-        Format::Text => eprint!("{summary}"),
+        Format::Text => emit_error_text(&summary),
     }
     Ok(ExitCode::from(crate::EXIT_FINDINGS))
 }
@@ -1274,6 +1743,41 @@ mod tests {
     use animsmith_core::{
         MeshInstanceShapeViolation, Property, SourceProjectionViolation, TrackShapeViolation,
     };
+
+    #[cfg(feature = "fbx")]
+    #[test]
+    fn fbx_staged_selector_mapping_rejects_repeated_joint_names() {
+        let mut original = animsmith_gltf::load_bytes(
+            Path::new("fixture.glb"),
+            &animsmith_testkit::rest_bind_scale_rig_glb(),
+        )
+        .expect("analytic rig loads");
+        let duplicate_node = original
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.source_node_index == 2)
+            .and_then(|node| node.bone)
+            .expect("attach node is normalized into the skeleton");
+        original.skeleton.bones[duplicate_node].name = "joint".into();
+        original.assets.source_skeleton.skins[0]
+            .joint_source_node_indices
+            .push(2);
+        let staged = original.clone();
+
+        let error = map_fbx_staged_rest_bind_operation(
+            &original,
+            &staged,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            },
+        )
+        .expect_err("repeated names cannot identify a staged skin exactly");
+        assert!(error.contains("duplicate normalized joint names"));
+    }
 
     #[test]
     fn shared_document_shape_errors_keep_specific_evidence_kinds() {
