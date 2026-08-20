@@ -424,9 +424,10 @@ impl Config {
     /// configuration structs.
     ///
     /// Deserialization rejects the same invalid values at the file/config
-    /// boundary. Embedded callers that construct [`Config`] directly may call
-    /// this method for an earlier error; [`crate::evaluate_checks`] always
-    /// calls it before inspecting or executing the supplied check catalog.
+    /// boundary. Embedded callers that construct [`Config`] directly must call
+    /// this method before passing it to measurement-only APIs;
+    /// [`crate::evaluate_checks`] always calls it before inspecting or
+    /// executing the supplied check catalog.
     ///
     /// # Errors
     ///
