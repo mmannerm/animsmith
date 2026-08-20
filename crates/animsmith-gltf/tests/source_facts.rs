@@ -611,6 +611,39 @@ fn dependency_closure_refuses_resource_and_root_symlinks_before_any_open() {
     ));
 }
 
+#[cfg(unix)]
+#[test]
+fn explicit_root_capability_may_traverse_a_symlinked_ancestor() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let real_parent = dir.path().join("real-parent");
+    let real_root = real_parent.join("resources");
+    std::fs::create_dir_all(&real_root).expect("real resource root");
+    std::fs::write(real_root.join("image.bin"), b"captured").expect("external image");
+    let linked_parent = dir.path().join("linked-parent");
+    symlink(&real_parent, &linked_parent).expect("ancestor symlink");
+    let explicit_root = linked_parent.join("resources");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": [{ "uri": "image.bin" }]
+    }));
+
+    let loaded = animsmith_gltf::load_source_bytes_with_resource_root(
+        &dir.path().join("captured.gltf"),
+        &bytes,
+        &explicit_root,
+    )
+    .expect("the caller explicitly authorized the root path");
+    let closure = loaded.dependency_closure();
+    assert!(closure.coverage().is_complete());
+    assert_eq!(closure.work().external_open_attempts(), 1);
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "image.bin"
+    ));
+}
+
 #[test]
 fn dependency_closure_stops_after_bounded_external_read_witness() {
     let dir = tempfile::tempdir().expect("temp dir");

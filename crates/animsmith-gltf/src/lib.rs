@@ -1742,9 +1742,12 @@ impl ResourceCaptureSession {
     }
 }
 
-/// Validate a caller-supplied root without canonicalizing it through a
-/// symlink. The caller may explicitly pass a relative root; that capability
-/// is made absolute once here, never inferred from a source locator.
+/// Validate the caller-supplied root itself without inspecting its ancestors.
+///
+/// Ancestors are part of the capability path the caller explicitly supplied;
+/// only the final root and locator-derived children belong to this loader's
+/// symlink-refusal boundary. A relative root is made absolute once here, never
+/// inferred from a source locator.
 fn trusted_resource_root(root: Option<&Path>) -> TrustedResourceRoot {
     let Some(root) = root else {
         return TrustedResourceRoot::Absent;
@@ -1761,39 +1764,18 @@ fn trusted_resource_root(root: Option<&Path>) -> TrustedResourceRoot {
             }
         }
     };
-    let mut checked = PathBuf::new();
-    for component in root.components() {
-        match component {
-            Component::Prefix(prefix) => checked.push(prefix.as_os_str()),
-            Component::RootDir => checked.push(component.as_os_str()),
-            Component::CurDir => {}
-            // The root is authority supplied by the caller, but accepting a
-            // lexical parent component would make the checked path ambiguous.
-            Component::ParentDir => {
-                return TrustedResourceRoot::Failure(CapturedResourceFailure::Unavailable(
-                    DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
-                ));
-            }
-            Component::Normal(component) => {
-                checked.push(component);
-                match std::fs::symlink_metadata(&checked) {
-                    Ok(metadata) if metadata.file_type().is_symlink() => {
-                        return TrustedResourceRoot::Failure(CapturedResourceFailure::Refused(
-                            DependencyResourceRefusalReasonV1::Symlink,
-                        ));
-                    }
-                    Ok(_) => {}
-                    Err(_) => {
-                        return TrustedResourceRoot::Failure(CapturedResourceFailure::Unavailable(
-                            DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
-                        ));
-                    }
-                }
-            }
-        }
+    // The root is authority supplied by the caller, but accepting a lexical
+    // parent component would make that capability ambiguous.
+    if root
+        .components()
+        .any(|component| component == Component::ParentDir)
+    {
+        return TrustedResourceRoot::Failure(CapturedResourceFailure::Unavailable(
+            DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
+        ));
     }
-    match std::fs::symlink_metadata(&checked) {
-        Ok(metadata) if metadata.is_dir() => TrustedResourceRoot::Available(checked),
+    match std::fs::symlink_metadata(&root) {
+        Ok(metadata) if metadata.is_dir() => TrustedResourceRoot::Available(root),
         Ok(metadata) if metadata.file_type().is_symlink() => TrustedResourceRoot::Failure(
             CapturedResourceFailure::Refused(DependencyResourceRefusalReasonV1::Symlink),
         ),
