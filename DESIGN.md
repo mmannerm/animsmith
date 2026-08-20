@@ -2367,19 +2367,41 @@ asset-addressability, and animation-target behavior.
 Each built-in resolves the exact `(family, profile_revision, engine_version,
 importer)` tuple to an immutable identity such as
 `urn:animsmith:engine-profile:unity-generic:1`. Its data record contains exact
-supported engine versions or version ranges, accepted input formats,
-importer/runtime facts, allowed setting vocabulary, and primary-source
-references with a verification date. Changing a fact requires a new profile
-revision and normal release notes; a historical result never silently
-resolves through the current revision. `[engine.settings]` selects only
-choices the immutable importer facts already expose; it cannot override those
-facts.
+supported engine versions or version ranges, accepted input formats, source
+and target coordinate bases, importer/runtime facts, allowed setting
+vocabulary, and primary-source references with a verification date. For every
+claimed input format it must also enumerate, rather than leave implicit:
+
+- handedness, up/forward axes, and the selected importer's axis-conversion
+  mapping;
+- each applicable clip-boundary predicate (including whole-frame constraints)
+  or an explicit statement that none is known; and
+- supported, dropped, and reinterpreted channels, extensions, and animation
+  constructs, with an explicit unsupported or unknown state where evidence is
+  incomplete.
+
+Changing any such fact requires a new profile revision and normal release
+notes; a historical result never silently resolves through the current
+revision. `[engine.settings]` selects only choices the immutable importer facts
+already expose; it cannot override those facts.
 
 Version one does not accept arbitrary engine-fact overrides in TOML. A user
 cannot safely make an importer support a channel or reinterpret root motion by
 assertion. Embedders may supply namespaced custom checks and keep their own
 consumer contracts, as they do today, without extending the built-in profile
 registry.
+
+Crate ownership is fixed before implementation. A new format-neutral
+`animsmith-engine` library owns the built-in fact registry, strict tuple
+resolution, prediction-rule adapters, and versioned engine-side contracts. It
+depends on `animsmith-core`, but not on format libraries, TOML, a filesystem,
+or engine SDKs. `animsmith-core` continues to own consumer-neutral documents,
+measurements, checks, and shared source-evidence value types. The glTF and FBX
+libraries populate the common raw-source projection while retaining their
+format-specific parsing details. The `animsmith` CLI owns strict TOML mapping
+and orchestration; `animsmith-report` renders the resulting public contracts.
+This preserves the engine-agnostic core and gives embedders the same registry
+and resolver as the CLI.
 
 ### E.3 Rules, checks, and precedence
 
@@ -2390,6 +2412,14 @@ sensitive extensions, authored FBX curves and units, take boundaries, and
 other declarations may already have been normalized or discarded. The raw
 projection preserves such facts and their availability without exposing a
 scale operation's private capability ledger as the general engine API.
+
+That projection is the one shared provenance-and-coverage model for raw source
+evidence, not a parallel per-feature copy. Loaders reuse its identity,
+availability, and provenance primitives wherever scale planning needs the same
+source observation. A scale capability inventory and proof ledger remain
+operation-specific derived consumers because they additionally encode a
+requested rewrite's closure and proof obligations; engine rules do not create
+a third representation of the underlying source fact.
 
 A rule declares all of its preconditions: the full resolved profile identity,
 input format and raw-source coverage, required measurement fields, rig roles
@@ -2448,6 +2478,14 @@ implementation slice, but it must permit a consumer to distinguish a measured
 fact, a profile prediction, generated advice, and an engine readback. Text and
 HTML views render that model rather than maintaining separate conclusions.
 
+Prediction, advice, and readback contracts reuse one versioned provenance
+header for input identity, profile tuple and facts digest, settings digest,
+schema identities, and source references. Their top-level schema identities
+and typed payloads remain separate because their authorities differ: a shared
+header must not let advice or an observation deserialize as measured or
+predicted evidence. This centralizes common identity plumbing without coupling
+the three contracts' independent compatibility rules.
+
 Profile selection never turns unavailable evidence into `not_applicable`.
 `not_applicable` is reserved for a rule whose subject genuinely does not exist
 under the resolved profile and project intent. An applicable rule with missing
@@ -2463,8 +2501,12 @@ Profiles keep these independent:
 - the source/interchange linear unit, either format-defined or explicitly
   supplied;
 - the target engine's native distance unit;
-- the importer's selected conversion behavior;
-- the resulting component/root and selected attachment transform scale; and
+- the exact source-to-target distance mapping and whether the importer
+  preserves physical dimensions;
+- source and target handedness, up/forward axes, and the importer's selected
+  axis-conversion behavior;
+- the resulting component/root, mesh-node, selected runtime-facing joint, and
+  attachment transform scales; and
 - the project's movement-ownership policy.
 
 For example, a centimetre-native engine does not imply a component scale of
@@ -2477,6 +2519,20 @@ They never infer units from bounds, character height, filenames, inverse-bind
 magnitudes, or an observed persistent object scale.
 Animation scale channels are dimensionless and never become length-bearing
 merely because the target engine uses a different world unit.
+
+The contract can therefore state, independently, that one source metre maps
+to 100 target centimetre units, physical dimensions are preserved, and the
+expected imported component/root, mesh-node, and selected-joint transform
+scales are dimensionless `1.0`. A mismatch in any one of those claims cannot
+be hidden by satisfying another.
+
+Issue #269's accepted Appendix D result is incorporated here: whole-document
+unit conversion and rest/bind hierarchy reparameterization are distinct
+operations with separate positive-uniform, closure, and proof contracts.
+Profile selection neither authorizes nor freezes an automatic normalization
+path. It may diagnose the need for, or advise a separately requested,
+Appendix D operation only when that operation's own source coverage and proof
+requirements are satisfied.
 
 Root motion is handled the same way. The profile describes which source or
 projection a configured importer uses and what a bake/extract option means.
@@ -2574,5 +2630,6 @@ commitment.
 This decision does not add engine dependencies, custom TOML profile
 definitions, automatic unit or root-motion conversion, retargeting,
 compression simulation, artistic thresholds, cross-file collection policy,
-or claims of visual/deformation correctness. Those require their own evidence
-and, where they rewrite motion, a separate accepted design and proof boundary.
+or claims of visual, deformation, artistic, gameplay, or runtime correctness.
+Those require their own evidence and, where they rewrite motion, a separate
+accepted design and proof boundary.
