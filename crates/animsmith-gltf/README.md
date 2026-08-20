@@ -14,6 +14,16 @@ embedding animsmith in a Rust pipeline: this crate handles container
 ingestion, while `animsmith-core` owns checks, measurements, config, and
 findings.
 
+Path loading roots external resources at the source file's parent. Captured
+byte loading deliberately has no ambient-current-directory fallback: use
+`load_bytes_with_resource_root` or `load_source_bytes_with_resource_root`
+when the input declares a safe relative external buffer or image. Unsafe
+spellings are refused before any open. The caller-supplied root is a capability
+rather than source evidence; rooted loading accepts only safe normalized
+relative keys, rejects symlinked root/resource components before opening them,
+and never includes host paths in the closure identity or source-controlled
+diagnostics.
+
 Values are preserved as authored. The loader does not renormalize
 quaternions, resample tracks, or clean data on the way in, so the
 mechanical checks judge the same animation data that shipped in the
@@ -26,8 +36,13 @@ declares no FPS or take range, and retain bounded source-order animation,
 channel/accessor, extension, and resource-declaration evidence. Resource
 locators are classified without opening or hashing additional dependencies;
 unsafe, remote, malformed, data-URI, and oversized spellings are redacted.
-The facts are importer evidence, not target-engine support policy or a
-dependency-closure claim.
+The facts are importer evidence, not target-engine support policy. The
+`LoadedSource` companion dependency closure records the exact primary identity
+plus each source-order buffer/image declaration's primary, captured external,
+refused, or unavailable mapping. It hashes each accepted external key from
+the same bounded read used by the loader and deduplicates aliases. Its fixed
+limits cover declarations, normalized keys, open/hash bytes, and alias probes;
+an N+1 limit produces typed partial evidence rather than resuming capture.
 
 `load` also fills `Document::assets` with the file's geometry — meshes
 (triangle lists), skins (joints + inverse bind matrices), and

@@ -10,22 +10,35 @@ README is a compact crates.io and repository index; the crate-root
 rustdoc owns the embedding flow, API status, extension points, and
 panic/error contracts.
 
-## Raw Source Facts
+## Raw Source Facts and Dependency Closure
 
 The core crate owns a bounded, format-neutral V1 vocabulary for importer-
 sensitive source evidence. Format crates can return an immutable
-`LoadedSource` that binds those facts to the exact primary bytes while lending
-read-only access to the normalized `Document`; `into_document()` deliberately
-discards the sidecar. The facts reuse the existing `SourceSkeletonAssets`
+`LoadedSource` that binds those facts and a bounded dependency closure to the
+exact primary bytes while lending read-only access to the normalized
+`Document`; `into_document()` deliberately discards both sidecars. The facts
+reuse the existing `SourceSkeletonAssets`
 projection instead of copying source node/skin authority. They describe
 AnimSmith loader evidence and availability, not engine support policy,
-filesystem/resource-closure policy, or a scale operation's private proof
-ledger. Complete, partial, and unavailable row coverage is explicit; a partial
-prefix proves presence only. V1 limits projection to 65,536 enumerable rows,
+target-importer policy, or a scale operation's private proof ledger. Complete,
+partial, and unavailable row coverage is explicit; a partial prefix proves
+presence only. V1 limits projection to 65,536 enumerable rows,
 4,096 clips/takes, 4,096 resource declarations, 4,096 bytes per retained
 source string, 8 MiB of retained source strings, and traversal depth 128.
 Budget N+1 preserves the deterministic prefix and marks the affected set
 partial without turning a successful legacy load into an error.
+
+`DependencyClosureV1` maps that raw declaration prefix to the primary input,
+safe normalized external keys with exact byte identities, or typed
+refusal/unavailability. Each reference also carries its kind-derived,
+format-neutral loader-essential, nonessential, or target-only purpose without
+making a target-engine support claim. Only complete raw coverage with an
+identity for every declaration produces a closure identity. Core performs no filesystem I/O;
+format loaders capture sidecar bytes once from a trusted root while loading,
+never from the process working directory. V1 bounds capture to 4,096
+declarations, 1,024 distinct external keys, 4,096 bytes and 128 components per
+key, 8 MiB aggregate normalization input, 64 MiB per external resource, and
+256 MiB in aggregate. Unsafe spellings and host paths are not retained.
 
 ## Shared runtime-node policy
 

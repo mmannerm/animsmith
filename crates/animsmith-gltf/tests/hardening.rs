@@ -8,8 +8,8 @@ use animsmith_core::profile::ResolvedRoles;
 use animsmith_core::{
     CheckCtx, CheckSelection, Config, MetricGrids, Severity, evaluate_checks, mechanical_checks,
 };
-use animsmith_gltf::LoadError;
 use animsmith_gltf::fix::{FixSession, Repair};
+use animsmith_gltf::{ExternalResourceFailure, LoadError};
 use std::path::{Path, PathBuf};
 
 fn unique_temp_dir(name: &str) -> tempfile::TempDir {
@@ -456,8 +456,8 @@ fn gltf_with_buffer_uri(uri: &str) -> String {
 fn loader_rejects_unsafe_external_buffer_uris() {
     let dir = unique_temp_dir("load-unsafe-uri");
     // Every containment branch: parent traversal, absolute path,
-    // backslash, and a bare `..`. All are LoadError::Buffer, never a
-    // read outside the input's directory.
+    // backslash, and a bare `..`. All are typed external-resource
+    // failures, never a read outside the input's directory.
     for (label, uri) in [
         ("parent", "../escape.bin"),
         ("absolute", "/etc/passwd"),
@@ -475,11 +475,14 @@ fn loader_rejects_unsafe_external_buffer_uris() {
         std::fs::write(&path, gltf_with_buffer_uri(uri)).unwrap();
         let err = animsmith_gltf::load(&path).expect_err("unsafe URI must be rejected");
         assert!(
-            matches!(err, LoadError::Buffer(_)),
+            matches!(
+                err,
+                LoadError::ExternalResource(ExternalResourceFailure::Refused)
+            ),
             "{label}: wrong variant: {err}"
         );
         assert!(
-            err.to_string().contains("unsafe external buffer URI"),
+            err.to_string().contains("unsafe external buffer resource"),
             "{label}: {err}"
         );
     }

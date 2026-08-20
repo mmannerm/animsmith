@@ -12,9 +12,12 @@
 //! that format loaders bind to the exact primary bytes in an immutable
 //! [`LoadedSource`]. A mutable normalized [`Document`] does not reconstruct
 //! importer-sensitive source declarations; consuming the wrapper as a document
-//! deliberately discards those facts. The borrowing view reuses the canonical
-//! [`model::SourceSkeletonAssets`] table and remains separate from scale's
-//! operation-specific capability and proof ledgers.
+//! deliberately discards those facts. The separate [`dependency_closure`]
+//! sidecar records bounded, same-load primary/external content identities over
+//! the raw resource-declaration domain; format crates own rooted I/O while core
+//! owns its validated value and canonical digest contract. The borrowing facts
+//! view reuses the canonical [`model::SourceSkeletonAssets`] table and remains
+//! separate from scale's operation-specific capability and proof ledgers.
 //! The opt-in [`bake_static_mesh_transforms`] operation canonicalizes supported
 //! unanimated, unskinned mesh scenes into identity-root geometry and returns
 //! deterministic producer evidence.
@@ -112,6 +115,7 @@ pub mod check;
 mod checks;
 pub mod config;
 pub mod contract;
+pub mod dependency_closure;
 pub mod diff;
 pub mod evaluation;
 pub mod finding;
@@ -140,6 +144,19 @@ pub use contract::{
     MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
     MeasurementReportInput, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, RigInfo, RigInfoError,
     ToolInfo, ToolSource, sha256_hex,
+};
+pub use dependency_closure::{
+    DEPENDENCY_CLOSURE_BUDGET_V1_ID, DEPENDENCY_CLOSURE_V1_ID,
+    DEPENDENCY_CLOSURE_V1_MAX_DEDUP_PROBES, DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES,
+    DEPENDENCY_CLOSURE_V1_MAX_KEY_BYTES, DEPENDENCY_CLOSURE_V1_MAX_NORMALIZATION_BYTES,
+    DEPENDENCY_CLOSURE_V1_MAX_PATH_COMPONENTS, DEPENDENCY_CLOSURE_V1_MAX_REFERENCES,
+    DEPENDENCY_CLOSURE_V1_MAX_RESOURCE_BYTES, DEPENDENCY_CLOSURE_V1_MAX_TOTAL_RESOURCE_BYTES,
+    DependencyClosureBuilderV1, DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1,
+    DependencyClosureError, DependencyClosureIdentityV1, DependencyClosureReferenceV1,
+    DependencyClosureV1, DependencyClosureWorkV1, DependencyReferenceTargetV1,
+    DependencyResourceKeyV1, DependencyResourcePurposeV1, DependencyResourceRefusalReasonV1,
+    DependencyResourceUnavailableReasonV1, ExternalResourceIdentityV1, ResourceClosureBudgetV1,
+    ResourceKeySyntaxV1,
 };
 pub use evaluation::{
     Applicability, BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, CheckEvaluation,

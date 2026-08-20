@@ -56,11 +56,13 @@ cargo run -p animsmith --example embed
 1. **Load a source.** Use `animsmith_gltf::load_source` or
    `animsmith_fbx::load_source` when importer-sensitive evidence matters. The
    immutable result binds the exact primary-file identity and bounded raw
-   facts to one normalized `Document`; borrow them through `document()` and
-   `source_facts()`. Calling `into_document()` explicitly discards that
-   sidecar. Byte-owning hosts use the corresponding `load_source_bytes`
-   functions. The compatibility `load` and `load_bytes` entry points still
-   return only a `Document`.
+   facts plus dependency-closure evidence to one normalized `Document`; borrow
+   them through `document()`, `source_facts()`, and `dependency_closure()`.
+   Calling `into_document()` explicitly discards both sidecars. Byte-owning
+   hosts with sibling resources use the format crate's explicit-resource-root
+   byte API. The compatibility `load_source_bytes`/`load_bytes` entry points do
+   not fall back to the process working directory. The `load` and `load_bytes`
+   entry points still return only a `Document`.
 
    glTF animation values remain authored; FBX scenes are normalized to metres,
    right-handed +Y-up coordinates and baked into linear TRS tracks. Raw FBX
@@ -73,9 +75,24 @@ cargo run -p animsmith --example embed
 
    Raw-fact row sets have explicit complete, partial, or unavailable coverage;
    a partial prefix proves presence only. Resource rows inventory bounded
-   declarations but do not open, normalize, deduplicate, or hash the external
-   closure. `SourceInfo.path` is diagnostic metadata, not identity or raw-fact
-   authority.
+   declarations. The separate closure view maps them to the primary identity,
+   one-read identities for safe rooted sidecars, or typed refusal/unavailability.
+   Each row also exposes its kind-derived loader-essential, nonessential, or
+   target-only purpose; that classification is not an engine-import verdict.
+   Only complete declaration coverage with an identity for every row yields a
+   complete closure identity. The result is exact for that versioned resource
+   domain, not a claim that an unsupported extension or unmodelled FBX domain
+   cannot introduce another target-importer dependency. `SourceInfo.path` is
+   diagnostic metadata, not identity or raw-fact authority.
+
+   External capture is local and bounded: unsafe, absolute, remote, escaping,
+   oversized, and symlink-mediated locators are not opened or reproduced.
+   Aliases of one normalized source-relative key are read and hashed once;
+   equal bytes under different keys remain distinct dependencies. Path-based
+   loading supplies the trusted root from the primary file. Hosts loading
+   captured primary bytes must explicitly supply a trusted root to resolve
+   sidecars; without one, a loader-essential resource is an error and an
+   optional resource leaves conservative closure coverage.
 
    An FBX host that needs auditable scale-boundary facts uses
    `animsmith_fbx::load_scale_source` instead: the returned wrapper retains the

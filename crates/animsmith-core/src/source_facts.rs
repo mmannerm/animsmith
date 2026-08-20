@@ -3,7 +3,10 @@
 //! This module binds immutable raw-source observations to the normalized
 //! [`Document`] produced from the same primary bytes.
 
-use crate::{Document, InputIdentity, SourceSkeletonAssets};
+use crate::{
+    DependencyClosureError, DependencyClosureV1, Document, InputIdentity, SourceSkeletonAssets,
+};
+use serde::Serialize;
 use std::fmt;
 
 /// Semantic identity of the in-memory raw-source vocabulary.
@@ -1076,7 +1079,8 @@ impl SourceConstructFactV1 {
 }
 
 /// Source declaration kind that may refer to external content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SourceResourceKindV1 {
     /// glTF buffer declaration.
     Buffer,
@@ -1117,7 +1121,7 @@ impl SourceResourceLocatorV1 {
     /// Classify a resource spelling while redacting unsafe or oversized input.
     ///
     /// This is lexical classification only. It deliberately does not
-    /// normalize, deduplicate, open, or assign resource identity; #465 owns
+    /// normalize, deduplicate, open, or assign resource identity; #475 owns
     /// those dependency-closure operations.
     pub fn classify(value: &str) -> Self {
         if let Some(classification) = redacted_resource_locator(value) {
@@ -1512,6 +1516,21 @@ impl RawSourceFactsBuilderV1 {
         RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES.saturating_sub(self.facts.resources.rows.len())
     }
 
+    /// Current raw resource-declaration coverage for closure capture.
+    pub const fn resource_coverage(&self) -> SourceSetCoverageV1 {
+        self.facts.resources.coverage
+    }
+
+    /// Retained raw resource-declaration prefix for closure capture.
+    pub fn resource_rows(&self) -> &[SourceResourceReferenceV1] {
+        &self.facts.resources.rows
+    }
+
+    /// Exact primary identity this projection is bound to.
+    pub const fn primary_identity(&self) -> &InputIdentity {
+        &self.facts.primary_identity
+    }
+
     /// Retained UTF-8 byte capacity remaining.
     ///
     /// Loaders use this before cloning the next source name or locator.
@@ -1726,11 +1745,40 @@ impl RawSourceFactsBuilderV1 {
     /// mappings contradict the document being bound.
     pub fn finish(mut self, document: Document) -> Result<LoadedSource, SourceFactsError> {
         self.qualify_unfinished_positive_rows();
+        let closure = DependencyClosureV1::capture_unavailable(
+            self.facts.primary_identity.clone(),
+            self.facts.resources.coverage,
+        );
+        self.finish_with_dependency_closure(document, closure)
+    }
+
+    /// Bind retained facts and dependency closure to one normalized document.
+    ///
+    /// This is the format-loader completion path once bounded resource capture
+    /// has run. The closure primary identity and retained reference prefix must
+    /// match this raw projection exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SourceFactsError`] for source row/document contradictions or
+    /// a mismatched dependency closure.
+    pub fn finish_with_dependency_closure(
+        mut self,
+        document: Document,
+        dependency_closure: DependencyClosureV1,
+    ) -> Result<LoadedSource, SourceFactsError> {
+        self.qualify_unfinished_positive_rows();
         validate_clip_rows(&self.facts.clips, document.clips.len())?;
         validate_ordered_rows(&self.facts.constructs, &self.facts.resources)?;
+        dependency_closure.validate_against(
+            self.facts.format,
+            &self.facts.primary_identity,
+            &self.facts.resources,
+        )?;
         Ok(LoadedSource {
             document,
             facts: self.facts,
+            dependency_closure,
         })
     }
 
@@ -1853,6 +1901,7 @@ fn validate_ordered_rows(
 pub struct LoadedSource {
     document: Document,
     facts: RawSourceFactsV1,
+    dependency_closure: DependencyClosureV1,
 }
 
 impl fmt::Debug for LoadedSource {
@@ -1861,6 +1910,7 @@ impl fmt::Debug for LoadedSource {
             .debug_struct("LoadedSource")
             .field("format", &self.facts.format)
             .field("primary_identity", &self.facts.primary_identity)
+            .field("dependency_closure", &self.dependency_closure)
             .field("work", &self.facts.work)
             .finish_non_exhaustive()
     }
@@ -1878,6 +1928,11 @@ impl LoadedSource {
             facts: &self.facts,
             source_skeleton: &self.document.assets.source_skeleton,
         }
+    }
+
+    /// Borrow the bounded dependency closure captured during this same load.
+    pub const fn dependency_closure(&self) -> &DependencyClosureV1 {
+        &self.dependency_closure
     }
 
     /// Consume the owner and deliberately discard importer-sensitive source facts.
@@ -2024,6 +2079,9 @@ pub enum SourceFactsError {
         /// Number of normalized clips.
         clip_count: usize,
     },
+    /// The dependency closure did not bind to these exact raw facts.
+    #[error(transparent)]
+    DependencyClosure(#[from] DependencyClosureError),
 }
 
 #[cfg(test)]
@@ -2170,6 +2228,13 @@ mod tests {
         assert!(!facts.clips().proves_absence());
         assert!(!facts.constructs().proves_absence());
         assert!(!facts.resources().proves_absence());
+        assert_eq!(
+            loaded.dependency_closure().coverage().reasons(),
+            &[
+                crate::DependencyClosureCoverageReasonV1::SourceDeclarationsUnavailable,
+                crate::DependencyClosureCoverageReasonV1::CaptureUnavailable,
+            ]
+        );
 
         let mut builder = RawSourceFactsBuilderV1::new(
             SourceFormatV1::GltfJson,
@@ -2185,6 +2250,57 @@ mod tests {
         assert!(facts.clips().proves_absence());
         assert!(facts.constructs().proves_absence());
         assert!(facts.resources().proves_absence());
+        assert_eq!(
+            loaded.dependency_closure().coverage().reasons(),
+            &[crate::DependencyClosureCoverageReasonV1::CaptureUnavailable]
+        );
+    }
+
+    #[test]
+    fn loaded_source_accepts_a_complete_format_bound_dependency_closure() {
+        let primary = InputIdentity::from_bytes(b"gltf");
+        let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::GltfJson, primary.clone());
+        assert!(facts.push_resource(SourceResourceReferenceV1::new(
+            0,
+            SourceResourceKindV1::Buffer,
+            0,
+            SourceResourceLocatorV1::classify("buffers/a%20b.bin"),
+            SourceLoaderDispositionV1::Preserved,
+            format_provenance(),
+        )));
+        facts.mark_complete(SourceFactDomainV1::Resources);
+
+        let key = crate::DependencyResourceKeyV1::from_source_str(
+            "buffers/a b.bin",
+            crate::ResourceKeySyntaxV1::GltfUri,
+        )
+        .unwrap();
+        let mut closure = crate::DependencyClosureBuilderV1::new(
+            primary.clone(),
+            facts.resource_coverage(),
+            facts.resource_rows().len(),
+        );
+        assert!(closure.begin_reference(17, 2));
+        assert_eq!(closure.prepare_external_key(&key).unwrap(), Some(true));
+        closure.record_external_open_attempt(&key).unwrap();
+        assert!(
+            closure
+                .push_captured_external(
+                    0,
+                    SourceResourceKindV1::Buffer,
+                    0,
+                    key,
+                    InputIdentity::from_bytes(b"buffer"),
+                )
+                .unwrap()
+        );
+        let loaded = facts
+            .finish_with_dependency_closure(Document::default(), closure.finish().unwrap())
+            .unwrap();
+        assert!(loaded.dependency_closure().coverage().is_complete());
+        assert!(loaded.dependency_closure().identity().is_some());
+        let document = loaded.into_document();
+        assert!(document.clips.is_empty());
     }
 
     #[test]
@@ -2347,6 +2463,12 @@ mod tests {
             facts.source_skeleton() as *const _,
             source_skeleton_ptr
         ));
+        assert_eq!(loaded.dependency_closure().primary_input(), &identity);
+        assert!(matches!(
+            loaded.dependency_closure().coverage(),
+            crate::DependencyClosureCoverageV1::Unavailable { .. }
+        ));
+        assert!(loaded.dependency_closure().identity().is_none());
         assert!(!format!("{loaded:?}").contains("/home/example/private"));
         let document = loaded.into_document();
         assert!(document.clips.is_empty());

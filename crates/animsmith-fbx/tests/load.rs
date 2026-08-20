@@ -7,11 +7,13 @@ use animsmith_core::scale::{
     ScaleCapabilityCoverage, ScaleError, ScaleOperation, ScaleRequest, plan_scale,
 };
 use animsmith_core::{
-    Document, InputIdentity, MeasurementContract, RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES,
-    SourceAxisV1, SourceChannelPropertyV1, SourceConstructKindV1, SourceFormatV1,
-    SourceLoaderDispositionV1, SourceObservationStateV1, SourceResourceKindV1,
-    SourceResourceLocatorV1, SourceSetCoverageStateV1, SourceUnavailableReasonV1, TrackValues,
-    validate_document_shape,
+    DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES, DependencyClosureCoverageReasonV1,
+    DependencyReferenceTargetV1, DependencyResourceRefusalReasonV1,
+    DependencyResourceUnavailableReasonV1, Document, InputIdentity, MeasurementContract,
+    RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES, RAW_SOURCE_V1_MAX_TEXT_BYTES, SourceAxisV1,
+    SourceChannelPropertyV1, SourceConstructKindV1, SourceFormatV1, SourceLoaderDispositionV1,
+    SourceObservationStateV1, SourceResourceKindV1, SourceResourceLocatorV1,
+    SourceSetCoverageStateV1, SourceUnavailableReasonV1, TrackValues, validate_document_shape,
 };
 use animsmith_fbx::{FbxCoordinateAxis, FbxScaleDomainStatus};
 use std::collections::BTreeMap;
@@ -1930,7 +1932,12 @@ fn byte_loader_resolves_external_texture_relative_to_supplied_path() {
     let bytes = std::fs::read(&path).expect("capture FBX");
     std::fs::remove_file(&path).expect("remove primary input after capture");
 
-    let source = animsmith_fbx::load_scale_source_bytes(&path, &bytes).expect("captured FBX loads");
+    let source = animsmith_fbx::load_scale_source_bytes_with_resource_root(
+        &path,
+        &bytes,
+        path.parent().expect("source parent is the explicit root"),
+    )
+    .expect("captured FBX loads under its explicit resource root");
 
     assert_eq!(source.inventory().external_resource_count, 2);
     assert!(animsmith_fbx::capability_facts(source.inventory()).external_resources_present);
@@ -1966,7 +1973,393 @@ fn source_facts_keep_texture_and_video_alias_declarations_separate() {
 }
 
 #[test]
-fn file_name_only_fbx_resources_are_present_but_redacted() {
+fn rooted_capture_opens_and_hashes_a_texture_video_alias_once() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
+
+    let loaded = animsmith_fbx::load_source(&path).expect("linked-resource FBX loads");
+    let closure = loaded.dependency_closure();
+    assert!(!closure.coverage().is_complete());
+    assert!(closure.identity().is_none());
+    assert!(
+        closure
+            .coverage()
+            .reasons()
+            .contains(&DependencyClosureCoverageReasonV1::UnmodeledResourceDomain)
+    );
+    assert_eq!(closure.references().len(), 2);
+    assert_eq!(closure.external_resources().len(), 1);
+    assert_eq!(closure.external_resources()[0].key().as_str(), "normal.png");
+    assert_eq!(closure.work().external_open_attempts(), 1);
+    assert_eq!(closure.work().captured_external_resources(), 1);
+    assert_eq!(
+        closure.work().external_bytes_read_hashed(),
+        TINY_PNG.len() as u64
+    );
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "normal.png"
+    ));
+    assert!(matches!(
+        closure.references()[1].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "normal.png"
+    ));
+    assert_normal_texture(loaded.document());
+}
+
+#[test]
+fn byte_only_capture_records_safe_aliases_as_root_unavailable_without_io() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
+    let bytes = std::fs::read(&path).expect("capture primary FBX bytes");
+
+    let loaded = animsmith_fbx::load_source_bytes(&path, &bytes)
+        .expect("byte-only FBX load does not require an external root");
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(closure.external_resources().is_empty());
+    assert_eq!(closure.references().len(), 2);
+    assert!(closure.references().iter().all(|reference| {
+        matches!(
+            reference.target(),
+            DependencyReferenceTargetV1::Unavailable {
+                key: Some(key),
+                reason: DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
+            } if key.as_str() == "normal.png"
+        )
+    }));
+    assert!(
+        loaded.document().assets.materials[0]
+            .normal_texture
+            .is_none()
+    );
+}
+
+#[test]
+fn rooted_capture_keeps_distinct_identical_external_keys_distinct() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
+    let source = std::fs::read_to_string(&path)
+        .expect("read analytic FBX")
+        .replace(
+            "\tVideo: 5003, \"Video::normal\", \"Clip\" {\n\t\tType: \"Clip\"\n\t\tProperties70: {\n\t\t\tP: \"Path\", \"KString\", \"XRefUrl\", \"\", \"normal.png\"\n\t\t}\n\t\tFileName: \"normal.png\"\n\t\tRelativeFilename: \"normal.png\"",
+            "\tVideo: 5003, \"Video::normal\", \"Clip\" {\n\t\tType: \"Clip\"\n\t\tProperties70: {\n\t\t\tP: \"Path\", \"KString\", \"XRefUrl\", \"\", \"alias.png\"\n\t\t}\n\t\tFileName: \"alias.png\"\n\t\tRelativeFilename: \"alias.png\"",
+        );
+    assert!(source.contains("RelativeFilename: \"alias.png\""));
+    std::fs::write(&path, source).expect("write distinct-alias FBX");
+    std::fs::write(path.with_file_name("alias.png"), TINY_PNG).expect("write identical alias");
+
+    let loaded = animsmith_fbx::load_source(&path).expect("distinct-alias FBX loads");
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.references().len(), 2);
+    assert_eq!(closure.external_resources().len(), 2);
+    assert_eq!(closure.work().external_open_attempts(), 2);
+    assert_eq!(closure.work().captured_external_resources(), 2);
+    assert_eq!(closure.external_resources()[0].key().as_str(), "alias.png");
+    assert_eq!(closure.external_resources()[1].key().as_str(), "normal.png");
+    assert_eq!(
+        closure.external_resources()[0].identity(),
+        closure.external_resources()[1].identity(),
+        "equal bytes do not collapse distinct logical keys"
+    );
+}
+
+#[test]
+fn rooted_capture_hashes_safe_relative_cache_file() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("cache-file.fbx");
+    let cache_bytes = b"analytic cache payload";
+    let source = std::fs::read_to_string(fixture())
+        .expect("read analytic FBX")
+        .replace("\r\n", "\n")
+        .replacen(
+            "\tObjectType: \"Deformer\" { Count: 2 }\n}",
+            "\tObjectType: \"Deformer\" { Count: 2 }\n\tObjectType: \"Cache\" { Count: 1 }\n}",
+            1,
+        )
+        .replacen(
+            "}\nConnections: {",
+            concat!(
+                "\tCache: 9000, \"Cache::analytic\", \"\" {\n",
+                "\t\tProperties70: {\n",
+                "\t\t\tP: \"CacheFileName\", \"KString\", \"\", \"\", \"cache.pc2\"\n",
+                "\t\t\tP: \"CacheFileType\", \"int\", \"Integer\", \"\",1\n",
+                "\t\t}\n",
+                "\t}\n",
+                "}\nConnections: {"
+            ),
+            1,
+        );
+    std::fs::write(&path, source).expect("write cache-file FBX");
+    std::fs::write(path.with_file_name("cache.pc2"), cache_bytes).expect("write cache bytes");
+
+    let loaded = animsmith_fbx::load_source(&path).expect("cache-file FBX loads");
+    let resources = loaded.source_facts().resources();
+    let [cache] = resources.rows() else {
+        panic!("one parser-projected cache declaration: {resources:?}");
+    };
+    assert_eq!(cache.kind(), SourceResourceKindV1::Cache);
+    assert!(matches!(
+        cache.locator(),
+        SourceResourceLocatorV1::Relative(locator) if locator.as_str() == "cache.pc2"
+    ));
+    let closure = loaded.dependency_closure();
+    assert!(closure.coverage().is_complete());
+    assert_eq!(closure.references().len(), 1);
+    assert_eq!(closure.external_resources().len(), 1);
+    assert_eq!(closure.work().external_open_attempts(), 1);
+    assert_eq!(closure.external_resources()[0].key().as_str(), "cache.pc2");
+    assert_eq!(
+        closure.external_resources()[0].identity(),
+        &InputIdentity::from_bytes(cache_bytes)
+    );
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RedactedLocatorCase {
+    Escaping,
+    Remote,
+    Malformed,
+    Oversized,
+}
+
+#[test]
+fn unsafe_resource_locator_table_is_refused_without_io_or_spelling_leaks() {
+    let oversized = "x".repeat(RAW_SOURCE_V1_MAX_TEXT_BYTES + 1);
+    let cases = [
+        (
+            "traversal",
+            "../secret-token",
+            RedactedLocatorCase::Escaping,
+        ),
+        (
+            "remote",
+            "https://example.invalid/secret-token",
+            RedactedLocatorCase::Remote,
+        ),
+        (
+            "encoded-separator",
+            "folder%2Fsecret-token",
+            RedactedLocatorCase::Escaping,
+        ),
+        (
+            "control",
+            "folder\u{0007}secret-token",
+            RedactedLocatorCase::Malformed,
+        ),
+        (
+            "malformed-percent",
+            "folder%zzsecret-token",
+            RedactedLocatorCase::Malformed,
+        ),
+        (
+            "oversized",
+            oversized.as_str(),
+            RedactedLocatorCase::Oversized,
+        ),
+    ];
+
+    for (label, locator, expected) in cases {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
+        let source = std::fs::read_to_string(&path)
+            .expect("read analytic FBX")
+            .replace(
+                "RelativeFilename: \"normal.png\"",
+                &format!("RelativeFilename: \"{locator}\""),
+            );
+        std::fs::write(&path, source).expect("write unsafe-locator FBX");
+
+        let loaded = animsmith_fbx::load_source(&path)
+            .unwrap_or_else(|error| panic!("{label}: parser accepts analytic locator: {error}"));
+        let resources = loaded.source_facts().resources();
+        assert_eq!(
+            resources.rows().len(),
+            2,
+            "{label}: both declarations remain"
+        );
+        for resource in resources.rows() {
+            assert!(
+                matches_locator_case(resource.locator(), expected),
+                "{label}: unexpected locator classification: {:?}",
+                resource.locator()
+            );
+        }
+        let closure = loaded.dependency_closure();
+        assert_eq!(closure.work().external_open_attempts(), 0, "{label}");
+        assert!(closure.external_resources().is_empty(), "{label}");
+        assert!(
+            closure
+                .references()
+                .iter()
+                .all(|reference| matches_refusal_case(reference.target(), expected))
+        );
+        let debug = format!("{:?}{:?}", loaded.source_facts(), closure);
+        assert!(!debug.contains("secret-token"), "{label}: {debug}");
+        assert!(
+            loaded.document().assets.materials[0]
+                .normal_texture
+                .is_none()
+        );
+    }
+}
+
+fn matches_locator_case(locator: &SourceResourceLocatorV1, expected: RedactedLocatorCase) -> bool {
+    matches!(
+        (locator, expected),
+        (
+            SourceResourceLocatorV1::Escaping,
+            RedactedLocatorCase::Escaping
+        ) | (SourceResourceLocatorV1::Remote, RedactedLocatorCase::Remote)
+            | (
+                SourceResourceLocatorV1::Malformed,
+                RedactedLocatorCase::Malformed
+            )
+            | (
+                SourceResourceLocatorV1::Oversized,
+                RedactedLocatorCase::Oversized
+            )
+    )
+}
+
+fn matches_refusal_case(
+    target: &DependencyReferenceTargetV1,
+    expected: RedactedLocatorCase,
+) -> bool {
+    matches!(
+        (target, expected),
+        (
+            DependencyReferenceTargetV1::Refused {
+                key: None,
+                reason: DependencyResourceRefusalReasonV1::Escaping,
+            },
+            RedactedLocatorCase::Escaping
+        ) | (
+            DependencyReferenceTargetV1::Refused {
+                key: None,
+                reason: DependencyResourceRefusalReasonV1::Remote,
+            },
+            RedactedLocatorCase::Remote
+        ) | (
+            DependencyReferenceTargetV1::Refused {
+                key: None,
+                reason: DependencyResourceRefusalReasonV1::Malformed,
+            },
+            RedactedLocatorCase::Malformed
+        ) | (
+            DependencyReferenceTargetV1::Refused {
+                key: None,
+                reason: DependencyResourceRefusalReasonV1::Oversized,
+            },
+            RedactedLocatorCase::Oversized
+        )
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn rooted_capture_refuses_symlink_without_an_open_attempt() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
+    let image = path.with_file_name("normal.png");
+    let outside = tempfile::tempdir().expect("outside temp dir");
+    let outside_image = outside.path().join("outside.png");
+    std::fs::write(&outside_image, TINY_PNG).expect("write outside image");
+    std::fs::remove_file(&image).expect("replace linked image with symlink");
+    std::os::unix::fs::symlink(&outside_image, &image).expect("create resource symlink");
+
+    let loaded = animsmith_fbx::load_source(&path).expect("symlinked FBX still parses");
+    let closure = loaded.dependency_closure();
+    assert!(!closure.coverage().is_complete());
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert_eq!(closure.work().captured_external_resources(), 0);
+    assert!(
+        closure
+            .coverage()
+            .reasons()
+            .contains(&DependencyClosureCoverageReasonV1::RefusedResource)
+    );
+    assert!(closure.references().iter().all(|reference| {
+        matches!(
+            reference.target(),
+            DependencyReferenceTargetV1::Refused {
+                key: Some(key),
+                reason: animsmith_core::DependencyResourceRefusalReasonV1::Symlink,
+            } if key.as_str() == "normal.png"
+        )
+    }));
+    assert!(
+        loaded.document().assets.materials[0]
+            .normal_texture
+            .is_none()
+    );
+}
+
+#[test]
+fn rooted_capture_does_not_open_a_non_regular_resource_target() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Unreadable);
+
+    let loaded = animsmith_fbx::load_source(&path).expect("directory-resource FBX still parses");
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(closure.external_resources().is_empty());
+    assert!(closure.references().iter().all(|reference| {
+        matches!(
+            reference.target(),
+            DependencyReferenceTargetV1::Unavailable {
+                reason: DependencyResourceUnavailableReasonV1::Unreadable,
+                ..
+            }
+        )
+    }));
+    assert!(
+        loaded.document().assets.materials[0]
+            .normal_texture
+            .is_none()
+    );
+}
+
+#[test]
+fn absolute_resource_sentinel_is_refused_without_a_host_probe() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
+    let source = std::fs::read_to_string(&path)
+        .expect("read analytic FBX")
+        .replace(
+            "RelativeFilename: \"normal.png\"",
+            "RelativeFilename: \"/sentinel.png\"",
+        );
+    std::fs::write(&path, source).expect("write absolute-sentinel FBX");
+
+    let loaded = animsmith_fbx::load_source(&path).expect("absolute-sentinel FBX parses");
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(
+        closure
+            .coverage()
+            .reasons()
+            .contains(&DependencyClosureCoverageReasonV1::RefusedResource)
+    );
+    assert!(closure.references().iter().all(|reference| {
+        matches!(
+            reference.target(),
+            DependencyReferenceTargetV1::Refused {
+                key: None,
+                reason: animsmith_core::DependencyResourceRefusalReasonV1::Absolute,
+            }
+        )
+    }));
+    assert!(
+        loaded.document().assets.materials[0]
+            .normal_texture
+            .is_none()
+    );
+    assert!(!format!("{:?}", closure).contains("sentinel.png"));
+}
+
+#[test]
+fn file_name_only_fbx_resources_are_redacted_and_never_captureable() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
     let source = std::fs::read_to_string(&path)
@@ -1990,6 +2383,24 @@ fn file_name_only_fbx_resources_are_present_but_redacted() {
     assert!(matches!(video.locator(), SourceResourceLocatorV1::Absolute));
     let debug = format!("{:?}", loaded.source_facts());
     assert!(!debug.contains("normal.png"), "{debug}");
+    let closure = loaded.dependency_closure();
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(closure.references().iter().all(|reference| {
+        matches!(
+            reference.target(),
+            DependencyReferenceTargetV1::Refused {
+                key: None,
+                reason: animsmith_core::DependencyResourceRefusalReasonV1::Absolute,
+            }
+        )
+    }));
+    // `normal.png` remains beside the source as a sentinel for the parser's
+    // resolved absolute path. It must never be opened through that field.
+    assert!(
+        loaded.document().assets.materials[0]
+            .normal_texture
+            .is_none()
+    );
 }
 
 #[test]
@@ -2058,6 +2469,28 @@ fn resource_projection_n_plus_one_is_partial_without_breaking_legacy_load() {
         // One take row, one authored property row, N retained resources, and
         // the terminal resource inspection that establishes partial coverage.
         RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES + 3
+    );
+    let closure = loaded.dependency_closure();
+    assert_eq!(
+        closure.references().len(),
+        DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES
+    );
+    assert_eq!(
+        closure.work().inspected_references(),
+        DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES + 1
+    );
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(
+        closure
+            .coverage()
+            .reasons()
+            .contains(&DependencyClosureCoverageReasonV1::SourceDeclarationsPartial)
+    );
+    assert!(
+        closure
+            .coverage()
+            .reasons()
+            .contains(&DependencyClosureCoverageReasonV1::ResourceBudgetExceeded)
     );
 }
 

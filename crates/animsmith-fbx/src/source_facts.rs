@@ -1,21 +1,24 @@
 //! Format-neutral source facts projected from one successfully parsed ufbx scene.
 
 use animsmith_core::{
-    Document, InputIdentity, LoadedSource, RAW_SOURCE_V1_MAX_TEXT_BYTES, RawSourceFactsBuilderV1,
-    SourceAxisV1, SourceChannelFactV1, SourceChannelPropertyV1, SourceClipFactV1,
-    SourceComponentMaskV1, SourceConstructFactV1, SourceConstructKindV1, SourceCoordinateBasisV1,
-    SourceFactDomainV1, SourceFactSetV1, SourceFactsError, SourceFormatV1, SourceFramesPerSecondV1,
-    SourceLinearUnitV1, SourceLoaderDispositionV1, SourceLogicalLocatorV1, SourceObservationV1,
-    SourceProvenanceV1, SourceResourceKindV1, SourceResourceLocatorV1, SourceResourceReferenceV1,
-    SourceTargetKindV1, SourceTargetV1, SourceTextV1, SourceTimeRangeV1, SourceUnavailableReasonV1,
+    InputIdentity, RAW_SOURCE_V1_MAX_TEXT_BYTES, RawSourceFactsBuilderV1, SourceAxisV1,
+    SourceChannelFactV1, SourceChannelPropertyV1, SourceClipFactV1, SourceComponentMaskV1,
+    SourceConstructFactV1, SourceConstructKindV1, SourceCoordinateBasisV1, SourceFactDomainV1,
+    SourceFactSetV1, SourceFormatV1, SourceFramesPerSecondV1, SourceLinearUnitV1,
+    SourceLoaderDispositionV1, SourceLogicalLocatorV1, SourceObservationV1, SourceProvenanceV1,
+    SourceResourceKindV1, SourceResourceLocatorV1, SourceResourceReferenceV1, SourceTargetKindV1,
+    SourceTargetV1, SourceTextV1, SourceTimeRangeV1, SourceUnavailableReasonV1,
 };
 
-pub(crate) fn build(
+/// Project raw FBX facts before the loader performs rooted dependency capture.
+///
+/// The caller retains this builder long enough to attach a closure constructed
+/// from its exact resource row prefix.
+pub(crate) fn project(
     scene: &ufbx::Scene,
     construct_counts: SourceConstructCounts,
     primary_bytes: &[u8],
-    document: Document,
-) -> Result<LoadedSource, SourceFactsError> {
+) -> RawSourceFactsBuilderV1 {
     let mut builder = RawSourceFactsBuilderV1::new(
         SourceFormatV1::Fbx,
         InputIdentity::from_bytes(primary_bytes),
@@ -24,7 +27,7 @@ pub(crate) fn build(
     project_clips(scene, &mut builder);
     project_constructs(construct_counts, &mut builder);
     project_resources(scene, &mut builder);
-    builder.finish(document)
+    builder
 }
 
 fn project_coordinate_facts(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1) {
@@ -492,78 +495,12 @@ fn unsupported_source_element_count(scene: &ufbx::Scene) -> usize {
 }
 
 fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1) {
-    let mut source_order_index = 0usize;
-    let mut texture_index = 0usize;
-    let mut video_index = 0usize;
-    let mut cache_index = 0usize;
-    // Merge the three typed lists by ufbx's stable scene-wide element id.
-    // This visits only resource declarations, so unrelated source elements
-    // cannot make the added facts walk unbounded.
-    while let Some(list) = next_resource_list(scene, texture_index, video_index, cache_index) {
+    for resource in resource_declarations(scene) {
         if builder.remaining_resource_rows() == 0 || builder.remaining_observation_rows() == 0 {
             builder.mark_budget_exceeded(SourceFactDomainV1::Resources);
             return;
         }
-        let resource = match list {
-            FbxResourceList::Texture => {
-                let texture = &scene.textures[texture_index];
-                texture_index = texture_index.saturating_add(1);
-                ResourceDeclaration {
-                    kind: SourceResourceKindV1::Texture,
-                    source_index: u64::from(texture.element.typed_id),
-                    embedded: !texture.content.is_empty(),
-                    relative_filename: texture.relative_filename.as_ref(),
-                    filename: texture.filename.as_ref(),
-                    absolute_filename_present: !texture.absolute_filename.is_empty(),
-                    disposition: SourceLoaderDispositionV1::Unknown,
-                    type_name: "textures",
-                }
-            }
-            FbxResourceList::Video => {
-                let video = &scene.videos[video_index];
-                video_index = video_index.saturating_add(1);
-                ResourceDeclaration {
-                    kind: SourceResourceKindV1::Video,
-                    source_index: u64::from(video.element.typed_id),
-                    embedded: !video.content.is_empty(),
-                    relative_filename: video.relative_filename.as_ref(),
-                    filename: video.filename.as_ref(),
-                    absolute_filename_present: !video.absolute_filename.is_empty(),
-                    disposition: SourceLoaderDispositionV1::Discarded,
-                    type_name: "videos",
-                }
-            }
-            FbxResourceList::Cache => {
-                let cache = &scene.cache_files[cache_index];
-                cache_index = cache_index.saturating_add(1);
-                ResourceDeclaration {
-                    kind: SourceResourceKindV1::Cache,
-                    source_index: u64::from(cache.element.typed_id),
-                    embedded: false,
-                    relative_filename: cache.relative_filename.as_ref(),
-                    filename: cache.filename.as_ref(),
-                    absolute_filename_present: !cache.absolute_filename.is_empty(),
-                    disposition: SourceLoaderDispositionV1::Unsupported,
-                    type_name: "cache_files",
-                }
-            }
-        };
-
-        let (value, field, redacted_locator) = if resource.embedded {
-            (None, "content", Some(SourceResourceLocatorV1::Embedded))
-        } else if !resource.relative_filename.is_empty() {
-            (Some(resource.relative_filename), "relative_filename", None)
-        } else if !resource.filename.is_empty() {
-            (Some(resource.filename), "filename", None)
-        } else if resource.absolute_filename_present {
-            (
-                None,
-                "absolute_filename",
-                Some(SourceResourceLocatorV1::Absolute),
-            )
-        } else {
-            (None, "filename", Some(SourceResourceLocatorV1::Missing))
-        };
+        let (value, field, redacted_locator) = resource.source_locator();
         // Reserve exactly what classification retains before the only possible
         // source-string clone. Unsafe, absolute, remote, data, malformed, and
         // oversized spellings are redacted and therefore reserve zero bytes.
@@ -573,7 +510,7 @@ fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1)
             .len()
             .saturating_add(resource.type_name.len())
             .saturating_add(1)
-            .saturating_add(decimal_len_u64(resource.source_index))
+            .saturating_add(decimal_len_u64(resource.source_index()))
             .saturating_add(1)
             .saturating_add(field.len());
         if provenance_locator_bytes.saturating_add(retained_locator_bytes)
@@ -584,7 +521,8 @@ fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1)
         }
         let provenance_locator = format!(
             "fbx:{}/{}/{field}",
-            resource.type_name, resource.source_index
+            resource.type_name,
+            resource.source_index()
         );
         let locator = redacted_locator.unwrap_or_else(|| {
             value.map_or(SourceResourceLocatorV1::Missing, |value| {
@@ -592,9 +530,9 @@ fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1)
             })
         });
         let row = SourceResourceReferenceV1::new(
-            source_order_index,
-            resource.kind,
-            resource.source_index,
+            resource.source_order_index(),
+            resource.kind(),
+            resource.source_index(),
             locator,
             resource.disposition,
             parser_provenance(&provenance_locator),
@@ -602,7 +540,6 @@ fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1)
         if !builder.push_resource(row) {
             return;
         }
-        source_order_index = source_order_index.saturating_add(1);
     }
     builder.mark_complete(SourceFactDomainV1::Resources);
 }
@@ -650,7 +587,16 @@ fn next_resource_list(
     .map(|(_, list)| list)
 }
 
-struct ResourceDeclaration<'a> {
+/// One deterministic typed FBX resource declaration.
+///
+/// The iterator below is the sole authority for raw resource rows and the
+/// dependency-closure capture pass. It retains only a boolean presence marker
+/// for the parser-resolved absolute path so an external declaration is never
+/// misreported as absent. That path is never retained, exposed, normalized,
+/// or opened; only embedded content and source-relative declarations are
+/// eligible for capture.
+pub(crate) struct ResourceDeclaration<'a> {
+    source_order_index: usize,
     kind: SourceResourceKindV1,
     source_index: u64,
     embedded: bool,
@@ -659,6 +605,132 @@ struct ResourceDeclaration<'a> {
     absolute_filename_present: bool,
     disposition: SourceLoaderDispositionV1,
     type_name: &'static str,
+}
+
+impl ResourceDeclaration<'_> {
+    /// Stable source-order index shared by raw facts and closure rows.
+    pub(crate) const fn source_order_index(&self) -> usize {
+        self.source_order_index
+    }
+
+    /// Typed source declaration kind.
+    pub(crate) const fn kind(&self) -> SourceResourceKindV1 {
+        self.kind
+    }
+
+    /// Parser-stable source declaration index.
+    pub(crate) const fn source_index(&self) -> u64 {
+        self.source_index
+    }
+
+    /// Whether content is carried by the exact primary FBX bytes.
+    pub(crate) const fn is_embedded(&self) -> bool {
+        self.embedded
+    }
+
+    fn source_locator(&self) -> (Option<&str>, &'static str, Option<SourceResourceLocatorV1>) {
+        if self.is_embedded() {
+            (None, "content", Some(SourceResourceLocatorV1::Embedded))
+        } else if !self.relative_filename.is_empty() {
+            (Some(self.relative_filename), "relative_filename", None)
+        } else if !self.filename.is_empty() {
+            // ufbx may surface a resolved absolute spelling here. It is only
+            // classified/redacted by core and can never become a capture key.
+            (Some(self.filename), "filename", None)
+        } else if self.absolute_filename_present {
+            // Preserve positive declaration evidence without retaining or
+            // resolving the parser's host-specific absolute spelling.
+            (
+                None,
+                "absolute_filename",
+                Some(SourceResourceLocatorV1::Absolute),
+            )
+        } else {
+            (None, "filename", Some(SourceResourceLocatorV1::Missing))
+        }
+    }
+}
+
+/// Bounded, allocation-free traversal of the typed FBX resource lists.
+pub(crate) struct ResourceDeclarations<'a> {
+    scene: &'a ufbx::Scene,
+    source_order_index: usize,
+    texture_index: usize,
+    video_index: usize,
+    cache_index: usize,
+}
+
+/// Iterate texture, video, and cache declarations in stable scene-wide order.
+pub(crate) fn resource_declarations(scene: &ufbx::Scene) -> ResourceDeclarations<'_> {
+    ResourceDeclarations {
+        scene,
+        source_order_index: 0,
+        texture_index: 0,
+        video_index: 0,
+        cache_index: 0,
+    }
+}
+
+impl<'a> Iterator for ResourceDeclarations<'a> {
+    type Item = ResourceDeclaration<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let list = next_resource_list(
+            self.scene,
+            self.texture_index,
+            self.video_index,
+            self.cache_index,
+        )?;
+        let source_order_index = self.source_order_index;
+        self.source_order_index = self.source_order_index.saturating_add(1);
+        Some(match list {
+            FbxResourceList::Texture => {
+                let texture = &self.scene.textures[self.texture_index];
+                self.texture_index = self.texture_index.saturating_add(1);
+                ResourceDeclaration {
+                    source_order_index,
+                    kind: SourceResourceKindV1::Texture,
+                    source_index: u64::from(texture.element.typed_id),
+                    embedded: !texture.content.is_empty(),
+                    relative_filename: texture.relative_filename.as_ref(),
+                    filename: texture.filename.as_ref(),
+                    absolute_filename_present: !texture.absolute_filename.is_empty(),
+                    disposition: SourceLoaderDispositionV1::Unknown,
+                    type_name: "textures",
+                }
+            }
+            FbxResourceList::Video => {
+                let video = &self.scene.videos[self.video_index];
+                self.video_index = self.video_index.saturating_add(1);
+                ResourceDeclaration {
+                    source_order_index,
+                    kind: SourceResourceKindV1::Video,
+                    source_index: u64::from(video.element.typed_id),
+                    embedded: !video.content.is_empty(),
+                    relative_filename: video.relative_filename.as_ref(),
+                    filename: video.filename.as_ref(),
+                    absolute_filename_present: !video.absolute_filename.is_empty(),
+                    disposition: SourceLoaderDispositionV1::Discarded,
+                    type_name: "videos",
+                }
+            }
+            FbxResourceList::Cache => {
+                let cache = &self.scene.cache_files[self.cache_index];
+                self.cache_index = self.cache_index.saturating_add(1);
+                ResourceDeclaration {
+                    source_order_index,
+                    kind: SourceResourceKindV1::Cache,
+                    source_index: u64::from(cache.element.typed_id),
+                    embedded: false,
+                    relative_filename: cache.relative_filename.as_ref(),
+                    filename: cache.filename.as_ref(),
+                    absolute_filename_present: !cache.absolute_filename.is_empty(),
+                    disposition: SourceLoaderDispositionV1::Unsupported,
+                    type_name: "cache_files",
+                }
+            }
+        })
+    }
 }
 
 fn parser_provenance(locator: &str) -> SourceProvenanceV1 {

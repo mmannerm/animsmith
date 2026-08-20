@@ -1440,6 +1440,9 @@ fn producer_load_failure(error: InputLoadError) -> producer::Failure {
         InputLoadError::Gltf(error @ animsmith_gltf::LoadError::Io { .. }) => {
             Failure::operator(error)
         }
+        InputLoadError::Gltf(error @ animsmith_gltf::LoadError::ExternalResource(_)) => {
+            Failure::operator(error)
+        }
         InputLoadError::Fbx(error @ animsmith_fbx::LoadError::Path(_)) => Failure::operator(error),
         // These are the only operator exceptions. Every other current or
         // future typed loader variant is a fact about bytes the producer was
@@ -1484,15 +1487,28 @@ fn capture_input(path: &Path) -> Result<(InputFormat, Vec<u8>), String> {
     Ok((format, bytes))
 }
 
+fn input_resource_root(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
 #[cfg(feature = "fbx")]
 fn load_bytes_typed(
     path: &Path,
     format: InputFormat,
     bytes: &[u8],
 ) -> Result<Document, InputLoadError> {
+    let resource_root = input_resource_root(path);
     match format {
-        InputFormat::Gltf => animsmith_gltf::load_bytes(path, bytes).map_err(InputLoadError::Gltf),
-        InputFormat::Fbx => animsmith_fbx::load_bytes(path, bytes).map_err(InputLoadError::Fbx),
+        InputFormat::Gltf => {
+            animsmith_gltf::load_bytes_with_resource_root(path, bytes, resource_root)
+                .map_err(InputLoadError::Gltf)
+        }
+        InputFormat::Fbx => {
+            animsmith_fbx::load_bytes_with_resource_root(path, bytes, resource_root)
+                .map_err(InputLoadError::Fbx)
+        }
     }
 }
 
@@ -1502,12 +1518,15 @@ fn load_source_bytes_typed(
     format: InputFormat,
     bytes: &[u8],
 ) -> Result<animsmith_core::LoadedSource, InputLoadError> {
+    let resource_root = input_resource_root(path);
     match format {
         InputFormat::Gltf => {
-            animsmith_gltf::load_source_bytes(path, bytes).map_err(InputLoadError::Gltf)
+            animsmith_gltf::load_source_bytes_with_resource_root(path, bytes, resource_root)
+                .map_err(InputLoadError::Gltf)
         }
         InputFormat::Fbx => {
-            animsmith_fbx::load_source_bytes(path, bytes).map_err(InputLoadError::Fbx)
+            animsmith_fbx::load_source_bytes_with_resource_root(path, bytes, resource_root)
+                .map_err(InputLoadError::Fbx)
         }
     }
 }
@@ -1518,9 +1537,11 @@ fn load_source_bytes_typed(
     format: InputFormat,
     bytes: &[u8],
 ) -> Result<animsmith_core::LoadedSource, String> {
+    let resource_root = input_resource_root(path);
     match format {
         InputFormat::Gltf => {
-            animsmith_gltf::load_source_bytes(path, bytes).map_err(|error| error.to_string())
+            animsmith_gltf::load_source_bytes_with_resource_root(path, bytes, resource_root)
+                .map_err(|error| error.to_string())
         }
     }
 }
@@ -1750,7 +1771,7 @@ root_rotation = "bake"
 
     #[cfg(feature = "fbx")]
     #[test]
-    fn producer_loader_classifier_has_only_two_operator_exceptions() {
+    fn producer_loader_classifier_keeps_io_and_required_dependencies_operator_owned() {
         let cases = [
             (
                 InputLoadError::Gltf(animsmith_gltf::LoadError::Io {
@@ -1761,6 +1782,12 @@ root_rotation = "bake"
             ),
             (
                 InputLoadError::Fbx(animsmith_fbx::LoadError::Path("non-UTF-8".into())),
+                true,
+            ),
+            (
+                InputLoadError::Gltf(animsmith_gltf::LoadError::ExternalResource(
+                    animsmith_gltf::ExternalResourceFailure::Unavailable,
+                )),
                 true,
             ),
             (
