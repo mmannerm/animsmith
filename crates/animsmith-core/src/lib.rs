@@ -54,6 +54,7 @@
 //!
 //! let doc = Document::default();
 //! let config = Config::default();
+//! config.validate()?;
 //! let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
 //! let grids = MetricGrids::new(&doc);
 //!

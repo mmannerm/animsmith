@@ -4812,6 +4812,36 @@ fn lint_bad_config_is_operator_error() {
 }
 
 #[test]
+fn invalid_check_tolerance_is_rejected_before_measurement_input_load() {
+    let dir = unique_temp_dir("invalid-check-tolerance");
+    let config = write_config(
+        dir.path(),
+        "invalid-check-tolerance.toml",
+        "[checks.loop-seam]\nmin_stride_step_m = nan\n",
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["measure", "/no/such/measurement-input.glb"])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    let error = stderr(&output);
+    assert!(error.contains("bad config"), "stderr:\n{error}");
+    assert!(error.contains("min_stride_step_m"), "stderr:\n{error}");
+    assert!(
+        !error.contains("failed to read"),
+        "config must fail before measurement input loading:\n{error}"
+    );
+}
+
+#[test]
 fn invalid_sync_group_tolerances_are_operator_errors() {
     let dir = unique_temp_dir("invalid-sync-group-tolerance");
     for (name, field, value) in [

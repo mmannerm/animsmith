@@ -85,11 +85,11 @@ cargo run -p animsmith --example embed
    names.
 3. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
    the types from your schema or build them programmatically. Deserialization
-   validates per-clip loop caps immediately; `evaluate_checks` also validates
-   directly constructed `Config` values before inspecting or running the check
-   catalog, so an invalid negative or non-finite cap fails closed as a typed
-   `EvaluationError::InvalidConfiguration`. Call `Config::validate` directly
-   only when the host wants that same error before it reaches evaluation.
+   validates numeric check tolerances and per-clip loop caps immediately.
+   Programmatic callers must call `Config::validate` before passing a directly
+   constructed config to measurement-only APIs; `evaluate_checks` performs the
+   same validation before inspecting or running the check catalog and returns
+   invalid configuration as a typed `EvaluationError::InvalidConfiguration`.
 4. **Create one `MetricGrids`.** Share it by reference with
    `measure_document`, `CheckCtx::new`, `evaluate_checks`, and optional report
    rendering so each clip is sampled once.

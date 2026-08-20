@@ -66,6 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         },
     );
+    config.validate()?;
 
     // 4a. Measure: the raw metric map, no judgment. Share the metric
     //     grids with linting so each clip is sampled once.
