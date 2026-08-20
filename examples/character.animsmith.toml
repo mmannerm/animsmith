@@ -19,8 +19,10 @@ max_angular_velocity_delta_degps = 5.0
 
 # Runtime-facing attachment nodes should normally inherit the expected uniform
 # rest scale. Each exact name or `*` glob must resolve to one source node.
+[runtime_nodes]
+selectors = ["weapon_socket", "ik_*_target"]
+
 [checks.rest-world-scale]
-node_selectors = ["weapon_socket", "ik_*_target"]
 expected_uniform_scale = 1.0
 uniform_scale_tolerance = 0.0001
 

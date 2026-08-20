@@ -4,8 +4,8 @@
 //! report, transform, fix, convert, assemble, scale, and diff skeletal
 //! animation clips. It
 //! is not the Rust library API; use `animsmith-core` plus the loader
-//! crates (`animsmith-gltf`, `animsmith-fbx`) and `animsmith-report` from
-//! library code.
+//! crates (`animsmith-gltf`, `animsmith-fbx`), `animsmith-engine`, and
+//! `animsmith-report` from library code.
 //!
 //! Feature gates mirror the installed binary surface. The default build
 //! includes FBX input and HTML reports; `--no-default-features` leaves a
@@ -28,9 +28,13 @@ use animsmith_core::{
     evaluate_checks, resolve_configured_roles,
 };
 use animsmith_core::{Document, InputIdentity};
+use animsmith_engine::{
+    BakeOrExtract, EngineDeclaration, ProfileSelection, SettingMap, SettingValue, StaticResolution,
+};
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::Deserialize;
 #[cfg(feature = "fbx")]
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -614,6 +618,8 @@ fn finish_run_with(result: Result<ExitCode, String>, emit_error: impl FnOnce(&st
 
 struct LoadedConfig {
     config: Config,
+    engine: Option<StaticResolution>,
+    path: Option<PathBuf>,
     #[cfg(feature = "fbx")]
     source: Option<LoadedConfigSource>,
 }
@@ -624,8 +630,133 @@ struct LoadedConfigSource {
     bytes: Vec<u8>,
 }
 
-fn load_config(explicit: Option<&Path>) -> Result<Config, String> {
-    Ok(load_config_with_source(explicit)?.config)
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EngineToml {
+    profile: Option<String>,
+    profile_revision: Option<u32>,
+    engine_version: Option<String>,
+    importer: Option<String>,
+    settings: Option<BTreeMap<String, EngineSettingToml>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum EngineSettingToml {
+    Boolean(bool),
+    Text(String),
+}
+
+fn engine_setting_value(key: &str, value: EngineSettingToml) -> SettingValue {
+    match value {
+        EngineSettingToml::Boolean(value) => SettingValue::Boolean(value),
+        EngineSettingToml::Text(value) if key == "root_motion_source" => {
+            SettingValue::SourceTransformPath(value)
+        }
+        EngineSettingToml::Text(value) if value == "bake" => {
+            SettingValue::BakeOrExtract(BakeOrExtract::Bake)
+        }
+        EngineSettingToml::Text(value) if value == "extract" => {
+            SettingValue::BakeOrExtract(BakeOrExtract::Extract)
+        }
+        EngineSettingToml::Text(value) => SettingValue::SourceTransformPath(value),
+    }
+}
+
+fn engine_setting_map(values: BTreeMap<String, EngineSettingToml>) -> SettingMap {
+    values
+        .into_iter()
+        .map(|(key, value)| {
+            let value = engine_setting_value(&key, value);
+            (key, value)
+        })
+        .collect()
+}
+
+fn engine_selection(config: &EngineToml) -> Result<Option<ProfileSelection>, String> {
+    let fields_present = [
+        config.profile.is_some(),
+        config.profile_revision.is_some(),
+        config.engine_version.is_some(),
+        config.importer.is_some(),
+    ];
+    if fields_present.iter().all(|present| !present) {
+        return Ok(None);
+    }
+    if !fields_present.iter().all(|present| *present) {
+        return Err(
+            "[engine] requires profile, profile_revision, engine_version, and importer".into(),
+        );
+    }
+    Ok(Some(ProfileSelection::new(
+        config.profile.clone().expect("presence checked"),
+        config.profile_revision.expect("presence checked"),
+        config.engine_version.clone().expect("presence checked"),
+        config.importer.clone().expect("presence checked"),
+    )))
+}
+
+fn parse_config(text: &str) -> Result<(Config, EngineDeclaration), String> {
+    let mut root: toml::Table = toml::from_str(text).map_err(|error| error.to_string())?;
+    let engine_value = root.remove("engine");
+    let engine_declared = engine_value.is_some();
+    let engine = engine_value
+        .map(|value| {
+            value
+                .try_into::<EngineToml>()
+                .map_err(|error| error.to_string())
+        })
+        .transpose()?;
+
+    let mut clip_settings = BTreeMap::new();
+    if let Some(toml::Value::Table(clips)) = root.get_mut("clips") {
+        for (selector, clip) in clips {
+            let toml::Value::Table(clip) = clip else {
+                continue;
+            };
+            let Some(settings) = clip.remove("engine_settings") else {
+                continue;
+            };
+            let settings = settings
+                .try_into::<BTreeMap<String, EngineSettingToml>>()
+                .map_err(|error| error.to_string())?;
+            clip_settings.insert(selector.clone(), engine_setting_map(settings));
+        }
+    }
+
+    let (selection, document_settings) = match engine {
+        Some(engine) => {
+            let selection = engine_selection(&engine)?;
+            if selection.is_none() && engine.settings.is_none() {
+                return Err(
+                    "[engine] requires profile, profile_revision, engine_version, and importer"
+                        .into(),
+                );
+            }
+            (selection, engine.settings.map(engine_setting_map))
+        }
+        None => (None, None),
+    };
+    debug_assert_eq!(
+        engine_declared,
+        selection.is_some() || document_settings.is_some()
+    );
+
+    let config = toml::Value::Table(root)
+        .try_into::<Config>()
+        .map_err(|error| error.to_string())?;
+    Ok((
+        config,
+        EngineDeclaration {
+            selection,
+            document_settings,
+            clip_settings,
+        },
+    ))
+}
+
+fn load_config(explicit: Option<&Path>) -> Result<LoadedConfig, String> {
+    load_config_with_source(explicit)
 }
 
 fn config_source_path(explicit: Option<&Path>) -> Option<PathBuf> {
@@ -639,6 +770,8 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
     let Some(path) = config_source_path(explicit) else {
         return Ok(LoadedConfig {
             config: Config::default(),
+            engine: None,
+            path: None,
             #[cfg(feature = "fbx")]
             source: None,
         });
@@ -647,16 +780,44 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
         std::fs::read(&path).map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|e| format!("bad config {}: config is not UTF-8: {e}", path.display()))?;
-    let config: Config =
-        toml::from_str(text).map_err(|e| format!("bad config {}: {e}", path.display()))?;
+    let (config, declaration) =
+        parse_config(text).map_err(|error| format!("bad config {}: {error}", path.display()))?;
     config
         .validate()
         .map_err(|e| format!("bad config {}: {e}", path.display()))?;
+    let engine = animsmith_engine::resolve_static(declaration)
+        .map_err(|error| format!("bad config {}: {error}", path.display()))?;
     Ok(LoadedConfig {
         config,
+        engine,
+        path: Some(path.clone()),
         #[cfg(feature = "fbx")]
         source: Some(LoadedConfigSource { path, bytes }),
     })
+}
+
+impl LoadedConfig {
+    fn validate_engine_input(
+        &self,
+        source_format: animsmith_core::SourceFormatV1,
+        document: &Document,
+    ) -> Result<(), String> {
+        let Some(engine) = &self.engine else {
+            return Ok(());
+        };
+        let clip_names = document
+            .clips
+            .iter()
+            .map(|clip| clip.name.clone())
+            .collect::<Vec<_>>();
+        engine
+            .resolve_input(source_format, &clip_names)
+            .map(|_| ())
+            .map_err(|error| match &self.path {
+                Some(path) => format!("bad config {}: {error}", path.display()),
+                None => format!("bad config: {error}"),
+            })
+    }
 }
 
 fn validate_check_selection(
@@ -682,18 +843,23 @@ fn validate_check_selection(
 fn run(cli: Cli) -> Result<ExitCode, String> {
     match cli.cmd {
         Cmd::Inspect { file } => {
-            let config = load_config(cli.config.as_deref())?;
-            let doc = load(&file)?;
+            let loaded_config = load_config(cli.config.as_deref())?;
+            let loaded = load_with_config(&file, &loaded_config)?;
+            let config = &loaded_config.config;
+            let doc = loaded.document;
             let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
             publish::emit_text_lines(render::render_inspect(&doc, &roles));
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Measure { files, format } => {
-            let config = load_config(cli.config.as_deref())?;
+            let loaded_config = load_config(cli.config.as_deref())?;
+            let config = &loaded_config.config;
             require_files(&files)?;
             let mut reports = Vec::new();
             for file in &files {
-                let (doc, input) = load_with_identity(file)?;
+                let loaded = load_with_config(file, &loaded_config)?;
+                let doc = loaded.document;
+                let input = loaded.input;
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(&doc);
                 reports.push(MeasureFileReport::new(
@@ -701,7 +867,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     input,
                     RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
                     MeasurementContract::new(
-                        animsmith_core::measure::measure_document(&grids, &roles, &config),
+                        animsmith_core::measure::measure_document(&grids, &roles, config),
                         animsmith_core::measure::measure_assets(&doc),
                     )
                     .map_err(|error| error.to_string())?,
@@ -725,7 +891,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             select,
             allow,
         } => {
-            let config = load_config(cli.config.as_deref())?;
+            let loaded_config = load_config(cli.config.as_deref())?;
+            let config = &loaded_config.config;
             require_files(&files)?;
             let checks = all_checks();
             validate_check_selection(&checks, &select)?;
@@ -744,10 +911,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let mut reports = Vec::new();
             let mut worst = Severity::Note;
             for file in &files {
-                let (doc, input) = load_with_identity(file)?;
+                let loaded = load_with_config(file, &loaded_config)?;
+                let doc = loaded.document;
+                let input = loaded.input;
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(&doc);
-                let ctx = CheckCtx::new(&grids, &roles, &config);
+                let ctx = CheckCtx::new(&grids, &roles, config);
                 let evaluations =
                     evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?;
                 for finding in evaluations
@@ -763,7 +932,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     RigInfo::from_resolved(&doc, &roles).map_err(|error| error.to_string())?,
                     evaluations,
                     MeasurementContract::new(
-                        animsmith_core::measure::measure_document(&grids, &roles, &config),
+                        animsmith_core::measure::measure_document(&grids, &roles, config),
                         animsmith_core::measure::measure_assets(&doc),
                     )
                     .map_err(|error| error.to_string())?,
@@ -792,11 +961,13 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         #[cfg(feature = "report")]
         Cmd::Report { file, output, clip } => {
-            let config = load_config(cli.config.as_deref())?;
-            let doc = load(&file)?;
+            let loaded_config = load_config(cli.config.as_deref())?;
+            let loaded = load_with_config(&file, &loaded_config)?;
+            let config = &loaded_config.config;
+            let doc = loaded.document;
             let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
             let grids = MetricGrids::new(&doc);
-            let ctx = CheckCtx::new(&grids, &roles, &config);
+            let ctx = CheckCtx::new(&grids, &roles, config);
             let findings: Vec<_> = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
                 .map_err(|error| error.to_string())?
                 .into_iter()
@@ -824,8 +995,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             prune_constant_tracks,
             fps,
         } => {
-            let config = load_config(cli.config.as_deref())?;
-            let mut doc = load(&input)?;
+            let loaded_config = load_config(cli.config.as_deref())?;
+            let loaded = load_with_config(&input, &loaded_config)?;
+            let config = &loaded_config.config;
+            let mut doc = loaded.document;
             let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
             let window = match &slice {
                 None => None,
@@ -1110,14 +1283,25 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 /// output-v9 `measure`/`lint` JSON report carrying measurements-v15.
 fn load_measurements(
     path: &Path,
-    config: &Config,
+    loaded_config: &LoadedConfig,
 ) -> Result<BTreeMap<String, animsmith_core::measure::ClipMeasurements>, String> {
+    let config = &loaded_config.config;
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     if ext == "json" {
+        if loaded_config.engine.is_some() {
+            let message = format!(
+                "cannot resolve an engine profile from JSON measurement report {}; output-v9 does not carry the loader-owned source format",
+                path.display()
+            );
+            return Err(match &loaded_config.path {
+                Some(config_path) => format!("bad config {}: {message}", config_path.display()),
+                None => format!("bad config: {message}"),
+            });
+        }
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         // Correctly rounded parsing is required by glTF raw-value proof. Keep
@@ -1146,7 +1330,7 @@ fn load_measurements(
             })?;
         return Ok(file.into_measurements().into_parts().0);
     }
-    let doc = load(path)?;
+    let doc = load_with_config(path, loaded_config)?.document;
     let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
     let grids = MetricGrids::new(&doc);
     Ok(animsmith_core::measure::measure_document(
@@ -1313,40 +1497,202 @@ fn load_bytes_typed(
 }
 
 #[cfg(feature = "fbx")]
-fn load_bytes(path: &Path, format: InputFormat, bytes: &[u8]) -> Result<Document, String> {
-    load_bytes_typed(path, format, bytes).map_err(|error| match error {
-        InputLoadError::Gltf(error) => error.to_string(),
-        InputLoadError::Fbx(error) => error.to_string(),
-    })
-}
-
-#[cfg(not(feature = "fbx"))]
-fn load_bytes(path: &Path, format: InputFormat, bytes: &[u8]) -> Result<Document, String> {
+fn load_source_bytes_typed(
+    path: &Path,
+    format: InputFormat,
+    bytes: &[u8],
+) -> Result<animsmith_core::LoadedSource, InputLoadError> {
     match format {
         InputFormat::Gltf => {
-            animsmith_gltf::load_bytes(path, bytes).map_err(|error| error.to_string())
+            animsmith_gltf::load_source_bytes(path, bytes).map_err(InputLoadError::Gltf)
+        }
+        InputFormat::Fbx => {
+            animsmith_fbx::load_source_bytes(path, bytes).map_err(InputLoadError::Fbx)
         }
     }
 }
 
-fn load(path: &Path) -> Result<Document, String> {
-    let (format, bytes) = capture_input(path)?;
-    load_bytes(path, format, &bytes)
+#[cfg(not(feature = "fbx"))]
+fn load_source_bytes_typed(
+    path: &Path,
+    format: InputFormat,
+    bytes: &[u8],
+) -> Result<animsmith_core::LoadedSource, String> {
+    match format {
+        InputFormat::Gltf => {
+            animsmith_gltf::load_source_bytes(path, bytes).map_err(|error| error.to_string())
+        }
+    }
+}
+
+struct LoadedInput {
+    document: Document,
+    input: InputIdentity,
+    source_format: animsmith_core::SourceFormatV1,
 }
 
 /// Read one primary input once, derive its retained-evidence identity from
 /// those exact bytes, and parse that same byte slice. This deliberately does
 /// not identify a reopened path: a report must describe the bytes judged.
-fn load_with_identity(path: &Path) -> Result<(Document, InputIdentity), String> {
+fn load_with_identity(path: &Path) -> Result<LoadedInput, String> {
     let (format, bytes) = capture_input(path)?;
-    let input = InputIdentity::from_bytes(&bytes);
-    let doc = load_bytes(path, format, &bytes)?;
-    Ok((doc, input))
+    let source =
+        load_source_bytes_typed(path, format, &bytes).map_err(|error| error.to_string())?;
+    let facts = source.source_facts();
+    let input = facts.primary_identity().clone();
+    let source_format = facts.format();
+    Ok(LoadedInput {
+        document: source.into_document(),
+        input,
+        source_format,
+    })
+}
+
+fn load_with_config(path: &Path, config: &LoadedConfig) -> Result<LoadedInput, String> {
+    let loaded = load_with_identity(path)?;
+    config.validate_engine_input(loaded.source_format, &loaded.document)?;
+    Ok(loaded)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_engine_toml_maps_to_the_public_resolver_without_new_core_authority() {
+        let text = r#"
+[rig]
+profile = "auto"
+
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+convert_units = true
+bake_axis_conversion = true
+root_motion_source = "Reference/Root"
+
+[clips."*"]
+[clips."*".engine_settings]
+root_rotation = "bake"
+root_position_y = "bake"
+root_position_xz = "bake"
+
+[clips."walk*"]
+[clips."walk*".engine_settings]
+root_rotation = "extract"
+
+[clips.walk_forward]
+[clips.walk_forward.engine_settings]
+root_position_y = "extract"
+"#;
+        let (core, declaration) = parse_config(text).unwrap();
+        assert_eq!(
+            core.clips.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["*", "walk*", "walk_forward"]
+        );
+        let from_cli = animsmith_engine::resolve_static(declaration)
+            .unwrap()
+            .unwrap()
+            .resolve_input(
+                animsmith_core::SourceFormatV1::Fbx,
+                &["walk_forward".into()],
+            )
+            .unwrap();
+
+        let direct = EngineDeclaration {
+            selection: Some(ProfileSelection::new(
+                "unity-generic",
+                1,
+                "6000.3",
+                "fbx-model-importer",
+            )),
+            document_settings: Some(BTreeMap::from([
+                ("convert_units".into(), SettingValue::Boolean(true)),
+                ("bake_axis_conversion".into(), SettingValue::Boolean(true)),
+                (
+                    "root_motion_source".into(),
+                    SettingValue::SourceTransformPath("Reference/Root".into()),
+                ),
+            ])),
+            clip_settings: BTreeMap::from([
+                (
+                    "*".into(),
+                    BTreeMap::from([
+                        (
+                            "root_rotation".into(),
+                            SettingValue::BakeOrExtract(BakeOrExtract::Bake),
+                        ),
+                        (
+                            "root_position_y".into(),
+                            SettingValue::BakeOrExtract(BakeOrExtract::Bake),
+                        ),
+                        (
+                            "root_position_xz".into(),
+                            SettingValue::BakeOrExtract(BakeOrExtract::Bake),
+                        ),
+                    ]),
+                ),
+                (
+                    "walk*".into(),
+                    BTreeMap::from([(
+                        "root_rotation".into(),
+                        SettingValue::BakeOrExtract(BakeOrExtract::Extract),
+                    )]),
+                ),
+                (
+                    "walk_forward".into(),
+                    BTreeMap::from([(
+                        "root_position_y".into(),
+                        SettingValue::BakeOrExtract(BakeOrExtract::Extract),
+                    )]),
+                ),
+            ]),
+        };
+        let direct = animsmith_engine::resolve_static(direct)
+            .unwrap()
+            .unwrap()
+            .resolve_input(
+                animsmith_core::SourceFormatV1::Fbx,
+                &["walk_forward".into()],
+            )
+            .unwrap();
+        assert_eq!(from_cli, direct);
+    }
+
+    #[test]
+    fn cli_engine_toml_rejects_incomplete_selection_and_source_unit_escape_hatch() {
+        let incomplete = parse_config(
+            r#"
+[engine]
+profile = "bevy"
+"#,
+        )
+        .unwrap_err();
+        assert!(incomplete.contains("requires profile, profile_revision"));
+
+        let source_unit = parse_config("source_unit = \"metre\"").unwrap_err();
+        assert!(source_unit.contains("unknown field `source_unit`"));
+    }
+
+    #[test]
+    fn cli_clip_engine_settings_without_selection_reach_the_typed_error() {
+        let (_, declaration) = parse_config(
+            r#"
+[clips.walk]
+[clips.walk.engine_settings]
+root_rotation = "bake"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            animsmith_engine::resolve_static(declaration),
+            Err(animsmith_engine::ResolutionError::SettingsWithoutSelection)
+        );
+    }
 
     #[cfg(feature = "fbx")]
     struct SerializationFailureDelivery {

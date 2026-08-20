@@ -131,8 +131,12 @@ pub struct CheckSettings {
     /// (default 0.3 m/s).
     #[serde(default, deserialize_with = "deserialize_nonnegative_finite_option")]
     pub max_slide_mps: Option<f64>,
-    /// `rest-world-scale`: exact names or `*` globs that must each resolve to
-    /// one source node before its effective rest-world scale is judged.
+    /// Compatibility alias for [`RuntimeNodesConfig::selectors`].
+    ///
+    /// `rest-world-scale` consumes the shared runtime-node authority. This
+    /// legacy field remains accepted for existing configuration only when the
+    /// shared selector field is absent; declaring both fields is rejected by
+    /// [`Config::validate`].
     pub node_selectors: Option<Vec<String>>,
     /// `rest-world-scale`: expected positive uniform scale factor (default
     /// 1.0).
@@ -401,6 +405,113 @@ impl Default for RigConfig {
     }
 }
 
+/// Engine-neutral runtime-node selection policy.
+///
+/// A runtime node is a source node whose identity matters to a consuming
+/// runtime, such as an attachment socket or IK target. The policy intentionally
+/// says nothing about a particular engine or the operation consuming it. An
+/// absent [`Self::selectors`] field and an explicit empty list both mean no
+/// runtime-node policy is declared.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeNodesConfig {
+    /// Exact source-node names or `*` globs, in declared priority order.
+    ///
+    /// Duplicate selectors are accepted and deterministically de-duplicated
+    /// by [`Config::runtime_node_selectors`], retaining their first occurrence.
+    #[serde(default)]
+    pub selectors: Option<Vec<String>>,
+}
+
+/// Normalized, deterministic runtime-node selection authority.
+///
+/// Obtain this value through [`Config::runtime_node_selectors`] after calling
+/// [`Config::validate`]. It retains configured selector order while removing
+/// later duplicate spellings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeNodeSelectors {
+    selectors: Vec<String>,
+}
+
+impl RuntimeNodeSelectors {
+    fn new(selectors: &[String]) -> Self {
+        let mut seen = std::collections::BTreeSet::new();
+        Self {
+            selectors: selectors
+                .iter()
+                .filter(|selector| seen.insert(selector.as_str()))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Normalized selectors in configured first-occurrence order.
+    pub fn selectors(&self) -> &[String] {
+        &self.selectors
+    }
+
+    /// Resolve every selector against named candidates in deterministic input
+    /// order.
+    ///
+    /// Exact names and `*` globs follow [`glob_match`]. Every configured
+    /// selector receives a result so consumers can preserve distinct no-match
+    /// and ambiguity handling without duplicating selector semantics. Unnamed
+    /// candidates are represented by omitting them from `candidates`.
+    pub fn resolve<'a, T: Clone>(
+        &self,
+        candidates: impl IntoIterator<Item = (&'a str, T)>,
+    ) -> Vec<RuntimeNodeSelectorResolution<T>> {
+        let candidates = candidates.into_iter().collect::<Vec<_>>();
+        self.selectors
+            .iter()
+            .map(|selector| {
+                let matches = candidates
+                    .iter()
+                    .filter(|(name, _)| glob_match(selector, name))
+                    .map(|(_, candidate)| candidate.clone())
+                    .collect::<Vec<_>>();
+                match matches.as_slice() {
+                    [] => RuntimeNodeSelectorResolution::NoMatch {
+                        selector: selector.clone(),
+                    },
+                    [node] => RuntimeNodeSelectorResolution::ExactlyOne {
+                        selector: selector.clone(),
+                        node: node.clone(),
+                    },
+                    _ => RuntimeNodeSelectorResolution::Ambiguous {
+                        selector: selector.clone(),
+                        nodes: matches,
+                    },
+                }
+            })
+            .collect()
+    }
+}
+
+/// One runtime-node selector's deterministic resolution result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeNodeSelectorResolution<T> {
+    /// The selector matched no named candidate.
+    NoMatch {
+        /// Configured selector spelling.
+        selector: String,
+    },
+    /// The selector resolved to exactly one candidate.
+    ExactlyOne {
+        /// Configured selector spelling.
+        selector: String,
+        /// The sole matching candidate.
+        node: T,
+    },
+    /// The selector matched more than one candidate.
+    Ambiguous {
+        /// Configured selector spelling.
+        selector: String,
+        /// Matching candidates in the input's deterministic order.
+        nodes: Vec<T>,
+    },
+}
+
 /// Invalid values in a directly constructed [`Config`].
 ///
 /// Numeric values are intentionally not retained in this error so it remains
@@ -433,6 +544,12 @@ pub enum ConfigValidationError {
         /// Exact clip name or glob containing both spellings.
         selector: String,
     },
+    /// The shared runtime-node selector field and its rest-world-scale
+    /// compatibility alias were both declared.
+    #[error(
+        "cannot declare both \"runtime_nodes.selectors\" and \"checks.rest-world-scale.node_selectors\""
+    )]
+    ConflictingRuntimeNodeSelectors,
     /// A sync-group tolerance was negative or non-finite.
     #[error("sync group {group:?} field {field:?} must be a finite non-negative number")]
     InvalidSyncGroupTolerance {
@@ -455,6 +572,11 @@ pub enum ConfigValidationError {
 
 /// The whole configuration. Field names match the `animsmith.toml`
 /// sections.
+///
+/// [`Self::runtime_nodes`] is an intentional pre-1.0 additive public field.
+/// Embedders that construct this struct with a literal must add
+/// `runtime_nodes: RuntimeNodesConfig::default()` or use
+/// `..Config::default()`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -466,6 +588,9 @@ pub struct Config {
     /// Per-check settings keyed by stable check id.
     #[serde(default)]
     pub checks: BTreeMap<String, CheckSettings>,
+    /// Shared engine-neutral policy for source nodes addressed by the runtime.
+    #[serde(default)]
+    pub runtime_nodes: RuntimeNodesConfig,
     /// Keyed by clip name or glob (`*` wildcards). An exact-name entry
     /// overrides glob entries; among globs, later (lexicographically
     /// greater) keys win on conflict.
@@ -497,11 +622,22 @@ impl Config {
     /// contains a negative or non-finite per-clip loop cap,
     /// [`ConfigValidationError::ConflictingClipMovementOwner`] when one clip
     /// selector declares both `movement_owner_xz` and its `in_place` alias,
+    /// [`ConfigValidationError::ConflictingRuntimeNodeSelectors`] when shared
+    /// runtime-node selectors and the rest-world-scale compatibility alias are
+    /// both declared,
     /// [`ConfigValidationError::InvalidSyncGroupTolerance`] when a same-time
     /// group has an invalid timing tolerance, or
     /// [`ConfigValidationError::InvalidTimeComplementSetting`] when an
     /// enabled time-complement policy has an invalid threshold.
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.runtime_nodes.selectors.is_some()
+            && self
+                .checks
+                .get("rest-world-scale")
+                .is_some_and(|settings| settings.node_selectors.is_some())
+        {
+            return Err(ConfigValidationError::ConflictingRuntimeNodeSelectors);
+        }
         for (check_id, settings) in &self.checks {
             for (field, valid) in [
                 (
@@ -668,6 +804,22 @@ impl Config {
         self.checks.get(id).cloned().unwrap_or_default()
     }
 
+    /// The normalized runtime-node authority, if one is declared.
+    ///
+    /// The shared [`RuntimeNodesConfig::selectors`] field is used when it is
+    /// present. Callers must first call [`Self::validate`]: simultaneous use
+    /// of the legacy `checks.rest-world-scale.node_selectors` alias is rejected
+    /// and has no precedence rule. An absent field or explicit empty list
+    /// returns `None` and declares no policy.
+    pub fn runtime_node_selectors(&self) -> Option<RuntimeNodeSelectors> {
+        let selectors = self.runtime_nodes.selectors.as_ref().or_else(|| {
+            self.checks
+                .get("rest-world-scale")
+                .and_then(|settings| settings.node_selectors.as_ref())
+        })?;
+        (!selectors.is_empty()).then(|| RuntimeNodeSelectors::new(selectors))
+    }
+
     /// Effective stride floor for loop-seam metrics, in metres.
     pub fn loop_seam_min_stride_step_m(&self) -> f64 {
         self.check_settings("loop-seam")
@@ -676,17 +828,79 @@ impl Config {
     }
 }
 
-/// Minimal `*`-wildcard matcher (no character classes; `*` matches any
-/// run including empty).
+/// Minimal linear-work `*`-wildcard matcher (no character classes; `*`
+/// matches any run including empty).
 pub fn glob_match(pattern: &str, name: &str) -> bool {
-    fn inner(p: &[u8], n: &[u8]) -> bool {
-        match p.split_first() {
-            None => n.is_empty(),
-            Some((b'*', rest)) => (0..=n.len()).any(|skip| inner(rest, &n[skip..])),
-            Some((c, rest)) => n
-                .split_first()
-                .is_some_and(|(nc, nrest)| nc == c && inner(rest, nrest)),
+    let pattern = pattern.as_bytes();
+    let name = name.as_bytes();
+    let Some(first_star) = pattern.iter().position(|&byte| byte == b'*') else {
+        return pattern == name;
+    };
+    let last_star = pattern
+        .iter()
+        .rposition(|&byte| byte == b'*')
+        .unwrap_or(first_star);
+
+    let prefix = &pattern[..first_star];
+    let suffix = &pattern[last_star + 1..];
+    if !name.starts_with(prefix) || !name.ends_with(suffix) {
+        return false;
+    }
+
+    let mut name_index = prefix.len();
+    let search_end = name.len() - suffix.len();
+    if name_index > search_end {
+        return false;
+    }
+
+    if first_star < last_star {
+        let mut failure = Vec::new();
+        for literal in pattern[first_star + 1..last_star]
+            .split(|&byte| byte == b'*')
+            .filter(|literal| !literal.is_empty())
+        {
+            let Some(offset) =
+                find_subslice_linear(&name[name_index..search_end], literal, &mut failure)
+            else {
+                return false;
+            };
+            name_index += offset + literal.len();
         }
     }
-    inner(pattern.as_bytes(), name.as_bytes())
+
+    true
+}
+
+fn find_subslice_linear(haystack: &[u8], needle: &[u8], failure: &mut Vec<usize>) -> Option<usize> {
+    debug_assert!(!needle.is_empty());
+    if needle.len() > haystack.len() {
+        return None;
+    }
+
+    failure.clear();
+    failure.resize(needle.len(), 0);
+    let mut prefix_len = 0;
+    for index in 1..needle.len() {
+        while prefix_len > 0 && needle[index] != needle[prefix_len] {
+            prefix_len = failure[prefix_len - 1];
+        }
+        if needle[index] == needle[prefix_len] {
+            prefix_len += 1;
+        }
+        failure[index] = prefix_len;
+    }
+
+    let mut matched = 0;
+    for (index, &byte) in haystack.iter().enumerate() {
+        while matched > 0 && byte != needle[matched] {
+            matched = failure[matched - 1];
+        }
+        if byte == needle[matched] {
+            matched += 1;
+            if matched == needle.len() {
+                return Some(index + 1 - needle.len());
+            }
+        }
+    }
+    None
 }

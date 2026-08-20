@@ -36,6 +36,7 @@ report = ["dep:animsmith-report"]
 
 [dependencies]
 animsmith-core = { workspace = true }
+animsmith-engine = { workspace = true }
 animsmith-gltf = { workspace = true }
 animsmith-fbx = { workspace = true, optional = true }
 animsmith-report = { workspace = true, optional = true }

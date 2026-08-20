@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::check::{Check, CheckCtx};
-use crate::config::glob_match;
+use crate::config::{RuntimeNodeSelectorResolution, RuntimeNodeSelectors};
 use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
@@ -29,12 +29,7 @@ impl Check for RestWorldScale {
     }
 
     fn applicability(&self, ctx: &CheckCtx) -> Applicability {
-        if ctx
-            .config
-            .check_settings(self.id())
-            .node_selectors
-            .is_some_and(|selectors| !selectors.is_empty())
-        {
+        if ctx.config.runtime_node_selectors().is_some() {
             Applicability::Applicable
         } else {
             Applicability::NotApplicable
@@ -43,9 +38,9 @@ impl Check for RestWorldScale {
 
     fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
         let settings = ctx.config.check_settings(self.id());
-        let selectors = settings
-            .node_selectors
-            .as_deref()
+        let selectors = ctx
+            .config
+            .runtime_node_selectors()
             .expect("applicability only permits non-empty node selectors");
         let expected = settings
             .expected_uniform_scale
@@ -61,36 +56,22 @@ impl Check for RestWorldScale {
         let mut findings = Vec::new();
         let mut scopes = Vec::new();
         let mut gaps = Vec::new();
-        let mut seen_selectors = BTreeSet::new();
         let mut reported_nodes = BTreeSet::new();
 
-        for selector in selectors {
-            if !seen_selectors.insert(selector.as_str()) {
-                continue;
-            }
+        if coverage == SkeletonSourceCoverage::Unavailable {
+            return unavailable_selection_output(&selectors);
+        }
+
+        for resolution in selectors.resolve(
+            nodes
+                .iter()
+                .filter_map(|node| node.name.as_deref().map(|name| (name, node))),
+        ) {
+            let selector = runtime_node_selector(&resolution).to_owned();
             let scope = EvaluationScope::new(EvaluationScopeCode::SELECTED_NODE_REST_SCALE)
                 .subject(selector.clone());
-            if coverage == SkeletonSourceCoverage::Unavailable {
-                gaps.push(
-                    CoverageGap::new(
-                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                        "selected-node rest-world scale cannot be checked because source-node transform evidence is unavailable",
-                    )
-                    .scope(scope),
-                );
-                continue;
-            }
-
-            let matches = nodes
-                .iter()
-                .filter(|node| {
-                    node.name
-                        .as_deref()
-                        .is_some_and(|name| glob_match(selector, name))
-                })
-                .collect::<Vec<_>>();
-            let node = match matches.as_slice() {
-                [] => {
+            let node = match resolution {
+                RuntimeNodeSelectorResolution::NoMatch { .. } => {
                     gaps.push(
                         CoverageGap::new(
                             CoverageGapCode::NODE_SELECTOR_NO_MATCH,
@@ -100,9 +81,9 @@ impl Check for RestWorldScale {
                     );
                     continue;
                 }
-                [node] => *node,
-                _ => {
-                    let identities = matches
+                RuntimeNodeSelectorResolution::ExactlyOne { node, .. } => node,
+                RuntimeNodeSelectorResolution::Ambiguous { nodes, .. } => {
+                    let identities = nodes
                         .iter()
                         .map(|node| source_node_path(node, &by_index))
                         .collect::<Vec<_>>()
@@ -112,7 +93,7 @@ impl Check for RestWorldScale {
                             CoverageGapCode::NODE_SELECTOR_AMBIGUOUS,
                             format!(
                                 "source-node selector {selector:?} matched {} nodes ({identities}); use a selector that resolves exactly once",
-                                matches.len()
+                                nodes.len()
                             ),
                         )
                         .scope(scope),
@@ -147,6 +128,32 @@ impl Check for RestWorldScale {
         }
 
         CheckOutput::from_coverage(findings, scopes, gaps)
+    }
+}
+
+fn unavailable_selection_output(selectors: &RuntimeNodeSelectors) -> CheckOutput {
+    let gaps = selectors
+        .selectors()
+        .iter()
+        .map(|selector| {
+            CoverageGap::new(
+                CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                "selected-node rest-world scale cannot be checked because source-node transform evidence is unavailable",
+            )
+            .scope(
+                EvaluationScope::new(EvaluationScopeCode::SELECTED_NODE_REST_SCALE)
+                    .subject(selector.clone()),
+            )
+        })
+        .collect();
+    CheckOutput::from_coverage(Vec::new(), Vec::new(), gaps)
+}
+
+fn runtime_node_selector<T>(resolution: &RuntimeNodeSelectorResolution<T>) -> &str {
+    match resolution {
+        RuntimeNodeSelectorResolution::NoMatch { selector }
+        | RuntimeNodeSelectorResolution::ExactlyOne { selector, .. }
+        | RuntimeNodeSelectorResolution::Ambiguous { selector, .. } => selector,
     }
 }
 

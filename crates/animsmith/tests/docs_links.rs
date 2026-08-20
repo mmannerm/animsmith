@@ -410,6 +410,7 @@ fn gated_markdown_links_resolve() {
         "THIRD-PARTY.md",
         "crates/animsmith-core/THIRD-PARTY.md",
         "crates/animsmith-fbx/THIRD-PARTY.md",
+        "crates/animsmith-engine/THIRD-PARTY.md",
         "crates/animsmith-gltf/THIRD-PARTY.md",
         "crates/animsmith-report/THIRD-PARTY.md",
         "crates/animsmith/THIRD-PARTY.md",
@@ -438,7 +439,7 @@ fn release_checklist_distinguishes_library_rustdoc_from_the_bin_only_package() {
         std::fs::read_to_string(repo_root().join("RELEASING.md")).expect("reads release checklist");
     let prose = rendered_prose_words(&releasing);
     for required in [
-        "library crates animsmith-core animsmith-gltf animsmith-fbx and animsmith-report must also have successful rustdoc builds",
+        "library crates animsmith-core animsmith-gltf animsmith-fbx animsmith-engine and animsmith-report must also have successful rustdoc builds",
         "published animsmith package is intentionally bin-only docs.rs has no library target to document and its cargo rustdoc --lib failure is an accepted mechanically guarded exemption",
         "verify its docs.rs landing/source/features pages only",
     ] {

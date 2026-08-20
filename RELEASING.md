@@ -68,7 +68,7 @@ shipping is riskier than changing.
    release version. When you merge the PR, the `release` job runs on the
    resulting push to `main`, tags the release, creates the GitHub Release, and
    publishes every crate to crates.io in dependency order (`animsmith-core` →
-   `-gltf`/`-fbx`/`-report` → `animsmith`).
+   `-gltf`/`-fbx`/`-engine`/`-report` → `animsmith`).
    The follow-on `release_binaries` job calls `release-binaries.yml`,
    builds CLI archives from the tag, and uploads the archives plus
    matching `.sha256` files to that GitHub Release.
@@ -132,6 +132,31 @@ same release-oriented PR. Do not add release-time rewriting without a
 mechanical check that proves the packaged README links and the release
 tag agree.
 
+## Bootstrapping a newly added crate
+
+Trusted Publishing cannot create a crates.io package. Generate the release PR,
+freeze its exact head, and run the full release gates before bootstrapping a new
+workspace crate. Do not change the release PR after any package from that head
+has been published.
+
+If the new crate verifies against the internal dependency versions already on
+crates.io, manually publish only the new crate with a token carrying
+`publish-new`. If it consumes internal APIs introduced by the same release,
+first manually publish the required existing workspace crates from the frozen
+release head in dependency order with `publish-update`, then publish the new
+crate with `publish-new`. Always let Cargo perform its ordinary package
+verification; `--no-verify` is not a bootstrap mechanism.
+
+Add the repository's `release-plz.yml` Trusted Publisher to the new package,
+then merge the unchanged release PR. release-plz skips the exact versions
+already published from that head and publishes the remaining workspace crates
+in dependency order. Record every manual package publish, the exact release-PR
+commit, and the Trusted Publisher setup in the release audit.
+
+If the release PR must change after a manual publish, stop and reconcile the
+already public immutable package rather than pretending the replacement head
+has the same bytes.
+
 ## One-time bootstrap
 
 This repository starts its public release history from a clean slate: the
@@ -180,8 +205,9 @@ So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
    dependencies exist in the index.
 4. After each crate is accepted, docs.rs queues its documentation. Check
    each crate's landing page, source listing, and feature metadata. The
-   library crates (`animsmith-core`, `animsmith-gltf`, `animsmith-fbx`, and
-   `animsmith-report`) must also have successful rustdoc builds; their
+   library crates (`animsmith-core`, `animsmith-gltf`, `animsmith-fbx`,
+   `animsmith-engine`, and `animsmith-report`) must also have successful
+   rustdoc builds; their
    manifests set `documentation` links and `[package.metadata.docs.rs]` so
    pure-Rust crates get Linux/macOS/Windows pages, while the C-dependent
    `animsmith-fbx` uses the Linux default target. The published `animsmith`

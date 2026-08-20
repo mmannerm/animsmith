@@ -5265,6 +5265,267 @@ fn invalid_duration_pin_from_toml_is_an_explicit_error() {
 }
 
 #[test]
+fn valid_bevy_profile_leaves_measure_and_lint_output_byte_identical() {
+    let dir = unique_temp_dir("engine-profile-measure-neutral");
+    let input = dir.path().join("sway.glb");
+    write_clean_glb(&input);
+    let baseline = animsmith()
+        .args(["measure"])
+        .arg(&input)
+        .args(["--format", "json"])
+        .output()
+        .expect("runs baseline measure");
+    assert_eq!(baseline.status.code(), Some(0), "{}", stderr(&baseline));
+
+    let config = write_config(
+        dir.path(),
+        "bevy.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 1
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+"#,
+    );
+    let profiled = animsmith()
+        .args(["--config"])
+        .arg(&config)
+        .args(["measure"])
+        .arg(&input)
+        .args(["--format", "json"])
+        .output()
+        .expect("runs profiled measure");
+    assert_eq!(profiled.status.code(), Some(0), "{}", stderr(&profiled));
+    assert_eq!(profiled.stdout, baseline.stdout);
+
+    let baseline = animsmith()
+        .args(["lint"])
+        .arg(&input)
+        .args(["--format", "json"])
+        .output()
+        .expect("runs baseline lint");
+    assert_eq!(baseline.status.code(), Some(0), "{}", stderr(&baseline));
+    let profiled = animsmith()
+        .args(["--config"])
+        .arg(&config)
+        .args(["lint"])
+        .arg(&input)
+        .args(["--format", "json"])
+        .output()
+        .expect("runs profiled lint");
+    assert_eq!(profiled.status.code(), Some(0), "{}", stderr(&profiled));
+    assert_eq!(profiled.stdout, baseline.stdout);
+}
+
+#[test]
+fn engine_static_configuration_errors_precede_missing_input_io() {
+    let dir = unique_temp_dir("engine-profile-static-errors");
+    let missing = dir.path().join("missing.glb");
+    let cases = [
+        (
+            "unknown.toml",
+            r#"
+[engine]
+profile = "bevy-latest"
+profile_revision = 1
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+"#,
+            "unknown engine profile selection",
+        ),
+        (
+            "settings-without-selection.toml",
+            r#"
+[clips.walk.engine_settings]
+root_rotation = "bake"
+"#,
+            "engine settings were declared without an engine profile selection",
+        ),
+        (
+            "humanoid-root-source.toml",
+            r#"
+[engine]
+profile = "unity-humanoid"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+convert_units = true
+bake_axis_conversion = true
+root_motion_source = "Reference/Root"
+"#,
+            "RootMotionSource is not applicable",
+        ),
+        (
+            "source-unit.toml",
+            "source_unit = \"metre\"\n",
+            "unknown field `source_unit`",
+        ),
+        (
+            "engine-source-unit.toml",
+            r#"
+[engine]
+profile = "bevy"
+profile_revision = 1
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+source_unit = "metre"
+"#,
+            "unknown field `source_unit`",
+        ),
+        (
+            "wrong-scope.toml",
+            r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+convert_units = true
+bake_axis_conversion = true
+root_motion_source = "Reference/Root"
+root_rotation = "bake"
+"#,
+            "RootRotation has Clip scope but was declared in Document scope",
+        ),
+        (
+            "wrong-domain.toml",
+            r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+convert_units = "bake"
+bake_axis_conversion = true
+root_motion_source = "Reference/Root"
+"#,
+            "invalid value for engine setting ConvertUnits",
+        ),
+        (
+            "missing-required.toml",
+            r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+bake_axis_conversion = true
+root_motion_source = "Reference/Root"
+"#,
+            "missing required engine setting ConvertUnits",
+        ),
+    ];
+    for (name, text, expected) in cases {
+        let config = write_config(dir.path(), name, text);
+        let output = animsmith()
+            .args(["--config"])
+            .arg(&config)
+            .args(["measure"])
+            .arg(&missing)
+            .output()
+            .expect("runs animsmith");
+        assert_eq!(output.status.code(), Some(2), "{name}: {}", stderr(&output));
+        let error = stderr(&output);
+        assert!(error.contains(expected), "{name}: {error}");
+        assert!(!error.contains("failed to read"), "{name}: {error}");
+    }
+}
+
+#[test]
+fn engine_input_format_comes_from_the_loader_and_has_no_override() {
+    let dir = unique_temp_dir("engine-profile-format");
+    let input = dir.path().join("sway.glb");
+    write_clean_glb(&input);
+    let config = write_config(
+        dir.path(),
+        "unity.toml",
+        r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+convert_units = true
+bake_axis_conversion = true
+root_motion_source = "Reference/Root"
+
+[clips."*".engine_settings]
+root_rotation = "extract"
+root_position_y = "bake"
+root_position_xz = "extract"
+"#,
+    );
+    let output = animsmith()
+        .args(["--config"])
+        .arg(&config)
+        .args(["measure"])
+        .arg(&input)
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    let error = stderr(&output);
+    assert!(
+        error.contains("input format Glb is not accepted"),
+        "{error}"
+    );
+    assert!(!error.contains("source_unit"), "{error}");
+}
+
+#[test]
+fn profiled_diff_rejects_json_reports_without_loader_owned_source_format() {
+    let dir = unique_temp_dir("engine-profile-report-format");
+    let input = dir.path().join("sway.glb");
+    let report = dir.path().join("sway.measure.json");
+    write_clean_glb(&input);
+    let measured = animsmith()
+        .args(["measure"])
+        .arg(&input)
+        .args(["--format", "json"])
+        .output()
+        .expect("measures report input");
+    assert_eq!(measured.status.code(), Some(0), "{}", stderr(&measured));
+    std::fs::write(&report, measured.stdout).expect("writes measurement report");
+
+    let config = write_config(
+        dir.path(),
+        "bevy.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 1
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+"#,
+    );
+    let output = animsmith()
+        .args(["--config"])
+        .arg(&config)
+        .args(["diff"])
+        .arg(&report)
+        .arg(&report)
+        .output()
+        .expect("runs profiled report diff");
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    let error = stderr(&output);
+    assert!(
+        error.contains("cannot resolve an engine profile from JSON measurement report"),
+        "{error}"
+    );
+    assert!(error.contains("loader-owned source format"), "{error}");
+}
+
+#[test]
 fn loop_continuity_clip_caps_layer_global_glob_and_exact_contracts() {
     let dir = unique_temp_dir("clip-loop-caps");
     let input = fixture("rig.gltf");

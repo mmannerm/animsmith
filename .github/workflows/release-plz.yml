@@ -12,7 +12,7 @@ name: release-plz
 #     (release-plz's Keep-a-Changelog format).
 #   - push to main: release checks whether a merged release PR changed the
 #     Cargo.toml version and, if so, tags, creates the GitHub Release, and
-#     publishes all five crates to crates.io in dependency order.
+#     publishes all six crates to crates.io in dependency order.
 #   - release-binaries: when release-plz reports a release for the CLI
 #     package, calls release-binaries.yml to attach CLI archives and checksums
 #     to that GitHub Release.
@@ -23,7 +23,7 @@ name: release-plz
 # the publish path.
 #
 # BOOTSTRAP (see RELEASING.md): Trusted Publishing cannot publish a crate
-# that does not yet exist, so the first 0.1.0 of each crate is published
+# that does not yet exist, so each crate's first published version is created
 # manually once; TP takes over for every release afterwards.
 #
 # CI-on-release-PR caveat: PRs opened with the default GITHUB_TOKEN do

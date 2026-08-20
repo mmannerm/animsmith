@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/animsmith-core",
+    "crates/animsmith-engine",
     "crates/animsmith-gltf",
     "crates/animsmith-fbx",
     "crates/animsmith-report",
@@ -33,6 +34,7 @@ categories = ["game-development", "graphics", "development-tools"]
 
 [workspace.dependencies]
 animsmith-core = { path = "crates/animsmith-core", version = "0.3.1" }
+animsmith-engine = { path = "crates/animsmith-engine", version = "0.3.1" }
 animsmith-gltf = { path = "crates/animsmith-gltf", version = "0.3.1" }
 animsmith-fbx = { path = "crates/animsmith-fbx", version = "0.3.1" }
 animsmith-report = { path = "crates/animsmith-report", version = "0.3.1" }

@@ -1,4 +1,4 @@
-use animsmith_core::config::CheckSettings;
+use animsmith_core::config::{CheckSettings, RuntimeNodesConfig};
 use animsmith_core::glam::{Mat4, Quat, Vec3};
 use animsmith_core::measure::{LinearTransformClassification, measure_assets};
 use animsmith_core::{
@@ -51,11 +51,15 @@ fn document(nodes: Vec<SourceNodeAsset>) -> Document {
 }
 
 fn config(selectors: &[&str], expected: f64, tolerance: f64) -> Config {
-    let mut config = Config::default();
+    let mut config = Config {
+        runtime_nodes: RuntimeNodesConfig {
+            selectors: Some(selectors.iter().map(|value| (*value).into()).collect()),
+        },
+        ..Config::default()
+    };
     config.checks.insert(
         "rest-world-scale".into(),
         CheckSettings {
-            node_selectors: Some(selectors.iter().map(|value| (*value).into()).collect()),
             expected_uniform_scale: Some(expected),
             uniform_scale_tolerance: Some(tolerance),
             ..Default::default()
@@ -65,11 +69,22 @@ fn config(selectors: &[&str], expected: f64, tolerance: f64) -> Config {
 }
 
 fn default_policy_config(selectors: &[&str]) -> Config {
+    Config {
+        runtime_nodes: RuntimeNodesConfig {
+            selectors: Some(selectors.iter().map(|value| (*value).into()).collect()),
+        },
+        ..Config::default()
+    }
+}
+
+fn legacy_config(selectors: &[&str], expected: f64, tolerance: f64) -> Config {
     let mut config = Config::default();
     config.checks.insert(
         "rest-world-scale".into(),
         CheckSettings {
             node_selectors: Some(selectors.iter().map(|value| (*value).into()).collect()),
+            expected_uniform_scale: Some(expected),
+            uniform_scale_tolerance: Some(tolerance),
             ..Default::default()
         },
     );
@@ -303,6 +318,61 @@ fn rest_world_scale_reports_selector_miss_and_ambiguity_without_guessing() {
         "source-node selector \"duplic*ate\" matched 2 nodes (#0(root)/#1(duplicate), #0(root)/#2(duplicate)); use a selector that resolves exactly once"
     );
     assert!(evaluation.findings().is_empty());
+}
+
+#[test]
+fn rest_world_scale_legacy_selectors_match_the_shared_policy_output() {
+    let doc = document(vec![
+        node(0, "socket", None, trs(Vec3::splat(0.01))),
+        node(1, "socket-extra", None, trs(Vec3::ONE)),
+    ]);
+    let selectors = ["socket", "missing*", "socket", "socket-*"];
+
+    assert_shared_and_legacy_policy_output(&doc, &selectors);
+}
+
+#[test]
+fn rest_world_scale_legacy_selectors_match_shared_policy_for_unavailable_measurements() {
+    let non_finite = Mat4::from_cols_array(&[
+        f32::NAN,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    ]);
+
+    for doc in [
+        Document::default(),
+        document(vec![node(
+            0,
+            "socket",
+            None,
+            SourceNodeLocalRest::Matrix(non_finite),
+        )]),
+    ] {
+        assert_shared_and_legacy_policy_output(&doc, &["socket"]);
+    }
+}
+
+fn assert_shared_and_legacy_policy_output(doc: &Document, selectors: &[&str]) {
+    let shared = config(selectors, 1.0, 1.0e-4);
+    let legacy = legacy_config(selectors, 1.0, 1.0e-4);
+
+    assert_eq!(
+        serde_json::to_value(evaluate(doc, &shared)).expect("shared evaluation serializes"),
+        serde_json::to_value(evaluate(doc, &legacy)).expect("legacy evaluation serializes"),
+    );
 }
 
 #[test]

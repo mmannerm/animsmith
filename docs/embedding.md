@@ -16,6 +16,7 @@ owns runnable CLI transcripts.
 | `animsmith-core` | Required embedding boundary: data model, rig roles, config, sampling, measurements, diffs, checks, and findings. No file I/O or format dependency. |
 | `animsmith-gltf` | Load glTF/GLB, write glTF/GLB, or apply byte-surgical glTF repairs. |
 | `animsmith-fbx` | Load FBX through `ufbx`; adds a bundled C build. Omit it from glTF-only pipelines. |
+| `animsmith-engine` | Resolve one exact built-in consumer/importer profile and fully materialized typed importer settings. No TOML, file I/O, format crate, or engine SDK dependency. |
 | `animsmith-report` | Render self-contained HTML from the same sampled grids and findings. |
 
 The `animsmith` crate is the CLI binary, not a library facade.
@@ -26,6 +27,7 @@ animsmith-core = "0.3"
 animsmith-gltf = "0.3"
 # Optional:
 animsmith-fbx = "0.3"
+animsmith-engine = "0.3"
 animsmith-report = "0.3"
 ```
 
@@ -33,7 +35,8 @@ docs.rs is the canonical reference for published APIs. The stable package
 URLs are:
 [animsmith-core](https://docs.rs/animsmith-core),
 [animsmith-gltf](https://docs.rs/animsmith-gltf),
-[animsmith-fbx](https://docs.rs/animsmith-fbx), and
+[animsmith-fbx](https://docs.rs/animsmith-fbx),
+[animsmith-engine](https://docs.rs/animsmith-engine), and
 [animsmith-report](https://docs.rs/animsmith-report). For the current workspace
 state, build the same rustdocs locally with `just doc`.
 
@@ -94,13 +97,23 @@ cargo run -p animsmith --example embed
    even when an earlier source definition emits no normalized primitive. A
    shared FBX geometry remains one normalized definition with multiple compact
    node instances, so that stable identity stays unique in measurements.
-2. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
+2. **Resolve an optional engine profile.** Construct an
+   `animsmith_engine::EngineDeclaration` with the exact family, profile
+   revision, engine version, importer, and typed document/selector settings.
+   `resolve_static` validates every declaration without file I/O; then call
+   `StaticResolution::resolve_input` with the loader-owned `SourceFormatV1`
+   and actual clip names. The result contains the immutable facts identity and
+   fully materialized settings identity. There is no generic/fallback profile,
+   caller-supplied source-unit override, or TOML type in this API. If the host
+   has no engine contract, omit this step; core measurements and checks remain
+   engine-neutral.
+3. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
    named/auto profile plus inline-override policy as the CLI. Lower-level
    `detect_profile`, `profile::resolve_named`, and
    `ResolvedRoles::from_names` remain available when a host intentionally
    owns a different policy. Checks consume roles, never project-specific bone
    names.
-3. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
+4. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
    the types from your schema or build them programmatically. Deserialization
    validates numeric check tolerances and per-clip loop caps immediately.
    `MovementOwner` represents independent XZ, Y, and yaw intent in core;
@@ -112,10 +125,15 @@ cargo run -p animsmith --example embed
    constructed config to measurement-only APIs; `evaluate_checks` performs the
    same validation before inspecting or running the check catalog and returns
    invalid configuration as a typed `EvaluationError::InvalidConfiguration`.
-4. **Create one `MetricGrids`.** Share it by reference with
+   `Config::runtime_nodes` is the shared attachment/socket/IK selector policy;
+   the legacy `rest-world-scale` check field is normalized into it only when
+   the shared field is absent. Supplying both is a typed conflict. This added
+   public field is an intentional pre-1.0 struct-literal break: exhaustive
+   literals must add `runtime_nodes` or use `..Config::default()`.
+5. **Create one `MetricGrids`.** Share it by reference with
    `measure_document`, `CheckCtx::new`, `evaluate_checks`, and optional report
    rendering so each clip is sampled once.
-5. **Map results into the host.** `Finding` carries a stable check id,
+6. **Map results into the host.** `Finding` carries a stable check id,
    severity, optional clip/bone/time, measured and expected values, and a
    message. The host decides whether warnings fail its gate.
 
