@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_root"
 
 fail() {
@@ -20,6 +20,18 @@ require_fixed_line() {
 
   require_file "$path"
   grep -Fxq "$expected" "$path" || fail "$message"
+}
+
+# Cargo is a native Windows executable under Git Bash, so its metadata paths
+# use `C:\...` while `pwd -P` uses `/c/...`. Compare the same mixed absolute
+# form on MSYS/Cygwin and leave native Unix paths unchanged.
+normalize_path_for_compare() {
+  local path="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -am "$path"
+  else
+    printf '%s\n' "$path"
+  fi
 }
 
 workspace_members=()
@@ -42,7 +54,13 @@ publishable_manifests=()
 publishable_members=()
 unpublished_crates=()
 published_readmes=()
-published_doc_sources=()
+published_source_entries=()
+
+# docs.rs always attempts `cargo rustdoc --lib`. The CLI package is
+# intentionally bin-only, so its docs.rs landing/source/features pages are
+# useful package metadata, but a rustdoc build is explicitly exempt until a
+# meaningful public library target is introduced.
+bin_only_docs_rs_exemptions=(animsmith)
 
 for member in "${workspace_members[@]}"; do
   manifest="$member/Cargo.toml"
@@ -64,6 +82,86 @@ for member in "${workspace_members[@]}"; do
 done
 
 test "${#publishable_crates[@]}" -gt 0 || fail "workspace has no publishable crates"
+
+command -v jq >/dev/null || fail "jq is required to inspect Cargo target metadata"
+workspace_metadata="$(cargo metadata --format-version 1 --no-deps)"
+
+# Cargo target metadata is the authority for what rustdoc can build. File names
+# and TOML headers alone are insufficient because explicit targets can redirect
+# either source entry point.
+for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
+  crate="${publishable_crates[$i]}"
+  manifest="${publishable_manifests[$i]}"
+  member="${publishable_members[$i]}"
+  library_sources=()
+  while IFS= read -r source; do
+    library_sources+=("$source")
+  done < <(
+    jq -r --arg crate "$crate" '
+      .packages[]
+      | select(.name == $crate)
+      | .targets[]
+      | select(.kind | any(
+          . == "lib" or . == "rlib" or . == "dylib" or . == "cdylib"
+          or . == "staticlib" or . == "proc-macro"
+        ))
+      | .src_path
+    ' <<<"$workspace_metadata"
+  )
+  binary_sources=()
+  while IFS= read -r source; do
+    binary_sources+=("$source")
+  done < <(
+    jq -r --arg crate "$crate" '
+      .packages[]
+      | select(.name == $crate)
+      | .targets[]
+      | select(.kind | index("bin"))
+      | .src_path
+    ' <<<"$workspace_metadata"
+  )
+
+  if printf '%s\n' "${bin_only_docs_rs_exemptions[@]}" | grep -Fxq "$crate"; then
+    test ! -f "$member/src/lib.rs" || {
+      fail "$crate docs.rs bin-only exemption must not have a library source"
+    }
+    test "${#library_sources[@]}" -eq 0 || {
+      fail "$crate docs.rs bin-only exemption must not have a Cargo library target"
+    }
+    test -f "$member/src/main.rs" || {
+      fail "$crate is exempt from docs.rs rustdoc only when its bin source exists"
+    }
+    grep -Eq '^[[:space:]]*\[\[bin\]\][[:space:]]*$' "$manifest" || {
+      fail "$crate docs.rs bin-only exemption requires an explicit [[bin]] target"
+    }
+    test "${#binary_sources[@]}" -eq 1 || {
+      fail "$crate docs.rs bin-only exemption requires exactly one Cargo binary target"
+    }
+    actual_source="$(normalize_path_for_compare "${binary_sources[0]}")"
+    expected_source="$(normalize_path_for_compare "$repo_root/$member/src/main.rs")"
+    test "$actual_source" = "$expected_source" || {
+      fail "$crate docs.rs bin-only target must use $member/src/main.rs"
+    }
+    published_source_entries+=("$member/src/main.rs")
+  else
+    test "${#library_sources[@]}" -eq 1 || {
+      fail "$crate must have exactly one Cargo library target or use an explicit bin-only docs.rs exemption"
+    }
+    test -f "$member/src/lib.rs" || {
+      fail "$crate library target requires $member/src/lib.rs"
+    }
+    actual_source="$(normalize_path_for_compare "${library_sources[0]}")"
+    expected_source="$(normalize_path_for_compare "$repo_root/$member/src/lib.rs")"
+    test "$actual_source" = "$expected_source" || {
+      fail "$crate library target must use $member/src/lib.rs"
+    }
+    published_source_entries+=("$member/src/lib.rs")
+  fi
+done
+
+if [ "${ANIMSMITH_PACKAGE_INVENTORY_TARGET_POLICY_ONLY:-0}" = "1" ]; then
+  exit 0
+fi
 
 # Cargo retains versioned dev-dependencies in a published manifest. Internal
 # fixture crates that are deliberately not published must therefore be used
@@ -111,14 +209,6 @@ for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
   fi
   published_readmes+=("$readme")
 
-  if test -f "$member/src/lib.rs"; then
-    published_doc_sources+=("$member/src/lib.rs")
-  elif test -f "$member/src/main.rs"; then
-    published_doc_sources+=("$member/src/main.rs")
-  else
-    fail "$member must provide src/lib.rs or src/main.rs for rustdoc"
-  fi
-
   require_fixed_line \
     "$manifest" \
     "documentation = \"https://docs.rs/$crate\"" \
@@ -136,12 +226,12 @@ done
 bad_repo_links="$(
   grep -Eho 'https://github\.com/mmannerm/animsmith/(blob|tree)/[^)[:space:]]+' \
     "${published_readmes[@]}" \
-    "${published_doc_sources[@]}" \
+    "${published_source_entries[@]}" \
     DESIGN.md \
     | grep -Ev 'https://github\.com/mmannerm/animsmith/(blob|tree)/main/' || true
 )"
 if [ -n "$bad_repo_links" ]; then
-  fail "published README, rustdoc, and design repository links must use /main/ while pre-1.0 drift is accepted: $bad_repo_links"
+  fail "published README, source entry, and design repository links must use /main/ while pre-1.0 drift is accepted: $bad_repo_links"
 fi
 
 for crate in "${publishable_crates[@]}"; do

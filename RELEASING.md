@@ -179,10 +179,15 @@ So automation begins at `0.2.0`; `0.1.0` is done by hand, once:
    dependent crates can only fully verify once their `animsmith-*`
    dependencies exist in the index.
 4. After each crate is accepted, docs.rs queues its documentation. Check
-   each crate's docs.rs page; the manifests set `documentation` links and
-   `[package.metadata.docs.rs]` so pure-Rust crates get Linux/macOS/Windows
-   pages, while the C-dependent crates (`animsmith-fbx`, all-features CLI)
-   use the Linux default target.
+   each crate's landing page, source listing, and feature metadata. The
+   library crates (`animsmith-core`, `animsmith-gltf`, `animsmith-fbx`, and
+   `animsmith-report`) must also have successful rustdoc builds; their
+   manifests set `documentation` links and `[package.metadata.docs.rs]` so
+   pure-Rust crates get Linux/macOS/Windows pages, while the C-dependent
+   `animsmith-fbx` uses the Linux default target. The published `animsmith`
+   package is intentionally bin-only: docs.rs has no library target to
+   document and its `cargo rustdoc --lib` failure is an accepted, mechanically
+   guarded exemption. Verify its docs.rs landing/source/features pages only.
 5. On crates.io, for **each publishable crate**: Settings → Trusted
    Publishing → add publisher — repository `mmannerm/animsmith`, workflow
    `release-plz.yml`, no environment.

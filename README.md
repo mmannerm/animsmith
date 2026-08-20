@@ -74,13 +74,16 @@ animsmith-fbx = "0.3"
 animsmith-report = "0.3"
 ```
 
-Published API documentation uses these stable docs.rs URLs:
+Published library API documentation uses these stable docs.rs URLs:
 
 - [animsmith-core](https://docs.rs/animsmith-core)
 - [animsmith-gltf](https://docs.rs/animsmith-gltf)
 - [animsmith-fbx](https://docs.rs/animsmith-fbx)
 - [animsmith-report](https://docs.rs/animsmith-report)
-- [animsmith](https://docs.rs/animsmith)
+
+The bin-only [`animsmith` package page](https://docs.rs/animsmith) exposes
+release, source, and feature metadata. CLI usage is documented in the
+[CLI guide](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md).
 
 ## Quickstart
 
