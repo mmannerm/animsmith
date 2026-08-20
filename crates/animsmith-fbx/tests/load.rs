@@ -2008,6 +2008,49 @@ fn rooted_capture_opens_and_hashes_a_texture_video_alias_once() {
 }
 
 #[test]
+fn unmodeled_audio_clip_prevents_a_complete_dependency_closure() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read analytic FBX")
+        .replace("\r\n", "\n")
+        .replacen(
+            "\tObjectType: \"Deformer\" { Count: 2 }\n}",
+            "\tObjectType: \"Deformer\" { Count: 2 }\n\tObjectType: \"Audio\" { Count: 1 }\n}",
+            1,
+        )
+        .replacen(
+            "}\nConnections: {",
+            concat!(
+                "\tAudio: 9100, \"Audio::voice\", \"Clip\" {\n",
+                "\t\tProperties70: {\n",
+                "\t\t\tP: \"Path\", \"KString\", \"XRefUrl\", \"\", \"voice.wav\"\n",
+                "\t\t\tP: \"RelPath\", \"KString\", \"XRefUrl\", \"\", \"voice.wav\"\n",
+                "\t\t}\n",
+                "\t}\n",
+                "}\nConnections: {"
+            ),
+            1,
+        );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("audio-clip.fbx");
+    std::fs::write(&path, source).expect("write audio fixture");
+    std::fs::write(dir.path().join("voice.wav"), b"sentinel audio")
+        .expect("write sidecar sentinel");
+
+    let loaded = animsmith_fbx::load_source(&path).expect("audio fixture parses");
+    let closure = loaded.dependency_closure();
+    assert!(!closure.coverage().is_complete());
+    assert!(closure.identity().is_none());
+    assert!(closure.references().is_empty());
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(
+        closure
+            .coverage()
+            .reasons()
+            .contains(&DependencyClosureCoverageReasonV1::UnmodeledResourceDomain)
+    );
+}
+
+#[test]
 fn byte_only_capture_records_safe_aliases_as_root_unavailable_without_io() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));

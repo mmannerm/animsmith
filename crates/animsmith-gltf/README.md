@@ -20,9 +20,10 @@ byte loading deliberately has no ambient-current-directory fallback: use
 when the input declares a safe relative external buffer or image. Unsafe
 spellings are refused before any open. The caller-supplied root is a capability
 rather than source evidence; rooted loading accepts only safe normalized
-relative keys, rejects symlinked root/resource components before opening them,
-and never includes host paths in the closure identity or source-controlled
-diagnostics.
+relative keys, rejects a symlinked final root and every locator-derived
+symlink component before opening them, and never includes host paths in the
+closure identity or source-controlled diagnostics. Ancestors of the explicitly
+supplied root remain part of the caller's capability path.
 
 Values are preserved as authored. The loader does not renormalize
 quaternions, resample tracks, or clean data on the way in, so the
@@ -43,6 +44,8 @@ refused, or unavailable mapping. It hashes each accepted external key from
 the same bounded read used by the loader and deduplicates aliases. Its fixed
 limits cover declarations, normalized keys, open/hash bytes, and alias probes;
 an N+1 limit produces typed partial evidence rather than resuming capture.
+Because V1 does not inspect extension payloads for additional locators, any
+declared extension also keeps dependency-closure coverage partial.
 
 `load` also fills `Document::assets` with the file's geometry — meshes
 (triangle lists), skins (joints + inverse bind matrices), and

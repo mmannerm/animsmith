@@ -2,10 +2,10 @@
 
 use animsmith_core::scale::{ScaleError, ScaleOperation};
 use animsmith_core::{
-    DependencyClosureCoverageV1, DependencyReferenceTargetV1, DependencyResourceRefusalReasonV1,
-    DependencyResourceUnavailableReasonV1, InputIdentity, RAW_SOURCE_V1_MAX_TEXT_BYTES,
-    SourceAxisV1, SourceChannelPropertyV1, SourceFormatV1, SourceHandednessV1,
-    SourceInterpolationV1, SourceLoaderDispositionV1, SourceObservationStateV1,
+    DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, DependencyReferenceTargetV1,
+    DependencyResourceRefusalReasonV1, DependencyResourceUnavailableReasonV1, InputIdentity,
+    RAW_SOURCE_V1_MAX_TEXT_BYTES, SourceAxisV1, SourceChannelPropertyV1, SourceFormatV1,
+    SourceHandednessV1, SourceInterpolationV1, SourceLoaderDispositionV1, SourceObservationStateV1,
     SourceProvenanceKindV1, SourceResourceKindV1, SourceResourceLocatorV1,
     SourceSetCoverageStateV1, SourceUnavailableReasonV1,
 };
@@ -321,7 +321,10 @@ fn oversized_optional_name_does_not_turn_legacy_success_into_failure() {
 fn used_extensions_keep_declaration_order_and_loader_unsupported() {
     let bytes = json_bytes(&json!({
         "asset": { "version": "2.0" },
-        "extensionsUsed": ["Z_vendor", "A_vendor"]
+        "extensionsUsed": ["Z_vendor", "A_vendor"],
+        "extensions": {
+            "Z_vendor": { "uri": "unmodeled-vendor-sidecar.bin" }
+        }
     }));
     let loaded = animsmith_gltf::load_source_bytes(Path::new("extensions.gltf"), &bytes)
         .expect("extension declarations load");
@@ -348,6 +351,17 @@ fn used_extensions_keep_declaration_order_and_loader_unsupported() {
         rows.iter()
             .all(|row| row.disposition() == SourceLoaderDispositionV1::Unsupported)
     );
+    let closure = loaded.dependency_closure();
+    assert!(!closure.coverage().is_complete());
+    assert!(closure.identity().is_none());
+    assert_eq!(closure.work().external_open_attempts(), 0);
+    assert!(
+        closure
+            .coverage()
+            .reasons()
+            .contains(&DependencyClosureCoverageReasonV1::UnmodeledResourceDomain)
+    );
+    assert!(!format!("{closure:?}").contains("unmodeled-vendor-sidecar.bin"));
 }
 
 #[test]
@@ -635,6 +649,34 @@ fn explicit_root_capability_may_traverse_a_symlinked_ancestor() {
         &explicit_root,
     )
     .expect("the caller explicitly authorized the root path");
+    let closure = loaded.dependency_closure();
+    assert!(closure.coverage().is_complete());
+    assert_eq!(closure.work().external_open_attempts(), 1);
+    assert!(matches!(
+        closure.references()[0].target(),
+        DependencyReferenceTargetV1::External { key } if key.as_str() == "image.bin"
+    ));
+}
+
+#[test]
+fn path_loading_preserves_a_caller_supplied_lexical_parent_in_the_root() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let capability = dir.path().join("capability");
+    let unused = capability.join("unused");
+    let resources = capability.join("resources");
+    std::fs::create_dir_all(&unused).expect("lexical parent component exists");
+    std::fs::create_dir_all(&resources).expect("resource root");
+    std::fs::write(resources.join("image.bin"), b"captured").expect("external image");
+    let bytes = json_bytes(&json!({
+        "asset": { "version": "2.0" },
+        "images": [{ "uri": "image.bin" }]
+    }));
+    let source = resources.join("source.gltf");
+    std::fs::write(&source, bytes).expect("primary source");
+    let supplied_path = unused.join("..").join("resources").join("source.gltf");
+
+    let loaded = animsmith_gltf::load_source(&supplied_path)
+        .expect("the input parent is the caller-authorized resource root");
     let closure = loaded.dependency_closure();
     assert!(closure.coverage().is_complete());
     assert_eq!(closure.work().external_open_attempts(), 1);

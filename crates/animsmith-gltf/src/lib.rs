@@ -122,7 +122,7 @@ use gltf::accessor::{DataType as ComponentType, Dimensions as AccessorType};
 use image::{ColorType, ImageError, ImageFormat, ImageReader, Limits};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Errors returned while loading `.gltf` or `.glb` input.
 ///
@@ -1240,8 +1240,10 @@ pub fn load_source_bytes(path: &Path, bytes: &[u8]) -> Result<LoadedSource, Load
 /// Load captured bytes with an explicit trusted local root for external resources.
 ///
 /// `resource_root` is an authority supplied by the caller, not a source fact.
-/// Resource keys are normalized and opened only beneath that root, with every
-/// symlink component refused. The root itself never enters public evidence.
+/// Resource keys are normalized and opened only beneath that root. The final
+/// root and every locator-derived symlink component are refused; ancestors of
+/// the explicitly supplied root are part of the caller's capability path. The
+/// root itself never enters public evidence.
 ///
 /// # Errors
 ///
@@ -1261,6 +1263,18 @@ fn load_source_bytes_inner(
     bytes: &[u8],
     resource_root: Option<&Path>,
 ) -> Result<LoadedSource, LoadError> {
+    load_source_bytes_inner_with_reader(path, bytes, resource_root, read_external_file)
+}
+
+fn load_source_bytes_inner_with_reader<F>(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: Option<&Path>,
+    mut read_external: F,
+) -> Result<LoadedSource, LoadError>
+where
+    F: FnMut(&Path, u64) -> CapturedResource,
+{
     // Parse from the supplied slice rather than via `Gltf::open`: the reader
     // path (`Glb::from_reader`) trusts the GLB header's declared length and
     // pre-allocates `vec![0; declared_len]` before reading a byte, so a
@@ -1278,7 +1292,14 @@ fn load_source_bytes_inner(
     let mut facts = source_facts_builder(bytes)?;
     project_extension_facts(&gltf.document, &mut facts);
     project_resource_facts(&gltf.document, &mut facts);
-    let (dependency_closure, mut resources) = capture_dependency_closure(&facts, resource_root)?;
+    let has_unmodeled_extension_domain = gltf.document.extensions_used().next().is_some()
+        || gltf.document.extensions_required().next().is_some();
+    let (dependency_closure, mut resources) = capture_dependency_closure(
+        &facts,
+        resource_root,
+        has_unmodeled_extension_domain,
+        &mut read_external,
+    )?;
     let buffers = resolve_captured_buffers(&gltf, &mut resources)?;
     validate_primitive_accessors(&gltf.document, &buffers)?;
     // Derive the node topology once and share it: the skeleton build and
@@ -1638,33 +1659,6 @@ impl ResourceCaptureSession {
         Ok(path)
     }
 
-    /// Read one already-preflighted resource exactly once. `limit + 1` is a
-    /// bounded witness for the core closure's terminal resource-budget row.
-    fn read_external_file(&self, path: &Path, limit: u64) -> CapturedResource {
-        let file = match std::fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return CapturedResource::Failure(CapturedResourceFailure::Unavailable(
-                    DependencyResourceUnavailableReasonV1::Missing,
-                ));
-            }
-            Err(_) => {
-                return CapturedResource::Failure(CapturedResourceFailure::Unavailable(
-                    DependencyResourceUnavailableReasonV1::Unreadable,
-                ));
-            }
-        };
-        let max_read = limit.saturating_add(1);
-        let mut bytes = Vec::new();
-        let read = file.take(max_read).read_to_end(&mut bytes);
-        if read.is_err() {
-            return CapturedResource::Failure(CapturedResourceFailure::Unavailable(
-                DependencyResourceUnavailableReasonV1::Unreadable,
-            ));
-        }
-        CapturedResource::Bytes(bytes)
-    }
-
     fn materialize_external(
         &mut self,
         kind: SourceResourceKindV1,
@@ -1742,6 +1736,33 @@ impl ResourceCaptureSession {
     }
 }
 
+/// Read one already-preflighted resource exactly once. `limit + 1` is a
+/// bounded witness for the core closure's terminal resource-budget row.
+fn read_external_file(path: &Path, limit: u64) -> CapturedResource {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return CapturedResource::Failure(CapturedResourceFailure::Unavailable(
+                DependencyResourceUnavailableReasonV1::Missing,
+            ));
+        }
+        Err(_) => {
+            return CapturedResource::Failure(CapturedResourceFailure::Unavailable(
+                DependencyResourceUnavailableReasonV1::Unreadable,
+            ));
+        }
+    };
+    let max_read = limit.saturating_add(1);
+    let mut bytes = Vec::new();
+    let read = file.take(max_read).read_to_end(&mut bytes);
+    if read.is_err() {
+        return CapturedResource::Failure(CapturedResourceFailure::Unavailable(
+            DependencyResourceUnavailableReasonV1::Unreadable,
+        ));
+    }
+    CapturedResource::Bytes(bytes)
+}
+
 /// Validate the caller-supplied root itself without inspecting its ancestors.
 ///
 /// Ancestors are part of the capability path the caller explicitly supplied;
@@ -1764,16 +1785,6 @@ fn trusted_resource_root(root: Option<&Path>) -> TrustedResourceRoot {
             }
         }
     };
-    // The root is authority supplied by the caller, but accepting a lexical
-    // parent component would make that capability ambiguous.
-    if root
-        .components()
-        .any(|component| component == Component::ParentDir)
-    {
-        return TrustedResourceRoot::Failure(CapturedResourceFailure::Unavailable(
-            DependencyResourceUnavailableReasonV1::ResourceRootUnavailable,
-        ));
-    }
     match std::fs::symlink_metadata(&root) {
         Ok(metadata) if metadata.is_dir() => TrustedResourceRoot::Available(root),
         Ok(metadata) if metadata.file_type().is_symlink() => TrustedResourceRoot::Failure(
@@ -1796,15 +1807,23 @@ fn reference_failure(reference: CapturedReference) -> CapturedResourceFailure {
     }
 }
 
-fn capture_dependency_closure(
+fn capture_dependency_closure<F>(
     facts: &RawSourceFactsBuilderV1,
     root: Option<&Path>,
-) -> Result<(DependencyClosureV1, ResourceCaptureSession), LoadError> {
+    has_unmodeled_resource_domain: bool,
+    read_external: &mut F,
+) -> Result<(DependencyClosureV1, ResourceCaptureSession), LoadError>
+where
+    F: FnMut(&Path, u64) -> CapturedResource,
+{
     let mut closure = DependencyClosureBuilderV1::new(
         facts.primary_identity().clone(),
         facts.resource_coverage(),
         facts.resource_rows().len(),
     );
+    if has_unmodeled_resource_domain {
+        closure.mark_unmodeled_resource_domain();
+    }
     let mut session = ResourceCaptureSession::new(root);
     for row in facts.resource_rows() {
         let (locator_bytes, components) = match row.locator() {
@@ -1968,7 +1987,7 @@ fn capture_dependency_closure(
                                 closure
                                     .record_external_open_attempt(&key)
                                     .map_err(SourceFactsError::from)?;
-                                session.read_external_file(&path, limit)
+                                read_external(&path, limit)
                             }
                             Err(failure) => CapturedResource::Failure(failure),
                         };
@@ -3474,6 +3493,72 @@ mod dependency_capture_tests {
             session.insert_reference(kind, index, CapturedReference::External(key.clone()));
         }
         session
+    }
+
+    #[test]
+    fn recording_reader_binds_one_capture_to_the_digest_and_document() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let external_path = dir.path().join("shared.bin");
+        std::fs::write(&external_path, [0_u8; 36]).expect("decoy external bytes");
+
+        let mut captured = Vec::new();
+        for value in [0.0_f32, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0, 0.0] {
+            captured.extend_from_slice(&value.to_le_bytes());
+        }
+        let primary = serde_json::to_vec(&serde_json::json!({
+            "asset": { "version": "2.0" },
+            "buffers": [
+                { "uri": "shared.bin", "byteLength": captured.len() },
+                { "uri": "shared.bin", "byteLength": captured.len() }
+            ],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": captured.len() }],
+            "accessors": [{
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [0.0, 0.0, 0.0],
+                "max": [2.0, 3.0, 0.0]
+            }],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+            "nodes": [{ "mesh": 0 }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }))
+        .expect("analytic glTF JSON");
+        let mut opens = 0;
+        let loaded = load_source_bytes_inner_with_reader(
+            &dir.path().join("recorded.gltf"),
+            &primary,
+            Some(dir.path()),
+            |path, limit| {
+                opens += 1;
+                assert_eq!(path, external_path);
+                assert!(limit >= captured.len() as u64);
+                CapturedResource::Bytes(captured.clone())
+            },
+        )
+        .expect("recorded external capture loads");
+
+        assert_eq!(opens, 1, "two aliases cause one resolver open");
+        let closure = loaded.dependency_closure();
+        assert!(closure.coverage().is_complete());
+        assert_eq!(closure.references().len(), 2);
+        assert_eq!(closure.external_resources().len(), 1);
+        assert_eq!(
+            closure.external_resources()[0].identity(),
+            &InputIdentity::from_bytes(&captured),
+            "the closure hashes the resolver-returned capture"
+        );
+        assert_eq!(
+            loaded.document().assets.meshes[0].primitives[0].positions,
+            [
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(0.0, 3.0, 0.0),
+            ],
+            "the Document consumes the recorded capture, not the on-disk decoy"
+        );
     }
 
     #[test]

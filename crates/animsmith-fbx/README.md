@@ -70,8 +70,8 @@ missing, unreadable, or budget-exceeded declarations become typed closure
 outcomes without host path or error text. The shared V1 limits cap one external
 read at 64 MiB, distinct captured bytes at 256 MiB, and distinct keys at 1,024;
 the first N+1 boundary retains only its deterministic prefix. `texture_files`
-remain conservatively unmodeled, so their presence makes closure coverage
-partial even when the represented rows were captured.
+and audio clips remain conservatively unmodeled, so their presence makes
+closure coverage partial even when the represented rows were captured.
 
 The exact captured bytes are reused for optional PNG/JPEG `TextureAsset`s;
 there is no post-load reread or path fallback. A separate 256 MiB FBX asset

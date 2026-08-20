@@ -577,10 +577,11 @@ fn capture_dependency_closure(
         facts.resource_coverage(),
         facts.resource_rows().len(),
     );
-    if !scene.texture_files.is_empty() {
-        // ufbx exposes texture-file linkage as an additional resource-bearing
-        // domain, but the normalized document has no one-to-one row shape for
-        // it yet. Never claim a complete closure while it is present.
+    if !scene.texture_files.is_empty() || !scene.audio_clips.is_empty() {
+        // ufbx exposes texture-file linkage and audio clips as additional
+        // resource-bearing domains, but the normalized document has no
+        // one-to-one row shape for either yet. Never claim a complete closure
+        // while either is present.
         closure.mark_unmodeled_resource_domain();
     }
 
