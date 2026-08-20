@@ -345,7 +345,7 @@ profile = "mixamo"
 
 [clips."mixamo.com"]
 loop = true
-in_place = true
+movement_owner_xz = "gameplay"
 
 [checks.loop-seam]
 max_ratio = 1.6
@@ -366,7 +366,8 @@ The same contract is committed as
 for reference (from a repo checkout, pass it with
 `--config examples/mixamo.animsmith.toml` instead of saving a local
 copy). It pins the profile rather than trusting auto-detection, declares
-the clip a loop (arming the loop checks) and in-place (arming `in-place`,
+the clip a loop (arming the loop checks) and gives XZ movement to gameplay
+(arming `in-place`,
 judged on the Hips track per the callout above). Every key, glob
 pattern, and severity override is documented in the
 [configuration reference](../README.md#configuration).
@@ -410,16 +411,20 @@ walking.glb:
   ...
 ```
 
-For a root-motion download like that one, swap the in-place
-declaration for a speed pin, using the `speed_mps` that `measure`
+For a root-motion download like that one, give XZ ownership to the animation
+and add a speed pin, using the `speed_mps` that `measure`
 reported as the starting value:
 
 ```toml
 [clips."mixamo.com"]
 loop = true
-in_place = false
+movement_owner_xz = "animation"
 speed_mps = { value = 1.8, tolerance = 0.15 }
 ```
+
+Older configs may spell XZ gameplay/animation ownership as `in_place = true`
+or `false`. That alias remains supported, but one selector entry cannot declare
+both `in_place` and `movement_owner_xz`.
 
 Under that contract the real download passes the loop and speed pins
 and surfaces genuine content findings instead (abridged):

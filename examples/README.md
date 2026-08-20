@@ -542,6 +542,9 @@ severity = "note"           # demote while an upstream fix lands
 
 [clips."run_*"]             # glob: every run clip loops
 loop = true
+movement_owner_xz = "animation" # extracted root motion owns horizontal travel
+movement_owner_y = "gameplay"   # controller owns vertical motion
+movement_owner_yaw = "animation"
 max_loop_position_delta_m = 0.04  # per-family pose/velocity seam caps
 max_loop_rotation_delta_deg = 2.0
 max_loop_velocity_delta_mps = 0.2
@@ -572,6 +575,14 @@ clip in a directional blend ring to the same stride phase, so runtime
 blends between them don't skate. `animsmith.toml` is auto-loaded from the
 working directory, so committing one next to your assets makes every bare
 `animsmith lint` enforce the contract.
+
+Movement ownership is independent on XZ, Y, and yaw. Each field is either
+`"gameplay"` (the entity/controller owns that component) or `"animation"`
+(extracted root motion owns it); omitted axes stay absent. `in_place = true`
+and `false` remain compatibility aliases for XZ gameplay and animation,
+respectively, but one selector entry cannot use both `in_place` and
+`movement_owner_xz`. Exact/glob layers normalize the alias before applying the
+usual field-by-field precedence.
 
 The four role-free loop-continuity caps (`max_loop_position_delta_m`,
 `max_loop_rotation_delta_deg`, `max_loop_velocity_delta_mps`, and

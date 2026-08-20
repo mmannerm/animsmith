@@ -15,8 +15,9 @@ profile = "auto"
 # Declaring the clip as a loop arms role-free per-bone C0/C1 checks plus the
 # locomotion-specific feet-relative-to-hips loop-seam check.
 loop = true
-# The clip animates in place (no net root travel), so in-place passes.
-in_place = true
+# Gameplay owns horizontal travel (the clip is a treadmill cycle), so
+# `in-place` expects no measured XZ root travel.
+movement_owner_xz = "gameplay"
 # A per-clip cap can be stricter than a project-wide loop default. Omitted
 # dimensions continue to inherit their global caps.
 max_loop_rotation_delta_deg = 0.5

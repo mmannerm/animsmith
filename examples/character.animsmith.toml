@@ -34,6 +34,9 @@ severity = "note"
 
 [clips."run_*"]
 loop = true
+movement_owner_xz = "animation"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "animation"
 # Locomotion has intentional root travel and a different seam budget than
 # stationary loops. These replace only matching inherited loop caps.
 max_loop_position_delta_m = 0.04
@@ -43,9 +46,15 @@ max_loop_angular_velocity_delta_degps = 200.0
 
 [clips."walk_*"]
 loop = true
+movement_owner_xz = "animation"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "animation"
 
 [clips.idle_1h]
 loop = true
+movement_owner_xz = "gameplay"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "gameplay"
 
 # Exact names override matching glob-derived caps one field at a time.
 [clips.run_forward_1h]

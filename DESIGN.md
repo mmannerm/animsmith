@@ -552,7 +552,9 @@ severity = "warn"
 
 [clips."run_*"]                    # glob; exact > glob, later entries win ties
 loop = true
-in_place = true
+movement_owner_xz = "animation"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "animation"
 max_loop_position_delta_m = 0.04   # finite per-family override; global is fallback
 max_loop_rotation_delta_deg = 2.0
 max_loop_velocity_delta_mps = 0.2
@@ -2664,7 +2666,9 @@ that component into pose) or `"animation"` (extracted root motion owns world
 motion). Issue #466 owns these engine-neutral clip-intent fields. The existing
 `in_place` field remains a compatibility alias only for
 horizontal ownership (`true` means gameplay, `false` means animation); declaring
-it together with `movement_owner_xz` is a typed configuration error. A missing
+both spellings in one selector entry is a typed configuration error. Each valid
+entry is normalized before the existing field-by-field exact/glob overlay, so
+an alias in one layer and the canonical field in another remain valid. A missing
 axis declaration makes only the intent-dependent rule for that axis not
 applicable; it is never inferred from another axis. A filename such as `_RM`,
 small translation magnitude, or the profile alone cannot declare intent.

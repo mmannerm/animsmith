@@ -902,7 +902,7 @@ Built-in completed/gap scope codes are:
 | `required_bone_presence` | Configured structural skeleton-bone presence requirements were evaluated. | `required-bones` |
 | `selected_node_rest_scale` | One configured source-node selector resolved and its effective rest-world linear scale was evaluated. | `rest-world-scale` |
 | `root_motion_speed` | One named clip's root-motion speed was measured. | `root-motion-speed` |
-| `travel_mode` | One named clip's in-place/root-motion declaration was judged. | `in-place` |
+| `travel_mode` | One named clip's XZ movement-owner declaration was judged. | `in-place` |
 | `foot_stance` | Whole-clip prerequisites for stance analysis were evaluated. | `foot-slide` |
 | `left_foot_stance` | The named clip's left foot/toe stance was evaluated. | `foot-slide` |
 | `right_foot_stance` | The named clip's right foot/toe stance was evaluated. | `foot-slide` |

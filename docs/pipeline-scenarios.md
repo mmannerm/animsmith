@@ -39,7 +39,7 @@ numbers, `lint` for the declared contract, `fix` for safe repairs,
 | Preserve raw | What must stay immutable? | Store raw FBX/glTF/GLB separately from any `fix`, `transform`, or `convert` outputs. |
 | Inspect | What clips, bones, tracks, durations, and rig roles exist? | Use `inspect` for inventory and `measure` for metrics without judgment. |
 | Segment | Which gameplay clips come from the take? | Use DCC slicing or mechanical `transform` slicing; declare clip names and frame policy in config. |
-| Root motion | Is each clip in-place or root-motion? | Pin `[clips.<name>] in_place` and `speed_mps`; verify with `lint` and measure drift with `measure`. |
+| Root motion | Who owns horizontal, vertical, and yaw world motion? | Pin `[clips.<name>] movement_owner_xz`, `movement_owner_y`, `movement_owner_yaw`, and `speed_mps`; verify horizontal intent with `lint` and measure trajectory evidence with `measure`. |
 | Conform | What needs artistic cleanup or retargeting? | Use findings as DCC work orders; reserve `fix` and `transform` for safe mechanical operations only. |
 | Validate | Does the clip meet the game contract? | Run config-backed `lint`; use `--deny-warnings` when warnings must block CI. |
 | Optimize | Did cleanup change what matters? | Run `lint` for `constant-track`, `scale-keys`, and `non-uniform-scale` hygiene, then use `diff` for metric deltas that catch motion drift. |
@@ -51,7 +51,7 @@ numbers, `lint` for the declared contract, `fix` for safe repairs,
 Every scenario below becomes much more useful once the team commits an
 `animsmith.toml` next to the asset set. The exact tolerances belong to
 your project, and the config is where the team records facts such as
-which clips loop, which are in-place, what speed a locomotion clip
+which clips loop, who owns each clip's XZ/Y/yaw movement, what speed a locomotion clip
 promises, which bones must move, and which clips form a directional
 blend set. animsmith checks those facts against the measured asset. It
 records typed, nonblocking coverage gaps when rig roles cannot be resolved,

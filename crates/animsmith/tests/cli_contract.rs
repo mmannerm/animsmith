@@ -4992,6 +4992,37 @@ fn invalid_check_tolerance_is_rejected_before_measurement_input_load() {
 }
 
 #[test]
+fn conflicting_movement_owner_alias_is_rejected_before_measurement_input_load() {
+    let dir = unique_temp_dir("conflicting-movement-owner-alias");
+    let config = write_config(
+        dir.path(),
+        "conflicting-movement-owner-alias.toml",
+        "[clips.walk]\nmovement_owner_xz = \"gameplay\"\nin_place = true\n",
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["measure", "/no/such/measurement-input.glb"])
+        .output()
+        .expect("runs animsmith");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    let error = stderr(&output);
+    assert!(error.contains("bad config"), "stderr:\n{error}");
+    assert!(error.contains("movement_owner_xz"), "stderr:\n{error}");
+    assert!(error.contains("in_place"), "stderr:\n{error}");
+    assert!(
+        !error.contains("failed to read"),
+        "config must fail before measurement input loading:\n{error}"
+    );
+}
+
+#[test]
 fn invalid_sync_group_tolerances_are_operator_errors() {
     let dir = unique_temp_dir("invalid-sync-group-tolerance");
     for (name, field, value) in [

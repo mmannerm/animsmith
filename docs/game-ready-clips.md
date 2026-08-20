@@ -369,11 +369,13 @@ an undeclared loop is reported clean.
 Locomotion clips carry a travel contract between the asset and the
 runtime, and nothing inside the file can verify it alone.
 
-- **In-place vs root motion.** An in-place (treadmill) clip expects the
-  gameplay code to drive entity velocity; a root-motion clip bakes the
-  travel in. A clip that violates its declared mode makes the character
-  glide or run in place at runtime. The `in-place` check compares the
-  declaration against measured root motion.
+- **Movement ownership.** Declare XZ, Y, and yaw independently as
+  `"gameplay"` (the entity/controller owns that component) or `"animation"`
+  (extracted root motion owns it). An in-place/treadmill clip normally uses XZ
+  gameplay ownership; a travelling root-motion clip uses XZ animation
+  ownership. The `in-place` check compares only declared XZ ownership against
+  measured horizontal root motion. Missing axes remain unspecified and are
+  never inferred from another axis, a filename, or measured magnitude.
 - **Declared speed drift.** Runtimes scale playback by a clip's
   declared locomotion speed to keep foot plants locked to world
   velocity; a stale speed pin plays the clip visibly too fast or too
@@ -733,7 +735,7 @@ order; they are not general animation cleanup.
 | Pose flickers, spins, or explodes | `nan`, `quat-norm`, `quat-flip`, `time-monotonic` | `fix` (quat repairs, lossless) | — | [First gate](../examples/README.md#1-a-first-cli-gate), [Repair](../examples/README.md#2-repairing-an-asset) |
 | Wrong length, freezes at the end | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] duration_s`, `fps` | [Editing a clip](../examples/README.md#3-editing-a-clip) |
 | The loop pops or pulses at the wrap | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam-rot`, `loop-seam` | drop a strict duplicated endpoint with `transform --drop-duplicate-loop-endpoint`; otherwise re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]`, `[checks.loop-seam-rot]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] in_place`, `speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
+| Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] movement_owner_xz`, `speed_mps` (`in_place` remains a legacy XZ alias) | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` for explicitly in-place cycles; runtime phase offsets for root motion | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Directional travel speed or foot slide changes by direction | per-member AnimSmith measurement and `root-motion-speed`; no cross-member check yet ([#411](https://github.com/mmannerm/animsmith/issues/411)) | preserve per-direction velocities, tune runtime/playback, or re-time in DCC | per-clip `speed_mps`; declared-set policy is future work | [Directional blend speeds](#directional-blend-members-travel-at-different-speeds) |
 | Same-time blend members drift or pop | `sync-group` | re-slice or re-time at source | `[sync_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |

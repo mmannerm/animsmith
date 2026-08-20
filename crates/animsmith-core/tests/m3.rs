@@ -476,6 +476,129 @@ fn stationary_clip_declared_root_motion_is_flagged() {
 }
 
 #[test]
+fn canonical_horizontal_owners_drive_the_in_place_check() {
+    let mut travelling = treadmill_doc(STANCE_SWEEP_M);
+    travelling.clips[0].tracks.push(Track {
+        bone: 0,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Vec3s(vec![Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 1.0, 2.0)]),
+    });
+    let gameplay = json_config(serde_json::json!({
+        "clips": { "walk": { "movement_owner_xz": "gameplay" } }
+    }));
+    let gameplay_hits = lint_with(&travelling, &gameplay);
+    let gameplay_hits = of(&gameplay_hits, "in-place");
+    assert_eq!(gameplay_hits.len(), 1);
+    let legacy_gameplay = json_config(serde_json::json!({
+        "clips": { "walk": { "in_place": true } }
+    }));
+    let legacy_gameplay_hits = lint_with(&travelling, &legacy_gameplay);
+    let legacy_gameplay_hits = of(&legacy_gameplay_hits, "in-place");
+    assert_eq!(legacy_gameplay_hits.len(), 1);
+    assert_eq!(gameplay_hits[0].message, legacy_gameplay_hits[0].message);
+
+    let stationary = treadmill_doc(STANCE_SWEEP_M);
+    let animation = json_config(serde_json::json!({
+        "clips": { "walk": { "movement_owner_xz": "animation" } }
+    }));
+    let animation_hits = lint_with(&stationary, &animation);
+    let animation_hits = of(&animation_hits, "in-place");
+    assert_eq!(animation_hits.len(), 1);
+    let legacy_animation = json_config(serde_json::json!({
+        "clips": { "walk": { "in_place": false } }
+    }));
+    let legacy_animation_hits = lint_with(&stationary, &legacy_animation);
+    let legacy_animation_hits = of(&legacy_animation_hits, "in-place");
+    assert_eq!(legacy_animation_hits.len(), 1);
+    assert_eq!(animation_hits[0].message, legacy_animation_hits[0].message);
+}
+
+#[test]
+fn canonical_gameplay_owner_exempts_treadmill_speed_from_root_motion_check() {
+    let doc = treadmill_doc(STANCE_SWEEP_M);
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "movement_owner_xz": "gameplay",
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+    let records = evaluate_with(&doc, &config);
+    let root_speed = records
+        .iter()
+        .find(|record| record.check_id() == "root-motion-speed")
+        .expect("root-motion-speed record");
+    assert_eq!(
+        root_speed.applicability(),
+        animsmith_core::Applicability::NotApplicable
+    );
+    assert!(root_speed.findings().is_empty());
+    assert!(root_speed.gaps().is_empty());
+
+    let legacy = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "in_place": true,
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+    let legacy_records = evaluate_with(&doc, &legacy);
+    let legacy_root_speed = legacy_records
+        .iter()
+        .find(|record| record.check_id() == "root-motion-speed")
+        .expect("legacy root-motion-speed record");
+    assert_eq!(
+        root_speed.applicability(),
+        legacy_root_speed.applicability()
+    );
+}
+
+#[test]
+fn vertical_and_yaw_intent_do_not_activate_the_horizontal_check() {
+    let doc = treadmill_doc(STANCE_SWEEP_M);
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "movement_owner_y": "animation",
+            "movement_owner_yaw": "gameplay"
+        }}
+    }));
+    let records = evaluate_with(&doc, &config);
+    for check_id in ["in-place", "root-motion-speed"] {
+        let record = records
+            .iter()
+            .find(|record| record.check_id() == check_id)
+            .expect("check record");
+        assert_eq!(
+            record.applicability(),
+            animsmith_core::Applicability::NotApplicable,
+            "{check_id} was activated by Y/yaw intent"
+        );
+    }
+}
+
+#[test]
+fn absent_horizontal_owner_does_not_exempt_a_root_motion_speed_pin() {
+    let doc = treadmill_doc(STANCE_SWEEP_M);
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "movement_owner_y": "animation",
+            "movement_owner_yaw": "gameplay",
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+    let records = evaluate_with(&doc, &config);
+    let root_speed = records
+        .iter()
+        .find(|record| record.check_id() == "root-motion-speed")
+        .expect("root-motion-speed record");
+    assert_eq!(
+        root_speed.applicability(),
+        animsmith_core::Applicability::Applicable
+    );
+    assert_eq!(root_speed.findings().len(), 1);
+}
+
+#[test]
 fn matching_in_place_declaration_is_clean() {
     let doc = treadmill_doc(STANCE_SWEEP_M);
     let config = json_config(serde_json::json!({
