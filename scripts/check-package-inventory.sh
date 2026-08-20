@@ -22,6 +22,18 @@ require_fixed_line() {
   grep -Fxq "$expected" "$path" || fail "$message"
 }
 
+# Cargo is a native Windows executable under Git Bash, so its metadata paths
+# use `C:\...` while `pwd -P` uses `/c/...`. Compare the same mixed absolute
+# form on MSYS/Cygwin and leave native Unix paths unchanged.
+normalize_path_for_compare() {
+  local path="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -am "$path"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
 workspace_members=()
 while IFS= read -r member; do
   workspace_members+=("$member")
@@ -89,7 +101,10 @@ for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
       .packages[]
       | select(.name == $crate)
       | .targets[]
-      | select(.kind | index("lib"))
+      | select(.kind | any(
+          . == "lib" or . == "rlib" or . == "dylib" or . == "cdylib"
+          or . == "staticlib" or . == "proc-macro"
+        ))
       | .src_path
     ' <<<"$workspace_metadata"
   )
@@ -122,7 +137,9 @@ for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
     test "${#binary_sources[@]}" -eq 1 || {
       fail "$crate docs.rs bin-only exemption requires exactly one Cargo binary target"
     }
-    test "${binary_sources[0]}" = "$repo_root/$member/src/main.rs" || {
+    actual_source="$(normalize_path_for_compare "${binary_sources[0]}")"
+    expected_source="$(normalize_path_for_compare "$repo_root/$member/src/main.rs")"
+    test "$actual_source" = "$expected_source" || {
       fail "$crate docs.rs bin-only target must use $member/src/main.rs"
     }
     published_source_entries+=("$member/src/main.rs")
@@ -133,7 +150,9 @@ for ((i = 0; i < ${#publishable_crates[@]}; i++)); do
     test -f "$member/src/lib.rs" || {
       fail "$crate library target requires $member/src/lib.rs"
     }
-    test "${library_sources[0]}" = "$repo_root/$member/src/lib.rs" || {
+    actual_source="$(normalize_path_for_compare "${library_sources[0]}")"
+    expected_source="$(normalize_path_for_compare "$repo_root/$member/src/lib.rs")"
+    test "$actual_source" = "$expected_source" || {
       fail "$crate library target must use $member/src/lib.rs"
     }
     published_source_entries+=("$member/src/lib.rs")

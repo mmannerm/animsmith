@@ -102,6 +102,38 @@ fn gfm_options() -> Options {
         | Options::ENABLE_TASKLISTS
 }
 
+/// Lowercased semantic prose tokens from rendered Markdown. Fenced/indented
+/// code is excluded so a checklist claim cannot be satisfied by a decoy;
+/// inline code remains prose because package and command names use it.
+fn rendered_prose_words(markdown: &str) -> String {
+    let mut in_code_block = false;
+    let mut prose = String::new();
+    for event in Parser::new_ext(markdown, gfm_options()) {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => in_code_block = true,
+            Event::End(TagEnd::CodeBlock) => in_code_block = false,
+            Event::Text(text) | Event::Code(text) if !in_code_block => {
+                prose.push(' ');
+                prose.push_str(&text);
+            }
+            _ => {}
+        }
+    }
+    prose
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || matches!(character, '.' | '-' | '/') {
+                character.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn rendered_destinations(markdown: &str, include_images: bool) -> Vec<String> {
     Parser::new_ext(markdown, gfm_options())
         .filter_map(|event| match event {
@@ -398,6 +430,23 @@ fn gated_markdown_links_resolve() {
         "broken documentation links:\n{}",
         errors.join("\n")
     );
+}
+
+#[test]
+fn release_checklist_distinguishes_library_rustdoc_from_the_bin_only_package() {
+    let releasing =
+        std::fs::read_to_string(repo_root().join("RELEASING.md")).expect("reads release checklist");
+    let prose = rendered_prose_words(&releasing);
+    for required in [
+        "library crates animsmith-core animsmith-gltf animsmith-fbx and animsmith-report must also have successful rustdoc builds",
+        "published animsmith package is intentionally bin-only docs.rs has no library target to document and its cargo rustdoc --lib failure is an accepted mechanically guarded exemption",
+        "verify its docs.rs landing/source/features pages only",
+    ] {
+        assert!(
+            prose.contains(required),
+            "RELEASING.md must retain the rendered release policy: {required:?}"
+        );
+    }
 }
 
 /// The false-failure and false-pass classes of the absorbed regex

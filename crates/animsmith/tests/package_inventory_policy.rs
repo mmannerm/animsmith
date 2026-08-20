@@ -1,6 +1,7 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -69,6 +70,14 @@ fn run(fixture: &TempDir) -> Output {
         .expect("run package target policy")
 }
 
+fn make_executable(path: &Path) {
+    let mut permissions = fs::metadata(path)
+        .expect("read script metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).expect("make fixture script executable");
+}
+
 fn assert_rejected(label: &str, mutate: impl FnOnce(&Path), expected_stderr: &str) {
     let fixture = fixture();
     mutate(fixture.path());
@@ -91,6 +100,107 @@ fn explicit_bin_only_policy_accepts_the_cli_and_library_contract() {
     assert!(
         output.status.success(),
         "valid policy fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn every_cargo_library_kind_that_rustdoc_accepts_satisfies_the_policy() {
+    for crate_type in ["lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"] {
+        let fixture = fixture();
+        write(
+            fixture.path().join("crates/library/Cargo.toml"),
+            &format!(
+                r#"[package]
+name = "library"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["{crate_type}"]
+"#,
+            ),
+        );
+        let output = run(&fixture);
+        assert!(
+            output.status.success(),
+            "valid {crate_type} library fixture failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn target_paths_normalize_native_windows_and_git_bash_forms() {
+    let fixture = fixture();
+    let metadata = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("capture fixture Cargo metadata");
+    assert!(
+        metadata.status.success(),
+        "fixture metadata failed: {}",
+        String::from_utf8_lossy(&metadata.stderr)
+    );
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&metadata.stdout).expect("parse fixture Cargo metadata");
+    for package in metadata["packages"]
+        .as_array_mut()
+        .expect("metadata packages")
+    {
+        for target in package["targets"].as_array_mut().expect("package targets") {
+            let path = target["src_path"].as_str().expect("target source path");
+            target["src_path"] = serde_json::Value::String(format!(
+                "C:\\{}",
+                path.trim_start_matches('/').replace('/', "\\")
+            ));
+        }
+    }
+
+    write(
+        fixture.path().join("fake-bin/metadata.json"),
+        &serde_json::to_string(&metadata).expect("serialize fixture metadata"),
+    );
+    let fake_cargo = fixture.path().join("fake-bin/cargo");
+    write(
+        &fake_cargo,
+        r#"#!/usr/bin/env bash
+test "$1" = metadata || exit 99
+cat "$(dirname "${BASH_SOURCE[0]}")/metadata.json"
+"#,
+    );
+    make_executable(&fake_cargo);
+    let fake_cygpath = fixture.path().join("fake-bin/cygpath");
+    write(
+        &fake_cygpath,
+        r#"#!/usr/bin/env bash
+path="$2"
+path="${path//\\//}"
+case "$path" in
+  [A-Za-z]:/*) printf '%s\n' "$path" ;;
+  /*) printf 'C:%s\n' "$path" ;;
+  *) printf '%s\n' "$path" ;;
+esac
+"#,
+    );
+    make_executable(&fake_cygpath);
+
+    let path = format!(
+        "{}:{}",
+        fixture.path().join("fake-bin").display(),
+        std::env::var("PATH").expect("PATH is set")
+    );
+    let output = Command::new("bash")
+        .arg("scripts/check-package-inventory.sh")
+        .current_dir(fixture.path())
+        .env("PATH", path)
+        .env("ANIMSMITH_PACKAGE_INVENTORY_TARGET_POLICY_ONLY", "1")
+        .output()
+        .expect("run package target policy with Windows metadata paths");
+    assert!(
+        output.status.success(),
+        "Windows/Git Bash path forms failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
