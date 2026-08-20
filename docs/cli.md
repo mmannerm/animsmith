@@ -442,12 +442,22 @@ animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 `measure`, `lint`, and `diff` support `--format json`. The native JSON
 contract is the source of truth and is versioned with `schema_version`.
 See [output.md](output.md) and
-[`output-v8.schema.json`](schemas/output-v8.schema.json). Nested measurement
+[`output-v9.schema.json`](schemas/output-v9.schema.json). Nested measurement
 evidence has its own
-[`measurements-v14.schema.json`](schemas/measurements-v14.schema.json) contract.
-Output-v7 and earlier reports, including reports carrying measurements v13,
-are historical contracts; regenerate a current output-v8 report from the
+[`measurements-v15.schema.json`](schemas/measurements-v15.schema.json) contract.
+Output-v8 and earlier reports, including reports carrying measurements v14,
+are historical contracts; regenerate a current output-v9 report from the
 original asset with the current CLI before using `diff`.
+
+Measurements v15 adds canonical per-bone local TRS channel coverage and
+sampled Root/Hips trajectory evidence. Root is preferred whenever that role
+resolves; Hips is only a typed fallback when Root is unresolved. The
+trajectory groups signed endpoint displacement, sampled horizontal travel and
+vertical extrema, plus net/unwrapped/travel yaw with independent translation
+and yaw availability. These are engine-neutral normalized-model-space
+regression facts from the shared uniform metric grid, not continuous-curve or
+engine root-motion extraction proof; see [output.md](output.md#measure-and-lint)
+for the full coordinate, sampling, and availability contract.
 
 `rest-world-scale` is quiet until its config supplies `node_selectors`.
 Each exact name or `*` glob must resolve to one source node; findings include

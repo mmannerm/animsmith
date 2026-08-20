@@ -7,15 +7,16 @@ future machine serializers should project the JSON contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v8 with the immutable protocol
-identity `urn:animsmith:schema:output:8`. The retrievable schema is
-[`output-v8.schema.json`](schemas/output-v8.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v9 with the immutable protocol
+identity `urn:animsmith:schema:output:9`. The retrievable schema is
+[`output-v9.schema.json`](schemas/output-v9.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:14`. Its retrievable schema is
-[`measurements-v14.schema.json`](schemas/measurements-v14.schema.json). Version
-14 gives every clip fact that is not applicable to every clip a sibling
+`urn:animsmith:schema:measurements:15`. Its retrievable schema is
+[`measurements-v15.schema.json`](schemas/measurements-v15.schema.json). Version
+15 adds canonical per-bone TRS channel coverage and root-trajectory evidence.
+Version 14 introduced a sibling
 `_availability` status (`measured`, `not_applicable`, or `unavailable`)
 alongside its optional value field, so a consumer can distinguish "this clip
 has no subject for the fact" from "the fact applies, but derivation failed" —
@@ -23,13 +24,14 @@ a distinction a bare optional value cannot express. Version 13 retains each
 per-joint source-declaration inverse-bind matrix beside the observations
 derived from it, refuses non-affine sources, and publishes a scale-free
 reciprocal infinity-norm condition number before trusting an inversion.
-Measurements v13, v12, and output v7, v6 remain immutable historical contracts.
+Measurements v14 and earlier, and output v8 and earlier, remain immutable
+historical contracts.
 Because each output schema statically pins its nested measurement URN,
-advancing the nested contract also requires the new output-v8 identity; it
+advancing the nested contract also requires the new output-v9 identity; it
 does not redesign the envelope shape.
 
 `convert --format json` is deliberately a separate conversion-evidence
-contract, not another command in the output-v8 envelope. Its immutable
+contract, not another command in the output-v9 envelope. Its immutable
 identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
@@ -40,7 +42,7 @@ An asset-property refusal from `convert` or `assemble` is not success
 evidence. Under `--format json` it uses the separate immutable
 `urn:animsmith:schema:producer-refusal:1` contract, whose retrievable schema is
 [`producer-refusal-v1.schema.json`](schemas/producer-refusal-v1.schema.json).
-This keeps conversion evidence v1/v2, assembly evidence v1-v7, output v1-v7,
+This keeps conversion evidence v1/v2, assembly evidence v1-v7, output v1-v8,
 and scale evidence v1-v5 immutable. The record has `outcome: "rejected"`, a
 null `result`, the command, and a typed `{stage, kind, detail}` rejection.
 
@@ -92,18 +94,19 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 [`output-v3`](schemas/output-v3.schema.json),
 [`output-v4`](schemas/output-v4.schema.json),
 [`output-v5`](schemas/output-v5.schema.json),
-[`output-v6`](schemas/output-v6.schema.json), and
-[`output-v7`](schemas/output-v7.schema.json) remain historical immutable
+[`output-v6`](schemas/output-v6.schema.json),
+[`output-v7`](schemas/output-v7.schema.json), and
+[`output-v8`](schemas/output-v8.schema.json) remain historical immutable
 contracts. The current CLI emits and
-`diff` reads output-v8; regenerate a current output-v8 report from the original
+`diff` reads output-v9; regenerate a current output-v9 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
 ```json
 {
-  "schema_version": 8,
-  "schema": "urn:animsmith:schema:output:8",
+  "schema_version": 9,
+  "schema": "urn:animsmith:schema:output:9",
   "tool": {
     "name": "animsmith",
     "version": "0.3.1",
@@ -453,8 +456,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 14,
-  "schema": "urn:animsmith:schema:measurements:14",
+  "schema_version": 15,
+  "schema": "urn:animsmith:schema:measurements:15",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -469,12 +472,36 @@ Both commands put evidence under `files[].measurements`:
 }
 ```
 
-`clips` maps clip names to duration, frame count, animated bones, rotation
-ranges, optional per-bone loop continuity, and optional role-dependent gait,
-foot-seam, and speed metrics.
+`clips` maps clip names to duration, frame count, animated bones, exact local
+TRS channel coverage, rotation ranges, optional per-bone loop continuity, and
+optional role-dependent gait, foot-seam, root-trajectory, and speed metrics. `bone_channels`
+is the canonical set of non-empty local channels present in the measured
+document:
+
+```json
+"bone_channels": [
+  { "bone_index": 0, "bone_name": "hips",
+    "properties": ["translation", "rotation"] },
+  { "bone_index": 3, "bone_name": "weapon_socket",
+    "properties": ["scale"] }
+]
+```
+
+Rows use skeleton-index order; properties use translation, rotation, scale
+order. Bone index is identity and the name is display metadata, so duplicate
+bone names remain distinguishable. Duplicate tracks for one `(bone, property)`
+pair collapse to one presence fact. This describes surviving normalized TRS
+coverage in the artifact regardless of which transforms were requested; it is
+not pruning evidence, track multiplicity, morph-weight coverage, or a raw
+source-channel inventory. `animated_bones` remains the sorted unique name
+projection for compatibility. Empty or structurally malformed channels do not
+contribute to `bone_channels`, `animated_bones`, or
+`bone_rotation_range_deg`; every rotation-range key is therefore also present
+in `animated_bones`.
 
 Each optional clip fact — `loop_continuity`, `loop_endpoint_mode`,
-`frame_grid`, `loop_seam_ratio`, `gait` (and its own `gait.phase`), and
+`frame_grid`, `loop_seam_ratio`, `gait` (and its own `gait.phase`),
+`root_trajectory` (with independent nested `translation` and `yaw` facts), and
 `speed_mps` — carries a required sibling `<field>_availability` status
 (`gait.phase` uses `phase_availability`, nested beside `phase` inside the
 `gait` object) with one of three values:
@@ -504,7 +531,47 @@ Field-by-field applicability:
 | `loop_seam_ratio` | the Hips role or every foot role is unresolved, or the Hips + at least one foot role resolved but no real stride was found between the seam-adjacent frames (feet did not move relative to the hips by at least the configured stride floor) — a planted/idle clip has no stride subject to normalize the seam against | the Hips + at least one foot role resolved and a real stride was found, but the ratio itself still could not be derived |
 | `gait` | the Hips role or every foot role is unresolved | the Hips + at least one foot role resolved, but the per-clip cycle sample failed |
 | `gait.phase` (nested `phase_availability`) | only one side (left or right) resolved a foot role | both a left and a right foot role resolved, but the fundamental-harmonic trough could not be located |
+| `root_trajectory` | neither the Root nor the Hips role is resolved | Root (preferred) or the Hips fallback resolved to an index outside the measured skeleton, or its captured name no longer matches that index |
+| `root_trajectory.translation` (nested `translation_availability`) | never, once a trajectory bone is selected | the shared metric grid is unavailable or any sampled selected-bone position is non-finite |
+| `root_trajectory.yaw` (nested `yaw_availability`) | never, once a trajectory bone is selected | the shared metric grid is unavailable, sampled rotation is non-finite/zero, the fixed heading witness becomes vertical, or an adjacent sampled step is an ambiguous half turn |
 | `speed_mps` | neither the Root nor the Hips role is resolved | the Root or Hips role resolved, but root-motion speed could not be derived from the sampled grid |
+
+`root_trajectory` selects the resolved Root role whenever it exists. Hips is
+used only as `source_role: "hips_fallback"` when Root is unresolved; a bad or
+unmeasurable resolved Root never causes a silent Hips fallback. A valid
+selection keeps its `bone_index`, `bone_name`, and source role even when one
+or both nested metric domains are unavailable. Translation and yaw are
+derived independently, so bad positions do not erase usable yaw and bad
+rotations do not erase usable translation.
+
+The translation domain is normalized right-handed, +Y-up model space in
+metres: +X is right and -Z is forward. Signed X/Z and Y displacement compare
+the final sample to sample zero. `horizontal_travel_m` sums the XZ length of
+every sampled step, so horizontal out-and-back motion does not collapse to a
+zero fact. Vertical min/max are sampled signed displacements from sample zero,
+include the initial zero, and contain the endpoint displacement.
+
+Yaw chooses at sample zero the positive local Z, Y, or X axis with the largest
+finite horizontal projection (ties prefer Z, then Y, then X), records that
+`heading_axis`, and holds the witness for the clip. `net_yaw_deg` is the
+endpoint-equivalent signed result in `[-180, 180]`; `unwrapped_yaw_deg` is the
+signed sum after shortest-step wrap handling; and `yaw_travel_deg` sums the
+absolute sampled steps so reversals do not cancel. An adjacent sampled step
+within `0.0001` degrees of exactly 180 degrees has no recoverable direction,
+so yaw is unavailable rather than guessed. Positive yaw increases
+`atan2(x, z)`; for a +Z-aligned witness this rotates +Z toward +X, the positive
+right-handed direction about normalized +Y. A multi-step endpoint-equivalent result within the same
+`0.0001`-degree tolerance of a half turn is canonicalized to signed `+180` or
+`-180` using the sign of the unwrapped result.
+
+These are bounded regression facts from the same inclusive uniform
+`MetricGrids` grid used by checks and reports. The grid has the longest
+authored channel's key count and needs at least three keys and positive clip
+duration. It can alias fast or irregular motion between samples, and adding an
+unrelated denser track can change its resolution. Consequently travel,
+vertical extrema, winding, and yaw travel are sampled observations, not proof
+of continuous-curve extrema or of a transform's authored-data correctness.
+Legacy `speed_mps` retains its existing calculation and status.
 
 `diff` reports every change to a clip fact's availability status — not only
 the `not_applicable` <-> `unavailable` transition that a bare optional value
@@ -887,13 +954,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v8 header and emits `inputs`, a
+`diff --format json` uses the same output v9 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 8,
-  "schema": "urn:animsmith:schema:output:8",
+  "schema_version": 9,
+  "schema": "urn:animsmith:schema:output:9",
   "tool": {
     "name": "animsmith",
     "version": "0.3.1",
@@ -908,8 +975,8 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v8 `measure`/`lint` reports carrying
-measurement contract v14. v13 and earlier reports are historical and are rejected with
+`diff` accepts asset files or one-file v9 `measure`/`lint` reports carrying
+measurement contract v15. v14 and earlier reports are historical and are rejected with
 guidance to regenerate them from the original asset. Multi-file reports and
 other unsupported contract versions are also rejected as operator errors.
 Before extracting the clip metrics it uses,
@@ -923,3 +990,11 @@ applies to `seam_angular_velocity_delta_degps`. Larger changes produce metric
 paths such as `loop_continuity.bones[12].rotation_delta_deg`. These are diff
 significance floors, not the lint caps configured under
 `[checks.loop-closure]`, `[checks.loop-seam-vel]`, and `[checks.loop-seam-rot]`.
+
+Channel-coverage membership compares the canonical `(bone_index, property)`
+set, so a display-name-only change is not reported as lost/gained coverage.
+Every root-trajectory status, selected-bone/source identity, and heading-axis
+change is exact. Each translation field uses a 0.001 m significance floor;
+each yaw field uses 0.1 degree, with circular 360-degree distance only for
+`net_yaw_deg`. Unwrapped yaw and yaw travel compare ordinarily, so `0 -> 360`
+remains visible even when net yaw is unchanged.

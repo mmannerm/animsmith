@@ -7,12 +7,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:8";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:14";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:9";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v8.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v9.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v14.schema.json");
+    include_str!("../../../docs/schemas/measurements-v15.schema.json");
 const EXPECTED_CHECK_IDS: [&str; 26] = [
     "nan",
     "time-monotonic",
@@ -65,7 +65,7 @@ fn assert_output_schema_valid(instance: &Value) {
         .collect();
     assert!(
         errors.is_empty(),
-        "output must satisfy the published v8 schemas:\n{}\ninstance: {instance:#}",
+        "output must satisfy the published v9 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -182,6 +182,60 @@ fn sway_doc_with_quats(quats: Vec<Quat>) -> Document {
 
 fn sway_doc(flipped: bool) -> Document {
     sway_doc_with_quats(sway_quats(flipped))
+}
+
+fn root_trajectory_doc(clip_name: &str) -> Document {
+    let mut doc = sway_doc(false);
+    let quarter_turn = std::f32::consts::FRAC_1_SQRT_2;
+    let positive_quarter_turn = Quat::from_xyzw(0.0, quarter_turn, 0.0, quarter_turn);
+    let half_turn = Quat::from_xyzw(0.0, 1.0, 0.0, 0.0);
+    let negative_quarter_turn = Quat::from_xyzw(0.0, -quarter_turn, 0.0, quarter_turn);
+    let times = vec![0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+    doc.clips = vec![Clip {
+        name: clip_name.into(),
+        duration_s: 1.0,
+        tracks: vec![
+            Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: times.clone(),
+                values: TrackValues::Vec3s(vec![
+                    Vec3::ZERO,
+                    Vec3::new(2.0, -3.0, 0.0),
+                    Vec3::new(2.0, 5.0, -4.0),
+                    Vec3::new(-1.0, 2.0, -4.0),
+                    Vec3::new(-1.0, 2.0, -10.0),
+                    Vec3::new(5.0, 2.0, -10.0),
+                ]),
+            },
+            Track {
+                bone: 0,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times,
+                values: TrackValues::Quats(vec![
+                    Quat::IDENTITY,
+                    positive_quarter_turn,
+                    half_turn,
+                    negative_quarter_turn,
+                    Quat::IDENTITY,
+                    negative_quarter_turn,
+                ]),
+            },
+        ],
+    }];
+    doc
+}
+
+fn write_root_trajectory_glb(path: &std::path::Path) {
+    animsmith_gltf::write::write(&root_trajectory_doc("trajectory"), path)
+        .expect("writes analytic root-trajectory fixture");
+}
+
+fn write_named_root_trajectory_glb(path: &std::path::Path, clip_name: &str) {
+    animsmith_gltf::write::write(&root_trajectory_doc(clip_name), path)
+        .expect("writes named analytic root-trajectory fixture");
 }
 
 fn sway_doc_with_distinct_repairs() -> Document {
@@ -447,7 +501,7 @@ fn write_json(path: &std::path::Path, value: &Value) {
 
 fn measurement_report(duration_s: f64) -> Value {
     json!({
-        "schema_version": 8,
+        "schema_version": 9,
         "schema": OUTPUT_SCHEMA_ID,
         "command": "measure",
         "files": [{
@@ -458,19 +512,21 @@ fn measurement_report(duration_s: f64) -> Value {
             },
             "rig": { "profile": "unknown" },
             "measurements": {
-                "schema_version": 14,
+                "schema_version": 15,
                 "schema": MEASUREMENTS_SCHEMA_ID,
                 "clips": {
                     "walk": {
                         "duration_s": duration_s,
                         "frame_count": 31,
                         "animated_bones": [],
+                        "bone_channels": [],
                         "bone_rotation_range_deg": {},
                         "loop_continuity_availability": "not_applicable",
                         "loop_endpoint_mode_availability": "not_applicable",
                         "frame_grid_availability": "not_applicable",
                         "loop_seam_ratio_availability": "not_applicable",
                         "gait_availability": "not_applicable",
+                        "root_trajectory_availability": "not_applicable",
                         "speed_mps_availability": "not_applicable"
                     }
                 },
@@ -607,9 +663,9 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_eq!(lint_json.status.code(), Some(0));
     let lint_json: Value = serde_json::from_slice(&lint_json.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&lint_json);
-    assert_eq!(lint_json["schema_version"], 8);
+    assert_eq!(lint_json["schema_version"], 9);
     assert_eq!(lint_json["schema"], OUTPUT_SCHEMA_ID);
-    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 14);
+    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 15);
     assert_eq!(
         lint_json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1288,8 +1344,8 @@ fn help_matches_compiled_feature_set() {
         .expect("runs diff help");
     assert!(diff.status.success(), "stderr:\n{}", stderr(&diff));
     let out = stdout(&diff);
-    assert!(out.contains("output-v8"), "{out}");
-    assert!(out.contains("measurements-v14"), "{out}");
+    assert!(out.contains("output-v9"), "{out}");
+    assert!(out.contains("measurements-v15"), "{out}");
     assert!(!out.contains("v5"), "{out}");
 }
 
@@ -1464,7 +1520,7 @@ fn measure_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 8);
+    assert_eq!(json["schema_version"], 9);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -1488,9 +1544,24 @@ fn measure_json_uses_versioned_envelope() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["rig"]["profile"], "unknown");
     assert!(files[0]["checks"].is_null());
-    assert_eq!(files[0]["measurements"]["schema_version"], 14);
+    assert_eq!(files[0]["measurements"]["schema_version"], 15);
     assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
     assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
+    assert_eq!(
+        files[0]["measurements"]["clips"]["walk"]["bone_channels"],
+        json!([
+            {
+                "bone_index": 0,
+                "bone_name": "root",
+                "properties": ["translation"]
+            },
+            {
+                "bone_index": 1,
+                "bone_name": "hips",
+                "properties": ["rotation"]
+            }
+        ])
+    );
     let loop_bones = files[0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"]
         .as_array()
         .expect("measurable clip exposes per-bone loop continuity");
@@ -1535,7 +1606,7 @@ fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
     );
     let baseline: Value = serde_json::from_slice(&baseline.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&baseline);
-    assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 14);
+    assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 15);
     assert_eq!(
         baseline["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -1548,7 +1619,7 @@ fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
         .remove("seam_angular_velocity_delta_degps");
     assert!(
         !output_validator().is_valid(&missing_angular_evidence),
-        "measurements-v14 requires angular seam evidence in every loop-continuity row"
+        "measurements-v15 requires angular seam evidence in every loop-continuity row"
     );
     let bones =
         baseline["files"][0]["measurements"]["clips"]["angular_cusp"]["loop_continuity"]["bones"]
@@ -1939,14 +2010,14 @@ fn lint_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 8);
+    assert_eq!(json["schema_version"], 9);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(json["command"], "lint");
     assert_eq!(json["summary"]["files"], 1);
     assert!(json["files"][0]["checks"].is_array());
-    assert_eq!(json["files"][0]["measurements"]["schema_version"], 14);
+    assert_eq!(json["files"][0]["measurements"]["schema_version"], 15);
     assert_eq!(
         json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -2042,8 +2113,8 @@ fn measure_and_lint_json_retain_each_primary_file_identity_in_argument_order() {
 #[test]
 fn cli_and_embedded_role_resolution_are_identical() {
     let dir = unique_temp_dir("resolver-parity");
-    let input = dir.path().join("sway.glb");
-    write_clean_glb(&input);
+    let input = dir.path().join("trajectory.glb");
+    write_root_trajectory_glb(&input);
     let config_path = write_config(
         dir.path(),
         "roles.toml",
@@ -2071,10 +2142,84 @@ fn cli_and_embedded_role_resolution_are_identical() {
         .expect("runs animsmith");
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_output_schema_valid(&json);
     assert_eq!(json["files"][0]["rig"]["profile"], embedded.profile);
     assert_eq!(
         json["files"][0]["rig"]["resolved_roles"],
         json!(embedded_roles)
+    );
+    let trajectory = &json["files"][0]["measurements"]["clips"]["trajectory"]["root_trajectory"];
+    assert_eq!(
+        trajectory,
+        &json!({
+            "bone_index": 0,
+            "bone_name": "root",
+            "source_role": "root",
+            "translation": {
+                "horizontal_displacement_x_m": 5.0,
+                "horizontal_displacement_z_m": -10.0,
+                "horizontal_travel_m": 21.0,
+                "vertical_displacement_m": 2.0,
+                "vertical_min_displacement_m": -3.0,
+                "vertical_max_displacement_m": 5.0
+            },
+            "translation_availability": "measured",
+            "yaw": {
+                "heading_axis": "positive_z",
+                "net_yaw_deg": -90.0,
+                "unwrapped_yaw_deg": 270.0,
+                "yaw_travel_deg": 450.0
+            },
+            "yaw_availability": "measured"
+        })
+    );
+}
+
+#[test]
+fn root_trajectory_facts_do_not_depend_on_rm_filename_or_clip_name_hint() {
+    let dir = unique_temp_dir("root-trajectory-filename-policy");
+    let ordinary = dir.path().join("ordinary.glb");
+    let rm_named = dir.path().join("ordinary_RM.glb");
+    let internal_rm_named = dir.path().join("ordinary-internal-name.glb");
+    write_root_trajectory_glb(&ordinary);
+    write_root_trajectory_glb(&rm_named);
+    write_named_root_trajectory_glb(&internal_rm_named, "trajectory_RM");
+    let config_path = write_config(dir.path(), "roles.toml", "[rig.roles]\nroot = \"root\"\n");
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config_path)
+        .arg("measure")
+        .arg(&ordinary)
+        .arg(&rm_named)
+        .arg(&internal_rm_named)
+        .args(["--format", "json"])
+        .output()
+        .expect("measures path- and clip-named _RM copies");
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_output_schema_valid(&json);
+    let files = json["files"].as_array().expect("three measured files");
+    assert_eq!(files.len(), 3);
+    let ordinary_trajectory = &files[0]["measurements"]["clips"]["trajectory"]["root_trajectory"];
+    assert_eq!(
+        files[0]["measurements"]["clips"]["trajectory"]["root_trajectory_availability"],
+        "measured"
+    );
+    assert_eq!(ordinary_trajectory["source_role"], "root");
+    assert_eq!(ordinary_trajectory["translation_availability"], "measured");
+    assert_eq!(ordinary_trajectory["yaw_availability"], "measured");
+    assert_eq!(
+        files[0]["input"], files[1]["input"],
+        "identical input bytes"
+    );
+    assert_eq!(
+        *ordinary_trajectory, files[1]["measurements"]["clips"]["trajectory"]["root_trajectory"],
+        "a filename policy hint must not alter content-derived root facts"
+    );
+    assert_eq!(
+        *ordinary_trajectory, files[2]["measurements"]["clips"]["trajectory_RM"]["root_trajectory"],
+        "an internal clip-name policy hint must not alter content-derived root facts"
     );
 }
 
@@ -2110,7 +2255,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 8);
+    assert_eq!(json["schema_version"], 9);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
@@ -2566,7 +2711,7 @@ fn diff_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 8);
+    assert_eq!(json["schema_version"], 9);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -2961,7 +3106,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported output version",
             unsupported_output_version,
-            format!("has schema_version 2; this build reads schema_version 8; {remediation}"),
+            format!("has schema_version 2; this build reads schema_version 9; {remediation}"),
         ),
         (
             "missing command",
@@ -2997,7 +3142,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
             "unsupported measurement version",
             unsupported_measurement_version,
             format!(
-                "has measurement schema_version 7; this build reads measurement schema_version 14; {remediation}"
+                "has measurement schema_version 7; this build reads measurement schema_version 15; {remediation}"
             ),
         ),
         (
@@ -3115,7 +3260,7 @@ fn diff_rejects_outer_and_nested_contract_identity_drift() {
                 report["files"][0]["measurements"]["schema_version"] = json!(7);
                 report
             },
-            "has measurement schema_version 7; this build reads measurement schema_version 14; regenerate it from the original asset with `animsmith measure --format json <asset>`",
+            "has measurement schema_version 7; this build reads measurement schema_version 15; regenerate it from the original asset with `animsmith measure --format json <asset>`",
         ),
         (
             {
@@ -3236,6 +3381,12 @@ fn diff_text_escapes_controls_from_report_clip_metric_and_note_fields() {
             .as_object_mut()
             .expect("clip map")
             .insert(hostile.into(), clip);
+        report["files"][0]["measurements"]["clips"][hostile]["animated_bones"] = json!([hostile]);
+        report["files"][0]["measurements"]["clips"][hostile]["bone_channels"] = json!([{
+            "bone_index": 0,
+            "bone_name": hostile,
+            "properties": ["translation"]
+        }]);
     }
     before["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"] = json!({});
     before["files"][0]["measurements"]["clips"][hostile]["bone_rotation_range_deg"]
@@ -3247,7 +3398,6 @@ fn diff_text_escapes_controls_from_report_clip_metric_and_note_fields() {
         .as_object_mut()
         .expect("rotation map")
         .insert(hostile.into(), json!(10.0));
-    after["files"][0]["measurements"]["clips"][hostile]["animated_bones"] = json!([hostile]);
     write_json(&before_path, &before);
     write_json(&after_path, &after);
 
@@ -3310,7 +3460,7 @@ fn diff_rejects_json_without_schema_version_with_measure_remediation() {
 fn diff_rejects_unsupported_schema_versions() {
     let dir = unique_temp_dir("diff-future-schema");
     let future = dir.path().join("future.json");
-    for version in [2, 3, 5, 99] {
+    for version in [2, 3, 5, 8, 99] {
         let mut report = measurement_report(1.0);
         report["schema_version"] = json!(version);
         write_json(&future, &report);
@@ -3367,7 +3517,7 @@ fn diff_rejects_historical_output_v5_with_v11_measurements() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has schema_version 5; this build reads schema_version 8; regenerate it from the original asset with `animsmith measure --format json <asset>`"
+            "has schema_version 5; this build reads schema_version 9; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)
@@ -3378,7 +3528,7 @@ fn diff_rejects_historical_output_v5_with_v11_measurements() {
 fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
     let dir = unique_temp_dir("diff-unsupported-nested-schema");
     let report_path = dir.path().join("report.json");
-    for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 99] {
+    for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 99] {
         let mut report = measurement_report(1.0);
         report["files"][0]["measurements"]["schema_version"] = json!(version);
         write_json(&report_path, &report);
@@ -3398,7 +3548,7 @@ fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
         );
         assert!(
             stderr(&output).contains(&format!(
-                "has measurement schema_version {version}; this build reads measurement schema_version 14"
+                "has measurement schema_version {version}; this build reads measurement schema_version 15"
             )),
             "version {version}: stderr:\n{}",
             stderr(&output)
@@ -3445,7 +3595,7 @@ fn diff_rejects_v11_skeleton_shape_before_decoding_v13_fields() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has measurement schema_version 11; this build reads measurement schema_version 14; regenerate it from the original asset with `animsmith measure --format json <asset>`"
+            "has measurement schema_version 11; this build reads measurement schema_version 15; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)
@@ -3524,7 +3674,7 @@ fn diff_rejects_envelope_without_files() {
     let report = dir.path().join("no-files.json");
     std::fs::write(
         &report,
-        r#"{"schema_version":8,"schema":"urn:animsmith:schema:output:8","command":"measure"}"#,
+        r#"{"schema_version":9,"schema":"urn:animsmith:schema:output:9","command":"measure"}"#,
     )
     .expect("writes report");
 

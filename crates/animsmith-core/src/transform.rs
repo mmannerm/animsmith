@@ -4,13 +4,15 @@
 //! only in ways whose correctness its own checks can verify.
 
 use crate::checks::constant_track::{is_constant_track, quaternion_angular_delta};
-use crate::metrics::foot_cycle_metrics;
+use crate::metrics::{
+    RootYawHeadingAxis, foot_cycle_metrics, horizontal_heading, select_horizontal_heading_axis,
+};
 use crate::model::{BoneId, Clip, Interpolation, Property, Skeleton, Track, TrackValues};
 use crate::profile::{ResolvedRoles, Role};
 use crate::sample::{PoseGrid, default_frame_count, sample_clip, sample_clip_at_times};
 #[cfg(test)]
 use crate::sample::{TrackSample, sample_track};
-use glam::{DQuat, DVec3, Quat, Vec3};
+use glam::{Quat, Vec3};
 use std::collections::BTreeSet;
 use std::fmt;
 use thiserror::Error;
@@ -1363,7 +1365,7 @@ fn verify_in_place_gait_trajectory(
     let mut first_heading_deg: Option<f64> = None;
     let mut previous_heading_deg: Option<f64> = None;
     let mut winding_turns = 0i64;
-    let mut heading_axis: Option<GaitHeadingAxis> = None;
+    let mut heading_axis: Option<RootYawHeadingAxis> = None;
     for frame in 0..grid.frame_count() {
         let position = grid.model_position(frame, bone);
         let rotation = grid.model_rotation(frame, bone);
@@ -1393,8 +1395,8 @@ fn verify_in_place_gait_trajectory(
         // well-tested rotation implementation rather than three hand-derived
         // matrix-column formulas.
         let normalized = rotation.as_dquat().normalize();
-        let axis = *heading_axis.get_or_insert_with(|| select_gait_heading_axis(normalized));
-        let (heading_x, heading_z) = gait_heading_horizontal(normalized, axis);
+        let axis = *heading_axis.get_or_insert_with(|| select_horizontal_heading_axis(normalized));
+        let (heading_x, heading_z) = horizontal_heading(normalized, axis);
         let horizontal_length = heading_x.hypot(heading_z);
         if !horizontal_length.is_finite() || horizontal_length <= f64::from(f32::EPSILON) {
             return Err(format!(
@@ -1449,55 +1451,6 @@ fn verify_in_place_gait_trajectory(
         ));
     }
     Ok(sampling_times)
-}
-
-/// One local orientation witness retained for a complete gait trajectory
-/// proof. Order is policy: conventional `+Z` wins an exact tie, followed by
-/// the common Z-up-source `+Y` convention and finally `+X`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GaitHeadingAxis {
-    Z,
-    Y,
-    X,
-}
-
-impl GaitHeadingAxis {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Z => "+Z",
-            Self::Y => "+Y",
-            Self::X => "+X",
-        }
-    }
-}
-
-/// Model-space horizontal `(x, z)` projection of one local unit basis axis.
-fn gait_heading_horizontal(rotation: DQuat, axis: GaitHeadingAxis) -> (f64, f64) {
-    let local_axis = match axis {
-        GaitHeadingAxis::Z => DVec3::Z,
-        GaitHeadingAxis::Y => DVec3::Y,
-        GaitHeadingAxis::X => DVec3::X,
-    };
-    let heading = rotation.mul_vec3(local_axis);
-    (heading.x, heading.z)
-}
-
-/// Select the best-conditioned local heading witness at sample zero. Exact
-/// ties retain the declared `+Z`, `+Y`, `+X` priority because replacement is
-/// strict rather than `>=`.
-fn select_gait_heading_axis(rotation: DQuat) -> GaitHeadingAxis {
-    let mut selected = GaitHeadingAxis::Z;
-    let (x, z) = gait_heading_horizontal(rotation, selected);
-    let mut best_length = x.hypot(z);
-    for candidate in [GaitHeadingAxis::Y, GaitHeadingAxis::X] {
-        let (x, z) = gait_heading_horizontal(rotation, candidate);
-        let length = x.hypot(z);
-        if length > best_length {
-            selected = candidate;
-            best_length = length;
-        }
-    }
-    selected
 }
 
 /// Compare a gait-local derived binary32 quantity with an inclusive policy

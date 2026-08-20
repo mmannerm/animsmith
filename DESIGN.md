@@ -129,7 +129,7 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
-animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v8 measure/lint JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v9 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
@@ -580,8 +580,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v8, identified by
-  `urn:animsmith:schema:output:8`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): final output v9, identified by
+  `urn:animsmith:schema:output:9`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -595,6 +595,16 @@ learns an embedder's contract schema.
   facts. This remains measurement evidence, not an image acceptance, repair,
   resize, transcode, color-space, writer-preservation, or recipe-authority
   policy.
+  Measurements v15 adds the canonical set of surviving non-empty local TRS
+  channels keyed by skeleton index, plus engine-neutral sampled Root/Hips
+  trajectory evidence. Root is selected whenever resolved; Hips is only a
+  fallback when Root is unresolved. Translation and yaw retain independent
+  availability, with endpoint X/Z/Y displacement, sampled horizontal travel
+  and vertical extrema, and fixed-basis net/unwrapped/travel yaw in normalized
+  right-handed +Y-up metre space. These are shared uniform-grid regression
+  observations, not continuous-curve extrema or transform-correctness proof.
+  The nested change advances the outer envelope to output v9; measurements
+  v14 and output v8 remain immutable historical contracts.
   Measurements v14 gives every clip fact that is not applicable to every
   clip (loop continuity, loop endpoint mode, frame grid, loop seam ratio,
   gait and its phase, and root-motion speed) a required sibling
@@ -613,7 +623,7 @@ learns an embedder's contract schema.
   the current CLI emits v2 exclusively.
   CLI exit status derives only from content severity (warnings block only
   with `--deny-warnings`); coverage gaps are nonblocking evidence.
-  The output-v8 envelope types and immutable identities live in
+  The output-v9 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -622,8 +632,8 @@ learns an embedder's contract schema.
   add serializers where downstream tools expect them: SARIF for code
   scanning, GitLab Code Quality/CodeClimate for MR widgets, JUnit XML for
   CI test dashboards, and CSV/HTML for humans.
-- **`diff A B`**: compares measurement maps per metric with per-metric
-  significance thresholds (defaults derived from configured tolerances);
+- **`diff A B`**: compares measurement maps per metric with fixed public
+  per-metric significance thresholds, independent of configured lint caps;
   prints deltas; exits 1 on significant movement. Primary use: "did this
   DCC re-export change anything that matters?"
 
@@ -2256,6 +2266,17 @@ compare distinctly under `diff` as well. The value field is present if and
 only if its status is `measured`. The new nested shape advances the immutable
 outer envelope to output v8; measurements v13 and output v7 remain
 historical.
+
+Measurements v15 inventories each clip's surviving non-empty local TRS
+channel set by skeleton index and adds normalized model-space root-trajectory
+regression evidence. A resolved Root always wins; Hips is a typed fallback
+only when Root is unresolved. The record retains independent translation and
+yaw availability, signed endpoint displacement, sampled horizontal travel and
+vertical extrema, and fixed-witness net/unwrapped/travel yaw. All trajectory
+path/extrema/winding values come from the shared inclusive uniform metric grid
+and therefore do not prove continuous-curve extrema or authored transform
+preservation. The new nested shape advances the immutable outer envelope to
+output v9; measurements v14 and output v8 remain historical.
 
 The implementation status is:
 

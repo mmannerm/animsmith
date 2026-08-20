@@ -6,7 +6,7 @@ use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v14.schema.json");
+    include_str!("../../../docs/schemas/measurements-v15.schema.json");
 
 fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
     let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
@@ -17,7 +17,7 @@ fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
         .collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "measurement output must satisfy the published v14 schema:\n{}\ninstance: {measurements:#}",
+        "measurement output must satisfy the published v15 schema:\n{}\ninstance: {measurements:#}",
         errors.join("\n")
     );
 }
@@ -27,7 +27,7 @@ fn assert_measurements_schema_invalid(measurements: &serde_json::Value) {
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     assert!(
         !validator.is_valid(measurements),
-        "measurement output must violate the published v14 schema:\n{measurements:#}"
+        "measurement output must violate the published v15 schema:\n{measurements:#}"
     );
 }
 
@@ -959,6 +959,50 @@ fn published_schema_rejects_availability_status_value_mismatches() {
     let clip = &measurements["clips"]["move"];
     assert!(clip.is_object(), "fixture must carry the animated clip");
 
+    let mut missing_bone_channels = clip.clone();
+    missing_bone_channels
+        .as_object_mut()
+        .unwrap()
+        .remove("bone_channels");
+    let mut invalid = measurements.clone();
+    invalid["clips"]["move"] = missing_bone_channels;
+    assert_measurements_schema_invalid(&invalid);
+
+    for properties in [
+        serde_json::json!([]),
+        serde_json::json!(["translation", "translation"]),
+        serde_json::json!(["weights"]),
+        serde_json::json!(["rotation", "translation"]),
+    ] {
+        let mut invalid_channels = clip.clone();
+        invalid_channels["bone_channels"] = serde_json::json!([{
+            "bone_index": 0,
+            "bone_name": "root",
+            "properties": properties
+        }]);
+        let mut invalid = measurements.clone();
+        invalid["clips"]["move"] = invalid_channels;
+        assert_measurements_schema_invalid(&invalid);
+    }
+
+    let duplicate_channel = serde_json::json!({
+        "bone_index": 0,
+        "bone_name": "root",
+        "properties": ["translation"]
+    });
+    let mut duplicate_channels = clip.clone();
+    duplicate_channels["bone_channels"] =
+        serde_json::json!([duplicate_channel.clone(), duplicate_channel]);
+    let mut invalid = measurements.clone();
+    invalid["clips"]["move"] = duplicate_channels;
+    assert_measurements_schema_invalid(&invalid);
+
+    let mut duplicate_animated_bones = clip.clone();
+    duplicate_animated_bones["animated_bones"] = serde_json::json!(["root", "root"]);
+    let mut invalid = measurements.clone();
+    invalid["clips"]["move"] = duplicate_animated_bones;
+    assert_measurements_schema_invalid(&invalid);
+
     // A `measured` availability status without its sibling value is invalid.
     let mut declared_measured_without_value = clip.clone();
     declared_measured_without_value["loop_continuity_availability"] = serde_json::json!("measured");
@@ -994,4 +1038,94 @@ fn published_schema_rejects_availability_status_value_mismatches() {
     let mut invalid_gait = measurements.clone();
     invalid_gait["clips"]["move"] = gait_mismatch;
     assert_measurements_schema_invalid(&invalid_gait);
+
+    let mut root_clip = clip.clone();
+    root_clip["root_trajectory_availability"] = serde_json::json!("measured");
+    root_clip["root_trajectory"] = serde_json::json!({
+        "bone_index": 0,
+        "bone_name": "root",
+        "source_role": "root",
+        "translation": {
+            "horizontal_displacement_x_m": 1.0,
+            "horizontal_displacement_z_m": -2.0,
+            "horizontal_travel_m": 3.0,
+            "vertical_displacement_m": 0.5,
+            "vertical_min_displacement_m": -0.25,
+            "vertical_max_displacement_m": 1.0
+        },
+        "translation_availability": "measured",
+        "yaw": {
+            "heading_axis": "positive_z",
+            "net_yaw_deg": 90.0,
+            "unwrapped_yaw_deg": 450.0,
+            "yaw_travel_deg": 540.0
+        },
+        "yaw_availability": "measured"
+    });
+    let mut valid_root = measurements.clone();
+    valid_root["clips"]["move"] = root_clip.clone();
+    assert_measurements_schema_valid(&valid_root);
+
+    for path in ["translation", "yaw"] {
+        let mut missing_nested_value = root_clip.clone();
+        missing_nested_value["root_trajectory"]
+            .as_object_mut()
+            .unwrap()
+            .remove(path);
+        let mut invalid = measurements.clone();
+        invalid["clips"]["move"] = missing_nested_value;
+        assert_measurements_schema_invalid(&invalid);
+
+        let mut spurious_nested_value = root_clip.clone();
+        spurious_nested_value["root_trajectory"][format!("{path}_availability")] =
+            serde_json::json!("unavailable");
+        let mut invalid = measurements.clone();
+        invalid["clips"]["move"] = spurious_nested_value;
+        assert_measurements_schema_invalid(&invalid);
+
+        let mut nested_not_applicable = root_clip.clone();
+        nested_not_applicable["root_trajectory"]
+            .as_object_mut()
+            .unwrap()
+            .remove(path);
+        nested_not_applicable["root_trajectory"][format!("{path}_availability")] =
+            serde_json::json!("not_applicable");
+        let mut invalid = measurements.clone();
+        invalid["clips"]["move"] = nested_not_applicable;
+        assert_measurements_schema_invalid(&invalid);
+    }
+
+    let mut missing_root_value = root_clip.clone();
+    missing_root_value
+        .as_object_mut()
+        .unwrap()
+        .remove("root_trajectory");
+    let mut invalid = measurements.clone();
+    invalid["clips"]["move"] = missing_root_value;
+    assert_measurements_schema_invalid(&invalid);
+
+    let mut spurious_root_value = root_clip.clone();
+    spurious_root_value["root_trajectory_availability"] = serde_json::json!("unavailable");
+    let mut invalid = measurements.clone();
+    invalid["clips"]["move"] = spurious_root_value;
+    assert_measurements_schema_invalid(&invalid);
+
+    for (field, invalid_value) in [
+        ("heading_axis", serde_json::json!("negative_z")),
+        ("net_yaw_deg", serde_json::json!(180.1)),
+        ("yaw_travel_deg", serde_json::json!(-0.1)),
+    ] {
+        let mut invalid_yaw = root_clip.clone();
+        invalid_yaw["root_trajectory"]["yaw"][field] = invalid_value;
+        let mut invalid = measurements.clone();
+        invalid["clips"]["move"] = invalid_yaw;
+        assert_measurements_schema_invalid(&invalid);
+    }
+
+    let mut invalid_translation = root_clip;
+    invalid_translation["root_trajectory"]["translation"]["horizontal_travel_m"] =
+        serde_json::json!(-0.1);
+    let mut invalid = measurements.clone();
+    invalid["clips"]["move"] = invalid_translation;
+    assert_measurements_schema_invalid(&invalid);
 }

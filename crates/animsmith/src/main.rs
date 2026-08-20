@@ -229,12 +229,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file output-v8 `measure` or `lint` JSON carrying measurements-v14) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file output-v9 `measure` or `lint` JSON carrying measurements-v15) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v8 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v9 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v8 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v9 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -1103,7 +1103,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// output-v8 `measure`/`lint` JSON report carrying measurements-v14.
+/// output-v9 `measure`/`lint` JSON report carrying measurements-v15.
 fn load_measurements(
     path: &Path,
     config: &Config,
@@ -1125,7 +1125,7 @@ fn load_measurements(
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
         let report: MeasurementReportInput = serde_json::from_value(value)
             .map_err(|e| format!("bad JSON in {}: {e}", path.display()))?;
-        // Only the current output-v8 envelope with measurement contract v14 is
+        // Only the current output-v9 envelope with measurement contract v15 is
         // accepted. Older report shapes are intentionally not retained while
         // the project is alpha.
         let file_count = report.file_count();

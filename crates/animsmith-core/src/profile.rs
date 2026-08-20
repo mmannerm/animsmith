@@ -106,6 +106,14 @@ impl ResolvedRoles {
         self.map.get(&role).map(|bone| bone.id)
     }
 
+    /// Bone id and captured name for internal boundaries that must reject a
+    /// role map reused with a different skeleton.
+    pub(crate) fn get_with_name(&self, role: Role) -> Option<(BoneId, &str)> {
+        self.map
+            .get(&role)
+            .map(|bone| (bone.id, bone.name.as_str()))
+    }
+
     /// Number of resolved roles.
     pub fn len(&self) -> usize {
         self.map.len()

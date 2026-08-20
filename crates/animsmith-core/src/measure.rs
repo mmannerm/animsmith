@@ -7,14 +7,15 @@ use crate::checks::fps::GRID_TOLERANCE_FRAMES;
 use crate::checks::loop_closure::effective_caps;
 use crate::config::Config;
 use crate::metrics::{
-    MetricGrids, foot_cycle_metrics, loop_continuity_metrics, root_motion_speed_mps,
-    rotation_range_deg,
+    MetricGrids, RootYawHeadingAxis, foot_cycle_metrics, loop_continuity_metrics,
+    root_motion_speed_mps, root_trajectory_metrics, rotation_range_deg,
 };
 use crate::model::{
     AffineGeometryFacts, DecodedImageColorType, Document, ImageContainerFormat, ImageSourceKind,
-    ImageUnavailableReason, MaterialResourceCoverage, MaterialTextureSlot, MeshAsset,
+    ImageUnavailableReason, MaterialResourceCoverage, MaterialTextureSlot, MeshAsset, Property,
     SourceImageInspection, SourceInverseBindAccessorStatus, SourceNodeLocalRest,
-    SourceSkeletonCoverage, tolerant_world_rest_matrices, values_equal_to_mean,
+    SourceSkeletonCoverage, tolerant_world_rest_matrices, validate_track_shape,
+    values_equal_to_mean,
 };
 use crate::profile::{ResolvedRoles, Role};
 use crate::sample::PoseGrid;
@@ -1727,6 +1728,86 @@ pub struct GaitMeasurement {
     pub lr_amplitude_m: f64,
 }
 
+/// Resolved role policy that selected a root-trajectory bone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RootTrajectorySourceRole {
+    /// The resolved Root role supplied the trajectory bone.
+    Root,
+    /// Root was unresolved, so the existing policy fell back to Hips.
+    HipsFallback,
+}
+
+impl RootTrajectorySourceRole {
+    /// Stable machine-readable spelling used in serialized measurements.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Root => "root",
+            Self::HipsFallback => "hips_fallback",
+        }
+    }
+}
+
+/// Signed sampled yaw facts for the selected root-trajectory bone.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RootYawMeasurement {
+    /// Fixed local basis axis used as the horizontal heading witness.
+    pub heading_axis: RootYawHeadingAxis,
+    /// Shortest signed endpoint-equivalent yaw in `[-180, 180]` degrees.
+    /// Positive increases `atan2(x, z)`; for a +Z-aligned witness this rotates
+    /// +Z toward +X, the positive right-handed direction around normalized +Y.
+    pub net_yaw_deg: f64,
+    /// Signed sampled heading change with ±180-degree wrap crossings unwrapped.
+    pub unwrapped_yaw_deg: f64,
+    /// Sum of absolute sampled unwrapped heading steps.
+    pub yaw_travel_deg: f64,
+}
+
+/// Sampled model-space translation facts for the selected root-trajectory bone.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RootTranslationMeasurement {
+    /// Endpoint displacement along canonical model-space +X, in metres.
+    pub horizontal_displacement_x_m: f64,
+    /// Endpoint displacement along canonical model-space +Z, in metres.
+    pub horizontal_displacement_z_m: f64,
+    /// Sum of sampled model-space XZ step lengths, in metres.
+    pub horizontal_travel_m: f64,
+    /// Signed endpoint displacement along canonical model-space +Y, in metres.
+    pub vertical_displacement_m: f64,
+    /// Minimum signed +Y displacement from the initial sample, in metres.
+    pub vertical_min_displacement_m: f64,
+    /// Maximum signed +Y displacement from the initial sample, in metres.
+    pub vertical_max_displacement_m: f64,
+}
+
+/// Engine-neutral model-space root-trajectory evidence for one clip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RootTrajectoryMeasurement {
+    /// Zero-based skeleton index of the selected Root/Hips bone.
+    pub bone_index: u32,
+    /// Human-readable selected bone name.
+    pub bone_name: String,
+    /// Whether Root supplied the selected bone, or Hips did so only because
+    /// Root was unresolved.
+    pub source_role: RootTrajectorySourceRole,
+    /// Directional displacement and sampled travel/extrema when every selected
+    /// bone position is finite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation: Option<RootTranslationMeasurement>,
+    /// Availability of [`Self::translation`].
+    pub translation_availability: MeasurementAvailability,
+    /// Signed yaw facts when the sampled heading basis remains deterministic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yaw: Option<RootYawMeasurement>,
+    /// Availability of [`Self::yaw`]. Translation and yaw are independent so
+    /// one derivation failure does not erase the other fact.
+    pub yaw_availability: MeasurementAvailability,
+}
+
 /// Model-space loop-continuity measurements for one skeleton bone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -1799,6 +1880,25 @@ pub struct FrameGridMeasurement {
     pub frame_intervals: u32,
 }
 
+/// Animated local TRS properties present for one skeleton bone.
+///
+/// Entries are emitted in skeleton-index order. [`Self::properties`] is a
+/// non-empty, duplicate-free subset in translation, rotation, scale order.
+/// This is artifact coverage derived from the document's surviving,
+/// structurally valid tracks, not a record of requested transforms or
+/// removed-track evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct BoneChannelCoverage {
+    /// Zero-based bone index in the measured document's skeleton.
+    pub bone_index: u32,
+    /// Bone name retained alongside the index so duplicate names remain
+    /// distinguishable without losing a human-readable identity.
+    pub bone_name: String,
+    /// Local TRS properties that have at least one non-empty channel.
+    pub properties: Vec<Property>,
+}
+
 /// Measurements for one clip in the `measure` output map.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -1808,11 +1908,15 @@ pub struct ClipMeasurements {
     /// Keyframe count of the longest channel. This also selects the uniform
     /// metric-grid resolution, but it is not an authored frame-rate value.
     pub frame_count: u32,
-    /// Bones with at least one keyframed channel, sorted.
+    /// Bones with at least one structurally valid keyframed channel, sorted.
     pub animated_bones: Vec<String>,
-    /// Max rotation deviation (degrees) of each bone from its first
-    /// keyed rotation. Bones under [`MIN_RECORDED_ROTATION_DEG`] are
-    /// omitted.
+    /// Per-bone local TRS channel coverage in skeleton-index order.
+    /// Duplicate tracks for the same `(bone, property)` pair contribute one
+    /// coverage fact; this is a set of present channels, not a track count.
+    pub bone_channels: Vec<BoneChannelCoverage>,
+    /// Max rotation deviation (degrees) of each structurally valid rotation
+    /// channel from its first key. Bones under
+    /// [`MIN_RECORDED_ROTATION_DEG`] are omitted.
     pub bone_rotation_range_deg: BTreeMap<String, f64>,
     /// Model-space pose closure plus seam-adjacent linear- and angular-velocity
     /// continuity for every skeleton bone. Not applicable only when the
@@ -1852,6 +1956,13 @@ pub struct ClipMeasurements {
     pub gait: Option<GaitMeasurement>,
     /// Availability of [`Self::gait`].
     pub gait_availability: MeasurementAvailability,
+    /// Directional horizontal, signed vertical, vertical-excursion, and yaw
+    /// evidence for the resolved Root role (falling back to Hips only when
+    /// Root is unresolved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_trajectory: Option<RootTrajectoryMeasurement>,
+    /// Availability of [`Self::root_trajectory`].
+    pub root_trajectory_availability: MeasurementAvailability,
     /// Horizontal root displacement ÷ duration (m/s); needs the Root
     /// (or Hips) role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1861,8 +1972,8 @@ pub struct ClipMeasurements {
 }
 
 /// Measure every clip using shared metric pose grids. Role-dependent
-/// metrics (loop seam, gait, root-motion speed) are present only where
-/// the roles resolve; pass an empty [`ResolvedRoles`] to skip them.
+/// metrics (loop seam, gait, root trajectory, root-motion speed) are present
+/// only where the roles resolve; pass an empty [`ResolvedRoles`] to skip them.
 ///
 /// This returns clip measurements only. Call [`measure_assets`] separately
 /// when the pipeline also needs static scene measurements. Clip names are map
@@ -1881,6 +1992,7 @@ pub fn measure_document(
         .enumerate()
         .map(|(clip_index, clip)| {
             let mut animated: BTreeSet<String> = BTreeSet::new();
+            let mut bone_channels: BTreeMap<usize, BTreeSet<Property>> = BTreeMap::new();
             let mut rotation_range: BTreeMap<String, f64> = BTreeMap::new();
             let mut frame_count = 0usize;
 
@@ -1891,15 +2003,22 @@ pub fn measure_document(
                 if track.key_count() == 0 {
                     continue;
                 }
-                animated.insert(bone.name.clone());
-                frame_count = frame_count.max(track.key_count());
+                let track_is_structurally_valid = validate_track_shape(clip_index, track).is_ok();
+                if track_is_structurally_valid {
+                    animated.insert(bone.name.clone());
+                    bone_channels
+                        .entry(track.bone)
+                        .or_default()
+                        .insert(track.property);
 
-                if let Some(max_deg) = rotation_range_deg(track)
-                    && max_deg >= MIN_RECORDED_ROTATION_DEG
-                {
-                    let entry = rotation_range.entry(bone.name.clone()).or_insert(0.0);
-                    *entry = entry.max(max_deg);
+                    if let Some(max_deg) = rotation_range_deg(track)
+                        && max_deg >= MIN_RECORDED_ROTATION_DEG
+                    {
+                        let entry = rotation_range.entry(bone.name.clone()).or_insert(0.0);
+                        *entry = entry.max(max_deg);
+                    }
                 }
+                frame_count = frame_count.max(track.key_count());
             }
 
             let grid = grids.grid(clip_index);
@@ -2010,10 +2129,76 @@ pub fn measure_document(
                 None if !gait_roles_applicable => (None, MeasurementAvailability::NotApplicable),
                 None => (None, MeasurementAvailability::Unavailable),
             };
-            let root_roles_applicable =
-                roles.get(Role::Root).is_some() || roles.get(Role::Hips).is_some();
+            let root_selection = roles
+                .get_with_name(Role::Root)
+                .map(|(bone, name)| (bone, name, RootTrajectorySourceRole::Root))
+                .or_else(|| {
+                    roles
+                        .get_with_name(Role::Hips)
+                        .map(|(bone, name)| (bone, name, RootTrajectorySourceRole::HipsFallback))
+                });
+            let root_roles_applicable = root_selection.is_some();
+            let (root_trajectory, root_trajectory_availability) = match root_selection {
+                None => (None, MeasurementAvailability::NotApplicable),
+                Some((bone, resolved_name, source_role)) => match doc.skeleton.bones.get(bone) {
+                    Some(selected_bone) if selected_bone.name == resolved_name => {
+                        let trajectory = grid
+                            .as_ref()
+                            .and_then(|grid| root_trajectory_metrics(grid, bone));
+                        let (translation, translation_availability) = match trajectory
+                            .as_ref()
+                            .and_then(|trajectory| trajectory.translation)
+                        {
+                            Some(translation) => (
+                                Some(RootTranslationMeasurement {
+                                    horizontal_displacement_x_m: translation
+                                        .horizontal_displacement_x_m,
+                                    horizontal_displacement_z_m: translation
+                                        .horizontal_displacement_z_m,
+                                    horizontal_travel_m: translation.horizontal_travel_m,
+                                    vertical_displacement_m: translation.vertical_displacement_m,
+                                    vertical_min_displacement_m: translation
+                                        .vertical_min_displacement_m,
+                                    vertical_max_displacement_m: translation
+                                        .vertical_max_displacement_m,
+                                }),
+                                MeasurementAvailability::Measured,
+                            ),
+                            None => (None, MeasurementAvailability::Unavailable),
+                        };
+                        let (yaw, yaw_availability) =
+                            match trajectory.and_then(|trajectory| trajectory.yaw) {
+                                Some(yaw) => (
+                                    Some(RootYawMeasurement {
+                                        heading_axis: yaw.heading_axis,
+                                        net_yaw_deg: yaw.net_yaw_deg,
+                                        unwrapped_yaw_deg: yaw.unwrapped_yaw_deg,
+                                        yaw_travel_deg: yaw.yaw_travel_deg,
+                                    }),
+                                    MeasurementAvailability::Measured,
+                                ),
+                                None => (None, MeasurementAvailability::Unavailable),
+                            };
+                        (
+                            Some(RootTrajectoryMeasurement {
+                                bone_index: bone as u32,
+                                bone_name: selected_bone.name.clone(),
+                                source_role,
+                                translation,
+                                translation_availability,
+                                yaw,
+                                yaw_availability,
+                            }),
+                            MeasurementAvailability::Measured,
+                        )
+                    }
+                    _ => (None, MeasurementAvailability::Unavailable),
+                },
+            };
             let (speed_mps, speed_mps_availability) = if !root_roles_applicable {
                 (None, MeasurementAvailability::NotApplicable)
+            } else if root_trajectory.is_none() {
+                (None, MeasurementAvailability::Unavailable)
             } else {
                 match grid.as_ref().and_then(|g| root_motion_speed_mps(g, roles)) {
                     Some(speed) => (Some(speed), MeasurementAvailability::Measured),
@@ -2030,6 +2215,14 @@ pub fn measure_document(
                     .map(f64::from)
                     .fold(0.0, f64::max)
             };
+            let bone_channels = bone_channels
+                .into_iter()
+                .map(|(bone_index, properties)| BoneChannelCoverage {
+                    bone_index: bone_index as u32,
+                    bone_name: doc.skeleton.bones[bone_index].name.clone(),
+                    properties: properties.into_iter().collect(),
+                })
+                .collect();
 
             (
                 clip.name.clone(),
@@ -2037,6 +2230,7 @@ pub fn measure_document(
                     duration_s,
                     frame_count: frame_count as u32,
                     animated_bones: animated.into_iter().collect(),
+                    bone_channels,
                     bone_rotation_range_deg: rotation_range,
                     loop_continuity,
                     loop_continuity_availability,
@@ -2048,6 +2242,8 @@ pub fn measure_document(
                     loop_seam_ratio_availability,
                     gait,
                     gait_availability,
+                    root_trajectory,
+                    root_trajectory_availability,
                     speed_mps,
                     speed_mps_availability,
                 },
@@ -2142,6 +2338,424 @@ mod tests {
             ..Document::default()
         };
         measure_assets(&doc).mesh_definitions.remove(0)
+    }
+
+    fn channel_track(bone: usize, property: Property) -> Track {
+        let values = match property {
+            Property::Rotation => TrackValues::Quats(vec![Quat::IDENTITY]),
+            Property::Translation | Property::Scale => TrackValues::Vec3s(vec![Vec3::ZERO]),
+        };
+        Track {
+            bone,
+            property,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0],
+            values,
+        }
+    }
+
+    #[test]
+    fn bone_channel_coverage_is_a_canonical_artifact_set() {
+        let document = Document {
+            skeleton: Skeleton {
+                bones: vec![
+                    Bone {
+                        name: "duplicate".into(),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                    Bone {
+                        name: "duplicate".into(),
+                        parent: Some(0),
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                    Bone {
+                        name: "empty".into(),
+                        parent: Some(1),
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                ],
+            },
+            clips: vec![Clip {
+                name: "coverage".into(),
+                duration_s: 0.0,
+                tracks: vec![
+                    channel_track(1, Property::Scale),
+                    channel_track(0, Property::Rotation),
+                    channel_track(99, Property::Translation),
+                    channel_track(0, Property::Translation),
+                    channel_track(0, Property::Translation),
+                    channel_track(1, Property::Rotation),
+                    Track {
+                        bone: 2,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Linear,
+                        times: Vec::new(),
+                        values: TrackValues::Vec3s(Vec::new()),
+                    },
+                    Track {
+                        bone: 2,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 1.0],
+                        values: TrackValues::Vec3s(vec![Vec3::ZERO]),
+                    },
+                    Track {
+                        bone: 2,
+                        property: Property::Rotation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0],
+                        values: TrackValues::Vec3s(vec![Vec3::ZERO]),
+                    },
+                    Track {
+                        bone: 2,
+                        property: Property::Rotation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 0.0],
+                        values: TrackValues::Quats(vec![
+                            Quat::IDENTITY,
+                            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                        ]),
+                    },
+                    Track {
+                        bone: 2,
+                        property: Property::Scale,
+                        interpolation: Interpolation::Linear,
+                        times: vec![f32::NAN],
+                        values: TrackValues::Vec3s(vec![Vec3::ONE]),
+                    },
+                    Track {
+                        bone: 2,
+                        property: Property::Scale,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0],
+                        values: TrackValues::Vec3s(vec![Vec3::splat(f32::INFINITY)]),
+                    },
+                ],
+            }],
+            ..Document::default()
+        };
+        let grids = MetricGrids::new(&document);
+
+        let measured =
+            &measure_document(&grids, &ResolvedRoles::default(), &Config::default())["coverage"];
+
+        assert_eq!(measured.animated_bones, ["duplicate"]);
+        assert_eq!(
+            measured.bone_channels,
+            [
+                BoneChannelCoverage {
+                    bone_index: 0,
+                    bone_name: "duplicate".into(),
+                    properties: vec![Property::Translation, Property::Rotation],
+                },
+                BoneChannelCoverage {
+                    bone_index: 1,
+                    bone_name: "duplicate".into(),
+                    properties: vec![Property::Rotation, Property::Scale],
+                },
+            ]
+        );
+        assert!(
+            measured.bone_rotation_range_deg.is_empty(),
+            "a malformed rotation track cannot contribute a range fact"
+        );
+    }
+
+    #[test]
+    fn root_trajectory_selection_is_root_first_with_typed_hips_fallback() {
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "hips".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        };
+        let document = Document {
+            skeleton: skeleton.clone(),
+            clips: vec![Clip {
+                name: "travel".into(),
+                duration_s: 1.0,
+                tracks: vec![
+                    Track {
+                        bone: 0,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 0.5, 1.0],
+                        values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X * 0.5, Vec3::X]),
+                    },
+                    Track {
+                        bone: 1,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 0.5, 1.0],
+                        values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::Z * 0.5, Vec3::Z]),
+                    },
+                ],
+            }],
+            ..Document::default()
+        };
+        let both_roles = ResolvedRoles::from_names(
+            &skeleton,
+            [(Role::Root, "root".into()), (Role::Hips, "hips".into())],
+        );
+        let grids = MetricGrids::new(&document);
+        let measured = &measure_document(&grids, &both_roles, &Config::default())["travel"];
+        let trajectory = measured.root_trajectory.as_ref().expect("selected Root");
+        assert_eq!(trajectory.bone_index, 0);
+        assert_eq!(trajectory.source_role, RootTrajectorySourceRole::Root);
+        assert_eq!(
+            trajectory
+                .translation
+                .as_ref()
+                .unwrap()
+                .horizontal_displacement_x_m,
+            1.0
+        );
+
+        let hips_only = ResolvedRoles::from_names(&skeleton, [(Role::Hips, "hips".into())]);
+        let measured = &measure_document(&grids, &hips_only, &Config::default())["travel"];
+        let trajectory = measured.root_trajectory.as_ref().expect("Hips fallback");
+        assert_eq!(trajectory.bone_index, 1);
+        assert_eq!(
+            trajectory.source_role,
+            RootTrajectorySourceRole::HipsFallback
+        );
+        let translation = trajectory.translation.as_ref().unwrap();
+        assert_eq!(translation.horizontal_displacement_x_m, 1.0);
+        assert_eq!(translation.horizontal_displacement_z_m, 1.0);
+
+        let measured =
+            &measure_document(&grids, &ResolvedRoles::default(), &Config::default())["travel"];
+        assert!(measured.root_trajectory.is_none());
+        assert_eq!(
+            measured.root_trajectory_availability,
+            MeasurementAvailability::NotApplicable
+        );
+
+        let mut too_short = document.clone();
+        for track in &mut too_short.clips[0].tracks {
+            track.times.truncate(2);
+            match &mut track.values {
+                TrackValues::Vec3s(values) => values.truncate(2),
+                TrackValues::Quats(values) => values.truncate(2),
+            }
+        }
+        let too_short_grids = MetricGrids::new(&too_short);
+        let measured =
+            &measure_document(&too_short_grids, &both_roles, &Config::default())["travel"];
+        let trajectory = measured
+            .root_trajectory
+            .as_ref()
+            .expect("selection remains observable without a metric grid");
+        assert_eq!(
+            trajectory.translation_availability,
+            MeasurementAvailability::Unavailable
+        );
+        assert_eq!(
+            trajectory.yaw_availability,
+            MeasurementAvailability::Unavailable
+        );
+
+        let roles_from_larger_skeleton = ResolvedRoles::from_names(
+            &Skeleton {
+                bones: vec![
+                    Bone {
+                        name: "hips".into(),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                    Bone {
+                        name: "root".into(),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                ],
+            },
+            [(Role::Root, "root".into()), (Role::Hips, "hips".into())],
+        );
+        let stale_role_document = Document {
+            skeleton: Skeleton {
+                bones: vec![Bone {
+                    name: "hips".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                }],
+            },
+            clips: document.clips.clone(),
+            ..Document::default()
+        };
+        let stale_role_grids = MetricGrids::new(&stale_role_document);
+        let measured = &measure_document(
+            &stale_role_grids,
+            &roles_from_larger_skeleton,
+            &Config::default(),
+        )["travel"];
+        assert!(
+            measured.root_trajectory.is_none(),
+            "invalid Root must not fall back to the valid Hips index"
+        );
+        assert_eq!(
+            measured.root_trajectory_availability,
+            MeasurementAvailability::Unavailable
+        );
+        assert!(measured.speed_mps.is_none());
+        assert_eq!(
+            measured.speed_mps_availability,
+            MeasurementAvailability::Unavailable
+        );
+
+        let mismatched_name_document = Document {
+            skeleton: Skeleton {
+                bones: vec![
+                    Bone {
+                        name: "hips".into(),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                    Bone {
+                        name: "other".into(),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    },
+                ],
+            },
+            clips: document.clips.clone(),
+            ..Document::default()
+        };
+        let mismatched_name_grids = MetricGrids::new(&mismatched_name_document);
+        let measured = &measure_document(
+            &mismatched_name_grids,
+            &roles_from_larger_skeleton,
+            &Config::default(),
+        )["travel"];
+        assert!(
+            measured.root_trajectory.is_none(),
+            "a stale Root name must not bind a different in-range bone or fall back"
+        );
+        assert_eq!(
+            measured.root_trajectory_availability,
+            MeasurementAvailability::Unavailable
+        );
+        assert!(measured.speed_mps.is_none());
+        assert_eq!(
+            measured.speed_mps_availability,
+            MeasurementAvailability::Unavailable
+        );
+    }
+
+    #[test]
+    fn resolved_root_derivation_failure_does_not_fall_back_to_measurable_hips() {
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "hips".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        };
+        let document = Document {
+            skeleton: skeleton.clone(),
+            clips: vec![Clip {
+                name: "root_failure".into(),
+                duration_s: 1.0,
+                tracks: vec![
+                    Track {
+                        bone: 0,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 0.5, 1.0],
+                        values: TrackValues::Vec3s(vec![
+                            Vec3::ZERO,
+                            Vec3::new(f32::NAN, 0.0, 0.0),
+                            Vec3::ZERO,
+                        ]),
+                    },
+                    Track {
+                        bone: 0,
+                        property: Property::Rotation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 0.5, 1.0],
+                        values: TrackValues::Quats(vec![Quat::from_xyzw(0.0, 0.0, 0.0, 0.0); 3]),
+                    },
+                    Track {
+                        bone: 1,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 0.5, 1.0],
+                        values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::Z, Vec3::Z * 2.0]),
+                    },
+                    Track {
+                        bone: 1,
+                        property: Property::Rotation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 0.5, 1.0],
+                        values: TrackValues::Quats(vec![Quat::IDENTITY; 3]),
+                    },
+                ],
+            }],
+            ..Document::default()
+        };
+        let roles = ResolvedRoles::from_names(
+            &skeleton,
+            [(Role::Root, "root".into()), (Role::Hips, "hips".into())],
+        );
+        let grids = MetricGrids::new(&document);
+        let grid = grids.grid(0).expect("shared metric grid");
+        let hips = root_trajectory_metrics(&grid, 1).expect("separate Hips evidence");
+        let hips_translation = hips.translation.expect("Hips translation is measurable");
+        assert_eq!(hips_translation.horizontal_displacement_x_m, 0.0);
+        assert_eq!(hips_translation.horizontal_displacement_z_m, 2.0);
+        assert_eq!(hips_translation.horizontal_travel_m, 2.0);
+        assert!(hips.yaw.is_some(), "Hips yaw is independently measurable");
+
+        let measured = &measure_document(&grids, &roles, &Config::default())["root_failure"];
+        let trajectory = measured
+            .root_trajectory
+            .as_ref()
+            .expect("valid resolved Root identity remains observable");
+        assert_eq!(trajectory.bone_index, 0);
+        assert_eq!(trajectory.bone_name, "root");
+        assert_eq!(trajectory.source_role, RootTrajectorySourceRole::Root);
+        assert!(trajectory.translation.is_none());
+        assert_eq!(
+            trajectory.translation_availability,
+            MeasurementAvailability::Unavailable
+        );
+        assert!(trajectory.yaw.is_none());
+        assert_eq!(
+            trajectory.yaw_availability,
+            MeasurementAvailability::Unavailable
+        );
+        assert_eq!(
+            measured.root_trajectory_availability,
+            MeasurementAvailability::Measured
+        );
     }
 
     #[test]
@@ -3851,12 +4465,25 @@ mod tests {
                     "duration_s": 2.0,
                     "frame_count": 2,
                     "animated_bones": ["hips"],
+                    "bone_channels": [{
+                        "bone_index": 0,
+                        "bone_name": "hips",
+                        "properties": ["translation"]
+                    }],
                     "bone_rotation_range_deg": {},
                     "loop_continuity_availability": "unavailable",
                     "loop_endpoint_mode_availability": "not_applicable",
                     "frame_grid_availability": "not_applicable",
                     "loop_seam_ratio_availability": "unavailable",
                     "gait_availability": "unavailable",
+                    "root_trajectory": {
+                        "bone_index": 0,
+                        "bone_name": "hips",
+                        "source_role": "hips_fallback",
+                        "translation_availability": "unavailable",
+                        "yaw_availability": "unavailable"
+                    },
+                    "root_trajectory_availability": "measured",
                     "speed_mps_availability": "unavailable",
                 }
             })

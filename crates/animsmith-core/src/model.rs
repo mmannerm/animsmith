@@ -395,7 +395,8 @@ pub(crate) fn mat4_is_finite(matrix: Mat4) -> bool {
 }
 
 /// Animated property targeted by a [`Track`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Property {
     /// Local translation channel.
     Translation,
@@ -1530,7 +1531,10 @@ fn validate_clip_tracks(document: &Document) -> Result<(), DocumentShapeError> {
     Ok(())
 }
 
-fn validate_track_shape(clip_index: usize, track: &Track) -> Result<(), DocumentShapeError> {
+pub(crate) fn validate_track_shape(
+    clip_index: usize,
+    track: &Track,
+) -> Result<(), DocumentShapeError> {
     let violation = if track.times.is_empty() {
         Some(TrackShapeViolation::EmptyTimes)
     } else if track.times.iter().any(|time| !time.is_finite()) {
@@ -1617,6 +1621,24 @@ fn validate_bone_inverse_binds(skeleton: &Skeleton) -> Result<(), DocumentShapeE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn property_serde_uses_the_stable_trs_vocabulary() {
+        assert_eq!(
+            serde_json::to_value([Property::Translation, Property::Rotation, Property::Scale,])
+                .expect("properties serialize"),
+            serde_json::json!(["translation", "rotation", "scale"])
+        );
+        assert_eq!(
+            serde_json::from_value::<Vec<Property>>(serde_json::json!([
+                "translation",
+                "rotation",
+                "scale"
+            ]))
+            .expect("properties deserialize"),
+            [Property::Translation, Property::Rotation, Property::Scale,]
+        );
+    }
 
     fn bone(parent: Option<BoneId>) -> Bone {
         Bone {
