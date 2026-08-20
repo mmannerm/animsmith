@@ -80,8 +80,10 @@ fn u16_bytes(values: &[u16]) -> Vec<u8> {
 
 fn read_f32(slice: &[u8]) -> Vec<f32> {
     slice
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four bytes")))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| f32::from_le_bytes(*chunk))
         .collect()
 }
 
