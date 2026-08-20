@@ -52,7 +52,9 @@ fn settings_value(settings: &CheckSettings, field: &str) -> Option<f64> {
 #[test]
 fn deserialized_check_settings_reject_negative_and_non_finite_values() {
     for (check_id, field) in NONNEGATIVE_CHECK_SETTINGS {
-        for value in ["-0.01", "nan", "inf", "-inf"] {
+        for value in [
+            "-0.01", "-1.0", "-1e308", "-5e-324", "nan", "-nan", "inf", "-inf",
+        ] {
             let source = format!("[checks.{check_id}]\n{field} = {value}\n");
             assert!(
                 toml::from_str::<Config>(&source).is_err(),
@@ -74,7 +76,17 @@ fn deserialized_check_settings_reject_negative_and_non_finite_values() {
 #[test]
 fn programmatic_check_settings_return_typed_validation_errors() {
     for (check_id, field) in NONNEGATIVE_CHECK_SETTINGS {
-        for value in [-0.01, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for value in [
+            -0.01,
+            -1.0,
+            -f64::MAX,
+            -f64::from_bits(1),
+            f64::NAN,
+            f64::from_bits(0x7ff8_0000_0000_0001),
+            f64::from_bits(0xfff8_0000_0000_0001),
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
             let mut config = Config::default();
             config
                 .checks

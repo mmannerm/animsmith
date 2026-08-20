@@ -1867,7 +1867,8 @@ pub struct ClipMeasurements {
 /// This returns clip measurements only. Call [`measure_assets`] separately
 /// when the pipeline also needs static scene measurements. Clip names are map
 /// keys and therefore must be unique; a later duplicate replaces an earlier
-/// entry.
+/// entry. Directly constructed configuration must pass [`Config::validate`]
+/// before it is supplied here.
 pub fn measure_document(
     grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
