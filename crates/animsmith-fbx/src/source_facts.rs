@@ -375,13 +375,27 @@ pub(crate) struct SourceConstructCounts {
 pub(crate) struct RestBindSourceConstructCounts {
     pub(crate) user_defined_property_count: usize,
     pub(crate) safe_texture_file_link_count: usize,
-    pub(crate) unsupported_unmodeled_element_count: usize,
+    admitted_unmodeled_element_count: usize,
+    unsupported_unmodeled_element_counts: [(&'static str, usize); 21],
 }
 
 impl RestBindSourceConstructCounts {
     pub(crate) fn total_unmodeled_element_count(self) -> usize {
         self.safe_texture_file_link_count
-            .saturating_add(self.unsupported_unmodeled_element_count)
+            .saturating_add(self.admitted_unmodeled_element_count)
+            .saturating_add(self.unsupported_unmodeled_element_count())
+    }
+
+    pub(crate) fn unsupported_unmodeled_element_count(self) -> usize {
+        self.unsupported_unmodeled_element_counts
+            .into_iter()
+            .fold(0usize, |total, (_, count)| total.saturating_add(count))
+    }
+
+    pub(crate) fn unsupported_kind_counts(self) -> impl Iterator<Item = (&'static str, usize)> {
+        self.unsupported_unmodeled_element_counts
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
     }
 }
 
@@ -392,8 +406,8 @@ pub(crate) fn construct_counts(scene: &ufbx::Scene) -> SourceConstructCounts {
         .flat_map(|element| element.props.props.iter())
         .filter(|prop| prop.flags.has_any(ufbx::PropFlags::USER_DEFINED))
         .count();
-    let (unsupported_unmodeled_element_count, safe_texture_file_link_count) =
-        rest_bind_unmodeled_element_counts(scene);
+    let mut rest_bind = rest_bind_unmodeled_element_counts(scene);
+    rest_bind.user_defined_property_count = user_defined_property_count;
     let stackless_animation_count = if scene.anim_stacks.is_empty() {
         scene
             .anim_layers
@@ -404,11 +418,7 @@ pub(crate) fn construct_counts(scene: &ufbx::Scene) -> SourceConstructCounts {
         0
     };
     SourceConstructCounts {
-        rest_bind: RestBindSourceConstructCounts {
-            user_defined_property_count,
-            safe_texture_file_link_count,
-            unsupported_unmodeled_element_count,
-        },
+        rest_bind,
         stackless_animation_count,
     }
 }
@@ -416,7 +426,7 @@ pub(crate) fn construct_counts(scene: &ufbx::Scene) -> SourceConstructCounts {
 /// Classify every field in `ufbx::Scene` at one exhaustive structural
 /// boundary. Omitting `..` is deliberate: a ufbx upgrade that adds a typed
 /// list must fail to compile until that list receives a classification.
-fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> (usize, usize) {
+fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceConstructCounts {
     let ufbx::Scene {
         metadata: _,
         settings: _,
@@ -486,32 +496,46 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> (usize, usize) {
         dom_root: _,
     } = scene;
 
-    let unsupported = unknowns.len()
-        + line_curves.len()
-        + nurbs_curves.len()
-        + nurbs_surfaces.len()
-        + nurbs_trim_surfaces.len()
-        + nurbs_trim_boundaries.len()
-        + procedural_geometries.len()
-        + stereo_cameras.len()
-        + camera_switchers.len()
-        + markers.len()
-        + lod_groups.len()
-        + blend_channels.len()
-        + blend_shapes.len()
-        + cache_files.len()
-        + shaders.len()
-        + shader_bindings.len()
-        + display_layers.len()
-        + selection_sets.len()
-        + selection_nodes.len()
-        + characters.len()
-        + constraints.len()
-        + audio_layers.len()
-        + audio_clips.len()
-        + poses.len()
-        + metadata_objects.len();
-    (unsupported, texture_files.len())
+    RestBindSourceConstructCounts {
+        user_defined_property_count: 0,
+        safe_texture_file_link_count: texture_files.len(),
+        // These typed node-attribute lists do not carry hierarchy transforms,
+        // skin binds, animation tracks, or geometry into the normalized GLB
+        // rest/bind bridge. Their source elements remain counted in the raw
+        // aggregate, while same-load admission discharges only these exact
+        // classes.
+        admitted_unmodeled_element_count: stereo_cameras
+            .len()
+            .saturating_add(camera_switchers.len())
+            .saturating_add(markers.len())
+            .saturating_add(lod_groups.len()),
+        // Keep the diagnostic label and parser count together. Because every
+        // destructured residual list is consumed here, compiler warnings also
+        // fail a future edit that binds a ufbx list without classifying it.
+        unsupported_unmodeled_element_counts: [
+            ("unknowns", unknowns.len()),
+            ("line_curves", line_curves.len()),
+            ("nurbs_curves", nurbs_curves.len()),
+            ("nurbs_surfaces", nurbs_surfaces.len()),
+            ("nurbs_trim_surfaces", nurbs_trim_surfaces.len()),
+            ("nurbs_trim_boundaries", nurbs_trim_boundaries.len()),
+            ("procedural_geometries", procedural_geometries.len()),
+            ("blend_channels", blend_channels.len()),
+            ("blend_shapes", blend_shapes.len()),
+            ("cache_files", cache_files.len()),
+            ("shaders", shaders.len()),
+            ("shader_bindings", shader_bindings.len()),
+            ("display_layers", display_layers.len()),
+            ("selection_sets", selection_sets.len()),
+            ("selection_nodes", selection_nodes.len()),
+            ("characters", characters.len()),
+            ("constraints", constraints.len()),
+            ("audio_layers", audio_layers.len()),
+            ("audio_clips", audio_clips.len()),
+            ("poses", poses.len()),
+            ("metadata_objects", metadata_objects.len()),
+        ],
+    }
 }
 
 fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1) {

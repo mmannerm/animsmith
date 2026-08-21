@@ -371,10 +371,15 @@ is invalid rather than trimmed. The block accepts
 glTF/GLB plus the narrow normalized/baked FBX subset admitted by the existing
 rest-bind capability boundary. That boundary may admit user-defined FBX
 properties and bounded external texture/video declarations after same-load
-evidence proves they are not scale-bearing; it still refuses incomplete
-resource or construct coverage, unknown source elements, extensions, and every
-unsupported transform, geometry, bind, or animation fact. A refusal names the
-exact failed fact or counter. An artifact or evidence destination that names
+evidence proves they are not scale-bearing. It also admits exactly ufbx's
+marker, LOD-group, stereo-camera, and camera-switcher typed lists because they
+cannot supply hierarchy transforms, skin binds, tracks, or geometry to the
+normalized rest/bind bridge. Those rows remain counted in the raw aggregate;
+every other unmodeled typed list stays fail-closed, with exact nonzero kind
+counts in the refusal. The boundary still refuses incomplete resource or
+construct coverage, extensions, and every unsupported transform, geometry,
+bind, or animation fact. A refusal names the exact failed fact or counter. An
+artifact or evidence destination that names
 one of the safe source-relative dependency keys retained by the same-load
 closure is an operator error even when capture was unavailable or refused;
 symlink-mediated dependency keys stop before publication rather than resolving
