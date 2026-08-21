@@ -871,10 +871,7 @@ fn prepare_scale_input(
         source_projection,
         selector,
     ) = if is_fbx {
-        let resource_root = resolved
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
+        let resource_root = parent_or_current(resolved);
         let fbx_source = animsmith_fbx::load_scale_source_bytes_with_resource_root(
             resolved,
             &bytes,

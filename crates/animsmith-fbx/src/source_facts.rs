@@ -314,14 +314,14 @@ fn project_constructs(counts: SourceConstructCounts, builder: &mut RawSourceFact
         (
             "fbx:user-defined-properties",
             SourceConstructKindV1::CustomProperty,
-            counts.user_defined_property_count,
+            counts.rest_bind.user_defined_property_count,
             SourceLoaderDispositionV1::Unsupported,
             "fbx:scene.elements.props",
         ),
         (
             "fbx:unmodeled-elements",
             SourceConstructKindV1::UnknownElement,
-            counts.unsupported_source_element_count,
+            counts.rest_bind.total_unmodeled_element_count(),
             SourceLoaderDispositionV1::Unsupported,
             "fbx:scene.elements",
         ),
@@ -365,9 +365,24 @@ fn project_constructs(counts: SourceConstructCounts, builder: &mut RawSourceFact
 /// inventory, computed exactly once per load.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SourceConstructCounts {
-    pub(crate) user_defined_property_count: usize,
-    pub(crate) unsupported_source_element_count: usize,
+    pub(crate) rest_bind: RestBindSourceConstructCounts,
     stackless_animation_count: usize,
+}
+
+/// Same-parse breakdown of the aggregate unmodeled-construct row used by the
+/// narrow rest/bind admission policy.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RestBindSourceConstructCounts {
+    pub(crate) user_defined_property_count: usize,
+    pub(crate) safe_texture_file_link_count: usize,
+    pub(crate) unsupported_unmodeled_element_count: usize,
+}
+
+impl RestBindSourceConstructCounts {
+    pub(crate) fn total_unmodeled_element_count(self) -> usize {
+        self.safe_texture_file_link_count
+            .saturating_add(self.unsupported_unmodeled_element_count)
+    }
 }
 
 pub(crate) fn construct_counts(scene: &ufbx::Scene) -> SourceConstructCounts {
@@ -377,7 +392,8 @@ pub(crate) fn construct_counts(scene: &ufbx::Scene) -> SourceConstructCounts {
         .flat_map(|element| element.props.props.iter())
         .filter(|prop| prop.flags.has_any(ufbx::PropFlags::USER_DEFINED))
         .count();
-    let unsupported_source_element_count = unsupported_source_element_count(scene);
+    let (unsupported_unmodeled_element_count, safe_texture_file_link_count) =
+        rest_bind_unmodeled_element_counts(scene);
     let stackless_animation_count = if scene.anim_stacks.is_empty() {
         scene
             .anim_layers
@@ -388,8 +404,11 @@ pub(crate) fn construct_counts(scene: &ufbx::Scene) -> SourceConstructCounts {
         0
     };
     SourceConstructCounts {
-        user_defined_property_count,
-        unsupported_source_element_count,
+        rest_bind: RestBindSourceConstructCounts {
+            user_defined_property_count,
+            safe_texture_file_link_count,
+            unsupported_unmodeled_element_count,
+        },
         stackless_animation_count,
     }
 }
@@ -397,7 +416,7 @@ pub(crate) fn construct_counts(scene: &ufbx::Scene) -> SourceConstructCounts {
 /// Classify every field in `ufbx::Scene` at one exhaustive structural
 /// boundary. Omitting `..` is deliberate: a ufbx upgrade that adds a typed
 /// list must fail to compile until that list receives a classification.
-fn unsupported_source_element_count(scene: &ufbx::Scene) -> usize {
+fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> (usize, usize) {
     let ufbx::Scene {
         metadata: _,
         settings: _,
@@ -466,7 +485,7 @@ fn unsupported_source_element_count(scene: &ufbx::Scene) -> usize {
         dom_root: _,
     } = scene;
 
-    unknowns.len()
+    let unsupported = unknowns.len()
         + line_curves.len()
         + nurbs_curves.len()
         + nurbs_surfaces.len()
@@ -490,8 +509,8 @@ fn unsupported_source_element_count(scene: &ufbx::Scene) -> usize {
         + audio_layers.len()
         + audio_clips.len()
         + poses.len()
-        + metadata_objects.len()
-        + texture_files.len()
+        + metadata_objects.len();
+    (unsupported, texture_files.len())
 }
 
 fn project_resources(scene: &ufbx::Scene, builder: &mut RawSourceFactsBuilderV1) {

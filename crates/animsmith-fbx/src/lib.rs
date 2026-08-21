@@ -505,7 +505,6 @@ fn load_scale_source_bytes_inner(
         capture_dependency_closure(&scene, &raw_facts, resource_root)?;
     let (assets, conversion) = extract_assets(&scene, &resource_capture);
     let inventory = capability::inventory(&scene, &conversion, construct_counts);
-    let rest_bind_safe_unmodeled_resource_link_count = scene.texture_files.len();
 
     let document = Document {
         skeleton: Skeleton { bones },
@@ -521,7 +520,7 @@ fn load_scale_source_bytes_inner(
     Ok(FbxScaleSource {
         source,
         inventory,
-        rest_bind_safe_unmodeled_resource_link_count,
+        rest_bind_construct_counts: construct_counts.rest_bind,
     })
 }
 

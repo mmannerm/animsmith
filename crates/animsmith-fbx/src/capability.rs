@@ -358,13 +358,13 @@ pub struct FbxScaleCapabilityInventory {
 pub struct FbxScaleSource {
     pub(crate) source: LoadedSource,
     pub(crate) inventory: FbxScaleCapabilityInventory,
-    /// Unmodeled source-element rows that are only texture-file linkage.
+    /// Same-parse breakdown behind the aggregate construct inventory.
     ///
     /// This parser-side distinction is intentionally not part of the frozen
     /// scale-evidence v5 inventory. It is same-load admission evidence for the
     /// normalized GLB bridge, where the texture/video declarations have their
     /// own bounded resource facts and cannot affect rest/bind transforms.
-    pub(crate) rest_bind_safe_unmodeled_resource_link_count: usize,
+    pub(crate) rest_bind_construct_counts: crate::source_facts::RestBindSourceConstructCounts,
 }
 
 impl FbxScaleSource {
@@ -508,12 +508,12 @@ pub fn rest_bind_capability_facts(
             )],
         ));
     }
-    rest_bind_capability_facts_with_safe_resource_links(inventory, 0)
+    rest_bind_capability_facts_with_construct_counts(inventory, None)
 }
 
-fn rest_bind_capability_facts_with_safe_resource_links(
+fn rest_bind_capability_facts_with_construct_counts(
     inventory: &FbxScaleCapabilityInventory,
-    safe_unmodeled_resource_link_count: usize,
+    source_counts: Option<crate::source_facts::RestBindSourceConstructCounts>,
 ) -> Result<ScaleCapabilityFacts, String> {
     let mut violations = Vec::new();
     for (domain, status) in inventory.domains.rest_bind_semantic_statuses() {
@@ -550,19 +550,31 @@ fn rest_bind_capability_facts_with_safe_resource_links(
             fbx_scale_domain_status_name(expected_custom_status)
         ));
     }
-    match inventory
-        .unsupported_source_element_count
-        .checked_sub(safe_unmodeled_resource_link_count)
-    {
-        Some(unsupported_count) => push_nonzero_violation(
+    if let Some(source_counts) = source_counts {
+        if inventory.user_defined_property_count != source_counts.user_defined_property_count {
+            violations.push(format!(
+                "user_defined_property_count={}!=source:{}",
+                inventory.user_defined_property_count, source_counts.user_defined_property_count
+            ));
+        }
+        let source_unmodeled_count = source_counts.total_unmodeled_element_count();
+        if inventory.unsupported_source_element_count != source_unmodeled_count {
+            violations.push(format!(
+                "unsupported_source_element_count={}!=source:{}",
+                inventory.unsupported_source_element_count, source_unmodeled_count
+            ));
+        }
+        push_nonzero_violation(
             &mut violations,
             "unsupported_source_element_count",
-            unsupported_count,
-        ),
-        None => violations.push(format!(
-            "safe_unmodeled_resource_link_count={} exceeds unsupported_source_element_count={}",
-            safe_unmodeled_resource_link_count, inventory.unsupported_source_element_count
-        )),
+            source_counts.unsupported_unmodeled_element_count,
+        );
+    } else {
+        push_nonzero_violation(
+            &mut violations,
+            "unsupported_source_element_count",
+            inventory.unsupported_source_element_count,
+        );
     }
 
     if !inventory.coordinate_normalization.target_right_handed_y_up {
@@ -720,6 +732,7 @@ pub fn rest_bind_capability_facts_for_source(
     source: &FbxScaleSource,
 ) -> Result<ScaleCapabilityFacts, String> {
     let source_facts = source.source_facts();
+    let source_counts = source.rest_bind_construct_counts;
     let mut violations = Vec::new();
     for (domain, state) in [
         ("constructs", source_facts.constructs().coverage().state()),
@@ -732,25 +745,48 @@ pub fn rest_bind_capability_facts_for_source(
             ));
         }
     }
+    let mut saw_custom_properties = false;
+    let mut saw_unmodeled_elements = false;
     for row in source_facts.constructs().rows() {
         match row.kind() {
-            SourceConstructKindV1::CustomProperty => {}
+            SourceConstructKindV1::CustomProperty
+                if row.name().as_str() == "fbx:user-defined-properties" =>
+            {
+                saw_custom_properties = true;
+                if row.count()
+                    != u64::try_from(source_counts.user_defined_property_count).unwrap_or(u64::MAX)
+                {
+                    violations.push(format!(
+                        "raw_source.construct=custom_property({}; count={})!=source:{}",
+                        row.name().as_str(),
+                        row.count(),
+                        source_counts.user_defined_property_count
+                    ));
+                }
+            }
+            SourceConstructKindV1::CustomProperty => violations.push(format!(
+                "raw_source.construct=custom_property({}; count={})",
+                row.name().as_str(),
+                row.count()
+            )),
             SourceConstructKindV1::UnknownElement
                 if row.name().as_str() == "fbx:unmodeled-elements" =>
             {
-                let safe_count = u64::try_from(source.rest_bind_safe_unmodeled_resource_link_count)
+                saw_unmodeled_elements = true;
+                let total_count = u64::try_from(source_counts.total_unmodeled_element_count())
                     .unwrap_or(u64::MAX);
-                if row.count() > safe_count {
+                if row.count() != total_count {
+                    violations.push(format!(
+                        "raw_source.construct=unknown_element({}; count={})!=source:{}",
+                        row.name().as_str(),
+                        row.count(),
+                        total_count
+                    ));
+                } else if source_counts.unsupported_unmodeled_element_count > 0 {
                     violations.push(format!(
                         "raw_source.construct=unknown_element({}; count={})",
                         row.name().as_str(),
-                        row.count() - safe_count
-                    ));
-                } else if row.count() < safe_count {
-                    violations.push(format!(
-                        "raw_source.construct=unknown_element({}; count={}) is smaller than safe resource-link count {safe_count}",
-                        row.name().as_str(),
-                        row.count()
+                        source_counts.unsupported_unmodeled_element_count
                     ));
                 }
             }
@@ -766,16 +802,25 @@ pub fn rest_bind_capability_facts_for_source(
             )),
         }
     }
+    if source_counts.user_defined_property_count > 0 && !saw_custom_properties {
+        violations.push(format!(
+            "raw_source.construct=custom_property(fbx:user-defined-properties; count=0)!=source:{}",
+            source_counts.user_defined_property_count
+        ));
+    }
+    if source_counts.total_unmodeled_element_count() > 0 && !saw_unmodeled_elements {
+        violations.push(format!(
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=0)!=source:{}",
+            source_counts.total_unmodeled_element_count()
+        ));
+    }
     if !violations.is_empty() {
         return Err(format_rest_bind_violations("raw-source facts", &violations));
     }
 
     let mut facts = join_source_facts(
         source,
-        rest_bind_capability_facts_with_safe_resource_links(
-            source.inventory(),
-            source.rest_bind_safe_unmodeled_resource_link_count,
-        )?,
+        rest_bind_capability_facts_with_construct_counts(source.inventory(), Some(source_counts))?,
     );
     facts.unknown_source_members_present = false;
     facts.unregistered_extensions_present = false;
@@ -997,8 +1042,9 @@ pub(crate) fn inventory(
         .map(|(index, mesh)| identity(index, &mesh.element))
         .collect::<Vec<_>>();
     let uninstanced_mesh_definition_count = uninstanced_source_meshes.len();
-    let user_defined_property_count = construct_counts.user_defined_property_count;
-    let unsupported_source_element_count = construct_counts.unsupported_source_element_count;
+    let user_defined_property_count = construct_counts.rest_bind.user_defined_property_count;
+    let unsupported_source_element_count =
+        construct_counts.rest_bind.total_unmodeled_element_count();
     let external_resource_count = scene
         .textures
         .iter()
@@ -1300,11 +1346,31 @@ mod tests {
     use std::path::PathBuf;
 
     fn captured_with(configure: impl FnOnce(&mut RawSourceFactsBuilderV1)) -> FbxScaleSource {
+        captured_with_counts(configure, |_| {})
+    }
+
+    fn captured_with_counts(
+        configure: impl FnOnce(&mut RawSourceFactsBuilderV1),
+        configure_counts: impl FnOnce(&mut crate::source_facts::RestBindSourceConstructCounts),
+    ) -> FbxScaleSource {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rigged_triangle.fbx");
         let baseline = crate::load_scale_source(&fixture).expect("checked-in FBX fixture loads");
         let document = baseline.document().clone();
-        let inventory = baseline.inventory().clone();
+        let mut inventory = baseline.inventory().clone();
+        let mut rest_bind_construct_counts = baseline.rest_bind_construct_counts;
+        configure_counts(&mut rest_bind_construct_counts);
+        inventory.user_defined_property_count =
+            rest_bind_construct_counts.user_defined_property_count;
+        inventory.unsupported_source_element_count =
+            rest_bind_construct_counts.total_unmodeled_element_count();
+        inventory.domains.collision_and_custom_data = if inventory.user_defined_property_count == 0
+            && inventory.unsupported_source_element_count == 0
+        {
+            FbxScaleDomainStatus::Absent
+        } else {
+            FbxScaleDomainStatus::Unsupported
+        };
         let identity: InputIdentity = baseline.source_facts().primary_identity().clone();
         let mut builder = RawSourceFactsBuilderV1::new(SourceFormatV1::Fbx, identity);
         configure(&mut builder);
@@ -1312,8 +1378,7 @@ mod tests {
         FbxScaleSource {
             source,
             inventory,
-            rest_bind_safe_unmodeled_resource_link_count: baseline
-                .rest_bind_safe_unmodeled_resource_link_count,
+            rest_bind_construct_counts,
         }
     }
 
@@ -1325,19 +1390,26 @@ mod tests {
 
     #[test]
     fn source_aware_rest_bind_rejects_partial_relevant_coverage() {
-        for source in [
-            captured_with(|builder| {
-                builder.mark_budget_exceeded(SourceFactDomainV1::Constructs);
-                builder.mark_complete(SourceFactDomainV1::Resources);
-            }),
-            captured_with(|builder| {
-                builder.mark_complete(SourceFactDomainV1::Constructs);
-                builder.mark_budget_exceeded(SourceFactDomainV1::Resources);
-            }),
+        for (source, expected) in [
+            (
+                captured_with(|builder| {
+                    builder.mark_budget_exceeded(SourceFactDomainV1::Constructs);
+                    builder.mark_complete(SourceFactDomainV1::Resources);
+                }),
+                "FBX rest/bind raw-source facts rejected: raw_source.constructs.coverage=partial",
+            ),
+            (
+                captured_with(|builder| {
+                    builder.mark_complete(SourceFactDomainV1::Constructs);
+                    builder.mark_budget_exceeded(SourceFactDomainV1::Resources);
+                }),
+                "FBX rest/bind raw-source facts rejected: raw_source.resources.coverage=partial",
+            ),
         ] {
-            assert!(
-                rest_bind_capability_facts_for_source(&source).is_err(),
-                "partial construct/resource coverage must fail before the operation inventory"
+            assert_eq!(
+                rest_bind_capability_facts_for_source(&source).unwrap_err(),
+                expected,
+                "partial construct/resource coverage must name the exact raw authority"
             );
         }
     }
@@ -1370,33 +1442,42 @@ mod tests {
                 SourceConstructKindV1::Extension => "extension",
                 SourceConstructKindV1::CustomProperty => unreachable!(),
             };
-            assert!(error.contains(expected), "{error}");
+            assert_eq!(
+                error,
+                format!(
+                    "FBX rest/bind raw-source facts rejected: raw_source.construct={expected}(synthetic; count=1)"
+                )
+            );
         }
 
-        let custom_and_external = captured_with(|builder| {
-            builder.push_construct(
-                SourceConstructFactV1::new(
+        let custom_and_external = captured_with_counts(
+            |builder| {
+                builder.push_construct(
+                    SourceConstructFactV1::new(
+                        0,
+                        SourceConstructKindV1::CustomProperty,
+                        SourceTextV1::new("fbx:user-defined-properties")
+                            .expect("bounded test name"),
+                        false,
+                        1,
+                        SourceLoaderDispositionV1::Unsupported,
+                        parser_provenance("fbx:synthetic/property"),
+                    )
+                    .expect("positive custom-property row"),
+                );
+                builder.mark_complete(SourceFactDomainV1::Constructs);
+                builder.push_resource(SourceResourceReferenceV1::new(
                     0,
-                    SourceConstructKindV1::CustomProperty,
-                    SourceTextV1::new("synthetic-property").expect("bounded test name"),
-                    false,
-                    1,
-                    SourceLoaderDispositionV1::Unsupported,
-                    parser_provenance("fbx:synthetic/property"),
-                )
-                .expect("positive custom-property row"),
-            );
-            builder.mark_complete(SourceFactDomainV1::Constructs);
-            builder.push_resource(SourceResourceReferenceV1::new(
-                0,
-                SourceResourceKindV1::Texture,
-                0,
-                SourceResourceLocatorV1::classify("texture.png"),
-                SourceLoaderDispositionV1::Unknown,
-                parser_provenance("fbx:textures/0/filename"),
-            ));
-            builder.mark_complete(SourceFactDomainV1::Resources);
-        });
+                    SourceResourceKindV1::Texture,
+                    0,
+                    SourceResourceLocatorV1::classify("texture.png"),
+                    SourceLoaderDispositionV1::Unknown,
+                    parser_provenance("fbx:textures/0/filename"),
+                ));
+                builder.mark_complete(SourceFactDomainV1::Resources);
+            },
+            |counts| counts.user_defined_property_count = 1,
+        );
         let facts = rest_bind_capability_facts_for_source(&custom_and_external)
             .expect("custom properties and external images are not scale-bearing");
         assert!(!facts.extras_present);

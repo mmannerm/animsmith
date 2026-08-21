@@ -142,6 +142,21 @@ fn unmodeled_pose_fbx() -> String {
     )
 }
 
+fn external_normal_texture_with_unmodeled_pose_fbx() -> String {
+    external_normal_texture_fbx().replacen(
+        "\tAnimationStack: 3001",
+        concat!(
+            "\tPose: 6001, \"Pose::unsupported\", \"BindPose\" {\n",
+            "\t\tType: \"BindPose\"\n",
+            "\t\tVersion: 100\n",
+            "\t\tNbPoseNodes: 0\n",
+            "\t}\n",
+            "\tAnimationStack: 3001"
+        ),
+        1,
+    )
+}
+
 fn external_normal_texture_fbx() -> String {
     let source = RIGGED_TRIANGLE_FBX.replace("\r\n", "\n");
     let source = source.replacen(
@@ -1655,9 +1670,31 @@ fn v6_and_v7_accept_scale_irrelevant_fbx_custom_properties() {
             String::from_utf8_lossy(&output.stderr)
         );
         let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_schema(
+            &evidence,
+            if label.starts_with("v6") {
+                EVIDENCE_SCHEMA_V6
+            } else {
+                EVIDENCE_SCHEMA_V7
+            },
+        );
         assert_eq!(
             evidence["artifact"]["sha256"], evidence["rest_bind_scale"]["read_back_sha256"],
             "{label}: the exact staged artifact remains the proven result"
+        );
+        let inputs = evidence["rest_bind_scale"]["inputs"]
+            .as_array()
+            .expect("scale evidence inputs");
+        assert_eq!(inputs.len(), 2, "{label}");
+        assert_eq!(
+            inputs[0]["source_projection"]["capability"]["user_defined_property_count"],
+            usize::from(custom_base),
+            "{label}: base projection belongs to the base input"
+        );
+        assert_eq!(
+            inputs[1]["source_projection"]["capability"]["user_defined_property_count"],
+            usize::from(custom_clip),
+            "{label}: clip projection belongs to the clip input"
         );
         assert!(dir.path().join("character.glb").exists(), "{label}");
         assert!(dir.path().join("character.json").exists(), "{label}");
@@ -1667,17 +1704,26 @@ fn v6_and_v7_accept_scale_irrelevant_fbx_custom_properties() {
 #[test]
 fn v7_accepts_external_fbx_texture_references_as_scale_irrelevant() {
     let dir = tempfile::tempdir().expect("temporary directory");
-    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::create_dir_all(dir.path().join("inputs/nested")).unwrap();
     std::fs::write(
-        dir.path().join("inputs/base.fbx"),
+        dir.path().join("inputs/nested/base.fbx"),
         external_normal_texture_fbx(),
     )
     .unwrap();
-    std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
-    std::fs::write(dir.path().join("inputs/normal.png"), TINY_PNG).unwrap();
-    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/nested/walk.fbx"),
+        RIGGED_TRIANGLE_FBX,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("inputs/nested/normal.png"), TINY_PNG).unwrap();
+    std::fs::write(dir.path().join("inputs/normal.png"), b"wrong-root decoy").unwrap();
+    let recipe = fbx_recipe_v7("nested/walk.fbx").replace(
+        "base_input = \"base.fbx\"",
+        "base_input = \"nested/base.fbx\"",
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
 
-    let source = animsmith_fbx::load(&dir.path().join("inputs/base.fbx"))
+    let source = animsmith_fbx::load(&dir.path().join("inputs/nested/base.fbx"))
         .expect("analytic external-texture FBX loads");
     assert_eq!(
         source.assets.materials[0]
@@ -1696,6 +1742,7 @@ fn v7_accepts_external_fbx_texture_references_as_scale_irrelevant() {
         String::from_utf8_lossy(&output.stderr)
     );
     let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
     assert_eq!(
         evidence["artifact"]["sha256"],
         evidence["rest_bind_scale"]["read_back_sha256"]
@@ -1720,6 +1767,33 @@ fn v7_accepts_external_fbx_texture_references_as_scale_irrelevant() {
 }
 
 #[test]
+fn v7_external_texture_does_not_mask_a_real_unmodeled_construct() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/walk.fbx"),
+        external_normal_texture_with_unmodeled_pose_fbx(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("inputs/normal.png"), TINY_PNG).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        refusal_detail(&output),
+        concat!(
+            "rest_bind_scale FBX capability rejected input walk.fbx: ",
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1)"
+        )
+    );
+    assert!(!dir.path().join("character.glb").exists());
+    assert!(!dir.path().join("character.json").exists());
+}
+
+#[test]
 fn v7_fbx_capability_refusal_names_the_exact_unsupported_source_fact() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
@@ -1729,14 +1803,13 @@ fn v7_fbx_capability_refusal_names_the_exact_unsupported_source_fact() {
 
     let output = run(dir.path());
     assert_eq!(output.status.code(), Some(1));
-    let detail = refusal_detail(&output);
-    assert!(
-        detail.contains("FBX capability rejected input walk.fbx"),
-        "{detail}"
-    );
-    assert!(
-        detail.contains("raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1)"),
-        "{detail}"
+    assert_eq!(
+        refusal_detail(&output),
+        concat!(
+            "rest_bind_scale FBX capability rejected input walk.fbx: ",
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1)"
+        )
     );
     assert!(!dir.path().join("character.glb").exists());
     assert!(!dir.path().join("character.json").exists());

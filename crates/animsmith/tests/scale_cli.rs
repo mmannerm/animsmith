@@ -2610,18 +2610,27 @@ fn fbx_rest_bind_reencodes_and_proves_a_complete_inventory() {
 #[test]
 fn fbx_rest_bind_captures_an_admitted_external_texture_before_staging() {
     let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("nested")).expect("creates nested input directory");
     std::fs::write(
-        dir.path().join("rig.fbx"),
+        dir.path().join("nested/rig.fbx"),
         external_normal_texture_fbx_fixture(),
     )
     .expect("writes analytic external-texture FBX");
-    std::fs::write(dir.path().join("normal.png"), TINY_PNG)
+    std::fs::write(dir.path().join("nested/normal.png"), TINY_PNG)
         .expect("writes analytic linked texture");
+    std::fs::write(dir.path().join("normal.png"), b"wrong-root decoy")
+        .expect("writes broader-root decoy");
 
-    let output =
-        fbx_rest_bind_command(dir.path(), "rig.fbx", "out.glb", "out.json", "0.01", "json")
-            .output()
-            .expect("runs FBX rest-bind scale");
+    let output = fbx_rest_bind_command(
+        dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs FBX rest-bind scale");
     assert_eq!(
         output.status.code(),
         Some(0),

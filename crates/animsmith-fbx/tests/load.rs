@@ -499,18 +499,109 @@ fn narrow_rest_bind_gate_consumes_every_inventory_refusal_signal() {
 
     let cases: &[(&str, &str, InventoryMutation)] = &[
         (
+            "rest-hierarchy-domain",
+            "domain.rest_hierarchy=unsupported",
+            |inventory| inventory.domains.rest_hierarchy = FbxScaleDomainStatus::Unsupported,
+        ),
+        (
+            "translation-animation-domain",
+            "domain.translation_animation=unsupported",
+            |inventory| inventory.domains.translation_animation = FbxScaleDomainStatus::Unsupported,
+        ),
+        (
+            "rotation-scale-animation-domain",
+            "domain.rotation_and_scale_animation=unsupported",
+            |inventory| {
+                inventory.domains.rotation_and_scale_animation = FbxScaleDomainStatus::Unsupported
+            },
+        ),
+        (
+            "root-motion-domain",
+            "domain.root_motion_and_velocity=unsupported",
+            |inventory| {
+                inventory.domains.root_motion_and_velocity = FbxScaleDomainStatus::Unsupported
+            },
+        ),
+        (
+            "base-mesh-domain",
+            "domain.base_mesh_geometry=unsupported",
+            |inventory| inventory.domains.base_mesh_geometry = FbxScaleDomainStatus::Unsupported,
+        ),
+        ("morph-domain", "domain.morphs=unsupported", |inventory| {
+            inventory.domains.morphs = FbxScaleDomainStatus::Unsupported
+        }),
+        (
+            "skin-bind-domain",
+            "domain.skin_binds=unsupported",
+            |inventory| inventory.domains.skin_binds = FbxScaleDomainStatus::Unsupported,
+        ),
+        (
+            "camera-light-domain",
+            "domain.cameras_and_lights=unsupported",
+            |inventory| inventory.domains.cameras_and_lights = FbxScaleDomainStatus::Unsupported,
+        ),
+        (
+            "other-source-domain",
+            "domain.other_vertex_and_source_data=unsupported",
+            |inventory| {
+                inventory.domains.other_vertex_and_source_data = FbxScaleDomainStatus::Unsupported
+            },
+        ),
+        (
+            "out-of-contract-transform-domain",
+            "domain.out_of_contract_node_transforms=unsupported",
+            |inventory| {
+                inventory.domains.out_of_contract_node_transforms =
+                    FbxScaleDomainStatus::Unsupported
+            },
+        ),
+        (
+            "matrix-target-domain",
+            "domain.animation_targeting_matrix_nodes=unsupported",
+            |inventory| {
+                inventory.domains.animation_targeting_matrix_nodes =
+                    FbxScaleDomainStatus::Unsupported
+            },
+        ),
+        (
+            "shared-raw-span",
+            "domain.shared_raw_accessor_payloads=absent (expected unverifiable)",
+            |inventory| {
+                inventory.domains.shared_raw_accessor_payloads = FbxScaleDomainStatus::Absent
+            },
+        ),
+        (
+            "unreferenced-raw-span",
+            "domain.unreferenced_accessor_payloads=absent (expected unverifiable)",
+            |inventory| {
+                inventory.domains.unreferenced_accessor_payloads = FbxScaleDomainStatus::Absent
+            },
+        ),
+        (
+            "image-alias-raw-span",
+            "domain.image_payload_aliases=absent (expected unverifiable)",
+            |inventory| inventory.domains.image_payload_aliases = FbxScaleDomainStatus::Absent,
+        ),
+        (
+            "custom-domain-mismatch",
+            "domain.collision_and_custom_data=unsupported (expected absent)",
+            |inventory| {
+                inventory.domains.collision_and_custom_data = FbxScaleDomainStatus::Unsupported
+            },
+        ),
+        (
             "target-not-y-up",
-            "target_right_handed_y_up=false",
+            "coordinate_normalization.target_right_handed_y_up=false",
             |inventory| inventory.coordinate_normalization.target_right_handed_y_up = false,
         ),
         (
             "target-not-meters",
-            "target_unit_meters=0.01",
+            "coordinate_normalization.target_unit_meters=0.01",
             |inventory| inventory.coordinate_normalization.target_unit_meters = 0.01,
         ),
         (
             "unadjusted-transforms",
-            "adjust_transforms=false",
+            "coordinate_normalization.adjust_transforms=false",
             |inventory| inventory.coordinate_normalization.adjust_transforms = false,
         ),
         (
@@ -590,7 +681,10 @@ fn narrow_rest_bind_gate_consumes_every_inventory_refusal_signal() {
         ),
         (
             "unknown-source-element",
-            "unsupported_source_element_count=1",
+            concat!(
+                "domain.collision_and_custom_data=absent (expected unsupported); ",
+                "unsupported_source_element_count=1"
+            ),
             |inventory| inventory.unsupported_source_element_count = 1,
         ),
         (
@@ -619,6 +713,11 @@ fn narrow_rest_bind_gate_consumes_every_inventory_refusal_signal() {
             |inventory| inventory.missing_skin_influence_corner_count = 1,
         ),
         (
+            "non-triangle-face",
+            "non_triangle_face_count=1",
+            |inventory| inventory.non_triangle_face_count = 1,
+        ),
+        (
             "incomplete-bind",
             "incomplete_bind_cluster_count=1",
             |inventory| inventory.incomplete_bind_cluster_count = 1,
@@ -631,9 +730,6 @@ fn narrow_rest_bind_gate_consumes_every_inventory_refusal_signal() {
             "uninstanced_mesh_definition_count=1",
             |inventory| inventory.uninstanced_mesh_definition_count = 1,
         ),
-        ("weld-mismatch", "weld_vertex_count=", |inventory| {
-            inventory.post_weld_vertex_count = inventory.pre_weld_vertex_count + 1
-        }),
         ("camera", "camera_count=1", |inventory| {
             inventory.camera_count = 1
         }),
@@ -645,27 +741,44 @@ fn narrow_rest_bind_gate_consumes_every_inventory_refusal_signal() {
             "external_resource_count=1",
             |inventory| inventory.external_resource_count = 1,
         ),
-        (
-            "unsupported-domain",
-            "domain.morphs=unsupported",
-            |inventory| inventory.domains.morphs = FbxScaleDomainStatus::Unsupported,
-        ),
-        (
-            "verifiable-raw-span",
-            "domain.image_payload_aliases=absent",
-            |inventory| inventory.domains.image_payload_aliases = FbxScaleDomainStatus::Absent,
-        ),
     ];
     for (label, expected, mutate) in cases {
         let mut inventory = baseline.clone();
         mutate(&mut inventory);
         let error = animsmith_fbx::rest_bind_capability_facts(&inventory)
             .expect_err("mutated inventory must refuse the narrow rest/bind bridge");
-        assert!(
-            error.contains(expected),
-            "{label} must name {expected:?}, found {error:?}"
+        assert_eq!(
+            error,
+            format!("FBX rest/bind capability inventory rejected: {expected}"),
+            "{label} must retain the exact one-violation diagnostic"
         );
     }
+
+    let mut weld_mismatch = baseline.clone();
+    weld_mismatch.post_weld_vertex_count = weld_mismatch.pre_weld_vertex_count + 1;
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts(&weld_mismatch).unwrap_err(),
+        format!(
+            "FBX rest/bind capability inventory rejected: weld_vertex_count={}!=post:{}",
+            weld_mismatch.pre_weld_vertex_count, weld_mismatch.post_weld_vertex_count
+        )
+    );
+
+    let mut ordered = baseline.clone();
+    ordered.domains.rest_hierarchy = FbxScaleDomainStatus::Unsupported;
+    ordered.coordinate_normalization.target_right_handed_y_up = false;
+    ordered.blend_deformer_count = 1;
+    ordered.camera_count = 1;
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts(&ordered).unwrap_err(),
+        concat!(
+            "FBX rest/bind capability inventory rejected: ",
+            "domain.rest_hierarchy=unsupported; ",
+            "coordinate_normalization.target_right_handed_y_up=false; ",
+            "blend_deformer_count=1; camera_count=1"
+        ),
+        "multi-violation diagnostics retain authority order"
+    );
 
     let mut custom_property = baseline.clone();
     custom_property.user_defined_property_count = 1;
@@ -2588,6 +2701,14 @@ fn resource_projection_n_plus_one_is_partial_without_breaking_legacy_load() {
         // One take row, one authored property row, N retained resources, and
         // the terminal resource inspection that establishes partial coverage.
         RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES + 3
+    );
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(
+            &animsmith_fbx::load_scale_source_bytes(&path, bytes)
+                .expect("scale source retains the bounded partial projection")
+        )
+        .unwrap_err(),
+        "FBX rest/bind raw-source facts rejected: raw_source.resources.coverage=partial"
     );
     let closure = loaded.dependency_closure();
     assert_eq!(

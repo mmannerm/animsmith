@@ -1213,11 +1213,7 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
         output: request.output.display().to_string(),
         evidence: request.evidence.display().to_string(),
     };
-    let resource_root = request
-        .input
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+    let resource_root = parent_or_current(&request.input);
     let source = match load_scale_source_bytes_with_resource_root(
         &request.input,
         &input_bytes,
