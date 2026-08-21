@@ -9,7 +9,7 @@ use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
 use crate::finding::{Finding, MemberMeasurement, Severity};
-use crate::metrics::{MIN_STRIDE_STEP_M, foot_cycle_metrics};
+use crate::metrics::{GaitPhaseOutcome, MIN_STRIDE_STEP_M, foot_cycle_metrics};
 use std::collections::BTreeSet;
 
 /// Compare phase similarity for pairs declared in same-time sync groups.
@@ -81,6 +81,39 @@ impl Check for TimeComplement {
                     );
                     continue;
                 };
+                let phase = match metrics.gait_phase_outcome(ctx.roles) {
+                    GaitPhaseOutcome::MissingBilateralFootRoles => {
+                        gaps.push(
+                            CoverageGap::new(
+                                CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                                "gait phase has no bilateral foot-role subject for time-complement comparison",
+                            )
+                            .scope(measurement_scope),
+                        );
+                        continue;
+                    }
+                    GaitPhaseOutcome::NoFootHeightSwing => {
+                        gaps.push(
+                            CoverageGap::new(
+                                CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                                "gait phase has no left/right foot-height swing for time-complement comparison",
+                            )
+                            .scope(measurement_scope),
+                        );
+                        continue;
+                    }
+                    GaitPhaseOutcome::Measured(phase) => phase,
+                    GaitPhaseOutcome::Unavailable => {
+                        gaps.push(
+                            CoverageGap::new(
+                                CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                                "gait phase could not be fitted for time-complement comparison",
+                            )
+                            .scope(measurement_scope),
+                        );
+                        continue;
+                    }
+                };
                 if metrics.lr_amplitude_m < settings.min_lr_amplitude_m {
                     gaps.push(
                         CoverageGap::new(
@@ -94,16 +127,6 @@ impl Check for TimeComplement {
                     );
                     continue;
                 }
-                let Some(phase) = metrics.gait_phase else {
-                    gaps.push(
-                        CoverageGap::new(
-                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                            "gait phase could not be fitted for time-complement comparison",
-                        )
-                        .scope(measurement_scope),
-                    );
-                    continue;
-                };
                 measured.push(MemberPhase {
                     name: member,
                     phase,

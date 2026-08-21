@@ -507,7 +507,7 @@ golden-test against.
 
 | id | what it checks | prior art |
 |---|---|---|
-| `gait-phase` / `gait-group` | stride-phase anchor from the fundamental-harmonic trough of the left-minus-right foot-height signal; circular phase spread across a declared clip ring (directional-blend coherence), with an `lr_amplitude` confidence floor | reference metrics module + gait-group contract — port verbatim |
+| `gait-phase` / `gait-group` | stride-phase anchor from the fundamental-harmonic trough of the left-minus-right foot-height signal; an exactly zero-amplitude signal has no phase subject, while positive signals are governed by the configured inclusive `lr_amplitude` confidence floor; circular phase spread across a declared clip ring (directional-blend coherence) | reference metrics module + gait-group contract — port verbatim |
 | `in-place` | classify in-place vs root-motion (net + per-frame root displacement) and compare against the clip's declared expectation | new; trivial on the grid |
 | `foot-slide` | detect stance (foot height + near-zero vertical velocity), measure horizontal foot velocity during stance in the travel-cancelled frame | new; hardest check — ships opt-in until corpus-tuned |
 | `bind-pose` | rest pose vs first frame delta (clip authored against wrong bind); T-pose/A-pose classification; node-TRS rest disagreeing with IBM-derived rest (the disagreement is itself a finding) | reference sidecar already derives rest from IBMs |

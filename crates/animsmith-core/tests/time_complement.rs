@@ -2,8 +2,8 @@ use animsmith_core::fixtures::{self, WALK_STRIDE, WalkBones};
 use animsmith_core::model::{Document, TrackValues};
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{
-    CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigValidationError, EvaluationState,
-    MetricGrids, Value, all_checks, evaluate_checks,
+    CheckCtx, CheckEvaluation, CheckSelection, Config, ConfigValidationError, EvaluationScopeCode,
+    EvaluationState, MetricGrids, Value, all_checks, evaluate_checks,
 };
 
 const BONES: WalkBones = WalkBones {
@@ -570,6 +570,40 @@ fn amplitude_floor_is_inclusive() {
     }));
 }
 
+/// Zero L-R amplitude is not a weak phase at an inclusive zero evidence
+/// floor: it has no phase subject and must not self-compare as an arbitrary
+/// fitted phase.
+#[test]
+fn zero_amplitude_pair_has_no_phase_subject_at_a_zero_evidence_floor() {
+    let mut doc = fixtures::walk_doc(&BONES, "a", 0.0, WALK_STRIDE, f64::sin);
+    let mut second = doc.clips[0].clone();
+    second.name = "b".into();
+    doc.clips.push(second);
+    let roles = roles(&doc);
+    let record = record(&doc, &roles, &config(serde_json::json!(["a", "b"]), 0.0));
+
+    assert_eq!(record.evaluation(), EvaluationState::Partial, "{record:#?}");
+    assert!(record.findings().is_empty(), "{record:#?}");
+    assert!(
+        record
+            .evaluated_scopes()
+            .iter()
+            .all(|scope| scope.code != EvaluationScopeCode::PHASE_COHERENCE),
+        "zero-swing members must not be consumed as a completed pair comparison: {record:#?}"
+    );
+    let subjects: Vec<_> = record
+        .gaps()
+        .iter()
+        .filter(|gap| {
+            gap.code.as_str() == "measurement_unavailable"
+                && gap.message
+                    == "gait phase has no left/right foot-height swing for time-complement comparison"
+        })
+        .map(|gap| gap.scope.as_ref().unwrap().subject.as_deref().unwrap())
+        .collect();
+    assert_eq!(subjects, ["a", "b"]);
+}
+
 #[test]
 fn low_amplitude_pair_is_coverage_not_a_flaky_finding() {
     let mut doc = paired_document(true);
@@ -624,7 +658,7 @@ fn unavailable_phase_measurement_is_a_typed_gap() {
 }
 
 #[test]
-fn unfitted_phase_is_a_typed_gap() {
+fn one_sided_phase_is_a_typed_gap() {
     let doc = paired_document(true);
     let one_sided_roles = ResolvedRoles::from_names(
         &doc.skeleton,
@@ -648,7 +682,7 @@ fn unfitted_phase_is_a_typed_gap() {
             .filter(|gap| {
                 gap.code.as_str() == "measurement_unavailable"
                     && gap.message
-                        == "gait phase could not be fitted for time-complement comparison"
+                        == "gait phase has no bilateral foot-role subject for time-complement comparison"
             })
             .count(),
         2

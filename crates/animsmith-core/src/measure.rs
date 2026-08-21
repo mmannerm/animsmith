@@ -7,7 +7,7 @@ use crate::checks::fps::GRID_TOLERANCE_FRAMES;
 use crate::checks::loop_closure::effective_caps;
 use crate::config::Config;
 use crate::metrics::{
-    MetricGrids, RootYawHeadingAxis, foot_cycle_metrics, loop_continuity_metrics,
+    GaitPhaseOutcome, MetricGrids, RootYawHeadingAxis, foot_cycle_metrics, loop_continuity_metrics,
     root_motion_speed_mps, root_trajectory_metrics, rotation_range_deg,
 };
 use crate::model::{
@@ -1718,7 +1718,10 @@ pub enum MeasurementAvailability {
 pub struct GaitMeasurement {
     /// Stride-anchor phase in `[0,1)`; see
     /// [`crate::metrics::FootCycleMetrics::gait_phase`]. Not applicable when
-    /// only one side (left or right) resolved a foot role.
+    /// only one side (left or right) resolved a foot role or when the sampled
+    /// L−R foot-height signal has exact zero peak-to-peak swing. Positive
+    /// low-amplitude evidence remains measured; consumer-specific confidence
+    /// floors decide whether it is usable for a check.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<f64>,
     /// Availability of [`Self::phase`].
@@ -2034,13 +2037,6 @@ pub fn measure_document(
                 ]
                 .iter()
                 .any(|&role| roles.get(role).is_some());
-            let has_left_foot_role = [Role::LeftFoot, Role::LeftToe]
-                .iter()
-                .any(|&role| roles.get(role).is_some());
-            let has_right_foot_role = [Role::RightFoot, Role::RightToe]
-                .iter()
-                .any(|&role| roles.get(role).is_some());
-
             let (loop_continuity, loop_continuity_availability) = if doc.skeleton.bones.is_empty() {
                 (None, MeasurementAvailability::NotApplicable)
             } else {
@@ -2110,12 +2106,17 @@ pub fn measure_document(
             };
             let (gait, gait_availability) = match &cycle {
                 Some(metrics) => {
-                    let (phase, phase_availability) = match metrics.gait_phase {
-                        Some(phase) => (Some(phase), MeasurementAvailability::Measured),
-                        None if !(has_left_foot_role && has_right_foot_role) => {
+                    let (phase, phase_availability) = match metrics.gait_phase_outcome(roles) {
+                        GaitPhaseOutcome::MissingBilateralFootRoles
+                        | GaitPhaseOutcome::NoFootHeightSwing => {
                             (None, MeasurementAvailability::NotApplicable)
                         }
-                        None => (None, MeasurementAvailability::Unavailable),
+                        GaitPhaseOutcome::Measured(phase) => {
+                            (Some(phase), MeasurementAvailability::Measured)
+                        }
+                        GaitPhaseOutcome::Unavailable => {
+                            (None, MeasurementAvailability::Unavailable)
+                        }
                     };
                     (
                         Some(GaitMeasurement {

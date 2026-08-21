@@ -319,10 +319,12 @@ The optional nested `time_complement` policy activates the separate
 warning-level `time-complement` check for every unordered pair in that sync
 group. It uses the already measured left-minus-right foot-height gait phase,
 so it needs resolvable hips plus left and right foot/toe roles. The
-`min_lr_amplitude_m` floor rejects near-idle or noisy phase evidence; among the
-remaining pairs, a warning appears only when reflected-time similarity beats
-same-time similarity by more than `min_reflected_time_advantage`. The finding's
-member rows retain both scores, their advantage, each phase, and each amplitude.
+exact-zero signal has no phase subject even when `min_lr_amplitude_m = 0`;
+positive near-idle or noisy phase evidence below that floor is also excluded.
+Among the remaining pairs, a warning appears only when reflected-time
+similarity beats same-time similarity by more than
+`min_reflected_time_advantage`. The finding's member rows retain both scores,
+their advantage, each phase, and each amplitude.
 
 `examples/assets/walk.glb` is a committed rig for this: a hips + two-foot
 skeleton with a one-second walk cycle. Its bone names resolve a built-in

@@ -469,9 +469,11 @@ min_lr_amplitude_m = 0.03
 `time-complement` compares every unordered pair using the existing
 left-minus-right foot-height fundamental. It reports same-time and
 reflected-time similarity on `[0, 1]` (higher is closer) and warns only when
-the reflected score wins by more than the configured advantage. Signals below
-the amplitude floor are coverage gaps, not findings: a stationary or noisy
-clip does not carry enough phase evidence to classify.
+the reflected score wins by more than the configured advantage. An exact-zero
+left-minus-right swing has no phase subject even when the configured floor is
+zero. Positive signals below the amplitude floor are coverage gaps, not
+findings: near-idle or noisy motion does not carry enough phase evidence to
+classify.
 
 This warning belongs to the declared same-time/absolute-sync contract, not to
 either animation in isolation. Typical resolutions are to re-author or
