@@ -1,12 +1,14 @@
 //! Engine-owned checks derived from immutable profile and same-load source evidence.
 
+use crate::error::PredictionRuleError;
+use crate::registry::profiles_v1;
 use animsmith_core::{
     Applicability, Check, CheckCtx, CheckOutput, EngineAnimationAddressabilityV1, EngineFactIdV1,
     EngineFactStateV1, EngineFactValueV1, EnginePredictionBasisV1, EnginePredictionFacetV1,
     EnginePredictionV1, EvaluationScope, EvaluationScopeCode, LoadedSource,
     PredictionBasisReferenceV1, PredictionProvenanceV1, PredictionUnavailableReasonV1,
-    RawSourceBasisReferenceV1, RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1,
-    SourceFormatV1, SourceSetCoverageStateV1,
+    RawSourceBasisReferenceV1, RawSourceBindingV1, RawSourceDomainV1, RawSourceFieldIdV1,
+    RawSourceKeyV1, SourceFormatV1, SourceSetCoverageStateV1,
 };
 
 /// Stable check id for engine scene, animation, target, and runtime-label addressability.
@@ -21,27 +23,54 @@ const BEVY_ENGINE_VERSION: &str = "0.19.0";
 const BEVY_IMPORTER: &str = "gltf-asset-loader";
 const BEVY_ANIMATION_LABEL_SOURCE: &str = "bevy-gltf-asset-label-0.19.0";
 
-/// A borrowed source-animation label check with optional resolved engine provenance.
+/// The engine addressability check over borrowed same-load source evidence.
 ///
 /// When provenance is absent or is not exactly the frozen Bevy 0.19.0 glTF profile, the check
-/// records a stable not-applicable evaluation. The check records no loader traversal at
-/// construction; source rows are traversed only from [`Check::evaluate`].
-pub struct AnimationAssetLabelCheck<'a> {
+/// records a stable not-applicable evaluation. Construction performs bounded in-memory
+/// validation against the immutable source sidecars but no filesystem or parser work.
+pub struct EngineAddressabilityCheck<'a> {
     source: &'a LoadedSource,
     provenance: Option<&'a PredictionProvenanceV1>,
 }
 
-impl<'a> AnimationAssetLabelCheck<'a> {
-    /// Borrow one same-load source and optional immutable prediction provenance.
-    pub const fn new(
+impl<'a> EngineAddressabilityCheck<'a> {
+    /// Bind one source and optional immutable prediction provenance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PredictionRuleError::SourceProvenanceMismatch`] when the
+    /// provenance was not projected from the supplied same-load source facts
+    /// and dependency closure, or [`PredictionRuleError::FrozenProfileMismatch`]
+    /// when an exact Bevy tuple does not carry the frozen registry facts.
+    pub fn new(
         source: &'a LoadedSource,
         provenance: Option<&'a PredictionProvenanceV1>,
-    ) -> Self {
-        Self { source, provenance }
+    ) -> Result<Self, PredictionRuleError> {
+        if let Some(provenance) = provenance {
+            let raw_source = RawSourceBindingV1::from_source(source.source_facts());
+            if &raw_source != provenance.raw_source()
+                || source.dependency_closure() != provenance.dependency_closure()
+            {
+                return Err(PredictionRuleError::SourceProvenanceMismatch);
+            }
+            if is_bevy_tuple(provenance)
+                && !profiles_v1().iter().any(|profile| {
+                    let selection = profile.selection();
+                    selection.family() == BEVY_FAMILY
+                        && selection.profile_revision() == BEVY_PROFILE_REVISION
+                        && selection.engine_version() == BEVY_ENGINE_VERSION
+                        && selection.importer() == BEVY_IMPORTER
+                        && profile.facts_identity() == provenance.profile().facts_identity()
+                })
+            {
+                return Err(PredictionRuleError::FrozenProfileMismatch);
+            }
+        }
+        Ok(Self { source, provenance })
     }
 }
 
-impl Check for AnimationAssetLabelCheck<'_> {
+impl Check for EngineAddressabilityCheck<'_> {
     fn id(&self) -> &'static str {
         ENGINE_ADDRESSABILITY_CHECK_ID
     }
@@ -85,13 +114,8 @@ fn facts_are_complete_and_empty(source: &LoadedSource) -> bool {
 
 fn is_bevy_gltf(source: &LoadedSource, provenance: &PredictionProvenanceV1) -> bool {
     let facts = source.source_facts();
-    let selection = provenance.profile().selection();
-    facts.primary_identity() == provenance.raw_source().primary_input()
-        && facts.format() == provenance.source_format()
-        && selection.family() == BEVY_FAMILY
-        && selection.profile_revision() == BEVY_PROFILE_REVISION
-        && selection.engine_version() == BEVY_ENGINE_VERSION
-        && selection.importer() == BEVY_IMPORTER
+    facts.format() == provenance.source_format()
+        && is_bevy_tuple(provenance)
         && matches!(
             provenance.source_format(),
             SourceFormatV1::GltfJson | SourceFormatV1::Glb
@@ -111,6 +135,14 @@ fn is_bevy_gltf(source: &LoadedSource, provenance: &PredictionProvenanceV1) -> b
             .profile()
             .source(BEVY_ANIMATION_LABEL_SOURCE)
             .is_some()
+}
+
+fn is_bevy_tuple(provenance: &PredictionProvenanceV1) -> bool {
+    let selection = provenance.profile().selection();
+    selection.family() == BEVY_FAMILY
+        && selection.profile_revision() == BEVY_PROFILE_REVISION
+        && selection.engine_version() == BEVY_ENGINE_VERSION
+        && selection.importer() == BEVY_IMPORTER
 }
 
 fn evaluate_animation_asset_labels(
@@ -139,25 +171,18 @@ fn evaluate_animation_asset_labels(
             },
             RawSourceFieldIdV1::new("source_name.state").expect("static field is valid"),
             facts,
-        );
-        let facet = match source_name {
-            Ok(source_name) => {
-                let basis = EnginePredictionBasisV1::new(vec![
-                    PredictionBasisReferenceV1::profile_fact("animation_addressability")
-                        .expect("static fact id is valid"),
-                    PredictionBasisReferenceV1::primary_source(BEVY_ANIMATION_LABEL_SOURCE)
-                        .expect("static primary-source id is valid"),
-                    PredictionBasisReferenceV1::raw_source(source_name),
-                ]);
-                match basis
-                    .and_then(|basis| EnginePredictionFacetV1::available(scope.clone(), basis))
-                {
-                    Ok(facet) => facet,
-                    Err(_) => return unavailable_inventory(provenance, inventory_scope),
-                }
-            }
-            _ => return unavailable_inventory(provenance, inventory_scope),
-        };
+        )
+        .expect("loader-valid retained clip rows must resolve their own raw-source witness");
+        let basis = EnginePredictionBasisV1::new(vec![
+            PredictionBasisReferenceV1::profile_fact("animation_addressability")
+                .expect("static fact id is valid"),
+            PredictionBasisReferenceV1::primary_source(BEVY_ANIMATION_LABEL_SOURCE)
+                .expect("static primary-source id is valid"),
+            PredictionBasisReferenceV1::raw_source(source_name),
+        ])
+        .expect("three distinct static basis references are valid");
+        let facet = EnginePredictionFacetV1::available(scope.clone(), basis)
+            .expect("complete source rows have unique bounded scopes");
         scopes.push(scope);
         facets.push(facet);
     }
@@ -165,10 +190,8 @@ fn evaluate_animation_asset_labels(
     if facets.is_empty() {
         return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
     }
-    let prediction = match EnginePredictionV1::new(provenance.identity().clone(), facets) {
-        Ok(prediction) => prediction,
-        Err(_) => return unavailable_inventory(provenance, inventory_scope),
-    };
+    let prediction = EnginePredictionV1::new(provenance.identity().clone(), facets)
+        .expect("complete bounded source rows form one valid canonical prediction");
     CheckOutput::from_coverage(Vec::new(), scopes, Vec::new()).with_engine_prediction(prediction)
 }
 

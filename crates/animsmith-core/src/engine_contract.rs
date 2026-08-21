@@ -417,7 +417,8 @@ pub enum EngineTargetAddressabilityV1 {
 #[serde(rename_all = "snake_case")]
 pub enum EngineAnimationAddressabilityV1 {
     /// Bevy addresses each glTF animation by its source-array index through
-    /// `GltfAssetLabel::Animation(index)`.
+    /// `GltfAssetLabel::Animation(index)`; animation names populate Bevy's
+    /// separate named-animation map rather than this typed label.
     GltfAssetLabel,
 }
 

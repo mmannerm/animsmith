@@ -128,8 +128,8 @@ cargo run -p animsmith --example embed
    and checks remain engine-neutral.
 3. **Compose one check catalog.** Start with `animsmith_core::all_checks()` and
    append one borrowed
-   `animsmith_engine::AnimationAssetLabelCheck::new(&source,
-   provenance.as_ref())`. Pass `None` when no profile was resolved so the
+   `animsmith_engine::EngineAddressabilityCheck::new(&source,
+   provenance.as_ref())?`. Pass `None` when no profile was resolved so the
    stable engine-owned record remains not applicable. Validate selection
    against the core ids plus `animsmith_engine::ENGINE_CHECK_IDS_V1` before
    asset I/O, then call `evaluate_checks` exactly once for the combined
@@ -232,14 +232,20 @@ is not needed.
 
 The CLI convention is a useful default for an embedded gate:
 
-- no error findings: success (warnings may remain visible);
+- no error findings and no required-unavailable prediction facets: success
+  (warnings and ordinary coverage gaps may remain visible);
 - any `Severity::Error`: content rejection;
+- any `required_prediction_unavailable` facet: prediction-evidence rejection,
+  regardless of severity or allow-list policy;
 - loader/config/I/O error: operator failure, kept separate from findings.
 
 Missing prerequisites are typed coverage gaps, and disabled/unselected checks
 remain visible without executing. Severity overrides apply only to content
-findings. Coverage is nonblocking by default; the embedding host owns any
-required-check or release-lane policy.
+findings. Ordinary coverage gaps are nonblocking by default; the embedding host
+owns any stricter required-check or release-lane policy. To match the CLI's
+finding threshold, allow-list, and unsuppressible prediction policy, call
+`animsmith_core::lint_requires_failure` on the completed evaluations rather
+than deciding from findings alone.
 
 Built-in scope and gap codes may be emitted only by the checks declared in the
 core evidence-code authority; `CheckEvaluation::evaluated` returns a typed

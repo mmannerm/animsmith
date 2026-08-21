@@ -4,7 +4,9 @@ use crate::{
     ResolutionError, SettingApplicability, SettingDomain, SettingId, SettingLocation, SettingMap,
     SettingScope, SettingValue, profiles_v1,
 };
-use animsmith_core::{InputIdentity, SourceFormatV1};
+use animsmith_core::{
+    ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS, EngineContractError, InputIdentity, SourceFormatV1,
+};
 use std::collections::BTreeMap;
 
 /// Maximum UTF-8 byte count of a V1 source-transform path.
@@ -125,6 +127,24 @@ impl StaticResolution {
         source_format: SourceFormatV1,
         clip_names: &[String],
     ) -> Result<ResolvedProfile, ResolutionError> {
+        self.resolve_input_iter(source_format, clip_names.iter().map(String::as_str))
+    }
+
+    /// Resolve input from a borrowed, exactly sized clip-name iterator.
+    ///
+    /// This entry point lets loaders reject an oversized actual-clip inventory
+    /// before cloning or traversing any names.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same typed errors as [`Self::resolve_input`]. An iterator
+    /// longer than the V1 collection bound is rejected before its first item is
+    /// consumed.
+    pub fn resolve_input_iter<'a>(
+        &self,
+        source_format: SourceFormatV1,
+        clip_names: impl ExactSizeIterator<Item = &'a str>,
+    ) -> Result<ResolvedProfile, ResolutionError> {
         if !self.profile.accepted_inputs().contains(&source_format) {
             return Err(ResolutionError::UnacceptedInputFormat {
                 selection: self.profile.selection().clone(),
@@ -132,7 +152,18 @@ impl StaticResolution {
             });
         }
 
-        let mut clips = Vec::with_capacity(clip_names.len());
+        let clip_count = clip_names.len();
+        if clip_count > ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS {
+            return Err(ResolutionError::ResolvedSettingsContract(
+                EngineContractError::TooManyRows {
+                    field: "settings.clips",
+                    found: clip_count,
+                    max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                },
+            ));
+        }
+
+        let mut clips = Vec::with_capacity(clip_count);
         for clip_name in clip_names {
             let mut materialized = BTreeMap::new();
             for (selector, settings) in &self.clip_overlays {
@@ -152,12 +183,12 @@ impl StaticResolution {
                 {
                     return Err(ResolutionError::MissingRequiredSetting {
                         setting: descriptor.id(),
-                        location: SettingLocation::ClipSelector(clip_name.clone()),
+                        location: SettingLocation::ClipSelector(clip_name.to_owned()),
                     });
                 }
             }
             clips.push(ResolvedClipSettings {
-                clip_name: clip_name.clone(),
+                clip_name: clip_name.to_owned(),
                 settings: materialized,
             });
         }

@@ -29,7 +29,7 @@ use animsmith_core::{
 };
 use animsmith_core::{Document, InputIdentity};
 use animsmith_engine::{
-    AnimationAssetLabelCheck, BakeOrExtract, ENGINE_CHECK_IDS_V1, EngineDeclaration,
+    BakeOrExtract, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineDeclaration,
     ProfileSelection, ResolvedProfile, SettingMap, SettingValue, StaticResolution,
 };
 use animsmith_gltf::fix::Repair;
@@ -806,13 +806,11 @@ impl LoadedConfig {
         let Some(engine) = &self.engine else {
             return Ok(None);
         };
-        let clip_names = document
-            .clips
-            .iter()
-            .map(|clip| clip.name.clone())
-            .collect::<Vec<_>>();
         engine
-            .resolve_input(source_format, &clip_names)
+            .resolve_input_iter(
+                source_format,
+                document.clips.iter().map(|clip| clip.name.as_str()),
+            )
             .map(Some)
             .map_err(|error| match &self.path {
                 Some(path) => format!("bad config {}: {error}", path.display()),
@@ -950,10 +948,13 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let ctx = CheckCtx::new(&grids, &roles, config);
                 let evaluations = {
                     let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
-                    checks.push(Box::new(AnimationAssetLabelCheck::new(
-                        &loaded.source,
-                        prediction_provenance.as_ref(),
-                    )));
+                    checks.push(Box::new(
+                        EngineAddressabilityCheck::new(
+                            &loaded.source,
+                            prediction_provenance.as_ref(),
+                        )
+                        .map_err(|error| error.to_string())?,
+                    ));
                     evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?
                 };
                 requires_failure |= animsmith_core::evaluation::lint_requires_failure(
@@ -1014,10 +1015,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let ctx = CheckCtx::new(&grids, &roles, config);
             let evaluations = {
                 let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
-                checks.push(Box::new(AnimationAssetLabelCheck::new(
-                    &loaded.source,
-                    prediction_provenance.as_ref(),
-                )));
+                checks.push(Box::new(
+                    EngineAddressabilityCheck::new(&loaded.source, prediction_provenance.as_ref())
+                        .map_err(|error| error.to_string())?,
+                ));
                 evaluate_checks(&ctx, &checks, CheckSelection::All)
                     .map_err(|error| error.to_string())?
             };

@@ -112,9 +112,12 @@ $ animsmith fix clip.glb --dry-run
 $ animsmith transform clip.glb -o compact.glb --prune-constant-tracks
 ```
 
-Exit codes are `0` for runs with no failing findings (warnings, notes, and
-coverage gaps may remain), `1` for error findings, and `2` for operator
-errors. `--deny-warnings` promotes warnings to a failing run.
+Exit codes are `0` for runs with no failing findings and no
+`required_prediction_unavailable` engine facets (warnings, notes, and ordinary
+coverage gaps may remain), `1` for failing findings or required-unavailable
+prediction work, and `2` for operator errors. `--deny-warnings` promotes
+warnings to a failing run; severity and `--allow` never suppress an emitted
+required-unavailable facet.
 
 The HTML report is a single self-contained file with no CDN dependency.
 It plays back the exact pose-grid frames judged by the checks, with

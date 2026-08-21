@@ -1,13 +1,15 @@
 use animsmith_core::{
     Check, CheckCtx, CheckSelection, Document, EnginePredictionBasisV1,
     EnginePredictionFacetStateV1, MetricGrids, PredictionBasisReferenceV1,
-    PredictionUnavailableReasonV1, RawSourceFactsBuilderV1, ResolvedRoles, SourceClipFactV1,
+    PredictionUnavailableReasonV1, RawSourceBasisReferenceV1, RawSourceDomainV1,
+    RawSourceFactsBuilderV1, RawSourceFieldIdV1, RawSourceKeyV1, ResolvedRoles, SourceClipFactV1,
     SourceFactDomainV1, SourceFactSetV1, SourceFormatV1, SourceLoaderDispositionV1,
     SourceObservationV1, SourceProvenanceV1, SourceTextV1, SourceUnavailableReasonV1,
 };
 use animsmith_engine::{
-    AnimationAssetLabelCheck, ENGINE_ADDRESSABILITY_CHECK_ID, ENGINE_CHECK_IDS_V1,
-    EngineDeclaration, ProfileSelection, project_prediction_provenance_v1, resolve_static,
+    ENGINE_ADDRESSABILITY_CHECK_ID, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck,
+    EngineDeclaration, PredictionRuleError, ProfileSelection, project_prediction_provenance_v1,
+    resolve_static,
 };
 use std::collections::BTreeSet;
 
@@ -21,6 +23,14 @@ enum ClipCoverage {
 fn loaded_source(coverage: ClipCoverage, names: &[Option<&str>]) -> animsmith_core::LoadedSource {
     let identity_witness = format!("bevy-addressability:{names:?}");
     let primary = animsmith_core::InputIdentity::from_bytes(identity_witness.as_bytes());
+    loaded_source_with_primary(coverage, names, primary)
+}
+
+fn loaded_source_with_primary(
+    coverage: ClipCoverage,
+    names: &[Option<&str>],
+    primary: animsmith_core::InputIdentity,
+) -> animsmith_core::LoadedSource {
     let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::GltfJson, primary.clone());
     if !matches!(coverage, ClipCoverage::Unavailable) {
         for (index, name) in names.iter().enumerate() {
@@ -116,7 +126,7 @@ fn bevy_animation_index_rule_emits_one_available_facet_per_complete_source_row()
     let source = loaded_source(ClipCoverage::Complete, &[Some("walk")]);
     let profile = bevy_profile(&source);
     let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
-    let check = AnimationAssetLabelCheck::new(&source, Some(&provenance));
+    let check = EngineAddressabilityCheck::new(&source, Some(&provenance)).unwrap();
     let output = evaluate(&check, &source);
 
     assert_eq!(ENGINE_CHECK_IDS_V1, &[ENGINE_ADDRESSABILITY_CHECK_ID]);
@@ -149,7 +159,7 @@ fn incomplete_animation_inventory_emits_one_required_unavailable_inventory_facet
     let source = loaded_source(ClipCoverage::Partial, &[Some("walk")]);
     let profile = bevy_profile(&source);
     let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
-    let check = AnimationAssetLabelCheck::new(&source, Some(&provenance));
+    let check = EngineAddressabilityCheck::new(&source, Some(&provenance)).unwrap();
     let output = evaluate(&check, &source);
 
     assert!(output.findings().is_empty());
@@ -183,7 +193,7 @@ fn incomplete_animation_inventory_emits_one_required_unavailable_inventory_facet
     let config = animsmith_core::Config::default();
     let grids = MetricGrids::new(source.document());
     let check: Box<dyn Check + '_> =
-        Box::new(AnimationAssetLabelCheck::new(&source, Some(&provenance)));
+        Box::new(EngineAddressabilityCheck::new(&source, Some(&provenance)).unwrap());
     let records = animsmith_core::evaluate_checks(
         &CheckCtx::new(&grids, &roles, &config),
         &[check],
@@ -204,7 +214,7 @@ fn incomplete_animation_inventory_emits_one_required_unavailable_inventory_facet
     let unavailable = loaded_source(ClipCoverage::Unavailable, &[Some("walk")]);
     let profile = bevy_profile(&unavailable);
     let provenance = project_prediction_provenance_v1(&profile, &unavailable).unwrap();
-    let check = AnimationAssetLabelCheck::new(&unavailable, Some(&provenance));
+    let check = EngineAddressabilityCheck::new(&unavailable, Some(&provenance)).unwrap();
     let output = evaluate(&check, &unavailable);
     assert_eq!(
         output.engine_prediction().unwrap().facets()[0].state(),
@@ -217,7 +227,7 @@ fn complete_empty_bevy_animation_inventory_is_not_applicable() {
     let source = loaded_source(ClipCoverage::Complete, &[]);
     let profile = bevy_profile(&source);
     let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
-    let check = AnimationAssetLabelCheck::new(&source, Some(&provenance));
+    let check = EngineAddressabilityCheck::new(&source, Some(&provenance)).unwrap();
     let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
@@ -236,7 +246,9 @@ fn absent_or_non_bevy_profile_has_a_stable_not_applicable_record() {
     let config = animsmith_core::Config::default();
     let ctx = CheckCtx::new(&grids, &roles, &config);
     assert_eq!(
-        AnimationAssetLabelCheck::new(&source, None).applicability(&ctx),
+        EngineAddressabilityCheck::new(&source, None)
+            .unwrap()
+            .applicability(&ctx),
         animsmith_core::Applicability::NotApplicable
     );
 
@@ -255,21 +267,96 @@ fn absent_or_non_bevy_profile_has_a_stable_not_applicable_record() {
     .unwrap();
     let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
     assert_eq!(
-        AnimationAssetLabelCheck::new(&source, Some(&provenance)).applicability(&ctx),
+        EngineAddressabilityCheck::new(&source, Some(&provenance))
+            .unwrap()
+            .applicability(&ctx),
         animsmith_core::Applicability::NotApplicable
     );
 
     let other_source = loaded_source(ClipCoverage::Complete, &[Some("other")]);
-    let grids = MetricGrids::new(other_source.document());
-    let other_ctx = CheckCtx::new(&grids, &roles, &config);
     let source_profile = bevy_profile(&source);
     let source_provenance = project_prediction_provenance_v1(&source_profile, &source).unwrap();
-    assert_eq!(
-        AnimationAssetLabelCheck::new(&other_source, Some(&source_provenance))
-            .applicability(&other_ctx),
-        animsmith_core::Applicability::NotApplicable,
-        "a prediction check cannot combine evidence from two primary inputs"
-    );
+    assert!(matches!(
+        EngineAddressabilityCheck::new(&other_source, Some(&source_provenance)),
+        Err(PredictionRuleError::SourceProvenanceMismatch)
+    ));
+}
+
+#[test]
+fn construction_rejects_same_primary_with_different_source_coverage() {
+    let primary = animsmith_core::InputIdentity::from_bytes(b"same-primary");
+    let complete =
+        loaded_source_with_primary(ClipCoverage::Complete, &[Some("walk")], primary.clone());
+    let partial =
+        loaded_source_with_primary(ClipCoverage::Partial, &[Some("walk")], primary.clone());
+    let unavailable =
+        loaded_source_with_primary(ClipCoverage::Unavailable, &[Some("walk")], primary);
+    let profile = bevy_profile(&partial);
+    let partial_provenance = project_prediction_provenance_v1(&profile, &partial).unwrap();
+
+    assert!(matches!(
+        EngineAddressabilityCheck::new(&complete, Some(&partial_provenance)),
+        Err(PredictionRuleError::SourceProvenanceMismatch)
+    ));
+    assert!(matches!(
+        EngineAddressabilityCheck::new(&unavailable, Some(&partial_provenance)),
+        Err(PredictionRuleError::SourceProvenanceMismatch)
+    ));
+}
+
+#[test]
+fn construction_rejects_an_exact_tuple_with_altered_profile_facts_identity() {
+    let source = loaded_source(ClipCoverage::Complete, &[Some("walk")]);
+    let profile = bevy_profile(&source);
+    let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
+    let altered_sources = provenance
+        .profile()
+        .primary_sources()
+        .iter()
+        .map(|source| {
+            let url = if source.id() == "bevy-gltf-asset-label-0.19.0" {
+                format!("{}#altered", source.url())
+            } else {
+                source.url().to_owned()
+            };
+            animsmith_core::EnginePrimarySourceV1::new(
+                source.id(),
+                source.target_version(),
+                url,
+                source.verified_on(),
+                source.supported_fact_ids().to_vec(),
+                source.supported_setting_ids().to_vec(),
+            )
+            .unwrap()
+        })
+        .collect();
+    let altered_profile = animsmith_core::ResolvedEngineProfileV1::new(
+        provenance.profile().selection().clone(),
+        provenance.profile().fact_bundle_urn(),
+        provenance.profile().facts().to_vec(),
+        provenance.profile().setting_descriptors().to_vec(),
+        altered_sources,
+    )
+    .unwrap();
+    let altered_settings = animsmith_core::ResolvedEngineSettingsV1::new(
+        &altered_profile,
+        provenance.settings().document_settings().to_vec(),
+        provenance.settings().clips().to_vec(),
+    )
+    .unwrap();
+    let altered_provenance = animsmith_core::PredictionProvenanceV1::new(
+        altered_profile,
+        provenance.source_format(),
+        altered_settings,
+        provenance.raw_source().clone(),
+        provenance.dependency_closure().clone(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        EngineAddressabilityCheck::new(&source, Some(&altered_provenance)),
+        Err(PredictionRuleError::FrozenProfileMismatch)
+    ));
 }
 
 #[test]
@@ -281,7 +368,7 @@ fn default_catalog_lifecycle_selects_and_enables_the_borrowed_bevy_check() {
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
     let check: Box<dyn Check + '_> =
-        Box::new(AnimationAssetLabelCheck::new(&source, Some(&provenance)));
+        Box::new(EngineAddressabilityCheck::new(&source, Some(&provenance)).unwrap());
 
     let records = animsmith_core::evaluate_checks(
         &CheckCtx::new(&grids, &roles, &config),
@@ -313,7 +400,7 @@ fn names_do_not_affect_source_index_label_subjects() {
     let source = loaded_source(ClipCoverage::Complete, &[Some("same"), None, Some("same")]);
     let profile = bevy_profile(&source);
     let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
-    let check = AnimationAssetLabelCheck::new(&source, Some(&provenance));
+    let check = EngineAddressabilityCheck::new(&source, Some(&provenance)).unwrap();
     let output = evaluate(&check, &source);
     let subjects = output
         .engine_prediction()
@@ -334,20 +421,42 @@ fn raw_clip_bound_uses_available_facets_at_4096_and_one_partial_inventory_facet(
     let source = loaded_source(ClipCoverage::Complete, &at_limit);
     let profile = bevy_profile(&source);
     let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
-    let check = AnimationAssetLabelCheck::new(&source, Some(&provenance));
-    assert_eq!(
-        evaluate(&check, &source)
-            .engine_prediction()
+    let check = EngineAddressabilityCheck::new(&source, Some(&provenance)).unwrap();
+    let output = evaluate(&check, &source);
+    let facets = output.engine_prediction().unwrap().facets();
+    assert_eq!(facets.len(), 4096);
+    let mut seen = vec![false; 4096];
+    for facet in facets {
+        let subject = facet.scope().subject.as_deref().unwrap();
+        let index = subject
+            .strip_prefix("Animation")
             .unwrap()
-            .facets()
-            .len(),
-        4096
-    );
+            .parse::<usize>()
+            .unwrap();
+        assert!(index < seen.len());
+        assert!(!std::mem::replace(&mut seen[index], true));
+        let expected_raw = RawSourceBasisReferenceV1::from_source(
+            RawSourceDomainV1::Clip,
+            RawSourceKeyV1::Clip {
+                source_clip_index: index as u64,
+            },
+            RawSourceFieldIdV1::new("source_name.state").unwrap(),
+            source.source_facts(),
+        )
+        .unwrap();
+        assert!(
+            facet
+                .basis()
+                .references()
+                .contains(&PredictionBasisReferenceV1::raw_source(expected_raw))
+        );
+    }
+    assert!(seen.into_iter().all(|was_seen| was_seen));
 
     let source = loaded_source(ClipCoverage::Partial, &at_limit);
     let profile = bevy_profile(&source);
     let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
-    let check = AnimationAssetLabelCheck::new(&source, Some(&provenance));
+    let check = EngineAddressabilityCheck::new(&source, Some(&provenance)).unwrap();
     let output = evaluate(&check, &source);
     let prediction = output.engine_prediction().unwrap();
     assert_eq!(prediction.facets().len(), 1);

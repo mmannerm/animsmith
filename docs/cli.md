@@ -191,8 +191,8 @@ tangents.
 
 | Code | Meaning |
 |---:|---|
-| 0 | No failing findings: clean, warnings-only, notes-only, or coverage gaps only. |
-| 1 | At least one failing finding, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
+| 0 | No failing findings and no required-unavailable engine prediction facets; warnings, notes, or ordinary coverage gaps may remain. |
+| 1 | At least one failing finding, any `required_prediction_unavailable` facet, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 The code reports what the run *did*, never how well it could report it. This
@@ -238,7 +238,8 @@ A role-dependent check with missing prerequisites reports a typed coverage
 gap and does not fail the run — exit `0` means no failing findings among the
 checks that evaluated, not that every declared check evaluated; see
 [reading a lint run](game-ready-clips.md#reading-a-lint-run) for the
-full outcome vocabulary.
+full outcome vocabulary. A required-unavailable engine prediction is distinct:
+it exits `1` and cannot be suppressed by severity or `--allow`.
 
 Use `lint --deny-warnings` when CI should fail on warnings as well as
 errors. `fix --dry-run` is the repair check mode: it exits 1 when the

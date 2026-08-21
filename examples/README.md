@@ -41,8 +41,8 @@ Every example relies on the same convention, so scripts can gate on it:
 
 | Code | Meaning |
 |---:|---|
-| 0 | No failing findings; warnings, notes, and coverage gaps may remain. |
-| 1 | A failing finding, a significant `diff`, or pending `fix --dry-run` repairs. |
+| 0 | No failing findings and no required-unavailable engine prediction facets; warnings, notes, and ordinary coverage gaps may remain. |
+| 1 | A failing finding, any `required_prediction_unavailable` facet, a significant `diff`, or pending `fix --dry-run` repairs. |
 | 2 | Operator error: unreadable input, bad config, bad flags. |
 
 ---

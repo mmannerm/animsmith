@@ -124,6 +124,20 @@ pub enum ResolutionError {
     ResolvedSettingsContract(#[from] EngineContractError),
 }
 
+/// Typed failure while binding an engine-owned check to immutable evidence.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PredictionRuleError {
+    /// The supplied provenance was not projected from the supplied same-load
+    /// source facts and dependency closure.
+    #[error("prediction provenance does not describe the supplied same-load source")]
+    SourceProvenanceMismatch,
+    /// An exact built-in profile tuple carried facts other than the immutable
+    /// registry record for that revision.
+    #[error("prediction provenance does not match the frozen engine profile facts")]
+    FrozenProfileMismatch,
+}
+
 /// Author-owned invariant failure in the built-in V1 registry.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]

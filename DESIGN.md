@@ -135,13 +135,15 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
 - `lint` = measure + judge against config. `measure` is lint minus
   judgment — both emit the independently versioned measurement contract
   that other pipelines can pin.
-- **Exit codes**: `0` no failing findings (warnings, notes, and nonblocking
-  coverage gaps may remain), `1` at least one error-severity finding (or
-  pending repairs under `fix --dry-run`) and any producer refusal established
-  as a fact about source asset bytes, `2` operator/tool error (unreadable
-  declared file, bad config or recipe syntax, unsafe/unwritable path, or
-  publication failure).
-  `--deny-warnings` promotes warnings to errors.
+- **Exit codes**: `0` no failing findings and no required-unavailable engine
+  prediction facets (warnings, notes, and ordinary nonblocking coverage gaps
+  may remain), `1` at least one error-severity finding, any
+  `required_prediction_unavailable` facet, pending repairs under
+  `fix --dry-run`, or any producer refusal established as a fact about source
+  asset bytes, `2` operator/tool error (unreadable declared file, bad config or
+  recipe syntax, unsafe/unwritable path, or publication failure).
+  `--deny-warnings` promotes warnings to errors; severity and `--allow` do not
+  suppress an emitted required-unavailable facet.
 - **Producer outcome authority is typed before prose exists.** `convert` and
   `assemble` carry `Published`, `Rejected`, and `Operator` through one shared
   boundary. Loader, selector, transform, proof, and representability failures
