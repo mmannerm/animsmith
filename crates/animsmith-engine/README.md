@@ -25,6 +25,14 @@ emits standard AnimSmith engine-prediction facets; callers may validate the
 asset labels, target-path identifiers, runtime-node selection, or imported
 transform behavior.
 
+`BevyAnimationAssetLabelV1` is the bounded authority for the exact
+`Animation{source_clip_index}` display selector. The
+`build_bevy_animation_addressability_adapter_v1` helper sends that same
+existing check through the ordinary evaluation lifecycle once and packages
+its unchanged record with same-load provenance and a neutral
+`GltfAnimationAddressabilityInventoryV1`. It returns no adapter for absent or
+non-Bevy provenance and does not add a second check or runtime-existence claim.
+
 Resolved settings V1 materializes at most 4,096 actual clip rows. Inputs above
 that bound return a typed `ResolutionError::ResolvedSettingsContract`; callers
 must not truncate the clip list and claim complete prediction provenance.

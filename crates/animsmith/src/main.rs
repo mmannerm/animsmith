@@ -1,8 +1,8 @@
 //! The animsmith CLI binary.
 //!
 //! This crate publishes the `animsmith` command: inspect, measure, lint,
-//! report, transform, fix, convert, assemble, scale, and diff skeletal
-//! animation clips. It
+//! report, transform, fix, convert, assemble, scale, generate, and diff
+//! skeletal animation clips. It
 //! is not the Rust library API; use `animsmith-core` plus the loader
 //! crates (`animsmith-gltf`, `animsmith-fbx`), `animsmith-engine`, and
 //! `animsmith-report` from library code.
@@ -30,7 +30,9 @@ use animsmith_core::{
 use animsmith_core::{Document, InputIdentity};
 use animsmith_engine::{
     BakeOrExtract, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineDeclaration,
-    ProfileSelection, ResolvedProfile, SettingMap, SettingValue, StaticResolution,
+    GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityV1, ProfileSelection,
+    ResolvedProfile, SettingMap, SettingValue, StaticResolution,
+    build_bevy_animation_addressability_adapter_v1,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -94,8 +96,8 @@ enum Cmd {
         /// Input .glb, .gltf, or .fbx files.
         #[arg(required = true, value_name = "FILE")]
         files: Vec<PathBuf>,
-        #[arg(long, value_enum, default_value_t = LintFormat::Text)]
-        format: LintFormat,
+        #[arg(long, value_enum, default_value_t = PresentationFormat::Text)]
+        format: PresentationFormat,
         /// Treat warnings as errors for the exit code.
         #[arg(long)]
         deny_warnings: bool,
@@ -232,6 +234,11 @@ enum Cmd {
         #[command(subcommand)]
         operation: ScaleCmd,
     },
+    /// Generate bounded, versioned pipeline contracts from one source asset.
+    Generate {
+        #[command(subcommand)]
+        operation: GenerateCmd,
+    },
     /// Compare animation measurements.
     #[command(
         long_about = "Compare the measurements of two inputs (asset files or one-file output-v10 `measure` or `lint` JSON carrying measurements-v15) and report movement beyond significance thresholds. Exits 1 on significant movement."
@@ -243,6 +250,23 @@ enum Cmd {
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
+    },
+}
+
+/// Versioned single-document pipeline contracts.
+#[derive(Subcommand)]
+enum GenerateCmd {
+    /// Inventory glTF animation addressability with an optional exact Bevy adapter.
+    #[command(
+        long_about = "Generate one bounded glTF animation-addressability document from the immutable source facts and dependency closure. With the exact supported Bevy profile selected, the same document embeds the existing engine-addressability evaluation; without it, the neutral inventory remains available and the Bevy adapter is null. This command does not claim runtime loading, graph wiring, target survival, or named-map behavior."
+    )]
+    Addressability {
+        /// Input .glb or .gltf file.
+        #[arg(value_name = "INPUT")]
+        input: PathBuf,
+        /// Render canonical JSON or a presentation-only text/Markdown view.
+        #[arg(long, value_enum, default_value_t = PresentationFormat::Json)]
+        format: PresentationFormat,
     },
 }
 
@@ -302,6 +326,15 @@ enum ScaleCmd {
 enum Format {
     Text,
     Json,
+}
+
+/// JSON machine output plus the two presentation-only renderings shared by
+/// `lint` and `generate addressability`. Each command pins its own default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum PresentationFormat {
+    Json,
+    Text,
+    Markdown,
 }
 
 #[cfg(feature = "fbx")]
@@ -536,17 +569,6 @@ fn run_conversion(request: &ConversionRequest<'_>, tool: ToolInfo) -> Result<Exi
         })?,
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// Output format for `lint`. Adds a presentation-only Markdown rendering
-/// on top of the shared text/JSON surface, suitable for pasting into CI
-/// comments and asset-review threads. JSON stays the machine-readable
-/// source of truth; Markdown carries no schema or stability guarantees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum LintFormat {
-    Text,
-    Json,
-    Markdown,
 }
 
 fn select_repairs(repairs: Vec<Repair>) -> Vec<Repair> {
@@ -911,7 +933,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             require_files(&files)?;
             let known_check_ids = full_check_ids()?;
             validate_check_selection(&known_check_ids, &select)?;
-            if format == LintFormat::Json && !allow.is_empty() {
+            if format == PresentationFormat::Json && !allow.is_empty() {
                 return Err(
                     "--allow is not supported with --format json; machine-readable results retain every content finding"
                         .into(),
@@ -979,13 +1001,15 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 );
             }
             match format {
-                LintFormat::Json => {
+                PresentationFormat::Json => {
                     let envelope = LintEnvelope::new(current_tool(), reports)
                         .map_err(|error| error.to_string())?;
                     render::print_json(&envelope)?;
                 }
-                LintFormat::Text => publish::emit_text(&render::render_text(&reports, &allow)),
-                LintFormat::Markdown => {
+                PresentationFormat::Text => {
+                    publish::emit_text(&render::render_text(&reports, &allow));
+                }
+                PresentationFormat::Markdown => {
                     publish::emit_text(&render::render_markdown(&reports, &allow));
                 }
             }
@@ -1309,6 +1333,62 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             };
             scale::run(&request, current_tool())
         }
+        Cmd::Generate { operation } => match operation {
+            GenerateCmd::Addressability { input, format } => {
+                // Static profile/configuration validation deliberately precedes
+                // input I/O, matching lint and preserving #464's typed error
+                // boundary for unknown or malformed tuples.
+                let loaded_config = load_config(cli.config.as_deref())?;
+                let loaded = load_with_config(&input, &loaded_config)?;
+                let prediction_provenance = loaded
+                    .engine
+                    .as_ref()
+                    .map(|profile| {
+                        animsmith_engine::project_prediction_provenance_v1(profile, &loaded.source)
+                    })
+                    .transpose()
+                    .map_err(|error| error.to_string())?;
+                let inventory = GltfAnimationAddressabilityInventoryV1::from_source(&loaded.source)
+                    .map_err(|error| error.to_string())?;
+
+                let config = &loaded_config.config;
+                let doc = loaded.document();
+                let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
+                let grids = MetricGrids::new(doc);
+                let ctx = CheckCtx::new(&grids, &roles, config);
+                let bevy = build_bevy_animation_addressability_adapter_v1(
+                    &loaded.source,
+                    &inventory,
+                    prediction_provenance,
+                    &ctx,
+                )
+                .map_err(|error| error.to_string())?;
+                let report = GltfAnimationAddressabilityV1::new(current_tool(), inventory, bevy)
+                    .map_err(|error| error.to_string())?;
+                let requires_failure = report.bevy().is_some_and(|adapter| {
+                    animsmith_core::evaluation::lint_requires_failure(
+                        std::slice::from_ref(adapter.check()),
+                        Severity::Error,
+                        &BTreeSet::new(),
+                    )
+                });
+
+                match format {
+                    PresentationFormat::Json => render::print_json(&report)?,
+                    PresentationFormat::Text => {
+                        publish::emit_text(&render::render_addressability_text(&report));
+                    }
+                    PresentationFormat::Markdown => {
+                        publish::emit_text(&render::render_addressability_markdown(&report));
+                    }
+                }
+                Ok(if requires_failure {
+                    ExitCode::from(EXIT_FINDINGS)
+                } else {
+                    ExitCode::SUCCESS
+                })
+            }
+        },
         Cmd::Diff { a, b, format } => {
             let config = load_config(cli.config.as_deref())?;
             let ma = load_measurements(&a, &config)?;

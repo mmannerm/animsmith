@@ -9,10 +9,13 @@ use std::process::{Command, Output, Stdio};
 
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
+const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v15.schema.json");
+const ADDRESSABILITY_SCHEMA: &str =
+    include_str!("../../../docs/schemas/gltf-animation-addressability-v1.schema.json");
 const EXPECTED_CHECK_IDS: [&str; 27] = [
     "nan",
     "time-monotonic",
@@ -67,6 +70,37 @@ fn assert_output_schema_valid(instance: &Value) {
     assert!(
         errors.is_empty(),
         "output must satisfy the published v10 schemas:\n{}\ninstance: {instance:#}",
+        errors.join("\n")
+    );
+}
+
+fn addressability_validator() -> jsonschema::Validator {
+    let output: Value = serde_json::from_str(OUTPUT_SCHEMA).expect("valid output schema JSON");
+    let measurements: Value =
+        serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let addressability: Value =
+        serde_json::from_str(ADDRESSABILITY_SCHEMA).expect("valid addressability schema JSON");
+    let registry = jsonschema::Registry::new()
+        .add(MEASUREMENTS_SCHEMA_ID, measurements)
+        .expect("valid measurement schema identity")
+        .add(OUTPUT_SCHEMA_ID, output)
+        .expect("valid output schema identity")
+        .prepare()
+        .expect("addressability schema registry prepares");
+    jsonschema::options()
+        .with_registry(&registry)
+        .build(&addressability)
+        .expect("addressability schema compiles with reused output-v10 definitions")
+}
+
+fn assert_addressability_schema_valid(instance: &Value) {
+    let errors: Vec<_> = addressability_validator()
+        .iter_errors(instance)
+        .map(|error| error.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "addressability output must satisfy the published V1 schema:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -594,6 +628,54 @@ fn write_source_animation_inventory_gltf(path: &std::path::Path, names: &[Option
     );
 }
 
+fn write_source_animation_channel_overflow_gltf(path: &std::path::Path) {
+    // Prime the raw-source text budget with bounded unsupported declarations,
+    // then make the one animation's discarded morph-channel prefix cross the
+    // remaining budget well before the aggregate row cap. Prediction settings
+    // retain only the short clip name, so the adapter can report the semantic
+    // required-unavailable result instead of failing provenance materialization.
+    let extensions_used = (0..1_536)
+        .map(|index| {
+            let prefix = format!("X_ANIMSMITH_TEST_{index:04}_");
+            format!("{prefix}{}", "x".repeat(4_096 - prefix.len()))
+        })
+        .collect::<Vec<_>>();
+    let channels = (0..32_768)
+        .map(|_| json!({ "sampler": 0, "target": { "node": 0, "path": "weights" } }))
+        .collect::<Vec<_>>();
+    write_json(
+        path,
+        &json!({
+            "asset": { "version": "2.0" },
+            "extensionsUsed": extensions_used,
+            "buffers": [{
+                "uri": "data:application/octet-stream;base64,AAAAAAAAgD8=",
+                "byteLength": 8
+            }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 8 }],
+            "accessors": [
+                {
+                    "bufferView": 0,
+                    "componentType": 5126,
+                    "count": 2,
+                    "type": "SCALAR",
+                    "min": [0.0],
+                    "max": [1.0]
+                },
+                { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR" }
+            ],
+            "nodes": [{ "name": "root" }],
+            "animations": [{
+                "name": "morph",
+                "samplers": [{ "input": 0, "output": 1 }],
+                "channels": channels
+            }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }),
+    );
+}
+
 fn write_bevy_config(dir: &std::path::Path, suffix: &str) -> PathBuf {
     write_config(
         dir,
@@ -615,6 +697,602 @@ fn lint_check<'a>(json: &'a Value, check_id: &str) -> &'a Value {
         .iter()
         .find(|check| check["check_id"] == check_id)
         .unwrap_or_else(|| panic!("missing {check_id} record"))
+}
+
+#[test]
+fn generate_addressability_is_schema_valid_profile_neutral_and_reuses_the_lint_check_bytes() {
+    let dir = unique_temp_dir("generate-addressability-profiles");
+    let input = dir.path().join("animations.gltf");
+    write_source_animation_inventory_gltf(&input, &[Some("duplicate"), None, Some("duplicate")]);
+    let bevy_config = write_bevy_config(dir.path(), "generate");
+    let godot_config = write_config(
+        dir.path(),
+        "godot.toml",
+        r#"
+[engine]
+profile = "godot"
+profile_revision = 1
+engine_version = "4.7"
+importer = "resource-importer-scene"
+"#,
+    );
+
+    let run = |config: Option<&std::path::Path>| {
+        let mut command = animsmith();
+        if let Some(config) = config {
+            command.arg("--config").arg(config);
+        }
+        command
+            .args(["generate", "addressability"])
+            .arg(&input)
+            .output()
+            .expect("runs generate addressability")
+    };
+
+    let neutral = run(None);
+    assert_eq!(neutral.status.code(), Some(0), "{}", stderr(&neutral));
+    assert!(stderr(&neutral).is_empty());
+    let neutral_json: Value = serde_json::from_slice(&neutral.stdout).expect("canonical JSON");
+    assert_addressability_schema_valid(&neutral_json);
+    assert_eq!(neutral_json["schema_version"], 1);
+    assert_eq!(neutral_json["schema"], ADDRESSABILITY_SCHEMA_ID);
+    assert_eq!(neutral_json["command"], "generate-addressability");
+    assert_eq!(neutral_json["input"], input_identity_json(&input));
+    assert_eq!(
+        neutral_json["input"],
+        neutral_json["inventory"]["primary_input"]
+    );
+    assert_eq!(neutral_json["inventory"]["source_format"], "gltf_json");
+    assert_eq!(
+        neutral_json["inventory"]["animations"]["coverage"]["state"],
+        "complete"
+    );
+    assert_eq!(
+        neutral_json["inventory"]["animations"]["rows"][0]["source_name"]["value"],
+        "duplicate"
+    );
+    assert_eq!(
+        neutral_json["inventory"]["animations"]["rows"][1]["source_name"]["state"],
+        "proven_absent"
+    );
+    assert!(neutral_json["bevy"].is_null());
+    let neutral_readback =
+        animsmith_engine::GltfAnimationAddressabilityInput::read_from(neutral.stdout.as_slice())
+            .expect("strict root read")
+            .into_report()
+            .expect("strict neutral readback");
+    assert!(neutral_readback.bevy().is_none());
+
+    let godot = run(Some(&godot_config));
+    assert_eq!(godot.status.code(), Some(0), "{}", stderr(&godot));
+    let godot_json: Value = serde_json::from_slice(&godot.stdout).expect("Godot JSON");
+    assert_addressability_schema_valid(&godot_json);
+    assert!(godot_json["bevy"].is_null());
+    assert_eq!(godot_json["inventory"], neutral_json["inventory"]);
+
+    let bevy = run(Some(&bevy_config));
+    assert_eq!(bevy.status.code(), Some(0), "{}", stderr(&bevy));
+    let bevy_json: Value = serde_json::from_slice(&bevy.stdout).expect("Bevy JSON");
+    assert_addressability_schema_valid(&bevy_json);
+    assert_eq!(bevy_json["inventory"], neutral_json["inventory"]);
+    let readback =
+        animsmith_engine::GltfAnimationAddressabilityInput::read_from(bevy.stdout.as_slice())
+            .expect("strict root read")
+            .into_report()
+            .expect("strict Bevy readback");
+    let readback_check = readback.bevy().expect("exact Bevy adapter").check();
+    assert_eq!(
+        readback_check.selection(),
+        animsmith_core::SelectionState::Selected
+    );
+    assert_eq!(
+        readback_check.configuration(),
+        animsmith_core::ConfigurationState::Enabled
+    );
+    assert_eq!(
+        readback_check.applicability(),
+        animsmith_core::Applicability::Applicable
+    );
+    assert_eq!(
+        readback_check.evaluation(),
+        animsmith_core::EvaluationState::Complete
+    );
+    assert_eq!(readback_check.evaluated_scopes().len(), 3);
+
+    let lint = animsmith()
+        .arg("--config")
+        .arg(&bevy_config)
+        .args([
+            "lint",
+            "--select",
+            "engine-addressability",
+            "--format",
+            "json",
+        ])
+        .arg(&input)
+        .output()
+        .expect("runs the original #154 check path");
+    assert_eq!(lint.status.code(), Some(0), "{}", stderr(&lint));
+    let lint_json: Value = serde_json::from_slice(&lint.stdout).expect("lint JSON");
+    let lint_addressability = lint_check(&lint_json, "engine-addressability");
+    assert_eq!(
+        serde_json::to_vec(&bevy_json["bevy"]["check"]).unwrap(),
+        serde_json::to_vec(lint_addressability).unwrap(),
+        "the adapter must embed the existing #154 CheckEvaluation byte-for-byte"
+    );
+    assert_eq!(
+        bevy_json["bevy"]["prediction_provenance"],
+        lint_json["files"][0]["prediction_provenance"]
+    );
+
+    let disabled_config = write_config(
+        dir.path(),
+        "bevy-disabled.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 1
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[checks.engine-addressability]
+severity = "off"
+"#,
+    );
+    let disabled = run(Some(&disabled_config));
+    assert_eq!(disabled.status.code(), Some(0), "{}", stderr(&disabled));
+    let disabled_json: Value =
+        serde_json::from_slice(&disabled.stdout).expect("disabled adapter JSON");
+    assert_addressability_schema_valid(&disabled_json);
+    assert_eq!(disabled_json["inventory"], neutral_json["inventory"]);
+    assert_eq!(disabled_json["bevy"]["check"]["configuration"], "disabled");
+    assert!(disabled_json["bevy"]["check"].get("prediction").is_none());
+    let disabled_readback =
+        animsmith_engine::GltfAnimationAddressabilityInput::read_from(disabled.stdout.as_slice())
+            .expect("strict disabled root read")
+            .into_report()
+            .expect("strict disabled adapter readback");
+    let disabled_check = disabled_readback
+        .bevy()
+        .expect("disabled exact Bevy adapter remains present")
+        .check();
+    assert_eq!(
+        disabled_check.configuration(),
+        animsmith_core::ConfigurationState::Disabled
+    );
+    assert_eq!(
+        disabled_check.evaluation(),
+        animsmith_core::EvaluationState::NotEvaluated
+    );
+    assert!(disabled_check.evaluated_scopes().is_empty());
+    let disabled_lint = animsmith()
+        .arg("--config")
+        .arg(&disabled_config)
+        .args([
+            "lint",
+            "--select",
+            "engine-addressability",
+            "--format",
+            "json",
+        ])
+        .arg(&input)
+        .output()
+        .expect("runs disabled #154 check path");
+    assert_eq!(disabled_lint.status.code(), Some(0));
+    let disabled_lint_json: Value =
+        serde_json::from_slice(&disabled_lint.stdout).expect("disabled lint JSON");
+    assert_eq!(
+        serde_json::to_vec(&disabled_json["bevy"]["check"]).unwrap(),
+        serde_json::to_vec(lint_check(&disabled_lint_json, "engine-addressability")).unwrap()
+    );
+
+    let mut unknown_root_field = neutral_json.clone();
+    unknown_root_field["unknown"] = json!(true);
+    assert!(
+        !addressability_validator().is_valid(&unknown_root_field),
+        "the public schema must reject unknown root fields"
+    );
+    assert!(
+        serde_json::from_value::<animsmith_engine::GltfAnimationAddressabilityInput>(
+            unknown_root_field
+        )
+        .is_err(),
+        "the strict reader must reject the same mutation"
+    );
+
+    let mut missing_bevy = neutral_json.clone();
+    missing_bevy.as_object_mut().unwrap().remove("bevy");
+    assert!(!addressability_validator().is_valid(&missing_bevy));
+    let missing_bevy: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(missing_bevy).expect("stages a missing required-nullable field");
+    assert!(matches!(
+        missing_bevy.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::MissingBevyField)
+    ));
+
+    let mut noncanonical_row = neutral_json.clone();
+    noncanonical_row["inventory"]["animations"]["rows"][1]["source_clip_index"] = json!(7);
+    let noncanonical_row: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(noncanonical_row).expect("stages nested inventory semantics");
+    assert!(matches!(
+        noncanonical_row.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidInventoryShape { .. })
+    ));
+
+    let mut invalid_coverage_reason = neutral_json.clone();
+    invalid_coverage_reason["inventory"]["animations"]["coverage"] = json!({
+        "state": "partial",
+        "reason": "not_a_reason"
+    });
+    assert!(!addressability_validator().is_valid(&invalid_coverage_reason));
+    let invalid_coverage_reason: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(invalid_coverage_reason).expect("stages raw nested inventory JSON");
+    assert!(matches!(
+        invalid_coverage_reason.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidInventoryShape { .. })
+    ));
+
+    let valid_channel = json!({
+        "source_channel_index": 0,
+        "target": { "kind": "node", "index": 0 },
+        "property": "translation",
+        "input_accessor_index": 0,
+        "output_accessor_index": 1
+    });
+
+    let mut invalid_target_kind = neutral_json.clone();
+    invalid_target_kind["inventory"]["animations"]["rows"][0]["channels"]["rows"] =
+        json!([valid_channel.clone()]);
+    invalid_target_kind["inventory"]["animations"]["rows"][0]["channels"]["rows"][0]["target"]["kind"] =
+        json!("element");
+    assert!(!addressability_validator().is_valid(&invalid_target_kind));
+    let invalid_target_kind: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(invalid_target_kind).expect("stages a non-glTF channel target");
+    assert!(matches!(
+        invalid_target_kind.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidInventoryShape { .. })
+    ));
+
+    let mut missing_accessor = neutral_json.clone();
+    missing_accessor["inventory"]["animations"]["rows"][0]["channels"]["rows"] =
+        json!([valid_channel]);
+    missing_accessor["inventory"]["animations"]["rows"][0]["channels"]["rows"][0]["input_accessor_index"] =
+        Value::Null;
+    assert!(!addressability_validator().is_valid(&missing_accessor));
+    let missing_accessor: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(missing_accessor).expect("stages a missing accessor pair member");
+    assert!(matches!(
+        missing_accessor.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidInventoryShape { .. })
+    ));
+
+    let mut malformed_check = bevy_json.clone();
+    malformed_check["bevy"]["check"]["check_id"] = json!("another-check");
+    assert!(!addressability_validator().is_valid(&malformed_check));
+    let malformed_check: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(malformed_check).expect("stages raw embedded check JSON");
+    assert!(matches!(
+        malformed_check.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidBevyCheckSubset)
+    ));
+
+    let mut malformed_provenance = bevy_json.clone();
+    malformed_provenance["bevy"]["prediction_provenance"]["profile"]["selection"]["family"] =
+        json!("other");
+    assert!(!addressability_validator().is_valid(&malformed_provenance));
+    let malformed_provenance: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(malformed_provenance).expect("stages raw provenance JSON");
+    assert!(matches!(
+        malformed_provenance.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidBevyProvenance { .. })
+    ));
+
+    let mut reduced_available_basis = bevy_json.clone();
+    let references =
+        reduced_available_basis["bevy"]["check"]["prediction"]["facets"][0]["basis"]["references"]
+            .as_array_mut()
+            .expect("available facet basis references");
+    references.pop().expect("three-reference #154 basis");
+    let references: Vec<animsmith_core::PredictionBasisReferenceV1> =
+        serde_json::from_value(Value::Array(references.clone()))
+            .expect("remaining references are structurally valid");
+    let reduced_basis = animsmith_core::EnginePredictionBasisV1::new(references)
+        .expect("reduced basis is internally canonical");
+    reduced_available_basis["bevy"]["check"]["prediction"]["facets"][0]["basis"] =
+        serde_json::to_value(reduced_basis).expect("serializes reduced basis");
+    assert!(
+        addressability_validator().is_valid(&reduced_available_basis),
+        "the generic schema permits a structurally valid reduced basis"
+    );
+    let reduced_available_basis: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(reduced_available_basis)
+            .expect("stages a structurally valid reduced available basis");
+    assert!(matches!(
+        reduced_available_basis.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidBevyCheckSubset)
+    ));
+
+    let mut malformed_profile_identity = bevy_json;
+    malformed_profile_identity["bevy"]["prediction_provenance"]["profile"]["identity"]["sha256"] =
+        json!("0000000000000000000000000000000000000000000000000000000000000000");
+    assert!(!addressability_validator().is_valid(&malformed_profile_identity));
+    let malformed_profile_identity: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(malformed_profile_identity)
+            .expect("stages a wrong embedded profile identity");
+    assert!(matches!(
+        malformed_profile_identity.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidBevyProvenance { .. })
+    ));
+}
+
+#[test]
+fn generate_addressability_text_and_markdown_render_the_same_bounded_observations() {
+    let dir = unique_temp_dir("generate-addressability-renderers");
+    let input = dir.path().join("animations.gltf");
+    write_source_animation_inventory_gltf(
+        &input,
+        &[Some("duplicate"), None, Some(HOSTILE_PRESENTATION_TEXT)],
+    );
+    let config = write_bevy_config(dir.path(), "renderers");
+
+    let json = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "addressability"])
+        .arg(&input)
+        .output()
+        .expect("renders canonical addressability JSON");
+    assert_eq!(json.status.code(), Some(0), "{}", stderr(&json));
+    assert!(stderr(&json).is_empty());
+    let json: Value = serde_json::from_slice(&json.stdout).expect("canonical addressability JSON");
+    assert_addressability_schema_valid(&json);
+    assert_eq!(
+        json["inventory"]["dependency_closure"]["coverage"]["state"],
+        "complete"
+    );
+    let input_sha256 = json["input"]["sha256"].as_str().expect("input digest");
+    let input_bytes = json["input"]["bytes"].as_u64().expect("input bytes");
+    let inventory_sha256 = json["inventory"]["identity"]["sha256"]
+        .as_str()
+        .expect("inventory digest");
+    let inventory_bytes = json["inventory"]["identity"]["bytes"]
+        .as_u64()
+        .expect("inventory canonical bytes");
+    let closure_references = json["inventory"]["dependency_closure"]["references"]
+        .as_array()
+        .expect("closure references")
+        .len();
+    let external_resources = json["inventory"]["dependency_closure"]["external_resources"]
+        .as_array()
+        .expect("external resources")
+        .len();
+
+    let text = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "addressability"])
+        .arg(&input)
+        .args(["--format", "text"])
+        .output()
+        .expect("renders addressability text");
+    assert_eq!(text.status.code(), Some(0), "{}", stderr(&text));
+    let text = stdout(&text);
+    assert_eq!(
+        text,
+        format!(
+            concat!(
+                "glTF animation addressability v1\n",
+                "input: sha256={input_sha256} bytes={input_bytes}\n",
+                "inventory: sha256={inventory_sha256} canonical-bytes={inventory_bytes}\n",
+                "source format: gltf_json\n",
+                "dependency closure: complete ({closure_references} reference(s), {external_resources} external resource(s))\n",
+                "animations: complete (3 retained row(s))\n",
+                "  animation 0: name=\"duplicate\" normalized_clip_index=0 channels=complete (0 retained row(s))\n",
+                "  animation 1: name=proven_absent normalized_clip_index=1 channels=complete (0 retained row(s))\n",
+                "  animation 2: name=\"forged\\nline\\u001B[31m\\u2028\\u2029\\u202E\" normalized_clip_index=2 channels=complete (0 retained row(s))\n",
+                "Bevy adapter: bevy revision 1 (0.19.0 / gltf-asset-loader)\n",
+                "  check engine-addressability: selected / enabled / applicable / complete\n",
+                "    facet animation_asset_label subject Animation0: available\n",
+                "    facet animation_asset_label subject Animation1: available\n",
+                "    facet animation_asset_label subject Animation2: available\n",
+            ),
+            input_sha256 = input_sha256,
+            input_bytes = input_bytes,
+            inventory_sha256 = inventory_sha256,
+            inventory_bytes = inventory_bytes,
+            closure_references = closure_references,
+            external_resources = external_resources,
+        ),
+        "text must remain an exact presentation of the validated JSON fields"
+    );
+    assert!(!text.contains(HOSTILE_PRESENTATION_TEXT), "{text}");
+
+    let markdown = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "addressability"])
+        .arg(&input)
+        .args(["--format", "markdown"])
+        .output()
+        .expect("renders addressability Markdown");
+    assert_eq!(markdown.status.code(), Some(0), "{}", stderr(&markdown));
+    let markdown = stdout(&markdown);
+    assert_eq!(
+        markdown,
+        format!(
+            concat!(
+                "# glTF animation addressability v1\n\n",
+                "- Input: `{input_sha256}` (`{input_bytes}` bytes)\n",
+                "- Inventory: `{inventory_sha256}` (`{inventory_bytes}` canonical bytes)\n",
+                "- Source format: `gltf_json`\n",
+                "- Dependency closure: `complete` (`{closure_references}` references, `{external_resources}` external resources)\n",
+                "- Animations: `complete` (`3` retained rows)\n\n",
+                "| Animation | Source name | Normalized clip | Channel coverage | Channels |\n",
+                "| ---: | --- | ---: | --- | ---: |\n",
+                "| 0 | `\"duplicate\"` | `0` | `complete` | 0 |\n",
+                "| 1 | `proven_absent` | `1` | `complete` | 0 |\n",
+                "| 2 | `\"forged\\\\nline\\\\u001B[31m\\\\u2028\\\\u2029\\\\u202E\"` | `2` | `complete` | 0 |\n\n",
+                "## Bevy adapter\n\n",
+                "Profile: `bevy` revision `1` (`0.19.0` / `gltf-asset-loader`).\n\n",
+                "Check `engine-addressability`: `selected` / `enabled` / `applicable` / `complete`.\n\n",
+                "| Scope | Subject | Prediction | Reasons |\n",
+                "| --- | --- | --- | --- |\n",
+                "| `animation_asset_label` | `Animation0` | `available` | `—` |\n",
+                "| `animation_asset_label` | `Animation1` | `available` | `—` |\n",
+                "| `animation_asset_label` | `Animation2` | `available` | `—` |\n",
+            ),
+            input_sha256 = input_sha256,
+            input_bytes = input_bytes,
+            inventory_sha256 = inventory_sha256,
+            inventory_bytes = inventory_bytes,
+            closure_references = closure_references,
+            external_resources = external_resources,
+        ),
+        "Markdown must remain an exact presentation of the validated JSON fields"
+    );
+    assert!(!markdown.contains(HOSTILE_PRESENTATION_TEXT), "{markdown}");
+}
+
+#[test]
+fn generate_addressability_operator_errors_are_stderr_only_and_config_precedes_input_io() {
+    let dir = unique_temp_dir("generate-addressability-errors");
+    let unsupported = dir.path().join("asset.txt");
+    std::fs::write(&unsupported, b"not an asset").unwrap();
+    let output = animsmith()
+        .args(["generate", "addressability"])
+        .arg(&unsupported)
+        .output()
+        .expect("rejects unsupported input");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(
+        stderr(&output).contains("unsupported input"),
+        "{}",
+        stderr(&output)
+    );
+
+    let bad_config = write_config(
+        dir.path(),
+        "unknown-profile.toml",
+        r#"
+[engine]
+profile = "bevy-next"
+profile_revision = 1
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+"#,
+    );
+    let missing = dir.path().join("missing.glb");
+    let output = animsmith()
+        .arg("--config")
+        .arg(&bad_config)
+        .args(["generate", "addressability"])
+        .arg(&missing)
+        .output()
+        .expect("rejects profile before input I/O");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(
+        stderr(&output).contains("unknown engine profile"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(
+        !stderr(&output).contains("failed to read"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn generate_addressability_required_unavailable_bevy_inventory_exits_one_without_prefix_labels() {
+    let dir = unique_temp_dir("generate-addressability-required-unavailable");
+    let input = dir.path().join("partial.gltf");
+    write_source_animation_channel_overflow_gltf(&input);
+    let config = write_bevy_config(dir.path(), "required-unavailable");
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "addressability"])
+        .arg(&input)
+        .output()
+        .expect("runs partial-inventory generation");
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("partial inventory JSON");
+    assert_addressability_schema_valid(&json);
+    assert_eq!(
+        json["inventory"]["animations"]["coverage"]["state"],
+        "partial"
+    );
+    let facets = json["bevy"]["check"]["prediction"]["facets"]
+        .as_array()
+        .expect("required-unavailable facets");
+    assert_eq!(facets.len(), 1);
+    assert_eq!(
+        facets[0]["scope"]["code"],
+        "animation_asset_label_inventory"
+    );
+    assert_eq!(facets[0]["state"], "required_prediction_unavailable");
+    assert!(
+        !output
+            .stdout
+            .windows(b"Animation0".len())
+            .any(|window| window == b"Animation0"),
+        "partial inventories must not emit an authoritative label prefix"
+    );
+
+    let mut wrong_partial_reason = json;
+    wrong_partial_reason["bevy"]["check"]["prediction"]["facets"][0]["reasons"][0] =
+        json!("dependency_closure_incomplete");
+    assert!(
+        addressability_validator().is_valid(&wrong_partial_reason),
+        "the generic schema permits another typed prediction reason"
+    );
+    let wrong_partial_reason: animsmith_engine::GltfAnimationAddressabilityInput =
+        serde_json::from_value(wrong_partial_reason)
+            .expect("stages a structurally valid wrong partial reason");
+    assert!(matches!(
+        wrong_partial_reason.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidBevyCheckSubset)
+    ));
+}
+
+#[test]
+fn generate_addressability_complete_empty_inventory_keeps_exact_bevy_check_not_applicable() {
+    let dir = unique_temp_dir("generate-addressability-empty");
+    let input = dir.path().join("empty.gltf");
+    write_source_animation_inventory_gltf(&input, &[]);
+    let config = write_bevy_config(dir.path(), "empty-generate");
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "addressability"])
+        .arg(&input)
+        .output()
+        .expect("generates complete empty addressability inventory");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("empty inventory JSON");
+    assert_addressability_schema_valid(&json);
+    assert_eq!(
+        json["inventory"]["animations"],
+        json!({"coverage":{"state":"complete"},"rows":[]})
+    );
+    assert_eq!(json["bevy"]["check"]["applicability"], "not_applicable");
+    assert_eq!(json["bevy"]["check"]["evaluation"], "not_evaluated");
+    assert!(json["bevy"]["check"].get("prediction").is_none());
+    let readback =
+        animsmith_engine::GltfAnimationAddressabilityInput::read_from(output.stdout.as_slice())
+            .unwrap()
+            .into_report()
+            .expect("strict empty readback");
+    assert_eq!(
+        readback.bevy().expect("exact adapter").check().evaluation(),
+        animsmith_core::EvaluationState::NotEvaluated
+    );
 }
 
 #[test]
@@ -1359,6 +2037,7 @@ fn help_matches_compiled_feature_set() {
     assert!(out.contains("transform"));
     assert!(out.contains("fix"));
     assert!(out.contains("scale"));
+    assert!(out.contains("generate"));
     assert!(out.contains("diff"));
 
     // One-line summaries come from the doc comments (clap derives
@@ -1371,6 +2050,7 @@ fn help_matches_compiled_feature_set() {
     // evidence-emitting producer, so a feature gate on it would silently
     // remove that surface.
     assert!(out.contains("Rewrite declared linear scale and publish versioned evidence"));
+    assert!(out.contains("Generate bounded, versioned pipeline contracts"));
 
     assert_eq!(out.contains("\n  convert "), cfg!(feature = "fbx"), "{out}");
     assert_eq!(
@@ -1403,6 +2083,20 @@ fn help_matches_compiled_feature_set() {
     assert!(out.contains("output-v10"), "{out}");
     assert!(out.contains("measurements-v15"), "{out}");
     assert!(!out.contains("v5"), "{out}");
+
+    let generate = animsmith()
+        .args(["generate", "addressability", "--help"])
+        .output()
+        .expect("runs addressability help");
+    assert!(generate.status.success(), "stderr:\n{}", stderr(&generate));
+    let out = stdout(&generate);
+    assert!(out.contains("<INPUT>"), "{out}");
+    assert!(out.contains("[default: json]"), "{out}");
+    assert!(
+        out.contains("[possible values: json, text, markdown]"),
+        "{out}"
+    );
+    assert!(out.contains("does not claim runtime loading"), "{out}");
 }
 
 #[test]
@@ -6022,6 +6716,45 @@ fn bevy_actual_clip_inventory_above_v1_provenance_bound_is_an_operator_error() {
         .arg(&input)
         .output()
         .expect("runs over-limit Bevy addressability lint");
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(output.stdout.is_empty());
+    assert!(
+        stderr(&output).contains("settings.clips")
+            && stderr(&output).contains("4097")
+            && stderr(&output).contains("4096"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn generate_addressability_actual_clip_inventory_above_v1_bound_is_an_operator_error() {
+    let dir = unique_temp_dir("generate-addressability-over-limit");
+    let input = dir.path().join("over-limit.gltf");
+    let names = vec![None; animsmith_core::RAW_SOURCE_V1_MAX_CLIPS + 1];
+    write_source_animation_inventory_gltf(&input, &names);
+    let config = write_bevy_config(dir.path(), "generate-over-limit");
+
+    let output = animsmith()
+        .args(["generate", "addressability"])
+        .arg(&input)
+        .output()
+        .expect("runs over-limit neutral addressability generation");
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(output.stdout.is_empty());
+    assert!(
+        stderr(&output).contains("4097 animations") && stderr(&output).contains("V1 limit of 4096"),
+        "{}",
+        stderr(&output)
+    );
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "addressability"])
+        .arg(&input)
+        .output()
+        .expect("runs over-limit Bevy addressability generation");
     assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
     assert!(output.stdout.is_empty());
     assert!(

@@ -2856,6 +2856,10 @@ fn decode_prediction_phase_file(
                         PredictionDecodeError::Semantic(source) => {
                             MeasurementFileError::InvalidPredictionProvenance { source }
                         }
+                        PredictionDecodeError::TooManyFileFacets
+                        | PredictionDecodeError::TooManyFileBasisReferences => {
+                            unreachable!("provenance decoding cannot consume prediction budgets")
+                        }
                     },
                 )
             })?;
@@ -2916,7 +2920,13 @@ fn decode_prediction_phase_file(
                 let prediction = wire
                     .prediction
                     .map(|raw| {
-                        decode_engine_prediction_v1(raw.get()).map_err(|error| {
+                        decode_engine_prediction_v1(
+                            raw.get(),
+                            PREDICTION_V1_MAX_FACETS_PER_FILE.saturating_sub(decoded_facets),
+                            PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE
+                                .saturating_sub(decoded_references),
+                        )
+                        .map_err(|error| {
                             prediction_file_error(
                                 file_index,
                                 match error {
@@ -2930,6 +2940,18 @@ fn decode_prediction_phase_file(
                                         MeasurementFileError::InvalidPrediction {
                                             check_index,
                                             source,
+                                        }
+                                    }
+                                    PredictionDecodeError::TooManyFileFacets => {
+                                        MeasurementFileError::TooManyPredictionFacets {
+                                            found: PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
+                                            limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                                        }
+                                    }
+                                    PredictionDecodeError::TooManyFileBasisReferences => {
+                                        MeasurementFileError::TooManyPredictionBasisReferences {
+                                            found: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE + 1,
+                                            limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
                                         }
                                     }
                                 },
@@ -3993,6 +4015,21 @@ mod measurement_report_input_tests {
             .as_array_mut()
             .unwrap()
             .push(serde_json::to_value(extra).unwrap());
+        *wire["files"][0]["checks"]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap()
+            .get_mut("prediction")
+            .unwrap()
+            .get_mut("facets")
+            .and_then(serde_json::Value::as_array_mut)
+            .and_then(|facets| facets.first_mut())
+            .and_then(|facet| facet.get_mut("basis"))
+            .and_then(|basis| basis.get_mut("references"))
+            .and_then(serde_json::Value::as_array_mut)
+            .and_then(|references| references.first_mut())
+            .unwrap() = serde_json::Value::Null;
         assert_eq!(
             lint_read_error(wire),
             MeasurementReportError::File {

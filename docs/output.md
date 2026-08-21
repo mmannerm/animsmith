@@ -5,6 +5,40 @@ Text and Markdown lint output are presentation views over the same evaluation
 results. The HTML report renders the same typed findings, coverage gaps, and
 prediction facets beside its sampled-motion view.
 
+## glTF animation addressability
+
+`animsmith generate addressability INPUT` emits a separate, one-file V1
+contract with immutable identity
+`urn:animsmith:schema:gltf-animation-addressability:1`. Its retrievable schema
+is
+[`gltf-animation-addressability-v1.schema.json`](schemas/gltf-animation-addressability-v1.schema.json).
+It is not an output-v10 measure/lint/diff envelope, and the two roots reject
+one another on readback. The staged reader accepts at most 256 MiB and applies
+that byte cap before UTF-8 or JSON decoding.
+
+The root contains the normal bounded tool identity, the exact primary input
+identity, an engine-neutral inventory, and a nullable `bevy` adapter. The
+inventory retains the complete existing dependency-closure record plus raw
+source-order animation and channel observations. Source names are optional,
+non-unique metadata; source indices remain the identity authority. The
+inventory's canonical identity excludes tool metadata and the optional adapter,
+so selecting a profile does not change neutral evidence.
+
+With no engine profile or another supported non-Bevy profile, `bevy` is null.
+For the exact Bevy revision 1 / 0.19.0 / `gltf-asset-loader` profile, it embeds
+the same-load prediction-provenance V1 record and the unchanged
+`engine-addressability` check evaluation. The evaluation's available facet
+subjects are the authoritative `Animation{source_clip_index}` display
+selectors. A required-unavailable facet remains blocking and makes the command
+exit 1. Incomplete dependency closure is retained honestly but does not, by
+itself, become a claim about runtime load success.
+
+The contract is animation-only. It makes no scene, default-scene, skin,
+target-path or UUID, Bevy named-map-winner, extension-support, successful-load,
+target-survival, or animation-graph claim. JSON is canonical; `--format text`
+and `--format markdown` escape and render the same typed value without adding
+conclusions.
+
 ## Contract identities
 
 Validation and comparison JSON commands emit output contract v10 with the

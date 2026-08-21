@@ -2650,6 +2650,21 @@ This predicts the canonical selector convention only. It does not claim a
 successful Bevy load, runtime asset existence, animation-target survival, or
 graph wiring, and the index is not stable across source-order edits. Richer
 scene/name/target addressability remains a separate inventory/adapter concern.
+
+The corresponding 0.4.0 standalone producer is
+`generate addressability`. Its V1 root is separate from output-v10 and contains
+one engine-neutral glTF/GLB animation inventory plus a nullable exact-Bevy
+adapter. `animsmith-engine` owns this format/profile-specific envelope and its
+strict reader; core remains limited to the generic source, closure, prediction,
+and evaluation contracts it consumes. The neutral identity covers the primary
+input, full existing dependency closure, and bounded raw animation/channel
+observations only; tool metadata and the adapter cannot change it. The exact
+Bevy adapter embeds the same prediction provenance and unchanged
+`engine-addressability` evaluation,
+so it creates neither a second selector rule nor a second check lifecycle.
+Absent and repeated source names remain metadata. Scene/default-scene, skin,
+target path or UUID, named-map-winner, and extension-handling claims require
+new raw facts and a later profile revision and are outside this V1.
 `[checks.<id>]` remains the only authority for severity and explicit
 enable/disable overrides. Existing checks such as `loop-closure`, `in-place`,
 `foot-slide`, and `root-motion-speed` keep their current behavior under every

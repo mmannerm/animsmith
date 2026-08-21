@@ -1,15 +1,19 @@
+use animsmith_core::config::{CheckSettings, SeveritySetting};
 use animsmith_core::{
-    Check, CheckCtx, CheckSelection, DependencyClosureBuilderV1, DependencyResourceKeyV1, Document,
-    EnginePredictionBasisV1, EnginePredictionFacetStateV1, InputIdentity, MetricGrids,
-    PredictionBasisReferenceV1, PredictionUnavailableReasonV1, RawSourceBasisReferenceV1,
-    RawSourceDomainV1, RawSourceFactsBuilderV1, RawSourceFieldIdV1, RawSourceKeyV1, ResolvedRoles,
-    ResourceKeySyntaxV1, SourceClipFactV1, SourceFactDomainV1, SourceFactSetV1, SourceFormatV1,
-    SourceLoaderDispositionV1, SourceObservationV1, SourceProvenanceV1, SourceResourceKindV1,
-    SourceResourceLocatorV1, SourceResourceReferenceV1, SourceTextV1, SourceUnavailableReasonV1,
+    Check, CheckCtx, CheckEvaluation, CheckSelection, DependencyClosureBuilderV1,
+    DependencyResourceKeyV1, Document, EnginePredictionBasisV1, EnginePredictionFacetStateV1,
+    InputIdentity, MetricGrids, PredictionBasisReferenceV1, PredictionUnavailableReasonV1,
+    RawSourceBasisReferenceV1, RawSourceDomainV1, RawSourceFactsBuilderV1, RawSourceFieldIdV1,
+    RawSourceKeyV1, ResolvedRoles, ResourceKeySyntaxV1, SourceClipFactV1, SourceFactDomainV1,
+    SourceFactSetV1, SourceFormatV1, SourceLoaderDispositionV1, SourceObservationV1,
+    SourceProvenanceV1, SourceResourceKindV1, SourceResourceLocatorV1, SourceResourceReferenceV1,
+    SourceTextV1, SourceUnavailableReasonV1,
 };
 use animsmith_engine::{
-    ENGINE_ADDRESSABILITY_CHECK_ID, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck,
-    EngineDeclaration, PredictionRuleError, ProfileSelection, project_prediction_provenance_v1,
+    BevyAnimationAssetLabelError, BevyAnimationAssetLabelV1, ENGINE_ADDRESSABILITY_CHECK_ID,
+    ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineDeclaration,
+    GltfAnimationAddressabilityInventoryV1, PredictionRuleError, ProfileSelection,
+    build_bevy_animation_addressability_adapter_v1, project_prediction_provenance_v1,
     resolve_static,
 };
 use std::collections::BTreeSet;
@@ -188,9 +192,66 @@ fn evaluate(
     check.evaluate(&CheckCtx::new(&grids, &roles, &config))
 }
 
+fn evaluate_record(
+    source: &animsmith_core::LoadedSource,
+    provenance: &animsmith_core::PredictionProvenanceV1,
+) -> CheckEvaluation {
+    let grids = MetricGrids::new(source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let check: Box<dyn Check + '_> =
+        Box::new(EngineAddressabilityCheck::new(source, Some(provenance)).unwrap());
+    animsmith_core::evaluate_checks(
+        &CheckCtx::new(&grids, &roles, &config),
+        &[check],
+        CheckSelection::All,
+    )
+    .unwrap()
+    .pop()
+    .unwrap()
+}
+
+fn assert_same_evaluation(left: &CheckEvaluation, right: &CheckEvaluation) {
+    assert_eq!(left.check_id(), right.check_id());
+    assert_eq!(left.selection(), right.selection());
+    assert_eq!(left.configuration(), right.configuration());
+    assert_eq!(left.applicability(), right.applicability());
+    assert_eq!(left.evaluation(), right.evaluation());
+    assert!(left.findings().is_empty());
+    assert!(right.findings().is_empty());
+    assert_eq!(left.evaluated_scopes(), right.evaluated_scopes());
+    assert_eq!(left.gaps(), right.gaps());
+    assert_eq!(left.engine_prediction(), right.engine_prediction());
+}
+
+fn assert_adapter_reuses_exact_existing_evaluation(source: &animsmith_core::LoadedSource) {
+    let profile = bevy_profile(source);
+    let provenance = project_prediction_provenance_v1(&profile, source).unwrap();
+    let independently_evaluated = evaluate_record(source, &provenance);
+    let inventory = GltfAnimationAddressabilityInventoryV1::from_source(source).unwrap();
+    let grids = MetricGrids::new(source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let adapter = build_bevy_animation_addressability_adapter_v1(
+        source,
+        &inventory,
+        Some(provenance.clone()),
+        &CheckCtx::new(&grids, &roles, &config),
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(adapter.prediction_provenance(), &provenance);
+    assert_same_evaluation(adapter.check(), &independently_evaluated);
+}
+
 #[test]
 fn bevy_animation_index_rule_emits_one_available_facet_per_complete_source_row() {
     let source = loaded_source(ClipCoverage::Complete, &[Some("walk")]);
+    assert!(
+        !source.dependency_closure().coverage().is_complete(),
+        "the selector prediction is independent of closure completeness"
+    );
     let profile = bevy_profile(&source);
     let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
     let check = EngineAddressabilityCheck::new(&source, Some(&provenance)).unwrap();
@@ -214,6 +275,11 @@ fn bevy_animation_index_rule_emits_one_available_facet_per_complete_source_row()
         prediction.facets()[0].state(),
         EnginePredictionFacetStateV1::Available
     );
+    assert!(!animsmith_core::evaluation::lint_requires_failure(
+        &[evaluate_record(&source, &provenance)],
+        animsmith_core::Severity::Error,
+        &BTreeSet::new(),
+    ));
 }
 
 #[test]
@@ -491,8 +557,143 @@ fn names_do_not_affect_source_index_label_subjects() {
         .collect::<Vec<_>>();
     assert_eq!(
         subjects,
-        vec![Some("Animation0"), Some("Animation1"), Some("Animation2")]
+        [0, 1, 2]
+            .into_iter()
+            .map(|index| BevyAnimationAssetLabelV1::new(index).unwrap())
+            .map(|label| Some(label.as_str().to_owned()))
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|subject| subject.as_deref())
+            .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn bevy_animation_asset_label_helper_is_exact_and_bounded() {
+    for source_clip_index in 0..animsmith_core::RAW_SOURCE_V1_MAX_CLIPS {
+        let label = BevyAnimationAssetLabelV1::new(source_clip_index).unwrap();
+        assert_eq!(label.source_clip_index(), source_clip_index);
+        assert_eq!(
+            label.as_str().as_bytes(),
+            format!("Animation{source_clip_index}").as_bytes()
+        );
+        assert!(label.as_str().len() <= "Animation4095".len());
+    }
+
+    assert!(matches!(
+        BevyAnimationAssetLabelV1::new(animsmith_core::RAW_SOURCE_V1_MAX_CLIPS),
+        Err(BevyAnimationAssetLabelError {
+            source_clip_index: 4_096,
+            limit: 4_096,
+        })
+    ));
+}
+
+#[test]
+fn adapter_reuses_the_exact_existing_evaluation_for_all_inventory_states() {
+    assert_adapter_reuses_exact_existing_evaluation(&loaded_source(ClipCoverage::Complete, &[]));
+    assert_adapter_reuses_exact_existing_evaluation(&loaded_source(
+        ClipCoverage::Complete,
+        &[Some("same"), None, Some("same")],
+    ));
+    assert_adapter_reuses_exact_existing_evaluation(&loaded_source(
+        ClipCoverage::Partial,
+        &[Some("walk")],
+    ));
+    assert_adapter_reuses_exact_existing_evaluation(&loaded_source(
+        ClipCoverage::Unavailable,
+        &[Some("walk")],
+    ));
+    assert_adapter_reuses_exact_existing_evaluation(&loaded_source(
+        ClipCoverage::Complete,
+        &vec![Some("clip"); animsmith_core::RAW_SOURCE_V1_MAX_CLIPS],
+    ));
+}
+
+#[test]
+fn adapter_is_absent_without_the_exact_bevy_profile() {
+    let source = loaded_source(ClipCoverage::Complete, &[Some("walk")]);
+    let inventory = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+    let grids = MetricGrids::new(source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+
+    assert!(
+        build_bevy_animation_addressability_adapter_v1(&source, &inventory, None, &ctx)
+            .unwrap()
+            .is_none()
+    );
+
+    let profile = resolve_static(EngineDeclaration {
+        selection: Some(ProfileSelection::new(
+            "godot",
+            1,
+            "4.7",
+            "resource-importer-scene",
+        )),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap()
+    .resolve_input(SourceFormatV1::GltfJson, &["walk".into()])
+    .unwrap();
+    let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
+    assert!(
+        build_bevy_animation_addressability_adapter_v1(
+            &source,
+            &inventory,
+            Some(provenance),
+            &ctx,
+        )
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[test]
+fn adapter_preserves_the_existing_disabled_check_lifecycle() {
+    let source = loaded_source(ClipCoverage::Complete, &[Some("walk")]);
+    let inventory = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+    let profile = bevy_profile(&source);
+    let provenance = project_prediction_provenance_v1(&profile, &source).unwrap();
+    let grids = MetricGrids::new(source.document());
+    let roles = ResolvedRoles::default();
+    let mut config = animsmith_core::Config::default();
+    config.checks.insert(
+        ENGINE_ADDRESSABILITY_CHECK_ID.to_owned(),
+        CheckSettings {
+            severity: Some(SeveritySetting::Off),
+            ..CheckSettings::default()
+        },
+    );
+
+    let adapter = build_bevy_animation_addressability_adapter_v1(
+        &source,
+        &inventory,
+        Some(provenance),
+        &CheckCtx::new(&grids, &roles, &config),
+    )
+    .unwrap()
+    .expect("an exact Bevy profile retains an adapter even when its check is disabled");
+    let check = adapter.check();
+    assert_eq!(check.selection(), animsmith_core::SelectionState::Selected);
+    assert_eq!(
+        check.configuration(),
+        animsmith_core::ConfigurationState::Disabled
+    );
+    assert_eq!(
+        check.applicability(),
+        animsmith_core::Applicability::Applicable
+    );
+    assert_eq!(
+        check.evaluation(),
+        animsmith_core::EvaluationState::NotEvaluated
+    );
+    assert!(check.findings().is_empty());
+    assert!(check.evaluated_scopes().is_empty());
+    assert!(check.gaps().is_empty());
+    assert!(check.engine_prediction().is_none());
 }
 
 #[test]
@@ -514,7 +715,8 @@ fn raw_clip_bound_uses_available_facets_at_4096_and_one_partial_inventory_facet(
             .unwrap()
             .parse::<usize>()
             .unwrap();
-        assert_eq!(subject, format!("Animation{index}"));
+        let helper = BevyAnimationAssetLabelV1::new(index).unwrap();
+        assert_eq!(subject.as_bytes(), helper.as_str().as_bytes());
         assert!(index < seen.len());
         assert!(!std::mem::replace(&mut seen[index], true));
         let expected_raw = RawSourceBasisReferenceV1::from_source(

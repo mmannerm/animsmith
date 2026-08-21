@@ -17,7 +17,7 @@ Find what you need by task — each page below owns one job.
 | [Multi-source character assembly](character-assembly.md) | Combine an authoritative skinned base with exact takes and timeline windows from separate inputs, producing one deterministic GLB plus evidence. |
 | [embedding.md](embedding.md) | Choose library crates and integration boundaries, then follow the embedded gate flow with the runnable [`embed`](../crates/animsmith/examples/embed.rs) example. |
 | [docs.rs API references](https://docs.rs/animsmith-core) | Look up exact published Rust API contracts for [`animsmith-core`](https://docs.rs/animsmith-core), [`animsmith-gltf`](https://docs.rs/animsmith-gltf), [`animsmith-fbx`](https://docs.rs/animsmith-fbx), [`animsmith-engine`](https://docs.rs/animsmith-engine), and [`animsmith-report`](https://docs.rs/animsmith-report). |
-| [output.md](output.md) | Parse versioned `--format json` reports and conversion evidence in a pipeline, validated by the JSON Schema under [`schemas/`](schemas/). |
+| [output.md](output.md) | Parse versioned `--format json` reports, glTF animation-addressability inventories, and producer evidence in a pipeline, validated by the JSON Schema under [`schemas/`](schemas/). |
 | [README](../README.md) | Install and quickstart, plus the check and configuration reference. |
 | [DESIGN.md](../DESIGN.md) | Follow the architecture, check-catalog rationale, and roadmap. |
 | [Scale proof calibration](scale-calibration.md) | Review the implementation-owned calibration sweep, provenance magnitudes, historical policy measurements, and reproducible command behind `appendix-d-v6`. |

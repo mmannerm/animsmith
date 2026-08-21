@@ -348,3 +348,48 @@ fn cookbook_semantic_contract() {
         "bare lint has no findings: {out}"
     );
 }
+
+#[test]
+fn cookbook_addressability_inventory() {
+    let walk = asset("walk.glb");
+    let walk = walk.to_str().unwrap();
+
+    let (code, out) = run(&["generate", "addressability", walk]);
+    assert_eq!(code, Some(0), "neutral addressability generation exits 0");
+    let doc: Value = serde_json::from_str(&out).expect("default addressability output is JSON");
+    assert_eq!(
+        doc["schema"],
+        "urn:animsmith:schema:gltf-animation-addressability:1"
+    );
+    assert_eq!(
+        doc["inventory"]["animations"]["coverage"]["state"],
+        "complete"
+    );
+    assert_eq!(
+        doc["inventory"]["animations"]["rows"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert!(
+        doc["bevy"].is_null(),
+        "neutral output has no adapter: {out}"
+    );
+
+    let config =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/bevy.animsmith.toml");
+    let (code, out) = run(&[
+        "--config",
+        config.to_str().unwrap(),
+        "generate",
+        "addressability",
+        walk,
+        "--format",
+        "markdown",
+    ]);
+    assert_eq!(code, Some(0), "exact Bevy Markdown generation exits 0");
+    assert!(
+        out.starts_with("# glTF animation addressability v1\n") && out.contains("Animation0"),
+        "Bevy presentation renders the documented selector: {out}"
+    );
+}

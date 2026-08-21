@@ -16,8 +16,15 @@ use animsmith_core::measure::{
 };
 use animsmith_core::model::Clip;
 use animsmith_core::{
-    CoverageGap, CoverageGapCode, Document, EnginePredictionFacetStateV1, EnginePredictionFacetV1,
-    Finding, LintFileReport, MeasureFileReport, ResolvedRoles, Severity,
+    Applicability, ConfigurationState, CoverageGap, CoverageGapCode,
+    DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, Document,
+    EnginePredictionFacetStateV1, EnginePredictionFacetV1, EvaluationState, Finding,
+    LintFileReport, MeasureFileReport, ResolvedRoles, SelectionState, Severity, SourceFormatV1,
+};
+use animsmith_engine::{
+    GltfAnimationAddressabilityV1, GltfAnimationChannelPropertyV1, GltfAnimationCoverageStateV1,
+    GltfAnimationCoverageV1, GltfAnimationObservationV1, GltfAnimationTargetKindV1,
+    GltfAnimationUnavailableReasonV1,
 };
 use animsmith_gltf::fix::{FixReport, Repair};
 use animsmith_gltf::write::WriteSummary;
@@ -73,6 +80,427 @@ pub(crate) fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
 /// Render one operator error for stderr.
 pub(crate) fn render_operator_error(message: &str) -> String {
     format!("animsmith: {}\n", text_atom(message))
+}
+
+fn addressability_source_format(format: SourceFormatV1) -> &'static str {
+    match format {
+        SourceFormatV1::GltfJson => "gltf_json",
+        SourceFormatV1::Glb => "glb",
+        SourceFormatV1::Fbx => "fbx",
+    }
+}
+
+fn addressability_coverage(state: GltfAnimationCoverageStateV1) -> &'static str {
+    match state {
+        GltfAnimationCoverageStateV1::Complete => "complete",
+        GltfAnimationCoverageStateV1::Partial => "partial",
+        GltfAnimationCoverageStateV1::Unavailable => "unavailable",
+    }
+}
+
+fn addressability_unavailable_reason(reason: GltfAnimationUnavailableReasonV1) -> &'static str {
+    match reason {
+        GltfAnimationUnavailableReasonV1::Malformed => "malformed",
+        GltfAnimationUnavailableReasonV1::Discarded => "discarded",
+        GltfAnimationUnavailableReasonV1::NormalizedAway => "normalized_away",
+        GltfAnimationUnavailableReasonV1::BakedAway => "baked_away",
+        GltfAnimationUnavailableReasonV1::LoaderUnsupported => "loader_unsupported",
+        GltfAnimationUnavailableReasonV1::ProjectionBudgetExceeded => "projection_budget_exceeded",
+        GltfAnimationUnavailableReasonV1::ParserUnavailable => "parser_unavailable",
+    }
+}
+
+fn addressability_coverage_label(coverage: GltfAnimationCoverageV1) -> String {
+    let state = addressability_coverage(coverage.state());
+    coverage.reason().map_or_else(
+        || state.to_owned(),
+        |reason| format!("{state} ({})", addressability_unavailable_reason(reason)),
+    )
+}
+
+fn closure_reason(reason: DependencyClosureCoverageReasonV1) -> &'static str {
+    match reason {
+        DependencyClosureCoverageReasonV1::SourceDeclarationsPartial => {
+            "source_declarations_partial"
+        }
+        DependencyClosureCoverageReasonV1::SourceDeclarationsUnavailable => {
+            "source_declarations_unavailable"
+        }
+        DependencyClosureCoverageReasonV1::CaptureUnavailable => "capture_unavailable",
+        DependencyClosureCoverageReasonV1::RefusedResource => "refused_resource",
+        DependencyClosureCoverageReasonV1::UnavailableResource => "unavailable_resource",
+        DependencyClosureCoverageReasonV1::ResourceBudgetExceeded => "resource_budget_exceeded",
+        DependencyClosureCoverageReasonV1::UnmodeledResourceDomain => "unmodeled_resource_domain",
+    }
+}
+
+fn closure_coverage_label(coverage: &DependencyClosureCoverageV1) -> String {
+    let state = match coverage {
+        DependencyClosureCoverageV1::Complete => "complete",
+        DependencyClosureCoverageV1::Partial { .. } => "partial",
+        DependencyClosureCoverageV1::Unavailable { .. } => "unavailable",
+    };
+    if coverage.reasons().is_empty() {
+        state.to_owned()
+    } else {
+        format!(
+            "{state} ({})",
+            coverage
+                .reasons()
+                .iter()
+                .copied()
+                .map(closure_reason)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+fn addressability_target_kind(kind: GltfAnimationTargetKindV1) -> &'static str {
+    match kind {
+        GltfAnimationTargetKindV1::Node => "node",
+        GltfAnimationTargetKindV1::Element => "element",
+        GltfAnimationTargetKindV1::Other => "other",
+    }
+}
+
+fn addressability_property(property: GltfAnimationChannelPropertyV1) -> &'static str {
+    match property {
+        GltfAnimationChannelPropertyV1::Translation => "translation",
+        GltfAnimationChannelPropertyV1::Rotation => "rotation",
+        GltfAnimationChannelPropertyV1::Scale => "scale",
+        GltfAnimationChannelPropertyV1::Weights => "weights",
+        GltfAnimationChannelPropertyV1::Other => "other",
+    }
+}
+
+fn addressability_name(observation: &GltfAnimationObservationV1<String>) -> String {
+    match observation {
+        GltfAnimationObservationV1::Observed { value } => quoted_text_atom(value),
+        GltfAnimationObservationV1::ProvenAbsent => "proven_absent".into(),
+        GltfAnimationObservationV1::Unavailable { reason } => {
+            format!(
+                "unavailable ({})",
+                addressability_unavailable_reason(*reason)
+            )
+        }
+    }
+}
+
+fn addressability_normalized_index(observation: &GltfAnimationObservationV1<u64>) -> String {
+    match observation {
+        GltfAnimationObservationV1::Observed { value } => value.to_string(),
+        GltfAnimationObservationV1::ProvenAbsent => "proven_absent".into(),
+        GltfAnimationObservationV1::Unavailable { reason } => {
+            format!(
+                "unavailable ({})",
+                addressability_unavailable_reason(*reason)
+            )
+        }
+    }
+}
+
+fn selection_name(state: SelectionState) -> &'static str {
+    match state {
+        SelectionState::Selected => "selected",
+        SelectionState::Unselected => "unselected",
+    }
+}
+
+fn configuration_name(state: ConfigurationState) -> &'static str {
+    match state {
+        ConfigurationState::Enabled => "enabled",
+        ConfigurationState::Disabled => "disabled",
+    }
+}
+
+fn applicability_name(state: Applicability) -> &'static str {
+    match state {
+        Applicability::Applicable => "applicable",
+        Applicability::NotApplicable => "not_applicable",
+    }
+}
+
+fn evaluation_name(state: EvaluationState) -> &'static str {
+    match state {
+        EvaluationState::Complete => "complete",
+        EvaluationState::Partial => "partial",
+        EvaluationState::NotEvaluated => "not_evaluated",
+    }
+}
+
+/// Render one validated addressability document as escaped, line-oriented text.
+pub(crate) fn render_addressability_text(report: &GltfAnimationAddressabilityV1) -> String {
+    use std::fmt::Write as _;
+
+    let inventory = report.inventory();
+    let closure = inventory.dependency_closure();
+    let animations = inventory.animations();
+    let mut out = String::new();
+    let _ = writeln!(out, "glTF animation addressability v1");
+    let _ = writeln!(
+        out,
+        "input: sha256={} bytes={}",
+        report.input().sha256(),
+        report.input().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "inventory: sha256={} canonical-bytes={}",
+        inventory.identity().input_identity().sha256(),
+        inventory.identity().input_identity().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "source format: {}",
+        addressability_source_format(inventory.source_format())
+    );
+    let _ = writeln!(
+        out,
+        "dependency closure: {} ({} reference(s), {} external resource(s))",
+        closure_coverage_label(closure.coverage()),
+        closure.references().len(),
+        closure.external_resources().len(),
+    );
+    let _ = writeln!(
+        out,
+        "animations: {} ({} retained row(s))",
+        addressability_coverage_label(animations.coverage()),
+        animations.rows().len(),
+    );
+    for animation in animations.rows() {
+        let _ = writeln!(
+            out,
+            "  animation {}: name={} normalized_clip_index={} channels={} ({} retained row(s))",
+            animation.source_clip_index(),
+            addressability_name(animation.source_name()),
+            addressability_normalized_index(animation.normalized_clip_index()),
+            addressability_coverage_label(animation.channels().coverage()),
+            animation.channels().rows().len(),
+        );
+        for channel in animation.channels().rows() {
+            let target = channel.target();
+            let input = channel.input_accessor_index();
+            let output = channel.output_accessor_index();
+            let _ = writeln!(
+                out,
+                "    channel {}: {} {} {} input_accessor={} output_accessor={}",
+                channel.source_channel_index(),
+                addressability_target_kind(target.kind()),
+                target.index(),
+                addressability_property(channel.property()),
+                input,
+                output,
+            );
+        }
+    }
+
+    let Some(adapter) = report.bevy() else {
+        let _ = writeln!(out, "Bevy adapter: null");
+        return out;
+    };
+    let selection = adapter.prediction_provenance().profile().selection();
+    let check = adapter.check();
+    let _ = writeln!(
+        out,
+        "Bevy adapter: {} revision {} ({} / {})",
+        text_atom(selection.family()),
+        selection.profile_revision(),
+        text_atom(selection.engine_version()),
+        text_atom(selection.importer()),
+    );
+    let _ = writeln!(
+        out,
+        "  check {}: {} / {} / {} / {}",
+        text_atom(check.check_id()),
+        selection_name(check.selection()),
+        configuration_name(check.configuration()),
+        applicability_name(check.applicability()),
+        evaluation_name(check.evaluation()),
+    );
+    if let Some(prediction) = check.engine_prediction() {
+        for facet in prediction.facets() {
+            let subject = facet
+                .scope()
+                .subject
+                .as_deref()
+                .map_or_else(|| "null".into(), |value| text_atom(value).into_owned());
+            let (state, reasons) = match facet.state() {
+                EnginePredictionFacetStateV1::Available => ("available", String::new()),
+                EnginePredictionFacetStateV1::RequiredPredictionUnavailable => (
+                    "required_prediction_unavailable",
+                    format!(
+                        " ({})",
+                        facet
+                            .reasons()
+                            .iter()
+                            .map(|reason| reason.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                ),
+            };
+            let _ = writeln!(
+                out,
+                "    facet {} subject {}: {}{}",
+                facet.scope().code,
+                subject,
+                state,
+                reasons,
+            );
+        }
+    }
+    out
+}
+
+/// Render one validated addressability document as escaped Markdown.
+pub(crate) fn render_addressability_markdown(report: &GltfAnimationAddressabilityV1) -> String {
+    use std::fmt::Write as _;
+
+    let inventory = report.inventory();
+    let closure = inventory.dependency_closure();
+    let animations = inventory.animations();
+    let mut out = String::from("# glTF animation addressability v1\n\n");
+    let _ = writeln!(
+        out,
+        "- Input: `{}` (`{}` bytes)",
+        report.input().sha256(),
+        report.input().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "- Inventory: `{}` (`{}` canonical bytes)",
+        inventory.identity().input_identity().sha256(),
+        inventory.identity().input_identity().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "- Source format: `{}`",
+        addressability_source_format(inventory.source_format())
+    );
+    let _ = writeln!(
+        out,
+        "- Dependency closure: `{}` (`{}` references, `{}` external resources)",
+        md_cell(&closure_coverage_label(closure.coverage())),
+        closure.references().len(),
+        closure.external_resources().len(),
+    );
+    let _ = writeln!(
+        out,
+        "- Animations: `{}` (`{}` retained rows)\n",
+        md_cell(&addressability_coverage_label(animations.coverage())),
+        animations.rows().len(),
+    );
+    let _ = writeln!(
+        out,
+        "| Animation | Source name | Normalized clip | Channel coverage | Channels |"
+    );
+    let _ = writeln!(out, "| ---: | --- | ---: | --- | ---: |");
+    for animation in animations.rows() {
+        let _ = writeln!(
+            out,
+            "| {} | `{}` | `{}` | `{}` | {} |",
+            animation.source_clip_index(),
+            md_cell(&addressability_name(animation.source_name())),
+            md_cell(&addressability_normalized_index(
+                animation.normalized_clip_index()
+            )),
+            md_cell(&addressability_coverage_label(
+                animation.channels().coverage()
+            )),
+            animation.channels().rows().len(),
+        );
+    }
+    let _ = writeln!(out);
+    for animation in animations.rows() {
+        if animation.channels().rows().is_empty() {
+            continue;
+        }
+        let _ = writeln!(
+            out,
+            "## Animation {} channels\n",
+            animation.source_clip_index()
+        );
+        let _ = writeln!(
+            out,
+            "| Channel | Target | Property | Input accessor | Output accessor |"
+        );
+        let _ = writeln!(out, "| ---: | --- | --- | ---: | ---: |");
+        for channel in animation.channels().rows() {
+            let target = channel.target();
+            let input = channel.input_accessor_index();
+            let output = channel.output_accessor_index();
+            let _ = writeln!(
+                out,
+                "| {} | `{} {}` | `{}` | `{}` | `{}` |",
+                channel.source_channel_index(),
+                addressability_target_kind(target.kind()),
+                target.index(),
+                addressability_property(channel.property()),
+                input,
+                output,
+            );
+        }
+        let _ = writeln!(out);
+    }
+
+    let Some(adapter) = report.bevy() else {
+        let _ = writeln!(out, "## Bevy adapter\n\n`null`\n");
+        return out;
+    };
+    let selection = adapter.prediction_provenance().profile().selection();
+    let check = adapter.check();
+    let _ = writeln!(out, "## Bevy adapter\n");
+    let _ = writeln!(
+        out,
+        "Profile: `{}` revision `{}` (`{}` / `{}`).\n",
+        md_cell(selection.family()),
+        selection.profile_revision(),
+        md_cell(selection.engine_version()),
+        md_cell(selection.importer()),
+    );
+    let _ = writeln!(
+        out,
+        "Check `{}`: `{}` / `{}` / `{}` / `{}`.\n",
+        md_cell(check.check_id()),
+        selection_name(check.selection()),
+        configuration_name(check.configuration()),
+        applicability_name(check.applicability()),
+        evaluation_name(check.evaluation()),
+    );
+    if let Some(prediction) = check.engine_prediction() {
+        let _ = writeln!(out, "| Scope | Subject | Prediction | Reasons |");
+        let _ = writeln!(out, "| --- | --- | --- | --- |");
+        for facet in prediction.facets() {
+            let subject = facet
+                .scope()
+                .subject
+                .as_deref()
+                .map(md_cell)
+                .unwrap_or_else(|| "null".into());
+            let (state, reasons) = match facet.state() {
+                EnginePredictionFacetStateV1::Available => ("available", "—".into()),
+                EnginePredictionFacetStateV1::RequiredPredictionUnavailable => (
+                    "required_prediction_unavailable",
+                    facet
+                        .reasons()
+                        .iter()
+                        .map(|reason| md_cell(reason.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+            };
+            let _ = writeln!(
+                out,
+                "| `{}` | `{}` | `{}` | `{}` |",
+                md_cell(facet.scope().code.as_str()),
+                subject,
+                state,
+                reasons,
+            );
+        }
+    }
+    out
 }
 
 fn render_aabb_size(label: &str, bounds: &animsmith_core::measure::Aabb) -> String {
