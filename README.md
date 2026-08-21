@@ -13,9 +13,9 @@ could not evaluate.
 animsmith checks glTF/GLB and FBX clips for broken quaternions,
 degenerate durations, popped loop seams, gait-phase drift, root-motion
 contract drift, export bloat, and other game-semantics problems. It can
-also inspect rigs, measure clips, generate an offline HTML report,
-convert DCC exports, compare re-exports, and byte-surgically fix safe
-mechanical problems.
+also inspect rigs, measure clips, generate an offline HTML report or a
+versioned glTF animation-addressability inventory, convert DCC exports,
+compare re-exports, and byte-surgically fix safe mechanical problems.
 
 glTF-Validator checks spec conformance. animsmith checks content
 semantics: loop seams, gait phase, root-motion speed, track hygiene, and
@@ -99,6 +99,7 @@ clip.glb:
 $ animsmith lint export.fbx
 $ animsmith measure clip.glb
 $ animsmith inspect clip.glb
+$ animsmith generate addressability clip.glb
 $ animsmith report clip.glb -o report.html
 $ animsmith convert export.fbx -o clip.glb
 $ animsmith convert prop.fbx -o prop.glb --bake-static-mesh-transforms

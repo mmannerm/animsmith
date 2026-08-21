@@ -1,15 +1,48 @@
 //! Engine-owned checks derived from immutable profile and same-load source evidence.
 
+use crate::addressability::{
+    GltfAnimationAddressabilityBevyAdapterV1, GltfAnimationAddressabilityInventoryV1,
+};
 use crate::error::PredictionRuleError;
 use crate::registry::profiles_v1;
 use animsmith_core::{
-    Applicability, Check, CheckCtx, CheckOutput, EngineAnimationAddressabilityV1, EngineFactIdV1,
-    EngineFactStateV1, EngineFactValueV1, EnginePredictionBasisV1, EnginePredictionFacetV1,
-    EnginePredictionV1, EvaluationScope, EvaluationScopeCode, LoadedSource,
-    PredictionBasisReferenceV1, PredictionProvenanceV1, PredictionUnavailableReasonV1,
-    RawSourceBasisReferenceV1, RawSourceBindingV1, RawSourceDomainV1, RawSourceFieldIdV1,
-    RawSourceKeyV1, SourceFormatV1, SourceSetCoverageStateV1,
+    Applicability, Check, CheckCtx, CheckOutput, CheckSelection, EngineAnimationAddressabilityV1,
+    EngineFactIdV1, EngineFactStateV1, EngineFactValueV1, EnginePredictionBasisV1,
+    EnginePredictionFacetV1, EnginePredictionV1, EvaluationScope, EvaluationScopeCode,
+    LoadedSource, PredictionBasisReferenceV1, PredictionProvenanceV1,
+    PredictionUnavailableReasonV1, RAW_SOURCE_V1_MAX_CLIPS, RawSourceBasisReferenceV1,
+    RawSourceBindingV1, RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1, SourceFormatV1,
+    SourceSetCoverageStateV1, evaluate_checks,
 };
+
+/// A Bevy animation asset-label index outside the bounded raw-source
+/// animation inventory.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("source animation index {source_clip_index} is outside the V1 limit of {limit} animations")]
+pub struct BevyAnimationAssetLabelError {
+    /// Supplied source animation index.
+    pub source_clip_index: usize,
+    /// Exclusive upper bound for V1 source animation indices.
+    pub limit: usize,
+}
+
+/// Typed failure while constructing the optional exact Bevy adapter for a
+/// glTF animation-addressability document.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum GltfAnimationAddressabilityAdapterError {
+    /// Same-load source binding or frozen-profile validation failed.
+    #[error(transparent)]
+    PredictionRule(#[from] PredictionRuleError),
+    /// The existing engine-addressability check could not form a valid
+    /// [`animsmith_core::CheckEvaluation`].
+    #[error(transparent)]
+    Evaluation(#[from] animsmith_core::EvaluationError),
+    /// The standalone contract rejected inconsistent inventory, provenance,
+    /// or check evidence.
+    #[error(transparent)]
+    Contract(#[from] crate::GltfAnimationAddressabilityError),
+}
 
 /// Stable check id for engine scene, animation, target, and runtime-label addressability.
 pub const ENGINE_ADDRESSABILITY_CHECK_ID: &str = "engine-addressability";
@@ -22,6 +55,49 @@ const BEVY_PROFILE_REVISION: u32 = 1;
 const BEVY_ENGINE_VERSION: &str = "0.19.0";
 const BEVY_IMPORTER: &str = "gltf-asset-loader";
 const BEVY_ANIMATION_LABEL_SOURCE: &str = "bevy-gltf-asset-label-0.19.0";
+
+/// One exact Bevy 0.19.0 `GltfAssetLabel::Animation(index)` display selector.
+///
+/// The source animation index is authoritative. Source names are optional,
+/// non-unique metadata and never affect this value. Construction enforces the
+/// same 4,096-row ceiling as raw-source facts, so the retained selector text is
+/// bounded to `Animation0` through `Animation4095`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BevyAnimationAssetLabelV1 {
+    source_clip_index: usize,
+    display_selector: String,
+}
+
+impl BevyAnimationAssetLabelV1 {
+    /// Construct the indexed selector for one retained source animation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BevyAnimationAssetLabelError`] when the index cannot occur in
+    /// the bounded V1 raw-source animation inventory.
+    pub fn new(source_clip_index: usize) -> Result<Self, BevyAnimationAssetLabelError> {
+        if source_clip_index >= RAW_SOURCE_V1_MAX_CLIPS {
+            return Err(BevyAnimationAssetLabelError {
+                source_clip_index,
+                limit: RAW_SOURCE_V1_MAX_CLIPS,
+            });
+        }
+        Ok(Self {
+            source_clip_index,
+            display_selector: format!("Animation{source_clip_index}"),
+        })
+    }
+
+    /// Exact source animation index carried by this selector.
+    pub const fn source_clip_index(&self) -> usize {
+        self.source_clip_index
+    }
+
+    /// Exact Bevy display selector, such as `Animation0`.
+    pub fn as_str(&self) -> &str {
+        &self.display_selector
+    }
+}
 
 /// The engine addressability check over borrowed same-load source evidence.
 ///
@@ -88,6 +164,51 @@ impl Check for EngineAddressabilityCheck<'_> {
         }
         evaluate_animation_asset_labels(self.source, provenance)
     }
+}
+
+/// Build the optional exact Bevy 0.19.0 adapter for one addressability document.
+///
+/// This is the single adapter assembly path: it binds the existing
+/// [`EngineAddressabilityCheck`] to the supplied same-load source and
+/// provenance, sends that one check through [`evaluate_checks`] exactly once,
+/// then lets the standalone contract validate the unchanged resulting evaluation
+/// against the neutral inventory. No-profile and valid non-Bevy provenance
+/// produce `None` without adding another check or prediction lifecycle.
+///
+/// # Errors
+///
+/// Returns [`GltfAnimationAddressabilityAdapterError`] when same-load or
+/// frozen-profile validation fails, the existing check cannot produce a valid
+/// evaluation, or the standalone contract rejects inconsistent evidence.
+pub fn build_bevy_animation_addressability_adapter_v1(
+    source: &LoadedSource,
+    inventory: &GltfAnimationAddressabilityInventoryV1,
+    prediction_provenance: Option<PredictionProvenanceV1>,
+    ctx: &CheckCtx<'_>,
+) -> Result<Option<GltfAnimationAddressabilityBevyAdapterV1>, GltfAnimationAddressabilityAdapterError>
+{
+    let Some(prediction_provenance) = prediction_provenance else {
+        return Ok(None);
+    };
+    let check = EngineAddressabilityCheck::new(source, Some(&prediction_provenance))?;
+    if !is_bevy_gltf(source, &prediction_provenance) {
+        return Ok(None);
+    }
+
+    let evaluation = {
+        let checks: [Box<dyn Check + '_>; 1] = [Box::new(check)];
+        let mut evaluations = evaluate_checks(ctx, &checks, CheckSelection::All)?;
+        let evaluation = evaluations
+            .pop()
+            .expect("one valid static check catalog produces one evaluation");
+        debug_assert!(evaluations.is_empty());
+        evaluation
+    };
+    Ok(Some(GltfAnimationAddressabilityBevyAdapterV1::new(
+        prediction_provenance,
+        evaluation,
+        inventory,
+    )?))
 }
 
 fn borrowed_applicability(
@@ -162,8 +283,10 @@ fn evaluate_animation_asset_labels(
     let mut facets = Vec::with_capacity(facts.clips().rows().len());
     for clip in facts.clips().rows() {
         let source_index = clip.source_clip_index();
+        let label = BevyAnimationAssetLabelV1::new(source_index)
+            .expect("loader-valid retained clip indices satisfy the V1 raw-source bound");
         let scope = EvaluationScope::new(EvaluationScopeCode::ANIMATION_ASSET_LABEL)
-            .subject(format!("Animation{source_index}"));
+            .subject(label.as_str().to_owned());
         let source_name = RawSourceBasisReferenceV1::from_source(
             RawSourceDomainV1::Clip,
             RawSourceKeyV1::Clip {

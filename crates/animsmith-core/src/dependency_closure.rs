@@ -660,10 +660,26 @@ struct DependencyClosureWireV1 {
     budget: ResourceClosureBudgetV1,
     primary_input: InputIdentity,
     coverage: DependencyClosureCoverageV1,
-    identity: Option<DependencyClosureIdentityV1>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
+    identity: OptionalNonNull<DependencyClosureIdentityV1>,
     references: Vec<DependencyClosureReferenceV1>,
     external_resources: Vec<ExternalResourceIdentityV1>,
     work: DependencyClosureWorkV1,
+}
+
+#[derive(Debug, Default)]
+enum OptionalNonNull<T> {
+    #[default]
+    Missing,
+    Present(T),
+}
+
+fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<OptionalNonNull<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(OptionalNonNull::Present)
 }
 
 #[derive(Debug)]
@@ -701,7 +717,10 @@ impl DependencyClosureV1 {
             budget: wire.budget,
             primary_input: wire.primary_input,
             coverage: wire.coverage,
-            identity: wire.identity,
+            identity: match wire.identity {
+                OptionalNonNull::Missing => None,
+                OptionalNonNull::Present(identity) => Some(identity),
+            },
             references: wire.references,
             external_resources: wire.external_resources,
             work: wire.work,
@@ -792,6 +811,16 @@ impl DependencyClosureV1 {
     /// Explicit bounded capture work counters.
     pub const fn work(&self) -> DependencyClosureWorkV1 {
         self.work
+    }
+
+    /// Canonical fingerprint of the complete serialized closure record.
+    ///
+    /// Unlike [`Self::identity`], this is available for partial and unavailable
+    /// records and therefore does **not** prove closure completeness. It exists
+    /// so another versioned contract can commit to the exact bounded evidence
+    /// record without depending on JSON encoder details.
+    pub fn record_identity(&self) -> InputIdentity {
+        canonical_record_identity(self)
     }
 
     fn validate_wire(&self) -> Result<(), String> {
@@ -1731,6 +1760,128 @@ fn canonical_identity(
     DependencyClosureIdentityV1(InputIdentity::from_bytes(&bytes))
 }
 
+fn canonical_record_identity(closure: &DependencyClosureV1) -> InputIdentity {
+    let mut bytes = Vec::new();
+    encode_text(&mut bytes, "animsmith-dependency-closure-record-v1");
+    encode_text(&mut bytes, closure.schema);
+    encode_text(&mut bytes, closure.budget.schema);
+    encode_u64(&mut bytes, closure.budget.max_references as u64);
+    encode_u64(&mut bytes, closure.budget.max_external_resources as u64);
+    encode_u64(&mut bytes, closure.budget.max_key_bytes as u64);
+    encode_u64(&mut bytes, closure.budget.max_path_components as u64);
+    encode_u64(&mut bytes, closure.budget.max_normalization_bytes as u64);
+    encode_u64(&mut bytes, closure.budget.max_resource_bytes);
+    encode_u64(&mut bytes, closure.budget.max_total_resource_bytes);
+    encode_u64(&mut bytes, closure.budget.max_dedup_probes as u64);
+    encode_identity(&mut bytes, &closure.primary_input);
+    match &closure.coverage {
+        DependencyClosureCoverageV1::Complete => bytes.push(0),
+        DependencyClosureCoverageV1::Partial { reasons } => {
+            bytes.push(1);
+            encode_u64(&mut bytes, reasons.len() as u64);
+            for reason in reasons {
+                bytes.push(coverage_reason_tag(*reason));
+            }
+        }
+        DependencyClosureCoverageV1::Unavailable { reasons } => {
+            bytes.push(2);
+            encode_u64(&mut bytes, reasons.len() as u64);
+            for reason in reasons {
+                bytes.push(coverage_reason_tag(*reason));
+            }
+        }
+    }
+    match &closure.identity {
+        Some(identity) => {
+            bytes.push(1);
+            encode_identity(&mut bytes, identity.input_identity());
+        }
+        None => bytes.push(0),
+    }
+    encode_u64(&mut bytes, closure.references.len() as u64);
+    for reference in &closure.references {
+        encode_u64(&mut bytes, reference.source_order_index as u64);
+        bytes.push(resource_kind_tag(reference.kind));
+        bytes.push(resource_purpose_tag(reference.purpose));
+        encode_u64(&mut bytes, reference.source_index);
+        match &reference.target {
+            DependencyReferenceTargetV1::Primary => bytes.push(0),
+            DependencyReferenceTargetV1::External { key } => {
+                bytes.push(1);
+                encode_text(&mut bytes, key.as_str());
+            }
+            DependencyReferenceTargetV1::Refused { key, reason } => {
+                bytes.push(2);
+                encode_optional_key(&mut bytes, key.as_ref());
+                bytes.push(refusal_reason_tag(*reason));
+            }
+            DependencyReferenceTargetV1::Unavailable { key, reason } => {
+                bytes.push(3);
+                encode_optional_key(&mut bytes, key.as_ref());
+                bytes.push(unavailable_reason_tag(*reason));
+            }
+        }
+    }
+    encode_u64(&mut bytes, closure.external_resources.len() as u64);
+    for resource in &closure.external_resources {
+        encode_text(&mut bytes, resource.key.as_str());
+        encode_identity(&mut bytes, &resource.identity);
+    }
+    let work = closure.work;
+    encode_u64(&mut bytes, work.inspected_references as u64);
+    encode_u64(&mut bytes, work.retained_references as u64);
+    encode_u64(&mut bytes, work.normalization_bytes_inspected as u64);
+    encode_u64(&mut bytes, work.path_components_inspected as u64);
+    encode_u64(&mut bytes, work.dedup_probes as u64);
+    encode_u64(&mut bytes, work.external_open_attempts as u64);
+    encode_u64(&mut bytes, work.distinct_external_keys as u64);
+    encode_u64(&mut bytes, work.captured_external_resources as u64);
+    encode_u64(&mut bytes, work.external_bytes_read_hashed);
+    InputIdentity::from_bytes(&bytes)
+}
+
+fn encode_optional_key(bytes: &mut Vec<u8>, key: Option<&DependencyResourceKeyV1>) {
+    match key {
+        Some(key) => {
+            bytes.push(1);
+            encode_text(bytes, key.as_str());
+        }
+        None => bytes.push(0),
+    }
+}
+
+fn coverage_reason_tag(reason: DependencyClosureCoverageReasonV1) -> u8 {
+    match reason {
+        DependencyClosureCoverageReasonV1::SourceDeclarationsPartial => 0,
+        DependencyClosureCoverageReasonV1::SourceDeclarationsUnavailable => 1,
+        DependencyClosureCoverageReasonV1::CaptureUnavailable => 2,
+        DependencyClosureCoverageReasonV1::RefusedResource => 3,
+        DependencyClosureCoverageReasonV1::UnavailableResource => 4,
+        DependencyClosureCoverageReasonV1::ResourceBudgetExceeded => 5,
+        DependencyClosureCoverageReasonV1::UnmodeledResourceDomain => 6,
+    }
+}
+
+fn refusal_reason_tag(reason: DependencyResourceRefusalReasonV1) -> u8 {
+    match reason {
+        DependencyResourceRefusalReasonV1::Absolute => 0,
+        DependencyResourceRefusalReasonV1::Escaping => 1,
+        DependencyResourceRefusalReasonV1::Remote => 2,
+        DependencyResourceRefusalReasonV1::Malformed => 3,
+        DependencyResourceRefusalReasonV1::Oversized => 4,
+        DependencyResourceRefusalReasonV1::Symlink => 5,
+    }
+}
+
+fn unavailable_reason_tag(reason: DependencyResourceUnavailableReasonV1) -> u8 {
+    match reason {
+        DependencyResourceUnavailableReasonV1::ResourceRootUnavailable => 0,
+        DependencyResourceUnavailableReasonV1::Missing => 1,
+        DependencyResourceUnavailableReasonV1::Unreadable => 2,
+        DependencyResourceUnavailableReasonV1::ResourceBudgetExceeded => 3,
+    }
+}
+
 fn encode_identity(bytes: &mut Vec<u8>, identity: &InputIdentity) {
     encode_text(bytes, identity.sha256());
     encode_u64(bytes, identity.bytes());
@@ -2008,6 +2159,12 @@ mod tests {
             .unwrap();
         let first = builder.finish().unwrap();
         assert!(first.coverage().is_complete());
+        let record_identity = first.record_identity();
+        assert_eq!(
+            record_identity.sha256(),
+            "dd3e91c7a0e1ea436c0ad538fae3de1e5d085b0b165d8727ebc1db61b8b2bbb5"
+        );
+        assert_eq!(record_identity.bytes(), 608);
         let identity = first.identity().expect("complete closure identity");
         assert_eq!(
             identity.input_identity().sha256(),
@@ -2096,6 +2253,7 @@ mod tests {
         assert_eq!(first.references()[0].kind(), changed.references()[0].kind());
         assert_eq!(first.references()[1].kind(), changed.references()[1].kind());
         assert_ne!(first.identity(), changed.identity());
+        assert_ne!(first.record_identity(), changed.record_identity());
     }
 
     #[test]
@@ -2118,6 +2276,11 @@ mod tests {
             DependencyClosureCoverageV1::Partial { .. }
         ));
         assert!(partial.identity().is_none());
+        let mut explicit_null_identity = serde_json::to_value(&partial).unwrap();
+        explicit_null_identity["identity"] = serde_json::Value::Null;
+        let error = serde_json::from_value::<DependencyClosureV1>(explicit_null_identity)
+            .expect_err("incomplete closure identity must be absent, not null");
+        assert!(error.to_string().contains("invalid type: null"), "{error}");
         let mut impossible_terminal = serde_json::to_value(&partial).unwrap();
         impossible_terminal["work"]["inspected_references"] = serde_json::json!(2);
         impossible_terminal["work"]["dedup_probes"] = serde_json::json!(2);

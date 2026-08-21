@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:gltf-animation-addressability:1",
+  "title": "animsmith glTF animation addressability v1",
+  "description": "One bounded engine-neutral glTF animation inventory with an optional exact Bevy 0.19.0 adapter. Shared provenance, closure, and check definitions are reused from immutable output v10. The staged reader caps each serialized document at 256 MiB before decoding.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "schema",
+    "tool",
+    "command",
+    "input",
+    "inventory",
+    "bevy"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "schema": {
+      "const": "urn:animsmith:schema:gltf-animation-addressability:1"
+    },
+    "tool": {
+      "$ref": "urn:animsmith:schema:output:10#/$defs/tool"
+    },
+    "command": { "const": "generate-addressability" },
+    "input": { "$ref": "#/$defs/input_identity" },
+    "inventory": { "$ref": "#/$defs/inventory" },
+    "bevy": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/bevy_adapter" }
+      ]
+    }
+  },
+  "$defs": {
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "input_identity": {
+      "$ref": "urn:animsmith:schema:output:10#/$defs/input_identity"
+    },
+    "coverage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state"],
+          "properties": { "state": { "const": "complete" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "enum": ["partial", "unavailable"] },
+            "reason": { "$ref": "#/$defs/unavailable_reason" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "unavailable_reason": {
+      "enum": [
+        "malformed",
+        "discarded",
+        "normalized_away",
+        "baked_away",
+        "loader_unsupported",
+        "projection_budget_exceeded",
+        "parser_unavailable"
+      ]
+    },
+    "text_observation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state", "value"],
+          "properties": {
+            "state": { "const": "observed" },
+            "value": {
+              "type": "string",
+              "maxLength": 4096,
+              "description": "The producer and strict reader additionally enforce the 4,096-byte UTF-8 limit."
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state"],
+          "properties": { "state": { "const": "proven_absent" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "const": "unavailable" },
+            "reason": { "$ref": "#/$defs/unavailable_reason" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "index_observation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state", "value"],
+          "properties": {
+            "state": { "const": "observed" },
+            "value": { "$ref": "#/$defs/u64" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state"],
+          "properties": { "state": { "const": "proven_absent" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "const": "unavailable" },
+            "reason": { "$ref": "#/$defs/unavailable_reason" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "target": {
+      "type": "object",
+      "required": ["kind", "index"],
+      "properties": {
+        "kind": { "const": "node" },
+        "index": { "$ref": "#/$defs/u64" }
+      },
+      "additionalProperties": false
+    },
+    "channel": {
+      "type": "object",
+      "required": [
+        "source_channel_index",
+        "target",
+        "property",
+        "input_accessor_index",
+        "output_accessor_index"
+      ],
+      "properties": {
+        "source_channel_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65534
+        },
+        "target": { "$ref": "#/$defs/target" },
+        "property": {
+          "enum": ["translation", "rotation", "scale", "weights", "other"]
+        },
+        "input_accessor_index": { "$ref": "#/$defs/u64" },
+        "output_accessor_index": { "$ref": "#/$defs/u64" }
+      },
+      "additionalProperties": false
+    },
+    "channel_set": {
+      "type": "object",
+      "required": ["coverage", "rows"],
+      "properties": {
+        "coverage": { "$ref": "#/$defs/coverage" },
+        "rows": {
+          "type": "array",
+          "maxItems": 65535,
+          "items": { "$ref": "#/$defs/channel" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "animation": {
+      "type": "object",
+      "required": [
+        "source_clip_index",
+        "source_name",
+        "normalized_clip_index",
+        "channels"
+      ],
+      "properties": {
+        "source_clip_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "source_name": { "$ref": "#/$defs/text_observation" },
+        "normalized_clip_index": { "$ref": "#/$defs/index_observation" },
+        "channels": { "$ref": "#/$defs/channel_set" }
+      },
+      "additionalProperties": false
+    },
+    "animation_set": {
+      "type": "object",
+      "required": ["coverage", "rows"],
+      "properties": {
+        "coverage": { "$ref": "#/$defs/coverage" },
+        "rows": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": { "$ref": "#/$defs/animation" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "inventory": {
+      "type": "object",
+      "required": [
+        "schema",
+        "identity",
+        "source_format",
+        "primary_input",
+        "dependency_closure",
+        "animations"
+      ],
+      "properties": {
+        "schema": {
+          "const": "urn:animsmith:schema:gltf-animation-addressability:1"
+        },
+        "identity": { "$ref": "#/$defs/input_identity" },
+        "source_format": { "enum": ["gltf_json", "glb"] },
+        "primary_input": { "$ref": "#/$defs/input_identity" },
+        "dependency_closure": {
+          "$ref": "urn:animsmith:schema:output:10#/$defs/dependency_closure"
+        },
+        "animations": { "$ref": "#/$defs/animation_set" }
+      },
+      "additionalProperties": false
+    },
+    "exact_bevy_provenance": {
+      "allOf": [
+        {
+          "$ref": "urn:animsmith:schema:output:10#/$defs/prediction_provenance"
+        },
+        {
+          "type": "object",
+          "required": ["profile", "source_format"],
+          "properties": {
+            "source_format": { "enum": ["gltf_json", "glb"] },
+            "profile": {
+              "type": "object",
+              "required": ["selection", "fact_bundle_urn", "identity"],
+              "properties": {
+                "selection": {
+                  "type": "object",
+                  "required": [
+                    "family",
+                    "profile_revision",
+                    "engine_version",
+                    "importer"
+                  ],
+                  "properties": {
+                    "family": { "const": "bevy" },
+                    "profile_revision": { "const": 1 },
+                    "engine_version": { "const": "0.19.0" },
+                    "importer": { "const": "gltf-asset-loader" }
+                  }
+                },
+                "fact_bundle_urn": {
+                  "const": "urn:animsmith:engine-profile:bevy:1"
+                },
+                "identity": {
+                  "const": {
+                    "sha256": "873b98e896f05de73d5ea30560a4555c1f93650beeec9ed929e30dbcf7ce8c1e",
+                    "bytes": 1642
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "exact_addressability_check": {
+      "allOf": [
+        {
+          "$ref": "urn:animsmith:schema:output:10#/$defs/check_evaluation"
+        },
+        {
+          "type": "object",
+          "required": ["check_id", "findings"],
+          "properties": {
+            "check_id": { "const": "engine-addressability" },
+            "findings": { "maxItems": 0 },
+            "gaps": { "maxItems": 0 }
+          }
+        }
+      ]
+    },
+    "bevy_adapter": {
+      "type": "object",
+      "required": ["prediction_provenance", "check"],
+      "properties": {
+        "prediction_provenance": { "$ref": "#/$defs/exact_bevy_provenance" },
+        "check": { "$ref": "#/$defs/exact_addressability_check" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

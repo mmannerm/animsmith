@@ -1915,6 +1915,18 @@ impl From<SourceSetCoverageV1> for RawSourceSetCoverageV1 {
     }
 }
 
+impl RawSourceSetCoverageV1 {
+    /// Exhaustiveness state retained from the raw-source row domain.
+    pub const fn state(self) -> RawSourceSetCoverageStateV1 {
+        self.state
+    }
+
+    /// Typed incompleteness reason, absent exactly for complete coverage.
+    pub const fn reason(self) -> Option<RawSourceUnavailableReasonV1> {
+        self.reason
+    }
+}
+
 /// Bounded raw-source projection work counters in their V1 declaration order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2045,6 +2057,11 @@ impl RawSourceBindingV1 {
     /// Exact source container format.
     pub const fn source_format(&self) -> SourceFormatV1 {
         self.source_format
+    }
+
+    /// Coverage of the raw source animation row domain.
+    pub const fn clips_coverage(&self) -> RawSourceSetCoverageV1 {
+        self.clips_coverage
     }
 
     fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {

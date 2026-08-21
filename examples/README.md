@@ -630,6 +630,27 @@ prefix. Prediction provenance v1 separately caps actual clip settings at
 4,096, so a 4,097-clip file is a bounded operator error rather than a truncated
 prediction; issue #485 owns a future overflow representation.
 
+Generate a reusable engine-neutral inventory as canonical JSON without a
+profile:
+
+```console
+$ animsmith generate addressability examples/assets/walk.glb \
+    > walk.addressability.json
+```
+
+Select the exact profile to add the unchanged Bevy evaluation to the same
+document; the neutral inventory and its identity stay unchanged:
+
+```console
+$ animsmith --config examples/bevy.animsmith.toml generate addressability \
+    examples/assets/walk.glb --format markdown
+```
+
+The inventory keeps source animation and channel indices, optional source
+names, raw targets and accessors, and dependency-closure identity. It does not
+infer scenes, skins, named-map winners, target UUIDs, extension support, or
+successful runtime loading.
+
 ### Steering a run without a config
 
 You can also shape a run from the command line. `--select` restricts the

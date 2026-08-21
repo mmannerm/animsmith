@@ -36,6 +36,7 @@ Every command has generated help:
 animsmith --help
 animsmith lint --help
 animsmith fix --help
+animsmith generate addressability --help
 ```
 
 There are no man pages yet, so `--help` is the canonical installed CLI
@@ -56,6 +57,7 @@ animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-text
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json> [--format text|json]
 animsmith scale whole-document <in.glb|in.gltf> -o <out.glb|out.gltf> --factor N --evidence <out.json> [--format text|json]
 animsmith scale rest-bind <in.glb|in.gltf> -o <out.glb|out.gltf> --source-skin-index N --source-root-node-index N --expected-factor N --evidence <out.json> [--format text|json]
+animsmith generate addressability <in.glb|in.gltf> [--format json|text|markdown]
 animsmith diff <before> <after> [--format text|json]
 ```
 
@@ -192,13 +194,13 @@ tangents.
 | Code | Meaning |
 |---:|---|
 | 0 | No failing findings and no required-unavailable engine prediction facets; warnings, notes, or ordinary coverage gaps may remain. |
-| 1 | At least one failing finding, any `required_prediction_unavailable` facet, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
+| 1 | At least one failing finding, any `required_prediction_unavailable` facet (including an embedded Bevy addressability evaluation), a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 The code reports what the run *did*, never how well it could report it. This
 holds for **every stdout presentation**: parser-rendered help/version, text,
 Markdown, and every `--format json` path (`measure`, `lint`, `diff`, `convert`,
-`assemble`, `scale`). If
+`assemble`, `scale`, `generate addressability`). If
 stdout cannot accept the result — a closed pipe or full filesystem — the
 checked write never panics, a best-effort checked diagnostic goes to stderr,
 and the stdout-bearing path's already-established code stands. Thus
@@ -518,6 +520,39 @@ Prediction provenance v1 materializes at most 4,096 actual clips. A
 4,097-clip input returns a bounded operator error before prediction instead of
 truncating resolved settings; issue #485 owns a future overflow representation.
 
+`generate addressability` packages the same immutable raw-source evidence as a
+standalone, animation-only contract. It emits canonical JSON by default:
+
+```console
+animsmith generate addressability examples/assets/walk.glb \
+  > walk.addressability.json
+```
+
+The neutral inventory retains source-order animation and channel indices,
+optional non-unique source names, channel targets and accessor indices, the
+primary-file identity, and the full dependency closure. Its identity covers
+only those neutral fields. Without an engine profile, or with a supported
+profile other than the exact Bevy tuple above, the root `bevy` field is null.
+With the exact Bevy profile, it embeds same-load prediction provenance and the
+unchanged `engine-addressability` evaluation:
+
+```console
+animsmith --config examples/bevy.animsmith.toml generate addressability \
+  examples/assets/walk.glb --format markdown
+```
+
+Names remain metadata and never replace source indices. Partial or unavailable
+animation coverage stays visible in the neutral inventory. When the exact Bevy
+adapter is active, the existing required-unavailable facet makes the command
+exit 1; without that adapter the same neutral evidence exits 0. Non-glTF input,
+malformed or unknown profile selections, and an actual 4,097-clip input are
+operator errors (exit 2). Text and Markdown are escaped presentation views of
+the same validated value and add no conclusions to the JSON contract. This V1
+does not inventory scenes, default scenes, skins, target paths or UUIDs, Bevy
+named-map winners, or extension support, and it does not certify a runtime
+load. Consumers using the strict staged reader must also keep each report at or
+below 256 MiB; the reader enforces this byte cap before UTF-8 or JSON decoding.
+
 An output-v10 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.
 When its operands are JSON reports, `diff` validates the complete v10 records
@@ -543,8 +578,9 @@ absent selector field or explicit empty list means no runtime-node policy.
 
 ## Machine Output
 
-`measure`, `lint`, and `diff` support `--format json`. The native JSON
-contract is the source of truth and is versioned with `schema_version`.
+`measure`, `lint`, `diff`, and `generate addressability` support
+`--format json`. The native JSON contract is the source of truth and is
+versioned with `schema_version`.
 See [output.md](output.md) and
 [`output-v10.schema.json`](schemas/output-v10.schema.json). Nested measurement
 evidence has its own
@@ -552,6 +588,12 @@ evidence has its own
 Output-v9 and earlier reports, including reports carrying measurements v14,
 are historical contracts; regenerate a current output-v10 report from the
 original asset with the current CLI before using `diff`.
+
+`generate addressability` has a separate immutable contract,
+`urn:animsmith:schema:gltf-animation-addressability:1`; see
+[output.md](output.md#gltf-animation-addressability) and
+[`gltf-animation-addressability-v1.schema.json`](schemas/gltf-animation-addressability-v1.schema.json).
+It is not output-v10 and cannot be used as a `diff` measurement operand.
 
 Measurements v15 adds canonical per-bone local TRS channel coverage and
 sampled Root/Hips trajectory evidence. Root is preferred whenever that role

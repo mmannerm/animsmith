@@ -12,6 +12,10 @@
 //! [`EngineAddressabilityCheck`] uses that evidence for the single frozen Bevy
 //! 0.19.0 source-animation index-selector prediction; other engine behavior
 //! remains outside this crate unless a version-pinned rule is added.
+//! [`BevyAnimationAssetLabelV1`] is the one bounded selector formatter used by
+//! that check, while [`build_bevy_animation_addressability_adapter_v1`] runs
+//! the same check lifecycle once and packages its unchanged evaluation for the
+//! standalone glTF animation-addressability contract.
 //!
 //! # Example
 //!
@@ -55,6 +59,7 @@
 
 #![warn(missing_docs)]
 
+mod addressability;
 mod canonical;
 mod error;
 mod prediction;
@@ -63,12 +68,28 @@ mod registry;
 mod resolver;
 mod types;
 
+pub use addressability::{
+    GLTF_ANIMATION_ADDRESSABILITY_COMMAND, GLTF_ANIMATION_ADDRESSABILITY_SCHEMA_VERSION,
+    GLTF_ANIMATION_ADDRESSABILITY_V1_ID, GLTF_ANIMATION_ADDRESSABILITY_V1_MAX_REPORT_BYTES,
+    GltfAnimationAddressabilityAnimationSetV1, GltfAnimationAddressabilityAnimationV1,
+    GltfAnimationAddressabilityBevyAdapterV1, GltfAnimationAddressabilityBevyReadbackV1,
+    GltfAnimationAddressabilityChannelSetV1, GltfAnimationAddressabilityChannelV1,
+    GltfAnimationAddressabilityCheckReadbackV1, GltfAnimationAddressabilityError,
+    GltfAnimationAddressabilityIdentityV1, GltfAnimationAddressabilityInput,
+    GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityReadError,
+    GltfAnimationAddressabilityReadbackV1, GltfAnimationAddressabilityToolReadbackV1,
+    GltfAnimationAddressabilityV1, GltfAnimationChannelPropertyV1, GltfAnimationCoverageStateV1,
+    GltfAnimationCoverageV1, GltfAnimationObservationV1, GltfAnimationTargetKindV1,
+    GltfAnimationTargetV1, GltfAnimationUnavailableReasonV1,
+};
 pub use error::{
     InvalidSettingReason, PredictionRuleError, RegistryValidationError, ResolutionError,
     SettingLocation,
 };
 pub use prediction::{
-    ENGINE_ADDRESSABILITY_CHECK_ID, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck,
+    BevyAnimationAssetLabelError, BevyAnimationAssetLabelV1, ENGINE_ADDRESSABILITY_CHECK_ID,
+    ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, GltfAnimationAddressabilityAdapterError,
+    build_bevy_animation_addressability_adapter_v1,
 };
 pub use provenance::{PredictionProvenanceProjectionError, project_prediction_provenance_v1};
 pub use registry::{profiles_v1, validate_registry_v1};
