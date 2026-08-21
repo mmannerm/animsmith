@@ -30,9 +30,9 @@ use animsmith_core::{
 use animsmith_core::{Document, InputIdentity};
 use animsmith_engine::{
     BakeOrExtract, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineDeclaration,
-    GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityV1, ProfileSelection,
-    ResolvedProfile, SettingMap, SettingValue, StaticResolution,
-    build_bevy_animation_addressability_adapter_v1,
+    EngineImportAdviceStateV1, EngineImportAdviceV1, GltfAnimationAddressabilityInventoryV1,
+    GltfAnimationAddressabilityV1, ProfileSelection, ResolvedProfile, SettingMap, SettingValue,
+    StaticResolution, build_bevy_animation_addressability_adapter_v1,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -268,6 +268,18 @@ enum GenerateCmd {
         #[arg(long, value_enum, default_value_t = PresentationFormat::Json)]
         format: PresentationFormat,
     },
+    /// Project bounded, versioned importer suggestions from one exact engine profile.
+    #[command(
+        long_about = "Generate bounded engine-import advice from one same-load source, its exact resolved engine profile/settings, explicit clip intent, and normalized measurements. Unity 6000.3 Generic/Humanoid emits documented importer properties. Frozen Unreal 5.8 and Godot 4.7 V1 profiles emit a typed refusal because their setting vocabulary is not yet modeled. No frame coordinates, sample rates, root-motion behavior, or unit conversion are guessed."
+    )]
+    ImportAdvice {
+        /// Input .fbx for Unity/Unreal, or .glb/.gltf for Godot.
+        #[arg(value_name = "INPUT")]
+        input: PathBuf,
+        /// Render canonical JSON or a presentation-only text/Markdown view.
+        #[arg(long, value_enum, default_value_t = PresentationFormat::Json)]
+        format: PresentationFormat,
+    },
 }
 
 /// The two accepted scale operations of DESIGN.md Appendix D §D.7, as
@@ -329,7 +341,7 @@ enum Format {
 }
 
 /// JSON machine output plus the two presentation-only renderings shared by
-/// `lint` and `generate addressability`. Each command pins its own default.
+/// `lint` and `generate`. Each command pins its own default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum PresentationFormat {
     Json,
@@ -1383,6 +1395,49 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     }
                 }
                 Ok(if requires_failure {
+                    ExitCode::from(EXIT_FINDINGS)
+                } else {
+                    ExitCode::SUCCESS
+                })
+            }
+            GenerateCmd::ImportAdvice { input, format } => {
+                // Configuration/profile resolution precedes input I/O so an
+                // incomplete or unknown tuple remains an operator error at
+                // the same boundary as lint and addressability.
+                let loaded_config = load_config(cli.config.as_deref())?;
+                let static_profile = loaded_config.engine.as_ref().ok_or_else(|| {
+                    "generate import-advice requires a complete [engine] selection and settings"
+                        .to_owned()
+                })?;
+                if !EngineImportAdviceV1::supports_profile(static_profile.profile()) {
+                    return Err(
+                        animsmith_engine::EngineImportAdviceError::UnsupportedProfile.to_string(),
+                    );
+                }
+                let loaded = load_with_config(&input, &loaded_config)?;
+                let profile = loaded.engine.as_ref().ok_or_else(|| {
+                    "generate import-advice requires a complete [engine] selection and settings"
+                        .to_owned()
+                })?;
+                let config = &loaded_config.config;
+                let report = EngineImportAdviceV1::from_source(
+                    current_tool(),
+                    &loaded.source,
+                    profile,
+                    config,
+                )
+                .map_err(|error| error.to_string())?;
+                let refused = report.state() == EngineImportAdviceStateV1::Refused;
+                match format {
+                    PresentationFormat::Json => render::print_json(&report)?,
+                    PresentationFormat::Text => {
+                        publish::emit_text(&render::render_import_advice_text(&report));
+                    }
+                    PresentationFormat::Markdown => {
+                        publish::emit_text(&render::render_import_advice_markdown(&report));
+                    }
+                }
+                Ok(if refused {
                     ExitCode::from(EXIT_FINDINGS)
                 } else {
                     ExitCode::SUCCESS

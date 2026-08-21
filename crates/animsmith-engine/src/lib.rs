@@ -16,6 +16,10 @@
 //! that check, while [`build_bevy_animation_addressability_adapter_v1`] runs
 //! the same check lifecycle once and packages its unchanged evaluation for the
 //! standalone glTF animation-addressability contract.
+//! [`EngineImportAdviceV1`] independently projects exact materialized Unity
+//! importer settings beside same-load provenance and bounded clip evidence;
+//! profiles without modeled settings produce a typed refusal rather than a
+//! guessed preset.
 //!
 //! # Example
 //!
@@ -62,6 +66,7 @@
 mod addressability;
 mod canonical;
 mod error;
+mod import_advice;
 mod prediction;
 mod provenance;
 mod registry;
@@ -85,6 +90,16 @@ pub use addressability::{
 pub use error::{
     InvalidSettingReason, PredictionRuleError, RegistryValidationError, ResolutionError,
     SettingLocation,
+};
+pub use import_advice::{
+    ENGINE_IMPORT_ADVICE_COMMAND, ENGINE_IMPORT_ADVICE_SCHEMA_VERSION, ENGINE_IMPORT_ADVICE_V1_ID,
+    ENGINE_IMPORT_ADVICE_V1_MAX_REPORT_BYTES, EngineImportAdviceClipEvidenceV1,
+    EngineImportAdviceClipV1, EngineImportAdviceError, EngineImportAdviceIdentityV1,
+    EngineImportAdviceInput, EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
+    EngineImportAdviceReadError, EngineImportAdviceReadbackV1, EngineImportAdviceRefusalReasonV1,
+    EngineImportAdviceSourceNameV1, EngineImportAdviceSourceUnavailableReasonV1,
+    EngineImportAdviceStateV1, EngineImportAdviceToolReadbackV1, EngineImportAdviceV1,
+    UnityClipAdviceV1, UnityDocumentAdviceV1,
 };
 pub use prediction::{
     BevyAnimationAssetLabelError, BevyAnimationAssetLabelV1, ENGINE_ADDRESSABILITY_CHECK_ID,

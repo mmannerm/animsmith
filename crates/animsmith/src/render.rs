@@ -22,6 +22,9 @@ use animsmith_core::{
     LintFileReport, MeasureFileReport, ResolvedRoles, SelectionState, Severity, SourceFormatV1,
 };
 use animsmith_engine::{
+    EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
+    EngineImportAdviceRefusalReasonV1, EngineImportAdviceSourceNameV1,
+    EngineImportAdviceSourceUnavailableReasonV1, EngineImportAdviceStateV1, EngineImportAdviceV1,
     GltfAnimationAddressabilityV1, GltfAnimationChannelPropertyV1, GltfAnimationCoverageStateV1,
     GltfAnimationCoverageV1, GltfAnimationObservationV1, GltfAnimationTargetKindV1,
     GltfAnimationUnavailableReasonV1,
@@ -38,6 +41,255 @@ struct FindingSummary {
     error: usize,
     warning: usize,
     note: usize,
+}
+
+fn import_advice_state(state: EngineImportAdviceStateV1) -> &'static str {
+    match state {
+        EngineImportAdviceStateV1::Available => "available",
+        EngineImportAdviceStateV1::Refused => "refused",
+    }
+}
+
+fn import_advice_owner(value: EngineImportAdviceMovementOwnerV1) -> &'static str {
+    match value {
+        EngineImportAdviceMovementOwnerV1::Gameplay => "gameplay",
+        EngineImportAdviceMovementOwnerV1::Animation => "animation",
+    }
+}
+
+fn import_advice_refusal(value: EngineImportAdviceRefusalReasonV1) -> &'static str {
+    match value {
+        EngineImportAdviceRefusalReasonV1::ProfileSettingsUnmodeled => "profile_settings_unmodeled",
+        EngineImportAdviceRefusalReasonV1::RawClipInventoryIncomplete => {
+            "raw_clip_inventory_incomplete"
+        }
+        EngineImportAdviceRefusalReasonV1::ClipIdentityUnavailable => "clip_identity_unavailable",
+        EngineImportAdviceRefusalReasonV1::ClipIdentityMismatch => "clip_identity_mismatch",
+        EngineImportAdviceRefusalReasonV1::MeasurementUnavailable => "measurement_unavailable",
+    }
+}
+
+fn import_advice_source_reason(value: EngineImportAdviceSourceUnavailableReasonV1) -> &'static str {
+    match value {
+        EngineImportAdviceSourceUnavailableReasonV1::Malformed => "malformed",
+        EngineImportAdviceSourceUnavailableReasonV1::Discarded => "discarded",
+        EngineImportAdviceSourceUnavailableReasonV1::NormalizedAway => "normalized_away",
+        EngineImportAdviceSourceUnavailableReasonV1::BakedAway => "baked_away",
+        EngineImportAdviceSourceUnavailableReasonV1::LoaderUnsupported => "loader_unsupported",
+        EngineImportAdviceSourceUnavailableReasonV1::ProjectionBudgetExceeded => {
+            "projection_budget_exceeded"
+        }
+        EngineImportAdviceSourceUnavailableReasonV1::ParserUnavailable => "parser_unavailable",
+    }
+}
+
+fn import_advice_source_name(value: &EngineImportAdviceSourceNameV1) -> String {
+    match value {
+        EngineImportAdviceSourceNameV1::Observed { value } => quoted_text_atom(value),
+        EngineImportAdviceSourceNameV1::ProvenAbsent => "proven_absent".into(),
+        EngineImportAdviceSourceNameV1::Unavailable { reason } => {
+            format!("unavailable ({})", import_advice_source_reason(*reason))
+        }
+    }
+}
+
+fn optional_bool(value: Option<bool>) -> String {
+    value.map_or_else(|| "null".into(), |value| value.to_string())
+}
+
+fn optional_owner(value: Option<EngineImportAdviceMovementOwnerV1>) -> &'static str {
+    value.map_or("null", import_advice_owner)
+}
+
+fn import_advice_availability(value: MeasurementAvailability) -> &'static str {
+    match value {
+        MeasurementAvailability::Measured => "measured",
+        MeasurementAvailability::NotApplicable => "not_applicable",
+        MeasurementAvailability::Unavailable => "unavailable",
+        _ => "unknown",
+    }
+}
+
+fn import_advice_speed(report: &animsmith_engine::EngineImportAdviceClipEvidenceV1) -> String {
+    report.speed_mps().map_or_else(
+        || import_advice_availability(report.speed_mps_availability()).into(),
+        |value| format!("measured ({value} m/s)"),
+    )
+}
+
+fn import_advice_endpoint(report: &animsmith_engine::EngineImportAdviceClipEvidenceV1) -> String {
+    report.loop_endpoint_mode().map_or_else(
+        || import_advice_availability(report.loop_endpoint_mode_availability()).into(),
+        |value| format!("measured ({})", value.as_str()),
+    )
+}
+
+fn import_advice_frame_grid(report: &animsmith_engine::EngineImportAdviceClipEvidenceV1) -> String {
+    report.frame_grid().map_or_else(
+        || import_advice_availability(report.frame_grid_availability()).into(),
+        |value| {
+            format!(
+                "measured ({} fps, {} intervals)",
+                value.fps, value.frame_intervals
+            )
+        },
+    )
+}
+
+/// Render one engine-import-advice document as escaped line-oriented text.
+pub(crate) fn render_import_advice_text(report: &EngineImportAdviceV1) -> String {
+    use std::fmt::Write as _;
+
+    let selection = report.prediction_provenance().profile().selection();
+    let mut out = String::new();
+    let _ = writeln!(out, "engine import advice v1");
+    let _ = writeln!(
+        out,
+        "identity: sha256={} canonical-bytes={}",
+        report.identity().input_identity().sha256(),
+        report.identity().input_identity().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "profile: {} revision {} ({} / {})",
+        text_atom(selection.family()),
+        selection.profile_revision(),
+        text_atom(selection.engine_version()),
+        text_atom(selection.importer()),
+    );
+    let _ = writeln!(out, "state: {}", import_advice_state(report.state()));
+    if let Some(reason) = report.refusal_reason() {
+        let _ = writeln!(out, "refusal: {}", import_advice_refusal(reason));
+    }
+    for clip in report.clips() {
+        let evidence = clip.evidence();
+        let _ = writeln!(
+            out,
+            "clip {} -> {} {}: source-name={} duration-s={} loop={} movement-xz={} movement-y={} movement-yaw={} speed={} loop-endpoint={} frame-grid={}",
+            clip.source_clip_index(),
+            clip.normalized_clip_index(),
+            quoted_text_atom(clip.normalized_clip_name()),
+            import_advice_source_name(clip.source_name()),
+            evidence.duration_s(),
+            optional_bool(evidence.looping()),
+            optional_owner(evidence.movement_owner_xz()),
+            optional_owner(evidence.movement_owner_y()),
+            optional_owner(evidence.movement_owner_yaw()),
+            import_advice_speed(evidence),
+            import_advice_endpoint(evidence),
+            import_advice_frame_grid(evidence),
+        );
+    }
+    match report.payload() {
+        EngineImportAdvicePayloadV1::UnityGeneric { document, clips }
+        | EngineImportAdvicePayloadV1::UnityHumanoid { document, clips } => {
+            let _ = writeln!(
+                out,
+                "Unity document: convert-units={} bake-axis-conversion={} root-motion-source={}",
+                document.convert_units(),
+                document.bake_axis_conversion(),
+                document
+                    .root_motion_source()
+                    .map_or_else(|| "null".into(), quoted_text_atom),
+            );
+            for clip in clips {
+                let _ = writeln!(
+                    out,
+                    "Unity clip {}: lock-root-rotation={} lock-root-height-y={} lock-root-position-xz={}",
+                    clip.normalized_clip_index(),
+                    clip.lock_root_rotation(),
+                    clip.lock_root_height_y(),
+                    clip.lock_root_position_xz(),
+                );
+            }
+        }
+        EngineImportAdvicePayloadV1::Unreal => {
+            let _ = writeln!(out, "Unreal settings: unmodeled");
+        }
+        EngineImportAdvicePayloadV1::Godot => {
+            let _ = writeln!(out, "Godot settings: unmodeled");
+        }
+    }
+    out
+}
+
+/// Render one engine-import-advice document as escaped Markdown.
+pub(crate) fn render_import_advice_markdown(report: &EngineImportAdviceV1) -> String {
+    use std::fmt::Write as _;
+
+    let selection = report.prediction_provenance().profile().selection();
+    let mut out = String::from("# Engine import advice v1\n\n");
+    let _ = writeln!(
+        out,
+        "- Identity: `{}` (`{}` canonical bytes)",
+        report.identity().input_identity().sha256(),
+        report.identity().input_identity().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "- Profile: `{}` revision `{}` (`{}` / `{}`)",
+        md_cell(selection.family()),
+        selection.profile_revision(),
+        md_cell(selection.engine_version()),
+        md_cell(selection.importer()),
+    );
+    let _ = writeln!(out, "- State: `{}`", import_advice_state(report.state()));
+    if let Some(reason) = report.refusal_reason() {
+        let _ = writeln!(out, "- Refusal: `{}`", import_advice_refusal(reason));
+    }
+    if !report.clips().is_empty() {
+        out.push_str("\n## Clips\n\n");
+        for clip in report.clips() {
+            let _ = writeln!(
+                out,
+                "- `{}` -> `{}` `{}`; source name `{}`; duration `{}` s; loop `{}`; movement XZ/Y/yaw `{}` / `{}` / `{}`; speed `{}`; loop endpoint `{}`; frame grid `{}`",
+                clip.source_clip_index(),
+                clip.normalized_clip_index(),
+                md_cell(clip.normalized_clip_name()),
+                md_cell(&import_advice_source_name(clip.source_name())),
+                clip.evidence().duration_s(),
+                optional_bool(clip.evidence().looping()),
+                optional_owner(clip.evidence().movement_owner_xz()),
+                optional_owner(clip.evidence().movement_owner_y()),
+                optional_owner(clip.evidence().movement_owner_yaw()),
+                md_cell(&import_advice_speed(clip.evidence())),
+                md_cell(&import_advice_endpoint(clip.evidence())),
+                md_cell(&import_advice_frame_grid(clip.evidence())),
+            );
+        }
+    }
+    out.push_str("\n## Importer settings\n\n");
+    match report.payload() {
+        EngineImportAdvicePayloadV1::UnityGeneric { document, clips }
+        | EngineImportAdvicePayloadV1::UnityHumanoid { document, clips } => {
+            let _ = writeln!(out, "- Convert Units: `{}`", document.convert_units());
+            let _ = writeln!(
+                out,
+                "- Bake Axis Conversion: `{}`",
+                document.bake_axis_conversion()
+            );
+            let _ = writeln!(
+                out,
+                "- Root Motion Source: {}",
+                document
+                    .root_motion_source()
+                    .map_or_else(|| "`null`".into(), |value| format!("`{}`", md_cell(value)))
+            );
+            for clip in clips {
+                let _ = writeln!(
+                    out,
+                    "- Clip `{}`: lock root rotation `{}`, height Y `{}`, position XZ `{}`",
+                    clip.normalized_clip_index(),
+                    clip.lock_root_rotation(),
+                    clip.lock_root_height_y(),
+                    clip.lock_root_position_xz(),
+                );
+            }
+        }
+        EngineImportAdvicePayloadV1::Unreal => out.push_str("- Unreal settings are unmodeled.\n"),
+        EngineImportAdvicePayloadV1::Godot => out.push_str("- Godot settings are unmodeled.\n"),
+    }
+    out
 }
 
 impl FindingSummary {

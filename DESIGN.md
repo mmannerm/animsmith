@@ -2692,6 +2692,21 @@ so it creates neither a second selector rule nor a second check lifecycle.
 Absent and repeated source names remain metadata. Scene/default-scene, skin,
 target path or UUID, named-map-winner, and extension-handling claims require
 new raw facts and a later profile revision and are outside this V1.
+
+The second bounded 0.4.0 standalone producer is `generate import-advice`.
+`animsmith-engine` owns its independent V1 envelope, canonical identity, and
+strict reader. It embeds the same exact prediction-provenance record but is
+not a check evaluation: it projects fully materialized profile settings into
+document/per-clip importer properties beside same-load source identity,
+dependency closure, source-to-normalized clip linkage, explicit loop/movement
+intent, and normalized measurement availability. Unity 6000.3 Generic and
+Humanoid revision 1 can project Convert Units, Bake Axis Conversion, Generic
+Root Motion Source, and the three bake/extract root controls. Frozen Unreal
+5.8 and Godot 4.7 revision 1 have no setting descriptors and therefore emit a
+typed refusal rather than a guessed preset. Authored frame coordinates,
+sampling policy, root-motion prediction, and unit-conversion inference remain
+out of scope until their own exact source/profile authorities exist.
+
 `[checks.<id>]` remains the only authority for severity and explicit
 enable/disable overrides. Existing checks such as `loop-closure`, `in-place`,
 `foot-slide`, and `root-motion-speed` keep their current behavior under every

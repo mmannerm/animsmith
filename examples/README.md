@@ -651,6 +651,47 @@ names, raw targets and accessors, and dependency-closure identity. It does not
 infer scenes, skins, named-map winners, target UUIDs, extension support, or
 successful runtime loading.
 
+### Generating engine import advice
+
+Select an exact engine profile and fully materialize every required importer
+setting before generating advice. For Unity Generic, for example:
+
+```toml
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+convert_units = true
+bake_axis_conversion = false
+root_motion_source = "Reference/Root"
+
+[clips."*"]
+loop = true
+movement_owner_xz = "animation"
+
+[clips."*".engine_settings]
+root_rotation = "extract"
+root_position_y = "bake"
+root_position_xz = "extract"
+```
+
+```console
+$ animsmith --config unity.animsmith.toml generate import-advice export.fbx \
+    > export.import-advice.json
+```
+
+The Unity payload maps those resolved values to `Convert Units`, `Bake Axis
+Conversion`, Generic `Root Motion Source`, and the three
+`ModelImporterClipAnimation.lockRoot*` booleans. The contract also keeps raw
+source versus normalized clip identity, explicit intent, normalized
+measurements, and the full same-load provenance/closure. Unreal 5.8 and Godot
+4.7 revision 1 deliberately exit 1 with `profile_settings_unmodeled`; their
+frozen profiles do not yet define importer settings. This command does not
+guess frame ranges, sample rates, unit conversion, or root-motion behavior.
+
 ### Steering a run without a config
 
 You can also shape a run from the command line. `--select` restricts the

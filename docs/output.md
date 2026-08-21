@@ -39,6 +39,44 @@ target-survival, or animation-graph claim. JSON is canonical; `--format text`
 and `--format markdown` escape and render the same typed value without adding
 conclusions.
 
+## Engine import advice
+
+`animsmith generate import-advice INPUT` emits a separate one-file V1
+contract with immutable identity
+`urn:animsmith:schema:engine-import-advice:1`. Its retrievable schema is
+[`engine-import-advice-v1.schema.json`](schemas/engine-import-advice-v1.schema.json).
+It is neither output-v10 nor the glTF addressability root; strict readers
+reject the other shapes. The staged reader applies a 256 MiB byte cap before
+UTF-8 or JSON decoding.
+
+Every record embeds exact `PredictionProvenanceV1`: the frozen engine-profile
+fact bundle, fully materialized settings, authoritative source format, raw
+source facts, primary identity, and dependency closure from the same load.
+Each available clip row binds its source-order clip index to one normalized
+document index and carries the original source-name observation separately
+from the normalized name. It also retains explicit project loop/movement
+intent plus duration, speed, loop-endpoint, and declared-frame-grid
+measurement/status pairs. Advice identity is a domain-separated canonical
+digest of provenance identity, lifecycle, clip rows, and importer payload;
+tool build metadata is excluded.
+
+For Unity 6000.3 Generic and Humanoid, the payload projects only settings
+already materialized by the frozen profile: Model Importer `Convert Units`,
+`Bake Axis Conversion`, Generic `Root Motion Source`, and each clip's
+`lockRootRotation`, `lockRootHeightY`, and `lockRootPositionXZ`. `bake` maps to
+`true`; `extract` maps to `false`. Unreal 5.8 and Godot 4.7 revision 1 have no
+modeled setting vocabulary, so they emit `state: refused` with
+`profile_settings_unmodeled` and exit 1 rather than guessing. Incomplete raw
+clip inventory, missing source-to-normalized linkage, or mismatched
+measurement/settings evidence likewise refuses without exposing a prefix.
+
+V1 does not emit frame-number ranges, sample rates, unit conversions,
+root-motion predictions, or project-file mutations. Source seconds multiplied
+by a floating-point FPS are not authoritative authored frame coordinates.
+Available advice exits 0, typed refusal exits 1, and configuration, profile,
+format, input, or serialization errors exit 2. Text and Markdown are escaped
+presentation views; JSON remains the contract.
+
 ## Contract identities
 
 Validation and comparison JSON commands emit output contract v10 with the

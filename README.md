@@ -14,7 +14,8 @@ animsmith checks glTF/GLB and FBX clips for broken quaternions,
 degenerate durations, popped loop seams, gait-phase drift, root-motion
 contract drift, export bloat, and other game-semantics problems. It can
 also inspect rigs, measure clips, generate an offline HTML report or a
-versioned glTF animation-addressability inventory, convert DCC exports,
+versioned glTF animation-addressability inventory or engine import advice,
+convert DCC exports,
 compare re-exports, and byte-surgically fix safe mechanical problems.
 
 glTF-Validator checks spec conformance. animsmith checks content
@@ -100,6 +101,7 @@ $ animsmith lint export.fbx
 $ animsmith measure clip.glb
 $ animsmith inspect clip.glb
 $ animsmith generate addressability clip.glb
+$ animsmith --config unity.animsmith.toml generate import-advice export.fbx
 $ animsmith report clip.glb -o report.html
 $ animsmith convert export.fbx -o clip.glb
 $ animsmith convert prop.fbx -o prop.glb --bake-static-mesh-transforms
@@ -305,6 +307,15 @@ version-pinned but can change when the source animation order changes. This is
 selector evidence, not proof that Bevy loaded the asset, retained its targets,
 or connected an animation graph. See the runnable
 [Bevy example](https://github.com/mmannerm/animsmith/blob/main/examples/README.md#predicting-a-bevy-animation-selector).
+
+`generate import-advice` is the separate engine-setting projection path. With
+an exact Unity 6000.3 Generic or Humanoid profile, it emits only the documented
+importer properties already materialized by config and binds them to same-load
+source, closure, intent, and measurement evidence. Unreal 5.8 and Godot 4.7
+revision 1 refuse with typed `profile_settings_unmodeled` evidence rather than
+inventing settings. V1 never guesses frame-number ranges, sample rates, unit
+conversion, or root-motion behavior. See the runnable
+[import-advice example](https://github.com/mmannerm/animsmith/blob/main/examples/README.md#generating-engine-import-advice).
 
 The four loop-continuity caps may also be declared under a clip name or
 `*`-glob: `max_loop_position_delta_m`, `max_loop_rotation_delta_deg`, and
