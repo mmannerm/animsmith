@@ -395,6 +395,85 @@ fn retained_dependency_identity(path: &Path) -> Result<Option<PathBuf>, String> 
     destination_identity_below(path, parent).map(Some)
 }
 
+#[cfg(feature = "fbx")]
+struct PublicationDestination<'a> {
+    label: &'a str,
+    identity: PathBuf,
+    missing_name_probe: Option<tempfile::TempDir>,
+}
+
+#[cfg(feature = "fbx")]
+impl<'a> PublicationDestination<'a> {
+    fn new(label: &'a str, path: &Path) -> Result<Self, String> {
+        let identity = destination_identity(path)?;
+        let missing_name_probe = match fs::symlink_metadata(&identity) {
+            Ok(_) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let parent = identity
+                    .parent()
+                    .ok_or_else(|| format!("{label} {} has no parent directory", path.display()))?;
+                let file_name = identity
+                    .file_name()
+                    .ok_or_else(|| format!("{label} {} has no file name", path.display()))?;
+                let probe = tempfile::Builder::new()
+                    .prefix(".animsmith-name-identity-")
+                    .tempdir_in(parent)
+                    .map_err(|error| {
+                        format!(
+                            "cannot inspect filesystem name semantics for {label} {}: {error}",
+                            path.display()
+                        )
+                    })?;
+                fs::File::create(probe.path().join(file_name)).map_err(|error| {
+                    format!(
+                        "cannot inspect filesystem name semantics for {label} {}: {error}",
+                        path.display()
+                    )
+                })?;
+                Some(probe)
+            }
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect existing {label} {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        Ok(Self {
+            label,
+            identity,
+            missing_name_probe,
+        })
+    }
+
+    fn aliases(&self, dependency: &Path) -> Result<bool, String> {
+        if self.identity == dependency {
+            return Ok(true);
+        }
+        let Some(probe) = &self.missing_name_probe else {
+            return Ok(false);
+        };
+        if self.identity.parent() != dependency.parent() {
+            return Ok(false);
+        }
+        let dependency_name = dependency.file_name().ok_or_else(|| {
+            format!(
+                "external dependency {} has no file name",
+                dependency.display()
+            )
+        })?;
+        match fs::symlink_metadata(probe.path().join(dependency_name)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(format!(
+                "cannot compare external dependency {} with {} using filesystem name semantics: {error}",
+                dependency.display(),
+                self.label
+            )),
+        }
+    }
+}
+
 /// An **input**'s identity for distinctness checks: its fully canonical path,
 /// final component included.
 ///
@@ -452,7 +531,7 @@ pub(crate) fn require_external_dependencies_safe_for_publication(
 ) -> Result<(), String> {
     let destinations = destinations
         .iter()
-        .map(|(label, path)| Ok((*label, destination_identity(path)?)))
+        .map(|(label, path)| PublicationDestination::new(label, path))
         .collect::<Result<Vec<_>, String>>()?;
     if closure
         .coverage()
@@ -488,11 +567,12 @@ pub(crate) fn require_external_dependencies_safe_for_publication(
         else {
             continue;
         };
-        for (destination_label, destination) in &destinations {
-            if dependency == *destination {
+        for destination in &destinations {
+            if destination.aliases(&dependency)? {
                 return Err(format!(
-                    "{command} external dependency {:?} and {destination_label} must be different paths, but both resolve to {}",
+                    "{command} external dependency {:?} and {} must be different paths, but both resolve to {}",
                     key.as_str(),
+                    destination.label,
                     dependency.display()
                 ));
             }

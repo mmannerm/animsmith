@@ -2883,6 +2883,60 @@ fn fbx_rest_bind_protects_a_missing_retained_key_without_requiring_its_parent() 
     assert!(!alias_dir.path().join("nested/missing.png").exists());
     assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
 
+    let case_dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(case_dir.path().join("nested")).unwrap();
+    let source = external_normal_texture_fbx_fixture().replace("normal.png", "missing.png");
+    std::fs::write(case_dir.path().join("nested/rig.fbx"), source).unwrap();
+    let probe = tempfile::tempdir_in(case_dir.path().join("nested")).unwrap();
+    std::fs::write(probe.path().join("missing.png"), b"probe").unwrap();
+    let case_insensitive = probe.path().join("MISSING.PNG").exists();
+    drop(probe);
+    let peer = case_dir.path().join("out.glb");
+    let prior_peer = b"prior artifact";
+    std::fs::write(&peer, prior_peer).unwrap();
+    let case_variant = case_dir.path().join("nested/MISSING.PNG");
+
+    let result = fbx_rest_bind_command(
+        case_dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        "nested/MISSING.PNG",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs missing case-variant dependency preflight");
+    if case_insensitive {
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert!(
+            stderr(&result).contains(
+                "scale external dependency \"missing.png\" and evidence must be different paths"
+            ),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert_eq!(std::fs::read(&peer).unwrap(), prior_peer);
+        assert!(!case_variant.exists());
+    } else {
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stderr.is_empty());
+        assert!(!result.stdout.is_empty());
+        assert_ne!(std::fs::read(&peer).unwrap(), prior_peer);
+        assert!(case_variant.is_file());
+    }
+    assert!(!case_dir.path().join("nested/missing.png").exists());
+
     let unrelated_dir = tempfile::tempdir().expect("temporary directory");
     let source =
         external_normal_texture_fbx_fixture().replace("normal.png", "textures/missing.png");
