@@ -1378,9 +1378,9 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ufbx"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "163c9b35d1322b7bab8f5eeda14428ad1b139cbcf5f1e04f659a2469378b66f2"
+checksum = "e160c3af14ab5a02f206e3af48777cb20e09bc22a354aa77d4e5cf4acb4a11a0"
 dependencies = [
  "cc",
 ]
