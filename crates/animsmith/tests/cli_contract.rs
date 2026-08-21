@@ -10,12 +10,17 @@ use std::process::{Command, Output, Stdio};
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
+const IMPORT_ADVICE_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:1";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v15.schema.json");
 const ADDRESSABILITY_SCHEMA: &str =
     include_str!("../../../docs/schemas/gltf-animation-addressability-v1.schema.json");
+const IMPORT_ADVICE_SCHEMA: &str =
+    include_str!("../../../docs/schemas/engine-import-advice-v1.schema.json");
+#[cfg(feature = "fbx")]
+const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
 const EXPECTED_CHECK_IDS: [&str; 27] = [
     "nan",
     "time-monotonic",
@@ -101,6 +106,37 @@ fn assert_addressability_schema_valid(instance: &Value) {
     assert!(
         errors.is_empty(),
         "addressability output must satisfy the published V1 schema:\n{}\ninstance: {instance:#}",
+        errors.join("\n")
+    );
+}
+
+fn import_advice_validator() -> jsonschema::Validator {
+    let output: Value = serde_json::from_str(OUTPUT_SCHEMA).expect("valid output schema JSON");
+    let measurements: Value =
+        serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let advice: Value =
+        serde_json::from_str(IMPORT_ADVICE_SCHEMA).expect("valid import-advice schema JSON");
+    let registry = jsonschema::Registry::new()
+        .add(MEASUREMENTS_SCHEMA_ID, measurements)
+        .expect("valid measurement schema identity")
+        .add(OUTPUT_SCHEMA_ID, output)
+        .expect("valid output schema identity")
+        .prepare()
+        .expect("import-advice schema registry prepares");
+    jsonschema::options()
+        .with_registry(&registry)
+        .build(&advice)
+        .expect("import-advice schema compiles with reused output definitions")
+}
+
+fn assert_import_advice_schema_valid(instance: &Value) {
+    let errors: Vec<_> = import_advice_validator()
+        .iter_errors(instance)
+        .map(|error| error.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "import-advice output must satisfy the published V1 schema:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -1296,6 +1332,282 @@ fn generate_addressability_complete_empty_inventory_keeps_exact_bevy_check_not_a
 }
 
 #[test]
+fn generate_import_advice_refusal_is_schema_valid_strict_and_exit_one() {
+    let dir = unique_temp_dir("generate-import-advice-godot");
+    let input = dir.path().join("animation.gltf");
+    write_source_animation_inventory_gltf(&input, &[Some("walk")]);
+    let config = write_config(
+        dir.path(),
+        "godot-import-advice.toml",
+        r#"
+[engine]
+profile = "godot"
+profile_revision = 1
+engine_version = "4.7"
+importer = "resource-importer-scene"
+"#,
+    );
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "import-advice"])
+        .arg(&input)
+        .output()
+        .expect("runs Godot import advice");
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("import advice JSON");
+    assert_import_advice_schema_valid(&json);
+    assert_eq!(json["schema"], IMPORT_ADVICE_SCHEMA_ID);
+    assert_eq!(json["command"], "generate-import-advice");
+    assert_eq!(json["state"], "refused");
+    assert_eq!(json["refusal_reason"], "profile_settings_unmodeled");
+    assert_eq!(json["payload"], json!({"engine":"godot"}));
+    assert_eq!(json["clips"], json!([]));
+    let readback = animsmith_engine::EngineImportAdviceInput::read_from(output.stdout.as_slice())
+        .unwrap()
+        .into_report()
+        .expect("strict import advice readback");
+    assert_eq!(
+        readback.state(),
+        animsmith_engine::EngineImportAdviceStateV1::Refused
+    );
+
+    let mut unknown = json.clone();
+    unknown["unknown"] = json!(true);
+    assert!(!import_advice_validator().is_valid(&unknown));
+    assert!(serde_json::from_value::<animsmith_engine::EngineImportAdviceInput>(unknown).is_err());
+    assert!(
+        serde_json::from_value::<animsmith_engine::GltfAnimationAddressabilityInput>(json).is_err(),
+        "standalone V1 roots must reject one another"
+    );
+}
+
+#[test]
+fn generate_import_advice_requires_profile_before_input_io_and_rejects_bevy() {
+    let dir = unique_temp_dir("generate-import-advice-errors");
+    let missing = dir.path().join("missing.gltf");
+    let no_profile = animsmith()
+        .args(["generate", "import-advice"])
+        .arg(&missing)
+        .output()
+        .expect("checks profile before input I/O");
+    assert_eq!(no_profile.status.code(), Some(2));
+    assert!(no_profile.stdout.is_empty());
+    assert!(
+        stderr(&no_profile).contains("requires a complete [engine] selection and settings"),
+        "{}",
+        stderr(&no_profile)
+    );
+    assert!(!stderr(&no_profile).contains("cannot read"));
+
+    let bevy = write_bevy_config(dir.path(), "import-advice");
+    let unsupported = animsmith()
+        .arg("--config")
+        .arg(bevy)
+        .args(["generate", "import-advice"])
+        .arg(&missing)
+        .output()
+        .expect("rejects unsupported Bevy advice before input I/O");
+    assert_eq!(unsupported.status.code(), Some(2));
+    assert!(unsupported.stdout.is_empty());
+    assert!(
+        stderr(&unsupported).contains("requires an exact Unity, Unreal, or Godot V1 profile"),
+        "{}",
+        stderr(&unsupported)
+    );
+    assert!(!stderr(&unsupported).contains("cannot read"));
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn generate_import_advice_projects_unity_settings_and_renderer_views() {
+    let dir = unique_temp_dir("generate-import-advice-unity");
+    let input = dir.path().join("rigged-triangle.fbx");
+    std::fs::write(&input, RIGGED_TRIANGLE_FBX).unwrap();
+    let config = write_config(
+        dir.path(),
+        "unity-import-advice.toml",
+        r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+convert_units = true
+bake_axis_conversion = false
+root_motion_source = "Reference/Root"
+
+[clips."*"]
+loop = false
+movement_owner_xz = "animation"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "animation"
+
+[clips."*".engine_settings]
+root_rotation = "extract"
+root_position_y = "bake"
+root_position_xz = "extract"
+"#,
+    );
+    let run = |format: &str| {
+        animsmith()
+            .arg("--config")
+            .arg(&config)
+            .args(["generate", "import-advice"])
+            .arg(&input)
+            .args(["--format", format])
+            .output()
+            .expect("runs Unity import advice")
+    };
+
+    let output = run("json");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("Unity advice JSON");
+    assert_import_advice_schema_valid(&json);
+    assert_eq!(json["state"], "available");
+    assert!(json.get("refusal_reason").is_none());
+    assert_eq!(json["clips"].as_array().unwrap().len(), 1);
+    assert_eq!(json["clips"][0]["source_clip_index"], 0);
+    assert_eq!(json["clips"][0]["normalized_clip_index"], 0);
+    assert_eq!(json["clips"][0]["evidence"]["loop"], false);
+    assert_eq!(
+        json["clips"][0]["evidence"]["movement_owner_xz"],
+        "animation"
+    );
+    assert_eq!(json["payload"]["engine"], "unity-generic");
+    assert_eq!(json["payload"]["document"]["convert_units"], true);
+    assert_eq!(json["payload"]["document"]["bake_axis_conversion"], false);
+    assert_eq!(
+        json["payload"]["document"]["root_motion_source"],
+        "Reference/Root"
+    );
+    assert_eq!(json["payload"]["clips"][0]["lock_root_rotation"], false);
+    assert_eq!(json["payload"]["clips"][0]["lock_root_height_y"], true);
+    assert_eq!(json["payload"]["clips"][0]["lock_root_position_xz"], false);
+    let advice_sha256 = json["identity"]["sha256"].as_str().expect("advice SHA-256");
+    let advice_identity_bytes = json["identity"]["bytes"]
+        .as_u64()
+        .expect("advice canonical byte count");
+
+    let semantic_result = |value: &Value| {
+        let bytes = serde_json::to_vec(value).unwrap();
+        animsmith_engine::EngineImportAdviceInput::read_from(bytes.as_slice())
+            .unwrap()
+            .into_report()
+    };
+
+    let mut explicit_null = json.clone();
+    explicit_null["clips"][0]["evidence"]["speed_mps"] = Value::Null;
+    assert!(!import_advice_validator().is_valid(&explicit_null));
+    assert!(
+        serde_json::from_value::<animsmith_engine::EngineImportAdviceInput>(explicit_null).is_err()
+    );
+
+    let mut lifecycle = json.clone();
+    lifecycle["refusal_reason"] = json!("measurement_unavailable");
+    assert!(!import_advice_validator().is_valid(&lifecycle));
+    assert!(matches!(
+        semantic_result(&lifecycle),
+        Err(animsmith_engine::EngineImportAdviceError::InvalidLifecycle)
+    ));
+
+    let mut measurement = json.clone();
+    measurement["clips"][0]["evidence"]["speed_mps"] = json!(1.0);
+    assert!(!import_advice_validator().is_valid(&measurement));
+    assert!(matches!(
+        semantic_result(&measurement),
+        Err(animsmith_engine::EngineImportAdviceError::InvalidMeasurement)
+    ));
+
+    let mut identity = json.clone();
+    identity["identity"]["bytes"] = json!(1);
+    assert_import_advice_schema_valid(&identity);
+    assert!(matches!(
+        semantic_result(&identity),
+        Err(animsmith_engine::EngineImportAdviceError::IdentityMismatch)
+    ));
+
+    let mut source_index = json.clone();
+    source_index["clips"][0]["source_clip_index"] = json!(1);
+    assert_import_advice_schema_valid(&source_index);
+    assert!(matches!(
+        semantic_result(&source_index),
+        Err(animsmith_engine::EngineImportAdviceError::InvalidClipIdentity)
+    ));
+
+    let mut profile_identity = json.clone();
+    profile_identity["prediction_provenance"]["profile"]["identity"]["bytes"] = json!(1);
+    assert_import_advice_schema_valid(&profile_identity);
+    assert!(matches!(
+        semantic_result(&profile_identity),
+        Err(animsmith_engine::EngineImportAdviceError::InvalidProvenance(_))
+    ));
+
+    let text = run("text");
+    assert_eq!(text.status.code(), Some(0), "{}", stderr(&text));
+    let text = stdout(&text);
+    assert_eq!(
+        text,
+        format!(
+            concat!(
+                "engine import advice v1\n",
+                "identity: sha256={} canonical-bytes={}\n",
+                "profile: unity-generic revision 1 (6000.3 / fbx-model-importer)\n",
+                "state: available\n",
+                "clip 0 -> 0 \"take\": source-name=\"take\" duration-s=1 loop=false movement-xz=animation movement-y=gameplay movement-yaw=animation speed=not_applicable loop-endpoint=not_applicable frame-grid=not_applicable\n",
+                "Unity document: convert-units=true bake-axis-conversion=false root-motion-source=\"Reference/Root\"\n",
+                "Unity clip 0: lock-root-rotation=false lock-root-height-y=true lock-root-position-xz=false\n",
+            ),
+            advice_sha256, advice_identity_bytes,
+        )
+    );
+
+    let markdown = run("markdown");
+    assert_eq!(markdown.status.code(), Some(0), "{}", stderr(&markdown));
+    let markdown = stdout(&markdown);
+    assert_eq!(
+        markdown,
+        format!(
+            concat!(
+                "# Engine import advice v1\n\n",
+                "- Identity: `{}` (`{}` canonical bytes)\n",
+                "- Profile: `unity-generic` revision `1` (`6000.3` / `fbx-model-importer`)\n",
+                "- State: `available`\n\n",
+                "## Clips\n\n",
+                "- `0` -> `0` `take`; source name `\"take\"`; duration `1` s; loop `false`; movement XZ/Y/yaw `animation` / `gameplay` / `animation`; speed `not_applicable`; loop endpoint `not_applicable`; frame grid `not_applicable`\n\n",
+                "## Importer settings\n\n",
+                "- Convert Units: `true`\n",
+                "- Bake Axis Conversion: `false`\n",
+                "- Root Motion Source: `Reference/Root`\n",
+                "- Clip `0`: lock root rotation `false`, height Y `true`, position XZ `false`\n",
+            ),
+            advice_sha256, advice_identity_bytes,
+        )
+    );
+
+    let hostile =
+        RIGGED_TRIANGLE_FBX.replace("AnimStack::take", "AnimStack::<img src=x onerror=alert(1)>");
+    std::fs::write(&input, hostile).unwrap();
+    let hostile_markdown = run("markdown");
+    assert_eq!(
+        hostile_markdown.status.code(),
+        Some(0),
+        "{}",
+        stderr(&hostile_markdown)
+    );
+    let hostile_markdown = stdout(&hostile_markdown);
+    assert!(hostile_markdown.contains(
+        "`<img src=x onerror=alert(1)>`; source name `\"<img src=x onerror=alert(1)>\"`"
+    ));
+    assert!(!hostile_markdown.contains("source name \"<img"));
+}
+
+#[test]
 fn transform_summary_reports_a_loaded_clip_omitted_from_the_artifact() {
     let dir = unique_temp_dir("transform-empty-animation");
     let input = dir.path().join("empty-animation.gltf");
@@ -2097,6 +2409,20 @@ fn help_matches_compiled_feature_set() {
         "{out}"
     );
     assert!(out.contains("does not claim runtime loading"), "{out}");
+
+    let generate = animsmith()
+        .args(["generate", "import-advice", "--help"])
+        .output()
+        .expect("runs import-advice help");
+    assert!(generate.status.success(), "stderr:\n{}", stderr(&generate));
+    let out = stdout(&generate);
+    assert!(out.contains("<INPUT>"), "{out}");
+    assert!(out.contains("[default: json]"), "{out}");
+    assert!(
+        out.contains("[possible values: json, text, markdown]"),
+        "{out}"
+    );
+    assert!(out.contains("No frame coordinates"), "{out}");
 }
 
 #[test]

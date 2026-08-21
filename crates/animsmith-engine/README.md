@@ -37,6 +37,15 @@ Resolved settings V1 materializes at most 4,096 actual clip rows. Inputs above
 that bound return a typed `ResolutionError::ResolvedSettingsContract`; callers
 must not truncate the clip list and claim complete prediction provenance.
 
+`EngineImportAdviceV1` is the separate bounded producer/readback contract for
+those materialized settings. Unity 6000.3 Generic/Humanoid projects its exact
+document and clip importer values beside same-load provenance, source versus
+normalized clip identity, explicit intent, and normalized measurement
+availability. Unreal 5.8 and Godot 4.7 revision 1 emit a typed refusal because
+their immutable profiles have no setting vocabulary. The contract makes no
+filesystem writes and does not infer frame coordinates, sampling, units, or
+root-motion behavior.
+
 ## Install
 
 ```toml

@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:engine-import-advice:1",
+  "title": "animsmith engine import advice v1",
+  "description": "One bounded, file-scoped importer-suggestion document derived from exact profile settings, same-load raw source evidence, explicit clip intent, and normalized measurements. The staged reader caps the serialized document at 256 MiB before decoding.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "schema",
+    "tool",
+    "command",
+    "identity",
+    "prediction_provenance",
+    "state",
+    "clips",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "schema": { "const": "urn:animsmith:schema:engine-import-advice:1" },
+    "tool": { "$ref": "urn:animsmith:schema:output:10#/$defs/tool" },
+    "command": { "const": "generate-import-advice" },
+    "identity": { "$ref": "urn:animsmith:schema:output:10#/$defs/input_identity" },
+    "prediction_provenance": {
+      "$ref": "urn:animsmith:schema:output:10#/$defs/prediction_provenance"
+    },
+    "state": { "enum": ["available", "refused"] },
+    "refusal_reason": {
+      "enum": [
+        "profile_settings_unmodeled",
+        "raw_clip_inventory_incomplete",
+        "clip_identity_unavailable",
+        "clip_identity_mismatch",
+        "measurement_unavailable"
+      ]
+    },
+    "clips": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/clip" }
+    },
+    "payload": { "$ref": "#/$defs/payload" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "state": { "const": "available" } },
+        "required": ["state"]
+      },
+      "then": { "not": { "required": ["refusal_reason"] } },
+      "else": {
+        "required": ["refusal_reason"],
+        "properties": { "clips": { "maxItems": 0 } }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "payload": {
+            "properties": { "engine": { "enum": ["unreal", "godot"] } },
+            "required": ["engine"]
+          }
+        },
+        "required": ["payload"]
+      },
+      "then": {
+        "properties": {
+          "state": { "const": "refused" },
+          "refusal_reason": { "const": "profile_settings_unmodeled" }
+        },
+        "required": ["refusal_reason"]
+      },
+      "else": {
+        "not": {
+          "properties": {
+            "refusal_reason": { "const": "profile_settings_unmodeled" }
+          },
+          "required": ["refusal_reason"]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "bounded_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "description": "The producer and reader additionally enforce the 4,096-byte UTF-8 limit."
+    },
+    "source_reason": {
+      "enum": [
+        "malformed",
+        "discarded",
+        "normalized_away",
+        "baked_away",
+        "loader_unsupported",
+        "projection_budget_exceeded",
+        "parser_unavailable"
+      ]
+    },
+    "source_name": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state", "value"],
+          "properties": {
+            "state": { "const": "observed" },
+            "value": { "$ref": "#/$defs/bounded_text" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state"],
+          "properties": { "state": { "const": "proven_absent" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "const": "unavailable" },
+            "reason": { "$ref": "#/$defs/source_reason" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "frame_grid": {
+      "type": "object",
+      "required": ["fps", "frame_intervals"],
+      "properties": {
+        "fps": { "type": "number", "exclusiveMinimum": 0 },
+        "frame_intervals": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "clip_evidence": {
+      "type": "object",
+      "required": [
+        "duration_s",
+        "speed_mps_availability",
+        "loop_endpoint_mode_availability",
+        "frame_grid_availability"
+      ],
+      "properties": {
+        "duration_s": { "type": "number", "minimum": 0 },
+        "speed_mps": { "type": "number", "minimum": 0 },
+        "speed_mps_availability": {
+          "$ref": "urn:animsmith:schema:measurements:15#/$defs/measurement_availability"
+        },
+        "loop_endpoint_mode": {
+          "enum": ["unique_cycle", "duplicate_endpoint", "non_closing"]
+        },
+        "loop_endpoint_mode_availability": {
+          "$ref": "urn:animsmith:schema:measurements:15#/$defs/measurement_availability"
+        },
+        "frame_grid": { "$ref": "#/$defs/frame_grid" },
+        "frame_grid_availability": {
+          "$ref": "urn:animsmith:schema:measurements:15#/$defs/measurement_availability"
+        },
+        "loop": { "type": "boolean" },
+        "movement_owner_xz": { "enum": ["gameplay", "animation"] },
+        "movement_owner_y": { "enum": ["gameplay", "animation"] },
+        "movement_owner_yaw": { "enum": ["gameplay", "animation"] }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "speed_mps_availability": { "const": "measured" } },
+            "required": ["speed_mps_availability"]
+          },
+          "then": { "required": ["speed_mps"] },
+          "else": { "not": { "required": ["speed_mps"] } }
+        },
+        {
+          "if": {
+            "properties": { "loop_endpoint_mode_availability": { "const": "measured" } },
+            "required": ["loop_endpoint_mode_availability"]
+          },
+          "then": { "required": ["loop_endpoint_mode"] },
+          "else": { "not": { "required": ["loop_endpoint_mode"] } }
+        },
+        {
+          "if": {
+            "properties": { "frame_grid_availability": { "const": "measured" } },
+            "required": ["frame_grid_availability"]
+          },
+          "then": { "required": ["frame_grid"] },
+          "else": { "not": { "required": ["frame_grid"] } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "clip": {
+      "type": "object",
+      "required": [
+        "source_clip_index",
+        "normalized_clip_index",
+        "normalized_clip_name",
+        "source_name",
+        "evidence"
+      ],
+      "properties": {
+        "source_clip_index": { "$ref": "#/$defs/u64" },
+        "normalized_clip_index": { "$ref": "#/$defs/u64" },
+        "normalized_clip_name": { "$ref": "#/$defs/bounded_text" },
+        "source_name": { "$ref": "#/$defs/source_name" },
+        "evidence": { "$ref": "#/$defs/clip_evidence" }
+      },
+      "additionalProperties": false
+    },
+    "unity_document": {
+      "type": "object",
+      "required": ["convert_units", "bake_axis_conversion"],
+      "properties": {
+        "convert_units": { "type": "boolean" },
+        "bake_axis_conversion": { "type": "boolean" },
+        "root_motion_source": { "$ref": "#/$defs/bounded_text" }
+      },
+      "additionalProperties": false
+    },
+    "unity_clip": {
+      "type": "object",
+      "required": [
+        "normalized_clip_index",
+        "lock_root_rotation",
+        "lock_root_height_y",
+        "lock_root_position_xz"
+      ],
+      "properties": {
+        "normalized_clip_index": { "$ref": "#/$defs/u64" },
+        "lock_root_rotation": { "type": "boolean" },
+        "lock_root_height_y": { "type": "boolean" },
+        "lock_root_position_xz": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "unity_clips": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/unity_clip" }
+    },
+    "payload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["engine", "document", "clips"],
+          "properties": {
+            "engine": { "const": "unity-generic" },
+            "document": {
+              "allOf": [
+                { "$ref": "#/$defs/unity_document" },
+                { "required": ["root_motion_source"] }
+              ]
+            },
+            "clips": { "$ref": "#/$defs/unity_clips" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["engine", "document", "clips"],
+          "properties": {
+            "engine": { "const": "unity-humanoid" },
+            "document": {
+              "allOf": [
+                { "$ref": "#/$defs/unity_document" },
+                { "not": { "required": ["root_motion_source"] } }
+              ]
+            },
+            "clips": { "$ref": "#/$defs/unity_clips" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["engine"],
+          "properties": { "engine": { "const": "unreal" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["engine"],
+          "properties": { "engine": { "const": "godot" } },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

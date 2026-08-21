@@ -588,7 +588,8 @@ absent selector field or explicit empty list means no runtime-node policy.
 
 ## Machine Output
 
-`measure`, `lint`, `diff`, and `generate addressability` support
+`measure`, `lint`, `diff`, `generate addressability`, and
+`generate import-advice` support
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
 See [output.md](output.md) and
@@ -604,6 +605,30 @@ original asset with the current CLI before using `diff`.
 [output.md](output.md#gltf-animation-addressability) and
 [`gltf-animation-addressability-v1.schema.json`](schemas/gltf-animation-addressability-v1.schema.json).
 It is not output-v10 and cannot be used as a `diff` measurement operand.
+
+`generate import-advice` requires an exact `[engine]` selection and all
+required settings, then binds that resolved profile to one input and the
+same-load raw facts, dependency closure, explicit clip intent, and normalized
+measurements:
+
+```console
+animsmith --config unity.animsmith.toml generate import-advice export.fbx
+animsmith --config unity.animsmith.toml generate import-advice export.fbx \
+  --format markdown
+```
+
+The default JSON is the separate immutable contract
+`urn:animsmith:schema:engine-import-advice:1`; see
+[output.md](output.md#engine-import-advice) and
+[`engine-import-advice-v1.schema.json`](schemas/engine-import-advice-v1.schema.json).
+The strict reader caps the serialized document at 256 MiB before decoding.
+Unity 6000.3 Generic/Humanoid projects only the resolved importer settings
+modeled by profile revision 1. Unreal 5.8 and Godot 4.7 revision 1 return a
+typed `profile_settings_unmodeled` refusal (exit 1). Available advice exits 0;
+config, unsupported-profile/input-format, I/O, and serialization errors exit
+2. The command never invents authored frame numbers, sampling rates, unit
+conversion, or root-motion behavior. Text and Markdown are presentation-only
+views of the same validated value.
 
 Measurements v15 adds canonical per-bone local TRS channel coverage and
 sampled Root/Hips trajectory evidence. Root is preferred whenever that role
