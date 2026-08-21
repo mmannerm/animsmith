@@ -2219,7 +2219,7 @@ fn unmodeled_audio_clip_prevents_a_complete_dependency_closure() {
     std::fs::write(dir.path().join("voice.wav"), b"sentinel audio")
         .expect("write sidecar sentinel");
 
-    let loaded = animsmith_fbx::load_source(&path).expect("audio fixture parses");
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("audio fixture parses");
     let closure = loaded.dependency_closure();
     assert!(!closure.coverage().is_complete());
     assert!(closure.identity().is_none());
@@ -2230,6 +2230,12 @@ fn unmodeled_audio_clip_prevents_a_complete_dependency_closure() {
             .coverage()
             .reasons()
             .contains(&DependencyClosureCoverageReasonV1::UnmodeledResourceDomain)
+    );
+    let error = animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect_err("unmodeled audio must remain outside the rest/bind admission boundary");
+    assert_eq!(
+        error,
+        "FBX rest/bind raw-source facts rejected: raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1)"
     );
 }
 
