@@ -167,6 +167,7 @@ The earlier `b7c215b` heading-basis refusals remain historical only. Pre-release
 5. `_RM` is naming evidence; per-clip root-trajectory measurement (new in 0.4.0) covers horizontal travel and yaw on 112/112 clips, but these are sampled regression facts on the shared metric grid, not continuous-curve or engine root-motion extraction proof — never declare a movement-ownership axis from measured travel alone.
 6. The 0.4.0 Unity `unity-humanoid` import-advice derives root rotation/Y/XZ=`extract` for every clip because no delivered `.fbx.meta` sets the lock flags; this assumes an absent key takes Unity's serialized default, targets 6000.3, and is not observed 6000.5.8f1 behavior.
 7. Current public pages/EULA do not prove the local revision, transaction date, or historical terms.
+8. The integration recipe's `owner=split-by-movement-variant` step is a variant-level integration recommendation grounded in the delivered in-place/root-motion pairing, which is observed-file evidence. It is not a per-axis `movement_owner_xz` / `movement_owner_y` / `movement_owner_yaw` declaration, and no such declaration is derived from measured travel in this refresh. Measured root displacement and yaw are recorded as sampled facts only; choosing the per-axis owner remains a project and engine decision.
 
 ## Reproduction
 

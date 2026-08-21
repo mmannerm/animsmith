@@ -175,6 +175,7 @@ No gait-anchor trial touched RM-labelled input; every resampled channel is in-pl
 7. Offline HTML reports were generated but not used to claim visual or artistic acceptance.
 8. Current public pages/EULA do not prove the local revision, transaction date, or historical terms, and were not re-checked on 2026-08-21.
 9. The 0.4.0 Unity 6000.3 import-advice rests on an operator-verified assumption about absent `.fbx.meta` keys, not an observed Unity 6000.3 or 6000.5 import.
+10. The integration recipe's `owner=split-by-movement-variant` step is a variant-level integration recommendation grounded in the delivered in-place/root-motion pairing, which is observed-file evidence. It is not a per-axis `movement_owner_xz` / `movement_owner_y` / `movement_owner_yaw` declaration, and no such declaration is derived from measured travel in this refresh. Measured root displacement and yaw are recorded as sampled facts only; choosing the per-axis owner remains a project and engine decision.
 
 ## Reproduction
 

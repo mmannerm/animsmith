@@ -213,6 +213,7 @@ The dominant rig's two forearm-twist bones distinguish it from the 56-bone Basic
 8. Current public pages/EULA do not prove the local revision, transaction date, or historical terms.
 9. The `unity-humanoid` import-advice settings are derived from delivered `.fbx.meta` absent-key defaults, not observed 6000.5.8f1 importer behavior; this assumption needs project-level confirmation.
 10. The explicit `[rig.roles]` config changes evaluator coverage, not source bytes; [#437](https://github.com/mmannerm/animsmith/issues/437) (case-tolerant fail-closed aliasing) remains open, so out-of-box role resolution is still a gap.
+11. The integration recipe's `owner=split-by-movement-variant` step is a variant-level integration recommendation grounded in the delivered in-place/root-motion pairing, which is observed-file evidence. It is not a per-axis `movement_owner_xz` / `movement_owner_y` / `movement_owner_yaw` declaration, and no such declaration is derived from measured travel in this refresh. Measured root displacement and yaw are recorded as sampled facts only; choosing the per-axis owner remains a project and engine decision.
 
 ## Reproduction
 

@@ -355,6 +355,7 @@ A meaningful future cross-pack report should compare at least: humanoid role map
 11. No full artistic review of all 177 motions was conducted; nine representative offline reports were sampled.
 12. Root trajectory (movement over 1 cm, stationary, yaw over 1°) and the `positive_y` heading axis are sampled-grid regression facts on 179/179 clips, not continuous-curve or engine root-motion-extraction proof; no movement-ownership axis (which side owns XZ/Y/yaw translation) is inferred from them.
 13. The 24 gait-anchored GLB candidates produced under 0.4.0 were not imported into any engine or visually reviewed this session; treat them as unpromoted pending that gate.
+14. The integration recipe's `owner=split-by-movement-variant` step is a variant-level integration recommendation grounded in the delivered in-place/root-motion pairing, which is observed-file evidence. It is not a per-axis `movement_owner_xz` / `movement_owner_y` / `movement_owner_yaw` declaration, and no such declaration is derived from measured travel in this refresh. Measured root displacement and yaw are recorded as sampled facts only; choosing the per-axis owner remains a project and engine decision.
 
 ## Reproduction
 
