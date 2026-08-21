@@ -990,7 +990,7 @@ fn container_name(container: GltfContainerKind) -> &'static str {
 /// `latest.glb -> store/rig.glb` be handed in as the input while
 /// `store/rig.glb` is named as the output, with publication then destroying
 /// the source asset the run just read. See [`input_identity`] and
-/// [`destination_identity`].
+/// [`PublicationDestination`].
 ///
 /// This one check is the whole guard: `scale` deliberately does not also
 /// reject symlinked paths outright the way `assemble`'s `reject_symlink_path`
