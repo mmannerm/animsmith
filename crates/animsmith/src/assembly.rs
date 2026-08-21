@@ -9,7 +9,7 @@ use crate::material_recipe::{
 };
 use crate::publish::{
     destination_identity, emit, emit_text, parent_or_current, publish_pair, read_digest,
-    require_external_dependencies_distinct_from_destinations, require_writable_destination,
+    require_external_dependencies_safe_for_publication, require_writable_destination,
     serialize_record,
 };
 use crate::{Format, render};
@@ -891,7 +891,7 @@ fn prepare_scale_input(
             )
         })
         .refusal(Stage::Load, Kind::UnreadableSource)?;
-        require_external_dependencies_distinct_from_destinations(
+        require_external_dependencies_safe_for_publication(
             "assemble",
             resource_root,
             fbx_source.dependency_closure(),

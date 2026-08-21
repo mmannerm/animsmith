@@ -160,8 +160,8 @@ texture/video declarations because neither supplies rest/bind state to the
 normalized GLB bridge. Rooted capture retains supported linked texture bytes
 through the normalized artifact, and neither publication destination may name
 one of the safe source-relative dependency keys retained by that same-load
-closure, including a key whose capture was unavailable or refused. The frozen
-path stops before publication when a retained key was refused as
+closure, including a key whose capture was unavailable or refused. The command
+stops before publication when a retained key was refused as
 symlink-mediated rather than resolving through the link, or when the closure
 resource budget leaves a declaration tail unchecked. The frozen v7 evidence
 retains declaration counts in its capability inventory; same-load raw

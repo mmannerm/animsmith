@@ -2807,37 +2807,47 @@ fn fbx_rest_bind_protects_a_keyed_dependency_that_exceeds_the_capture_budget() {
 #[cfg(feature = "fbx")]
 #[test]
 fn fbx_rest_bind_rejects_a_truncated_dependency_closure_before_publication() {
-    let dir = tempfile::tempdir().expect("temporary directory");
-    std::fs::write(
-        dir.path().join("rig.fbx"),
-        external_resource_closure_budget_fbx_fixture("out.json"),
-    )
-    .unwrap();
-    let artifact = dir.path().join("out.glb");
-    let evidence = dir.path().join("out.json");
-    let prior_artifact = b"prior artifact";
-    let prior_evidence = b"source-sidecar sentinel";
-    std::fs::write(&artifact, prior_artifact).unwrap();
-    std::fs::write(&evidence, prior_evidence).unwrap();
+    for last_locator in ["out.json", "tail.png"] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::write(
+            dir.path().join("rig.fbx"),
+            external_resource_closure_budget_fbx_fixture(last_locator),
+        )
+        .unwrap();
+        let artifact = dir.path().join("out.glb");
+        let evidence = dir.path().join("out.json");
+        let tail = dir.path().join("tail.png");
+        let prior_artifact = b"prior artifact";
+        let prior_evidence = b"prior evidence";
+        let prior_tail = b"source-sidecar sentinel";
+        std::fs::write(&artifact, prior_artifact).unwrap();
+        std::fs::write(&evidence, prior_evidence).unwrap();
+        if last_locator == "tail.png" {
+            std::fs::write(&tail, prior_tail).unwrap();
+        }
 
-    let result =
-        fbx_rest_bind_command(dir.path(), "rig.fbx", "out.glb", "out.json", "0.01", "json")
-            .output()
-            .expect("runs dependency-closure budget preflight");
+        let result =
+            fbx_rest_bind_command(dir.path(), "rig.fbx", "out.glb", "out.json", "0.01", "json")
+                .output()
+                .expect("runs dependency-closure budget preflight");
 
-    assert_eq!(
-        result.status.code(),
-        Some(2),
-        "stderr:\n{}",
-        stderr(&result)
-    );
-    assert!(result.stdout.is_empty());
-    assert_eq!(
-        stderr(&result),
-        "animsmith: scale dependency closure exceeded its resource budget, so publication cannot prove every source sidecar distinct\n"
-    );
-    assert_eq!(std::fs::read(artifact).unwrap(), prior_artifact);
-    assert_eq!(std::fs::read(evidence).unwrap(), prior_evidence);
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{last_locator} stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert_eq!(
+            stderr(&result),
+            "animsmith: scale dependency closure exceeded its resource budget, so publication cannot prove every source sidecar distinct\n"
+        );
+        assert_eq!(std::fs::read(artifact).unwrap(), prior_artifact);
+        assert_eq!(std::fs::read(evidence).unwrap(), prior_evidence);
+        if last_locator == "tail.png" {
+            assert_eq!(std::fs::read(tail).unwrap(), prior_tail);
+        }
+    }
 }
 
 #[cfg(feature = "fbx")]
@@ -2905,7 +2915,7 @@ fn fbx_rest_bind_protects_a_missing_retained_key_without_requiring_its_parent() 
 fn fbx_rest_bind_refuses_a_symlink_retained_key_before_any_publication() {
     use std::os::unix::fs::symlink;
 
-    for destination_kind in ["entry", "target"] {
+    for destination_kind in ["entry", "target", "unrelated"] {
         let dir = tempfile::tempdir().expect("temporary directory");
         std::fs::create_dir(dir.path().join("nested")).unwrap();
         std::fs::write(
@@ -2923,14 +2933,18 @@ fn fbx_rest_bind_refuses_a_symlink_retained_key_before_any_publication() {
         } else {
             "nested/normal.png"
         };
-        let evidence = if destination_kind == "entry" {
-            entry_destination
-        } else {
-            "nested/source.png"
+        let evidence = match destination_kind {
+            "entry" => entry_destination,
+            "target" => "nested/source.png",
+            "unrelated" => "out.json",
+            _ => unreachable!(),
         };
         let peer = dir.path().join("out.glb");
+        let unrelated_evidence = dir.path().join("out.json");
         let prior_peer = b"prior artifact";
+        let prior_evidence = b"prior evidence";
         std::fs::write(&peer, prior_peer).unwrap();
+        std::fs::write(&unrelated_evidence, prior_evidence).unwrap();
 
         let result = fbx_rest_bind_command(
             dir.path(),
@@ -2969,6 +2983,7 @@ fn fbx_rest_bind_refuses_a_symlink_retained_key_before_any_publication() {
         );
         assert_eq!(std::fs::read(target).unwrap(), TINY_PNG);
         assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+        assert_eq!(std::fs::read(unrelated_evidence).unwrap(), prior_evidence);
     }
 }
 

@@ -444,7 +444,7 @@ pub(crate) fn input_identity(path: &Path) -> Result<PathBuf, String> {
 /// a dependency path cannot be inspected, or a key names one of the supplied
 /// destinations.
 #[cfg(feature = "fbx")]
-pub(crate) fn require_external_dependencies_distinct_from_destinations(
+pub(crate) fn require_external_dependencies_safe_for_publication(
     command: &str,
     resource_root: &Path,
     closure: &DependencyClosureV1,
