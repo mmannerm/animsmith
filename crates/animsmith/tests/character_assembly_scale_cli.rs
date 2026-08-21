@@ -1705,7 +1705,18 @@ fn v7_accepts_external_fbx_texture_references_as_scale_irrelevant() {
         2,
         "the immutable evidence remains honest about both texture/video declarations"
     );
-    animsmith_gltf::load(&dir.path().join("character.glb")).expect("published artifact reloads");
+    let artifact = animsmith_gltf::load(&dir.path().join("character.glb"))
+        .expect("published artifact reloads");
+    assert_eq!(
+        artifact.assets.materials[0]
+            .normal_texture
+            .as_ref()
+            .expect("published material retains its captured normal texture")
+            .texture
+            .bytes,
+        TINY_PNG,
+        "rest/bind staging must not turn an admitted external texture into silent data loss"
+    );
 }
 
 #[test]

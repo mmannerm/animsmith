@@ -157,10 +157,13 @@ incomplete bind evidence, unknown source elements or extensions, incomplete
 resource/construct coverage, or an incompatible basis fails closed. The
 source-aware gate may admit user-defined properties and bounded external
 texture/video declarations because neither supplies rest/bind state to the
-normalized GLB bridge. Their declarations and closure evidence remain visible;
-admission does not claim raw object-property, material, or texture-assignment
-preservation. A refusal identifies the exact failed source fact, semantic
-domain, or inventory counter. Nothing is inferred from filenames, bounds,
+normalized GLB bridge. Rooted capture retains supported linked texture bytes
+through the normalized artifact. The frozen v7 evidence retains declaration
+counts in its capability inventory; same-load raw facts and closure remain
+loader-side rather than being added to that wire record. Admission does not
+claim raw FBX object-property, material, or texture-assignment preservation. A
+refusal identifies the exact failed source fact, semantic domain, or inventory
+counter. Nothing is inferred from filenames, bounds,
 character height, inverse-bind magnitudes, or source units. Recipe v6 remains
 immutable with its explicit source indices;
 recipes v4/v5 remain immutable and continue to reject FBX when

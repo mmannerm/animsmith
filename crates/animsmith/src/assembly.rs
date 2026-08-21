@@ -871,14 +871,22 @@ fn prepare_scale_input(
         source_projection,
         selector,
     ) = if is_fbx {
-        let fbx_source = animsmith_fbx::load_scale_source_bytes(resolved, &bytes)
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale FBX load rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Load, Kind::UnreadableSource)?;
+        let resource_root = resolved
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let fbx_source = animsmith_fbx::load_scale_source_bytes_with_resource_root(
+            resolved,
+            &bytes,
+            resource_root,
+        )
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale FBX load rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Load, Kind::UnreadableSource)?;
         let primary_identity = fbx_source.source_facts().primary_identity();
         let sha256 = primary_identity.sha256().to_owned();
         let byte_count = primary_identity.bytes();

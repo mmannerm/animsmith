@@ -488,14 +488,26 @@ fn join_source_facts(
 /// [`FbxScaleDomainStatus::Unverifiable`]. Every semantic domain must still
 /// be complete when it can affect the normalized document. User-defined FBX
 /// properties are already explicitly discarded by the loader, and external
-/// image declarations become ordinary staged-GLB image payloads (or remain
-/// absent); neither is a scale-bearing ambiguity. Unknown source elements,
+/// image declarations require the source-aware companion so their same-load
+/// resource classification and capture can be validated before staging. The
+/// frozen inventory alone remains conservative for external references because
+/// it cannot prove that boundary. Neither known class is a scale-bearing
+/// ambiguity. Unknown source elements,
 /// incomplete bind evidence, altered skin influences, or an incomplete
 /// coordinate projection remain stable refusals before the producer can stage
 /// any output.
 pub fn rest_bind_capability_facts(
     inventory: &FbxScaleCapabilityInventory,
 ) -> Result<ScaleCapabilityFacts, String> {
+    if inventory.external_resource_count != 0 {
+        return Err(format_rest_bind_violations(
+            "capability inventory",
+            &[format!(
+                "external_resource_count={}",
+                inventory.external_resource_count
+            )],
+        ));
+    }
     rest_bind_capability_facts_with_safe_resource_links(inventory, 0)
 }
 

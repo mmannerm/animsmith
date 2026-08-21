@@ -30,6 +30,14 @@ const FBX_SCALE_EVIDENCE_SCHEMA: &str =
     include_str!("../../../docs/schemas/scale-evidence-v5.schema.json");
 #[cfg(feature = "fbx")]
 const FBX_SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:5";
+#[cfg(feature = "fbx")]
+const TINY_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xA7, 0x35, 0x81, 0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82,
+];
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
@@ -2349,6 +2357,54 @@ fn two_skin_fbx_fixture() -> String {
     .replace("Link_DeformAccuracy", &["Link_DeformA", "curacy"].concat())
 }
 
+#[cfg(feature = "fbx")]
+fn external_normal_texture_fbx_fixture() -> String {
+    let source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
+    )
+    .expect("reads analytic FBX fixture")
+    .replace("\r\n", "\n");
+    let source = source.replacen(
+        "\tObjectType: \"Deformer\" { Count: 2 }\n}",
+        "\tObjectType: \"Deformer\" { Count: 2 }\n\tObjectType: \"Material\" { Count: 1 }\n\tObjectType: \"Texture\" { Count: 1 }\n\tObjectType: \"Video\" { Count: 1 }\n}",
+        1,
+    );
+    let objects = r#"	Material: 5001, "Material::normal_mat", "" {
+		Version: 102
+		ShadingModel: "phong"
+		MultiLayer: 0
+	}
+	Texture: 5002, "Texture::normal", "" {
+		Type: "TextureVideoClip"
+		Version: 202
+		TextureName: "Texture::normal"
+		Media: "Video::normal"
+		FileName: "normal.png"
+		RelativeFilename: "normal.png"
+		ModelUVTranslation: 0,0
+		ModelUVScaling: 1,1
+		Texture_Alpha_Source: "None"
+		Cropping: 0,0,0,0
+	}
+	Video: 5003, "Video::normal", "Clip" {
+		Type: "Clip"
+		Properties70: {
+			P: "Path", "KString", "XRefUrl", "", "normal.png"
+		}
+		FileName: "normal.png"
+		RelativeFilename: "normal.png"
+	}
+}
+Connections: {"#;
+    source
+        .replacen("}\nConnections: {", objects, 1)
+        .replacen(
+            "Connections: {",
+            "Connections: {\n\tC: \"OO\",5001,1002\n\tC: \"OP\",5002,5001,\"NormalMap\"\n\tC: \"OO\",5003,5002",
+            1,
+        )
+}
+
 /// Two separate skins whose ordered named joint topologies deliberately
 /// collide after staging, while their selected parent root remains unique.
 #[cfg(feature = "fbx")]
@@ -2548,6 +2604,46 @@ fn fbx_rest_bind_reencodes_and_proves_a_complete_inventory() {
         first_evidence
     );
     assert_eq!(rerun.stdout, first_evidence);
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_captures_an_admitted_external_texture_before_staging() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::write(
+        dir.path().join("rig.fbx"),
+        external_normal_texture_fbx_fixture(),
+    )
+    .expect("writes analytic external-texture FBX");
+    std::fs::write(dir.path().join("normal.png"), TINY_PNG)
+        .expect("writes analytic linked texture");
+
+    let output =
+        fbx_rest_bind_command(dir.path(), "rig.fbx", "out.glb", "out.json", "0.01", "json")
+            .output()
+            .expect("runs FBX rest-bind scale");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let record: Value = serde_json::from_slice(&output.stdout).expect("JSON evidence");
+    assert_fbx_schema_valid(&record);
+    assert_eq!(record["capability"]["external_resource_count"], 2);
+
+    let artifact = animsmith_gltf::load(&dir.path().join("out.glb"))
+        .expect("published external-texture GLB reloads");
+    assert_eq!(
+        artifact.assets.materials[0]
+            .normal_texture
+            .as_ref()
+            .expect("published material retains its captured normal texture")
+            .texture
+            .bytes,
+        TINY_PNG,
+        "admitting a scale-irrelevant declaration must not silently remove its supported payload"
+    );
 }
 
 #[cfg(feature = "fbx")]

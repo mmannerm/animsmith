@@ -460,9 +460,11 @@ re-encoding proof, not a claim that FBX bytes, object properties, or authored
 curve keys were preserved. Source-aware admission can therefore allow
 user-defined properties and bounded external texture/video declarations when
 same-load evidence proves they do not affect rest/bind state. The frozen
-inventory and dependency closure continue to retain their counts, coverage,
-and captured-resource identities; admission does not erase that evidence or
-claim material/texture-assignment preservation. The inventory projection is
+v5 record retains the inventory counts; the same-load loader source separately
+retains raw facts and dependency-closure coverage/identities, but v5 does not
+serialize those sidecars. Supported linked texture bytes are captured before
+staging so the operation does not silently remove them, without claiming raw
+FBX material/texture-assignment preservation. The inventory projection is
 frozen with v5: a new FBX fact requires a new evidence identity rather than
 silently changing this wire record. Whole-document FBX scaling remains
 refused.

@@ -641,6 +641,11 @@ fn narrow_rest_bind_gate_consumes_every_inventory_refusal_signal() {
             inventory.light_count = 1
         }),
         (
+            "external-resource",
+            "external_resource_count=1",
+            |inventory| inventory.external_resource_count = 1,
+        ),
+        (
             "unsupported-domain",
             "domain.morphs=unsupported",
             |inventory| inventory.domains.morphs = FbxScaleDomainStatus::Unsupported,

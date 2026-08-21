@@ -97,7 +97,8 @@ use std::process::ExitCode;
 use animsmith_core::model::Document;
 #[cfg(feature = "fbx")]
 use animsmith_fbx::{
-    FbxScaleCapabilityInventory, load_scale_source_bytes, rest_bind_capability_facts_for_source,
+    FbxScaleCapabilityInventory, load_scale_source_bytes_with_resource_root,
+    rest_bind_capability_facts_for_source,
 };
 
 const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 4;
@@ -1212,7 +1213,16 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
         output: request.output.display().to_string(),
         evidence: request.evidence.display().to_string(),
     };
-    let source = match load_scale_source_bytes(&request.input, &input_bytes) {
+    let resource_root = request
+        .input
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let source = match load_scale_source_bytes_with_resource_root(
+        &request.input,
+        &input_bytes,
+        resource_root,
+    ) {
         Ok(source) => source,
         Err(error) => {
             return emit_fbx_rejection(

@@ -1683,8 +1683,10 @@ scale-bearing. User-defined properties are explicitly discarded before the
 private GLB is written, and parser-known texture/video linkage is represented
 by bounded resource facts and dependency-closure evidence rather than a
 transform field. The source-aware gate may therefore admit those two known
-classes while retaining their inventory/evidence rows and making no
-object-property, material, or texture-assignment preservation claim. Unknown
+classes while retaining their inventory/evidence rows; rooted capture keeps
+supported texture assignments in the normalized document and private GLB.
+This remains a normalized re-encoding rather than a raw FBX object-property,
+material, or texture-assignment preservation claim. Unknown
 elements, extensions, incomplete construct/resource coverage, and every
 unsupported transform, geometry, bind, or animation fact still reject. The
 inventory-only API remains conservative because its frozen v5 aggregate cannot
@@ -2005,8 +2007,10 @@ rest/bind subset: adjusted metre/Y-up coordinates, compensated inheritance,
 complete finite bind provenance, unchanged four-slot influences, and no
 unsupported scale-bearing semantic D.4 row. Same-load source facts may prove
 that user-defined properties or bounded texture/video declarations are known,
-non-scale-bearing inputs to this normalized bridge; their immutable inventory
-and closure evidence remain present. The three raw-span rows are deliberately
+non-scale-bearing inputs to this normalized bridge. The same-load
+`FbxScaleSource` retains their raw facts and dependency closure, while v5 keeps
+the frozen inventory projection rather than adding either sidecar to its wire
+shape. The three raw-span rows are deliberately
 unverifiable because FBX is not rewritten. The frontend serializes the
 normalized document to a private GLB, maps the selected root and ordered skin
 joint topology by exact unique normalized names, rewrites that GLB with the
@@ -2015,8 +2019,9 @@ once, read-back-digest checks it, and atomically publishes the resulting GLB
 with immutable scale-evidence v5. V5 records the complete FBX inventory and
 the private staged-GLB identity plus the nested raw-GLB proof; it makes no raw
 FBX span, object-property, authored-curve, material, or texture-assignment
-preservation claim. Refusals name the exact incomplete coverage domain,
-semantic row, or inventory counter.
+preservation claim; supported linked texture bytes are nevertheless captured
+before staging so admission cannot silently remove them. Refusals name the
+exact incomplete coverage domain, semantic row, or inventory counter.
 
 **Two observed factors, and the divergence between them.** For rest/bind
 reparameterization, "observed factor" names two independent witnesses of the
