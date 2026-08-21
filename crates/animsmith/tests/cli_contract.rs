@@ -7241,7 +7241,7 @@ convert_units = true
 bake_axis_conversion = true
 root_motion_source = "Reference/Root"
 "#,
-            "RootMotionSource is not applicable",
+            "root_motion_source is not applicable",
         ),
         (
             "source-unit.toml",
@@ -7275,7 +7275,7 @@ bake_axis_conversion = true
 root_motion_source = "Reference/Root"
 root_rotation = "bake"
 "#,
-            "RootRotation has Clip scope but was declared in Document scope",
+            "root_rotation has Clip scope but was declared in Document scope",
         ),
         (
             "wrong-domain.toml",
@@ -7291,7 +7291,7 @@ convert_units = "bake"
 bake_axis_conversion = true
 root_motion_source = "Reference/Root"
 "#,
-            "invalid value for engine setting ConvertUnits",
+            "invalid value for engine setting convert_units",
         ),
         (
             "missing-required.toml",
@@ -7306,7 +7306,21 @@ importer = "fbx-model-importer"
 bake_axis_conversion = true
 root_motion_source = "Reference/Root"
 "#,
-            "missing required engine setting ConvertUnits",
+            "missing required engine setting convert_units",
+        ),
+        (
+            "enum-spelling-is-unknown.toml",
+            r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+BakeAxisConversion = true
+"#,
+            "unknown engine setting \"BakeAxisConversion\"",
         ),
     ];
     for (name, text, expected) in cases {

@@ -71,9 +71,7 @@ pub enum ResolutionError {
         location: SettingLocation,
     },
     /// A known setting was declared in the wrong scope.
-    #[error(
-        "engine setting {setting:?} has {expected:?} scope but was declared in {found:?} scope"
-    )]
+    #[error("engine setting {setting} has {expected:?} scope but was declared in {found:?} scope")]
     WrongScope {
         /// Stable setting id.
         setting: SettingId,
@@ -85,7 +83,7 @@ pub enum ResolutionError {
         location: SettingLocation,
     },
     /// A known descriptor genuinely does not apply to the selected profile.
-    #[error("engine setting {setting:?} is not applicable in {location}")]
+    #[error("engine setting {setting} is not applicable in {location}")]
     NotApplicable {
         /// Stable setting id.
         setting: SettingId,
@@ -93,7 +91,7 @@ pub enum ResolutionError {
         location: SettingLocation,
     },
     /// A setting value is outside its closed descriptor domain.
-    #[error("invalid value for engine setting {setting:?} in {location}: {reason:?}")]
+    #[error("invalid value for engine setting {setting} in {location}: {reason:?}")]
     InvalidSettingValue {
         /// Stable setting id.
         setting: SettingId,
@@ -103,7 +101,7 @@ pub enum ResolutionError {
         reason: InvalidSettingReason,
     },
     /// One required-without-default setting was not materialized.
-    #[error("missing required engine setting {setting:?} in {location}")]
+    #[error("missing required engine setting {setting} in {location}")]
     MissingRequiredSetting {
         /// Stable setting id.
         setting: SettingId,

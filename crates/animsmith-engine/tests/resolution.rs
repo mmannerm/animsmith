@@ -266,6 +266,63 @@ fn every_setting_descriptor_rejects_a_value_from_another_domain() {
 }
 
 #[test]
+fn known_setting_diagnostics_use_public_configuration_spellings() {
+    let spellings = [
+        (SettingId::ConvertUnits, "convert_units"),
+        (SettingId::BakeAxisConversion, "bake_axis_conversion"),
+        (SettingId::RootMotionSource, "root_motion_source"),
+        (SettingId::RootRotation, "root_rotation"),
+        (SettingId::RootPositionY, "root_position_y"),
+        (SettingId::RootPositionXz, "root_position_xz"),
+    ];
+    for (setting, expected) in spellings {
+        assert_eq!(setting.to_string(), expected);
+    }
+
+    let wrong_scope = ResolutionError::WrongScope {
+        setting: SettingId::RootRotation,
+        expected: SettingScope::Clip,
+        found: SettingScope::Document,
+        location: SettingLocation::Document,
+    };
+    assert_eq!(
+        wrong_scope.to_string(),
+        "engine setting root_rotation has Clip scope but was declared in Document scope"
+    );
+
+    let not_applicable = ResolutionError::NotApplicable {
+        setting: SettingId::RootMotionSource,
+        location: SettingLocation::Document,
+    };
+    assert_eq!(
+        not_applicable.to_string(),
+        "engine setting root_motion_source is not applicable in document settings"
+    );
+
+    let invalid_value = ResolutionError::InvalidSettingValue {
+        setting: SettingId::ConvertUnits,
+        location: SettingLocation::Document,
+        reason: InvalidSettingReason::WrongDomain {
+            expected: SettingDomain::Boolean,
+            found: SettingValueKind::BakeOrExtract,
+        },
+    };
+    assert_eq!(
+        invalid_value.to_string(),
+        "invalid value for engine setting convert_units in document settings: WrongDomain { expected: Boolean, found: BakeOrExtract }"
+    );
+
+    let missing = ResolutionError::MissingRequiredSetting {
+        setting: SettingId::BakeAxisConversion,
+        location: SettingLocation::Document,
+    };
+    assert_eq!(
+        missing.to_string(),
+        "missing required engine setting bake_axis_conversion in document settings"
+    );
+}
+
+#[test]
 fn source_transform_path_is_relative_segmented_control_free_and_byte_bounded() {
     let invalid = [
         ("", InvalidSettingReason::EmptyPath),
