@@ -120,17 +120,31 @@ cargo run -p animsmith --example embed
    `resolve_static` validates every declaration without file I/O; then call
    `StaticResolution::resolve_input` with the loader-owned `SourceFormatV1`
    and actual clip names. The result contains the immutable facts identity and
-   fully materialized settings identity. There is no generic/fallback profile,
+   fully materialized settings identity. Pass that result and the same
+   `LoadedSource` to `project_prediction_provenance_v1`; do not reopen or
+   reconstruct either input. There is no generic/fallback profile,
    caller-supplied source-unit override, or TOML type in this API. If the host
-   has no engine contract, omit this step; core measurements and checks remain
-   engine-neutral.
-3. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
+   has no engine contract, omit projection and retain `None`; core measurements
+   and checks remain engine-neutral.
+3. **Compose one check catalog.** Start with `animsmith_core::all_checks()` and
+   append one borrowed
+   `animsmith_engine::AnimationAssetLabelCheck::new(&source,
+   provenance.as_ref())`. Pass `None` when no profile was resolved so the
+   stable engine-owned record remains not applicable. Validate selection
+   against the core ids plus `animsmith_engine::ENGINE_CHECK_IDS_V1` before
+   asset I/O, then call `evaluate_checks` exactly once for the combined
+   per-file catalog. The borrowed catalog intentionally cannot outlive its
+   same-load `LoadedSource` and provenance. `measure_document` does not consume
+   either and remains profile-neutral. V1 materializes at most 4,096 actual
+   clip-setting rows; an N+1 document is a typed bounds error rather than a
+   truncated prediction.
+4. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
    named/auto profile plus inline-override policy as the CLI. Lower-level
    `detect_profile`, `profile::resolve_named`, and
    `ResolvedRoles::from_names` remain available when a host intentionally
    owns a different policy. Checks consume roles, never project-specific bone
    names.
-4. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
+5. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
    the types from your schema or build them programmatically. Deserialization
    validates numeric check tolerances and per-clip loop caps immediately.
    `MovementOwner` represents independent XZ, Y, and yaw intent in core;
@@ -147,10 +161,10 @@ cargo run -p animsmith --example embed
    the shared field is absent. Supplying both is a typed conflict. This added
    public field is an intentional pre-1.0 struct-literal break: exhaustive
    literals must add `runtime_nodes` or use `..Config::default()`.
-5. **Create one `MetricGrids`.** Share it by reference with
+6. **Create one `MetricGrids`.** Share it by reference with
    `measure_document`, `CheckCtx::new`, `evaluate_checks`, and optional report
    rendering so each clip is sampled once.
-6. **Map results into the host.** `Finding` carries a stable check id,
+7. **Map results into the host.** `Finding` carries a stable check id,
    severity, optional clip/bone/time, measured and expected values, and a
    message. The host decides whether warnings fail its gate.
 

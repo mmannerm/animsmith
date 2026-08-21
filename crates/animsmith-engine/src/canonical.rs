@@ -28,13 +28,11 @@ pub(crate) fn settings_identity<'a>(
     profile: &EngineProfile,
     document: &BTreeMap<SettingId, SettingValue>,
     clips: impl IntoIterator<Item = (&'a str, &'a BTreeMap<SettingId, SettingValue>)>,
-) -> InputIdentity {
-    let profile = project_profile(profile)
-        .expect("a resolved engine profile must project into its core-owned V1 contract");
-    project_settings(&profile, document, clips)
-        .expect("resolved settings must project into their core-owned V1 contract")
+) -> Result<InputIdentity, EngineContractError> {
+    let profile = project_profile(profile)?;
+    Ok(project_settings(&profile, document, clips)?
         .settings_identity()
-        .clone()
+        .clone())
 }
 
 pub(crate) fn project_resolved_profile(

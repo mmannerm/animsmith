@@ -1,4 +1,4 @@
-use animsmith_core::SourceFormatV1;
+use animsmith_core::{ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS, EngineContractError, SourceFormatV1};
 use animsmith_engine::{
     BakeOrExtract, EngineDeclaration, InvalidSettingReason, ProfileSelection, ResolutionError,
     SettingDomain, SettingId, SettingLocation, SettingScope, SettingValue, SettingValueKind,
@@ -786,5 +786,27 @@ fn settings_identity_golden_values_cover_every_frozen_profile() {
                 235,
             ),
         ]
+    );
+}
+
+#[test]
+fn actual_clip_inventory_over_v1_settings_bound_returns_a_typed_error_without_panicking() {
+    let bevy = resolve_static(EngineDeclaration {
+        selection: Some(selection("bevy", "0.19.0", "gltf-asset-loader")),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap();
+    let clip_names = vec!["clip".into(); ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1];
+
+    assert_eq!(
+        bevy.resolve_input(SourceFormatV1::GltfJson, &clip_names),
+        Err(ResolutionError::ResolvedSettingsContract(
+            EngineContractError::TooManyRows {
+                field: "settings.clips",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            }
+        ))
     );
 }

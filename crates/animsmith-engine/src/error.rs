@@ -2,6 +2,7 @@ use crate::{
     ProfileSelection, SettingDomain, SettingId, SettingScope, SettingValue, SettingValueKind,
 };
 use animsmith_core::SourceFormatV1;
+use animsmith_core::engine_contract::EngineContractError;
 use std::fmt;
 
 /// Location of one settings declaration.
@@ -117,6 +118,10 @@ pub enum ResolutionError {
         /// Authoritative loader-owned input format.
         format: SourceFormatV1,
     },
+    /// Fully materialized settings exceeded or contradicted the bounded V1
+    /// engine contract.
+    #[error("resolved engine settings are outside the V1 contract: {0}")]
+    ResolvedSettingsContract(#[from] EngineContractError),
 }
 
 /// Author-owned invariant failure in the built-in V1 registry.

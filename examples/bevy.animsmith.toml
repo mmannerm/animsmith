@@ -1,0 +1,5 @@
+[engine]
+profile = "bevy"
+profile_revision = 1
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"

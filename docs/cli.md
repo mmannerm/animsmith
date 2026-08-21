@@ -492,8 +492,30 @@ Godot, and Bevy expose no V1 settings, so supplying any setting is an error.
 All statically knowable tuple, setting, value, scope, and applicability errors
 are reported before input I/O. Accepted input format and required per-clip
 materialization are checked after loading. Profile selection never changes
-`measure` values. Output v10 records resolved profile provenance on lint files;
-this substrate slice emits no production engine prediction yet.
+`measure` values. Output v10 records resolved profile provenance on lint files.
+
+The first production rule is `engine-addressability` for the exact Bevy
+revision 1 / 0.19.0 / `gltf-asset-loader` tuple. With complete glTF/GLB source
+animation inventory, it emits one available facet whose subject is the exact
+Bevy display label `Animation{i}` for each source animation index `i`:
+
+```console
+animsmith --config examples/bevy.animsmith.toml lint \
+  --select engine-addressability examples/assets/walk.glb
+```
+
+Named, unnamed, and duplicate-named animations all use their distinct source
+indices; names do not become typed labels. Partial or unavailable source clip
+coverage emits one blocking `animation_asset_label_inventory` facet rather
+than predictions for the retained prefix. The rule predicts only the canonical
+`GltfAssetLabel::Animation(i)` selector spelling. It does not prove Bevy ran,
+that animation loading was enabled, that the runtime asset exists, or that its
+targets and graph wiring are usable. The selector can change when source
+animation order changes.
+
+Prediction provenance v1 materializes at most 4,096 actual clips. A
+4,097-clip input returns a bounded operator error before prediction instead of
+truncating resolved settings; issue #485 owns a future overflow representation.
 
 An output-v10 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.

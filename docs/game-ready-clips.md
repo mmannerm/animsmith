@@ -102,9 +102,11 @@ plainly what it did not evaluate — not to stamp the whole ladder.
 5. **Runtime integration** — importer behavior, blend-graph
    topology, animation target IDs, masks, sync and reset behavior,
    and the poses your engine actually evaluates. Consumer-owned:
-   animsmith ships no runtime-integration checks, and its
-   measurements come from its own documented sampling model — a
-   model of engine samplers, not a reproduction of yours.
+   animsmith's exact Bevy 0.19.0 profile can predict the canonical
+   `Animation{i}` source-animation selector, but it does not run the engine,
+   prove runtime asset existence, or validate graph wiring or target survival.
+   Its measurements come from its own documented sampling model — a model of
+   engine samplers, not a reproduction of yours.
 
 6. **Gameplay, artistic, and production acceptance** — controller
    feel and timing, readability, visual quality, provenance,
@@ -138,20 +140,24 @@ them separate when you automate on the output:
   or measurement is missing, the check reports a typed coverage gap. A check
   can also complete part of its work: `gait-group` still validates declared
   ring members when unresolved roles keep it from measuring phase, then
-  reports member existence as completed and phase coherence as a gap.
+  reports member existence as completed and phase coherence as a gap. Engine
+  prediction work uses a separate `required_prediction_unavailable` facet;
+  unlike an ordinary coverage gap, it makes `lint` exit `1` and cannot be
+  suppressed with severity or `--allow`.
 - **What did the evaluated work find?** Content findings at note,
   warning, or error severity, carrying clip, bone, time, and
   measured-vs-expected context.
 - **What blocks?** Gate policy is yours, not animsmith's verdict:
   exit `1` on error findings, `--deny-warnings` to promote warnings,
   per-check severity overrides, and presentation-only `--allow` in text or
-  Markdown. Coverage gaps never fail a run — exit `0` means no failing
-  findings among the work that was evaluated, not that everything
-  was evaluated. A gate that requires full coverage must inspect gaps too.
+  Markdown. Coverage gaps never fail a run, while required-unavailable engine
+  prediction work does. Exit `0` means no failing findings and no required
+  prediction work remains unavailable; it still does not imply ordinary gap
+  completeness. A gate that requires full coverage must inspect gaps too.
 
 There is deliberately no single "pass" state: a run can complete with
 warnings, and it can evaluate some declared work while skipping the
-rest. See [machine-readable output](output.md) for the current v8
+rest. See [machine-readable output](output.md) for the current v10
 representation. It models selection, configuration, applicability, and
 evaluation independently, keeps content findings separate from typed gaps,
 and records completed work scopes. This is evidence about animsmith's checks,

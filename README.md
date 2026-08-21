@@ -292,6 +292,16 @@ The source hierarchy is loader-projected evidence: exact authored node members
 for glTF, but documented metre/Y-up, adjusted and inheritance-compensated ufbx
 state for FBX. An FBX result must not be read as the raw FBX transform stack.
 
+An optional exact `[engine]` profile adds bounded importer predictions without
+changing `measure`. For `bevy` revision 1 / `0.19.0` /
+`gltf-asset-loader`, `engine-addressability` reports the canonical
+`GltfAssetLabel::Animation(i)` display selector `Animation{i}` for every
+completely inventoried source animation. The index is type-safe and
+version-pinned but can change when the source animation order changes. This is
+selector evidence, not proof that Bevy loaded the asset, retained its targets,
+or connected an animation graph. See the runnable
+[Bevy example](https://github.com/mmannerm/animsmith/blob/main/examples/README.md#predicting-a-bevy-animation-selector).
+
 The four loop-continuity caps may also be declared under a clip name or
 `*`-glob: `max_loop_position_delta_m`, `max_loop_rotation_delta_deg`, and
 `max_loop_velocity_delta_mps`, and `max_loop_angular_velocity_delta_degps`.

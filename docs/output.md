@@ -912,6 +912,8 @@ Built-in completed/gap scope codes are:
 | `right_foot_stance` | The named clip's right foot/toe stance was evaluated. | `foot-slide` |
 | `frame_grid` | The named clip's declared frame grid was evaluated. | `fps` |
 | `first_frame_rest_delta` | The named clip's first-frame/rest-pose rotation evidence was evaluated. | `bind-pose` |
+| `animation_asset_label` | One source animation index was projected to the selected engine profile's canonical asset-label selector. | `engine-addressability` |
+| `animation_asset_label_inventory` | Complete source-animation inventory required for asset-label prediction was unavailable. | `engine-addressability` |
 
 The built-in gap and scope declarations in `animsmith_core` are authoritative
 for each code's identity, meaning, and allowed emitting check ids. Runtime
@@ -938,10 +940,29 @@ coverage states, the same-load dependency closure, and the exact five consumed
 contract identities. The header, profile, settings, closure, and primary input
 identities are cross-validated; host paths and arbitrary JSON are forbidden.
 
-Output v10 defines the substrate but adds no production engine rule. Therefore
-the current profiled CLI emits nonnull provenance with zero check predictions.
-Future engine-backed checks attach one `prediction` object to their existing
-check record. Its canonical `facets` are keyed by the existing
+Output v10 also carries the first bounded production rule. For the exact Bevy
+revision 1 / 0.19.0 / `gltf-asset-loader` profile on glTF or GLB,
+`engine-addressability` predicts the canonical
+`GltfAssetLabel::Animation(source_clip_index)` display selector. Each available
+`animation_asset_label` facet uses the exact `Animation{index}` selector as its
+scope subject. Names do not control the selector, and the index may change when
+the source animation order changes. Complete empty source-animation inventory
+is not applicable. Partial or unavailable inventory emits one subjectless
+`animation_asset_label_inventory` required-unavailable facet and no prefix
+predictions.
+
+Resolved engine settings and prediction provenance v1 can materialize at most
+4,096 actual clips. A document with 4,097 clips is rejected with a bounded
+operator error before prediction; it is not serialized as incomplete
+prediction evidence and its settings are never silently truncated. Future
+overflow evidence is tracked in issue #485.
+
+This is selector evidence only: it does not establish that Bevy loaded the
+input, that animation loading was enabled, that an asset exists at runtime, or
+that targets and graph wiring survived. Other exact profiles currently retain
+nonnull provenance with no production prediction. Engine-backed checks attach
+one `prediction` object to their existing check record. Its canonical `facets`
+are keyed by the existing
 `EvaluationScope` so one check can retain an available result for one clip or
 selector and a required-unavailable result for another.
 

@@ -191,7 +191,19 @@ builtin_codes!(
     SELECTED_NODE_REST_SCALE => "selected_node_rest_scale",
         meaning = "One configured source-node selector resolved and its effective rest-world linear scale was evaluated.",
         emitted_by = ["rest-world-scale"],
+    ANIMATION_ASSET_LABEL => "animation_asset_label",
+        meaning = "One source animation index was projected to the selected engine profile's canonical asset-label selector.",
+        emitted_by = ["engine-addressability"],
+    ANIMATION_ASSET_LABEL_INVENTORY => "animation_asset_label_inventory",
+        meaning = "Complete source-animation inventory required for asset-label prediction was unavailable.",
+        emitted_by = ["engine-addressability"],
 );
+
+/// Stable built-in evidence emitters implemented outside `animsmith-core`.
+///
+/// This is evidence-vocabulary authority, not a runnable check catalog.
+/// Frontends obtain runnable external checks from their owning crates.
+pub const EXTERNAL_BUILTIN_CHECK_IDS: &[&str] = &["engine-addressability"];
 
 impl EvaluationScopeCode {
     const fn from_static(code: &'static str) -> Self {
@@ -940,7 +952,7 @@ pub fn lint_requires_failure(
 /// runs before catalog inspection or check evaluation.
 pub fn evaluate_checks(
     ctx: &CheckCtx<'_>,
-    checks: &[Box<dyn Check>],
+    checks: &[Box<dyn Check + '_>],
     selection: CheckSelection<'_>,
 ) -> Result<Vec<CheckEvaluation>, EvaluationError> {
     ctx.config.validate()?;
@@ -1008,8 +1020,8 @@ mod authority_contract {
     use super::{
         BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS, BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
         BuiltinEvidenceCode, CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode,
-        EvaluationError, EvaluationScope, EvaluationScopeCode, EvaluationState,
-        lint_requires_failure,
+        EXTERNAL_BUILTIN_CHECK_IDS, EvaluationError, EvaluationScope, EvaluationScopeCode,
+        EvaluationState, lint_requires_failure,
     };
     use crate::InputIdentity;
     use crate::finding::{Finding, Severity};
@@ -1092,6 +1104,7 @@ mod authority_contract {
         let catalog_ids = crate::all_checks()
             .into_iter()
             .map(|check| check.id())
+            .chain(EXTERNAL_BUILTIN_CHECK_IDS.iter().copied())
             .collect::<BTreeSet<_>>();
         let authorities = [
             ("coverage-gap", BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS),
@@ -1145,6 +1158,7 @@ mod authority_contract {
         let catalog_ids = crate::all_checks()
             .into_iter()
             .map(|check| check.id())
+            .chain(EXTERNAL_BUILTIN_CHECK_IDS.iter().copied())
             .collect::<Vec<_>>();
 
         for definition in BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS {

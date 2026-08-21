@@ -116,8 +116,10 @@ impl StaticResolution {
     /// # Errors
     ///
     /// Returns [`ResolutionError::UnacceptedInputFormat`] outside the profile's
-    /// bounded V1 input set or [`ResolutionError::MissingRequiredSetting`] when
-    /// any real clip lacks an applicable required-without-default setting.
+    /// bounded V1 input set, [`ResolutionError::MissingRequiredSetting`] when
+    /// any real clip lacks an applicable required-without-default setting, or
+    /// [`ResolutionError::ResolvedSettingsContract`] when the fully
+    /// materialized settings exceed the V1 row/text bounds.
     pub fn resolve_input(
         &self,
         source_format: SourceFormatV1,
@@ -166,7 +168,7 @@ impl StaticResolution {
             clips
                 .iter()
                 .map(|clip| (clip.clip_name.as_str(), &clip.settings)),
-        );
+        )?;
         Ok(ResolvedProfile {
             profile: self.profile,
             source_format,

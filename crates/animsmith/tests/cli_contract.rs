@@ -13,7 +13,7 @@ const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v15.schema.json");
-const EXPECTED_CHECK_IDS: [&str; 26] = [
+const EXPECTED_CHECK_IDS: [&str; 27] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -40,6 +40,7 @@ const EXPECTED_CHECK_IDS: [&str; 26] = [
     "fps",
     "bind-pose",
     "foot-slide",
+    "engine-addressability",
 ];
 
 fn output_validator() -> jsonschema::Validator {
@@ -566,6 +567,55 @@ const EMPTY_ANIMATION_GLTF: &str = r#"{
   "scenes": [{ "nodes": [0] }],
   "scene": 0
 }"#;
+
+fn write_source_animation_inventory_gltf(path: &std::path::Path, names: &[Option<&str>]) {
+    let animations = names
+        .iter()
+        .map(|name| {
+            let mut animation = serde_json::Map::from_iter([
+                ("samplers".to_owned(), json!([])),
+                ("channels".to_owned(), json!([])),
+            ]);
+            if let Some(name) = name {
+                animation.insert("name".to_owned(), json!(name));
+            }
+            Value::Object(animation)
+        })
+        .collect::<Vec<_>>();
+    write_json(
+        path,
+        &json!({
+            "asset": { "version": "2.0" },
+            "nodes": [{ "name": "root" }],
+            "animations": animations,
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }),
+    );
+}
+
+fn write_bevy_config(dir: &std::path::Path, suffix: &str) -> PathBuf {
+    write_config(
+        dir,
+        &format!("bevy-{suffix}.toml"),
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 1
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+"#,
+    )
+}
+
+fn lint_check<'a>(json: &'a Value, check_id: &str) -> &'a Value {
+    json["files"][0]["checks"]
+        .as_array()
+        .expect("checks array")
+        .iter()
+        .find(|check| check["check_id"] == check_id)
+        .unwrap_or_else(|| panic!("missing {check_id} record"))
+}
 
 #[test]
 fn transform_summary_reports_a_loaded_clip_omitted_from_the_artifact() {
@@ -2347,6 +2397,12 @@ fn lint_json_uses_versioned_envelope() {
         .into_iter()
         .collect()
     );
+    let engine_addressability = lint_check(&json, "engine-addressability");
+    assert_eq!(engine_addressability["selection"], "selected");
+    assert_eq!(engine_addressability["configuration"], "enabled");
+    assert_eq!(engine_addressability["applicability"], "not_applicable");
+    assert_eq!(engine_addressability["evaluation"], "not_evaluated");
+    assert!(engine_addressability.get("prediction").is_none());
     assert_evaluation_summary_matches_checks(&json);
     assert_output_schema_valid(&json);
 }
@@ -5182,13 +5238,9 @@ fn lint_allow_suppresses_a_check() {
 
 #[test]
 fn lint_unknown_select_is_operator_error() {
+    let missing = "/no/such/selection-precedence.glb";
     let output = animsmith()
-        .args([
-            "lint",
-            fixture("rig.gltf").to_str().expect("utf-8 path"),
-            "--select",
-            "no-such-check",
-        ])
+        .args(["lint", missing, "--select", "no-such-check"])
         .output()
         .expect("runs animsmith");
     assert_eq!(
@@ -5205,8 +5257,30 @@ fn lint_unknown_select_is_operator_error() {
     // The error also lists the known check ids so the user can correct
     // the typo without reading the docs.
     assert!(
-        err.contains("known:") && err.contains("quat-flip"),
+        err.contains("known:")
+            && err.contains("quat-flip")
+            && err.contains("engine-addressability"),
         "error should list known check ids:\n{err}"
+    );
+    assert!(
+        !err.contains("failed to read"),
+        "selection validation must precede asset I/O:\n{err}"
+    );
+
+    let known = animsmith()
+        .args(["lint", missing, "--select", "engine-addressability"])
+        .output()
+        .expect("runs known engine selection");
+    assert_eq!(known.status.code(), Some(2), "{}", stderr(&known));
+    assert!(
+        stderr(&known).contains("failed to read"),
+        "{}",
+        stderr(&known)
+    );
+    assert!(
+        !stderr(&known).contains("unknown check"),
+        "{}",
+        stderr(&known)
     );
 }
 
@@ -5564,7 +5638,7 @@ fn invalid_duration_pin_from_toml_is_an_explicit_error() {
 }
 
 #[test]
-fn compatible_gltf_profiles_leave_measure_bytes_identical_and_lint_adds_only_provenance() {
+fn compatible_gltf_profiles_leave_measure_bytes_identical_and_bevy_lint_predicts_the_label() {
     let dir = unique_temp_dir("engine-profile-measure-neutral");
     let input = dir.path().join("sway.glb");
     write_clean_glb(&input);
@@ -5673,28 +5747,316 @@ importer = "resource-importer-scene"
         "{}",
         stderr(&profiled_lint)
     );
-    let mut baseline_json: Value =
+    let baseline_json: Value =
         serde_json::from_slice(&baseline_lint.stdout).expect("baseline lint JSON");
-    let mut profiled_json: Value =
+    let profiled_json: Value =
         serde_json::from_slice(&profiled_lint.stdout).expect("profiled lint JSON");
     assert!(baseline_json["files"][0]["prediction_provenance"].is_null());
     assert!(profiled_json["files"][0]["prediction_provenance"].is_object());
     assert_eq!(
         profiled_json["summary"]["prediction_facets"],
         json!({
-            "available": 0,
+            "available": 1,
             "required_prediction_unavailable": 0
         })
     );
-    baseline_json["files"][0]
-        .as_object_mut()
-        .expect("baseline file")
-        .remove("prediction_provenance");
-    profiled_json["files"][0]
-        .as_object_mut()
-        .expect("profiled file")
-        .remove("prediction_provenance");
-    assert_eq!(profiled_json, baseline_json);
+    let baseline_engine = baseline_json["files"][0]["checks"]
+        .as_array()
+        .expect("baseline checks")
+        .iter()
+        .find(|check| check["check_id"] == "engine-addressability")
+        .expect("baseline engine-addressability check");
+    assert_eq!(baseline_engine["applicability"], "not_applicable");
+    assert!(baseline_engine.get("prediction").is_none());
+
+    let profiled_engine = profiled_json["files"][0]["checks"]
+        .as_array()
+        .expect("profiled checks")
+        .iter()
+        .find(|check| check["check_id"] == "engine-addressability")
+        .expect("profiled engine-addressability check");
+    assert_eq!(profiled_engine["applicability"], "applicable");
+    assert_eq!(profiled_engine["evaluation"], "complete");
+    assert_eq!(
+        profiled_engine["prediction"]["facets"][0]["scope"],
+        json!({
+            "code": "animation_asset_label",
+            "subject": "Animation0"
+        })
+    );
+    assert_eq!(
+        profiled_engine["prediction"]["provenance_identity"],
+        profiled_json["files"][0]["prediction_provenance"]["identity"]
+    );
+    assert_eq!(profiled_engine["findings"], json!([]));
+
+    let core_checks = |json: &Value| {
+        json["files"][0]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .filter(|check| check["check_id"] != "engine-addressability")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(core_checks(&profiled_json), core_checks(&baseline_json));
+    assert_eq!(
+        profiled_json["files"][0]["measurements"],
+        baseline_json["files"][0]["measurements"]
+    );
+}
+
+#[test]
+fn bevy_animation_labels_are_indexed_independently_of_source_names_and_share_one_lifecycle() {
+    let dir = unique_temp_dir("bevy-animation-labels");
+    let input = dir.path().join("animations.gltf");
+    write_source_animation_inventory_gltf(&input, &[Some("duplicate"), None, Some("duplicate")]);
+    let config = write_bevy_config(dir.path(), "labels");
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            "--select",
+            "engine-addressability",
+            "--format",
+            "json",
+        ])
+        .arg(&input)
+        .output()
+        .expect("runs Bevy addressability lint");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid lint JSON");
+    assert_output_schema_valid(&json);
+    let check = lint_check(&json, "engine-addressability");
+    assert_eq!(check["selection"], "selected");
+    assert_eq!(check["configuration"], "enabled");
+    assert_eq!(check["applicability"], "applicable");
+    assert_eq!(check["evaluation"], "complete");
+    assert_eq!(check["findings"], json!([]));
+    let facets = check["prediction"]["facets"]
+        .as_array()
+        .expect("prediction facets");
+    assert_eq!(facets.len(), 3);
+    assert_eq!(
+        facets
+            .iter()
+            .map(|facet| facet["scope"]["subject"].as_str().expect("label subject"))
+            .collect::<Vec<_>>(),
+        vec!["Animation0", "Animation1", "Animation2"]
+    );
+    for (index, facet) in facets.iter().enumerate() {
+        assert_eq!(facet["scope"]["code"], "animation_asset_label");
+        assert_eq!(facet["state"], "available");
+        assert_eq!(facet["reasons"], json!([]));
+        assert_eq!(
+            facet["basis"]["references"],
+            json!([
+                {
+                    "kind": "profile_fact",
+                    "fact_id": "animation_addressability"
+                },
+                {
+                    "kind": "raw_source",
+                    "domain": "clip",
+                    "key": {
+                        "kind": "clip",
+                        "source_clip_index": index
+                    },
+                    "field": "source_name.state",
+                    "value": {
+                        "type": "token",
+                        "value": if index == 1 { "proven_absent" } else { "observed" }
+                    }
+                },
+                {
+                    "kind": "primary_source",
+                    "source_id": "bevy-gltf-asset-label-0.19.0"
+                }
+            ])
+        );
+    }
+    assert_eq!(
+        check["prediction"]["provenance_identity"],
+        json["files"][0]["prediction_provenance"]["identity"]
+    );
+    assert_eq!(
+        json["summary"]["prediction_facets"],
+        json!({
+            "available": 3,
+            "required_prediction_unavailable": 0
+        })
+    );
+
+    let unselected = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["lint", "--select", "nan", "--format", "json"])
+        .arg(&input)
+        .output()
+        .expect("runs unselected Bevy addressability lint");
+    assert_eq!(unselected.status.code(), Some(0), "{}", stderr(&unselected));
+    let unselected: Value = serde_json::from_slice(&unselected.stdout).expect("valid lint JSON");
+    let check = lint_check(&unselected, "engine-addressability");
+    assert_eq!(check["selection"], "unselected");
+    assert_eq!(check["configuration"], "enabled");
+    assert_eq!(check["applicability"], "applicable");
+    assert_eq!(check["evaluation"], "not_evaluated");
+    assert!(check.get("prediction").is_none());
+
+    let disabled_config = write_config(
+        dir.path(),
+        "bevy-disabled.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 1
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[checks.engine-addressability]
+severity = "off"
+"#,
+    );
+    let disabled = animsmith()
+        .arg("--config")
+        .arg(&disabled_config)
+        .args([
+            "lint",
+            "--select",
+            "engine-addressability",
+            "--format",
+            "json",
+        ])
+        .arg(&input)
+        .output()
+        .expect("runs disabled Bevy addressability lint");
+    assert_eq!(disabled.status.code(), Some(0), "{}", stderr(&disabled));
+    let disabled: Value = serde_json::from_slice(&disabled.stdout).expect("valid lint JSON");
+    let check = lint_check(&disabled, "engine-addressability");
+    assert_eq!(check["selection"], "selected");
+    assert_eq!(check["configuration"], "disabled");
+    assert_eq!(check["applicability"], "applicable");
+    assert_eq!(check["evaluation"], "not_evaluated");
+    assert!(check.get("prediction").is_none());
+
+    for (format, needle) in [
+        (
+            "text",
+            "animation_asset_label subject Animation0: available",
+        ),
+        (
+            "markdown",
+            "| `engine-addressability` | `animation_asset_label` | `Animation0` | available |",
+        ),
+    ] {
+        let rendered = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .args([
+                "lint",
+                "--select",
+                "engine-addressability",
+                "--format",
+                format,
+            ])
+            .arg(&input)
+            .output()
+            .expect("renders Bevy addressability lint");
+        assert_eq!(rendered.status.code(), Some(0), "{}", stderr(&rendered));
+        assert!(stdout(&rendered).contains(needle), "{}", stdout(&rendered));
+    }
+}
+
+#[test]
+fn bevy_complete_empty_and_absent_profile_records_are_not_applicable() {
+    let dir = unique_temp_dir("bevy-empty-animation-labels");
+    let input = dir.path().join("empty.gltf");
+    write_source_animation_inventory_gltf(&input, &[]);
+    let config = write_bevy_config(dir.path(), "empty");
+
+    for config in [None, Some(config.as_path())] {
+        let mut command = animsmith();
+        if let Some(config) = config {
+            command.arg("--config").arg(config);
+        }
+        let output = command
+            .args([
+                "lint",
+                "--select",
+                "engine-addressability",
+                "--format",
+                "json",
+            ])
+            .arg(&input)
+            .output()
+            .expect("runs empty addressability lint");
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        let json: Value = serde_json::from_slice(&output.stdout).expect("valid lint JSON");
+        let check = lint_check(&json, "engine-addressability");
+        assert_eq!(check["applicability"], "not_applicable");
+        assert_eq!(check["evaluation"], "not_evaluated");
+        assert!(check.get("prediction").is_none());
+    }
+}
+
+#[test]
+fn bevy_actual_clip_inventory_above_v1_provenance_bound_is_an_operator_error() {
+    let dir = unique_temp_dir("bevy-over-limit-animation-labels");
+    let input = dir.path().join("over-limit.gltf");
+    let names = vec![None; animsmith_core::RAW_SOURCE_V1_MAX_CLIPS + 1];
+    write_source_animation_inventory_gltf(&input, &names);
+    let config = write_bevy_config(dir.path(), "over-limit");
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            "--select",
+            "engine-addressability",
+            "--format",
+            "json",
+        ])
+        .arg(&input)
+        .output()
+        .expect("runs over-limit Bevy addressability lint");
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(output.stdout.is_empty());
+    assert!(
+        stderr(&output).contains("settings.clips")
+            && stderr(&output).contains("4097")
+            && stderr(&output).contains("4096"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[cfg(feature = "report")]
+#[test]
+fn report_runs_the_production_bevy_addressability_check() {
+    let dir = unique_temp_dir("bevy-animation-label-report");
+    let input = dir.path().join("animations.gltf");
+    let report = dir.path().join("report.html");
+    write_source_animation_inventory_gltf(&input, &[Some("walk")]);
+    let config = write_bevy_config(dir.path(), "report");
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["report"])
+        .arg(&input)
+        .args(["--output"])
+        .arg(&report)
+        .args(["--clip", "missing-normalized-clip"])
+        .output()
+        .expect("renders Bevy addressability report");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let html = std::fs::read_to_string(&report).expect("reads HTML report");
+    assert!(html.contains("engine-addressability"));
+    assert!(html.contains("Animation0"));
+    assert!(html.contains("animation_asset_label"));
 }
 
 #[cfg(feature = "fbx")]

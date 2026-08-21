@@ -2631,6 +2631,23 @@ with the exact fact, setting, policy, and measurement basis for clean and
 finding-bearing work alike. Findings bind to an available facet rather than
 introducing another applied-rule id. Checks do not use `unity-*`, `unreal-*`,
 and similar duplicate families.
+
+The bounded 0.4.0 production slice is the exact Bevy revision 1 / 0.19.0 /
+`gltf-asset-loader` animation-index selector rule. With complete nonempty glTF
+or GLB source-animation inventory, `engine-addressability` emits one available
+facet per source row whose subject is Bevy's `Animation{source_clip_index}`
+display label. A source name is only metadata: absent and duplicate names do
+not change the index selector. Partial or unavailable inventory emits one
+required-unavailable inventory facet and no retained-prefix predictions, so
+the 4,096-row raw-source and file-facet caps compose without an N+1 facet.
+The resolved-settings/provenance v1 contract separately caps actual clip rows
+at 4,096. A 4,097-clip document is therefore a bounded operator error before
+prediction, not a silently truncated settings inventory; #485 owns any future
+overflow evidence and shared multi-rule facet-budget policy.
+This predicts the canonical selector convention only. It does not claim a
+successful Bevy load, runtime asset existence, animation-target survival, or
+graph wiring, and the index is not stable across source-order edits. Richer
+scene/name/target addressability remains a separate inventory/adapter concern.
 `[checks.<id>]` remains the only authority for severity and explicit
 enable/disable overrides. Existing checks such as `loop-closure`, `in-place`,
 `foot-slide`, and `root-motion-speed` keep their current behavior under every

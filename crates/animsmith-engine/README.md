@@ -18,6 +18,17 @@ adapter can publish an already-resolved profile and its same-load
 `animsmith-core::LoadedSource` evidence as prediction-provenance V1 without
 rerunning resolution or reading source bytes.
 
+The public `AnimationAssetLabelCheck` evaluates only the frozen Bevy 0.19.0
+glTF source-animation index rule. It borrows same-load source evidence and
+emits standard AnimSmith engine-prediction facets; callers may validate the
+`ENGINE_CHECK_IDS_V1` catalog before asset I/O. It does not predict named
+asset labels, target-path identifiers, runtime-node selection, or imported
+transform behavior.
+
+Resolved settings V1 materializes at most 4,096 actual clip rows. Inputs above
+that bound return a typed `ResolutionError::ResolvedSettingsContract`; callers
+must not truncate the clip list and claim complete prediction provenance.
+
 ## Install
 
 ```toml
