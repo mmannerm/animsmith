@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/mmannerm/animsmith/compare/v0.3.1...v0.4.0) - 2026-08-21
+
+### Added
+
+- admit nonbearing FBX node attributes
+- add bounded engine import advice ([#497](https://github.com/mmannerm/animsmith/pull/497))
+- *(generate)* add glTF addressability inventory
+- *(engine)* predict Bevy animation labels
+- *(engine)* publish prediction provenance contract
+- *(source)* capture dependency closure identities
+- *(engine)* add strict profile registry and resolution
+- *(core)* project importer-sensitive source facts
+- *(config)* declare per-axis movement ownership
+- *(measure)* expose channel and root trajectory evidence
+- *(assembly)* select rest-bind scale by name
+- *(assembly)* stage eligible FBX rest-bind inputs
+- *(fbx)* enable proved rest-bind scale
+- *(assemble)* compose rest-bind scaling with assembly transforms
+- *(contract)* advance to measurements-v14/output-v8
+
+### Fixed
+
+- *(publish)* compare destination names by filesystem
+- *(fbx)* compare missing dependency names by filesystem
+- *(fbx)* reject truncated dependency publication
+- *(fbx)* fail closed on unsafe dependency paths
+- *(fbx)* protect every retained dependency path
+- *(fbx)* protect captured dependencies from publication
+- *(fbx)* unify rest-bind admission authority
+- *(fbx)* preserve admitted linked textures
+- *(fbx)* narrow rest-bind capability refusals
+- *(generate)* reject truncated animation inventories
+- *(generate)* bound addressability readback allocation
+- *(engine)* validate addressability evidence
+- *(release)* normalize inventory target paths
+- *(release)* validate docs.rs target metadata
+- *(measure)* correct loop-seam availability and widen diff coverage
+- *(core)* bound inherited contract decoding
+- *(measure)* classify flat gait phase as not applicable
+- *(core)* close prediction readback gaps
+- *(core)* satisfy current clippy
+- *(loaders)* preserve redacted resource presence
+- *(config)* reject invalid check tolerances
+- *(measure)* report loop_seam_ratio as not_applicable without a real stride
+- *(measure)* use sibling availability fields instead of ClipFact<T>
+- *(gltf)* detect undeclared extension payloads
+- *(source)* keep dependency closure conservative
+- *(gltf)* honor explicit resource root capability
+- *(fbx)* model derived texture file aliases
+
 ## [0.3.1](https://github.com/mmannerm/animsmith/compare/v0.3.0...v0.3.1) - 2026-08-18
 
 ### Fixed
