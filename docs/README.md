@@ -6,6 +6,11 @@ Find what you need by task — each page below owns one job.
 |---|---|
 | [Why animsmith](why-animsmith.md) | Decide whether animsmith fits your team — what it is, why it exists, and what it is worth by role. The canonical home of the positioning case. |
 | [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder) and what animsmith validates at each level — and why a check fires: every runtime failure mode, mapped to the checks, repairs, and config that address it. |
+| [Unity 6000.3 profile guide](engine-profile-unity.md) | Configure the exact Unity Generic/Humanoid profiles, importer advice, root-motion choices, and scale boundary. |
+| [Unreal Engine 5.8 profile guide](engine-profile-unreal.md) | Map FBX animation, Skeleton, frame, unit, root-motion, and scale concerns to AnimSmith evidence without inventing importer settings. |
+| [Godot 4.7 profile guide](engine-profile-godot.md) | Plan scene import, retargeting, animation slicing, root scale, and the current profile's explicit prediction boundary. |
+| [Bevy 0.19.0 profile guide](engine-profile-bevy.md) | Generate exact `Animation{i}` selector evidence and keep runtime loading, graph, target, and scale responsibilities explicit. |
+| [glTF and generic runtime guide](engine-profile-gltf-runtime.md) | Use the engine-neutral contract for custom runtimes, glTF units, source identity, scale repair, and downstream validation. |
 | [Pipeline scenario guide](pipeline-scenarios.md) | Plan a raw-to-game-ready asset process — marketplace intake, mocap cleanup, outsourced acceptance, CI gating, and artifact storage. |
 | [Animation-pack evaluation reports](reports/README.md) | Review evidence-backed marketplace-pack assessments and the reporting convention for constituent packs and collection-level cross-pack summaries. |
 | [Examples cookbook](../examples/README.md) | Do the work, copy-paste style — gate exports in CI, repair a broken export, trim or re-anchor a clip, encode a project contract config, migrate FBX/Mixamo exports, embed the checks in Rust. |

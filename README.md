@@ -339,6 +339,9 @@ lists every guide and reference by task. Four useful next stops:
 
 - [Game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md)
   — why each check exists, failure mode by failure mode.
+- [Engine profile guides](https://github.com/mmannerm/animsmith/tree/main/docs)
+  — exact Unity, Unreal, Godot, Bevy, and generic glTF importer boundaries,
+  settings, scale guidance, and downstream responsibilities.
 - [Static asset workflow guide](https://github.com/mmannerm/animsmith/blob/main/docs/static-asset-workflows.md)
   — bounds and transform domains, normal maps, static baking, texture recipes,
   and what still needs target-engine validation.
