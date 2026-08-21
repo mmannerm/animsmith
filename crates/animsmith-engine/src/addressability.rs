@@ -661,6 +661,13 @@ impl GltfAnimationAddressabilityInventoryV1 {
     pub fn from_source(source: &LoadedSource) -> Result<Self, GltfAnimationAddressabilityError> {
         let facts = source.source_facts();
         require_gltf(facts.format())?;
+        let document_clip_count = source.document().clips.len();
+        if document_clip_count > animsmith_core::RAW_SOURCE_V1_MAX_CLIPS {
+            return Err(GltfAnimationAddressabilityError::TooManyAnimations {
+                found: document_clip_count,
+                limit: animsmith_core::RAW_SOURCE_V1_MAX_CLIPS,
+            });
+        }
         preflight_source(facts)?;
 
         let mut animations = Vec::with_capacity(facts.clips().rows().len());

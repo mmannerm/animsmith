@@ -6736,6 +6736,19 @@ fn generate_addressability_actual_clip_inventory_above_v1_bound_is_an_operator_e
     let config = write_bevy_config(dir.path(), "generate-over-limit");
 
     let output = animsmith()
+        .args(["generate", "addressability"])
+        .arg(&input)
+        .output()
+        .expect("runs over-limit neutral addressability generation");
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(output.stdout.is_empty());
+    assert!(
+        stderr(&output).contains("4097 animations") && stderr(&output).contains("V1 limit of 4096"),
+        "{}",
+        stderr(&output)
+    );
+
+    let output = animsmith()
         .arg("--config")
         .arg(&config)
         .args(["generate", "addressability"])
