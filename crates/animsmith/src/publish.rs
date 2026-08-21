@@ -54,7 +54,9 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "fbx")]
-use animsmith_core::{DependencyClosureV1, DependencyReferenceTargetV1};
+use animsmith_core::{
+    DependencyClosureV1, DependencyReferenceTargetV1, DependencyResourceRefusalReasonV1,
+};
 use animsmith_gltf::fix::{FixReport, Repair};
 
 /// Serialize one record or envelope as the pretty, newline-terminated JSON
@@ -348,6 +350,10 @@ pub(crate) fn destination_identity(path: &Path) -> Result<PathBuf, String> {
             parent.display()
         )
     })?;
+    destination_identity_below(path, parent)
+}
+
+fn destination_identity_below(path: &Path, parent: PathBuf) -> Result<PathBuf, String> {
     let file_name = path
         .file_name()
         .ok_or_else(|| format!("output {} has no file name", path.display()))?;
@@ -361,6 +367,31 @@ pub(crate) fn destination_identity(path: &Path) -> Result<PathBuf, String> {
             path.display()
         )),
     }
+}
+
+/// Resolve a retained dependency's destination-style entry identity when its
+/// parent exists.
+///
+/// A missing intermediate directory cannot alias a publication destination:
+/// both producers have already required each destination's parent to exist.
+/// Returning `None` preserves that honest unavailable dependency without
+/// turning every unrelated invocation into an operator error. When only the
+/// final entry is missing, the existing parent plus declared name still lets
+/// the ordinary comparison reject publication to that exact key.
+#[cfg(feature = "fbx")]
+fn retained_dependency_identity(path: &Path) -> Result<Option<PathBuf>, String> {
+    let parent = parent_or_current(path);
+    let parent = match fs::canonicalize(parent) {
+        Ok(parent) => parent,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "cannot resolve external dependency directory {}: {error}",
+                parent.display()
+            ));
+        }
+    };
+    destination_identity_below(path, parent).map(Some)
 }
 
 /// An **input**'s identity for distinctness checks: its fully canonical path,
@@ -430,7 +461,22 @@ pub(crate) fn require_external_dependencies_distinct_from_destinations(
             | DependencyReferenceTargetV1::Refused { key: None, .. }
             | DependencyReferenceTargetV1::Unavailable { key: None, .. } => continue,
         };
-        let dependency = destination_identity(&resource_root.join(key.as_str()))?;
+        if matches!(
+            reference.target(),
+            DependencyReferenceTargetV1::Refused {
+                reason: DependencyResourceRefusalReasonV1::Symlink,
+                ..
+            }
+        ) {
+            return Err(format!(
+                "{command} external dependency {:?} is a symlink and cannot be published safely",
+                key.as_str()
+            ));
+        }
+        let Some(dependency) = retained_dependency_identity(&resource_root.join(key.as_str()))?
+        else {
+            continue;
+        };
         for (destination_label, destination) in &destinations {
             if dependency == *destination {
                 return Err(format!(

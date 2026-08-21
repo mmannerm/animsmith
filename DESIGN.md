@@ -2105,9 +2105,12 @@ animsmith scale rest-bind INPUT.glb -o OUTPUT.glb \
 
 All numeric and source-identity arguments shown are required; there is no
 inferred factor, implicit first skin/root, or in-place mode. Artifact and
-evidence paths must be distinct from each other and the input. Initial support
-is self-contained glTF/GLB for both operations, plus the narrow
-inventory-complete FBX `rest-bind` path that emits a `.glb` and v5 evidence.
+evidence paths must be distinct from each other and the input. The narrow FBX
+path additionally refuses either destination when it names a retained safe
+dependency key, and refuses publication entirely when that key was rejected as
+symlink-mediated. Initial support is self-contained glTF/GLB for both
+operations, plus the narrow inventory-complete FBX `rest-bind` path that emits
+a `.glb` and v5 evidence.
 The command uses the fixed tolerance-policy version recorded in evidence rather
 than accepting per-run tolerance flags. A future policy change requires a new
 policy identity and compatibility review.

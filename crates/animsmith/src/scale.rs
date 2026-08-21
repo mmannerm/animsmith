@@ -51,11 +51,12 @@
 //!
 //! The evidence record carries no timestamp and no canonicalized path: the
 //! operator's declared paths are recorded verbatim, and the canonical forms
-//! exist only for the three-way distinctness check. Every collection on the
-//! evidence path is ordered. Every `f64` is serialized through [`Finite`],
-//! which fails serialization rather than let `serde_json` render a `NaN` or
-//! an infinity as `null` — a false record, which DESIGN.md §D.6 forbids more
-//! strongly than a missing one.
+//! exist only for publication-safety comparisons among the input,
+//! destinations, and any retained external dependency keys. Every collection
+//! on the evidence path is ordered. Every `f64` is serialized through
+//! [`Finite`], which fails serialization rather than let `serde_json` render a
+//! `NaN` or an infinity as `null` — a false record, which DESIGN.md §D.6
+//! forbids more strongly than a missing one.
 //!
 //! # Cost
 //!

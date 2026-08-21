@@ -2768,9 +2768,141 @@ fn fbx_rest_bind_protects_a_keyed_dependency_that_exceeds_the_capture_budget() {
     assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
 }
 
-#[cfg(all(feature = "fbx", any(target_os = "macos", target_os = "windows")))]
+#[cfg(feature = "fbx")]
 #[test]
-fn fbx_rest_bind_uses_case_insensitive_destination_identity_when_the_filesystem_does() {
+fn fbx_rest_bind_protects_a_missing_retained_key_without_requiring_its_parent() {
+    let alias_dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(alias_dir.path().join("nested")).unwrap();
+    let source = external_normal_texture_fbx_fixture().replace("normal.png", "missing.png");
+    std::fs::write(alias_dir.path().join("nested/rig.fbx"), source).unwrap();
+    let peer = alias_dir.path().join("out.glb");
+    let prior_peer = b"prior artifact";
+    std::fs::write(&peer, prior_peer).unwrap();
+
+    let alias = fbx_rest_bind_command(
+        alias_dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        "nested/missing.png",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs missing-key alias preflight");
+    assert_eq!(alias.status.code(), Some(2), "stderr:\n{}", stderr(&alias));
+    assert!(alias.stdout.is_empty());
+    assert!(
+        stderr(&alias).contains(
+            "scale external dependency \"missing.png\" and evidence must be different paths"
+        ),
+        "stderr:\n{}",
+        stderr(&alias)
+    );
+    assert!(!alias_dir.path().join("nested/missing.png").exists());
+    assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+
+    let unrelated_dir = tempfile::tempdir().expect("temporary directory");
+    let source =
+        external_normal_texture_fbx_fixture().replace("normal.png", "textures/missing.png");
+    std::fs::write(unrelated_dir.path().join("rig.fbx"), source).unwrap();
+    let unrelated = fbx_rest_bind_command(
+        unrelated_dir.path(),
+        "rig.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs unrelated missing-intermediate dependency");
+    assert_eq!(
+        unrelated.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&unrelated)
+    );
+    assert!(unrelated.stderr.is_empty());
+    assert!(!unrelated.stdout.is_empty());
+    assert!(unrelated_dir.path().join("out.glb").is_file());
+    assert!(unrelated_dir.path().join("out.json").is_file());
+    assert!(!unrelated_dir.path().join("textures").exists());
+}
+
+#[cfg(all(feature = "fbx", unix))]
+#[test]
+fn fbx_rest_bind_refuses_a_symlink_retained_key_before_any_publication() {
+    use std::os::unix::fs::symlink;
+
+    for destination_kind in ["entry", "target"] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        std::fs::write(
+            dir.path().join("nested/rig.fbx"),
+            external_normal_texture_fbx_fixture(),
+        )
+        .unwrap();
+        let dependency = dir.path().join("nested/normal.png");
+        let target = dir.path().join("nested/source.png");
+        std::fs::write(&target, TINY_PNG).unwrap();
+        symlink("source.png", &dependency).unwrap();
+        let case_variant = dir.path().join("nested/NORMAL.PNG");
+        let entry_destination = if std::fs::symlink_metadata(&case_variant).is_ok() {
+            "nested/NORMAL.PNG"
+        } else {
+            "nested/normal.png"
+        };
+        let evidence = if destination_kind == "entry" {
+            entry_destination
+        } else {
+            "nested/source.png"
+        };
+        let peer = dir.path().join("out.glb");
+        let prior_peer = b"prior artifact";
+        std::fs::write(&peer, prior_peer).unwrap();
+
+        let result = fbx_rest_bind_command(
+            dir.path(),
+            "nested/rig.fbx",
+            "out.glb",
+            evidence,
+            "0.01",
+            "json",
+        )
+        .output()
+        .expect("runs symlink-refused dependency preflight");
+
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{destination_kind} stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert!(
+            stderr(&result).contains(
+                "scale external dependency \"normal.png\" is a symlink and cannot be published safely"
+            ),
+            "{destination_kind} stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(
+            std::fs::symlink_metadata(&dependency)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            std::fs::read_link(&dependency).unwrap(),
+            Path::new("source.png")
+        );
+        assert_eq!(std::fs::read(target).unwrap(), TINY_PNG);
+        assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+    }
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_uses_the_filesystems_case_semantics_for_destination_identity() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("nested")).unwrap();
     std::fs::write(
@@ -2781,11 +2913,7 @@ fn fbx_rest_bind_uses_case_insensitive_destination_identity_when_the_filesystem_
     let dependency = dir.path().join("nested/normal.png");
     std::fs::write(&dependency, TINY_PNG).unwrap();
     let case_variant = dir.path().join("nested/NORMAL.PNG");
-    if std::fs::canonicalize(&case_variant).is_err() {
-        // macOS also supports case-sensitive volumes. This regression applies
-        // only when the filesystem itself resolves the alternate spelling.
-        return;
-    }
+    let case_insensitive = std::fs::canonicalize(&case_variant).is_ok();
     let peer = dir.path().join("out.glb");
     let prior_peer = b"prior artifact";
     std::fs::write(&peer, prior_peer).unwrap();
@@ -2805,22 +2933,35 @@ fn fbx_rest_bind_uses_case_insensitive_destination_identity_when_the_filesystem_
     .output()
     .expect("runs case-variant destructive-alias preflight");
 
-    assert_eq!(
-        result.status.code(),
-        Some(2),
-        "stderr:\n{}",
-        stderr(&result)
-    );
-    assert!(result.stdout.is_empty());
-    assert!(
-        stderr(&result).contains(
-            "scale external dependency \"normal.png\" and evidence must be different paths"
-        ),
-        "stderr:\n{}",
-        stderr(&result)
-    );
+    if case_insensitive {
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert!(
+            stderr(&result).contains(
+                "scale external dependency \"normal.png\" and evidence must be different paths"
+            ),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+    } else {
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stderr.is_empty());
+        assert!(!result.stdout.is_empty());
+        assert_ne!(std::fs::read(peer).unwrap(), prior_peer);
+        assert!(case_variant.is_file());
+    }
     assert_eq!(std::fs::read(dependency).unwrap(), TINY_PNG);
-    assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
 }
 
 #[cfg(feature = "fbx")]

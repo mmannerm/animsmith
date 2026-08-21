@@ -438,9 +438,10 @@ byte-compare for determinism; what they cannot see is the write path, which is
 what this closes.
 
 Paths are recorded exactly as the operator wrote them. Canonical host paths are
-computed only for the three-way input/output/evidence distinctness check and
-are deliberately not serialized, so identical arguments produce byte-identical
-evidence. Nothing in the record carries a timestamp.
+computed only for publication-safety comparisons among input, output,
+evidence, and retained external dependency keys. They are deliberately not
+serialized, so identical arguments produce byte-identical evidence. Nothing in
+the record carries a timestamp.
 
 The normative glTF/GLB contract is
 [`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json).

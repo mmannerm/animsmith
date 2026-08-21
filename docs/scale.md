@@ -39,8 +39,10 @@ animsmith scale rest-bind source.glb -o canonical.glb \
 
 There is no in-place mode, plan file, `animsmith.toml` key, implicit first
 skin/root, or per-run tolerance override. Input, artifact, and evidence paths
-must be three distinct files. glTF/GLB artifacts keep the input container;
-narrow FBX `rest-bind` emits a new `.glb`.
+must be three distinct files. For narrow FBX `rest-bind`, neither destination
+may name a safe dependency key retained by the same-load closure, and a
+symlink-refused dependency stops before publication. glTF/GLB artifacts keep
+the input container; narrow FBX `rest-bind` emits a new `.glb`.
 
 ## What one run proves
 
