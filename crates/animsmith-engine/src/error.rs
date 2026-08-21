@@ -2,6 +2,7 @@ use crate::{
     ProfileSelection, SettingDomain, SettingId, SettingScope, SettingValue, SettingValueKind,
 };
 use animsmith_core::SourceFormatV1;
+use animsmith_core::engine_contract::EngineContractError;
 use std::fmt;
 
 /// Location of one settings declaration.
@@ -117,6 +118,24 @@ pub enum ResolutionError {
         /// Authoritative loader-owned input format.
         format: SourceFormatV1,
     },
+    /// Fully materialized settings exceeded or contradicted the bounded V1
+    /// engine contract.
+    #[error("resolved engine settings are outside the V1 contract: {0}")]
+    ResolvedSettingsContract(#[from] EngineContractError),
+}
+
+/// Typed failure while binding an engine-owned check to immutable evidence.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PredictionRuleError {
+    /// The supplied provenance was not projected from the supplied same-load
+    /// source facts and dependency closure.
+    #[error("prediction provenance does not describe the supplied same-load source")]
+    SourceProvenanceMismatch,
+    /// An exact built-in profile tuple carried facts other than the immutable
+    /// registry record for that revision.
+    #[error("prediction provenance does not match the frozen engine profile facts")]
+    FrozenProfileMismatch,
 }
 
 /// Author-owned invariant failure in the built-in V1 registry.

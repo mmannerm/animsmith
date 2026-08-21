@@ -8,8 +8,10 @@
 //! Unknown engine behavior remains [`FactState::Unknown`]. This crate performs
 //! no filesystem access, parses no TOML, and imports no format crate. Its
 //! one-way [`project_prediction_provenance_v1`] adapter publishes the already
-//! resolved profile/settings and same-load core source evidence without
-//! predicting engine behavior itself.
+//! resolved profile/settings and same-load core source evidence. The borrowed
+//! [`EngineAddressabilityCheck`] uses that evidence for the single frozen Bevy
+//! 0.19.0 source-animation index-selector prediction; other engine behavior
+//! remains outside this crate unless a version-pinned rule is added.
 //!
 //! # Example
 //!
@@ -55,12 +57,19 @@
 
 mod canonical;
 mod error;
+mod prediction;
 mod provenance;
 mod registry;
 mod resolver;
 mod types;
 
-pub use error::{InvalidSettingReason, RegistryValidationError, ResolutionError, SettingLocation};
+pub use error::{
+    InvalidSettingReason, PredictionRuleError, RegistryValidationError, ResolutionError,
+    SettingLocation,
+};
+pub use prediction::{
+    ENGINE_ADDRESSABILITY_CHECK_ID, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck,
+};
 pub use provenance::{PredictionProvenanceProjectionError, project_prediction_provenance_v1};
 pub use registry::{profiles_v1, validate_registry_v1};
 pub use resolver::{

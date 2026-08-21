@@ -41,8 +41,8 @@ Every example relies on the same convention, so scripts can gate on it:
 
 | Code | Meaning |
 |---:|---|
-| 0 | No failing findings; warnings, notes, and coverage gaps may remain. |
-| 1 | A failing finding, a significant `diff`, or pending `fix --dry-run` repairs. |
+| 0 | No failing findings and no required-unavailable engine prediction facets; warnings, notes, and ordinary coverage gaps may remain. |
+| 1 | A failing finding, any `required_prediction_unavailable` facet, a significant `diff`, or pending `fix --dry-run` repairs. |
 | 2 | Operator error: unreadable input, bad config, bad flags. |
 
 ---
@@ -607,6 +607,28 @@ corresponding global check caps in a `[clips.<exact-name>]` entry or
 omitted field keeps its inherited cap. This is useful when root-motion runs
 need a different position allowance but idles must stay tightly closed. All
 four values must be finite and non-negative.
+
+### Predicting a Bevy animation selector
+
+The small [`bevy.animsmith.toml`](bevy.animsmith.toml) profile selects Bevy
+0.19.0's exact glTF loader contract. Its first production prediction maps each
+completely inventoried source animation index to the canonical typed subasset
+label spelling `Animation{index}`:
+
+```console
+$ animsmith --config examples/bevy.animsmith.toml lint \
+    --select engine-addressability examples/assets/walk.glb
+```
+
+The available facet's subject is the predicted display label, such as
+`Animation0`. Names do not control this selector: unnamed animations work, and
+duplicate names remain distinct indices. This predicts the selector spelling,
+not that Bevy loaded the file, retained its targets, or wired it into an
+animation graph. Incomplete source-animation inventory produces a blocking
+`required_prediction_unavailable` facet instead of guessing from the retained
+prefix. Prediction provenance v1 separately caps actual clip settings at
+4,096, so a 4,097-clip file is a bounded operator error rather than a truncated
+prediction; issue #485 owns a future overflow representation.
 
 ### Steering a run without a config
 

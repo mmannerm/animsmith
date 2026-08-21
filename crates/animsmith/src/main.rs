@@ -22,15 +22,15 @@
 #![warn(missing_docs)]
 
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport, MeasureEnvelope,
-    MeasureFileReport, MeasurementContract, MeasurementFileError, MeasurementReportError,
-    MeasurementReportInput, MeasurementReportReadError, MetricGrids, RigInfo, Severity, ToolInfo,
-    ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
+    Check, CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport,
+    MeasureEnvelope, MeasureFileReport, MeasurementContract, MeasurementFileError,
+    MeasurementReportError, MeasurementReportInput, MeasurementReportReadError, MetricGrids,
+    RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
 };
 use animsmith_core::{Document, InputIdentity};
 use animsmith_engine::{
-    BakeOrExtract, EngineDeclaration, ProfileSelection, ResolvedProfile, SettingMap, SettingValue,
-    StaticResolution,
+    BakeOrExtract, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineDeclaration,
+    ProfileSelection, ResolvedProfile, SettingMap, SettingValue, StaticResolution,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -806,13 +806,11 @@ impl LoadedConfig {
         let Some(engine) = &self.engine else {
             return Ok(None);
         };
-        let clip_names = document
-            .clips
-            .iter()
-            .map(|clip| clip.name.clone())
-            .collect::<Vec<_>>();
         engine
-            .resolve_input(source_format, &clip_names)
+            .resolve_input_iter(
+                source_format,
+                document.clips.iter().map(|clip| clip.name.as_str()),
+            )
             .map(Some)
             .map_err(|error| match &self.path {
                 Some(path) => format!("bad config {}: {error}", path.display()),
@@ -821,15 +819,30 @@ impl LoadedConfig {
     }
 }
 
-fn validate_check_selection(
-    checks: &[Box<dyn animsmith_core::Check>],
-    select: &[String],
-) -> Result<(), String> {
+fn full_check_ids() -> Result<Vec<&'static str>, String> {
+    let mut known = all_checks()
+        .into_iter()
+        .map(|check| check.id())
+        .collect::<Vec<_>>();
+    known.extend_from_slice(ENGINE_CHECK_IDS_V1);
+
+    let mut unique = BTreeSet::new();
+    for id in &known {
+        if id.is_empty() {
+            return Err("check catalog contains an empty id".into());
+        }
+        if !unique.insert(*id) {
+            return Err(format!("check catalog contains duplicate id '{id}'"));
+        }
+    }
+    Ok(known)
+}
+
+fn validate_check_selection(known: &[&str], select: &[String]) -> Result<(), String> {
     // Frontend validation intentionally runs before loading any input file, so
     // a bad CLI selection has one deterministic operator error. Core repeats
     // the invariant for embedded callers that invoke `evaluate_checks`
     // directly; the two boundaries serve different consumers.
-    let known: Vec<&str> = checks.iter().map(|check| check.id()).collect();
     for id in select {
         if !known.contains(&id.as_str()) {
             return Err(format!(
@@ -896,8 +909,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let loaded_config = load_config(cli.config.as_deref())?;
             let config = &loaded_config.config;
             require_files(&files)?;
-            let checks = all_checks();
-            validate_check_selection(&checks, &select)?;
+            let known_check_ids = full_check_ids()?;
+            validate_check_selection(&known_check_ids, &select)?;
             if format == LintFormat::Json && !allow.is_empty() {
                 return Err(
                     "--allow is not supported with --format json; machine-readable results retain every content finding"
@@ -933,8 +946,17 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(doc);
                 let ctx = CheckCtx::new(&grids, &roles, config);
-                let evaluations =
-                    evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?;
+                let evaluations = {
+                    let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
+                    checks.push(Box::new(
+                        EngineAddressabilityCheck::new(
+                            &loaded.source,
+                            prediction_provenance.as_ref(),
+                        )
+                        .map_err(|error| error.to_string())?,
+                    ));
+                    evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?
+                };
                 requires_failure |= animsmith_core::evaluation::lint_requires_failure(
                     &evaluations,
                     fail_at,
@@ -976,14 +998,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         #[cfg(feature = "report")]
         Cmd::Report { file, output, clip } => {
             let loaded_config = load_config(cli.config.as_deref())?;
+            full_check_ids()?;
             let loaded = load_with_config(&file, &loaded_config)?;
             let config = &loaded_config.config;
-            let doc = loaded.document();
-            let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-            let grids = MetricGrids::new(doc);
-            let ctx = CheckCtx::new(&grids, &roles, config);
-            let evaluations = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)
-                .map_err(|error| error.to_string())?;
             let prediction_provenance = loaded
                 .engine
                 .as_ref()
@@ -992,6 +1009,19 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 })
                 .transpose()
                 .map_err(|error| error.to_string())?;
+            let doc = loaded.document();
+            let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
+            let grids = MetricGrids::new(doc);
+            let ctx = CheckCtx::new(&grids, &roles, config);
+            let evaluations = {
+                let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
+                checks.push(Box::new(
+                    EngineAddressabilityCheck::new(&loaded.source, prediction_provenance.as_ref())
+                        .map_err(|error| error.to_string())?,
+                ));
+                evaluate_checks(&ctx, &checks, CheckSelection::All)
+                    .map_err(|error| error.to_string())?
+            };
             let finding_count = evaluations.iter().map(|check| check.findings().len()).sum();
             let html = animsmith_report::render(
                 &grids,

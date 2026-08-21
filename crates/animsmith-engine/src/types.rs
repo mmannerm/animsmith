@@ -234,7 +234,9 @@ pub enum TargetAddressability {
 /// Known animation-asset addressability behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AnimationAddressability {
-    /// Animations have typed glTF asset labels by name or index.
+    /// Bevy addresses each glTF animation by its source-array index through
+    /// `GltfAssetLabel::Animation(index)`; animation names populate Bevy's
+    /// separate named-animation map rather than this typed label.
     GltfAssetLabel,
 }
 

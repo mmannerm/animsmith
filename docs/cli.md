@@ -191,8 +191,8 @@ tangents.
 
 | Code | Meaning |
 |---:|---|
-| 0 | No failing findings: clean, warnings-only, notes-only, or coverage gaps only. |
-| 1 | At least one failing finding, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
+| 0 | No failing findings and no required-unavailable engine prediction facets; warnings, notes, or ordinary coverage gaps may remain. |
+| 1 | At least one failing finding, any `required_prediction_unavailable` facet, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 The code reports what the run *did*, never how well it could report it. This
@@ -238,7 +238,8 @@ A role-dependent check with missing prerequisites reports a typed coverage
 gap and does not fail the run — exit `0` means no failing findings among the
 checks that evaluated, not that every declared check evaluated; see
 [reading a lint run](game-ready-clips.md#reading-a-lint-run) for the
-full outcome vocabulary.
+full outcome vocabulary. A required-unavailable engine prediction is distinct:
+it exits `1` and cannot be suppressed by severity or `--allow`.
 
 Use `lint --deny-warnings` when CI should fail on warnings as well as
 errors. `fix --dry-run` is the repair check mode: it exits 1 when the
@@ -492,8 +493,30 @@ Godot, and Bevy expose no V1 settings, so supplying any setting is an error.
 All statically knowable tuple, setting, value, scope, and applicability errors
 are reported before input I/O. Accepted input format and required per-clip
 materialization are checked after loading. Profile selection never changes
-`measure` values. Output v10 records resolved profile provenance on lint files;
-this substrate slice emits no production engine prediction yet.
+`measure` values. Output v10 records resolved profile provenance on lint files.
+
+The first production rule is `engine-addressability` for the exact Bevy
+revision 1 / 0.19.0 / `gltf-asset-loader` tuple. With complete glTF/GLB source
+animation inventory, it emits one available facet whose subject is the exact
+Bevy display label `Animation{i}` for each source animation index `i`:
+
+```console
+animsmith --config examples/bevy.animsmith.toml lint \
+  --select engine-addressability examples/assets/walk.glb
+```
+
+Named, unnamed, and duplicate-named animations all use their distinct source
+indices; names do not become typed labels. Partial or unavailable source clip
+coverage emits one blocking `animation_asset_label_inventory` facet rather
+than predictions for the retained prefix. The rule predicts only the canonical
+`GltfAssetLabel::Animation(i)` selector spelling. It does not prove Bevy ran,
+that animation loading was enabled, that the runtime asset exists, or that its
+targets and graph wiring are usable. The selector can change when source
+animation order changes.
+
+Prediction provenance v1 materializes at most 4,096 actual clips. A
+4,097-clip input returns a bounded operator error before prediction instead of
+truncating resolved settings; issue #485 owns a future overflow representation.
 
 An output-v10 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.

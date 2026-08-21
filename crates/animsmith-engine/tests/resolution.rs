@@ -1,9 +1,10 @@
-use animsmith_core::SourceFormatV1;
+use animsmith_core::{ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS, EngineContractError, SourceFormatV1};
 use animsmith_engine::{
     BakeOrExtract, EngineDeclaration, InvalidSettingReason, ProfileSelection, ResolutionError,
     SettingDomain, SettingId, SettingLocation, SettingScope, SettingValue, SettingValueKind,
     resolve_static,
 };
+use std::cell::Cell;
 use std::collections::BTreeMap;
 
 fn selection(family: &str, version: &str, importer: &str) -> ProfileSelection {
@@ -787,4 +788,78 @@ fn settings_identity_golden_values_cover_every_frozen_profile() {
             ),
         ]
     );
+}
+
+#[test]
+fn actual_clip_inventory_over_v1_settings_bound_returns_a_typed_error_without_panicking() {
+    let bevy = resolve_static(EngineDeclaration {
+        selection: Some(selection("bevy", "0.19.0", "gltf-asset-loader")),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap();
+    let clip_names = vec!["clip".into(); ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1];
+
+    assert_eq!(
+        bevy.resolve_input(SourceFormatV1::GltfJson, &clip_names),
+        Err(ResolutionError::ResolvedSettingsContract(
+            EngineContractError::TooManyRows {
+                field: "settings.clips",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            }
+        ))
+    );
+}
+
+#[test]
+fn oversized_exact_iterator_is_rejected_before_consuming_or_cloning_a_name() {
+    struct Oversized<'a> {
+        next_calls: &'a Cell<usize>,
+    }
+
+    impl Iterator for Oversized<'_> {
+        type Item = &'static str;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.next_calls.set(self.next_calls.get() + 1);
+            Some("must-not-be-consumed")
+        }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let length = ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1;
+            (length, Some(length))
+        }
+    }
+
+    impl ExactSizeIterator for Oversized<'_> {
+        fn len(&self) -> usize {
+            ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1
+        }
+    }
+
+    let bevy = resolve_static(EngineDeclaration {
+        selection: Some(selection("bevy", "0.19.0", "gltf-asset-loader")),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap();
+    let next_calls = Cell::new(0);
+
+    assert_eq!(
+        bevy.resolve_input_iter(
+            SourceFormatV1::GltfJson,
+            Oversized {
+                next_calls: &next_calls,
+            },
+        ),
+        Err(ResolutionError::ResolvedSettingsContract(
+            EngineContractError::TooManyRows {
+                field: "settings.clips",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            }
+        ))
+    );
+    assert_eq!(next_calls.get(), 0);
 }
