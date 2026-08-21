@@ -11,7 +11,8 @@ use animsmith_core::evaluation::{
 use animsmith_core::{
     DependencyClosureV1, EngineAnimationAddressabilityV1, EngineFactIdV1, EngineFactStateV1,
     EngineFactValueV1, EnginePredictionFacetStateV1, EnginePredictionV1, InputIdentity,
-    LoadedSource, PredictionBasisReferenceV1, PredictionContractError, PredictionProvenanceV1,
+    LoadedSource, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE, PREDICTION_V1_MAX_FACETS_PER_FILE,
+    PredictionBasisReferenceV1, PredictionContractError, PredictionProvenanceV1,
     PredictionScalarV1, PredictionUnavailableReasonV1, RawSourceDomainV1, RawSourceKeyV1,
     RawSourceSetCoverageStateV1, RawSourceUnavailableReasonV1, SourceChannelPropertyV1,
     SourceFormatV1, SourceObservationStateV1, SourceSetCoverageStateV1, SourceTargetKindV1,
@@ -1474,7 +1475,7 @@ impl GltfAnimationAddressabilityInput {
                             reason: source.to_string(),
                         }
                     })?;
-                let check = GltfAnimationAddressabilityCheckReadbackV1::from_wire(check_wire);
+                let check = GltfAnimationAddressabilityCheckReadbackV1::from_wire(check_wire)?;
                 check.validate(&prediction_provenance, &inventory)?;
                 Some(GltfAnimationAddressabilityBevyReadbackV1 {
                     prediction_provenance,
@@ -1555,20 +1556,44 @@ struct GltfAnimationAddressabilityCheckWireV1 {
     #[serde(rename = "gaps")]
     _gaps: EmptyCheckSequence,
     #[serde(default, deserialize_with = "deserialize_present_non_null")]
-    prediction: Option<EnginePredictionV1>,
+    prediction: Option<Box<RawValue>>,
 }
 
 impl GltfAnimationAddressabilityCheckReadbackV1 {
-    fn from_wire(wire: GltfAnimationAddressabilityCheckWireV1) -> Self {
-        Self {
+    fn from_wire(
+        wire: GltfAnimationAddressabilityCheckWireV1,
+    ) -> Result<Self, GltfAnimationAddressabilityError> {
+        let prediction = wire
+            .prediction
+            .map(|raw| {
+                let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+                let prediction = EnginePredictionV1::deserialize_with_file_limits(
+                    &mut deserializer,
+                    PREDICTION_V1_MAX_FACETS_PER_FILE,
+                    PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+                )
+                .map_err(|source| {
+                    GltfAnimationAddressabilityError::InvalidBevyCheckShape {
+                        reason: source.to_string(),
+                    }
+                })?;
+                deserializer.end().map_err(|source| {
+                    GltfAnimationAddressabilityError::InvalidBevyCheckShape {
+                        reason: source.to_string(),
+                    }
+                })?;
+                Ok(prediction)
+            })
+            .transpose()?;
+        Ok(Self {
             check_id: wire.check_id,
             selection: wire.selection,
             configuration: wire.configuration,
             applicability: wire.applicability,
             evaluation: wire.evaluation,
             evaluated_scopes: wire.evaluated_scopes,
-            prediction: wire.prediction,
-        }
+            prediction,
+        })
     }
 
     /// Stable check id, always `engine-addressability` after validation.
@@ -3094,6 +3119,54 @@ mod tests {
         assert!(matches!(
             input.into_report(),
             Err(GltfAnimationAddressabilityError::InvalidBevyCheckShape { .. })
+        ));
+    }
+
+    #[test]
+    fn strict_reader_stops_at_the_prediction_file_basis_n_plus_one() {
+        let source = loaded_source(SourceFormatV1::GltfJson);
+        let inventory = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+        let provenance = frozen_bevy_provenance(&source);
+        let grids = MetricGrids::new(source.document());
+        let roles = resolve_configured_roles(
+            &source.document().skeleton,
+            &animsmith_core::Config::default().rig,
+        );
+        let config = animsmith_core::Config::default();
+        let adapter = crate::build_bevy_animation_addressability_adapter_v1(
+            &source,
+            &inventory,
+            Some(provenance),
+            &CheckCtx::new(&grids, &roles, &config),
+        )
+        .unwrap()
+        .unwrap();
+        let report = GltfAnimationAddressabilityV1::new(
+            ToolInfo::animsmith(ToolSource::new(None, None)),
+            inventory,
+            Some(adapter),
+        )
+        .unwrap();
+        let mut wire = serde_json::to_value(report).unwrap();
+        let mut full_facet = wire["bevy"]["check"]["prediction"]["facets"][0].clone();
+        let reference = full_facet["basis"]["references"][0].clone();
+        full_facet["basis"]["references"] =
+            vec![reference; animsmith_core::PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET].into();
+        let exact_count = PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE
+            / animsmith_core::PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET;
+        let mut facets = vec![full_facet.clone(); exact_count];
+        full_facet["basis"]["references"] = serde_json::json!([null]);
+        facets.push(full_facet);
+        wire["bevy"]["check"]["prediction"]["facets"] = facets.into();
+
+        let input = GltfAnimationAddressabilityInput::read_from(Cursor::new(
+            serde_json::to_vec(&wire).unwrap(),
+        ))
+        .unwrap();
+        assert!(matches!(
+            input.into_report(),
+            Err(GltfAnimationAddressabilityError::InvalidBevyCheckShape { reason })
+                if reason.contains("file basis-reference limit")
         ));
     }
 

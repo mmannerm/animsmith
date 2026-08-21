@@ -4,6 +4,7 @@
 //! own rooted filesystem access and provide only safe logical keys and byte
 //! identities to [`DependencyClosureBuilderV1`].
 
+use crate::bounded_deserialize::{CappedSequence, deserialize_capped_sequence};
 use crate::{
     InputIdentity, SourceFactSetV1, SourceFormatV1, SourceRelativeLocatorV1, SourceResourceKindV1,
     SourceResourceLocatorV1, SourceResourceReferenceV1, SourceSetCoverageStateV1,
@@ -533,7 +534,7 @@ pub enum DependencyClosureCoverageReasonV1 {
 }
 
 /// Complete, partial, or unavailable closure coverage.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DependencyClosureCoverageV1 {
     /// Every retained source declaration maps to exact content and the source domain is complete.
@@ -548,6 +549,58 @@ pub enum DependencyClosureCoverageV1 {
         /// Sorted unique reasons no closure can be established.
         reasons: Vec<DependencyClosureCoverageReasonV1>,
     },
+}
+
+const DEPENDENCY_CLOSURE_COVERAGE_REASON_VARIANTS: usize = 7;
+
+#[derive(Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum DependencyClosureCoverageWireV1 {
+    Complete,
+    Partial {
+        #[serde(deserialize_with = "deserialize_closure_coverage_reasons")]
+        reasons: CappedSequence<DependencyClosureCoverageReasonV1>,
+    },
+    Unavailable {
+        #[serde(deserialize_with = "deserialize_closure_coverage_reasons")]
+        reasons: CappedSequence<DependencyClosureCoverageReasonV1>,
+    },
+}
+
+impl DependencyClosureCoverageWireV1 {
+    fn into_value(self) -> (DependencyClosureCoverageV1, bool) {
+        match self {
+            Self::Complete => (DependencyClosureCoverageV1::Complete, false),
+            Self::Partial { reasons } => (
+                DependencyClosureCoverageV1::Partial {
+                    reasons: reasons.values,
+                },
+                reasons.overflowed,
+            ),
+            Self::Unavailable { reasons } => (
+                DependencyClosureCoverageV1::Unavailable {
+                    reasons: reasons.values,
+                },
+                reasons.overflowed,
+            ),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DependencyClosureCoverageV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let (coverage, overflowed) =
+            DependencyClosureCoverageWireV1::deserialize(deserializer)?.into_value();
+        if overflowed {
+            return Err(D::Error::custom(
+                "dependency coverage reasons must be strictly ordered",
+            ));
+        }
+        Ok(coverage)
+    }
 }
 
 impl DependencyClosureCoverageV1 {
@@ -659,12 +712,41 @@ struct DependencyClosureWireV1 {
     schema: String,
     budget: ResourceClosureBudgetV1,
     primary_input: InputIdentity,
-    coverage: DependencyClosureCoverageV1,
+    coverage: DependencyClosureCoverageWireV1,
     #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     identity: OptionalNonNull<DependencyClosureIdentityV1>,
-    references: Vec<DependencyClosureReferenceV1>,
-    external_resources: Vec<ExternalResourceIdentityV1>,
+    #[serde(deserialize_with = "deserialize_closure_references")]
+    references: CappedSequence<DependencyClosureReferenceV1>,
+    #[serde(deserialize_with = "deserialize_closure_external_resources")]
+    external_resources: CappedSequence<ExternalResourceIdentityV1>,
     work: DependencyClosureWorkV1,
+}
+
+fn deserialize_closure_references<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<DependencyClosureReferenceV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, DEPENDENCY_CLOSURE_V1_MAX_REFERENCES)
+}
+
+fn deserialize_closure_external_resources<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<ExternalResourceIdentityV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES)
+}
+
+fn deserialize_closure_coverage_reasons<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<DependencyClosureCoverageReasonV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, DEPENDENCY_CLOSURE_COVERAGE_REASON_VARIANTS)
 }
 
 #[derive(Debug, Default)]
@@ -712,20 +794,30 @@ impl DependencyClosureV1 {
                 "dependency closure schema must be {DEPENDENCY_CLOSURE_V1_ID:?}"
             ));
         }
+        if wire.budget != ResourceClosureBudgetV1::VALUE {
+            return Err("dependency closure budget is not immutable V1".to_owned());
+        }
+        if wire.references.overflowed {
+            return Err("dependency closure has too many references".to_owned());
+        }
+        if wire.external_resources.overflowed {
+            return Err("dependency closure has too many external resources".to_owned());
+        }
+        let (coverage, coverage_reasons_overflowed) = wire.coverage.into_value();
         let closure = Self {
             schema: DEPENDENCY_CLOSURE_V1_ID,
             budget: wire.budget,
             primary_input: wire.primary_input,
-            coverage: wire.coverage,
+            coverage,
             identity: match wire.identity {
                 OptionalNonNull::Missing => None,
                 OptionalNonNull::Present(identity) => Some(identity),
             },
-            references: wire.references,
-            external_resources: wire.external_resources,
+            references: wire.references.values,
+            external_resources: wire.external_resources.values,
             work: wire.work,
         };
-        closure.validate_wire()?;
+        closure.validate_wire(coverage_reasons_overflowed)?;
         Ok(closure)
     }
 
@@ -823,7 +915,7 @@ impl DependencyClosureV1 {
         canonical_record_identity(self)
     }
 
-    fn validate_wire(&self) -> Result<(), String> {
+    fn validate_wire(&self, coverage_reasons_overflowed: bool) -> Result<(), String> {
         if self.budget != ResourceClosureBudgetV1::VALUE {
             return Err("dependency closure budget is not immutable V1".to_owned());
         }
@@ -873,7 +965,7 @@ impl DependencyClosureV1 {
             return Err("dependency external resources must be strictly key ordered".to_owned());
         }
         let reasons = self.coverage.reasons();
-        if reasons.windows(2).any(|rows| rows[0] >= rows[1]) {
+        if coverage_reasons_overflowed || reasons.windows(2).any(|rows| rows[0] >= rows[1]) {
             return Err("dependency coverage reasons must be strictly ordered".to_owned());
         }
         match &self.coverage {
@@ -3161,6 +3253,85 @@ mod tests {
         );
         assert_eq!(locator.work().path_components_inspected(), 1);
         assert_eq!(locator.work().dedup_probes(), 1);
+    }
+
+    #[test]
+    fn closure_wire_sequences_reject_n_plus_one_before_decoding_the_sentinel() {
+        let primary = InputIdentity::from_bytes(b"primary");
+        let mut builder =
+            DependencyClosureBuilderV1::new(primary, SourceSetCoverageV1::complete(), 1);
+        assert!(builder.begin_reference(0, 0));
+        builder
+            .push_primary(0, SourceResourceKindV1::Buffer, 0)
+            .unwrap();
+        let closure = builder.finish().unwrap();
+        let base = serde_json::to_value(&closure).unwrap();
+
+        let reference = base["references"][0].clone();
+        let mut references = Vec::with_capacity(DEPENDENCY_CLOSURE_V1_MAX_REFERENCES + 1);
+        for source_order_index in 0..DEPENDENCY_CLOSURE_V1_MAX_REFERENCES {
+            let mut row = reference.clone();
+            row["source_order_index"] = serde_json::json!(source_order_index);
+            references.push(row);
+        }
+        let mut exact = base.clone();
+        exact["references"] = references.clone().into();
+        let exact_error = decode_dependency_closure_v1(&serde_json::to_string(&exact).unwrap())
+            .expect_err("later closure semantics reject the synthetic exact-N prefix");
+        assert!(!matches!(
+            exact_error,
+            DependencyClosureDecodeError::Semantic(ref reason)
+                if reason == "dependency closure has too many references"
+        ));
+        references.push(serde_json::Value::Null);
+        let mut over = base.clone();
+        over["references"] = references.into();
+        assert!(matches!(
+            decode_dependency_closure_v1(&serde_json::to_string(&over).unwrap()),
+            Err(DependencyClosureDecodeError::Semantic(reason))
+                if reason == "dependency closure has too many references"
+        ));
+
+        let external = serde_json::json!({
+            "key": "a.bin",
+            "identity": {"sha256": "00".repeat(32), "bytes": 0}
+        });
+        let mut external_resources = vec![external; DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES];
+        let mut exact = base.clone();
+        exact["external_resources"] = external_resources.clone().into();
+        let exact_error = decode_dependency_closure_v1(&serde_json::to_string(&exact).unwrap())
+            .expect_err("later closure semantics reject duplicate exact-N resources");
+        assert!(!matches!(
+            exact_error,
+            DependencyClosureDecodeError::Semantic(ref reason)
+                if reason == "dependency closure has too many external resources"
+        ));
+        external_resources.push(serde_json::Value::Null);
+        let mut over = base.clone();
+        over["external_resources"] = external_resources.into();
+        assert!(matches!(
+            decode_dependency_closure_v1(&serde_json::to_string(&over).unwrap()),
+            Err(DependencyClosureDecodeError::Semantic(reason))
+                if reason == "dependency closure has too many external resources"
+        ));
+
+        let mut reasons = vec![
+            serde_json::json!("source_declarations_partial"),
+            serde_json::json!("source_declarations_unavailable"),
+            serde_json::json!("capture_unavailable"),
+            serde_json::json!("refused_resource"),
+            serde_json::json!("unavailable_resource"),
+            serde_json::json!("resource_budget_exceeded"),
+            serde_json::json!("unmodeled_resource_domain"),
+        ];
+        reasons.push(serde_json::Value::Null);
+        let mut over = base;
+        over["coverage"] = serde_json::json!({"state": "partial", "reasons": reasons});
+        assert!(matches!(
+            decode_dependency_closure_v1(&serde_json::to_string(&over).unwrap()),
+            Err(DependencyClosureDecodeError::Semantic(reason))
+                if reason == "dependency coverage reasons must be strictly ordered"
+        ));
     }
 
     #[test]

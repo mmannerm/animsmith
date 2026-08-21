@@ -5,7 +5,7 @@
 //! [`crate::engine_contract`] wire types; prediction records only consume those
 //! projections and loader-owned evidence from the same [`crate::LoadedSource`].
 
-use serde::de::Error as _;
+use serde::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::ser::{
     Error as _, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
     SerializeTuple, SerializeTupleStruct, SerializeTupleVariant,
@@ -14,6 +14,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::fmt;
+use std::marker::PhantomData;
+
+use crate::bounded_deserialize::{
+    BudgetedCappedSequenceSeed, CappedSequence, CappedSequenceSeed, RowBudget,
+    consume_ignored_tail, deserialize_capped_sequence,
+};
 
 use crate::dependency_closure::{
     DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, DependencyClosureDecodeError,
@@ -22,8 +29,10 @@ use crate::dependency_closure::{
 };
 use crate::engine_contract::{
     CanonicalEncoder, ENGINE_PROFILE_FACTS_V1_ID, EngineContractDecodeError, EngineContractError,
-    EngineSettingIdV1, EngineSettingScopeV1, ResolvedEngineProfileV1, ResolvedEngineSettingsV1,
-    decode_resolved_engine_profile_v1, decode_resolved_engine_settings_v1, encode_input_identity,
+    EngineProfileLimitedDecodeError, EngineSettingIdV1, EngineSettingScopeV1,
+    EngineSettingsLimitedDecodeError, ResolvedEngineProfileV1, ResolvedEngineSettingsV1,
+    decode_resolved_engine_profile_v1_with_provenance_limit,
+    decode_resolved_engine_settings_v1_with_provenance_limit, encode_input_identity,
 };
 use crate::evaluation::{CoverageGap, EvaluationScope};
 use crate::finding::Finding;
@@ -62,6 +71,33 @@ pub const PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS: usize = 65_536;
 pub const PREDICTION_V1_MAX_MEASUREMENT_POINTER_COMPONENTS: usize = 128;
 /// Maximum unavailable-reason codes retained by one prediction facet.
 pub const PREDICTION_V1_MAX_REASONS_PER_FACET: usize = 4_096;
+
+fn deserialize_basis_references<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<PredictionBasisReferenceWireV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET)
+}
+
+fn deserialize_unavailable_reasons<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, PREDICTION_V1_MAX_REASONS_PER_FACET)
+}
+
+fn deserialize_consumed_contracts<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, CONSUMED_CONTRACTS_V1.len())
+}
 
 /// A prediction/provenance value violated the immutable V1 contract.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -2387,16 +2423,103 @@ pub struct EnginePredictionBasisV1 {
 #[serde(deny_unknown_fields)]
 struct EnginePredictionBasisWireV1 {
     identity: PredictionBasisIdentityV1,
-    references: Vec<PredictionBasisReferenceWireV1>,
+    #[serde(deserialize_with = "deserialize_basis_references")]
+    references: CappedSequence<PredictionBasisReferenceWireV1>,
+}
+
+struct EnginePredictionBasisSeed<'a> {
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for EnginePredictionBasisSeed<'_> {
+    type Value = EnginePredictionBasisWireV1;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Identity,
+            References,
+        }
+
+        struct BasisVisitor<'a> {
+            references: &'a mut RowBudget,
+        }
+
+        impl<'de> Visitor<'de> for BasisVisitor<'_> {
+            type Value = EnginePredictionBasisWireV1;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an engine prediction basis")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut identity = None;
+                let mut references = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Identity => {
+                            set_prediction_field(&mut identity, map.next_value()?, "identity")?
+                        }
+                        Field::References => {
+                            if references.is_some() {
+                                return Err(A::Error::duplicate_field("references"));
+                            }
+                            references = Some(map.next_value_seed(BudgetedCappedSequenceSeed {
+                                budget: self.references,
+                                local_limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+                                element: PhantomData,
+                            })?);
+                        }
+                    }
+                }
+                Ok(EnginePredictionBasisWireV1 {
+                    identity: required_prediction_field(identity, "identity")?,
+                    references: required_prediction_field(references, "references")?,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "EnginePredictionBasisV1",
+            &["identity", "references"],
+            BasisVisitor {
+                references: self.references,
+            },
+        )
+    }
+}
+
+fn set_prediction_field<E, T>(slot: &mut Option<T>, value: T, field: &'static str) -> Result<(), E>
+where
+    E: serde::de::Error,
+{
+    if slot.replace(value).is_some() {
+        return Err(E::duplicate_field(field));
+    }
+    Ok(())
+}
+
+fn required_prediction_field<E, T>(value: Option<T>, field: &'static str) -> Result<T, E>
+where
+    E: serde::de::Error,
+{
+    value.ok_or_else(|| E::missing_field(field))
 }
 
 impl TryFrom<EnginePredictionBasisWireV1> for EnginePredictionBasisV1 {
     type Error = PredictionContractError;
 
     fn try_from(wire: EnginePredictionBasisWireV1) -> Result<Self, Self::Error> {
-        if wire.references.len() > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET {
+        if wire.references.overflowed {
             return Err(PredictionContractError::TooManyBasisReferences {
-                found: wire.references.len(),
+                found: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET + 1,
                 limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
             });
         }
@@ -2404,6 +2527,7 @@ impl TryFrom<EnginePredictionBasisWireV1> for EnginePredictionBasisV1 {
             identity: wire.identity,
             references: wire
                 .references
+                .values
                 .into_iter()
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
@@ -2713,16 +2837,102 @@ struct EnginePredictionFacetWireV1 {
     scope: EvaluationScope,
     state: EnginePredictionFacetStateV1,
     basis: EnginePredictionBasisWireV1,
-    reasons: Vec<String>,
+    #[serde(deserialize_with = "deserialize_unavailable_reasons")]
+    reasons: CappedSequence<String>,
+}
+
+struct EnginePredictionFacetSeed<'a> {
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for EnginePredictionFacetSeed<'_> {
+    type Value = EnginePredictionFacetWireV1;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Scope,
+            State,
+            Basis,
+            Reasons,
+        }
+
+        struct FacetVisitor<'a> {
+            references: &'a mut RowBudget,
+        }
+
+        impl<'de> Visitor<'de> for FacetVisitor<'_> {
+            type Value = EnginePredictionFacetWireV1;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an engine prediction facet")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut scope = None;
+                let mut state = None;
+                let mut basis = None;
+                let mut reasons = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Scope => {
+                            set_prediction_field(&mut scope, map.next_value()?, "scope")?
+                        }
+                        Field::State => {
+                            set_prediction_field(&mut state, map.next_value()?, "state")?
+                        }
+                        Field::Basis => {
+                            if basis.is_some() {
+                                return Err(A::Error::duplicate_field("basis"));
+                            }
+                            basis = Some(map.next_value_seed(EnginePredictionBasisSeed {
+                                references: self.references,
+                            })?);
+                        }
+                        Field::Reasons => {
+                            if reasons.is_some() {
+                                return Err(A::Error::duplicate_field("reasons"));
+                            }
+                            reasons = Some(map.next_value_seed(CappedSequenceSeed {
+                                limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
+                                element: PhantomData,
+                            })?);
+                        }
+                    }
+                }
+                Ok(EnginePredictionFacetWireV1 {
+                    scope: required_prediction_field(scope, "scope")?,
+                    state: required_prediction_field(state, "state")?,
+                    basis: required_prediction_field(basis, "basis")?,
+                    reasons: required_prediction_field(reasons, "reasons")?,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "EnginePredictionFacetV1",
+            &["scope", "state", "basis", "reasons"],
+            FacetVisitor {
+                references: self.references,
+            },
+        )
+    }
 }
 
 impl TryFrom<EnginePredictionFacetWireV1> for EnginePredictionFacetV1 {
     type Error = PredictionContractError;
 
     fn try_from(wire: EnginePredictionFacetWireV1) -> Result<Self, Self::Error> {
-        if wire.reasons.len() > PREDICTION_V1_MAX_REASONS_PER_FACET {
+        if wire.reasons.overflowed {
             return Err(PredictionContractError::TooManyUnavailableReasons {
-                found: wire.reasons.len(),
+                found: PREDICTION_V1_MAX_REASONS_PER_FACET + 1,
                 limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
             });
         }
@@ -2732,6 +2942,7 @@ impl TryFrom<EnginePredictionFacetWireV1> for EnginePredictionFacetV1 {
             basis: wire.basis.try_into()?,
             reasons: wire
                 .reasons
+                .values
                 .into_iter()
                 .map(PredictionUnavailableReasonV1::from_wire)
                 .collect::<Result<_, _>>()?,
@@ -2940,26 +3151,220 @@ pub struct EnginePredictionV1 {
     facets: Vec<EnginePredictionFacetV1>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct EnginePredictionWireV1 {
     schema: String,
     provenance_identity: PredictionProvenanceIdentityV1,
-    facets: Vec<EnginePredictionFacetWireV1>,
+    facets: CappedSequence<EnginePredictionFacetWireV1>,
+    facet_budget: RowBudget,
+    reference_budget: RowBudget,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StagedEnginePredictionWireV1 {
-    schema: String,
-    provenance_identity: PredictionProvenanceIdentityV1,
-    facets: Vec<Box<RawValue>>,
+enum FacetElement {
+    Value(EnginePredictionFacetWireV1),
+    Skipped,
+}
+
+struct FacetElementSeed<'a> {
+    facets: &'a mut RowBudget,
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for FacetElementSeed<'_> {
+    type Value = FacetElement;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if self.facets.admit() {
+            EnginePredictionFacetSeed {
+                references: self.references,
+            }
+            .deserialize(deserializer)
+            .map(FacetElement::Value)
+        } else {
+            IgnoredAny::deserialize(deserializer).map(|_| FacetElement::Skipped)
+        }
+    }
+}
+
+struct FacetsSeed<'a> {
+    facets: &'a mut RowBudget,
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for FacetsSeed<'_> {
+    type Value = CappedSequence<EnginePredictionFacetWireV1>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FacetsVisitor<'a> {
+            facets: &'a mut RowBudget,
+            references: &'a mut RowBudget,
+        }
+
+        impl<'de> Visitor<'de> for FacetsVisitor<'_> {
+            type Value = CappedSequence<EnginePredictionFacetWireV1>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a bounded sequence of engine prediction facets")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::with_capacity(
+                    sequence
+                        .size_hint()
+                        .unwrap_or(0)
+                        .min(PREDICTION_V1_MAX_FACETS_PER_FILE),
+                );
+                let mut seen = 0usize;
+                while seen < PREDICTION_V1_MAX_FACETS_PER_FILE {
+                    let Some(element) = sequence.next_element_seed(FacetElementSeed {
+                        facets: self.facets,
+                        references: self.references,
+                    })?
+                    else {
+                        return Ok(CappedSequence {
+                            values,
+                            overflowed: false,
+                        });
+                    };
+                    seen += 1;
+                    match element {
+                        FacetElement::Value(value) => values.push(value),
+                        FacetElement::Skipped => {
+                            let overflowed = consume_ignored_tail(
+                                &mut sequence,
+                                seen,
+                                PREDICTION_V1_MAX_FACETS_PER_FILE,
+                            )?;
+                            return Ok(CappedSequence { values, overflowed });
+                        }
+                    }
+                }
+                let overflowed =
+                    consume_ignored_tail(&mut sequence, seen, PREDICTION_V1_MAX_FACETS_PER_FILE)?;
+                Ok(CappedSequence { values, overflowed })
+            }
+        }
+
+        deserializer.deserialize_seq(FacetsVisitor {
+            facets: self.facets,
+            references: self.references,
+        })
+    }
+}
+
+struct EnginePredictionWireSeed {
+    facet_limit: usize,
+    reference_limit: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for EnginePredictionWireSeed {
+    type Value = EnginePredictionWireV1;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Schema,
+            ProvenanceIdentity,
+            Facets,
+        }
+
+        struct PredictionVisitor {
+            facet_limit: usize,
+            reference_limit: usize,
+        }
+
+        impl<'de> Visitor<'de> for PredictionVisitor {
+            type Value = EnginePredictionWireV1;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an engine prediction")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut facet_budget = RowBudget::new(self.facet_limit);
+                let mut reference_budget = RowBudget::new(self.reference_limit);
+                let mut schema = None;
+                let mut provenance_identity = None;
+                let mut facets = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Schema => {
+                            set_prediction_field(&mut schema, map.next_value()?, "schema")?
+                        }
+                        Field::ProvenanceIdentity => set_prediction_field(
+                            &mut provenance_identity,
+                            map.next_value()?,
+                            "provenance_identity",
+                        )?,
+                        Field::Facets => {
+                            if facets.is_some() {
+                                return Err(A::Error::duplicate_field("facets"));
+                            }
+                            facets = Some(map.next_value_seed(FacetsSeed {
+                                facets: &mut facet_budget,
+                                references: &mut reference_budget,
+                            })?);
+                        }
+                    }
+                }
+                Ok(EnginePredictionWireV1 {
+                    schema: required_prediction_field(schema, "schema")?,
+                    provenance_identity: required_prediction_field(
+                        provenance_identity,
+                        "provenance_identity",
+                    )?,
+                    facets: required_prediction_field(facets, "facets")?,
+                    facet_budget,
+                    reference_budget,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "EnginePredictionV1",
+            &["schema", "provenance_identity", "facets"],
+            PredictionVisitor {
+                facet_limit: self.facet_limit,
+                reference_limit: self.reference_limit,
+            },
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePredictionWireV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        EnginePredictionWireSeed {
+            facet_limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            reference_limit: usize::MAX,
+        }
+        .deserialize(deserializer)
+    }
 }
 
 #[derive(Debug)]
 pub(crate) enum PredictionDecodeError {
     Shape(serde_json::Error),
     Semantic(PredictionContractError),
+    TooManyFileFacets,
+    TooManyFileBasisReferences,
 }
 
 impl EnginePredictionV1 {
@@ -2976,9 +3381,9 @@ impl EnginePredictionV1 {
 
     fn from_wire(wire: EnginePredictionWireV1) -> Result<Self, PredictionContractError> {
         Self::validate_wire_schema(&wire.schema)?;
-        if wire.facets.len() > PREDICTION_V1_MAX_FACETS_PER_FILE {
+        if wire.facets.overflowed {
             return Err(PredictionContractError::TooManyFacets {
-                found: wire.facets.len(),
+                found: PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
                 limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
             });
         }
@@ -2987,6 +3392,7 @@ impl EnginePredictionV1 {
             provenance_identity: wire.provenance_identity,
             facets: wire
                 .facets
+                .values
                 .into_iter()
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
@@ -2994,41 +3400,59 @@ impl EnginePredictionV1 {
         prediction.validate_structure()?;
         Ok(prediction)
     }
+
+    fn first_nested_limit_error(wire: &EnginePredictionWireV1) -> Option<PredictionContractError> {
+        for facet in &wire.facets.values {
+            if facet.reasons.overflowed {
+                return Some(PredictionContractError::TooManyUnavailableReasons {
+                    found: PREDICTION_V1_MAX_REASONS_PER_FACET + 1,
+                    limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
+                });
+            }
+            if facet.basis.references.overflowed {
+                return Some(PredictionContractError::TooManyBasisReferences {
+                    found: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET + 1,
+                    limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+                });
+            }
+        }
+        None
+    }
 }
 
 pub(crate) fn decode_engine_prediction_v1(
     raw: &str,
+    facet_limit: usize,
+    reference_limit: usize,
 ) -> Result<EnginePredictionV1, PredictionDecodeError> {
-    let wire: StagedEnginePredictionWireV1 =
-        serde_json::from_str(raw).map_err(PredictionDecodeError::Shape)?;
+    let mut deserializer = serde_json::Deserializer::from_str(raw);
+    let wire = EnginePredictionWireSeed {
+        facet_limit,
+        reference_limit,
+    }
+    .deserialize(&mut deserializer)
+    .map_err(PredictionDecodeError::Shape)?;
+    deserializer.end().map_err(PredictionDecodeError::Shape)?;
     EnginePredictionV1::validate_wire_schema(&wire.schema)
         .map_err(PredictionDecodeError::Semantic)?;
-    if wire.facets.len() > PREDICTION_V1_MAX_FACETS_PER_FILE {
+    if wire.facets.overflowed {
         return Err(PredictionDecodeError::Semantic(
             PredictionContractError::TooManyFacets {
-                found: wire.facets.len(),
+                found: PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
                 limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
             },
         ));
     }
-    let facets = wire
-        .facets
-        .into_iter()
-        .map(|raw| {
-            let wire: EnginePredictionFacetWireV1 =
-                serde_json::from_str(raw.get()).map_err(PredictionDecodeError::Shape)?;
-            EnginePredictionFacetV1::try_from(wire).map_err(PredictionDecodeError::Semantic)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let prediction = EnginePredictionV1 {
-        schema: ENGINE_PREDICTION_V1_ID,
-        provenance_identity: wire.provenance_identity,
-        facets,
-    };
-    prediction
-        .validate_structure()
-        .map_err(PredictionDecodeError::Semantic)?;
-    Ok(prediction)
+    if let Some(error) = EnginePredictionV1::first_nested_limit_error(&wire) {
+        return Err(PredictionDecodeError::Semantic(error));
+    }
+    if wire.facet_budget.overflowed() {
+        return Err(PredictionDecodeError::TooManyFileFacets);
+    }
+    if wire.reference_budget.overflowed() {
+        return Err(PredictionDecodeError::TooManyFileBasisReferences);
+    }
+    EnginePredictionV1::from_wire(wire).map_err(PredictionDecodeError::Semantic)
 }
 
 impl<'de> Deserialize<'de> for EnginePredictionV1 {
@@ -3036,12 +3460,56 @@ impl<'de> Deserialize<'de> for EnginePredictionV1 {
     where
         D: Deserializer<'de>,
     {
-        Self::from_wire(EnginePredictionWireV1::deserialize(deserializer)?)
-            .map_err(D::Error::custom)
+        let wire = EnginePredictionWireV1::deserialize(deserializer)?;
+        if let Some(error) = Self::first_nested_limit_error(&wire) {
+            return Err(D::Error::custom(error));
+        }
+        Self::from_wire(wire).map_err(D::Error::custom)
     }
 }
 
 impl EnginePredictionV1 {
+    /// Deserialize one prediction while enforcing caller-owned file budgets.
+    ///
+    /// Standalone [`Deserialize`] enforces only prediction-local V1 caps.
+    /// Staged file and envelope readers use this entry point to stop before a
+    /// row exceeds their remaining aggregate facet or basis-reference budget.
+    pub fn deserialize_with_file_limits<'de, D>(
+        deserializer: D,
+        facet_limit: usize,
+        reference_limit: usize,
+    ) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = EnginePredictionWireSeed {
+            facet_limit,
+            reference_limit,
+        }
+        .deserialize(deserializer)?;
+        Self::validate_wire_schema(&wire.schema).map_err(D::Error::custom)?;
+        if wire.facets.overflowed {
+            return Err(D::Error::custom(PredictionContractError::TooManyFacets {
+                found: PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            }));
+        }
+        if let Some(error) = Self::first_nested_limit_error(&wire) {
+            return Err(D::Error::custom(error));
+        }
+        if wire.facet_budget.overflowed() {
+            return Err(D::Error::custom(
+                "engine prediction exceeds the V1 file facet limit",
+            ));
+        }
+        if wire.reference_budget.overflowed() {
+            return Err(D::Error::custom(
+                "engine prediction exceeds the V1 file basis-reference limit",
+            ));
+        }
+        Self::from_wire(wire).map_err(D::Error::custom)
+    }
+
     /// Construct a nonempty canonical prediction attachment.
     pub fn new(
         provenance_identity: PredictionProvenanceIdentityV1,
@@ -3250,19 +3718,6 @@ pub struct PredictionProvenanceV1 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PredictionProvenanceWireV1 {
-    schema: String,
-    identity: PredictionProvenanceIdentityV1,
-    profile: ResolvedEngineProfileV1,
-    source_format: SourceFormatV1,
-    settings: ResolvedEngineSettingsV1,
-    raw_source: RawSourceBindingV1,
-    dependency_closure: DependencyClosureV1,
-    consumed_contracts: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct StagedPredictionProvenanceWireV1 {
     schema: String,
     identity: PredictionProvenanceIdentityV1,
@@ -3271,10 +3726,21 @@ struct StagedPredictionProvenanceWireV1 {
     settings: Box<RawValue>,
     raw_source: Box<RawValue>,
     dependency_closure: Box<RawValue>,
-    consumed_contracts: Vec<String>,
+    #[serde(deserialize_with = "deserialize_consumed_contracts")]
+    consumed_contracts: CappedSequence<String>,
 }
 
 impl PredictionProvenanceV1 {
+    fn validate_capped_wire_header(
+        schema: &str,
+        consumed_contracts: &CappedSequence<String>,
+    ) -> Result<(), PredictionContractError> {
+        if consumed_contracts.overflowed {
+            return Err(PredictionContractError::InvalidConsumedContracts);
+        }
+        Self::validate_wire_header(schema, &consumed_contracts.values)
+    }
+
     fn validate_wire_header(
         schema: &str,
         consumed_contracts: &[String],
@@ -3322,19 +3788,6 @@ impl PredictionProvenanceV1 {
         provenance.validate()?;
         Ok(provenance)
     }
-
-    fn from_wire(wire: PredictionProvenanceWireV1) -> Result<Self, PredictionContractError> {
-        Self::from_wire_parts(
-            wire.schema,
-            wire.identity,
-            wire.profile,
-            wire.source_format,
-            wire.settings,
-            wire.raw_source,
-            wire.dependency_closure,
-            wire.consumed_contracts,
-        )
-    }
 }
 
 pub(crate) fn decode_prediction_provenance_v1(
@@ -3342,26 +3795,69 @@ pub(crate) fn decode_prediction_provenance_v1(
 ) -> Result<PredictionProvenanceV1, PredictionDecodeError> {
     let wire: StagedPredictionProvenanceWireV1 =
         serde_json::from_str(raw).map_err(PredictionDecodeError::Shape)?;
-    PredictionProvenanceV1::validate_wire_header(&wire.schema, &wire.consumed_contracts)
+    decode_prediction_provenance_wire(wire)
+}
+
+fn decode_prediction_provenance_wire(
+    wire: StagedPredictionProvenanceWireV1,
+) -> Result<PredictionProvenanceV1, PredictionDecodeError> {
+    PredictionProvenanceV1::validate_capped_wire_header(&wire.schema, &wire.consumed_contracts)
         .map_err(PredictionDecodeError::Semantic)?;
-    let profile =
-        decode_resolved_engine_profile_v1(wire.profile.get()).map_err(|error| match error {
-            EngineContractDecodeError::Shape(source) => PredictionDecodeError::Shape(source),
-            EngineContractDecodeError::Semantic(source) => {
-                PredictionDecodeError::Semantic(source.into())
-            }
-        })?;
-    let settings =
-        decode_resolved_engine_settings_v1(wire.settings.get()).map_err(|error| match error {
-            EngineContractDecodeError::Shape(source) => PredictionDecodeError::Shape(source),
-            EngineContractDecodeError::Semantic(source) => {
-                PredictionDecodeError::Semantic(source.into())
-            }
-        })?;
-    let raw_source_wire: RawSourceBindingWireV1 =
-        serde_json::from_str(wire.raw_source.get()).map_err(PredictionDecodeError::Shape)?;
-    let raw_source =
-        RawSourceBindingV1::from_wire(raw_source_wire).map_err(PredictionDecodeError::Semantic)?;
+    let raw_source_result = serde_json::from_str::<RawSourceBindingWireV1>(wire.raw_source.get())
+        .map_err(PredictionDecodeError::Shape)
+        .and_then(|raw| {
+            RawSourceBindingV1::from_wire(raw).map_err(PredictionDecodeError::Semantic)
+        });
+    let reserved_raw_rows = match raw_source_result.as_ref() {
+        Ok(raw) => usize::try_from(raw.work.retained_rows).map_err(|_| {
+            PredictionDecodeError::Semantic(PredictionContractError::ArithmeticOverflow(
+                "raw-source rows",
+            ))
+        })?,
+        Err(_) => 0,
+    };
+    let remaining_after_raw =
+        PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS.saturating_sub(reserved_raw_rows);
+    let profile = decode_resolved_engine_profile_v1_with_provenance_limit(
+        wire.profile.get(),
+        remaining_after_raw,
+    )
+    .map_err(|error| match error {
+        EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source)) => {
+            PredictionDecodeError::Shape(source)
+        }
+        EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source)) => {
+            PredictionDecodeError::Semantic(source.into())
+        }
+        EngineProfileLimitedDecodeError::ProvenanceRowsOverflow => PredictionDecodeError::Semantic(
+            PredictionContractError::TooManyAggregateProvenanceRows {
+                found: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS + 1,
+                limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+            },
+        ),
+    })?;
+    let remaining_provenance_rows = remaining_after_raw.saturating_sub(profile.provenance_rows());
+    let settings = decode_resolved_engine_settings_v1_with_provenance_limit(
+        wire.settings.get(),
+        remaining_provenance_rows,
+    )
+    .map_err(|error| match error {
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source)) => {
+            PredictionDecodeError::Shape(source)
+        }
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source)) => {
+            PredictionDecodeError::Semantic(source.into())
+        }
+        EngineSettingsLimitedDecodeError::ProvenanceRowsOverflow => {
+            PredictionDecodeError::Semantic(
+                PredictionContractError::TooManyAggregateProvenanceRows {
+                    found: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS + 1,
+                    limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+                },
+            )
+        }
+    })?;
+    let raw_source = raw_source_result?;
     let dependency_closure = decode_dependency_closure_v1(wire.dependency_closure.get()).map_err(
         |error| match error {
             DependencyClosureDecodeError::Shape(source) => PredictionDecodeError::Shape(source),
@@ -3378,7 +3874,7 @@ pub(crate) fn decode_prediction_provenance_v1(
         settings,
         raw_source,
         dependency_closure,
-        wire.consumed_contracts,
+        wire.consumed_contracts.values,
     )
     .map_err(PredictionDecodeError::Semantic)
 }
@@ -3388,8 +3884,17 @@ impl<'de> Deserialize<'de> for PredictionProvenanceV1 {
     where
         D: Deserializer<'de>,
     {
-        Self::from_wire(PredictionProvenanceWireV1::deserialize(deserializer)?)
-            .map_err(D::Error::custom)
+        decode_prediction_provenance_wire(StagedPredictionProvenanceWireV1::deserialize(
+            deserializer,
+        )?)
+        .map_err(|error| match error {
+            PredictionDecodeError::Shape(source) => D::Error::custom(source),
+            PredictionDecodeError::Semantic(source) => D::Error::custom(source),
+            PredictionDecodeError::TooManyFileFacets
+            | PredictionDecodeError::TooManyFileBasisReferences => {
+                unreachable!("provenance decoding cannot consume prediction budgets")
+            }
+        })
     }
 }
 
@@ -5381,5 +5886,344 @@ mod tests {
             .expect("no measurement references need no traversal"),
             0,
         );
+    }
+
+    #[test]
+    fn consumed_contracts_reject_n_plus_one_before_decoding_null_or_large_tail() {
+        let provenance = minimal_provenance();
+        let mut wire = serde_json::to_value(provenance).unwrap();
+        let contracts = wire["consumed_contracts"].as_array_mut().unwrap();
+        assert_eq!(contracts.len(), CONSUMED_CONTRACTS_V1.len());
+        contracts.push(serde_json::Value::Null);
+        contracts.extend((0..10_000).map(|_| serde_json::json!("")));
+        let result = decode_prediction_provenance_v1(&serde_json::to_string(&wire).unwrap());
+        assert!(matches!(
+            result,
+            Err(PredictionDecodeError::Semantic(
+                PredictionContractError::InvalidConsumedContracts
+            ))
+        ));
+    }
+
+    #[test]
+    fn prediction_sequences_reject_n_plus_one_before_decoding_null_sentinels() {
+        let prediction = prediction_with_reference(
+            PredictionBasisReferenceV1::project_field(
+                "project.mode",
+                PredictionScalarV1::token("generic").unwrap(),
+            )
+            .unwrap(),
+        );
+        let base = serde_json::to_value(prediction).unwrap();
+
+        let mut facets = vec![base["facets"][0].clone(); PREDICTION_V1_MAX_FACETS_PER_FILE];
+        facets.push(serde_json::Value::Null);
+        let mut over = base.clone();
+        over["facets"] = facets.into();
+        assert!(matches!(
+            decode_engine_prediction_v1(
+                &serde_json::to_string(&over).unwrap(),
+                PREDICTION_V1_MAX_FACETS_PER_FILE,
+                PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            ),
+            Err(PredictionDecodeError::Semantic(
+                PredictionContractError::TooManyFacets {
+                    found,
+                    limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                }
+            )) if found == PREDICTION_V1_MAX_FACETS_PER_FILE + 1
+        ));
+
+        let mut reasons = vec![
+            serde_json::json!("project_intent_unavailable");
+            PREDICTION_V1_MAX_REASONS_PER_FACET
+        ];
+        reasons.push(serde_json::Value::Null);
+        let mut over = base.clone();
+        over["facets"][0]["reasons"] = reasons.into();
+        assert!(matches!(
+            decode_engine_prediction_v1(
+                &serde_json::to_string(&over).unwrap(),
+                PREDICTION_V1_MAX_FACETS_PER_FILE,
+                PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            ),
+            Err(PredictionDecodeError::Semantic(
+                PredictionContractError::TooManyUnavailableReasons {
+                    found,
+                    limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
+                }
+            )) if found == PREDICTION_V1_MAX_REASONS_PER_FACET + 1
+        ));
+
+        let reference = base["facets"][0]["basis"]["references"][0].clone();
+        let mut references = vec![reference; PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET];
+        references.push(serde_json::Value::Null);
+        let mut over = base;
+        over["facets"][0]["basis"]["references"] = references.into();
+        assert!(matches!(
+            decode_engine_prediction_v1(
+                &serde_json::to_string(&over).unwrap(),
+                PREDICTION_V1_MAX_FACETS_PER_FILE,
+                PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            ),
+            Err(PredictionDecodeError::Semantic(
+                PredictionContractError::TooManyBasisReferences {
+                    found,
+                    limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+                }
+            )) if found == PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET + 1
+        ));
+    }
+
+    #[test]
+    fn prediction_basis_aggregate_stops_at_cross_facet_n_plus_one() {
+        let prediction = prediction_with_reference(
+            PredictionBasisReferenceV1::project_field(
+                "project.mode",
+                PredictionScalarV1::token("generic").unwrap(),
+            )
+            .unwrap(),
+        );
+        let mut wire = serde_json::to_value(prediction).unwrap();
+        let reference = wire["facets"][0]["basis"]["references"][0].clone();
+        let mut full_facet = wire["facets"][0].clone();
+        full_facet["basis"]["references"] =
+            vec![reference; PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET].into();
+        let facet_count = PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE
+            / PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET;
+        let exact_facets = vec![full_facet.clone(); facet_count];
+        wire["facets"] = exact_facets.clone().into();
+        assert!(!matches!(
+            decode_engine_prediction_v1(
+                &serde_json::to_string(&wire).unwrap(),
+                PREDICTION_V1_MAX_FACETS_PER_FILE,
+                PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            ),
+            Err(PredictionDecodeError::TooManyFileBasisReferences)
+        ));
+
+        let mut sentinel_facet = full_facet.clone();
+        sentinel_facet["basis"]["references"] = serde_json::json!([null]);
+        let mut over_facets = exact_facets.clone();
+        over_facets.push(sentinel_facet);
+        wire["facets"] = over_facets.into();
+        assert!(matches!(
+            decode_engine_prediction_v1(
+                &serde_json::to_string(&wire).unwrap(),
+                PREDICTION_V1_MAX_FACETS_PER_FILE,
+                PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            ),
+            Err(PredictionDecodeError::TooManyFileBasisReferences)
+        ));
+
+        let reference = wire["facets"][0]["basis"]["references"][0].clone();
+        let mut locally_oversized = vec![reference; PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET];
+        locally_oversized.push(serde_json::Value::Null);
+        full_facet["basis"]["references"] = locally_oversized.into();
+        let mut over_facets = exact_facets;
+        over_facets.push(full_facet);
+        wire["facets"] = over_facets.into();
+        assert!(matches!(
+            decode_engine_prediction_v1(
+                &serde_json::to_string(&wire).unwrap(),
+                PREDICTION_V1_MAX_FACETS_PER_FILE,
+                PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            ),
+            Err(PredictionDecodeError::Semantic(
+                PredictionContractError::TooManyBasisReferences {
+                    found,
+                    limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+                }
+            )) if found == PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET + 1
+        ));
+    }
+
+    #[test]
+    fn standalone_prediction_round_trips_above_the_file_basis_budget() {
+        let basis = EnginePredictionBasisV1::new(
+            (0..PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET)
+                .map(|index| {
+                    PredictionBasisReferenceV1::project_field(
+                        format!("project.standalone.{index:04}"),
+                        PredictionScalarV1::Null,
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        )
+        .unwrap();
+        let facets = (0..17)
+            .map(|index| {
+                EnginePredictionFacetV1::available(
+                    EvaluationScope::new(EvaluationScopeCode::custom("acme:standalone"))
+                        .subject(format!("subject-{index:02}")),
+                    basis.clone(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let prediction = EnginePredictionV1::new(test_identity(), facets).unwrap();
+        assert!(prediction.basis_reference_count() > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE);
+        let round_trip: EnginePredictionV1 =
+            serde_json::from_slice(&serde_json::to_vec(&prediction).unwrap()).unwrap();
+        assert_eq!(round_trip, prediction);
+    }
+
+    #[test]
+    fn provenance_collection_aggregate_stops_before_settings_n_plus_one() {
+        let base_profile = minimal_profile();
+        let sources = (0..PREDICTION_V1_MAX_FACETS_PER_FILE)
+            .map(|index| {
+                EnginePrimarySourceV1::new(
+                    format!("source-{index:04}"),
+                    "1",
+                    format!("https://example.invalid/{index:04}"),
+                    "2026-08-20",
+                    vec![EngineFactIdV1::AcceptedInputs],
+                    vec![],
+                )
+                .unwrap()
+            })
+            .collect();
+        let profile = ResolvedEngineProfileV1::new(
+            base_profile.selection().clone(),
+            base_profile.fact_bundle_urn(),
+            base_profile.facts().to_vec(),
+            base_profile.setting_descriptors().to_vec(),
+            sources,
+        )
+        .unwrap();
+        assert_eq!(profile.provenance_rows(), 4_110);
+        let raw: RawSourceBindingV1 = serde_json::from_value(raw_binding_wire()).unwrap();
+        let closure = DependencyClosureV1::unavailable(raw.primary_input().clone());
+        let settings = ResolvedEngineSettingsV1::new(&profile, vec![], vec![]).unwrap();
+        let provenance =
+            PredictionProvenanceV1::new(profile, SourceFormatV1::Glb, settings, raw, closure)
+                .unwrap();
+        let mut wire = serde_json::to_value(provenance).unwrap();
+        let setting = serde_json::json!({"id": "convert_units", "value": {"boolean": true}});
+        let mut document_settings = vec![setting.clone(); PREDICTION_V1_MAX_FACETS_PER_FILE - 1];
+        document_settings.push(serde_json::Value::Null);
+        wire["settings"]["document_settings"] = document_settings.into();
+        let full_clip = serde_json::json!({
+            "clip_name": "clip",
+            "settings": vec![
+                setting.clone();
+                PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET
+            ]
+        });
+        let mut clips = vec![full_clip; 13];
+        let last = serde_json::json!({
+            "clip_name": "clip",
+            "settings": vec![setting; 4_083]
+        });
+        clips.push(last);
+        wire["settings"]["clips"] = clips.into();
+        assert_eq!(
+            wire["settings"]["document_settings"]
+                .as_array()
+                .unwrap()
+                .len()
+                + wire["settings"]["clips"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|clip| clip["settings"].as_array().unwrap().len())
+                    .sum::<usize>(),
+            61_427,
+        );
+        let result = decode_prediction_provenance_v1(&serde_json::to_string(&wire).unwrap());
+        assert!(
+            matches!(
+                result,
+                Err(PredictionDecodeError::Semantic(
+                    PredictionContractError::TooManyAggregateProvenanceRows {
+                        found,
+                        limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+                    }
+                )) if found == PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS + 1
+            ),
+            "unexpected provenance aggregate result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn raw_rows_are_reserved_before_profile_and_settings_n_plus_one() {
+        let provenance = minimal_provenance();
+        let profile_rows = provenance.profile().provenance_rows();
+        let mut wire = serde_json::to_value(provenance).unwrap();
+
+        wire["raw_source"]["work"]["inspected_rows"] =
+            serde_json::json!(PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS);
+        wire["raw_source"]["work"]["retained_rows"] =
+            serde_json::json!(PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS);
+        wire["profile"]["facts"][0] = serde_json::Value::Null;
+        let result = decode_prediction_provenance_v1(&serde_json::to_string(&wire).unwrap());
+        assert!(matches!(
+            result,
+            Err(PredictionDecodeError::Semantic(
+                PredictionContractError::TooManyAggregateProvenanceRows {
+                    found,
+                    limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+                }
+            )) if found == PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS + 1
+        ));
+
+        let provenance = minimal_provenance();
+        let mut wire = serde_json::to_value(provenance).unwrap();
+        let raw_rows = PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS - profile_rows - 1;
+        wire["raw_source"]["work"]["inspected_rows"] = serde_json::json!(raw_rows);
+        wire["raw_source"]["work"]["retained_rows"] = serde_json::json!(raw_rows);
+        wire["settings"]["document_settings"] = serde_json::json!([
+            {"id": "convert_units", "value": {"boolean": true}},
+            null
+        ]);
+        let result = decode_prediction_provenance_v1(&serde_json::to_string(&wire).unwrap());
+        assert!(matches!(
+            result,
+            Err(PredictionDecodeError::Semantic(
+                PredictionContractError::TooManyAggregateProvenanceRows {
+                    found,
+                    limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+                }
+            )) if found == PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS + 1
+        ));
+    }
+
+    #[test]
+    fn raw_row_reservation_preserves_profile_and_settings_error_precedence() {
+        let provenance = minimal_provenance();
+        let mut wire = serde_json::to_value(provenance).unwrap();
+        wire["raw_source"]["work"]["retained_rows"] = serde_json::json!(1);
+        wire["profile"]["schema"] = serde_json::json!("wrong-profile");
+        let result = decode_prediction_provenance_v1(&serde_json::to_string(&wire).unwrap());
+        assert!(matches!(
+            result,
+            Err(PredictionDecodeError::Semantic(
+                PredictionContractError::InvalidEngineContract(
+                    EngineContractError::InvalidSchema {
+                        field: "profile.schema",
+                        ..
+                    }
+                )
+            ))
+        ));
+
+        let provenance = minimal_provenance();
+        let mut wire = serde_json::to_value(provenance).unwrap();
+        wire["raw_source"]["work"]["retained_rows"] = serde_json::json!(1);
+        wire["settings"]["schema"] = serde_json::json!("wrong-settings");
+        let result = decode_prediction_provenance_v1(&serde_json::to_string(&wire).unwrap());
+        assert!(matches!(
+            result,
+            Err(PredictionDecodeError::Semantic(
+                PredictionContractError::InvalidEngineContract(
+                    EngineContractError::InvalidSchema {
+                        field: "settings.schema",
+                        ..
+                    }
+                )
+            ))
+        ));
     }
 }

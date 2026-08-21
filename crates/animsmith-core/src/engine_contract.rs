@@ -5,9 +5,16 @@
 //! canonical encoders preserve the byte preimages introduced with the V1
 //! engine registry.
 
+use crate::bounded_deserialize::{
+    BudgetedCappedSequenceSeed, CappedSequence, RowBudget, consume_ignored_tail,
+    deserialize_capped_sequence,
+};
 use crate::{InputIdentity, SourceFormatV1};
+use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use std::collections::BTreeSet;
+use std::fmt;
+use std::marker::PhantomData;
 
 /// Semantic contract for a self-contained V1 engine profile record.
 pub const ENGINE_PROFILE_FACTS_V1_ID: &str = "urn:animsmith:engine-profile-facts:1";
@@ -24,6 +31,70 @@ pub const ENGINE_CONTRACT_V1_MAX_TOTAL_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
 const ENGINE_FACTS_PREIMAGE_DOMAIN: &str = "animsmith-engine-facts-v1";
 const ENGINE_SETTINGS_PREIMAGE_DOMAIN: &str = "animsmith-engine-settings-v1";
+
+fn deserialize_collection_rows<'de, D, T>(deserializer: D) -> Result<CappedSequence<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    deserialize_capped_sequence(deserializer, ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS)
+}
+
+#[derive(Debug)]
+struct ProfileRows {
+    local: RowBudget,
+    provenance: Option<RowBudget>,
+}
+
+impl ProfileRows {
+    fn new(provenance_limit: Option<usize>) -> Self {
+        Self {
+            local: RowBudget::new(ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS),
+            provenance: provenance_limit.map(RowBudget::new),
+        }
+    }
+
+    fn admit_top_level(&mut self) -> bool {
+        if !self.local.admit() {
+            return false;
+        }
+        self.provenance.as_mut().is_none_or(RowBudget::admit)
+    }
+
+    fn provenance_overflowed(&self) -> bool {
+        self.provenance.as_ref().is_some_and(RowBudget::overflowed)
+    }
+}
+
+#[derive(Debug)]
+struct SettingsRows {
+    local: RowBudget,
+    provenance: Option<RowBudget>,
+}
+
+impl SettingsRows {
+    fn new(provenance_limit: Option<usize>) -> Self {
+        Self {
+            local: RowBudget::new(ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS),
+            provenance: provenance_limit.map(RowBudget::new),
+        }
+    }
+
+    fn admit_clip(&mut self) -> bool {
+        self.local.admit()
+    }
+
+    fn admit_setting(&mut self) -> bool {
+        if !self.local.admit() {
+            return false;
+        }
+        self.provenance.as_mut().is_none_or(RowBudget::admit)
+    }
+
+    fn provenance_overflowed(&self) -> bool {
+        self.provenance.as_ref().is_some_and(RowBudget::overflowed)
+    }
+}
 
 /// Fixed-field-order token encoder shared by V1 prediction identities.
 ///
@@ -433,7 +504,7 @@ pub enum EngineRootMotionAddressabilityV1 {
 }
 
 /// Typed value of one known immutable profile fact.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineFactValueV1 {
     /// Exact accepted input formats.
@@ -454,6 +525,60 @@ pub enum EngineFactValueV1 {
     TargetAddressability(EngineTargetAddressabilityV1),
     /// Root-motion addressability.
     RootMotionAddressability(EngineRootMotionAddressabilityV1),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EngineFactValueWireV1 {
+    AcceptedFormats(
+        #[serde(deserialize_with = "deserialize_collection_rows")] CappedSequence<SourceFormatV1>,
+    ),
+    AnimationAddressability(EngineAnimationAddressabilityV1),
+    CoordinateBasis(EngineCoordinateBasisV1),
+    LinearUnit(EngineLinearUnitV1),
+    ConversionControl(EngineConversionControlV1),
+    Boolean(bool),
+    ImportHandling(EngineImportHandlingV1),
+    TargetAddressability(EngineTargetAddressabilityV1),
+    RootMotionAddressability(EngineRootMotionAddressabilityV1),
+}
+
+impl TryFrom<EngineFactValueWireV1> for EngineFactValueV1 {
+    type Error = EngineContractError;
+
+    fn try_from(wire: EngineFactValueWireV1) -> Result<Self, Self::Error> {
+        Ok(match wire {
+            EngineFactValueWireV1::AcceptedFormats(formats) => {
+                if formats.overflowed {
+                    return Err(EngineContractError::InvalidAcceptedInputs);
+                }
+                Self::AcceptedFormats(formats.values)
+            }
+            EngineFactValueWireV1::AnimationAddressability(value) => {
+                Self::AnimationAddressability(value)
+            }
+            EngineFactValueWireV1::CoordinateBasis(value) => Self::CoordinateBasis(value),
+            EngineFactValueWireV1::LinearUnit(value) => Self::LinearUnit(value),
+            EngineFactValueWireV1::ConversionControl(value) => Self::ConversionControl(value),
+            EngineFactValueWireV1::Boolean(value) => Self::Boolean(value),
+            EngineFactValueWireV1::ImportHandling(value) => Self::ImportHandling(value),
+            EngineFactValueWireV1::TargetAddressability(value) => Self::TargetAddressability(value),
+            EngineFactValueWireV1::RootMotionAddressability(value) => {
+                Self::RootMotionAddressability(value)
+            }
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for EngineFactValueV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        EngineFactValueWireV1::deserialize(deserializer)?
+            .try_into()
+            .map_err(D::Error::custom)
+    }
 }
 
 /// Evidence state of one immutable profile fact.
@@ -591,7 +716,7 @@ impl EngineSettingDescriptorV1 {
 }
 
 /// One primary source retained by an immutable profile record.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnginePrimarySourceV1 {
     id: String,
@@ -600,6 +725,185 @@ pub struct EnginePrimarySourceV1 {
     verified_on: String,
     supported_fact_ids: Vec<EngineFactIdV1>,
     supported_setting_ids: Vec<EngineSettingIdV1>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnginePrimarySourceWireV1 {
+    id: String,
+    target_version: String,
+    url: String,
+    verified_on: String,
+    #[serde(deserialize_with = "deserialize_collection_rows")]
+    supported_fact_ids: CappedSequence<EngineFactIdV1>,
+    #[serde(deserialize_with = "deserialize_collection_rows")]
+    supported_setting_ids: CappedSequence<EngineSettingIdV1>,
+}
+
+struct EnginePrimarySourceSeed<'a> {
+    rows: &'a mut ProfileRows,
+}
+
+impl<'de> DeserializeSeed<'de> for EnginePrimarySourceSeed<'_> {
+    type Value = EnginePrimarySourceWireV1;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Id,
+            TargetVersion,
+            Url,
+            VerifiedOn,
+            SupportedFactIds,
+            SupportedSettingIds,
+        }
+
+        struct PrimarySourceVisitor<'a> {
+            rows: &'a mut ProfileRows,
+        }
+
+        impl<'de> Visitor<'de> for PrimarySourceVisitor<'_> {
+            type Value = EnginePrimarySourceWireV1;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an engine primary-source record")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut id = None;
+                let mut target_version = None;
+                let mut url = None;
+                let mut verified_on = None;
+                let mut supported_fact_ids = None;
+                let mut supported_setting_ids = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Id => set_once(&mut id, map.next_value()?, "id")?,
+                        Field::TargetVersion => {
+                            set_once(&mut target_version, map.next_value()?, "target_version")?
+                        }
+                        Field::Url => set_once(&mut url, map.next_value()?, "url")?,
+                        Field::VerifiedOn => {
+                            set_once(&mut verified_on, map.next_value()?, "verified_on")?
+                        }
+                        Field::SupportedFactIds => {
+                            if supported_fact_ids.is_some() {
+                                return Err(A::Error::duplicate_field("supported_fact_ids"));
+                            }
+                            supported_fact_ids =
+                                Some(map.next_value_seed(BudgetedCappedSequenceSeed {
+                                    budget: &mut self.rows.local,
+                                    local_limit: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                                    element: PhantomData,
+                                })?);
+                        }
+                        Field::SupportedSettingIds => {
+                            if supported_setting_ids.is_some() {
+                                return Err(A::Error::duplicate_field("supported_setting_ids"));
+                            }
+                            supported_setting_ids =
+                                Some(map.next_value_seed(BudgetedCappedSequenceSeed {
+                                    budget: &mut self.rows.local,
+                                    local_limit: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                                    element: PhantomData,
+                                })?);
+                        }
+                    }
+                }
+                Ok(EnginePrimarySourceWireV1 {
+                    id: required(id, "id")?,
+                    target_version: required(target_version, "target_version")?,
+                    url: required(url, "url")?,
+                    verified_on: required(verified_on, "verified_on")?,
+                    supported_fact_ids: required(supported_fact_ids, "supported_fact_ids")?,
+                    supported_setting_ids: required(
+                        supported_setting_ids,
+                        "supported_setting_ids",
+                    )?,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "EnginePrimarySourceV1",
+            &[
+                "id",
+                "target_version",
+                "url",
+                "verified_on",
+                "supported_fact_ids",
+                "supported_setting_ids",
+            ],
+            PrimarySourceVisitor { rows: self.rows },
+        )
+    }
+}
+
+fn set_once<E, T>(slot: &mut Option<T>, value: T, field: &'static str) -> Result<(), E>
+where
+    E: serde::de::Error,
+{
+    if slot.replace(value).is_some() {
+        return Err(E::duplicate_field(field));
+    }
+    Ok(())
+}
+
+fn required<E, T>(value: Option<T>, field: &'static str) -> Result<T, E>
+where
+    E: serde::de::Error,
+{
+    value.ok_or_else(|| E::missing_field(field))
+}
+
+impl EnginePrimarySourceV1 {
+    fn from_wire(wire: EnginePrimarySourceWireV1) -> Result<Self, EngineContractError> {
+        validate_required_text("primary_sources.id", &wire.id)?;
+        validate_required_text("primary_sources.target_version", &wire.target_version)?;
+        validate_required_text("primary_sources.url", &wire.url)?;
+        validate_required_text("primary_sources.verified_on", &wire.verified_on)?;
+        if wire.supported_fact_ids.overflowed {
+            return Err(EngineContractError::TooManyRows {
+                field: "primary_sources.supported_fact_ids",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            });
+        }
+        if wire.supported_setting_ids.overflowed {
+            return Err(EngineContractError::TooManyRows {
+                field: "primary_sources.supported_setting_ids",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            });
+        }
+        let source = Self {
+            id: wire.id,
+            target_version: wire.target_version,
+            url: wire.url,
+            verified_on: wire.verified_on,
+            supported_fact_ids: wire.supported_fact_ids.values,
+            supported_setting_ids: wire.supported_setting_ids.values,
+        };
+        source.validate(true)?;
+        Ok(source)
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePrimarySourceV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_wire(EnginePrimarySourceWireV1::deserialize(deserializer)?)
+            .map_err(D::Error::custom)
+    }
 }
 
 impl EnginePrimarySourceV1 {
@@ -888,6 +1192,13 @@ impl ResolvedEngineProfileV1 {
         )
     }
 
+    pub(crate) fn provenance_rows(&self) -> usize {
+        self.facts
+            .len()
+            .saturating_add(self.setting_descriptors.len())
+            .saturating_add(self.primary_sources.len())
+    }
+
     pub(crate) fn retained_text_bytes(&self) -> Result<usize, EngineContractError> {
         let base = self
             .selection
@@ -1056,16 +1367,347 @@ impl ResolvedEngineProfileV1 {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ResolvedEngineProfileWireV1 {
     schema: String,
     selection: EngineProfileSelectionV1,
     fact_bundle_urn: String,
     identity: InputIdentity,
-    facts: Vec<EngineProfileFactV1>,
-    setting_descriptors: Vec<EngineSettingDescriptorV1>,
-    primary_sources: Vec<EnginePrimarySourceV1>,
+    facts: CappedSequence<EngineProfileFactV1>,
+    setting_descriptors: CappedSequence<EngineSettingDescriptorV1>,
+    primary_sources: CappedSequence<EnginePrimarySourceWireV1>,
+    aggregate_rows: RowBudget,
+    provenance_rows_overflowed: bool,
+}
+
+enum ProfileTopLevelElement<T> {
+    Value(T),
+    Skipped,
+}
+
+struct ProfileTopLevelElementSeed<'a, T> {
+    rows: &'a mut ProfileRows,
+    element: PhantomData<fn() -> T>,
+}
+
+impl<'de, T> DeserializeSeed<'de> for ProfileTopLevelElementSeed<'_, T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = ProfileTopLevelElement<T>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if self.rows.admit_top_level() {
+            T::deserialize(deserializer).map(ProfileTopLevelElement::Value)
+        } else {
+            IgnoredAny::deserialize(deserializer).map(|_| ProfileTopLevelElement::Skipped)
+        }
+    }
+}
+
+struct ProfileTopLevelSequenceSeed<'a, T> {
+    rows: &'a mut ProfileRows,
+    element: PhantomData<fn() -> T>,
+}
+
+impl<'de, T> DeserializeSeed<'de> for ProfileTopLevelSequenceSeed<'_, T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = CappedSequence<T>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ProfileTopLevelSequenceVisitor<'a, T> {
+            rows: &'a mut ProfileRows,
+            element: PhantomData<fn() -> T>,
+        }
+
+        impl<'de, T> Visitor<'de> for ProfileTopLevelSequenceVisitor<'_, T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = CappedSequence<T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a bounded sequence of engine profile rows")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::with_capacity(
+                    sequence
+                        .size_hint()
+                        .unwrap_or(0)
+                        .min(ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS),
+                );
+                let mut seen = 0usize;
+                while seen < ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS {
+                    let Some(element) = sequence.next_element_seed(ProfileTopLevelElementSeed {
+                        rows: self.rows,
+                        element: PhantomData,
+                    })?
+                    else {
+                        return Ok(CappedSequence {
+                            values,
+                            overflowed: false,
+                        });
+                    };
+                    seen += 1;
+                    match element {
+                        ProfileTopLevelElement::Value(value) => values.push(value),
+                        ProfileTopLevelElement::Skipped => {
+                            let overflowed = consume_ignored_tail(
+                                &mut sequence,
+                                seen,
+                                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                            )?;
+                            return Ok(CappedSequence { values, overflowed });
+                        }
+                    }
+                }
+                let overflowed = consume_ignored_tail(
+                    &mut sequence,
+                    seen,
+                    ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                )?;
+                Ok(CappedSequence { values, overflowed })
+            }
+        }
+
+        deserializer.deserialize_seq(ProfileTopLevelSequenceVisitor {
+            rows: self.rows,
+            element: PhantomData,
+        })
+    }
+}
+
+enum PrimarySourceElement {
+    Value(EnginePrimarySourceWireV1),
+    Skipped,
+}
+
+struct PrimarySourceElementSeed<'a> {
+    rows: &'a mut ProfileRows,
+}
+
+impl<'de> DeserializeSeed<'de> for PrimarySourceElementSeed<'_> {
+    type Value = PrimarySourceElement;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if self.rows.admit_top_level() {
+            EnginePrimarySourceSeed { rows: self.rows }
+                .deserialize(deserializer)
+                .map(PrimarySourceElement::Value)
+        } else {
+            IgnoredAny::deserialize(deserializer).map(|_| PrimarySourceElement::Skipped)
+        }
+    }
+}
+
+struct PrimarySourcesSeed<'a> {
+    rows: &'a mut ProfileRows,
+}
+
+impl<'de> DeserializeSeed<'de> for PrimarySourcesSeed<'_> {
+    type Value = CappedSequence<EnginePrimarySourceWireV1>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PrimarySourcesVisitor<'a> {
+            rows: &'a mut ProfileRows,
+        }
+
+        impl<'de> Visitor<'de> for PrimarySourcesVisitor<'_> {
+            type Value = CappedSequence<EnginePrimarySourceWireV1>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a bounded sequence of engine primary sources")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::with_capacity(
+                    sequence
+                        .size_hint()
+                        .unwrap_or(0)
+                        .min(ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS),
+                );
+                let mut seen = 0usize;
+                while seen < ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS {
+                    let Some(element) =
+                        sequence.next_element_seed(PrimarySourceElementSeed { rows: self.rows })?
+                    else {
+                        return Ok(CappedSequence {
+                            values,
+                            overflowed: false,
+                        });
+                    };
+                    seen += 1;
+                    match element {
+                        PrimarySourceElement::Value(value) => values.push(value),
+                        PrimarySourceElement::Skipped => {
+                            let overflowed = consume_ignored_tail(
+                                &mut sequence,
+                                seen,
+                                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                            )?;
+                            return Ok(CappedSequence { values, overflowed });
+                        }
+                    }
+                }
+                let overflowed = consume_ignored_tail(
+                    &mut sequence,
+                    seen,
+                    ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                )?;
+                Ok(CappedSequence { values, overflowed })
+            }
+        }
+
+        deserializer.deserialize_seq(PrimarySourcesVisitor { rows: self.rows })
+    }
+}
+
+struct ResolvedEngineProfileWireSeed {
+    provenance_limit: Option<usize>,
+}
+
+impl<'de> DeserializeSeed<'de> for ResolvedEngineProfileWireSeed {
+    type Value = ResolvedEngineProfileWireV1;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Schema,
+            Selection,
+            FactBundleUrn,
+            Identity,
+            Facts,
+            SettingDescriptors,
+            PrimarySources,
+        }
+
+        struct ProfileVisitor {
+            provenance_limit: Option<usize>,
+        }
+
+        impl<'de> Visitor<'de> for ProfileVisitor {
+            type Value = ResolvedEngineProfileWireV1;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a resolved engine profile")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut rows = ProfileRows::new(self.provenance_limit);
+                let mut schema = None;
+                let mut selection = None;
+                let mut fact_bundle_urn = None;
+                let mut identity = None;
+                let mut facts = None;
+                let mut setting_descriptors = None;
+                let mut primary_sources = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Schema => set_once(&mut schema, map.next_value()?, "schema")?,
+                        Field::Selection => {
+                            set_once(&mut selection, map.next_value()?, "selection")?
+                        }
+                        Field::FactBundleUrn => {
+                            set_once(&mut fact_bundle_urn, map.next_value()?, "fact_bundle_urn")?
+                        }
+                        Field::Identity => set_once(&mut identity, map.next_value()?, "identity")?,
+                        Field::Facts => {
+                            if facts.is_some() {
+                                return Err(A::Error::duplicate_field("facts"));
+                            }
+                            facts = Some(map.next_value_seed(ProfileTopLevelSequenceSeed {
+                                rows: &mut rows,
+                                element: PhantomData,
+                            })?);
+                        }
+                        Field::SettingDescriptors => {
+                            if setting_descriptors.is_some() {
+                                return Err(A::Error::duplicate_field("setting_descriptors"));
+                            }
+                            setting_descriptors =
+                                Some(map.next_value_seed(ProfileTopLevelSequenceSeed {
+                                    rows: &mut rows,
+                                    element: PhantomData,
+                                })?);
+                        }
+                        Field::PrimarySources => {
+                            if primary_sources.is_some() {
+                                return Err(A::Error::duplicate_field("primary_sources"));
+                            }
+                            primary_sources =
+                                Some(map.next_value_seed(PrimarySourcesSeed { rows: &mut rows })?);
+                        }
+                    }
+                }
+                Ok(ResolvedEngineProfileWireV1 {
+                    schema: required(schema, "schema")?,
+                    selection: required(selection, "selection")?,
+                    fact_bundle_urn: required(fact_bundle_urn, "fact_bundle_urn")?,
+                    identity: required(identity, "identity")?,
+                    facts: required(facts, "facts")?,
+                    setting_descriptors: required(setting_descriptors, "setting_descriptors")?,
+                    primary_sources: required(primary_sources, "primary_sources")?,
+                    provenance_rows_overflowed: rows.provenance_overflowed(),
+                    aggregate_rows: rows.local,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "ResolvedEngineProfileV1",
+            &[
+                "schema",
+                "selection",
+                "fact_bundle_urn",
+                "identity",
+                "facts",
+                "setting_descriptors",
+                "primary_sources",
+            ],
+            ProfileVisitor {
+                provenance_limit: self.provenance_limit,
+            },
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for ResolvedEngineProfileWireV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        ResolvedEngineProfileWireSeed {
+            provenance_limit: None,
+        }
+        .deserialize(deserializer)
+    }
 }
 
 #[derive(Debug)]
@@ -1075,26 +1717,128 @@ pub(crate) enum EngineContractDecodeError {
 }
 
 impl ResolvedEngineProfileV1 {
+    fn validate_wire_limits(wire: &ResolvedEngineProfileWireV1) -> Result<(), EngineContractError> {
+        validate_schema("profile.schema", &wire.schema, ENGINE_PROFILE_FACTS_V1_ID)?;
+        wire.selection.validate()?;
+        validate_required_text("profile.fact_bundle_urn", &wire.fact_bundle_urn)?;
+        for (field, overflowed) in [
+            ("profile.facts", wire.facts.overflowed),
+            (
+                "profile.setting_descriptors",
+                wire.setting_descriptors.overflowed,
+            ),
+            ("profile.primary_sources", wire.primary_sources.overflowed),
+        ] {
+            if overflowed {
+                return Err(EngineContractError::TooManyRows {
+                    field,
+                    found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                    max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                });
+            }
+        }
+        for source in &wire.primary_sources.values {
+            if source.supported_fact_ids.overflowed {
+                return Err(EngineContractError::TooManyRows {
+                    field: "primary_sources.supported_fact_ids",
+                    found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                    max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                });
+            }
+            if source.supported_setting_ids.overflowed {
+                return Err(EngineContractError::TooManyRows {
+                    field: "primary_sources.supported_setting_ids",
+                    found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                    max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                });
+            }
+        }
+        if wire.aggregate_rows.overflowed() {
+            return Err(EngineContractError::TooManyAggregateRows {
+                found: wire.aggregate_rows.found(),
+                max: ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS,
+            });
+        }
+        Ok(())
+    }
+
     fn from_wire(wire: ResolvedEngineProfileWireV1) -> Result<Self, EngineContractError> {
+        Self::validate_wire_limits(&wire)?;
+        let primary_sources = wire
+            .primary_sources
+            .values
+            .into_iter()
+            .map(EnginePrimarySourceV1::from_wire)
+            .collect::<Result<Vec<_>, _>>()?;
         let profile = Self {
             schema: wire.schema,
             selection: wire.selection,
             fact_bundle_urn: wire.fact_bundle_urn,
             identity: wire.identity,
-            facts: wire.facts,
-            setting_descriptors: wire.setting_descriptors,
-            primary_sources: wire.primary_sources,
+            facts: wire.facts.values,
+            setting_descriptors: wire.setting_descriptors.values,
+            primary_sources,
         };
         profile.validate()?;
         Ok(profile)
     }
 }
 
+#[cfg(test)]
 pub(crate) fn decode_resolved_engine_profile_v1(
     raw: &str,
 ) -> Result<ResolvedEngineProfileV1, EngineContractDecodeError> {
-    let wire = serde_json::from_str(raw).map_err(EngineContractDecodeError::Shape)?;
+    let wire = serde_json::from_str(raw).map_err(|source| {
+        if source
+            .to_string()
+            .starts_with(&EngineContractError::InvalidAcceptedInputs.to_string())
+        {
+            EngineContractDecodeError::Semantic(EngineContractError::InvalidAcceptedInputs)
+        } else {
+            EngineContractDecodeError::Shape(source)
+        }
+    })?;
     ResolvedEngineProfileV1::from_wire(wire).map_err(EngineContractDecodeError::Semantic)
+}
+
+pub(crate) enum EngineProfileLimitedDecodeError {
+    Contract(EngineContractDecodeError),
+    ProvenanceRowsOverflow,
+}
+
+pub(crate) fn decode_resolved_engine_profile_v1_with_provenance_limit(
+    raw: &str,
+    provenance_limit: usize,
+) -> Result<ResolvedEngineProfileV1, EngineProfileLimitedDecodeError> {
+    let mut deserializer = serde_json::Deserializer::from_str(raw);
+    let wire = ResolvedEngineProfileWireSeed {
+        provenance_limit: Some(provenance_limit),
+    }
+    .deserialize(&mut deserializer)
+    .map_err(|source| {
+        if source
+            .to_string()
+            .starts_with(&EngineContractError::InvalidAcceptedInputs.to_string())
+        {
+            EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(
+                EngineContractError::InvalidAcceptedInputs,
+            ))
+        } else {
+            EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source))
+        }
+    })?;
+    deserializer.end().map_err(|source| {
+        EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source))
+    })?;
+    ResolvedEngineProfileV1::validate_wire_limits(&wire).map_err(|source| {
+        EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source))
+    })?;
+    if wire.provenance_rows_overflowed {
+        return Err(EngineProfileLimitedDecodeError::ProvenanceRowsOverflow);
+    }
+    ResolvedEngineProfileV1::from_wire(wire).map_err(|source| {
+        EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source))
+    })
 }
 
 impl<'de> Deserialize<'de> for ResolvedEngineProfileV1 {
@@ -1155,11 +1899,223 @@ impl EngineSettingRowV1 {
 }
 
 /// Fully materialized settings for one actual clip.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EngineClipSettingsV1 {
     clip_name: String,
     settings: Vec<EngineSettingRowV1>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EngineClipSettingsWireV1 {
+    clip_name: String,
+    #[serde(deserialize_with = "deserialize_collection_rows")]
+    settings: CappedSequence<EngineSettingRowV1>,
+}
+
+struct EngineClipSettingsSeed<'a> {
+    rows: &'a mut SettingsRows,
+}
+
+enum SettingsElement<T> {
+    Value(T),
+    Skipped,
+}
+
+struct SettingsElementSeed<'a, T> {
+    rows: &'a mut SettingsRows,
+    element: PhantomData<fn() -> T>,
+}
+
+impl<'de, T> DeserializeSeed<'de> for SettingsElementSeed<'_, T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = SettingsElement<T>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if self.rows.admit_setting() {
+            T::deserialize(deserializer).map(SettingsElement::Value)
+        } else {
+            IgnoredAny::deserialize(deserializer).map(|_| SettingsElement::Skipped)
+        }
+    }
+}
+
+struct SettingsSequenceSeed<'a, T> {
+    rows: &'a mut SettingsRows,
+    element: PhantomData<fn() -> T>,
+}
+
+impl<'de, T> DeserializeSeed<'de> for SettingsSequenceSeed<'_, T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = CappedSequence<T>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct SettingsSequenceVisitor<'a, T> {
+            rows: &'a mut SettingsRows,
+            element: PhantomData<fn() -> T>,
+        }
+
+        impl<'de, T> Visitor<'de> for SettingsSequenceVisitor<'_, T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = CappedSequence<T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a bounded sequence of engine setting rows")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::with_capacity(
+                    sequence
+                        .size_hint()
+                        .unwrap_or(0)
+                        .min(ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS),
+                );
+                let mut seen = 0usize;
+                while seen < ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS {
+                    let Some(element) = sequence.next_element_seed(SettingsElementSeed {
+                        rows: self.rows,
+                        element: PhantomData,
+                    })?
+                    else {
+                        return Ok(CappedSequence {
+                            values,
+                            overflowed: false,
+                        });
+                    };
+                    seen += 1;
+                    match element {
+                        SettingsElement::Value(value) => values.push(value),
+                        SettingsElement::Skipped => {
+                            let overflowed = consume_ignored_tail(
+                                &mut sequence,
+                                seen,
+                                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                            )?;
+                            return Ok(CappedSequence { values, overflowed });
+                        }
+                    }
+                }
+                let overflowed = consume_ignored_tail(
+                    &mut sequence,
+                    seen,
+                    ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                )?;
+                Ok(CappedSequence { values, overflowed })
+            }
+        }
+
+        deserializer.deserialize_seq(SettingsSequenceVisitor {
+            rows: self.rows,
+            element: PhantomData,
+        })
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for EngineClipSettingsSeed<'_> {
+    type Value = EngineClipSettingsWireV1;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            ClipName,
+            Settings,
+        }
+
+        struct ClipSettingsVisitor<'a> {
+            rows: &'a mut SettingsRows,
+        }
+
+        impl<'de> Visitor<'de> for ClipSettingsVisitor<'_> {
+            type Value = EngineClipSettingsWireV1;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an engine clip-settings record")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut clip_name = None;
+                let mut settings = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::ClipName => {
+                            set_once(&mut clip_name, map.next_value()?, "clip_name")?
+                        }
+                        Field::Settings => {
+                            if settings.is_some() {
+                                return Err(A::Error::duplicate_field("settings"));
+                            }
+                            settings = Some(map.next_value_seed(SettingsSequenceSeed {
+                                rows: self.rows,
+                                element: PhantomData,
+                            })?);
+                        }
+                    }
+                }
+                Ok(EngineClipSettingsWireV1 {
+                    clip_name: required(clip_name, "clip_name")?,
+                    settings: required(settings, "settings")?,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "EngineClipSettingsV1",
+            &["clip_name", "settings"],
+            ClipSettingsVisitor { rows: self.rows },
+        )
+    }
+}
+
+impl EngineClipSettingsV1 {
+    fn from_wire(wire: EngineClipSettingsWireV1) -> Result<Self, EngineContractError> {
+        validate_text("settings.clips.clip_name", &wire.clip_name)?;
+        if wire.settings.overflowed {
+            return Err(EngineContractError::TooManyRows {
+                field: "settings.clips.settings",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            });
+        }
+        let clip = Self {
+            clip_name: wire.clip_name,
+            settings: wire.settings.values,
+        };
+        clip.validate(true)?;
+        Ok(clip)
+    }
+}
+
+impl<'de> Deserialize<'de> for EngineClipSettingsV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_wire(EngineClipSettingsWireV1::deserialize(deserializer)?)
+            .map_err(D::Error::custom)
+    }
 }
 
 impl EngineClipSettingsV1 {
@@ -1450,33 +2406,297 @@ impl ResolvedEngineSettingsV1 {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ResolvedEngineSettingsWireV1 {
     schema: String,
     identity: InputIdentity,
-    document_settings: Vec<EngineSettingRowV1>,
-    clips: Vec<EngineClipSettingsV1>,
+    document_settings: CappedSequence<EngineSettingRowV1>,
+    clips: CappedSequence<EngineClipSettingsWireV1>,
+    aggregate_rows: RowBudget,
+    provenance_rows_overflowed: bool,
+}
+
+enum ClipSettingsElement {
+    Value(EngineClipSettingsWireV1),
+    Skipped,
+}
+
+struct ClipSettingsElementSeed<'a> {
+    rows: &'a mut SettingsRows,
+}
+
+impl<'de> DeserializeSeed<'de> for ClipSettingsElementSeed<'_> {
+    type Value = ClipSettingsElement;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if self.rows.admit_clip() {
+            EngineClipSettingsSeed { rows: self.rows }
+                .deserialize(deserializer)
+                .map(ClipSettingsElement::Value)
+        } else {
+            IgnoredAny::deserialize(deserializer).map(|_| ClipSettingsElement::Skipped)
+        }
+    }
+}
+
+struct ClipSettingsSequenceSeed<'a> {
+    rows: &'a mut SettingsRows,
+}
+
+impl<'de> DeserializeSeed<'de> for ClipSettingsSequenceSeed<'_> {
+    type Value = CappedSequence<EngineClipSettingsWireV1>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ClipSettingsSequenceVisitor<'a> {
+            rows: &'a mut SettingsRows,
+        }
+
+        impl<'de> Visitor<'de> for ClipSettingsSequenceVisitor<'_> {
+            type Value = CappedSequence<EngineClipSettingsWireV1>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a bounded sequence of engine clip settings")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::with_capacity(
+                    sequence
+                        .size_hint()
+                        .unwrap_or(0)
+                        .min(ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS),
+                );
+                let mut seen = 0usize;
+                while seen < ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS {
+                    let Some(element) =
+                        sequence.next_element_seed(ClipSettingsElementSeed { rows: self.rows })?
+                    else {
+                        return Ok(CappedSequence {
+                            values,
+                            overflowed: false,
+                        });
+                    };
+                    seen += 1;
+                    match element {
+                        ClipSettingsElement::Value(value) => values.push(value),
+                        ClipSettingsElement::Skipped => {
+                            let overflowed = consume_ignored_tail(
+                                &mut sequence,
+                                seen,
+                                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                            )?;
+                            return Ok(CappedSequence { values, overflowed });
+                        }
+                    }
+                }
+                let overflowed = consume_ignored_tail(
+                    &mut sequence,
+                    seen,
+                    ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                )?;
+                Ok(CappedSequence { values, overflowed })
+            }
+        }
+
+        deserializer.deserialize_seq(ClipSettingsSequenceVisitor { rows: self.rows })
+    }
+}
+
+struct ResolvedEngineSettingsWireSeed {
+    provenance_limit: Option<usize>,
+}
+
+impl<'de> DeserializeSeed<'de> for ResolvedEngineSettingsWireSeed {
+    type Value = ResolvedEngineSettingsWireV1;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Schema,
+            Identity,
+            DocumentSettings,
+            Clips,
+        }
+
+        struct SettingsVisitor {
+            provenance_limit: Option<usize>,
+        }
+
+        impl<'de> Visitor<'de> for SettingsVisitor {
+            type Value = ResolvedEngineSettingsWireV1;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("resolved engine settings")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut rows = SettingsRows::new(self.provenance_limit);
+                let mut schema = None;
+                let mut identity = None;
+                let mut document_settings = None;
+                let mut clips = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Schema => set_once(&mut schema, map.next_value()?, "schema")?,
+                        Field::Identity => set_once(&mut identity, map.next_value()?, "identity")?,
+                        Field::DocumentSettings => {
+                            if document_settings.is_some() {
+                                return Err(A::Error::duplicate_field("document_settings"));
+                            }
+                            document_settings =
+                                Some(map.next_value_seed(SettingsSequenceSeed {
+                                    rows: &mut rows,
+                                    element: PhantomData,
+                                })?);
+                        }
+                        Field::Clips => {
+                            if clips.is_some() {
+                                return Err(A::Error::duplicate_field("clips"));
+                            }
+                            clips =
+                                Some(map.next_value_seed(ClipSettingsSequenceSeed {
+                                    rows: &mut rows,
+                                })?);
+                        }
+                    }
+                }
+                Ok(ResolvedEngineSettingsWireV1 {
+                    schema: required(schema, "schema")?,
+                    identity: required(identity, "identity")?,
+                    document_settings: required(document_settings, "document_settings")?,
+                    clips: required(clips, "clips")?,
+                    provenance_rows_overflowed: rows.provenance_overflowed(),
+                    aggregate_rows: rows.local,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "ResolvedEngineSettingsV1",
+            &["schema", "identity", "document_settings", "clips"],
+            SettingsVisitor {
+                provenance_limit: self.provenance_limit,
+            },
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for ResolvedEngineSettingsWireV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        ResolvedEngineSettingsWireSeed {
+            provenance_limit: None,
+        }
+        .deserialize(deserializer)
+    }
 }
 
 impl ResolvedEngineSettingsV1 {
+    fn validate_wire_limits(
+        wire: &ResolvedEngineSettingsWireV1,
+    ) -> Result<(), EngineContractError> {
+        validate_schema(
+            "settings.schema",
+            &wire.schema,
+            RESOLVED_ENGINE_SETTINGS_V1_ID,
+        )?;
+        for (field, overflowed) in [
+            (
+                "settings.document_settings",
+                wire.document_settings.overflowed,
+            ),
+            ("settings.clips", wire.clips.overflowed),
+        ] {
+            if overflowed {
+                return Err(EngineContractError::TooManyRows {
+                    field,
+                    found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                    max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                });
+            }
+        }
+        for clip in &wire.clips.values {
+            if clip.settings.overflowed {
+                return Err(EngineContractError::TooManyRows {
+                    field: "settings.clips.settings",
+                    found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                    max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                });
+            }
+        }
+        if wire.aggregate_rows.overflowed() {
+            return Err(EngineContractError::TooManyAggregateRows {
+                found: wire.aggregate_rows.found(),
+                max: ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS,
+            });
+        }
+        Ok(())
+    }
+
     fn from_wire(wire: ResolvedEngineSettingsWireV1) -> Result<Self, EngineContractError> {
+        Self::validate_wire_limits(&wire)?;
+        let clips = wire
+            .clips
+            .values
+            .into_iter()
+            .map(EngineClipSettingsV1::from_wire)
+            .collect::<Result<Vec<_>, _>>()?;
         let settings = Self {
             schema: wire.schema,
             identity: wire.identity,
-            document_settings: wire.document_settings,
-            clips: wire.clips,
+            document_settings: wire.document_settings.values,
+            clips,
         };
         settings.validate_structure(true)?;
         Ok(settings)
     }
 }
 
-pub(crate) fn decode_resolved_engine_settings_v1(
+pub(crate) enum EngineSettingsLimitedDecodeError {
+    Contract(EngineContractDecodeError),
+    ProvenanceRowsOverflow,
+}
+
+pub(crate) fn decode_resolved_engine_settings_v1_with_provenance_limit(
     raw: &str,
-) -> Result<ResolvedEngineSettingsV1, EngineContractDecodeError> {
-    let wire = serde_json::from_str(raw).map_err(EngineContractDecodeError::Shape)?;
-    ResolvedEngineSettingsV1::from_wire(wire).map_err(EngineContractDecodeError::Semantic)
+    provenance_limit: usize,
+) -> Result<ResolvedEngineSettingsV1, EngineSettingsLimitedDecodeError> {
+    let mut deserializer = serde_json::Deserializer::from_str(raw);
+    let wire = ResolvedEngineSettingsWireSeed {
+        provenance_limit: Some(provenance_limit),
+    }
+    .deserialize(&mut deserializer)
+    .map_err(|source| {
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source))
+    })?;
+    deserializer.end().map_err(|source| {
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source))
+    })?;
+    ResolvedEngineSettingsV1::validate_wire_limits(&wire).map_err(|source| {
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source))
+    })?;
+    if wire.provenance_rows_overflowed {
+        return Err(EngineSettingsLimitedDecodeError::ProvenanceRowsOverflow);
+    }
+    ResolvedEngineSettingsV1::from_wire(wire).map_err(|source| {
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source))
+    })
 }
 
 impl<'de> Deserialize<'de> for ResolvedEngineSettingsV1 {
@@ -2689,5 +3909,219 @@ mod tests {
         let bytes = encoder.into_bytes();
         assert_eq!(&bytes[..8], &6_u64.to_be_bytes());
         assert_eq!(&bytes[8..14], b"domain");
+    }
+
+    fn assert_profile_limit(value: &serde_json::Value, expected: EngineContractError) {
+        match decode_resolved_engine_profile_v1(&serde_json::to_string(value).unwrap()) {
+            Err(EngineContractDecodeError::Semantic(error)) => assert_eq!(error, expected),
+            other => panic!("expected typed profile limit, got {other:?}"),
+        }
+    }
+
+    fn assert_settings_limit(value: &serde_json::Value, expected: EngineContractError) {
+        match decode_resolved_engine_settings_v1_with_provenance_limit(
+            &serde_json::to_string(value).unwrap(),
+            ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS,
+        ) {
+            Err(EngineSettingsLimitedDecodeError::Contract(
+                EngineContractDecodeError::Semantic(error),
+            )) => assert_eq!(error, expected),
+            _ => panic!("expected typed settings limit"),
+        }
+    }
+
+    #[test]
+    fn profile_sequences_reject_n_plus_one_before_decoding_null_sentinels() {
+        let profile = settings_profile("stream-profile");
+        let base = serde_json::to_value(&profile).unwrap();
+        for (field, element) in [
+            ("facts", base["facts"][0].clone()),
+            (
+                "setting_descriptors",
+                base["setting_descriptors"][0].clone(),
+            ),
+            ("primary_sources", base["primary_sources"][0].clone()),
+        ] {
+            let mut rows = vec![element; ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS];
+            rows.push(serde_json::Value::Null);
+            let mut over = base.clone();
+            over[field] = rows.into();
+            assert_profile_limit(
+                &over,
+                EngineContractError::TooManyRows {
+                    field: match field {
+                        "facts" => "profile.facts",
+                        "setting_descriptors" => "profile.setting_descriptors",
+                        "primary_sources" => "profile.primary_sources",
+                        _ => unreachable!(),
+                    },
+                    found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                    max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                },
+            );
+        }
+
+        let mut accepted = vec![serde_json::json!("glb"); ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS];
+        accepted.push(serde_json::Value::Null);
+        let mut over = base.clone();
+        over["facts"][0]["state"]["known"]["accepted_formats"] = accepted.into();
+        assert_profile_limit(&over, EngineContractError::InvalidAcceptedInputs);
+
+        for (field, value) in [
+            ("supported_fact_ids", serde_json::json!("accepted_inputs")),
+            ("supported_setting_ids", serde_json::json!("convert_units")),
+        ] {
+            let mut rows = vec![value; ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS];
+            rows.push(serde_json::Value::Null);
+            let mut over = base.clone();
+            over["primary_sources"][0][field] = rows.into();
+            assert_profile_limit(
+                &over,
+                EngineContractError::TooManyRows {
+                    field: if field == "supported_fact_ids" {
+                        "primary_sources.supported_fact_ids"
+                    } else {
+                        "primary_sources.supported_setting_ids"
+                    },
+                    found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                    max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn settings_sequences_reject_n_plus_one_before_decoding_null_sentinels() {
+        let profile = godot_profile();
+        let settings = ResolvedEngineSettingsV1::new(&profile, vec![], vec![]).unwrap();
+        let base = serde_json::to_value(settings).unwrap();
+        let row = serde_json::json!({"id": "convert_units", "value": {"boolean": true}});
+        let clip = serde_json::json!({"clip_name": "clip", "settings": []});
+
+        for (field, element, error_field) in [
+            (
+                "document_settings",
+                row.clone(),
+                "settings.document_settings",
+            ),
+            ("clips", clip.clone(), "settings.clips"),
+        ] {
+            let mut rows = vec![element; ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS];
+            rows.push(serde_json::Value::Null);
+            let mut over = base.clone();
+            over[field] = rows.into();
+            assert_settings_limit(
+                &over,
+                EngineContractError::TooManyRows {
+                    field: error_field,
+                    found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                    max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                },
+            );
+        }
+
+        let mut rows = vec![row; ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS];
+        rows.push(serde_json::Value::Null);
+        let mut over = base;
+        over["clips"] = serde_json::json!([{"clip_name": "clip", "settings": rows}]);
+        assert_settings_limit(
+            &over,
+            EngineContractError::TooManyRows {
+                field: "settings.clips.settings",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            },
+        );
+    }
+
+    #[test]
+    fn nested_profile_and_settings_aggregate_budgets_stop_at_global_n_plus_one() {
+        let profile = settings_profile("aggregate-profile");
+        let mut profile_wire = serde_json::to_value(profile).unwrap();
+        profile_wire["facts"] = serde_json::json!([]);
+        profile_wire["setting_descriptors"] = serde_json::json!([]);
+        let source_template = serde_json::json!({
+            "id": "source",
+            "target_version": "1",
+            "url": "https://example.invalid",
+            "verified_on": "2026-08-20",
+            "supported_fact_ids": vec![
+                "accepted_inputs";
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+            ],
+            "supported_setting_ids": vec![
+                "convert_units";
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+            ]
+        });
+        let mut sources = vec![source_template.clone(); 7];
+        let mut last = source_template;
+        last["supported_setting_ids"] = serde_json::json!(vec!["convert_units"; 4_088]);
+        last["supported_setting_ids"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::Null);
+        sources.push(last);
+        profile_wire["primary_sources"] = sources.into();
+        assert_profile_limit(
+            &profile_wire,
+            EngineContractError::TooManyAggregateRows {
+                found: ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS,
+            },
+        );
+        let mut locally_oversized =
+            vec![serde_json::json!("convert_units"); ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS];
+        locally_oversized.push(serde_json::Value::Null);
+        profile_wire["primary_sources"][7]["supported_setting_ids"] = locally_oversized.into();
+        assert_profile_limit(
+            &profile_wire,
+            EngineContractError::TooManyRows {
+                field: "primary_sources.supported_setting_ids",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            },
+        );
+
+        let profile = godot_profile();
+        let settings = ResolvedEngineSettingsV1::new(&profile, vec![], vec![]).unwrap();
+        let mut settings_wire = serde_json::to_value(settings).unwrap();
+        let setting = serde_json::json!({"id": "convert_units", "value": {"boolean": true}});
+        let full_clip = serde_json::json!({
+            "clip_name": "clip",
+            "settings": vec![setting.clone(); 4_095]
+        });
+        let mut clips = vec![full_clip; 15];
+        let mut last = serde_json::json!({
+            "clip_name": "clip",
+            "settings": vec![setting; 4_095]
+        });
+        last["settings"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::Null);
+        clips.push(last);
+        settings_wire["clips"] = clips.into();
+        assert_settings_limit(
+            &settings_wire,
+            EngineContractError::TooManyAggregateRows {
+                found: ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS,
+            },
+        );
+        let mut locally_oversized = vec![
+            serde_json::json!({"id": "convert_units", "value": {"boolean": true}});
+            ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+        ];
+        locally_oversized.push(serde_json::Value::Null);
+        settings_wire["clips"][15]["settings"] = locally_oversized.into();
+        assert_settings_limit(
+            &settings_wire,
+            EngineContractError::TooManyRows {
+                field: "settings.clips.settings",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            },
+        );
     }
 }
