@@ -1677,6 +1677,21 @@ field row or obligation.
 | Unreferenced accessor payloads | Retained only in the raw source container, including dense bases and sparse index/value payloads | Preserve exactly; reject when any owned byte span overlaps a rewritten accessor | Preserve exactly; reject when any owned byte span overlaps a rewritten accessor |
 | Image payload aliases | An `image` reads a `bufferView` directly and never becomes an accessor | Reject when its bytes overlap a rewritten accessor | Reject when its bytes overlap a rewritten accessor |
 
+The narrow normalized FBX bridge applies the collision/custom row at the
+operation boundary rather than treating every parser-observed declaration as
+scale-bearing. User-defined properties are explicitly discarded before the
+private GLB is written, and parser-known texture/video linkage is represented
+by bounded resource facts and dependency-closure evidence rather than a
+transform field. The source-aware gate may therefore admit those two known
+classes while retaining their inventory/evidence rows; rooted capture keeps
+supported texture assignments in the normalized document and private GLB.
+This remains a normalized re-encoding rather than a raw FBX object-property,
+material, or texture-assignment preservation claim. Unknown
+elements, extensions, incomplete construct/resource coverage, and every
+unsupported transform, geometry, bind, or animation fact still reject. The
+inventory-only API remains conservative because its frozen v5 aggregate cannot
+distinguish texture-file linkage from another unmodeled source element.
+
 The connector exception is deliberately narrower than general helper-node
 support. The source projection can attest an unprojected row's identity,
 parent, and authored local rest, but not a raw animation channel targeting
@@ -1990,7 +2005,12 @@ selecting the prior artifact, not attempting an inverse float rewrite.
 accept an `.fbx` input only when its complete inventory proves the normalized
 rest/bind subset: adjusted metre/Y-up coordinates, compensated inheritance,
 complete finite bind provenance, unchanged four-slot influences, and no
-unsupported semantic D.4 row. The three raw-span rows are deliberately
+unsupported scale-bearing semantic D.4 row. Same-load source facts may prove
+that user-defined properties or bounded texture/video declarations are known,
+non-scale-bearing inputs to this normalized bridge. The same-load
+`FbxScaleSource` retains their raw facts and dependency closure, while v5 keeps
+the frozen inventory projection rather than adding either sidecar to its wire
+shape. The three raw-span rows are deliberately
 unverifiable because FBX is not rewritten. The frontend serializes the
 normalized document to a private GLB, maps the selected root and ordered skin
 joint topology by exact unique normalized names, rewrites that GLB with the
@@ -1998,7 +2018,10 @@ existing raw glTF writer, reloads and semantically proves the exact candidate
 once, read-back-digest checks it, and atomically publishes the resulting GLB
 with immutable scale-evidence v5. V5 records the complete FBX inventory and
 the private staged-GLB identity plus the nested raw-GLB proof; it makes no raw
-FBX span, object-property, or authored-curve preservation claim.
+FBX span, object-property, authored-curve, material, or texture-assignment
+preservation claim; supported linked texture bytes are nevertheless captured
+before staging so admission cannot silently remove them. Refusals name the
+exact incomplete coverage domain, semantic row, or inventory counter.
 
 **Two observed factors, and the divergence between them.** For rest/bind
 reparameterization, "observed factor" names two independent witnesses of the
@@ -2082,9 +2105,13 @@ animsmith scale rest-bind INPUT.glb -o OUTPUT.glb \
 
 All numeric and source-identity arguments shown are required; there is no
 inferred factor, implicit first skin/root, or in-place mode. Artifact and
-evidence paths must be distinct from each other and the input. Initial support
-is self-contained glTF/GLB for both operations, plus the narrow
-inventory-complete FBX `rest-bind` path that emits a `.glb` and v5 evidence.
+evidence paths must be distinct from each other and the input. The narrow FBX
+path additionally refuses either destination when it names a retained safe
+dependency key, and refuses publication entirely when that key was rejected as
+symlink-mediated or the dependency closure stopped before enumerating every
+key. Initial support is self-contained glTF/GLB for both
+operations, plus the narrow inventory-complete FBX `rest-bind` path that emits
+a `.glb` and v5 evidence.
 The command uses the fixed tolerance-policy version recorded in evidence rather
 than accepting per-run tolerance flags. A future policy change requires a new
 policy identity and compatibility review.

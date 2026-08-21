@@ -438,9 +438,10 @@ byte-compare for determinism; what they cannot see is the write path, which is
 what this closes.
 
 Paths are recorded exactly as the operator wrote them. Canonical host paths are
-computed only for the three-way input/output/evidence distinctness check and
-are deliberately not serialized, so identical arguments produce byte-identical
-evidence. Nothing in the record carries a timestamp.
+computed only for publication-safety comparisons among input, output,
+evidence, and retained external dependency keys. They are deliberately not
+serialized, so identical arguments produce byte-identical evidence. Nothing in
+the record carries a timestamp.
 
 The normative glTF/GLB contract is
 [`scale-evidence-v4.schema.json`](schemas/scale-evidence-v4.schema.json).
@@ -457,9 +458,17 @@ normalized-domain inventory, not a raw FBX accessor manifest. `result` binds
 the private staged GLB identity and then nests the v4-shaped exact GLB rewrite,
 reload/proof, and read-back record for the published candidate. This is a
 re-encoding proof, not a claim that FBX bytes, object properties, or authored
-curve keys were preserved. The inventory projection is frozen with v5: a new
-FBX fact requires a new evidence identity rather than silently changing this
-wire record. Whole-document FBX scaling remains refused.
+curve keys were preserved. Source-aware admission can therefore allow
+user-defined properties and bounded external texture/video declarations when
+same-load evidence proves they do not affect rest/bind state. The frozen
+v5 record retains the inventory counts; the same-load loader source separately
+retains raw facts and dependency-closure coverage/identities, but v5 does not
+serialize those sidecars. Supported linked texture bytes are captured before
+staging so the operation does not silently remove them, without claiming raw
+FBX material/texture-assignment preservation. The inventory projection is
+frozen with v5: a new FBX fact requires a new evidence identity rather than
+silently changing this wire record. Whole-document FBX scaling remains
+refused.
 
 A whole-document factor of one has no raw write set. Its v4
 `result.artifact.rewritten_accessors`, `rewritten_json_pointers`, and

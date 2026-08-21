@@ -8,8 +8,9 @@ use crate::material_recipe::{
     MaterialTextureRecipeEvidence, apply_material_texture_recipe_in_root,
 };
 use crate::publish::{
-    destination_identity, emit, emit_text, parent_or_current, publish_pair, read_digest,
-    require_writable_destination, serialize_record,
+    PublicationDestination, emit, emit_text, parent_or_current, publish_pair, read_digest,
+    require_external_dependencies_safe_for_publication, require_writable_destination,
+    serialize_record,
 };
 use crate::{Format, render};
 use animsmith_core::InputIdentity;
@@ -385,6 +386,12 @@ struct PreparedScaleInput {
     compatibility_basis: AssemblyScaleCompatibilityBasis,
     evidence: AssemblyRestBindScaleInputEvidence,
     selector: ResolvedRestBindScaleSelector,
+}
+
+struct AssemblyPublicationContext<'a> {
+    staging_parent: &'a Path,
+    output: &'a Path,
+    evidence: &'a Path,
 }
 
 struct PreparedAssemblyClip {
@@ -836,7 +843,7 @@ fn prepare_scale_input(
     resolved: &Path,
     scale: &AssemblyRestBindScaleRecipe,
     recipe_version: u32,
-    staging_parent: &Path,
+    publication: &AssemblyPublicationContext<'_>,
     tool: &ToolInfo,
 ) -> Result<PreparedScaleInput, crate::producer::Failure> {
     use crate::producer::{Classify as _, Failure, Kind, Stage};
@@ -871,14 +878,29 @@ fn prepare_scale_input(
         source_projection,
         selector,
     ) = if is_fbx {
-        let fbx_source = animsmith_fbx::load_scale_source_bytes(resolved, &bytes)
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale FBX load rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Load, Kind::UnreadableSource)?;
+        let resource_root = parent_or_current(resolved);
+        let fbx_source = animsmith_fbx::load_scale_source_bytes_with_resource_root(
+            resolved,
+            &bytes,
+            resource_root,
+        )
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale FBX load rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Load, Kind::UnreadableSource)?;
+        require_external_dependencies_safe_for_publication(
+            "assemble",
+            resource_root,
+            fbx_source.dependency_closure(),
+            &[
+                ("output", publication.output),
+                ("evidence", publication.evidence),
+            ],
+        )
+        .operator()?;
         let primary_identity = fbx_source.source_facts().primary_identity();
         let sha256 = primary_identity.sha256().to_owned();
         let byte_count = primary_identity.bytes();
@@ -899,9 +921,11 @@ fn prepare_scale_input(
             })
             .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
         let operation = rest_bind_operation(&selector, scale.expected_factor());
-        let staged =
-            crate::scale::serialize_fbx_rest_bind_stage(fbx_source.document(), staging_parent)
-                .operator()?;
+        let staged = crate::scale::serialize_fbx_rest_bind_stage(
+            fbx_source.document(),
+            publication.staging_parent,
+        )
+        .operator()?;
         let staged_source = preflight_scale_source_bytes(staged.path(), staged.bytes())
             .map_err(|error| {
                 format!(
@@ -1208,18 +1232,17 @@ fn assemble_inner(
             "assemble output must use the .glb extension",
         ));
     }
-    if output == evidence_output {
-        return Err(Failure::operator(
-            "artifact and evidence outputs must be different paths",
-        ));
-    }
     let output_parent = parent_or_current(output);
     let evidence_parent = parent_or_current(evidence_output);
     require_writable_destination(output).operator()?;
     require_writable_destination(evidence_output).operator()?;
-    let output_identity = destination_identity(output).operator()?;
-    let evidence_identity = destination_identity(evidence_output).operator()?;
-    if output_identity == evidence_identity {
+    let output_destination = PublicationDestination::new("artifact", output).operator()?;
+    let evidence_destination =
+        PublicationDestination::new("evidence", evidence_output).operator()?;
+    if output_destination
+        .aliases_destination(&evidence_destination)
+        .operator()?
+    {
         return Err(Failure::operator(
             "artifact and evidence outputs must resolve to different paths",
         ));
@@ -1259,13 +1282,18 @@ fn assemble_inner(
     let mut prepared_scale_inputs = BTreeMap::<PathBuf, PreparedScaleInput>::new();
     let mut rest_bind_input_evidence = Vec::new();
     if let Some(scale) = &recipe.rest_bind_scale {
+        let publication = AssemblyPublicationContext {
+            staging_parent: output_parent,
+            output,
+            evidence: evidence_output,
+        };
         let prepared = prepare_scale_input(
             "base".to_owned(),
             &recipe.base_input,
             &base_path,
             scale,
             recipe.schema_version,
-            output_parent,
+            &publication,
             &tool,
         )?;
         let base_basis = prepared.compatibility_basis.clone();
@@ -1286,7 +1314,7 @@ fn assemble_inner(
                 &resolved,
                 scale,
                 recipe.schema_version,
-                output_parent,
+                &publication,
                 &tool,
             )?;
             require_input_scale_compatibility(&base_basis, &prepared.compatibility_basis)

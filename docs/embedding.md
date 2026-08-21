@@ -98,8 +98,13 @@ cargo run -p animsmith --example embed
    `animsmith_fbx::load_scale_source` instead: the returned wrapper retains the
    document and `FbxScaleCapabilityInventory` from one parse. The inventory
    and normalized source-skeleton sidecar enable only the CLI's narrow
-   rest/bind re-encode path when `rest_bind_capability_facts` accepts them;
-   whole-document FBX scaling remains refused. `Complete`
+   rest/bind re-encode path when
+   `rest_bind_capability_facts_for_source` accepts them; the source-aware form
+   can distinguish known, non-scale-bearing custom properties and resource
+   linkage from an unknown source element. The inventory-only
+   `rest_bind_capability_facts` remains conservative where its frozen aggregate
+   cannot make that distinction. Whole-document FBX scaling remains refused.
+   `Complete`
    means the documented ufbx projection covers every representable node/skin
    identity and joint slot; a missing cluster bone downgrades the sidecar to
    `Unavailable` instead of dropping that slot. Unreadable ordered bind
@@ -320,7 +325,11 @@ the narrow `rest-bind` producer first requires a complete normalized FBX
 inventory, stages a private GLB, and then runs the same raw-GLB plan/rewrite/
 proof transaction; `whole-document` remains unsupported for FBX. The FBX
 inventory is not authority to claim raw FBX spans, object properties, curve
-keys, or vertex identity were preserved.
+keys, material/texture assignments, or vertex identity were preserved. The
+source-aware gate may admit bounded texture/video declarations and discarded
+user-defined properties while retaining their raw facts and closure evidence;
+all incomplete or unknown scale-bearing domains still refuse with the exact
+failed fact or counter.
 
 `ScaleCandidate` grants no authority: proof independently validates the
 source, plan inventory, candidate structure, and numeric claims. A frontend

@@ -10,9 +10,9 @@
 //! `scale` is the first evidence-emitting producer in the minimal binary, and
 //! a feature-gated import here would silently drop that coverage.
 
-#[cfg(feature = "fbx")]
-use animsmith_core::model::Property;
 use animsmith_core::sha256_hex;
+#[cfg(feature = "fbx")]
+use animsmith_core::{DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES, model::Property};
 use animsmith_testkit::{
     clipless_mesh_scale_rig_glb, nodes_only_scale_rig_glb, oversized_proof_scale_rig_glb,
     rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf, rotation_only_meshless_scale_rig_glb,
@@ -30,6 +30,14 @@ const FBX_SCALE_EVIDENCE_SCHEMA: &str =
     include_str!("../../../docs/schemas/scale-evidence-v5.schema.json");
 #[cfg(feature = "fbx")]
 const FBX_SCALE_EVIDENCE_SCHEMA_ID: &str = "urn:animsmith:schema:scale-evidence:5";
+#[cfg(feature = "fbx")]
+const TINY_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xA7, 0x35, 0x81, 0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82,
+];
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
@@ -1986,6 +1994,37 @@ fn two_arguments_naming_one_file_are_an_operator_error() {
     assert!(!fixture.path("out.json").exists());
 }
 
+#[test]
+fn missing_output_names_use_the_destination_filesystems_case_semantics() {
+    let fixture = Fixture::new();
+    let probe = tempfile::tempdir_in(fixture.dir.path()).expect("filesystem-semantics probe");
+    std::fs::write(probe.path().join("out.glb"), b"probe").unwrap();
+    let case_insensitive = probe.path().join("OUT.GLB").exists();
+    drop(probe);
+
+    let run = rest_bind_paths(&fixture, "rig.glb", "out.glb", "OUT.GLB");
+    if case_insensitive {
+        assert_eq!(run.status.code(), Some(2), "stderr:\n{}", stderr(&run));
+        assert!(run.stdout.is_empty());
+        assert!(
+            stderr(&run).contains("scale output and evidence must be different paths"),
+            "stderr:\n{}",
+            stderr(&run)
+        );
+        assert!(!fixture.path("out.glb").exists());
+        assert!(!fixture.path("OUT.GLB").exists());
+    } else {
+        assert_eq!(run.status.code(), Some(0), "stderr:\n{}", stderr(&run));
+        assert!(run.stderr.is_empty());
+        assert!(fixture.path("out.glb").is_file());
+        assert!(fixture.path("OUT.GLB").is_file());
+        assert_ne!(
+            std::fs::read(fixture.path("out.glb")).unwrap(),
+            std::fs::read(fixture.path("OUT.GLB")).unwrap()
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_symlinked_input_aliasing_a_destination_is_refused_before_the_asset_is_destroyed() {
@@ -2349,6 +2388,93 @@ fn two_skin_fbx_fixture() -> String {
     .replace("Link_DeformAccuracy", &["Link_DeformA", "curacy"].concat())
 }
 
+#[cfg(feature = "fbx")]
+fn external_normal_texture_fbx_fixture() -> String {
+    let source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
+    )
+    .expect("reads analytic FBX fixture")
+    .replace("\r\n", "\n");
+    let source = source.replacen(
+        "\tObjectType: \"Deformer\" { Count: 2 }\n}",
+        "\tObjectType: \"Deformer\" { Count: 2 }\n\tObjectType: \"Material\" { Count: 1 }\n\tObjectType: \"Texture\" { Count: 1 }\n\tObjectType: \"Video\" { Count: 1 }\n}",
+        1,
+    );
+    let objects = r#"	Material: 5001, "Material::normal_mat", "" {
+		Version: 102
+		ShadingModel: "phong"
+		MultiLayer: 0
+	}
+	Texture: 5002, "Texture::normal", "" {
+		Type: "TextureVideoClip"
+		Version: 202
+		TextureName: "Texture::normal"
+		Media: "Video::normal"
+		FileName: "normal.png"
+		RelativeFilename: "normal.png"
+		ModelUVTranslation: 0,0
+		ModelUVScaling: 1,1
+		Texture_Alpha_Source: "None"
+		Cropping: 0,0,0,0
+	}
+	Video: 5003, "Video::normal", "Clip" {
+		Type: "Clip"
+		Properties70: {
+			P: "Path", "KString", "XRefUrl", "", "normal.png"
+		}
+		FileName: "normal.png"
+		RelativeFilename: "normal.png"
+	}
+}
+Connections: {"#;
+    source
+        .replacen("}\nConnections: {", objects, 1)
+        .replacen(
+            "Connections: {",
+            "Connections: {\n\tC: \"OO\",5001,1002\n\tC: \"OP\",5002,5001,\"NormalMap\"\n\tC: \"OO\",5003,5002",
+            1,
+        )
+}
+
+#[cfg(feature = "fbx")]
+fn external_resource_closure_budget_fbx_fixture(last_locator: &str) -> String {
+    let mut videos = String::new();
+    for index in 0..=DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES {
+        let locator = if index == DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES {
+            last_locator.to_owned()
+        } else {
+            format!("resource{index}.bin")
+        };
+        videos.push_str(&format!(
+            concat!(
+                "\tVideo: {}, \"Video::resource{}\", \"Clip\" {{\n",
+                "\t\tType: \"Clip\"\n",
+                "\t\tFileName: {:?}\n",
+                "\t\tRelativeFilename: {:?}\n",
+                "\t}}\n"
+            ),
+            10_000 + index,
+            index,
+            locator,
+            locator
+        ));
+    }
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
+    )
+    .expect("reads analytic FBX fixture")
+    .replace("\r\n", "\n")
+    .replacen(
+        "\tObjectType: \"Deformer\" { Count: 2 }\n}",
+        &format!(
+            "\tObjectType: \"Deformer\" {{ Count: 2 }}\n\tObjectType: \"Video\" {{ Count: {} }}\n}}",
+            DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES + 1
+        ),
+        1,
+    )
+    .replacen("}\nConnections: {", &format!("{videos}}}\nConnections: {{"), 1)
+}
+
 /// Two separate skins whose ordered named joint topologies deliberately
 /// collide after staging, while their selected parent root remains unique.
 #[cfg(feature = "fbx")]
@@ -2548,6 +2674,466 @@ fn fbx_rest_bind_reencodes_and_proves_a_complete_inventory() {
         first_evidence
     );
     assert_eq!(rerun.stdout, first_evidence);
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_captures_an_admitted_external_texture_before_staging() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("nested")).expect("creates nested input directory");
+    std::fs::write(
+        dir.path().join("nested/rig.fbx"),
+        external_normal_texture_fbx_fixture(),
+    )
+    .expect("writes analytic external-texture FBX");
+    std::fs::write(dir.path().join("nested/normal.png"), TINY_PNG)
+        .expect("writes analytic linked texture");
+    std::fs::write(dir.path().join("normal.png"), b"wrong-root decoy")
+        .expect("writes broader-root decoy");
+
+    let output = fbx_rest_bind_command(
+        dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs FBX rest-bind scale");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    let record: Value = serde_json::from_slice(&output.stdout).expect("JSON evidence");
+    assert_fbx_schema_valid(&record);
+    assert_eq!(record["capability"]["external_resource_count"], 2);
+
+    let artifact = animsmith_gltf::load(&dir.path().join("out.glb"))
+        .expect("published external-texture GLB reloads");
+    assert_eq!(
+        artifact.assets.materials[0]
+            .normal_texture
+            .as_ref()
+            .expect("published material retains its captured normal texture")
+            .texture
+            .bytes,
+        TINY_PNG,
+        "admitting a scale-irrelevant declaration must not silently remove its supported payload"
+    );
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_refuses_destinations_that_alias_captured_dependencies() {
+    for (destination, locator, output, evidence) in [
+        ("evidence", "normal.png", "out.glb", "nested/normal.png"),
+        ("output", "artifact.glb", "nested/artifact.glb", "out.json"),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        let source = external_normal_texture_fbx_fixture().replace("normal.png", locator);
+        std::fs::write(dir.path().join("nested/rig.fbx"), source).unwrap();
+        let dependency = dir.path().join("nested").join(locator);
+        std::fs::write(&dependency, TINY_PNG).unwrap();
+        let (peer, prior_peer) = if destination == "evidence" {
+            (dir.path().join(output), b"prior artifact".as_slice())
+        } else {
+            (dir.path().join(evidence), b"prior evidence".as_slice())
+        };
+        std::fs::write(&peer, prior_peer).unwrap();
+
+        let result = fbx_rest_bind_command(
+            dir.path(),
+            "nested/rig.fbx",
+            output,
+            evidence,
+            "0.01",
+            "json",
+        )
+        .output()
+        .expect("runs destructive-alias preflight");
+
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert!(
+            stderr(&result).contains(&format!(
+                "scale external dependency {locator:?} and {destination} must be different paths"
+            )),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert_eq!(
+            std::fs::read(dependency).unwrap(),
+            TINY_PNG,
+            "publication must not replace the captured source dependency"
+        );
+        assert_eq!(
+            std::fs::read(peer).unwrap(),
+            prior_peer,
+            "refusal must leave the non-aliased publication peer byte-identical"
+        );
+    }
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_protects_a_keyed_dependency_that_exceeds_the_capture_budget() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    let source = external_normal_texture_fbx_fixture().replace("normal.png", "oversized.png");
+    std::fs::write(dir.path().join("nested/rig.fbx"), source).unwrap();
+    let dependency = dir.path().join("nested/oversized.png");
+    std::fs::write(&dependency, TINY_PNG).unwrap();
+    let oversized_len = animsmith_core::ResourceClosureBudgetV1::VALUE
+        .max_resource_bytes()
+        .saturating_add(1);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&dependency)
+        .unwrap()
+        .set_len(oversized_len)
+        .unwrap();
+    let peer = dir.path().join("out.glb");
+    let prior_peer = b"prior artifact";
+    std::fs::write(&peer, prior_peer).unwrap();
+
+    let result = fbx_rest_bind_command(
+        dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        "nested/oversized.png",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs keyed unavailable-dependency preflight");
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        stderr(&result)
+    );
+    assert!(result.stdout.is_empty());
+    assert_eq!(
+        stderr(&result),
+        "animsmith: scale dependency closure exceeded its resource budget, so publication cannot prove every source sidecar distinct\n"
+    );
+    assert_eq!(std::fs::metadata(&dependency).unwrap().len(), oversized_len);
+    let mut prefix = [0u8; 8];
+    let mut dependency_file = std::fs::File::open(&dependency).unwrap();
+    std::io::Read::read_exact(&mut dependency_file, &mut prefix).unwrap();
+    assert_eq!(prefix, TINY_PNG[..8]);
+    assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_rejects_a_truncated_dependency_closure_before_publication() {
+    for last_locator in ["out.json", "tail.png"] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::write(
+            dir.path().join("rig.fbx"),
+            external_resource_closure_budget_fbx_fixture(last_locator),
+        )
+        .unwrap();
+        let artifact = dir.path().join("out.glb");
+        let evidence = dir.path().join("out.json");
+        let tail = dir.path().join("tail.png");
+        let prior_artifact = b"prior artifact";
+        let prior_evidence = b"prior evidence";
+        let prior_tail = b"source-sidecar sentinel";
+        std::fs::write(&artifact, prior_artifact).unwrap();
+        std::fs::write(&evidence, prior_evidence).unwrap();
+        if last_locator == "tail.png" {
+            std::fs::write(&tail, prior_tail).unwrap();
+        }
+
+        let result =
+            fbx_rest_bind_command(dir.path(), "rig.fbx", "out.glb", "out.json", "0.01", "json")
+                .output()
+                .expect("runs dependency-closure budget preflight");
+
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{last_locator} stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert_eq!(
+            stderr(&result),
+            "animsmith: scale dependency closure exceeded its resource budget, so publication cannot prove every source sidecar distinct\n"
+        );
+        assert_eq!(std::fs::read(artifact).unwrap(), prior_artifact);
+        assert_eq!(std::fs::read(evidence).unwrap(), prior_evidence);
+        if last_locator == "tail.png" {
+            assert_eq!(std::fs::read(tail).unwrap(), prior_tail);
+        }
+    }
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_protects_a_missing_retained_key_without_requiring_its_parent() {
+    let alias_dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(alias_dir.path().join("nested")).unwrap();
+    let source = external_normal_texture_fbx_fixture().replace("normal.png", "missing.png");
+    std::fs::write(alias_dir.path().join("nested/rig.fbx"), source).unwrap();
+    let peer = alias_dir.path().join("out.glb");
+    let prior_peer = b"prior artifact";
+    std::fs::write(&peer, prior_peer).unwrap();
+
+    let alias = fbx_rest_bind_command(
+        alias_dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        "nested/missing.png",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs missing-key alias preflight");
+    assert_eq!(alias.status.code(), Some(2), "stderr:\n{}", stderr(&alias));
+    assert!(alias.stdout.is_empty());
+    assert!(
+        stderr(&alias).contains(
+            "scale external dependency \"missing.png\" and evidence must be different paths"
+        ),
+        "stderr:\n{}",
+        stderr(&alias)
+    );
+    assert!(!alias_dir.path().join("nested/missing.png").exists());
+    assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+
+    let case_dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(case_dir.path().join("nested")).unwrap();
+    let source = external_normal_texture_fbx_fixture().replace("normal.png", "missing.png");
+    std::fs::write(case_dir.path().join("nested/rig.fbx"), source).unwrap();
+    let probe = tempfile::tempdir_in(case_dir.path().join("nested")).unwrap();
+    std::fs::write(probe.path().join("missing.png"), b"probe").unwrap();
+    let case_insensitive = probe.path().join("MISSING.PNG").exists();
+    drop(probe);
+    let peer = case_dir.path().join("out.glb");
+    let prior_peer = b"prior artifact";
+    std::fs::write(&peer, prior_peer).unwrap();
+    let case_variant = case_dir.path().join("nested/MISSING.PNG");
+
+    let result = fbx_rest_bind_command(
+        case_dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        "nested/MISSING.PNG",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs missing case-variant dependency preflight");
+    if case_insensitive {
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert!(
+            stderr(&result).contains(
+                "scale external dependency \"missing.png\" and evidence must be different paths"
+            ),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert_eq!(std::fs::read(&peer).unwrap(), prior_peer);
+        assert!(!case_variant.exists());
+    } else {
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stderr.is_empty());
+        assert!(!result.stdout.is_empty());
+        assert_ne!(std::fs::read(&peer).unwrap(), prior_peer);
+        assert!(case_variant.is_file());
+    }
+    assert!(!case_dir.path().join("nested/missing.png").exists());
+
+    let unrelated_dir = tempfile::tempdir().expect("temporary directory");
+    let source =
+        external_normal_texture_fbx_fixture().replace("normal.png", "textures/missing.png");
+    std::fs::write(unrelated_dir.path().join("rig.fbx"), source).unwrap();
+    let unrelated = fbx_rest_bind_command(
+        unrelated_dir.path(),
+        "rig.fbx",
+        "out.glb",
+        "out.json",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs unrelated missing-intermediate dependency");
+    assert_eq!(
+        unrelated.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        stderr(&unrelated)
+    );
+    assert!(unrelated.stderr.is_empty());
+    assert!(!unrelated.stdout.is_empty());
+    assert!(unrelated_dir.path().join("out.glb").is_file());
+    assert!(unrelated_dir.path().join("out.json").is_file());
+    assert!(!unrelated_dir.path().join("textures").exists());
+}
+
+#[cfg(all(feature = "fbx", unix))]
+#[test]
+fn fbx_rest_bind_refuses_a_symlink_retained_key_before_any_publication() {
+    use std::os::unix::fs::symlink;
+
+    for destination_kind in ["entry", "target", "unrelated"] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        std::fs::write(
+            dir.path().join("nested/rig.fbx"),
+            external_normal_texture_fbx_fixture(),
+        )
+        .unwrap();
+        let dependency = dir.path().join("nested/normal.png");
+        let target = dir.path().join("nested/source.png");
+        std::fs::write(&target, TINY_PNG).unwrap();
+        symlink("source.png", &dependency).unwrap();
+        let case_variant = dir.path().join("nested/NORMAL.PNG");
+        let entry_destination = if std::fs::symlink_metadata(&case_variant).is_ok() {
+            "nested/NORMAL.PNG"
+        } else {
+            "nested/normal.png"
+        };
+        let evidence = match destination_kind {
+            "entry" => entry_destination,
+            "target" => "nested/source.png",
+            "unrelated" => "out.json",
+            _ => unreachable!(),
+        };
+        let peer = dir.path().join("out.glb");
+        let unrelated_evidence = dir.path().join("out.json");
+        let prior_peer = b"prior artifact";
+        let prior_evidence = b"prior evidence";
+        std::fs::write(&peer, prior_peer).unwrap();
+        std::fs::write(&unrelated_evidence, prior_evidence).unwrap();
+
+        let result = fbx_rest_bind_command(
+            dir.path(),
+            "nested/rig.fbx",
+            "out.glb",
+            evidence,
+            "0.01",
+            "json",
+        )
+        .output()
+        .expect("runs symlink-refused dependency preflight");
+
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{destination_kind} stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert!(
+            stderr(&result).contains(
+                "scale external dependency \"normal.png\" is a symlink and cannot be published safely"
+            ),
+            "{destination_kind} stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(
+            std::fs::symlink_metadata(&dependency)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            std::fs::read_link(&dependency).unwrap(),
+            Path::new("source.png")
+        );
+        assert_eq!(std::fs::read(target).unwrap(), TINY_PNG);
+        assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+        assert_eq!(std::fs::read(unrelated_evidence).unwrap(), prior_evidence);
+    }
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_uses_the_filesystems_case_semantics_for_destination_identity() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    std::fs::write(
+        dir.path().join("nested/rig.fbx"),
+        external_normal_texture_fbx_fixture(),
+    )
+    .unwrap();
+    let dependency = dir.path().join("nested/normal.png");
+    std::fs::write(&dependency, TINY_PNG).unwrap();
+    let case_variant = dir.path().join("nested/NORMAL.PNG");
+    let case_insensitive = std::fs::canonicalize(&case_variant).is_ok();
+    let peer = dir.path().join("out.glb");
+    let prior_peer = b"prior artifact";
+    std::fs::write(&peer, prior_peer).unwrap();
+
+    let result = fbx_rest_bind_command(
+        dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        case_variant
+            .strip_prefix(dir.path())
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs case-variant destructive-alias preflight");
+
+    if case_insensitive {
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert!(
+            stderr(&result).contains(
+                "scale external dependency \"normal.png\" and evidence must be different paths"
+            ),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+    } else {
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stderr.is_empty());
+        assert!(!result.stdout.is_empty());
+        assert_ne!(std::fs::read(peer).unwrap(), prior_peer);
+        assert!(case_variant.is_file());
+    }
+    assert_eq!(std::fs::read(dependency).unwrap(), TINY_PNG);
 }
 
 #[cfg(feature = "fbx")]

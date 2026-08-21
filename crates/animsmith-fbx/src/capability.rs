@@ -2,8 +2,8 @@
 
 use animsmith_core::scale::{ScaleCapabilityCoverage, ScaleCapabilityFacts};
 use animsmith_core::{
-    Document, LoadedSource, SourceConstructKindV1, SourceFactsViewV1, SourceResourceLocatorV1,
-    SourceSetCoverageStateV1,
+    DependencyClosureV1, Document, LoadedSource, SourceConstructKindV1, SourceFactsViewV1,
+    SourceResourceLocatorV1, SourceSetCoverageStateV1,
 };
 use serde::Serialize;
 
@@ -118,29 +118,46 @@ impl FbxScaleDomainInventory {
     /// GLB's raw spans instead. Keeping this as typed fields rather than
     /// display labels makes a newly added semantic domain fail closed until
     /// this policy is deliberately updated.
-    fn rest_bind_semantic_statuses(&self) -> [FbxScaleDomainStatus; 12] {
+    fn rest_bind_semantic_statuses(&self) -> [(&'static str, FbxScaleDomainStatus); 11] {
         [
-            self.rest_hierarchy,
-            self.translation_animation,
-            self.rotation_and_scale_animation,
-            self.root_motion_and_velocity,
-            self.base_mesh_geometry,
-            self.morphs,
-            self.skin_binds,
-            self.cameras_and_lights,
-            self.collision_and_custom_data,
-            self.other_vertex_and_source_data,
-            self.out_of_contract_node_transforms,
-            self.animation_targeting_matrix_nodes,
+            ("rest_hierarchy", self.rest_hierarchy),
+            ("translation_animation", self.translation_animation),
+            (
+                "rotation_and_scale_animation",
+                self.rotation_and_scale_animation,
+            ),
+            ("root_motion_and_velocity", self.root_motion_and_velocity),
+            ("base_mesh_geometry", self.base_mesh_geometry),
+            ("morphs", self.morphs),
+            ("skin_binds", self.skin_binds),
+            ("cameras_and_lights", self.cameras_and_lights),
+            (
+                "other_vertex_and_source_data",
+                self.other_vertex_and_source_data,
+            ),
+            (
+                "out_of_contract_node_transforms",
+                self.out_of_contract_node_transforms,
+            ),
+            (
+                "animation_targeting_matrix_nodes",
+                self.animation_targeting_matrix_nodes,
+            ),
         ]
     }
 
     /// The raw-span rows whose FBX status is expected to be unverifiable.
-    fn rest_bind_raw_span_statuses(&self) -> [FbxScaleDomainStatus; 3] {
+    fn rest_bind_raw_span_statuses(&self) -> [(&'static str, FbxScaleDomainStatus); 3] {
         [
-            self.shared_raw_accessor_payloads,
-            self.unreferenced_accessor_payloads,
-            self.image_payload_aliases,
+            (
+                "shared_raw_accessor_payloads",
+                self.shared_raw_accessor_payloads,
+            ),
+            (
+                "unreferenced_accessor_payloads",
+                self.unreferenced_accessor_payloads,
+            ),
+            ("image_payload_aliases", self.image_payload_aliases),
         ]
     }
 }
@@ -341,6 +358,13 @@ pub struct FbxScaleCapabilityInventory {
 pub struct FbxScaleSource {
     pub(crate) source: LoadedSource,
     pub(crate) inventory: FbxScaleCapabilityInventory,
+    /// Same-parse breakdown behind the aggregate construct inventory.
+    ///
+    /// This parser-side distinction is intentionally not part of the frozen
+    /// scale-evidence v5 inventory. It is same-load admission evidence for the
+    /// normalized GLB bridge, where the texture/video declarations have their
+    /// own bounded resource facts and cannot affect rest/bind transforms.
+    pub(crate) rest_bind_construct_counts: crate::source_facts::RestBindSourceConstructCounts,
 }
 
 impl FbxScaleSource {
@@ -352,6 +376,11 @@ impl FbxScaleSource {
     /// The bounded importer-sensitive facts retained from the same ufbx parse.
     pub fn source_facts(&self) -> SourceFactsViewV1<'_> {
         self.source.source_facts()
+    }
+
+    /// The bounded dependency closure captured with the same ufbx parse.
+    pub fn dependency_closure(&self) -> &DependencyClosureV1 {
+        self.source.dependency_closure()
     }
 
     /// The conservative ufbx-side inventory.
@@ -462,63 +491,222 @@ fn join_source_facts(
 /// The accepted operation rewrites a freshly serialized GLB rather than the
 /// FBX container, so the three raw-span rows are intentionally
 /// [`FbxScaleDomainStatus::Unverifiable`]. Every semantic domain must still
-/// be complete: an unsupported row, incomplete bind evidence, altered skin
-/// influences, external resources, or an incomplete coordinate projection is
-/// a stable refusal before the producer can stage any output.
+/// be complete when it can affect the normalized document. User-defined FBX
+/// properties are already explicitly discarded by the loader, and external
+/// image declarations require the source-aware companion so their same-load
+/// resource classification and capture can be validated before staging. The
+/// frozen inventory alone remains conservative for external references because
+/// it cannot prove that boundary. Neither known class is a scale-bearing
+/// ambiguity. Unknown source elements,
+/// incomplete bind evidence, altered skin influences, or an incomplete
+/// coordinate projection remain stable refusals before the producer can stage
+/// any output.
 pub fn rest_bind_capability_facts(
     inventory: &FbxScaleCapabilityInventory,
 ) -> Result<ScaleCapabilityFacts, String> {
-    if inventory
-        .domains
-        .rest_bind_semantic_statuses()
-        .into_iter()
-        .any(|status| {
-            matches!(
-                status,
-                FbxScaleDomainStatus::Unsupported | FbxScaleDomainStatus::Unverifiable
-            )
-        })
-    {
-        return Err("FBX capability inventory leaves a semantic domain incomplete".into());
+    if inventory.external_resource_count != 0 {
+        return Err(format_rest_bind_violations(
+            "capability inventory",
+            &[format!(
+                "external_resource_count={}",
+                inventory.external_resource_count
+            )],
+        ));
     }
-    if inventory
-        .domains
-        .rest_bind_raw_span_statuses()
-        .into_iter()
-        .any(|status| !matches!(status, FbxScaleDomainStatus::Unverifiable))
-    {
-        return Err("FBX capability inventory has an unexpected raw-span projection".into());
+    rest_bind_capability_facts_with_construct_counts(inventory, None)
+}
+
+fn rest_bind_capability_facts_with_construct_counts(
+    inventory: &FbxScaleCapabilityInventory,
+    source_counts: Option<crate::source_facts::RestBindSourceConstructCounts>,
+) -> Result<ScaleCapabilityFacts, String> {
+    let mut violations = Vec::new();
+    for (domain, status) in inventory.domains.rest_bind_semantic_statuses() {
+        if matches!(
+            status,
+            FbxScaleDomainStatus::Unsupported | FbxScaleDomainStatus::Unverifiable
+        ) {
+            violations.push(format!(
+                "domain.{domain}={}",
+                fbx_scale_domain_status_name(status)
+            ));
+        }
     }
-    if !inventory.coordinate_normalization.target_right_handed_y_up
-        || inventory.coordinate_normalization.target_unit_meters != 1.0
-        || !inventory.coordinate_normalization.adjust_transforms
-        || !inventory.animation_takes_baked
-        || inventory.authored_curve_keys_preserved
-        || !inventory.inherit_modes_compensated
-        || inventory.incomplete_bind_cluster_count != 0
-        || inventory.empty_skin_deformer_count != 0
-        || inventory.missing_normal_mesh_count != 0
-        || inventory.bone_convenience_bind_overwrite_count != 0
-        || inventory.identity_bind_defaults_invented
-        || inventory.truncated_influence_vertex_count != 0
-        || inventory.discarded_influence_count != 0
-        || inventory.renormalized_influence_vertex_count != 0
-        || inventory.rejected_influence_count != 0
-        || inventory.missing_skin_influence_corner_count != 0
-        || inventory.non_triangle_face_count != 0
-        || inventory.triangulated_face_count != 0
-        || inventory.omitted_non_polygon_face_count != 0
-        || inventory.external_resource_count != 0
-    {
-        return Err("FBX capability inventory cannot prove the selected rest/bind domain".into());
+    for (domain, status) in inventory.domains.rest_bind_raw_span_statuses() {
+        if status != FbxScaleDomainStatus::Unverifiable {
+            violations.push(format!(
+                "domain.{domain}={} (expected unverifiable)",
+                fbx_scale_domain_status_name(status)
+            ));
+        }
     }
+
+    let expected_custom_status = if inventory.unsupported_source_element_count == 0
+        && inventory.user_defined_property_count == 0
+    {
+        FbxScaleDomainStatus::Absent
+    } else {
+        FbxScaleDomainStatus::Unsupported
+    };
+    if inventory.domains.collision_and_custom_data != expected_custom_status {
+        violations.push(format!(
+            "domain.collision_and_custom_data={} (expected {})",
+            fbx_scale_domain_status_name(inventory.domains.collision_and_custom_data),
+            fbx_scale_domain_status_name(expected_custom_status)
+        ));
+    }
+    if let Some(source_counts) = source_counts {
+        if inventory.user_defined_property_count != source_counts.user_defined_property_count {
+            violations.push(format!(
+                "user_defined_property_count={}!=source:{}",
+                inventory.user_defined_property_count, source_counts.user_defined_property_count
+            ));
+        }
+        let source_unmodeled_count = source_counts.total_unmodeled_element_count();
+        if inventory.unsupported_source_element_count != source_unmodeled_count {
+            violations.push(format!(
+                "unsupported_source_element_count={}!=source:{}",
+                inventory.unsupported_source_element_count, source_unmodeled_count
+            ));
+        }
+        push_nonzero_violation(
+            &mut violations,
+            "unsupported_source_element_count",
+            source_counts.unsupported_unmodeled_element_count,
+        );
+    } else {
+        push_nonzero_violation(
+            &mut violations,
+            "unsupported_source_element_count",
+            inventory.unsupported_source_element_count,
+        );
+    }
+
+    if !inventory.coordinate_normalization.target_right_handed_y_up {
+        violations.push("coordinate_normalization.target_right_handed_y_up=false".into());
+    }
+    if inventory.coordinate_normalization.target_unit_meters != 1.0 {
+        violations.push(format!(
+            "coordinate_normalization.target_unit_meters={}",
+            inventory.coordinate_normalization.target_unit_meters
+        ));
+    }
+    if !inventory.coordinate_normalization.adjust_transforms {
+        violations.push("coordinate_normalization.adjust_transforms=false".into());
+    }
+    if !inventory.animation_takes_baked {
+        violations.push("animation_takes_baked=false".into());
+    }
+    if inventory.authored_curve_keys_preserved {
+        violations.push("authored_curve_keys_preserved=true".into());
+    }
+    if !inventory.inherit_modes_compensated {
+        violations.push("inherit_modes_compensated=false".into());
+    }
+    if inventory.identity_bind_defaults_invented {
+        violations.push("identity_bind_defaults_invented=true".into());
+    }
+    for (name, value) in [
+        ("blend_deformer_count", inventory.blend_deformer_count),
+        ("blend_channel_count", inventory.blend_channel_count),
+        ("blend_shape_count", inventory.blend_shape_count),
+        ("camera_count", inventory.camera_count),
+        ("light_count", inventory.light_count),
+        (
+            "shared_mesh_definition_count",
+            inventory.shared_mesh_definition_count,
+        ),
+        (
+            "uninstanced_mesh_definition_count",
+            inventory.uninstanced_mesh_definition_count,
+        ),
+        (
+            "empty_mesh_definition_count",
+            inventory.empty_mesh_definition_count,
+        ),
+        (
+            "multiple_skin_deformer_mesh_count",
+            inventory.multiple_skin_deformer_mesh_count,
+        ),
+        (
+            "dual_quaternion_skin_count",
+            inventory.dual_quaternion_skin_count,
+        ),
+        ("cache_deformer_count", inventory.cache_deformer_count),
+        (
+            "unsupported_vertex_payload_mesh_count",
+            inventory.unsupported_vertex_payload_mesh_count,
+        ),
+        (
+            "incomplete_bind_cluster_count",
+            inventory.incomplete_bind_cluster_count,
+        ),
+        (
+            "empty_skin_deformer_count",
+            inventory.empty_skin_deformer_count,
+        ),
+        (
+            "missing_normal_mesh_count",
+            inventory.missing_normal_mesh_count,
+        ),
+        (
+            "bone_convenience_bind_overwrite_count",
+            inventory.bone_convenience_bind_overwrite_count,
+        ),
+        (
+            "truncated_influence_vertex_count",
+            inventory.truncated_influence_vertex_count,
+        ),
+        (
+            "discarded_influence_count",
+            inventory.discarded_influence_count,
+        ),
+        (
+            "renormalized_influence_vertex_count",
+            inventory.renormalized_influence_vertex_count,
+        ),
+        (
+            "rejected_influence_count",
+            inventory.rejected_influence_count,
+        ),
+        (
+            "missing_skin_influence_corner_count",
+            inventory.missing_skin_influence_corner_count,
+        ),
+        ("non_triangle_face_count", inventory.non_triangle_face_count),
+        ("triangulated_face_count", inventory.triangulated_face_count),
+        (
+            "omitted_non_polygon_face_count",
+            inventory.omitted_non_polygon_face_count,
+        ),
+    ] {
+        push_nonzero_violation(&mut violations, name, value);
+    }
+    if inventory.pre_weld_vertex_count != inventory.post_weld_vertex_count {
+        violations.push(format!(
+            "weld_vertex_count={}!=post:{}",
+            inventory.pre_weld_vertex_count, inventory.post_weld_vertex_count
+        ));
+    }
+    if !violations.is_empty() {
+        return Err(format_rest_bind_violations(
+            "capability inventory",
+            &violations,
+        ));
+    }
+
     // Reuse the complete conservative projection for every counter and
-    // source-domain fact. The two flags it sets solely because this is not a
-    // raw FBX rewriter are discharged by the private GLB staging/proof
-    // boundary below; every other fact continues to gate the operation.
+    // source-domain fact. These flags are discharged by the private GLB
+    // staging/proof boundary: raw FBX members are not preserved, while the
+    // already-validated texture-linkage aggregate, custom properties, and
+    // external locator spellings cannot carry scale-bearing state into the
+    // normalized document. Every other fact continues to gate the operation.
     let mut facts = capability_facts(inventory);
     facts.unknown_source_members_present = false;
+    facts.unregistered_extensions_present = false;
     facts.unsafe_accessor_layout_present = false;
+    facts.extras_present = false;
+    facts.external_resources_present = false;
     if !facts.is_supported_for(
         animsmith_core::scale::ScaleOperation::RestBindUniformScale {
             source_skin_index: 0,
@@ -526,7 +714,10 @@ pub fn rest_bind_capability_facts(
             expected_factor: 1.0,
         },
     ) {
-        return Err("FBX capability inventory contains an unsupported rest/bind domain".into());
+        return Err(format_rest_bind_violations(
+            "projected capability",
+            &scale_capability_violations(&facts),
+        ));
     }
     Ok(facts)
 }
@@ -539,23 +730,107 @@ pub fn rest_bind_capability_facts(
 ///
 /// # Errors
 ///
-/// Returns a stable refusal when shared raw facts or the scale inventory
-/// cannot prove the selected domain.
+/// Returns a stable refusal naming each incomplete shared-raw coverage domain,
+/// unsupported construct row, semantic status, or inventory counter that
+/// prevents proof of the selected domain.
 pub fn rest_bind_capability_facts_for_source(
     source: &FbxScaleSource,
 ) -> Result<ScaleCapabilityFacts, String> {
-    let mut shared = ScaleCapabilityFacts::default();
-    shared.coverage = ScaleCapabilityCoverage::Complete;
-    shared = join_source_facts(source, shared);
-    if shared.coverage != ScaleCapabilityCoverage::Complete
-        || shared.extras_present
-        || shared.unknown_source_members_present
-        || shared.unregistered_extensions_present
-        || shared.external_resources_present
-    {
-        return Err("FBX raw-source facts cannot prove the selected rest/bind domain".into());
+    let source_facts = source.source_facts();
+    let source_counts = source.rest_bind_construct_counts;
+    let mut violations = Vec::new();
+    for (domain, state) in [
+        ("constructs", source_facts.constructs().coverage().state()),
+        ("resources", source_facts.resources().coverage().state()),
+    ] {
+        if state != SourceSetCoverageStateV1::Complete {
+            violations.push(format!(
+                "raw_source.{domain}.coverage={}",
+                source_set_coverage_state_name(state)
+            ));
+        }
     }
-    let facts = join_source_facts(source, rest_bind_capability_facts(source.inventory())?);
+    let mut saw_custom_properties = false;
+    let mut saw_unmodeled_elements = false;
+    for row in source_facts.constructs().rows() {
+        match row.kind() {
+            SourceConstructKindV1::CustomProperty
+                if row.name().as_str() == "fbx:user-defined-properties" =>
+            {
+                saw_custom_properties = true;
+                if row.count()
+                    != u64::try_from(source_counts.user_defined_property_count).unwrap_or(u64::MAX)
+                {
+                    violations.push(format!(
+                        "raw_source.construct=custom_property({}; count={})!=source:{}",
+                        row.name().as_str(),
+                        row.count(),
+                        source_counts.user_defined_property_count
+                    ));
+                }
+            }
+            SourceConstructKindV1::CustomProperty => violations.push(format!(
+                "raw_source.construct=custom_property({}; count={})",
+                row.name().as_str(),
+                row.count()
+            )),
+            SourceConstructKindV1::UnknownElement
+                if row.name().as_str() == "fbx:unmodeled-elements" =>
+            {
+                saw_unmodeled_elements = true;
+                let total_count = u64::try_from(source_counts.total_unmodeled_element_count())
+                    .unwrap_or(u64::MAX);
+                if row.count() != total_count {
+                    violations.push(format!(
+                        "raw_source.construct=unknown_element({}; count={})!=source:{}",
+                        row.name().as_str(),
+                        row.count(),
+                        total_count
+                    ));
+                } else if source_counts.unsupported_unmodeled_element_count > 0 {
+                    violations.push(format!(
+                        "raw_source.construct=unknown_element({}; count={})",
+                        row.name().as_str(),
+                        source_counts.unsupported_unmodeled_element_count
+                    ));
+                }
+            }
+            SourceConstructKindV1::UnknownElement => violations.push(format!(
+                "raw_source.construct=unknown_element({}; count={})",
+                row.name().as_str(),
+                row.count()
+            )),
+            SourceConstructKindV1::Extension => violations.push(format!(
+                "raw_source.construct=extension({}; count={})",
+                row.name().as_str(),
+                row.count()
+            )),
+        }
+    }
+    if source_counts.user_defined_property_count > 0 && !saw_custom_properties {
+        violations.push(format!(
+            "raw_source.construct=custom_property(fbx:user-defined-properties; count=0)!=source:{}",
+            source_counts.user_defined_property_count
+        ));
+    }
+    if source_counts.total_unmodeled_element_count() > 0 && !saw_unmodeled_elements {
+        violations.push(format!(
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=0)!=source:{}",
+            source_counts.total_unmodeled_element_count()
+        ));
+    }
+    if !violations.is_empty() {
+        return Err(format_rest_bind_violations("raw-source facts", &violations));
+    }
+
+    let mut facts = join_source_facts(
+        source,
+        rest_bind_capability_facts_with_construct_counts(source.inventory(), Some(source_counts))?,
+    );
+    facts.unknown_source_members_present = false;
+    facts.unregistered_extensions_present = false;
+    facts.extras_present = false;
+    facts.external_resources_present = false;
     if facts.is_supported_for(
         animsmith_core::scale::ScaleOperation::RestBindUniformScale {
             source_skin_index: 0,
@@ -565,8 +840,96 @@ pub fn rest_bind_capability_facts_for_source(
     ) {
         Ok(facts)
     } else {
-        Err("FBX raw-source facts contain an unsupported rest/bind domain".into())
+        Err(format_rest_bind_violations(
+            "joined capability",
+            &scale_capability_violations(&facts),
+        ))
     }
+}
+
+fn fbx_scale_domain_status_name(status: FbxScaleDomainStatus) -> &'static str {
+    match status {
+        FbxScaleDomainStatus::Absent => "absent",
+        FbxScaleDomainStatus::Normalized => "normalized",
+        FbxScaleDomainStatus::Baked => "baked",
+        FbxScaleDomainStatus::Derived => "derived",
+        FbxScaleDomainStatus::Rebuilt => "rebuilt",
+        FbxScaleDomainStatus::Unsupported => "unsupported",
+        FbxScaleDomainStatus::Unverifiable => "unverifiable",
+    }
+}
+
+fn source_set_coverage_state_name(state: SourceSetCoverageStateV1) -> &'static str {
+    match state {
+        SourceSetCoverageStateV1::Complete => "complete",
+        SourceSetCoverageStateV1::Partial => "partial",
+        SourceSetCoverageStateV1::Unavailable => "unavailable",
+    }
+}
+
+fn push_nonzero_violation(violations: &mut Vec<String>, name: &'static str, value: usize) {
+    if value > 0 {
+        violations.push(format!("{name}={value}"));
+    }
+}
+
+fn format_rest_bind_violations(authority: &str, violations: &[String]) -> String {
+    format!(
+        "FBX rest/bind {authority} rejected: {}",
+        violations.join("; ")
+    )
+}
+
+fn scale_capability_violations(facts: &ScaleCapabilityFacts) -> Vec<String> {
+    let mut violations = Vec::new();
+    if facts.coverage != ScaleCapabilityCoverage::Complete {
+        violations.push("coverage=unavailable".into());
+    }
+    for (name, present) in [
+        ("morphs_present", facts.morphs_present),
+        ("morph_weights_present", facts.morph_weights_present),
+        ("cameras_present", facts.cameras_present),
+        ("lights_present", facts.lights_present),
+        ("instancing_present", facts.instancing_present),
+        (
+            "unregistered_extensions_present",
+            facts.unregistered_extensions_present,
+        ),
+        ("extras_present", facts.extras_present),
+        (
+            "unknown_source_members_present",
+            facts.unknown_source_members_present,
+        ),
+        (
+            "non_triangle_primitives_present",
+            facts.non_triangle_primitives_present,
+        ),
+        (
+            "unsupported_vertex_attributes_present",
+            facts.unsupported_vertex_attributes_present,
+        ),
+        (
+            "secondary_skin_influences_present",
+            facts.secondary_skin_influences_present,
+        ),
+        (
+            "inverse_bind_issues_present",
+            facts.inverse_bind_issues_present,
+        ),
+        (
+            "unsafe_accessor_layout_present",
+            facts.unsafe_accessor_layout_present,
+        ),
+        (
+            "external_resources_present",
+            facts.external_resources_present,
+        ),
+    ] {
+        if present {
+            violations.push(format!("{name}=true"));
+        }
+    }
+    violations
 }
 
 #[derive(Debug, Default)]
@@ -684,8 +1047,9 @@ pub(crate) fn inventory(
         .map(|(index, mesh)| identity(index, &mesh.element))
         .collect::<Vec<_>>();
     let uninstanced_mesh_definition_count = uninstanced_source_meshes.len();
-    let user_defined_property_count = construct_counts.user_defined_property_count;
-    let unsupported_source_element_count = construct_counts.unsupported_source_element_count;
+    let user_defined_property_count = construct_counts.rest_bind.user_defined_property_count;
+    let unsupported_source_element_count =
+        construct_counts.rest_bind.total_unmodeled_element_count();
     let external_resource_count = scene
         .textures
         .iter()
@@ -987,16 +1351,40 @@ mod tests {
     use std::path::PathBuf;
 
     fn captured_with(configure: impl FnOnce(&mut RawSourceFactsBuilderV1)) -> FbxScaleSource {
+        captured_with_counts(configure, |_| {})
+    }
+
+    fn captured_with_counts(
+        configure: impl FnOnce(&mut RawSourceFactsBuilderV1),
+        configure_counts: impl FnOnce(&mut crate::source_facts::RestBindSourceConstructCounts),
+    ) -> FbxScaleSource {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rigged_triangle.fbx");
         let baseline = crate::load_scale_source(&fixture).expect("checked-in FBX fixture loads");
         let document = baseline.document().clone();
-        let inventory = baseline.inventory().clone();
+        let mut inventory = baseline.inventory().clone();
+        let mut rest_bind_construct_counts = baseline.rest_bind_construct_counts;
+        configure_counts(&mut rest_bind_construct_counts);
+        inventory.user_defined_property_count =
+            rest_bind_construct_counts.user_defined_property_count;
+        inventory.unsupported_source_element_count =
+            rest_bind_construct_counts.total_unmodeled_element_count();
+        inventory.domains.collision_and_custom_data = if inventory.user_defined_property_count == 0
+            && inventory.unsupported_source_element_count == 0
+        {
+            FbxScaleDomainStatus::Absent
+        } else {
+            FbxScaleDomainStatus::Unsupported
+        };
         let identity: InputIdentity = baseline.source_facts().primary_identity().clone();
         let mut builder = RawSourceFactsBuilderV1::new(SourceFormatV1::Fbx, identity);
         configure(&mut builder);
         let source = builder.finish(document).expect("synthetic raw facts bind");
-        FbxScaleSource { source, inventory }
+        FbxScaleSource {
+            source,
+            inventory,
+            rest_bind_construct_counts,
+        }
     }
 
     fn parser_provenance(path: &str) -> SourceProvenanceV1 {
@@ -1007,28 +1395,35 @@ mod tests {
 
     #[test]
     fn source_aware_rest_bind_rejects_partial_relevant_coverage() {
-        for source in [
-            captured_with(|builder| {
-                builder.mark_budget_exceeded(SourceFactDomainV1::Constructs);
-                builder.mark_complete(SourceFactDomainV1::Resources);
-            }),
-            captured_with(|builder| {
-                builder.mark_complete(SourceFactDomainV1::Constructs);
-                builder.mark_budget_exceeded(SourceFactDomainV1::Resources);
-            }),
+        for (source, expected) in [
+            (
+                captured_with(|builder| {
+                    builder.mark_budget_exceeded(SourceFactDomainV1::Constructs);
+                    builder.mark_complete(SourceFactDomainV1::Resources);
+                }),
+                "FBX rest/bind raw-source facts rejected: raw_source.constructs.coverage=partial",
+            ),
+            (
+                captured_with(|builder| {
+                    builder.mark_complete(SourceFactDomainV1::Constructs);
+                    builder.mark_budget_exceeded(SourceFactDomainV1::Resources);
+                }),
+                "FBX rest/bind raw-source facts rejected: raw_source.resources.coverage=partial",
+            ),
         ] {
-            assert!(
-                rest_bind_capability_facts_for_source(&source).is_err(),
-                "partial construct/resource coverage must fail before the operation inventory"
+            assert_eq!(
+                rest_bind_capability_facts_for_source(&source).unwrap_err(),
+                expected,
+                "partial construct/resource coverage must name the exact raw authority"
             );
         }
     }
 
     #[test]
-    fn source_aware_rest_bind_rejects_positive_shared_domains() {
+    fn source_aware_rest_bind_distinguishes_irrelevant_and_unsupported_shared_domains() {
         for kind in [
-            SourceConstructKindV1::CustomProperty,
             SourceConstructKindV1::UnknownElement,
+            SourceConstructKindV1::Extension,
         ] {
             let source = captured_with(|builder| {
                 builder.push_construct(
@@ -1046,21 +1441,58 @@ mod tests {
                 builder.mark_complete(SourceFactDomainV1::Constructs);
                 builder.mark_complete(SourceFactDomainV1::Resources);
             });
-            assert!(rest_bind_capability_facts_for_source(&source).is_err());
+            let error = rest_bind_capability_facts_for_source(&source).unwrap_err();
+            let expected = match kind {
+                SourceConstructKindV1::UnknownElement => "unknown_element",
+                SourceConstructKindV1::Extension => "extension",
+                SourceConstructKindV1::CustomProperty => unreachable!(),
+            };
+            assert_eq!(
+                error,
+                format!(
+                    "FBX rest/bind raw-source facts rejected: raw_source.construct={expected}(synthetic; count=1)"
+                )
+            );
         }
 
-        let external = captured_with(|builder| {
-            builder.mark_complete(SourceFactDomainV1::Constructs);
-            builder.push_resource(SourceResourceReferenceV1::new(
-                0,
-                SourceResourceKindV1::Texture,
-                0,
-                SourceResourceLocatorV1::classify("texture.png"),
-                SourceLoaderDispositionV1::Unknown,
-                parser_provenance("fbx:textures/0/filename"),
-            ));
-            builder.mark_complete(SourceFactDomainV1::Resources);
-        });
-        assert!(rest_bind_capability_facts_for_source(&external).is_err());
+        let custom_and_external = captured_with_counts(
+            |builder| {
+                builder.push_construct(
+                    SourceConstructFactV1::new(
+                        0,
+                        SourceConstructKindV1::CustomProperty,
+                        SourceTextV1::new("fbx:user-defined-properties")
+                            .expect("bounded test name"),
+                        false,
+                        1,
+                        SourceLoaderDispositionV1::Unsupported,
+                        parser_provenance("fbx:synthetic/property"),
+                    )
+                    .expect("positive custom-property row"),
+                );
+                builder.mark_complete(SourceFactDomainV1::Constructs);
+                builder.push_resource(SourceResourceReferenceV1::new(
+                    0,
+                    SourceResourceKindV1::Texture,
+                    0,
+                    SourceResourceLocatorV1::classify("texture.png"),
+                    SourceLoaderDispositionV1::Unknown,
+                    parser_provenance("fbx:textures/0/filename"),
+                ));
+                builder.mark_complete(SourceFactDomainV1::Resources);
+            },
+            |counts| counts.user_defined_property_count = 1,
+        );
+        let facts = rest_bind_capability_facts_for_source(&custom_and_external)
+            .expect("custom properties and external images are not scale-bearing");
+        assert!(!facts.extras_present);
+        assert!(!facts.external_resources_present);
+        assert!(facts.is_supported_for(
+            animsmith_core::scale::ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 1,
+                expected_factor: 0.01,
+            }
+        ));
     }
 }

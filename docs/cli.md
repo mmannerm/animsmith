@@ -369,8 +369,18 @@ both required. Every input must resolve that name to exactly one source node
 and exactly one source skin whose joint set contains it. Boundary whitespace
 is invalid rather than trimmed. The block accepts
 glTF/GLB plus the narrow normalized/baked FBX subset admitted by the existing
-rest-bind capability boundary, and validates the base plus every clip's
-versioned skeleton basis before
+rest-bind capability boundary. That boundary may admit user-defined FBX
+properties and bounded external texture/video declarations after same-load
+evidence proves they are not scale-bearing; it still refuses incomplete
+resource or construct coverage, unknown source elements, extensions, and every
+unsupported transform, geometry, bind, or animation fact. A refusal names the
+exact failed fact or counter. An artifact or evidence destination that names
+one of the safe source-relative dependency keys retained by the same-load
+closure is an operator error even when capture was unavailable or refused;
+symlink-mediated dependency keys stop before publication rather than resolving
+through the link, and resource-budget truncation stops rather than trusting an
+unchecked tail. Publication never replaces a source sidecar. The command
+validates the base plus every clip's versioned skeleton basis before
 remapping any keys. V7 retains v6's composition with
 `canonicalize_skin`, `ground_and_center`, and `remove_nodes`: it applies those
 normalized assembly transforms to both the staged source and the rebased clip

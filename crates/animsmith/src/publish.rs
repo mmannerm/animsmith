@@ -53,6 +53,11 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "fbx")]
+use animsmith_core::{
+    DependencyClosureCoverageReasonV1, DependencyClosureV1, DependencyReferenceTargetV1,
+    DependencyResourceRefusalReasonV1,
+};
 use animsmith_gltf::fix::{FixReport, Repair};
 
 /// Serialize one record or envelope as the pretty, newline-terminated JSON
@@ -317,18 +322,19 @@ pub(crate) fn parent_or_current(path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-/// A **destination**'s identity for distinctness checks: its canonical parent
-/// joined with its own file name.
+/// A **destination**'s identity for distinctness checks.
 ///
 /// Canonicalizing the parent collapses `.`, `..`, and symlinked directories,
-/// so two lexically different arguments naming one file compare equal. It
-/// deliberately does **not** resolve a symlinked final component, because a
-/// destination is reached by [`fs::rename`], which *replaces* the link rather
-/// than following it: publishing to `latest.glb -> store/rig.glb` leaves
-/// `store/rig.glb` untouched, so the two are genuinely different
-/// destinations. The canonical form exists for this comparison only and is
-/// never recorded in evidence: evidence keeps the operator's declared path
-/// verbatim.
+/// so two lexically different arguments naming one file compare equal. An
+/// existing non-symlink final component is canonicalized as well, which lets
+/// the filesystem apply its own case semantics. A final symlink is deliberately
+/// kept as its canonical parent plus declared file name because a destination
+/// is reached by [`fs::rename`], which *replaces* the link rather than following
+/// it: publishing to `latest.glb -> store/rig.glb` leaves `store/rig.glb`
+/// untouched, so the two are genuinely different destinations. A missing
+/// final component likewise uses the canonical parent plus its declared name.
+/// The canonical form exists for this comparison only and is never recorded in
+/// evidence: evidence keeps the operator's declared path verbatim.
 ///
 /// An **input** must not use this function — see [`input_identity`], whose
 /// doc comment carries the argument for the asymmetry.
@@ -345,10 +351,167 @@ pub(crate) fn destination_identity(path: &Path) -> Result<PathBuf, String> {
             parent.display()
         )
     })?;
+    destination_identity_below(path, parent)
+}
+
+fn destination_identity_below(path: &Path, parent: PathBuf) -> Result<PathBuf, String> {
     let file_name = path
         .file_name()
         .ok_or_else(|| format!("output {} has no file name", path.display()))?;
-    Ok(parent.join(file_name))
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_symlink() => fs::canonicalize(path)
+            .map_err(|error| format!("cannot resolve existing output {}: {error}", path.display())),
+        Ok(_) => Ok(parent.join(file_name)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(parent.join(file_name)),
+        Err(error) => Err(format!(
+            "cannot inspect existing output {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+/// Resolve a retained dependency's destination-style entry identity when its
+/// parent exists.
+///
+/// A missing intermediate directory cannot alias a publication destination:
+/// both producers have already required each destination's parent to exist.
+/// Returning `None` preserves that honest unavailable dependency without
+/// turning every unrelated invocation into an operator error. When only the
+/// final entry is missing, the existing parent plus declared name still lets
+/// the ordinary comparison reject publication to that exact key.
+#[cfg(feature = "fbx")]
+fn retained_dependency_identity(path: &Path) -> Result<Option<PathBuf>, String> {
+    let parent = parent_or_current(path);
+    let parent = match fs::canonicalize(parent) {
+        Ok(parent) => parent,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "cannot resolve external dependency directory {}: {error}",
+                parent.display()
+            ));
+        }
+    };
+    destination_identity_below(path, parent).map(Some)
+}
+
+pub(crate) struct PublicationDestination<'a> {
+    label: &'a str,
+    identity: PathBuf,
+    entry_name_probe: Option<tempfile::TempDir>,
+}
+
+impl<'a> PublicationDestination<'a> {
+    pub(crate) fn new(label: &'a str, path: &Path) -> Result<Self, String> {
+        let identity = destination_identity(path)?;
+        let needs_entry_name_probe = match fs::symlink_metadata(&identity) {
+            Ok(metadata) => metadata.file_type().is_symlink(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect existing {label} {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        let entry_name_probe = if needs_entry_name_probe {
+            let parent = identity
+                .parent()
+                .ok_or_else(|| format!("{label} {} has no parent directory", path.display()))?;
+            let file_name = identity
+                .file_name()
+                .ok_or_else(|| format!("{label} {} has no file name", path.display()))?;
+            let probe = tempfile::Builder::new()
+                .prefix(".animsmith-name-identity-")
+                .tempdir_in(parent)
+                .map_err(|error| {
+                    format!(
+                        "cannot inspect filesystem name semantics for {label} {}: {error}",
+                        path.display()
+                    )
+                })?;
+            fs::File::create(probe.path().join(file_name)).map_err(|error| {
+                format!(
+                    "cannot inspect filesystem name semantics for {label} {}: {error}",
+                    path.display()
+                )
+            })?;
+            Some(probe)
+        } else {
+            None
+        };
+        Ok(Self {
+            label,
+            identity,
+            entry_name_probe,
+        })
+    }
+
+    pub(crate) fn identity(&self) -> &Path {
+        &self.identity
+    }
+
+    pub(crate) fn aliases_destination(&self, other: &Self) -> Result<bool, String> {
+        if self.identity == other.identity {
+            return Ok(true);
+        }
+        if self.identity.parent() != other.identity.parent() {
+            return Ok(false);
+        }
+        if let Some(probe) = &self.entry_name_probe {
+            return probe_contains_name(probe, &other.identity, self.label, other.label);
+        }
+        if let Some(probe) = &other.entry_name_probe {
+            return probe_contains_name(probe, &self.identity, other.label, self.label);
+        }
+        Ok(false)
+    }
+
+    #[cfg(feature = "fbx")]
+    fn aliases(&self, dependency: &Path) -> Result<bool, String> {
+        if self.identity == dependency {
+            return Ok(true);
+        }
+        let Some(probe) = &self.entry_name_probe else {
+            return Ok(false);
+        };
+        if self.identity.parent() != dependency.parent() {
+            return Ok(false);
+        }
+        let dependency_name = dependency.file_name().ok_or_else(|| {
+            format!(
+                "external dependency {} has no file name",
+                dependency.display()
+            )
+        })?;
+        match fs::symlink_metadata(probe.path().join(dependency_name)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(format!(
+                "cannot compare external dependency {} with {} using filesystem name semantics: {error}",
+                dependency.display(),
+                self.label
+            )),
+        }
+    }
+}
+
+fn probe_contains_name(
+    probe: &tempfile::TempDir,
+    candidate: &Path,
+    probe_label: &str,
+    candidate_label: &str,
+) -> Result<bool, String> {
+    let candidate_name = candidate
+        .file_name()
+        .ok_or_else(|| format!("{candidate_label} {} has no file name", candidate.display()))?;
+    match fs::symlink_metadata(probe.path().join(candidate_name)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "cannot compare {probe_label} with {candidate_label} using filesystem name semantics: {error}"
+        )),
+    }
 }
 
 /// An **input**'s identity for distinctness checks: its fully canonical path,
@@ -383,6 +546,79 @@ pub(crate) fn destination_identity(path: &Path) -> Result<PathBuf, String> {
 /// failure it is.
 pub(crate) fn input_identity(path: &Path) -> Result<PathBuf, String> {
     fs::canonicalize(path).map_err(|error| format!("cannot read {}: {error}", path.display()))
+}
+
+/// Reject publication destinations that name a retained external dependency.
+///
+/// Rooted format loaders may consume more files than their primary input. A
+/// producer must treat every safe external key retained by the closure as
+/// source data for the same destructive-alias check it already applies to the
+/// primary input. This includes a keyed sidecar whose capture was unavailable
+/// or refused; otherwise a successful pair publication can replace that linked
+/// texture or other sidecar with the artifact or evidence record.
+///
+/// # Errors
+///
+/// Returns an operator error when the closure stopped at its resource budget,
+/// a dependency path cannot be inspected, or a key names one of the supplied
+/// destinations.
+#[cfg(feature = "fbx")]
+pub(crate) fn require_external_dependencies_safe_for_publication(
+    command: &str,
+    resource_root: &Path,
+    closure: &DependencyClosureV1,
+    destinations: &[(&str, &Path)],
+) -> Result<(), String> {
+    let destinations = destinations
+        .iter()
+        .map(|(label, path)| PublicationDestination::new(label, path))
+        .collect::<Result<Vec<_>, String>>()?;
+    if closure
+        .coverage()
+        .reasons()
+        .contains(&DependencyClosureCoverageReasonV1::ResourceBudgetExceeded)
+    {
+        return Err(format!(
+            "{command} dependency closure exceeded its resource budget, so publication cannot prove every source sidecar distinct"
+        ));
+    }
+    for reference in closure.references() {
+        let key = match reference.target() {
+            DependencyReferenceTargetV1::External { key }
+            | DependencyReferenceTargetV1::Refused { key: Some(key), .. }
+            | DependencyReferenceTargetV1::Unavailable { key: Some(key), .. } => key,
+            DependencyReferenceTargetV1::Primary
+            | DependencyReferenceTargetV1::Refused { key: None, .. }
+            | DependencyReferenceTargetV1::Unavailable { key: None, .. } => continue,
+        };
+        if matches!(
+            reference.target(),
+            DependencyReferenceTargetV1::Refused {
+                reason: DependencyResourceRefusalReasonV1::Symlink,
+                ..
+            }
+        ) {
+            return Err(format!(
+                "{command} external dependency {:?} is a symlink and cannot be published safely",
+                key.as_str()
+            ));
+        }
+        let Some(dependency) = retained_dependency_identity(&resource_root.join(key.as_str()))?
+        else {
+            continue;
+        };
+        for destination in &destinations {
+            if destination.aliases(&dependency)? {
+                return Err(format!(
+                    "{command} external dependency {:?} and {} must be different paths, but both resolve to {}",
+                    key.as_str(),
+                    destination.label,
+                    dependency.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Reject a destination whose directory does not exist, or which exists as

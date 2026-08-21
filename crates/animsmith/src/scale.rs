@@ -51,11 +51,12 @@
 //!
 //! The evidence record carries no timestamp and no canonicalized path: the
 //! operator's declared paths are recorded verbatim, and the canonical forms
-//! exist only for the three-way distinctness check. Every collection on the
-//! evidence path is ordered. Every `f64` is serialized through [`Finite`],
-//! which fails serialization rather than let `serde_json` render a `NaN` or
-//! an infinity as `null` — a false record, which DESIGN.md §D.6 forbids more
-//! strongly than a missing one.
+//! exist only for publication-safety comparisons among the input,
+//! destinations, and any retained external dependency keys. Every collection
+//! on the evidence path is ordered. Every `f64` is serialized through
+//! [`Finite`], which fails serialization rather than let `serde_json` render a
+//! `NaN` or an infinity as `null` — a false record, which DESIGN.md §D.6
+//! forbids more strongly than a missing one.
 //!
 //! # Cost
 //!
@@ -67,8 +68,10 @@
 //! per-channel, so the evidence record for such a rig is large; §D.6 asks
 //! for the raw manifest and a digest of one is not a manifest.
 
+#[cfg(feature = "fbx")]
+use crate::publish::require_external_dependencies_safe_for_publication;
 use crate::publish::{
-    destination_identity, emit, emit_error_text, emit_text, input_identity, parent_or_current,
+    PublicationDestination, emit, emit_error_text, emit_text, input_identity, parent_or_current,
     publish_pair, read_digest, require_writable_destination, serialize_record,
 };
 use crate::{Format, render};
@@ -97,7 +100,8 @@ use std::process::ExitCode;
 use animsmith_core::model::Document;
 #[cfg(feature = "fbx")]
 use animsmith_fbx::{
-    FbxScaleCapabilityInventory, load_scale_source_bytes, rest_bind_capability_facts_for_source,
+    FbxScaleCapabilityInventory, load_scale_source_bytes_with_resource_root,
+    rest_bind_capability_facts_for_source,
 };
 
 const SCALE_EVIDENCE_SCHEMA_VERSION: u32 = 4;
@@ -986,7 +990,7 @@ fn container_name(container: GltfContainerKind) -> &'static str {
 /// `latest.glb -> store/rig.glb` be handed in as the input while
 /// `store/rig.glb` is named as the output, with publication then destroying
 /// the source asset the run just read. See [`input_identity`] and
-/// [`destination_identity`].
+/// [`PublicationDestination`].
 ///
 /// This one check is the whole guard: `scale` deliberately does not also
 /// reject symlinked paths outright the way `assemble`'s `reject_symlink_path`
@@ -1001,19 +1005,21 @@ fn container_name(container: GltfContainerKind) -> &'static str {
 /// serialized.
 fn require_distinct_paths(request: &Request) -> Result<(), String> {
     let input = input_identity(&request.input)?;
-    let output = destination_identity(&request.output)?;
-    let evidence = destination_identity(&request.evidence)?;
-    for (first, second, first_label, second_label) in [
-        (&input, &output, "input", "output"),
-        (&input, &evidence, "input", "evidence"),
-        (&output, &evidence, "output", "evidence"),
-    ] {
-        if first == second {
+    let output = PublicationDestination::new("output", &request.output)?;
+    let evidence = PublicationDestination::new("evidence", &request.evidence)?;
+    for (destination, label) in [(&output, "output"), (&evidence, "evidence")] {
+        if input == destination.identity() {
             return Err(format!(
-                "scale {first_label} and {second_label} must be different paths, but both resolve to {}",
-                first.display()
+                "scale input and {label} must be different paths, but both resolve to {}",
+                input.display()
             ));
         }
+    }
+    if output.aliases_destination(&evidence)? {
+        return Err(format!(
+            "scale output and evidence must be different paths, but both resolve to {}",
+            output.identity().display()
+        ));
     }
     Ok(())
 }
@@ -1212,7 +1218,12 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
         output: request.output.display().to_string(),
         evidence: request.evidence.display().to_string(),
     };
-    let source = match load_scale_source_bytes(&request.input, &input_bytes) {
+    let resource_root = parent_or_current(&request.input);
+    let source = match load_scale_source_bytes_with_resource_root(
+        &request.input,
+        &input_bytes,
+        resource_root,
+    ) {
         Ok(source) => source,
         Err(error) => {
             return emit_fbx_rejection(
@@ -1229,6 +1240,12 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
             );
         }
     };
+    require_external_dependencies_safe_for_publication(
+        "scale",
+        resource_root,
+        source.dependency_closure(),
+        &[("output", &request.output), ("evidence", &request.evidence)],
+    )?;
     let identity = source.source_facts().primary_identity().clone();
     match rest_bind_capability_facts_for_source(&source) {
         Ok(_) => {}

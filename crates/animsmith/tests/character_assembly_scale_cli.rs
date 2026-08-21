@@ -34,6 +34,13 @@ const RECIPE_SCHEMA_V7: &str =
 const EVIDENCE_SCHEMA_V7: &str =
     include_str!("../../../docs/schemas/character-assembly-evidence-v7.schema.json");
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
+const TINY_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
+    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xA7, 0x35, 0x81, 0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82,
+];
 
 fn recipe(clip: &str) -> String {
     format!(
@@ -112,12 +119,85 @@ take = "take"
     )
 }
 
-fn unsupported_user_property_fbx() -> String {
+fn user_property_fbx() -> String {
     RIGGED_TRIANGLE_FBX.replacen(
         "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1",
         "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n\t\t\tP: \"PipelineTag\", \"KString\", \"\", \"U\",\"unsupported\"",
         1,
     )
+}
+
+fn unmodeled_pose_fbx() -> String {
+    RIGGED_TRIANGLE_FBX.replacen(
+        "\tAnimationStack: 3001",
+        concat!(
+            "\tPose: 5001, \"Pose::unsupported\", \"BindPose\" {\n",
+            "\t\tType: \"BindPose\"\n",
+            "\t\tVersion: 100\n",
+            "\t\tNbPoseNodes: 0\n",
+            "\t}\n",
+            "\tAnimationStack: 3001"
+        ),
+        1,
+    )
+}
+
+fn external_normal_texture_with_unmodeled_pose_fbx() -> String {
+    external_normal_texture_fbx().replacen(
+        "\tAnimationStack: 3001",
+        concat!(
+            "\tPose: 6001, \"Pose::unsupported\", \"BindPose\" {\n",
+            "\t\tType: \"BindPose\"\n",
+            "\t\tVersion: 100\n",
+            "\t\tNbPoseNodes: 0\n",
+            "\t}\n",
+            "\tAnimationStack: 3001"
+        ),
+        1,
+    )
+}
+
+fn external_normal_texture_fbx() -> String {
+    let source = RIGGED_TRIANGLE_FBX.replace("\r\n", "\n");
+    let source = source.replacen(
+        "\tObjectType: \"Deformer\" { Count: 2 }\n}",
+        "\tObjectType: \"Deformer\" { Count: 2 }\n\tObjectType: \"Material\" { Count: 1 }\n\tObjectType: \"Texture\" { Count: 1 }\n\tObjectType: \"Video\" { Count: 1 }\n}",
+        1,
+    );
+    let objects = r#"	Material: 5001, "Material::normal_mat", "" {
+		Version: 102
+		ShadingModel: "phong"
+		MultiLayer: 0
+	}
+	Texture: 5002, "Texture::normal", "" {
+		Type: "TextureVideoClip"
+		Version: 202
+		TextureName: "Texture::normal"
+		Media: "Video::normal"
+		FileName: "normal.png"
+		RelativeFilename: "normal.png"
+		ModelUVTranslation: 0,0
+		ModelUVScaling: 1,1
+		Texture_Alpha_Source: "None"
+		Cropping: 0,0,0,0
+	}
+	Video: 5003, "Video::normal", "Clip" {
+		Type: "Clip"
+		Properties70: {
+			P: "Path", "KString", "XRefUrl", "", "normal.png"
+		}
+		FileName: "normal.png"
+		RelativeFilename: "normal.png"
+	}
+}
+Connections: {"#;
+    source
+        .replacen("}\nConnections: {", objects, 1)
+        .replacen(
+            "Connections: {",
+            "Connections: {\n\tC: \"OO\",5001,1002\n\tC: \"OP\",5002,5001,\"NormalMap\"\n\tC: \"OO\",5003,5002",
+            1,
+        )
 }
 
 fn write_normalized_fbx_glb(path: &Path) {
@@ -311,6 +391,51 @@ fn run_to(dir: &Path, recipe: &str, output: &str, evidence: &str) -> Output {
         ])
         .output()
         .expect("runs assemble")
+}
+
+#[test]
+fn missing_assembly_destinations_use_the_filesystems_case_semantics() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    write_cubic_asset(&dir.path().join("inputs/base.glb"), 0.0);
+    write_cubic_asset(&dir.path().join("inputs/clip.glb"), 10.0);
+    std::fs::write(dir.path().join("recipe.toml"), recipe("clip.glb")).unwrap();
+
+    let probe = tempfile::tempdir_in(dir.path()).expect("filesystem-semantics probe");
+    std::fs::write(probe.path().join("character.glb"), b"probe").unwrap();
+    let case_insensitive = probe.path().join("CHARACTER.GLB").exists();
+    drop(probe);
+
+    let output = run_to(dir.path(), "recipe.toml", "character.glb", "CHARACTER.GLB");
+    if case_insensitive {
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("artifact and evidence outputs must resolve to different paths")
+        );
+        assert!(!dir.path().join("character.glb").exists());
+        assert!(!dir.path().join("CHARACTER.GLB").exists());
+    } else {
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        assert!(dir.path().join("character.glb").is_file());
+        assert!(dir.path().join("CHARACTER.GLB").is_file());
+        assert_ne!(
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            std::fs::read(dir.path().join("CHARACTER.GLB")).unwrap()
+        );
+    }
 }
 
 fn rest_worlds(document: &Document) -> Vec<Mat4> {
@@ -1554,110 +1679,286 @@ fn v4_through_v7_keep_selector_forms_required_fields_and_identities_disjoint() {
 }
 
 #[test]
-fn v6_refuses_an_incomplete_fbx_clip_inventory_atomically() {
+fn v6_and_v7_accept_scale_irrelevant_fbx_custom_properties() {
+    for (label, recipe, custom_base, custom_clip) in [
+        ("v6-base", fbx_recipe_v6("walk.fbx"), true, false),
+        ("v6-clip", fbx_recipe_v6("walk.fbx"), false, true),
+        ("v7-base", fbx_recipe_v7("walk.fbx"), true, false),
+        ("v7-clip", fbx_recipe_v7("walk.fbx"), false, true),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        std::fs::write(
+            dir.path().join("inputs/base.fbx"),
+            if custom_base {
+                user_property_fbx()
+            } else {
+                RIGGED_TRIANGLE_FBX.to_owned()
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("inputs/walk.fbx"),
+            if custom_clip {
+                user_property_fbx()
+            } else {
+                RIGGED_TRIANGLE_FBX.to_owned()
+            },
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+        let output = run(dir.path());
+        assert!(
+            output.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_schema(
+            &evidence,
+            if label.starts_with("v6") {
+                EVIDENCE_SCHEMA_V6
+            } else {
+                EVIDENCE_SCHEMA_V7
+            },
+        );
+        assert_eq!(
+            evidence["artifact"]["sha256"], evidence["rest_bind_scale"]["read_back_sha256"],
+            "{label}: the exact staged artifact remains the proven result"
+        );
+        let inputs = evidence["rest_bind_scale"]["inputs"]
+            .as_array()
+            .expect("scale evidence inputs");
+        assert_eq!(inputs.len(), 2, "{label}");
+        assert_eq!(
+            inputs[0]["source_projection"]["capability"]["user_defined_property_count"],
+            usize::from(custom_base),
+            "{label}: base projection belongs to the base input"
+        );
+        assert_eq!(
+            inputs[1]["source_projection"]["capability"]["user_defined_property_count"],
+            usize::from(custom_clip),
+            "{label}: clip projection belongs to the clip input"
+        );
+        assert!(dir.path().join("character.glb").exists(), "{label}");
+        assert!(dir.path().join("character.json").exists(), "{label}");
+    }
+}
+
+#[test]
+fn v7_accepts_external_fbx_texture_references_as_scale_irrelevant() {
     let dir = tempfile::tempdir().expect("temporary directory");
-    std::fs::create_dir(dir.path().join("inputs")).unwrap();
-    std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    std::fs::create_dir_all(dir.path().join("inputs/nested")).unwrap();
     std::fs::write(
-        dir.path().join("inputs/walk.fbx"),
-        unsupported_user_property_fbx(),
+        dir.path().join("inputs/nested/base.fbx"),
+        external_normal_texture_fbx(),
     )
     .unwrap();
-    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v6("walk.fbx")).unwrap();
-    let prior_artifact = b"prior artifact";
-    let prior_evidence = b"prior evidence";
-    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
-    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/nested/walk.fbx"),
+        RIGGED_TRIANGLE_FBX,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("inputs/nested/normal.png"), TINY_PNG).unwrap();
+    std::fs::write(dir.path().join("inputs/normal.png"), b"wrong-root decoy").unwrap();
+    let recipe = fbx_recipe_v7("nested/walk.fbx").replace(
+        "base_input = \"base.fbx\"",
+        "base_input = \"nested/base.fbx\"",
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let source = animsmith_fbx::load(&dir.path().join("inputs/nested/base.fbx"))
+        .expect("analytic external-texture FBX loads");
+    assert_eq!(
+        source.assets.materials[0]
+            .normal_texture
+            .as_ref()
+            .expect("source carries captured texture")
+            .texture
+            .bytes,
+        TINY_PNG
+    );
 
     let output = run(dir.path());
-    assert_eq!(output.status.code(), Some(1));
     assert!(
-        refusal_detail(&output).contains("FBX capability rejected input walk.fbx"),
+        output.status.success(),
         "{}",
-        refusal_detail(&output)
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    assert_eq!(
+        evidence["artifact"]["sha256"],
+        evidence["rest_bind_scale"]["read_back_sha256"]
     );
     assert_eq!(
-        std::fs::read(dir.path().join("character.glb")).unwrap(),
-        prior_artifact
+        evidence["rest_bind_scale"]["inputs"][0]["source_projection"]["capability"]["external_resource_count"],
+        2,
+        "the immutable evidence remains honest about both texture/video declarations"
     );
     assert_eq!(
-        std::fs::read(dir.path().join("character.json")).unwrap(),
-        prior_evidence
+        evidence["rest_bind_scale"]["inputs"][1]["source_projection"]["capability"]["external_resource_count"],
+        0,
+        "the clean clip keeps its own source projection rather than inheriting the base count"
+    );
+    let artifact = animsmith_gltf::load(&dir.path().join("character.glb"))
+        .expect("published artifact reloads");
+    assert_eq!(
+        artifact.assets.materials[0]
+            .normal_texture
+            .as_ref()
+            .expect("published material retains its captured normal texture")
+            .texture
+            .bytes,
+        TINY_PNG,
+        "rest/bind staging must not turn an admitted external texture into silent data loss"
     );
 }
 
 #[test]
-fn v7_refuses_an_incomplete_fbx_inventory_before_selector_use_or_publication() {
-    for (base, clip, expected_input) in [
+fn v7_refuses_a_destination_that_aliases_a_captured_fbx_dependency() {
+    for (source_role, destination, locator, output, evidence) in [
         (
-            unsupported_user_property_fbx(),
-            RIGGED_TRIANGLE_FBX.to_owned(),
-            "base.fbx",
+            "base",
+            "evidence",
+            "normal.png",
+            "character.glb",
+            "inputs/base/normal.png",
         ),
         (
-            RIGGED_TRIANGLE_FBX.to_owned(),
-            unsupported_user_property_fbx(),
-            "walk.fbx",
+            "base",
+            "output",
+            "artifact.glb",
+            "inputs/base/artifact.glb",
+            "character.json",
+        ),
+        (
+            "clip",
+            "evidence",
+            "normal.png",
+            "character.glb",
+            "inputs/clip/normal.png",
+        ),
+        (
+            "clip",
+            "output",
+            "artifact.glb",
+            "inputs/clip/artifact.glb",
+            "character.json",
         ),
     ] {
         let dir = tempfile::tempdir().expect("temporary directory");
-        std::fs::create_dir(dir.path().join("inputs")).unwrap();
-        std::fs::write(dir.path().join("inputs/base.fbx"), base).unwrap();
-        std::fs::write(dir.path().join("inputs/walk.fbx"), clip).unwrap();
-        std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
-        let prior_artifact = b"prior artifact";
-        let prior_evidence = b"prior evidence";
-        std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
-        std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+        std::fs::create_dir_all(dir.path().join("inputs/base")).unwrap();
+        std::fs::create_dir_all(dir.path().join("inputs/clip")).unwrap();
+        let external = external_normal_texture_fbx().replace("normal.png", locator);
+        std::fs::write(
+            dir.path().join("inputs/base/base.fbx"),
+            if source_role == "base" {
+                external.as_str()
+            } else {
+                RIGGED_TRIANGLE_FBX
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("inputs/clip/walk.fbx"),
+            if source_role == "clip" {
+                external.as_str()
+            } else {
+                RIGGED_TRIANGLE_FBX
+            },
+        )
+        .unwrap();
+        let dependency = dir.path().join("inputs").join(source_role).join(locator);
+        std::fs::write(&dependency, TINY_PNG).unwrap();
+        let recipe = fbx_recipe_v7("clip/walk.fbx").replace(
+            "base_input = \"base.fbx\"",
+            "base_input = \"base/base.fbx\"",
+        );
+        std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+        let (peer, prior_peer) = if destination == "evidence" {
+            (dir.path().join(output), b"prior artifact".as_slice())
+        } else {
+            (dir.path().join(evidence), b"prior evidence".as_slice())
+        };
+        std::fs::write(&peer, prior_peer).unwrap();
 
-        let output = run(dir.path());
-        assert_eq!(output.status.code(), Some(1));
+        let result = run_to(dir.path(), "recipe.toml", output, evidence);
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{source_role}/{destination} stderr:\n{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(result.stdout.is_empty(), "{source_role}/{destination}");
         assert!(
-            refusal_detail(&output)
-                .contains(&format!("FBX capability rejected input {expected_input}"))
+            String::from_utf8_lossy(&result.stderr).contains(&format!(
+                "assemble external dependency {locator:?} and {destination} must be different paths"
+            )),
+            "{source_role}/{destination} stderr:\n{}",
+            String::from_utf8_lossy(&result.stderr)
         );
         assert_eq!(
-            std::fs::read(dir.path().join("character.glb")).unwrap(),
-            prior_artifact
+            std::fs::read(dependency).unwrap(),
+            TINY_PNG,
+            "{source_role}/{destination}: assembly must not replace the source dependency"
         );
         assert_eq!(
-            std::fs::read(dir.path().join("character.json")).unwrap(),
-            prior_evidence
+            std::fs::read(peer).unwrap(),
+            prior_peer,
+            "{source_role}/{destination}: refusal must preserve the non-aliased peer"
         );
     }
 }
 
 #[test]
-fn v6_refuses_an_incomplete_fbx_base_inventory_atomically() {
+fn v7_external_texture_does_not_mask_a_real_unmodeled_construct() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
     std::fs::write(
-        dir.path().join("inputs/base.fbx"),
-        unsupported_user_property_fbx(),
+        dir.path().join("inputs/walk.fbx"),
+        external_normal_texture_with_unmodeled_pose_fbx(),
     )
     .unwrap();
-    std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
-    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v6("walk.fbx")).unwrap();
-    let prior_artifact = b"prior artifact";
-    let prior_evidence = b"prior evidence";
-    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
-    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+    std::fs::write(dir.path().join("inputs/normal.png"), TINY_PNG).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
 
     let output = run(dir.path());
     assert_eq!(output.status.code(), Some(1));
-    assert!(
-        refusal_detail(&output).contains("FBX capability rejected input base.fbx"),
-        "{}",
-        refusal_detail(&output)
-    );
     assert_eq!(
-        std::fs::read(dir.path().join("character.glb")).unwrap(),
-        prior_artifact
+        refusal_detail(&output),
+        concat!(
+            "rest_bind_scale FBX capability rejected input walk.fbx: ",
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1)"
+        )
     );
+    assert!(!dir.path().join("character.glb").exists());
+    assert!(!dir.path().join("character.json").exists());
+}
+
+#[test]
+fn v7_fbx_capability_refusal_names_the_exact_unsupported_source_fact() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), unmodeled_pose_fbx()).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
     assert_eq!(
-        std::fs::read(dir.path().join("character.json")).unwrap(),
-        prior_evidence
+        refusal_detail(&output),
+        concat!(
+            "rest_bind_scale FBX capability rejected input walk.fbx: ",
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1)"
+        )
     );
+    assert!(!dir.path().join("character.glb").exists());
+    assert!(!dir.path().join("character.json").exists());
 }
 
 #[test]
