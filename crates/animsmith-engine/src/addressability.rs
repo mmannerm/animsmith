@@ -656,8 +656,10 @@ impl GltfAnimationAddressabilityInventoryV1 {
     /// # Errors
     ///
     /// Returns [`GltfAnimationAddressabilityError::UnsupportedSourceFormat`] for
-    /// a non-glTF source. Loader-valid glTF/GLB sidecars already satisfy all
-    /// other collection, text, ordering, and closure invariants.
+    /// a non-glTF source and [`GltfAnimationAddressabilityError::TooManyAnimations`]
+    /// when the normalized document exceeds the V1 limit of 4,096 clips.
+    /// Other loader-valid glTF/GLB sidecars already satisfy the retained
+    /// collection, text, ordering, and closure invariants.
     pub fn from_source(source: &LoadedSource) -> Result<Self, GltfAnimationAddressabilityError> {
         let facts = source.source_facts();
         require_gltf(facts.format())?;
