@@ -202,6 +202,12 @@ impl SettingId {
     }
 }
 
+impl std::fmt::Display for SettingId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// A known importer control relevant to source-to-target conversion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConversionControl {
