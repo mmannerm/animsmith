@@ -205,8 +205,8 @@ both the declared name and every resolved name/index tuple.
 
 ```toml
 [dependencies]
-animsmith-core = "0.3"
-animsmith-gltf = "0.3"
+animsmith-core = "0.4"
+animsmith-gltf = "0.4"
 ```
 
 The compiling load/check and repair examples live in the crate-level API
