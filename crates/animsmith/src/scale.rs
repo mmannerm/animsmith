@@ -71,7 +71,7 @@
 #[cfg(feature = "fbx")]
 use crate::publish::require_external_dependencies_safe_for_publication;
 use crate::publish::{
-    destination_identity, emit, emit_error_text, emit_text, input_identity, parent_or_current,
+    PublicationDestination, emit, emit_error_text, emit_text, input_identity, parent_or_current,
     publish_pair, read_digest, require_writable_destination, serialize_record,
 };
 use crate::{Format, render};
@@ -1005,19 +1005,21 @@ fn container_name(container: GltfContainerKind) -> &'static str {
 /// serialized.
 fn require_distinct_paths(request: &Request) -> Result<(), String> {
     let input = input_identity(&request.input)?;
-    let output = destination_identity(&request.output)?;
-    let evidence = destination_identity(&request.evidence)?;
-    for (first, second, first_label, second_label) in [
-        (&input, &output, "input", "output"),
-        (&input, &evidence, "input", "evidence"),
-        (&output, &evidence, "output", "evidence"),
-    ] {
-        if first == second {
+    let output = PublicationDestination::new("output", &request.output)?;
+    let evidence = PublicationDestination::new("evidence", &request.evidence)?;
+    for (destination, label) in [(&output, "output"), (&evidence, "evidence")] {
+        if input == destination.identity() {
             return Err(format!(
-                "scale {first_label} and {second_label} must be different paths, but both resolve to {}",
-                first.display()
+                "scale input and {label} must be different paths, but both resolve to {}",
+                input.display()
             ));
         }
+    }
+    if output.aliases_destination(&evidence)? {
+        return Err(format!(
+            "scale output and evidence must be different paths, but both resolve to {}",
+            output.identity().display()
+        ));
     }
     Ok(())
 }

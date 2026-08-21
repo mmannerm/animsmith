@@ -8,7 +8,7 @@ use crate::material_recipe::{
     MaterialTextureRecipeEvidence, apply_material_texture_recipe_in_root,
 };
 use crate::publish::{
-    destination_identity, emit, emit_text, parent_or_current, publish_pair, read_digest,
+    PublicationDestination, emit, emit_text, parent_or_current, publish_pair, read_digest,
     require_external_dependencies_safe_for_publication, require_writable_destination,
     serialize_record,
 };
@@ -1232,18 +1232,17 @@ fn assemble_inner(
             "assemble output must use the .glb extension",
         ));
     }
-    if output == evidence_output {
-        return Err(Failure::operator(
-            "artifact and evidence outputs must be different paths",
-        ));
-    }
     let output_parent = parent_or_current(output);
     let evidence_parent = parent_or_current(evidence_output);
     require_writable_destination(output).operator()?;
     require_writable_destination(evidence_output).operator()?;
-    let output_identity = destination_identity(output).operator()?;
-    let evidence_identity = destination_identity(evidence_output).operator()?;
-    if output_identity == evidence_identity {
+    let output_destination = PublicationDestination::new("artifact", output).operator()?;
+    let evidence_destination =
+        PublicationDestination::new("evidence", evidence_output).operator()?;
+    if output_destination
+        .aliases_destination(&evidence_destination)
+        .operator()?
+    {
         return Err(Failure::operator(
             "artifact and evidence outputs must resolve to different paths",
         ));

@@ -1994,6 +1994,37 @@ fn two_arguments_naming_one_file_are_an_operator_error() {
     assert!(!fixture.path("out.json").exists());
 }
 
+#[test]
+fn missing_output_names_use_the_destination_filesystems_case_semantics() {
+    let fixture = Fixture::new();
+    let probe = tempfile::tempdir_in(fixture.dir.path()).expect("filesystem-semantics probe");
+    std::fs::write(probe.path().join("out.glb"), b"probe").unwrap();
+    let case_insensitive = probe.path().join("OUT.GLB").exists();
+    drop(probe);
+
+    let run = rest_bind_paths(&fixture, "rig.glb", "out.glb", "OUT.GLB");
+    if case_insensitive {
+        assert_eq!(run.status.code(), Some(2), "stderr:\n{}", stderr(&run));
+        assert!(run.stdout.is_empty());
+        assert!(
+            stderr(&run).contains("scale output and evidence must be different paths"),
+            "stderr:\n{}",
+            stderr(&run)
+        );
+        assert!(!fixture.path("out.glb").exists());
+        assert!(!fixture.path("OUT.GLB").exists());
+    } else {
+        assert_eq!(run.status.code(), Some(0), "stderr:\n{}", stderr(&run));
+        assert!(run.stderr.is_empty());
+        assert!(fixture.path("out.glb").is_file());
+        assert!(fixture.path("OUT.GLB").is_file());
+        assert_ne!(
+            std::fs::read(fixture.path("out.glb")).unwrap(),
+            std::fs::read(fixture.path("OUT.GLB")).unwrap()
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_symlinked_input_aliasing_a_destination_is_refused_before_the_asset_is_destroyed() {

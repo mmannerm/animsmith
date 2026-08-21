@@ -393,6 +393,51 @@ fn run_to(dir: &Path, recipe: &str, output: &str, evidence: &str) -> Output {
         .expect("runs assemble")
 }
 
+#[test]
+fn missing_assembly_destinations_use_the_filesystems_case_semantics() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    write_cubic_asset(&dir.path().join("inputs/base.glb"), 0.0);
+    write_cubic_asset(&dir.path().join("inputs/clip.glb"), 10.0);
+    std::fs::write(dir.path().join("recipe.toml"), recipe("clip.glb")).unwrap();
+
+    let probe = tempfile::tempdir_in(dir.path()).expect("filesystem-semantics probe");
+    std::fs::write(probe.path().join("character.glb"), b"probe").unwrap();
+    let case_insensitive = probe.path().join("CHARACTER.GLB").exists();
+    drop(probe);
+
+    let output = run_to(dir.path(), "recipe.toml", "character.glb", "CHARACTER.GLB");
+    if case_insensitive {
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("artifact and evidence outputs must resolve to different paths")
+        );
+        assert!(!dir.path().join("character.glb").exists());
+        assert!(!dir.path().join("CHARACTER.GLB").exists());
+    } else {
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        assert!(dir.path().join("character.glb").is_file());
+        assert!(dir.path().join("CHARACTER.GLB").is_file());
+        assert_ne!(
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            std::fs::read(dir.path().join("CHARACTER.GLB")).unwrap()
+        );
+    }
+}
+
 fn rest_worlds(document: &Document) -> Vec<Mat4> {
     let mut worlds = Vec::with_capacity(document.skeleton.bones.len());
     for bone in &document.skeleton.bones {

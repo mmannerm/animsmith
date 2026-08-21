@@ -395,43 +395,18 @@ fn retained_dependency_identity(path: &Path) -> Result<Option<PathBuf>, String> 
     destination_identity_below(path, parent).map(Some)
 }
 
-#[cfg(feature = "fbx")]
-struct PublicationDestination<'a> {
+pub(crate) struct PublicationDestination<'a> {
     label: &'a str,
     identity: PathBuf,
-    missing_name_probe: Option<tempfile::TempDir>,
+    entry_name_probe: Option<tempfile::TempDir>,
 }
 
-#[cfg(feature = "fbx")]
 impl<'a> PublicationDestination<'a> {
-    fn new(label: &'a str, path: &Path) -> Result<Self, String> {
+    pub(crate) fn new(label: &'a str, path: &Path) -> Result<Self, String> {
         let identity = destination_identity(path)?;
-        let missing_name_probe = match fs::symlink_metadata(&identity) {
-            Ok(_) => None,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let parent = identity
-                    .parent()
-                    .ok_or_else(|| format!("{label} {} has no parent directory", path.display()))?;
-                let file_name = identity
-                    .file_name()
-                    .ok_or_else(|| format!("{label} {} has no file name", path.display()))?;
-                let probe = tempfile::Builder::new()
-                    .prefix(".animsmith-name-identity-")
-                    .tempdir_in(parent)
-                    .map_err(|error| {
-                        format!(
-                            "cannot inspect filesystem name semantics for {label} {}: {error}",
-                            path.display()
-                        )
-                    })?;
-                fs::File::create(probe.path().join(file_name)).map_err(|error| {
-                    format!(
-                        "cannot inspect filesystem name semantics for {label} {}: {error}",
-                        path.display()
-                    )
-                })?;
-                Some(probe)
-            }
+        let needs_entry_name_probe = match fs::symlink_metadata(&identity) {
+            Ok(metadata) => metadata.file_type().is_symlink(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
             Err(error) => {
                 return Err(format!(
                     "cannot inspect existing {label} {}: {error}",
@@ -439,18 +414,65 @@ impl<'a> PublicationDestination<'a> {
                 ));
             }
         };
+        let entry_name_probe = if needs_entry_name_probe {
+            let parent = identity
+                .parent()
+                .ok_or_else(|| format!("{label} {} has no parent directory", path.display()))?;
+            let file_name = identity
+                .file_name()
+                .ok_or_else(|| format!("{label} {} has no file name", path.display()))?;
+            let probe = tempfile::Builder::new()
+                .prefix(".animsmith-name-identity-")
+                .tempdir_in(parent)
+                .map_err(|error| {
+                    format!(
+                        "cannot inspect filesystem name semantics for {label} {}: {error}",
+                        path.display()
+                    )
+                })?;
+            fs::File::create(probe.path().join(file_name)).map_err(|error| {
+                format!(
+                    "cannot inspect filesystem name semantics for {label} {}: {error}",
+                    path.display()
+                )
+            })?;
+            Some(probe)
+        } else {
+            None
+        };
         Ok(Self {
             label,
             identity,
-            missing_name_probe,
+            entry_name_probe,
         })
     }
 
+    pub(crate) fn identity(&self) -> &Path {
+        &self.identity
+    }
+
+    pub(crate) fn aliases_destination(&self, other: &Self) -> Result<bool, String> {
+        if self.identity == other.identity {
+            return Ok(true);
+        }
+        if self.identity.parent() != other.identity.parent() {
+            return Ok(false);
+        }
+        if let Some(probe) = &self.entry_name_probe {
+            return probe_contains_name(probe, &other.identity, self.label, other.label);
+        }
+        if let Some(probe) = &other.entry_name_probe {
+            return probe_contains_name(probe, &self.identity, other.label, self.label);
+        }
+        Ok(false)
+    }
+
+    #[cfg(feature = "fbx")]
     fn aliases(&self, dependency: &Path) -> Result<bool, String> {
         if self.identity == dependency {
             return Ok(true);
         }
-        let Some(probe) = &self.missing_name_probe else {
+        let Some(probe) = &self.entry_name_probe else {
             return Ok(false);
         };
         if self.identity.parent() != dependency.parent() {
@@ -471,6 +493,24 @@ impl<'a> PublicationDestination<'a> {
                 self.label
             )),
         }
+    }
+}
+
+fn probe_contains_name(
+    probe: &tempfile::TempDir,
+    candidate: &Path,
+    probe_label: &str,
+    candidate_label: &str,
+) -> Result<bool, String> {
+    let candidate_name = candidate
+        .file_name()
+        .ok_or_else(|| format!("{candidate_label} {} has no file name", candidate.display()))?;
+    match fs::symlink_metadata(probe.path().join(candidate_name)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "cannot compare {probe_label} with {candidate_label} using filesystem name semantics: {error}"
+        )),
     }
 }
 
