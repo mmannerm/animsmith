@@ -293,6 +293,22 @@ fn write_reindexed_and_reskinned_glb(path: &Path) {
     std::fs::write(path, glb).unwrap();
 }
 
+fn normalized_fbx_stage_bytes(dir: &Path, name: &str, source: &[u8]) -> Vec<u8> {
+    let document = animsmith_fbx::load_bytes(Path::new("source.fbx"), source)
+        .expect("analytic FBX fixture loads");
+    let stage = dir.join(format!("expected-private-{name}-stage.glb"));
+    animsmith_gltf::write::write(&document, &stage).expect("normalized FBX fixture stages as GLB");
+    std::fs::read(stage).expect("reads independently staged normalized FBX GLB")
+}
+
+fn translated_fbx_clip() -> String {
+    RIGGED_TRIANGLE_FBX.replacen(
+        "KeyValueFloat: *2 { a: 0,100 }",
+        "KeyValueFloat: *2 { a: 0,200 }",
+        1,
+    )
+}
+
 fn write_cubic_asset_from(path: &Path, bytes: &[u8], offset: f32) {
     let mut document = animsmith_gltf::load_bytes(Path::new("source.glb"), bytes).unwrap();
     let track = document.clips[0]
@@ -1098,11 +1114,45 @@ fn v5_active_block_keeps_its_fbx_refusal_and_preserves_a_prior_pair() {
 }
 
 #[test]
+fn v5_active_block_refuses_an_fbx_clip_with_a_gltf_base() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.glb"),
+        rest_bind_scale_rig_glb(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    let recipe = recipe_v5("walk.fbx");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("rest_bind_scale input walk.fbx is not glTF/GLB")
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[test]
 fn v6_assembles_eligible_fbx_base_and_clip_through_one_proved_glb() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
     std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
-    std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
+    let clip_fbx = translated_fbx_clip();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), &clip_fbx).unwrap();
     let recipe = fbx_recipe_v6("walk.fbx");
     let recipe_value: toml::Value = toml::from_str(&recipe).unwrap();
     assert_schema(
@@ -1131,12 +1181,25 @@ fn v6_assembles_eligible_fbx_base_and_clip_through_one_proved_glb() {
     assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
     let scale = &evidence["rest_bind_scale"];
     assert!(scale.get("declared_root_node_name").is_none());
+    let expected_stages = [
+        normalized_fbx_stage_bytes(dir.path(), "base", RIGGED_TRIANGLE_FBX.as_bytes()),
+        normalized_fbx_stage_bytes(dir.path(), "clip", clip_fbx.as_bytes()),
+    ];
+    assert_ne!(
+        sha256_hex(&expected_stages[0]),
+        sha256_hex(&expected_stages[1])
+    );
     assert_eq!(scale["read_back_sha256"], evidence["artifact"]["sha256"]);
     assert_eq!(scale["proof"]["proof"]["read_back_digest_matches"], true);
     assert_eq!(scale["inputs"].as_array().unwrap().len(), 2);
-    for (input, role, declared) in [
-        (&scale["inputs"][0], "base", "base.fbx"),
-        (&scale["inputs"][1], "clip:walk", "walk.fbx"),
+    for (input, role, declared, expected_stage) in [
+        (&scale["inputs"][0], "base", "base.fbx", &expected_stages[0]),
+        (
+            &scale["inputs"][1],
+            "clip:walk",
+            "walk.fbx",
+            &expected_stages[1],
+        ),
     ] {
         assert_eq!(input["role"], role);
         assert_eq!(input["declared_path"], declared);
@@ -1157,7 +1220,14 @@ fn v6_assembles_eligible_fbx_base_and_clip_through_one_proved_glb() {
             projection["capability"]["domains"]["translation_animation"],
             "baked"
         );
-        assert!(projection["staged_source"]["bytes"].as_u64().unwrap() > 0);
+        assert_eq!(
+            projection["staged_source"]["sha256"],
+            sha256_hex(expected_stage)
+        );
+        assert_eq!(
+            projection["staged_source"]["bytes"],
+            u64::try_from(expected_stage.len()).unwrap()
+        );
     }
     let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
     assert_eq!(assembled.clips.len(), 1);
@@ -2059,10 +2129,51 @@ fn v6_accepts_mixed_fbx_and_glb_inputs_in_both_directions() {
         let inputs = evidence["rest_bind_scale"]["inputs"].as_array().unwrap();
         assert_eq!(inputs[0]["input_format"], expected_formats[0]);
         assert_eq!(inputs[1]["input_format"], expected_formats[1]);
+        for input in inputs {
+            assert_eq!(
+                input["source_projection"]["kind"],
+                if input["input_format"] == "fbx" {
+                    "normalized-baked-fbx"
+                } else {
+                    "raw-gltf"
+                }
+            );
+        }
         assert_eq!(
             evidence["rest_bind_scale"]["read_back_sha256"],
             evidence["artifact"]["sha256"]
         );
+    }
+}
+
+#[test]
+fn v6_records_gltf_inputs_as_raw_gltf_projections() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let bytes = rest_bind_scale_rig_gltf();
+    std::fs::write(dir.path().join("inputs/base.gltf"), &bytes).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.gltf"), bytes).unwrap();
+    let recipe = recipe("walk.gltf")
+        .replace("base.glb", "base.gltf")
+        .replacen("schema_version = 4", "schema_version = 6", 1)
+        .replacen(
+            "urn:animsmith:schema:character-assembly-recipe:4",
+            "urn:animsmith:schema:character-assembly-recipe:6",
+            1,
+        );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V6);
+    for input in evidence["rest_bind_scale"]["inputs"].as_array().unwrap() {
+        assert_eq!(input["input_format"], "gltf");
+        assert_eq!(input["source_projection"]["kind"], "raw-gltf");
     }
 }
 
