@@ -376,7 +376,7 @@ pub(crate) struct RestBindSourceConstructCounts {
     pub(crate) user_defined_property_count: usize,
     pub(crate) safe_texture_file_link_count: usize,
     admitted_unmodeled_element_count: usize,
-    unsupported_unmodeled_element_counts: [(&'static str, usize); 21],
+    unsupported_unmodeled_element_counts: [(&'static str, usize); 24],
 }
 
 impl RestBindSourceConstructCounts {
@@ -423,10 +423,241 @@ pub(crate) fn construct_counts(scene: &ufbx::Scene) -> SourceConstructCounts {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct BindPoseReconciliationCounts {
+    admitted: usize,
+    non_bind: usize,
+    incomplete: usize,
+    ambiguous: usize,
+    non_finite: usize,
+    mismatched: usize,
+    allocation_budget_exceeded: usize,
+}
+
+const MAX_BIND_POSE_RECONCILIATION_NODES: usize = 65_536;
+const MAX_BIND_POSE_RECONCILIATION_CLUSTERS: usize = 65_536;
+
+#[derive(Debug, Clone, Copy)]
+enum BindPoseReconciliation {
+    Admitted,
+    NonBind,
+    Incomplete,
+    Ambiguous,
+    NonFinite,
+    Mismatched,
+}
+
+/// Reconcile ufbx's converted BindPose matrices with the converted matrices
+/// that feed the normalized rest/bind bridge.
+///
+/// ufbx uses a BindPose row to fill `SkinCluster::bind_to_world` only when the
+/// cluster did not carry its own matrix. Otherwise both values remain
+/// independently observable after the same axis/unit conversion. Cluster
+/// bones therefore compare against that exact bind input; other PoseNodes
+/// compare against the normalized node rest-world input. Other pose kinds
+/// remain outside this narrow admission contract.
+fn reconcile_bind_poses(scene: &ufbx::Scene) -> BindPoseReconciliationCounts {
+    let bind_pose_count = scene.poses.iter().filter(|pose| pose.is_bind_pose).count();
+    let non_bind_pose_count = scene.poses.len().saturating_sub(bind_pose_count);
+    if bind_pose_count == 0 {
+        return BindPoseReconciliationCounts {
+            non_bind: non_bind_pose_count,
+            ..BindPoseReconciliationCounts::default()
+        };
+    }
+    if !bind_pose_reconciliation_allocation_within_budget(
+        scene.nodes.len(),
+        scene.skin_clusters.len(),
+    ) {
+        return BindPoseReconciliationCounts {
+            non_bind: non_bind_pose_count,
+            allocation_budget_exceeded: bind_pose_count,
+            ..BindPoseReconciliationCounts::default()
+        };
+    }
+
+    let mut bind_pose_coverage = vec![0u8; scene.nodes.len()];
+    for pose in &scene.poses {
+        if !pose.is_bind_pose {
+            continue;
+        }
+        for bone_pose in &pose.bone_poses {
+            let Ok(node_index) = usize::try_from(bone_pose.bone_node.element.typed_id) else {
+                continue;
+            };
+            if let Some(coverage) = bind_pose_coverage.get_mut(node_index) {
+                *coverage = coverage.saturating_add(1);
+            }
+        }
+    }
+
+    let mut clusters_by_node = vec![Vec::new(); scene.nodes.len()];
+    for (cluster_index, cluster) in scene.skin_clusters.iter().enumerate() {
+        let Some(bone_node) = &cluster.bone_node else {
+            continue;
+        };
+        let Ok(node_index) = usize::try_from(bone_node.element.typed_id) else {
+            continue;
+        };
+        if let Some(indices) = clusters_by_node.get_mut(node_index) {
+            indices.push(cluster_index);
+        }
+    }
+
+    let mut counts = BindPoseReconciliationCounts::default();
+    for pose in &scene.poses {
+        let outcome = reconcile_bind_pose(scene, pose, &bind_pose_coverage, &clusters_by_node);
+        match outcome {
+            BindPoseReconciliation::Admitted => counts.admitted = counts.admitted.saturating_add(1),
+            BindPoseReconciliation::NonBind => counts.non_bind = counts.non_bind.saturating_add(1),
+            BindPoseReconciliation::Incomplete => {
+                counts.incomplete = counts.incomplete.saturating_add(1)
+            }
+            BindPoseReconciliation::Ambiguous => {
+                counts.ambiguous = counts.ambiguous.saturating_add(1)
+            }
+            BindPoseReconciliation::NonFinite => {
+                counts.non_finite = counts.non_finite.saturating_add(1)
+            }
+            BindPoseReconciliation::Mismatched => {
+                counts.mismatched = counts.mismatched.saturating_add(1)
+            }
+        }
+    }
+    counts
+}
+
+fn bind_pose_reconciliation_allocation_within_budget(
+    node_count: usize,
+    cluster_count: usize,
+) -> bool {
+    node_count <= MAX_BIND_POSE_RECONCILIATION_NODES
+        && cluster_count <= MAX_BIND_POSE_RECONCILIATION_CLUSTERS
+}
+
+fn reconcile_bind_pose(
+    scene: &ufbx::Scene,
+    pose: &ufbx::Pose,
+    bind_pose_coverage: &[u8],
+    clusters_by_node: &[Vec<usize>],
+) -> BindPoseReconciliation {
+    if !pose.is_bind_pose {
+        return BindPoseReconciliation::NonBind;
+    }
+    if pose.bone_poses.is_empty() {
+        return BindPoseReconciliation::Incomplete;
+    }
+
+    for skin in &scene.skin_deformers {
+        if skin.clusters.is_empty() {
+            continue;
+        }
+        let covered = skin
+            .clusters
+            .iter()
+            .filter(|cluster| {
+                cluster
+                    .bone_node
+                    .as_ref()
+                    .and_then(|node| ufbx::get_bone_pose(pose, node))
+                    .is_some()
+            })
+            .count();
+        if covered > 0 && covered != skin.clusters.len() {
+            return BindPoseReconciliation::Incomplete;
+        }
+    }
+
+    let mut previous_node = None;
+    for bone_pose in &pose.bone_poses {
+        let Ok(node_index) = usize::try_from(bone_pose.bone_node.element.typed_id) else {
+            return BindPoseReconciliation::Ambiguous;
+        };
+        if previous_node == Some(node_index)
+            || bind_pose_coverage.get(node_index).copied() != Some(1)
+        {
+            return BindPoseReconciliation::Ambiguous;
+        }
+        previous_node = Some(node_index);
+
+        if !matrix_is_finite(&bone_pose.bone_to_world) {
+            return BindPoseReconciliation::NonFinite;
+        }
+        let Some(node) = scene.nodes.get(node_index) else {
+            return BindPoseReconciliation::Ambiguous;
+        };
+        let Some(cluster_indices) = clusters_by_node.get(node_index) else {
+            return BindPoseReconciliation::Ambiguous;
+        };
+        if cluster_indices.is_empty() {
+            let outcome = compare_bind_pose_matrix(&bone_pose.bone_to_world, &node.node_to_world);
+            if !matches!(outcome, BindPoseReconciliation::Admitted) {
+                return outcome;
+            }
+            continue;
+        }
+        for cluster_index in cluster_indices {
+            let Some(cluster) = scene.skin_clusters.get(*cluster_index) else {
+                return BindPoseReconciliation::Ambiguous;
+            };
+            let outcome =
+                compare_bind_pose_matrix(&bone_pose.bone_to_world, &cluster.bind_to_world);
+            if !matches!(outcome, BindPoseReconciliation::Admitted) {
+                return outcome;
+            }
+        }
+    }
+    BindPoseReconciliation::Admitted
+}
+
+fn compare_bind_pose_matrix(
+    actual: &ufbx::Matrix,
+    expected: &ufbx::Matrix,
+) -> BindPoseReconciliation {
+    if !matrix_is_finite(expected) {
+        BindPoseReconciliation::NonFinite
+    } else if !matrices_approximately_equal(actual, expected) {
+        BindPoseReconciliation::Mismatched
+    } else {
+        BindPoseReconciliation::Admitted
+    }
+}
+
+fn matrix_is_finite(matrix: &ufbx::Matrix) -> bool {
+    matrix_components(matrix).into_iter().all(f64::is_finite)
+}
+
+fn matrices_approximately_equal(left: &ufbx::Matrix, right: &ufbx::Matrix) -> bool {
+    matrix_components(left)
+        .into_iter()
+        .zip(matrix_components(right))
+        .all(|(left, right)| {
+            left.is_finite()
+                && right.is_finite()
+                && scalar_difference_within_tolerance(
+                    (left - right).abs(),
+                    left.abs().max(right.abs()),
+                )
+        })
+}
+
+fn scalar_difference_within_tolerance(difference: f64, magnitude: f64) -> bool {
+    let policy = animsmith_core::scale::ScaleTolerancePolicy::APPENDIX_D_V6;
+    difference <= policy.scalar_absolute + policy.scalar_relative * magnitude
+}
+
+fn matrix_components(matrix: &ufbx::Matrix) -> [f64; 12] {
+    [
+        matrix.m00, matrix.m10, matrix.m20, matrix.m01, matrix.m11, matrix.m21, matrix.m02,
+        matrix.m12, matrix.m22, matrix.m03, matrix.m13, matrix.m23,
+    ]
+}
+
 /// Classify every field in `ufbx::Scene` at one exhaustive structural
 /// boundary. Omitting `..` is deliberate: a ufbx upgrade that adds a typed
 /// list must fail to compile until that list receives a classification.
 fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceConstructCounts {
+    let bind_poses = reconcile_bind_poses(scene);
     let ufbx::Scene {
         metadata: _,
         settings: _,
@@ -463,13 +694,15 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceCons
         cache_deformers: _,
         cache_files,
         // The loader rebuilds its documented material/texture subset;
-        // external payload absence is counted separately.
+        // external payload absence is counted separately. Shader records are
+        // material-evaluation metadata and do not feed the rest/bind bridge.
         materials: _,
         textures: _,
         videos: _,
         shaders,
         shader_bindings,
-        // Animation lists are evaluated through bake_anim.
+        // Animation lists are evaluated through bake_anim. Pose records are
+        // admitted only after same-parse matrix reconciliation above.
         anim_stacks: _,
         anim_layers: _,
         anim_values: _,
@@ -481,7 +714,7 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceCons
         constraints,
         audio_layers,
         audio_clips,
-        poses,
+        poses: _,
         metadata_objects,
         // ufbx derives this deduplicated file view from `textures`; keep its
         // count as same-parse admission evidence rather than projecting a
@@ -508,7 +741,10 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceCons
             .len()
             .saturating_add(camera_switchers.len())
             .saturating_add(markers.len())
-            .saturating_add(lod_groups.len()),
+            .saturating_add(lod_groups.len())
+            .saturating_add(shaders.len())
+            .saturating_add(shader_bindings.len())
+            .saturating_add(bind_poses.admitted),
         // Keep the diagnostic label and parser count together. Because every
         // destructured residual list is consumed here, compiler warnings also
         // fail a future edit that binds a ufbx list without classifying it.
@@ -523,8 +759,6 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceCons
             ("blend_channels", blend_channels.len()),
             ("blend_shapes", blend_shapes.len()),
             ("cache_files", cache_files.len()),
-            ("shaders", shaders.len()),
-            ("shader_bindings", shader_bindings.len()),
             ("display_layers", display_layers.len()),
             ("selection_sets", selection_sets.len()),
             ("selection_nodes", selection_nodes.len()),
@@ -532,7 +766,15 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceCons
             ("constraints", constraints.len()),
             ("audio_layers", audio_layers.len()),
             ("audio_clips", audio_clips.len()),
-            ("poses", poses.len()),
+            ("non_bind_poses", bind_poses.non_bind),
+            ("incomplete_bind_poses", bind_poses.incomplete),
+            ("ambiguous_bind_poses", bind_poses.ambiguous),
+            ("non_finite_bind_poses", bind_poses.non_finite),
+            ("mismatched_bind_poses", bind_poses.mismatched),
+            (
+                "bind_pose_reconciliation_budget_exceeded",
+                bind_poses.allocation_budget_exceeded,
+            ),
             ("metadata_objects", metadata_objects.len()),
         ],
     }
@@ -807,4 +1049,72 @@ fn decimal_len_u64(mut value: u64) -> usize {
         digits += 1;
     }
     digits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn matrix_with_component(index: usize, value: f64) -> ufbx::Matrix {
+        let mut matrix = ufbx::Matrix::default();
+        match index {
+            0 => matrix.m00 = value,
+            1 => matrix.m10 = value,
+            2 => matrix.m20 = value,
+            3 => matrix.m01 = value,
+            4 => matrix.m11 = value,
+            5 => matrix.m21 = value,
+            6 => matrix.m02 = value,
+            7 => matrix.m12 = value,
+            8 => matrix.m22 = value,
+            9 => matrix.m03 = value,
+            10 => matrix.m13 = value,
+            11 => matrix.m23 = value,
+            _ => panic!("matrix component index out of range"),
+        }
+        matrix
+    }
+
+    #[test]
+    fn matrix_reconciliation_checks_all_twelve_affine_components() {
+        for index in 0..12 {
+            assert!(matrices_approximately_equal(
+                &matrix_with_component(index, 5.0e-7),
+                &ufbx::Matrix::default(),
+            ));
+            assert!(!matrices_approximately_equal(
+                &matrix_with_component(index, 2.0e-6),
+                &ufbx::Matrix::default(),
+            ));
+        }
+    }
+
+    #[test]
+    fn scalar_reconciliation_includes_the_exact_absolute_and_relative_boundary() {
+        let policy = animsmith_core::scale::ScaleTolerancePolicy::APPENDIX_D_V6;
+        for magnitude in [0.0, 100.0] {
+            let boundary = policy.scalar_absolute + policy.scalar_relative * magnitude;
+            assert!(scalar_difference_within_tolerance(boundary, magnitude));
+            assert!(!scalar_difference_within_tolerance(
+                f64::from_bits(boundary.to_bits() + 1),
+                magnitude,
+            ));
+        }
+    }
+
+    #[test]
+    fn bind_pose_reconciliation_allocation_budget_has_a_fixed_boundary() {
+        assert!(bind_pose_reconciliation_allocation_within_budget(
+            MAX_BIND_POSE_RECONCILIATION_NODES,
+            MAX_BIND_POSE_RECONCILIATION_CLUSTERS,
+        ));
+        assert!(!bind_pose_reconciliation_allocation_within_budget(
+            MAX_BIND_POSE_RECONCILIATION_NODES + 1,
+            0,
+        ));
+        assert!(!bind_pose_reconciliation_allocation_within_budget(
+            0,
+            MAX_BIND_POSE_RECONCILIATION_CLUSTERS + 1,
+        ));
+    }
 }

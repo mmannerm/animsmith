@@ -130,9 +130,16 @@ because the normalized GLB bridge does not use either as rest/bind state. On
 the same-load proof path it also admits exactly ufbx's marker, LOD-group,
 stereo-camera, and camera-switcher typed lists: those node-attribute kinds do
 not supply hierarchy transforms, skin binds, animation tracks, or geometry to
-that bridge. Their rows remain in the raw unmodeled-element aggregate. Every
-other unmodeled typed list remains fail-closed, and a refusal reports the exact
-nonzero kind counts instead of only the aggregate total. The immutable
+that bridge. Shader and binding-table records are admitted on the same basis.
+A BindPose is admitted only when it covers every joint of each skin it touches
+and its converted rows are finite, unambiguous, and agree component-wise under
+the fixed rest/bind tolerance with the converted cluster bind or node
+rest-world matrix already consumed by the bridge; no Pose remains required.
+Incomplete, ambiguous, non-finite, or mismatching BindPoses remain distinct
+fail-closed kinds. All of these rows remain in the raw unmodeled-element
+aggregate. Every other unmodeled typed list remains fail-closed, and a refusal
+reports the exact nonzero kind counts instead of only the aggregate total. The
+immutable
 inventory, raw-source facts, and dependency closure still report all admitted
 declarations honestly. The inventory-only API remains conservative when it
 cannot make that same-load distinction. Refusals identify the exact coverage

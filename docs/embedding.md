@@ -100,8 +100,13 @@ cargo run -p animsmith --example embed
    and normalized source-skeleton sidecar enable only the CLI's narrow
    rest/bind re-encode path when
    `rest_bind_capability_facts_for_source` accepts them; the source-aware form
-   can distinguish known, non-scale-bearing custom properties and resource
-   linkage from an unknown source element. The inventory-only
+   can distinguish known, non-scale-bearing custom properties, resource
+   linkage, and shader/binding-table metadata from an unknown source element.
+   It also admits a BindPose only when it covers every joint of each skin it
+   touches and every exposed converted row is finite, unambiguous, and agrees
+   with the cluster bind or node rest-world matrix the bridge consumes; a
+   source with no Pose remains valid.
+   The inventory-only
    `rest_bind_capability_facts` remains conservative where its frozen aggregate
    cannot make that distinction. Whole-document FBX scaling remains refused.
    `Complete`

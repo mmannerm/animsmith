@@ -374,9 +374,14 @@ properties and bounded external texture/video declarations after same-load
 evidence proves they are not scale-bearing. It also admits exactly ufbx's
 marker, LOD-group, stereo-camera, and camera-switcher typed lists because they
 cannot supply hierarchy transforms, skin binds, tracks, or geometry to the
-normalized rest/bind bridge. Those rows remain counted in the raw aggregate;
-every other unmodeled typed list stays fail-closed, with exact nonzero kind
-counts in the refusal. The boundary still refuses incomplete resource or
+normalized rest/bind bridge, and admits shader/binding-table metadata on that
+same basis. BindPose rows are admitted only when they cover every joint of each
+skin they touch and are finite, unambiguous, and reconcile with the converted
+cluster bind or node rest-world matrices already consumed by the bridge; no
+Pose remains required. Those rows remain counted in the raw aggregate; every
+other unmodeled typed list stays
+fail-closed, with exact nonzero kind counts in the refusal. The boundary still
+refuses incomplete resource or
 construct coverage, extensions, and every unsupported transform, geometry,
 bind, or animation fact. A refusal names the exact failed fact or counter. An
 artifact or evidence destination that names

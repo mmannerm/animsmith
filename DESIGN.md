@@ -1688,7 +1688,15 @@ supported texture assignments in the normalized document and private GLB. The
 same proof boundary admits exactly ufbx's marker, LOD-group, stereo-camera, and
 camera-switcher typed lists: those node-attribute types supply no hierarchy
 transform, skin bind, animation track, or geometry to the normalized bridge.
-They remain counted in the raw unmodeled-element aggregate. Every residual
+Shader and binding-table records are material-evaluation metadata and are
+admitted on the same basis. BindPose is different rest/bind-domain evidence:
+the same-load gate admits it only when it covers every joint of each skin it
+touches and every converted row is finite, unambiguous, and agrees under the
+fixed Appendix D scalar tolerance with the converted cluster bind or node
+rest-world matrix the bridge already consumes. A source without a Pose remains
+valid; incomplete, ambiguous, non-finite, or mismatching BindPoses fail closed
+as distinct residual kinds. All admitted rows remain counted in the raw
+unmodeled-element aggregate. Every residual
 unmodeled typed list fails closed, and its refusal retains the exact nonzero
 kind counts. This remains a normalized re-encoding rather than a raw FBX
 object-property, marker/camera behavior, material, or texture-assignment
@@ -2014,8 +2022,11 @@ complete finite bind provenance, unchanged four-slot influences, and no
 unsupported scale-bearing semantic D.4 row. Same-load source facts may prove
 that user-defined properties, bounded texture/video declarations, or exact
 marker, LOD-group, stereo-camera, and camera-switcher typed lists are known,
-non-scale-bearing inputs to this normalized bridge. Other unmodeled typed lists
-remain fail-closed and are reported by exact nonzero kind counts. The same-load
+non-scale-bearing inputs to this normalized bridge. Shader and binding-table
+metadata is equally non-bearing. BindPose rows are admitted only after the
+same-load converted matrices reconcile with the cluster/node matrices the
+bridge consumes; no Pose is required. Other unmodeled typed lists remain
+fail-closed and are reported by exact nonzero kind counts. The same-load
 `FbxScaleSource` retains the raw facts and dependency closure, while v5 keeps
 the frozen inventory projection rather than adding either sidecar to its wire
 shape. The three raw-span rows are deliberately
