@@ -127,17 +127,26 @@ fn user_property_fbx() -> String {
     )
 }
 
-fn unmodeled_pose_fbx() -> String {
-    RIGGED_TRIANGLE_FBX.replacen(
-        "\tAnimationStack: 3001",
-        concat!(
-            "\tPose: 5001, \"Pose::unsupported\", \"BindPose\" {\n",
+fn nonbearing_node_attributes_fbx(include_pose: bool) -> String {
+    let mut objects = concat!(
+        "\tNodeAttribute: 5101, \"NodeAttribute::marker\", \"FKEffector\" {}\n",
+        "\tNodeAttribute: 5102, \"NodeAttribute::lod\", \"LodGroup\" {}\n",
+        "\tNodeAttribute: 5103, \"NodeAttribute::stereo\", \"CameraStereo\" {}\n",
+        "\tNodeAttribute: 5104, \"NodeAttribute::switcher\", \"CameraSwitcher\" {}\n",
+    )
+    .to_owned();
+    if include_pose {
+        objects.push_str(concat!(
+            "\tPose: 5105, \"Pose::unsupported\", \"BindPose\" {\n",
             "\t\tType: \"BindPose\"\n",
             "\t\tVersion: 100\n",
             "\t\tNbPoseNodes: 0\n",
             "\t}\n",
-            "\tAnimationStack: 3001"
-        ),
+        ));
+    }
+    RIGGED_TRIANGLE_FBX.replace("\r\n", "\n").replacen(
+        "\tAnimationStack: 3001",
+        &format!("{objects}\tAnimationStack: 3001"),
         1,
     )
 }
@@ -1932,7 +1941,7 @@ fn v7_external_texture_does_not_mask_a_real_unmodeled_construct() {
         concat!(
             "rest_bind_scale FBX capability rejected input walk.fbx: ",
             "FBX rest/bind raw-source facts rejected: ",
-            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1)"
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1; poses=1)"
         )
     );
     assert!(!dir.path().join("character.glb").exists());
@@ -1944,7 +1953,11 @@ fn v7_fbx_capability_refusal_names_the_exact_unsupported_source_fact() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
     std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
-    std::fs::write(dir.path().join("inputs/walk.fbx"), unmodeled_pose_fbx()).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/walk.fbx"),
+        nonbearing_node_attributes_fbx(true),
+    )
+    .unwrap();
     std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
 
     let output = run(dir.path());
@@ -1954,11 +1967,63 @@ fn v7_fbx_capability_refusal_names_the_exact_unsupported_source_fact() {
         concat!(
             "rest_bind_scale FBX capability rejected input walk.fbx: ",
             "FBX rest/bind raw-source facts rejected: ",
-            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1)"
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1; poses=1)"
         )
     );
     assert!(!dir.path().join("character.glb").exists());
     assert!(!dir.path().join("character.json").exists());
+}
+
+#[test]
+fn v7_admits_exact_nonbearing_fbx_node_attributes_for_base_and_clip() {
+    for source_role in ["base", "clip"] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        std::fs::write(
+            dir.path().join("inputs/base.fbx"),
+            if source_role == "base" {
+                nonbearing_node_attributes_fbx(false)
+            } else {
+                RIGGED_TRIANGLE_FBX.to_owned()
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("inputs/walk.fbx"),
+            if source_role == "clip" {
+                nonbearing_node_attributes_fbx(false)
+            } else {
+                RIGGED_TRIANGLE_FBX.to_owned()
+            },
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+
+        let output = run(dir.path());
+        assert!(
+            output.status.success(),
+            "{source_role}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+        let inputs = evidence["rest_bind_scale"]["inputs"]
+            .as_array()
+            .expect("scale evidence inputs");
+        assert_eq!(inputs.len(), 2, "{source_role}");
+        assert_eq!(
+            inputs[0]["source_projection"]["capability"]["unsupported_source_element_count"],
+            usize::from(source_role == "base") * 4,
+            "{source_role}: base evidence retains the raw aggregate"
+        );
+        assert_eq!(
+            inputs[1]["source_projection"]["capability"]["unsupported_source_element_count"],
+            usize::from(source_role == "clip") * 4,
+            "{source_role}: clip evidence retains the raw aggregate"
+        );
+        assert!(dir.path().join("character.glb").exists(), "{source_role}");
+        assert!(dir.path().join("character.json").exists(), "{source_role}");
+    }
 }
 
 #[test]

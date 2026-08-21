@@ -153,21 +153,26 @@ capability boundary. That boundary
 requires a complete ufbx inventory for the normalized metre/Y-up hierarchy,
 derived bind evidence, rebuilt geometry, and baked animation. Incomplete
 source-skeleton projection, unsupported payload, altered skin influences,
-incomplete bind evidence, unknown source elements or extensions, incomplete
-resource/construct coverage, or an incompatible basis fails closed. The
-source-aware gate may admit user-defined properties and bounded external
+incomplete bind evidence, residual unmodeled source elements or extensions,
+incomplete resource/construct coverage, or an incompatible basis fails closed.
+The source-aware gate may admit user-defined properties and bounded external
 texture/video declarations because neither supplies rest/bind state to the
-normalized GLB bridge. Rooted capture retains supported linked texture bytes
-through the normalized artifact, and neither publication destination may name
-one of the safe source-relative dependency keys retained by that same-load
-closure, including a key whose capture was unavailable or refused. The command
+normalized GLB bridge. It also admits exactly ufbx's marker, LOD-group,
+stereo-camera, and camera-switcher typed lists: they cannot supply hierarchy
+transforms, skin binds, tracks, or geometry to that bridge. Those elements
+remain counted in the raw aggregate, while every residual unmodeled typed list
+fails closed and is named by kind and count in the refusal. Rooted capture
+retains supported linked texture bytes through the normalized artifact, and
+neither publication destination may name one of the safe source-relative
+dependency keys retained by that same-load closure, including a key whose
+capture was unavailable or refused. The command
 stops before publication when a retained key was refused as
 symlink-mediated rather than resolving through the link, or when the closure
 resource budget leaves a declaration tail unchecked. The frozen v7 evidence
 retains declaration counts in its capability inventory; same-load raw
 facts and closure remain loader-side rather than being added to that wire
-record. Admission does not claim raw FBX object-property, material, or
-texture-assignment preservation. A
+record. Admission does not claim raw FBX object-property, marker, camera,
+material, or texture-assignment preservation. A
 refusal identifies the exact failed source fact, semantic domain, or inventory
 counter. Nothing is inferred from filenames, bounds,
 character height, inverse-bind magnitudes, or source units. Recipe v6 remains

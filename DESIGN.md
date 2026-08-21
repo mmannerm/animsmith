@@ -1684,13 +1684,19 @@ private GLB is written, and parser-known texture/video linkage is represented
 by bounded resource facts and dependency-closure evidence rather than a
 transform field. The source-aware gate may therefore admit those two known
 classes while retaining their inventory/evidence rows; rooted capture keeps
-supported texture assignments in the normalized document and private GLB.
-This remains a normalized re-encoding rather than a raw FBX object-property,
-material, or texture-assignment preservation claim. Unknown
-elements, extensions, incomplete construct/resource coverage, and every
-unsupported transform, geometry, bind, or animation fact still reject. The
-inventory-only API remains conservative because its frozen v5 aggregate cannot
-distinguish texture-file linkage from another unmodeled source element.
+supported texture assignments in the normalized document and private GLB. The
+same proof boundary admits exactly ufbx's marker, LOD-group, stereo-camera, and
+camera-switcher typed lists: those node-attribute types supply no hierarchy
+transform, skin bind, animation track, or geometry to the normalized bridge.
+They remain counted in the raw unmodeled-element aggregate. Every residual
+unmodeled typed list fails closed, and its refusal retains the exact nonzero
+kind counts. This remains a normalized re-encoding rather than a raw FBX
+object-property, marker/camera behavior, material, or texture-assignment
+preservation claim. Extensions, incomplete construct/resource coverage, and
+every unsupported transform, geometry, bind, or animation fact still reject.
+The inventory-only API remains conservative because its frozen v5 aggregate
+cannot distinguish these discharged classes from another unmodeled source
+element.
 
 The connector exception is deliberately narrower than general helper-node
 support. The source projection can attest an unprojected row's identity,
@@ -2006,9 +2012,11 @@ accept an `.fbx` input only when its complete inventory proves the normalized
 rest/bind subset: adjusted metre/Y-up coordinates, compensated inheritance,
 complete finite bind provenance, unchanged four-slot influences, and no
 unsupported scale-bearing semantic D.4 row. Same-load source facts may prove
-that user-defined properties or bounded texture/video declarations are known,
-non-scale-bearing inputs to this normalized bridge. The same-load
-`FbxScaleSource` retains their raw facts and dependency closure, while v5 keeps
+that user-defined properties, bounded texture/video declarations, or exact
+marker, LOD-group, stereo-camera, and camera-switcher typed lists are known,
+non-scale-bearing inputs to this normalized bridge. Other unmodeled typed lists
+remain fail-closed and are reported by exact nonzero kind counts. The same-load
+`FbxScaleSource` retains the raw facts and dependency closure, while v5 keeps
 the frozen inventory projection rather than adding either sidecar to its wire
 shape. The three raw-span rows are deliberately
 unverifiable because FBX is not rewritten. The frontend serializes the
@@ -2019,9 +2027,10 @@ once, read-back-digest checks it, and atomically publishes the resulting GLB
 with immutable scale-evidence v5. V5 records the complete FBX inventory and
 the private staged-GLB identity plus the nested raw-GLB proof; it makes no raw
 FBX span, object-property, authored-curve, material, or texture-assignment
-preservation claim; supported linked texture bytes are nevertheless captured
-before staging so admission cannot silently remove them. Refusals name the
-exact incomplete coverage domain, semantic row, or inventory counter.
+preservation claim, nor a marker/camera behavior claim; supported linked
+texture bytes are nevertheless captured before staging so admission cannot
+silently remove them. Refusals name the exact incomplete coverage domain,
+semantic row, inventory counter, or residual unmodeled kind.
 
 **Two observed factors, and the divergence between them.** For rest/bind
 reparameterization, "observed factor" names two independent witnesses of the

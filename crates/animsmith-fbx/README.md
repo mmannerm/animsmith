@@ -126,16 +126,22 @@ scale-bearing domains are proven. The source-aware
 `rest_bind_capability_facts_for_source` additionally distinguishes
 parser-known texture-file linkage from genuinely unknown source elements. It
 may admit bounded texture/video declarations and user-defined properties
-because the normalized GLB bridge does not use either as rest/bind state; the
-immutable inventory, raw-source facts, and dependency closure still report
-them honestly. The inventory-only API remains conservative when it cannot make
-that same-load distinction. Refusals identify the exact coverage domain,
-semantic row, or counter that failed. The accepted source is staged as a
-private GLB, rewritten and proven as the exact emitted GLB, then atomically
+because the normalized GLB bridge does not use either as rest/bind state. On
+the same-load proof path it also admits exactly ufbx's marker, LOD-group,
+stereo-camera, and camera-switcher typed lists: those node-attribute kinds do
+not supply hierarchy transforms, skin binds, animation tracks, or geometry to
+that bridge. Their rows remain in the raw unmodeled-element aggregate. Every
+other unmodeled typed list remains fail-closed, and a refusal reports the exact
+nonzero kind counts instead of only the aggregate total. The immutable
+inventory, raw-source facts, and dependency closure still report all admitted
+declarations honestly. The inventory-only API remains conservative when it
+cannot make that same-load distinction. Refusals identify the exact coverage
+domain, semantic row, or counter that failed. The accepted source is staged as
+a private GLB, rewritten and proven as the exact emitted GLB, then atomically
 published as a `.glb` artifact/evidence pair. Whole-document FBX scaling
 remains disabled. No API claims raw FBX bytes, raw object properties, authored
-curve keys, material/texture assignment, or source vertex identity are
-preserved.
+curve keys, camera or marker behavior, material/texture assignment, or source
+vertex identity are preserved.
 
 ## Install
 

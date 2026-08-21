@@ -1247,9 +1247,14 @@ fn valid_unmodeled_ufbx_typed_lists_are_counted_conservatively() {
     assert!(animsmith_fbx::capability_facts(loaded.inventory()).unregistered_extensions_present);
     let error = animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
         .expect_err("unmodeled source elements remain a rest/bind refusal");
-    assert!(
-        error.contains("raw_source.construct=unknown_element(fbx:unmodeled-elements; count=4)"),
-        "the refusal must identify the exact raw-source fact: {error}"
+    assert_eq!(
+        error,
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=4; ",
+            "cache_files=1; shaders=1; shader_bindings=1; poses=1)"
+        ),
+        "the refusal must identify every residual typed-list kind"
     );
     let constructs = loaded.source_facts().constructs();
     assert!(constructs.rows().iter().any(|row| {
@@ -1270,6 +1275,85 @@ fn valid_unmodeled_ufbx_typed_lists_are_counted_conservatively() {
     assert_eq!(cache.kind(), SourceResourceKindV1::Cache);
     assert_eq!(cache.locator(), &SourceResourceLocatorV1::Missing);
     assert_eq!(cache.disposition(), SourceLoaderDispositionV1::Unsupported);
+}
+
+fn add_nonbearing_node_attributes(source: &str, include_pose: bool) -> String {
+    let mut objects = concat!(
+        "\tNodeAttribute: 5101, \"NodeAttribute::marker\", \"FKEffector\" {}\n",
+        "\tNodeAttribute: 5102, \"NodeAttribute::lod\", \"LodGroup\" {}\n",
+        "\tNodeAttribute: 5103, \"NodeAttribute::stereo\", \"CameraStereo\" {}\n",
+        "\tNodeAttribute: 5104, \"NodeAttribute::switcher\", \"CameraSwitcher\" {}\n",
+    )
+    .to_owned();
+    if include_pose {
+        objects.push_str(concat!(
+            "\tPose: 5105, \"Pose::bind\", \"BindPose\" {\n",
+            "\t\tType: \"BindPose\"\n",
+            "\t\tVersion: 100\n",
+            "\t\tNbPoseNodes: 0\n",
+            "\t}\n",
+        ));
+    }
+    source.replace("\r\n", "\n").replacen(
+        "\tAnimationStack: 3001",
+        &format!("{objects}\tAnimationStack: 3001"),
+        1,
+    )
+}
+
+#[test]
+fn rest_bind_admits_exact_nonbearing_node_attribute_kinds() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = add_nonbearing_node_attributes(&source, false);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("nonbearing-node-attributes.fbx");
+    std::fs::write(&path, source).expect("write analytic node-attribute fixture");
+
+    let scene = ufbx::load_memory(
+        &std::fs::read(&path).expect("read analytic fixture"),
+        ufbx::LoadOpts::default(),
+    )
+    .expect("inspect typed lists");
+    assert_eq!(
+        (
+            scene.stereo_cameras.len(),
+            scene.camera_switchers.len(),
+            scene.markers.len(),
+            scene.lod_groups.len(),
+        ),
+        (1, 1, 1, 1),
+        "the analytic fixture must exercise each admitted ufbx typed list"
+    );
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("node attributes parse");
+    assert_eq!(loaded.inventory().unsupported_source_element_count, 4);
+    let constructs = loaded.source_facts().constructs();
+    assert!(constructs.rows().iter().any(|row| {
+        row.kind() == SourceConstructKindV1::UnknownElement
+            && row.name().as_str() == "fbx:unmodeled-elements"
+            && row.count() == 4
+    }));
+    animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect("marker, LOD-group, stereo-camera, and camera-switcher rows are scale-irrelevant");
+}
+
+#[test]
+fn admitted_node_attributes_do_not_hide_a_residual_pose() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = add_nonbearing_node_attributes(&source, true);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("mixed-node-attributes-and-pose.fbx");
+    std::fs::write(&path, source).expect("write analytic mixed fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("mixed fixture parses");
+    assert_eq!(loaded.inventory().unsupported_source_element_count, 5);
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1; poses=1)"
+        )
+    );
 }
 
 #[test]
@@ -2235,7 +2319,10 @@ fn unmodeled_audio_clip_prevents_a_complete_dependency_closure() {
         .expect_err("unmodeled audio must remain outside the rest/bind admission boundary");
     assert_eq!(
         error,
-        "FBX rest/bind raw-source facts rejected: raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1)"
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1; audio_clips=1)"
+        )
     );
 }
 

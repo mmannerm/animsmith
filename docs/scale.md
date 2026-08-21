@@ -118,10 +118,14 @@ With the default FBX feature, `scale rest-bind source.fbx -o canonical.glb`
 accepts only the inventory-complete normalized subset. It requires the same
 explicit skin/root/factor declarations, stages a private normalized GLB,
 maps both selectors by exact unique named identity, then uses the existing raw
-GLB rewrite/reload/proof path. It records the full FBX inventory and staged
-GLB digest in scale-evidence v5. The published artifact is a re-encoded GLB:
-no raw FBX byte, object-property, or authored-curve-key preservation is
-claimed. FBX whole-document conversion remains refused. Character assembly
+GLB rewrite/reload/proof path. The same-load gate admits exact marker,
+LOD-group, stereo-camera, and camera-switcher typed lists because none can
+supply rest/bind state to that bridge; the raw aggregate still counts them.
+Residual unmodeled typed lists fail closed with exact nonzero kind counts. It
+records the full FBX inventory and staged GLB digest in scale-evidence v5. The
+published artifact is a re-encoded GLB: no raw FBX byte, object-property,
+marker/camera behavior, or authored-curve-key preservation is claimed. FBX
+whole-document conversion remains refused. Character assembly
 likewise does not silently apply either scale operation. Its existing bind-pose
 canonicalization remains a distinct, explicit recipe operation.
 Morph support intentionally remains a raw glTF whole-document capability; it

@@ -569,11 +569,7 @@ fn rest_bind_capability_facts_with_construct_counts(
                 inventory.unsupported_source_element_count, source_unmodeled_count
             ));
         }
-        push_nonzero_violation(
-            &mut violations,
-            "unsupported_source_element_count",
-            source_counts.unsupported_unmodeled_element_count,
-        );
+        push_unmodeled_element_violation(&mut violations, source_counts);
     } else {
         push_nonzero_violation(
             &mut violations,
@@ -787,11 +783,11 @@ pub fn rest_bind_capability_facts_for_source(
                         row.count(),
                         total_count
                     ));
-                } else if source_counts.unsupported_unmodeled_element_count > 0 {
+                } else if source_counts.unsupported_unmodeled_element_count() > 0 {
                     violations.push(format!(
-                        "raw_source.construct=unknown_element({}; count={})",
+                        "raw_source.construct=unknown_element({}; {})",
                         row.name().as_str(),
-                        source_counts.unsupported_unmodeled_element_count
+                        unmodeled_element_details(source_counts)
                     ));
                 }
             }
@@ -845,6 +841,29 @@ pub fn rest_bind_capability_facts_for_source(
             &scale_capability_violations(&facts),
         ))
     }
+}
+
+fn push_unmodeled_element_violation(
+    violations: &mut Vec<String>,
+    counts: crate::source_facts::RestBindSourceConstructCounts,
+) {
+    if counts.unsupported_unmodeled_element_count() > 0 {
+        violations.push(format!(
+            "unsupported_source_element_count; {}",
+            unmodeled_element_details(counts)
+        ));
+    }
+}
+
+fn unmodeled_element_details(counts: crate::source_facts::RestBindSourceConstructCounts) -> String {
+    let mut details = format!("count={}", counts.unsupported_unmodeled_element_count());
+    for (kind, count) in counts.unsupported_kind_counts() {
+        details.push_str("; ");
+        details.push_str(kind);
+        details.push('=');
+        details.push_str(&count.to_string());
+    }
+    details
 }
 
 fn fbx_scale_domain_status_name(status: FbxScaleDomainStatus) -> &'static str {
