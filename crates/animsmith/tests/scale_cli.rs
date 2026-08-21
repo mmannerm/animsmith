@@ -2668,6 +2668,12 @@ fn fbx_rest_bind_refuses_destinations_that_alias_captured_dependencies() {
         std::fs::write(dir.path().join("nested/rig.fbx"), source).unwrap();
         let dependency = dir.path().join("nested").join(locator);
         std::fs::write(&dependency, TINY_PNG).unwrap();
+        let (peer, prior_peer) = if destination == "evidence" {
+            (dir.path().join(output), b"prior artifact".as_slice())
+        } else {
+            (dir.path().join(evidence), b"prior evidence".as_slice())
+        };
+        std::fs::write(&peer, prior_peer).unwrap();
 
         let result = fbx_rest_bind_command(
             dir.path(),
@@ -2699,7 +2705,122 @@ fn fbx_rest_bind_refuses_destinations_that_alias_captured_dependencies() {
             TINY_PNG,
             "publication must not replace the captured source dependency"
         );
+        assert_eq!(
+            std::fs::read(peer).unwrap(),
+            prior_peer,
+            "refusal must leave the non-aliased publication peer byte-identical"
+        );
     }
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_protects_a_keyed_dependency_that_exceeds_the_capture_budget() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    let source = external_normal_texture_fbx_fixture().replace("normal.png", "oversized.png");
+    std::fs::write(dir.path().join("nested/rig.fbx"), source).unwrap();
+    let dependency = dir.path().join("nested/oversized.png");
+    std::fs::write(&dependency, TINY_PNG).unwrap();
+    let oversized_len = animsmith_core::ResourceClosureBudgetV1::VALUE
+        .max_resource_bytes()
+        .saturating_add(1);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&dependency)
+        .unwrap()
+        .set_len(oversized_len)
+        .unwrap();
+    let peer = dir.path().join("out.glb");
+    let prior_peer = b"prior artifact";
+    std::fs::write(&peer, prior_peer).unwrap();
+
+    let result = fbx_rest_bind_command(
+        dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        "nested/oversized.png",
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs keyed unavailable-dependency preflight");
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        stderr(&result)
+    );
+    assert!(result.stdout.is_empty());
+    assert!(
+        stderr(&result).contains(
+            "scale external dependency \"oversized.png\" and evidence must be different paths"
+        ),
+        "stderr:\n{}",
+        stderr(&result)
+    );
+    assert_eq!(std::fs::metadata(&dependency).unwrap().len(), oversized_len);
+    let mut prefix = [0u8; 8];
+    let mut dependency_file = std::fs::File::open(&dependency).unwrap();
+    std::io::Read::read_exact(&mut dependency_file, &mut prefix).unwrap();
+    assert_eq!(prefix, TINY_PNG[..8]);
+    assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+}
+
+#[cfg(all(feature = "fbx", any(target_os = "macos", target_os = "windows")))]
+#[test]
+fn fbx_rest_bind_uses_case_insensitive_destination_identity_when_the_filesystem_does() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    std::fs::write(
+        dir.path().join("nested/rig.fbx"),
+        external_normal_texture_fbx_fixture(),
+    )
+    .unwrap();
+    let dependency = dir.path().join("nested/normal.png");
+    std::fs::write(&dependency, TINY_PNG).unwrap();
+    let case_variant = dir.path().join("nested/NORMAL.PNG");
+    if std::fs::canonicalize(&case_variant).is_err() {
+        // macOS also supports case-sensitive volumes. This regression applies
+        // only when the filesystem itself resolves the alternate spelling.
+        return;
+    }
+    let peer = dir.path().join("out.glb");
+    let prior_peer = b"prior artifact";
+    std::fs::write(&peer, prior_peer).unwrap();
+
+    let result = fbx_rest_bind_command(
+        dir.path(),
+        "nested/rig.fbx",
+        "out.glb",
+        case_variant
+            .strip_prefix(dir.path())
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "0.01",
+        "json",
+    )
+    .output()
+    .expect("runs case-variant destructive-alias preflight");
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        stderr(&result)
+    );
+    assert!(result.stdout.is_empty());
+    assert!(
+        stderr(&result).contains(
+            "scale external dependency \"normal.png\" and evidence must be different paths"
+        ),
+        "stderr:\n{}",
+        stderr(&result)
+    );
+    assert_eq!(std::fs::read(dependency).unwrap(), TINY_PNG);
+    assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
 }
 
 #[cfg(feature = "fbx")]

@@ -54,7 +54,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "fbx")]
-use animsmith_core::DependencyClosureV1;
+use animsmith_core::{DependencyClosureV1, DependencyReferenceTargetV1};
 use animsmith_gltf::fix::{FixReport, Repair};
 
 /// Serialize one record or envelope as the pretty, newline-terminated JSON
@@ -319,18 +319,19 @@ pub(crate) fn parent_or_current(path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-/// A **destination**'s identity for distinctness checks: its canonical parent
-/// joined with its own file name.
+/// A **destination**'s identity for distinctness checks.
 ///
 /// Canonicalizing the parent collapses `.`, `..`, and symlinked directories,
-/// so two lexically different arguments naming one file compare equal. It
-/// deliberately does **not** resolve a symlinked final component, because a
-/// destination is reached by [`fs::rename`], which *replaces* the link rather
-/// than following it: publishing to `latest.glb -> store/rig.glb` leaves
-/// `store/rig.glb` untouched, so the two are genuinely different
-/// destinations. The canonical form exists for this comparison only and is
-/// never recorded in evidence: evidence keeps the operator's declared path
-/// verbatim.
+/// so two lexically different arguments naming one file compare equal. An
+/// existing non-symlink final component is canonicalized as well, which lets
+/// the filesystem apply its own case semantics. A final symlink is deliberately
+/// kept as its canonical parent plus declared file name because a destination
+/// is reached by [`fs::rename`], which *replaces* the link rather than following
+/// it: publishing to `latest.glb -> store/rig.glb` leaves `store/rig.glb`
+/// untouched, so the two are genuinely different destinations. A missing
+/// final component likewise uses the canonical parent plus its declared name.
+/// The canonical form exists for this comparison only and is never recorded in
+/// evidence: evidence keeps the operator's declared path verbatim.
 ///
 /// An **input** must not use this function — see [`input_identity`], whose
 /// doc comment carries the argument for the asymmetry.
@@ -350,7 +351,16 @@ pub(crate) fn destination_identity(path: &Path) -> Result<PathBuf, String> {
     let file_name = path
         .file_name()
         .ok_or_else(|| format!("output {} has no file name", path.display()))?;
-    Ok(parent.join(file_name))
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_symlink() => fs::canonicalize(path)
+            .map_err(|error| format!("cannot resolve existing output {}: {error}", path.display())),
+        Ok(_) => Ok(parent.join(file_name)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(parent.join(file_name)),
+        Err(error) => Err(format!(
+            "cannot inspect existing output {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 /// An **input**'s identity for distinctness checks: its fully canonical path,
@@ -387,18 +397,19 @@ pub(crate) fn input_identity(path: &Path) -> Result<PathBuf, String> {
     fs::canonicalize(path).map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
-/// Reject publication destinations that name a captured external dependency.
+/// Reject publication destinations that name a retained external dependency.
 ///
 /// Rooted format loaders may consume more files than their primary input. A
-/// producer must treat every captured external key as source data for the same
-/// destructive-alias check it already applies to the primary input; otherwise
-/// a successful pair publication can replace a linked texture or other
-/// sidecar with the artifact or evidence record.
+/// producer must treat every safe external key retained by the closure as
+/// source data for the same destructive-alias check it already applies to the
+/// primary input. This includes a keyed sidecar whose capture was unavailable
+/// or refused; otherwise a successful pair publication can replace that linked
+/// texture or other sidecar with the artifact or evidence record.
 ///
 /// # Errors
 ///
-/// Returns an operator error when a captured dependency can no longer be
-/// resolved or when it names one of the supplied destinations.
+/// Returns an operator error when a dependency path cannot be inspected or
+/// when it names one of the supplied destinations.
 #[cfg(feature = "fbx")]
 pub(crate) fn require_external_dependencies_distinct_from_destinations(
     command: &str,
@@ -410,13 +421,21 @@ pub(crate) fn require_external_dependencies_distinct_from_destinations(
         .iter()
         .map(|(label, path)| Ok((*label, destination_identity(path)?)))
         .collect::<Result<Vec<_>, String>>()?;
-    for resource in closure.external_resources() {
-        let dependency = input_identity(&resource_root.join(resource.key().as_str()))?;
+    for reference in closure.references() {
+        let key = match reference.target() {
+            DependencyReferenceTargetV1::External { key }
+            | DependencyReferenceTargetV1::Refused { key: Some(key), .. }
+            | DependencyReferenceTargetV1::Unavailable { key: Some(key), .. } => key,
+            DependencyReferenceTargetV1::Primary
+            | DependencyReferenceTargetV1::Refused { key: None, .. }
+            | DependencyReferenceTargetV1::Unavailable { key: None, .. } => continue,
+        };
+        let dependency = destination_identity(&resource_root.join(key.as_str()))?;
         for (destination_label, destination) in &destinations {
             if dependency == *destination {
                 return Err(format!(
                     "{command} external dependency {:?} and {destination_label} must be different paths, but both resolve to {}",
-                    resource.key().as_str(),
+                    key.as_str(),
                     dependency.display()
                 ));
             }

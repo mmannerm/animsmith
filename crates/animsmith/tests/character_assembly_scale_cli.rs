@@ -1773,52 +1773,98 @@ fn v7_accepts_external_fbx_texture_references_as_scale_irrelevant() {
 
 #[test]
 fn v7_refuses_a_destination_that_aliases_a_captured_fbx_dependency() {
-    let dir = tempfile::tempdir().expect("temporary directory");
-    std::fs::create_dir_all(dir.path().join("inputs/nested")).unwrap();
-    std::fs::write(
-        dir.path().join("inputs/nested/base.fbx"),
-        external_normal_texture_fbx(),
-    )
-    .unwrap();
-    std::fs::write(
-        dir.path().join("inputs/nested/walk.fbx"),
-        RIGGED_TRIANGLE_FBX,
-    )
-    .unwrap();
-    let dependency = dir.path().join("inputs/nested/normal.png");
-    std::fs::write(&dependency, TINY_PNG).unwrap();
-    let recipe = fbx_recipe_v7("nested/walk.fbx").replace(
-        "base_input = \"base.fbx\"",
-        "base_input = \"nested/base.fbx\"",
-    );
-    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
-
-    let output = run_to(
-        dir.path(),
-        "recipe.toml",
-        "character.glb",
-        "inputs/nested/normal.png",
-    );
-    assert_eq!(
-        output.status.code(),
-        Some(2),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains(
-            "assemble external dependency \"normal.png\" and evidence must be different paths"
+    for (source_role, destination, locator, output, evidence) in [
+        (
+            "base",
+            "evidence",
+            "normal.png",
+            "character.glb",
+            "inputs/base/normal.png",
         ),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        std::fs::read(dependency).unwrap(),
-        TINY_PNG,
-        "assembly publication must not replace the captured source dependency"
-    );
-    assert!(!dir.path().join("character.glb").exists());
+        (
+            "base",
+            "output",
+            "artifact.glb",
+            "inputs/base/artifact.glb",
+            "character.json",
+        ),
+        (
+            "clip",
+            "evidence",
+            "normal.png",
+            "character.glb",
+            "inputs/clip/normal.png",
+        ),
+        (
+            "clip",
+            "output",
+            "artifact.glb",
+            "inputs/clip/artifact.glb",
+            "character.json",
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir_all(dir.path().join("inputs/base")).unwrap();
+        std::fs::create_dir_all(dir.path().join("inputs/clip")).unwrap();
+        let external = external_normal_texture_fbx().replace("normal.png", locator);
+        std::fs::write(
+            dir.path().join("inputs/base/base.fbx"),
+            if source_role == "base" {
+                external.as_str()
+            } else {
+                RIGGED_TRIANGLE_FBX
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("inputs/clip/walk.fbx"),
+            if source_role == "clip" {
+                external.as_str()
+            } else {
+                RIGGED_TRIANGLE_FBX
+            },
+        )
+        .unwrap();
+        let dependency = dir.path().join("inputs").join(source_role).join(locator);
+        std::fs::write(&dependency, TINY_PNG).unwrap();
+        let recipe = fbx_recipe_v7("clip/walk.fbx").replace(
+            "base_input = \"base.fbx\"",
+            "base_input = \"base/base.fbx\"",
+        );
+        std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+        let (peer, prior_peer) = if destination == "evidence" {
+            (dir.path().join(output), b"prior artifact".as_slice())
+        } else {
+            (dir.path().join(evidence), b"prior evidence".as_slice())
+        };
+        std::fs::write(&peer, prior_peer).unwrap();
+
+        let result = run_to(dir.path(), "recipe.toml", output, evidence);
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{source_role}/{destination} stderr:\n{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(result.stdout.is_empty(), "{source_role}/{destination}");
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains(&format!(
+                "assemble external dependency {locator:?} and {destination} must be different paths"
+            )),
+            "{source_role}/{destination} stderr:\n{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(
+            std::fs::read(dependency).unwrap(),
+            TINY_PNG,
+            "{source_role}/{destination}: assembly must not replace the source dependency"
+        );
+        assert_eq!(
+            std::fs::read(peer).unwrap(),
+            prior_peer,
+            "{source_role}/{destination}: refusal must preserve the non-aliased peer"
+        );
+    }
 }
 
 #[test]
