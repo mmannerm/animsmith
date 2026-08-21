@@ -120,8 +120,13 @@ explicit skin/root/factor declarations, stages a private normalized GLB,
 maps both selectors by exact unique named identity, then uses the existing raw
 GLB rewrite/reload/proof path. The same-load gate admits exact marker,
 LOD-group, stereo-camera, and camera-switcher typed lists because none can
-supply rest/bind state to that bridge; the raw aggregate still counts them.
-Residual unmodeled typed lists fail closed with exact nonzero kind counts. It
+supply rest/bind state to that bridge, plus shader/binding-table metadata. It
+admits a BindPose only when it covers every joint of each skin it touches and
+its converted rows are finite, unambiguous, and agree with the converted
+cluster bind or node rest-world matrix already consumed by the bridge; a
+source without a Pose remains valid. The raw aggregate still counts all
+admitted rows. Residual unmodeled typed lists fail closed with exact nonzero
+kind counts. It
 records the full FBX inventory and staged GLB digest in scale-evidence v5. The
 published artifact is a re-encoded GLB: no raw FBX byte, object-property,
 marker/camera behavior, or authored-curve-key preservation is claimed. FBX

@@ -30,8 +30,10 @@
 //! [`capability_facts`] remains the conservative generic refusal projection.
 //! [`rest_bind_capability_facts`] admits only the complete normalized subset
 //! used by the CLI's narrow FBX rest/bind path: it stages a new GLB, proves
-//! that emitted GLB, and never claims raw FBX preservation. Whole-document
-//! FBX scaling remains refused.
+//! that emitted GLB, and never claims raw FBX preservation. Its source-aware
+//! companion admits material shader metadata and only those BindPoses whose
+//! converted rows reconcile with the cluster/node matrices consumed by that
+//! bridge. Whole-document FBX scaling remains refused.
 //!
 //! # Quick start
 //!

@@ -1251,8 +1251,8 @@ fn valid_unmodeled_ufbx_typed_lists_are_counted_conservatively() {
         error,
         concat!(
             "FBX rest/bind raw-source facts rejected: ",
-            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=4; ",
-            "cache_files=1; shaders=1; shader_bindings=1; poses=1)"
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=2; ",
+            "cache_files=1; incomplete_bind_poses=1)"
         ),
         "the refusal must identify every residual typed-list kind"
     );
@@ -1301,6 +1301,103 @@ fn add_nonbearing_node_attributes(source: &str, include_pose: bool) -> String {
     )
 }
 
+const IDENTITY_FBX_MATRIX: &str = "1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1";
+
+fn add_bind_pose(source: &str, root_matrix: &str, duplicate_root: bool) -> String {
+    add_bind_pose_with_id(source, 5201, root_matrix, duplicate_root)
+}
+
+fn add_bind_pose_with_id(
+    source: &str,
+    pose_id: u64,
+    root_matrix: &str,
+    duplicate_root: bool,
+) -> String {
+    let duplicate = if duplicate_root {
+        format!(
+            concat!(
+                "\t\tPoseNode: {{\n",
+                "\t\t\tNode: 1001\n",
+                "\t\t\tMatrix: *16 {{ a: {} }}\n",
+                "\t\t}}\n",
+            ),
+            root_matrix
+        )
+    } else {
+        String::new()
+    };
+    let pose = format!(
+        concat!(
+            "\tPose: {}, \"Pose::bind\", \"BindPose\" {{\n",
+            "\t\tType: \"BindPose\"\n",
+            "\t\tVersion: 100\n",
+            "\t\tNbPoseNodes: {}\n",
+            "\t\tPoseNode: {{\n",
+            "\t\t\tNode: 1001\n",
+            "\t\t\tMatrix: *16 {{ a: {} }}\n",
+            "\t\t}}\n",
+            "{}",
+            "\t\tPoseNode: {{\n",
+            "\t\t\tNode: 1002\n",
+            "\t\t\tMatrix: *16 {{ a: {} }}\n",
+            "\t\t}}\n",
+            "\t}}\n",
+        ),
+        pose_id,
+        if duplicate_root { 3 } else { 2 },
+        root_matrix,
+        duplicate,
+        IDENTITY_FBX_MATRIX,
+    );
+    source.replace("\r\n", "\n").replacen(
+        "\tAnimationStack: 3001",
+        &format!("{pose}\tAnimationStack: 3001"),
+        1,
+    )
+}
+
+fn add_shader_and_binding(source: &str) -> String {
+    let objects = concat!(
+        "\tImplementation: 5301, \"Implementation::shader\", \"\" {}\n",
+        "\tBindingTable: 5302, \"BindingTable::binding\", \"\" {}\n",
+    );
+    source.replace("\r\n", "\n").replacen(
+        "\tAnimationStack: 3001",
+        &format!("{objects}\tAnimationStack: 3001"),
+        1,
+    )
+}
+
+fn add_second_root_cluster(source: &str, bind_matrix: &str) -> String {
+    source
+        .replacen(
+            "\tAnimationStack: 3001",
+            &format!(
+                concat!(
+                    "\tDeformer: 4003, \"SubDeformer::second_root_cluster\", \"Cluster\" {{\n",
+                    "\t\tVersion: 100\n",
+                    "\t\tIndexes: *3 {{ a: 0,1,2 }}\n",
+                    "\t\tWeights: *3 {{ a: 1,1,1 }}\n",
+                    "\t\tTransform: *16 {{ a: {} }}\n",
+                    "\t\tTransformLink: *16 {{ a: {} }}\n",
+                    "\t}}\n",
+                    "\tAnimationStack: 3001",
+                ),
+                IDENTITY_FBX_MATRIX, bind_matrix,
+            ),
+            1,
+        )
+        .replacen(
+            "\tC: \"OO\",1001,4002",
+            concat!(
+                "\tC: \"OO\",1001,4002\n",
+                "\tC: \"OO\",4003,4001\n",
+                "\tC: \"OO\",1001,4003",
+            ),
+            1,
+        )
+}
+
 #[test]
 fn rest_bind_admits_exact_nonbearing_node_attribute_kinds() {
     let source = std::fs::read_to_string(fixture()).expect("read fixture");
@@ -1338,6 +1435,358 @@ fn rest_bind_admits_exact_nonbearing_node_attribute_kinds() {
 }
 
 #[test]
+fn rest_bind_admits_shader_bindings_and_a_reconciled_bind_pose() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = add_shader_and_binding(&source);
+    let source = add_bind_pose(&source, IDENTITY_FBX_MATRIX, false);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("reconciled-bind-pose.fbx");
+    std::fs::write(&path, source).expect("write analytic bind-pose fixture");
+
+    let scene = ufbx::load_memory(
+        &std::fs::read(&path).expect("read analytic fixture"),
+        ufbx::LoadOpts::default(),
+    )
+    .expect("inspect typed lists");
+    assert_eq!((scene.shaders.len(), scene.shader_bindings.len()), (1, 1));
+    assert_eq!(scene.poses.len(), 1);
+    let pose = &scene.poses[0];
+    assert!(pose.is_bind_pose);
+    assert_eq!(pose.bone_poses.len(), 2);
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("bind pose parses");
+    assert_eq!(loaded.inventory().unsupported_source_element_count, 3);
+    assert!(loaded.source_facts().constructs().rows().iter().any(|row| {
+        row.kind() == SourceConstructKindV1::UnknownElement
+            && row.name().as_str() == "fbx:unmodeled-elements"
+            && row.count() == 3
+    }));
+    animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect("reconciled bind pose and shader metadata are scale-safe");
+}
+
+#[test]
+fn rest_bind_reconciles_a_bind_pose_that_only_covers_a_non_skin_node() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = add_bind_pose(&source, IDENTITY_FBX_MATRIX, false)
+        .replacen("NbPoseNodes: 2", "NbPoseNodes: 1", 1)
+        .replacen(
+            concat!(
+                "\t\tPoseNode: {\n",
+                "\t\t\tNode: 1001\n",
+                "\t\t\tMatrix: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+                "\t\t}\n",
+            ),
+            "",
+            1,
+        );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let matching_path = dir.path().join("non-skin-node-bind-pose.fbx");
+    std::fs::write(&matching_path, &source).expect("write analytic bind-pose fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&matching_path).expect("bind pose parses");
+    animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect("a reconciled non-skin PoseNode is scale-safe");
+
+    let mismatched = source.replacen(
+        concat!(
+            "\t\tPoseNode: {\n",
+            "\t\t\tNode: 1002\n",
+            "\t\t\tMatrix: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+            "\t\t}\n",
+        ),
+        concat!(
+            "\t\tPoseNode: {\n",
+            "\t\t\tNode: 1002\n",
+            "\t\t\tMatrix: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,100,0,0,1 }\n",
+            "\t\t}\n",
+        ),
+        1,
+    );
+    let mismatched_path = dir.path().join("mismatched-non-skin-node-bind-pose.fbx");
+    std::fs::write(&mismatched_path, mismatched).expect("write mismatched bind-pose fixture");
+    let loaded = animsmith_fbx::load_scale_source(&mismatched_path).expect("bind pose parses");
+    assert!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+            .unwrap_err()
+            .contains("mismatched_bind_poses=1")
+    );
+}
+
+#[test]
+fn rest_bind_refuses_a_mismatched_bind_pose() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let mismatched = "1,0,0,0,0,1,0,0,0,0,1,0,100,0,0,1";
+    let source = add_bind_pose(&source, mismatched, false);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("mismatched-bind-pose.fbx");
+    std::fs::write(&path, source).expect("write analytic mismatched fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("bind pose parses");
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
+            "count=1; mismatched_bind_poses=1)"
+        )
+    );
+}
+
+#[test]
+fn rest_bind_checks_every_cluster_for_a_repeated_bone() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let mismatched = "1,0,0,0,0,1,0,0,0,0,1,0,100,0,0,1";
+    let source = add_second_root_cluster(&source, mismatched);
+    let source = add_bind_pose(&source, IDENTITY_FBX_MATRIX, false);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("later-cluster-mismatch.fbx");
+    std::fs::write(&path, source).expect("write repeated-bone fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("bind pose parses");
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
+            "count=1; mismatched_bind_poses=1)"
+        )
+    );
+}
+
+#[test]
+fn rest_bind_reconciles_bind_pose_with_the_fixed_scale_tolerance() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    // The fixture is authored in centimeters and the loader converts it to
+    // meters, so these become 5e-7 m and 2e-6 m respectively.
+    let inside = "1,0,0,0,0,1,0,0,0,0,1,0,0.00005,0,0,1";
+    let inside = add_bind_pose(&source, inside, false);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let inside_path = dir.path().join("inside-bind-pose-tolerance.fbx");
+    std::fs::write(&inside_path, inside).expect("write inside-tolerance fixture");
+    let loaded = animsmith_fbx::load_scale_source(&inside_path).expect("bind pose parses");
+    animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect("a component inside the fixed scalar tolerance reconciles");
+
+    let outside = "1,0,0,0,0,1,0,0,0,0,1,0,0.0002,0,0,1";
+    let outside = add_bind_pose(&source, outside, false);
+    let parsed = ufbx::load_memory(outside.as_bytes(), ufbx::LoadOpts::default())
+        .expect("inspect outside-tolerance fixture");
+    assert!(
+        (parsed.poses[0].bone_poses[0].bone_to_world.m03
+            - parsed.skin_clusters[0].bind_to_world.m03)
+            .abs()
+            > 1.0e-4,
+        "fixture must retain an independently observable bind mismatch: pose={}, cluster={}",
+        parsed.poses[0].bone_poses[0].bone_to_world.m03,
+        parsed.skin_clusters[0].bind_to_world.m03,
+    );
+    let outside_path = dir.path().join("outside-bind-pose-tolerance.fbx");
+    std::fs::write(&outside_path, outside).expect("write outside-tolerance fixture");
+    let loaded = animsmith_fbx::load_scale_source(&outside_path).expect("bind pose parses");
+    assert!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+            .unwrap_err()
+            .contains("mismatched_bind_poses=1"),
+        "a component outside the fixed scalar tolerance must refuse"
+    );
+}
+
+#[test]
+fn rest_bind_refuses_a_non_finite_bind_pose() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let non_finite = "1,0,0,0,0,1,0,0,0,0,1,0,nan,0,0,1";
+    let source = add_bind_pose(&source, non_finite, false);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("non-finite-bind-pose.fbx");
+    std::fs::write(&path, source).expect("write analytic non-finite fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("bind pose parses");
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
+            "count=1; non_finite_bind_poses=1)"
+        )
+    );
+}
+
+#[test]
+fn rest_bind_refuses_ambiguous_bind_pose_node_coverage() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = add_bind_pose(&source, IDENTITY_FBX_MATRIX, true);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("ambiguous-bind-pose.fbx");
+    std::fs::write(&path, source).expect("write analytic ambiguous fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("bind pose parses");
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
+            "count=1; ambiguous_bind_poses=1)"
+        )
+    );
+}
+
+#[test]
+fn rest_bind_refuses_cross_pose_node_coverage_ambiguity() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = add_bind_pose_with_id(&source, 5201, IDENTITY_FBX_MATRIX, false);
+    let source = add_bind_pose_with_id(&source, 5202, IDENTITY_FBX_MATRIX, false);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("cross-pose-ambiguity.fbx");
+    std::fs::write(&path, source).expect("write analytic ambiguous fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("bind poses parse");
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
+            "count=2; ambiguous_bind_poses=2)"
+        )
+    );
+}
+
+#[test]
+fn rest_bind_reconciles_converted_nonidentity_bind_matrices() {
+    const NONIDENTITY_FBX_MATRIX: &str = "0,1,0,0,-1,0,0,0,0,0,1,0,100,200,300,1";
+    let source = std::fs::read_to_string(fixture())
+        .expect("read fixture")
+        .replacen(
+            "P: \"UpAxis\", \"int\", \"Integer\", \"\",1",
+            "P: \"UpAxis\", \"int\", \"Integer\", \"\",2",
+            1,
+        )
+        .replacen(
+            "P: \"FrontAxis\", \"int\", \"Integer\", \"\",2",
+            "P: \"FrontAxis\", \"int\", \"Integer\", \"\",1",
+            1,
+        )
+        .replacen(
+            "P: \"FrontAxisSign\", \"int\", \"Integer\", \"\",1",
+            "P: \"FrontAxisSign\", \"int\", \"Integer\", \"\",-1",
+            1,
+        )
+        .replacen(
+            &format!("TransformLink: *16 {{ a: {IDENTITY_FBX_MATRIX} }}"),
+            &format!("TransformLink: *16 {{ a: {NONIDENTITY_FBX_MATRIX} }}"),
+            1,
+        );
+    let source = add_bind_pose(&source, NONIDENTITY_FBX_MATRIX, false)
+        .replacen("NbPoseNodes: 2", "NbPoseNodes: 1", 1)
+        .replacen(
+            concat!(
+                "\t\tPoseNode: {\n",
+                "\t\t\tNode: 1002\n",
+                "\t\t\tMatrix: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+                "\t\t}\n",
+            ),
+            "",
+            1,
+        );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("converted-nonidentity-bind-pose.fbx");
+    std::fs::write(&path, source).expect("write converted bind fixture");
+
+    let parsed = ufbx::load_memory(
+        &std::fs::read(&path).expect("read converted fixture"),
+        ufbx::LoadOpts::default(),
+    )
+    .expect("inspect converted fixture");
+    assert_eq!(parsed.poses.len(), 1);
+    assert_eq!(parsed.poses[0].bone_poses.len(), 1);
+    assert_ne!(parsed.poses[0].bone_poses[0].bone_to_world.m03, 0.0);
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("bind pose parses");
+    animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect("converted nonidentity pose and cluster matrices reconcile");
+}
+
+#[test]
+fn rest_bind_refuses_partial_bind_pose_skin_coverage() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = source
+        .replace("Weights: *3 { a: 1,1,1 }", "Weights: *3 { a: 0.5,0.5,0.5 }")
+        .replacen(
+            "\tAnimationStack: 3001",
+            concat!(
+                "\tDeformer: 4003, \"SubDeformer::tri_cluster\", \"Cluster\" {\n",
+                "\t\tVersion: 100\n",
+                "\t\tIndexes: *3 { a: 0,1,2 }\n",
+                "\t\tWeights: *3 { a: 0.5,0.5,0.5 }\n",
+                "\t\tTransform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+                "\t\tTransformLink: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+                "\t}\n",
+                "\tAnimationStack: 3001",
+            ),
+            1,
+        )
+        .replacen(
+            "\tC: \"OO\",1001,4002",
+            concat!(
+                "\tC: \"OO\",1001,4002\n",
+                "\tC: \"OO\",4003,4001\n",
+                "\tC: \"OO\",1002,4003",
+            ),
+            1,
+        );
+    let source = add_bind_pose(&source, IDENTITY_FBX_MATRIX, false)
+        .replacen("NbPoseNodes: 2", "NbPoseNodes: 1", 1)
+        .replacen(
+            concat!(
+                "\t\tPoseNode: {\n",
+                "\t\t\tNode: 1002\n",
+                "\t\t\tMatrix: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+                "\t\t}\n",
+            ),
+            "",
+            1,
+        );
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("partial-bind-pose.fbx");
+    std::fs::write(&path, source).expect("write analytic partial fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("bind pose parses");
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
+            "count=1; incomplete_bind_poses=1)"
+        )
+    );
+}
+
+#[test]
+fn rest_bind_keeps_non_bind_pose_kinds_unsupported() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = add_bind_pose(&source, IDENTITY_FBX_MATRIX, false)
+        .replacen(
+            "\"Pose::bind\", \"BindPose\"",
+            "\"Pose::rest\", \"RestPose\"",
+            1,
+        )
+        .replacen("Type: \"BindPose\"", "Type: \"RestPose\"", 1);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("rest-pose.fbx");
+    std::fs::write(&path, source).expect("write analytic rest-pose fixture");
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("rest pose parses");
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
+            "count=1; non_bind_poses=1)"
+        )
+    );
+}
+
+#[test]
 fn admitted_node_attributes_do_not_hide_a_residual_pose() {
     let source = std::fs::read_to_string(fixture()).expect("read fixture");
     let source = add_nonbearing_node_attributes(&source, true);
@@ -1351,7 +1800,8 @@ fn admitted_node_attributes_do_not_hide_a_residual_pose() {
         animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
         concat!(
             "FBX rest/bind raw-source facts rejected: ",
-            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=1; poses=1)"
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
+            "count=1; incomplete_bind_poses=1)"
         )
     );
 }
