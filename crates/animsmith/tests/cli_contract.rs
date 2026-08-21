@@ -971,7 +971,10 @@ severity = "off"
     assert!(!addressability_validator().is_valid(&malformed_check));
     let malformed_check: animsmith_engine::GltfAnimationAddressabilityInput =
         serde_json::from_value(malformed_check).expect("stages raw embedded check JSON");
-    assert!(malformed_check.into_report().is_err());
+    assert!(matches!(
+        malformed_check.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidBevyCheckSubset)
+    ));
 
     let mut malformed_provenance = bevy_json.clone();
     malformed_provenance["bevy"]["prediction_provenance"]["profile"]["selection"]["family"] =
@@ -979,7 +982,10 @@ severity = "off"
     assert!(!addressability_validator().is_valid(&malformed_provenance));
     let malformed_provenance: animsmith_engine::GltfAnimationAddressabilityInput =
         serde_json::from_value(malformed_provenance).expect("stages raw provenance JSON");
-    assert!(malformed_provenance.into_report().is_err());
+    assert!(matches!(
+        malformed_provenance.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidBevyProvenance { .. })
+    ));
 
     let mut reduced_available_basis = bevy_json.clone();
     let references =
@@ -1013,7 +1019,10 @@ severity = "off"
     let malformed_profile_identity: animsmith_engine::GltfAnimationAddressabilityInput =
         serde_json::from_value(malformed_profile_identity)
             .expect("stages a wrong embedded profile identity");
-    assert!(malformed_profile_identity.into_report().is_err());
+    assert!(matches!(
+        malformed_profile_identity.into_report(),
+        Err(animsmith_engine::GltfAnimationAddressabilityError::InvalidBevyProvenance { .. })
+    ));
 }
 
 #[test]
@@ -1026,6 +1035,38 @@ fn generate_addressability_text_and_markdown_render_the_same_bounded_observation
     );
     let config = write_bevy_config(dir.path(), "renderers");
 
+    let json = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "addressability"])
+        .arg(&input)
+        .output()
+        .expect("renders canonical addressability JSON");
+    assert_eq!(json.status.code(), Some(0), "{}", stderr(&json));
+    assert!(stderr(&json).is_empty());
+    let json: Value = serde_json::from_slice(&json.stdout).expect("canonical addressability JSON");
+    assert_addressability_schema_valid(&json);
+    assert_eq!(
+        json["inventory"]["dependency_closure"]["coverage"]["state"],
+        "complete"
+    );
+    let input_sha256 = json["input"]["sha256"].as_str().expect("input digest");
+    let input_bytes = json["input"]["bytes"].as_u64().expect("input bytes");
+    let inventory_sha256 = json["inventory"]["identity"]["sha256"]
+        .as_str()
+        .expect("inventory digest");
+    let inventory_bytes = json["inventory"]["identity"]["bytes"]
+        .as_u64()
+        .expect("inventory canonical bytes");
+    let closure_references = json["inventory"]["dependency_closure"]["references"]
+        .as_array()
+        .expect("closure references")
+        .len();
+    let external_resources = json["inventory"]["dependency_closure"]["external_resources"]
+        .as_array()
+        .expect("external resources")
+        .len();
+
     let text = animsmith()
         .arg("--config")
         .arg(&config)
@@ -1036,18 +1077,35 @@ fn generate_addressability_text_and_markdown_render_the_same_bounded_observation
         .expect("renders addressability text");
     assert_eq!(text.status.code(), Some(0), "{}", stderr(&text));
     let text = stdout(&text);
-    assert!(
-        text.contains("animations: complete (3 retained row(s))"),
-        "{text}"
-    );
-    assert!(text.contains("animation 0: name=\"duplicate\""), "{text}");
-    assert!(text.contains("animation 1: name=proven_absent"), "{text}");
-    assert!(
-        text.contains("facet animation_asset_label subject Animation2: available"),
-        "{text}"
+    assert_eq!(
+        text,
+        format!(
+            concat!(
+                "glTF animation addressability v1\n",
+                "input: sha256={input_sha256} bytes={input_bytes}\n",
+                "inventory: sha256={inventory_sha256} canonical-bytes={inventory_bytes}\n",
+                "source format: gltf_json\n",
+                "dependency closure: complete ({closure_references} reference(s), {external_resources} external resource(s))\n",
+                "animations: complete (3 retained row(s))\n",
+                "  animation 0: name=\"duplicate\" normalized_clip_index=0 channels=complete (0 retained row(s))\n",
+                "  animation 1: name=proven_absent normalized_clip_index=1 channels=complete (0 retained row(s))\n",
+                "  animation 2: name=\"forged\\nline\\u001B[31m\\u2028\\u2029\\u202E\" normalized_clip_index=2 channels=complete (0 retained row(s))\n",
+                "Bevy adapter: bevy revision 1 (0.19.0 / gltf-asset-loader)\n",
+                "  check engine-addressability: selected / enabled / applicable / complete\n",
+                "    facet animation_asset_label subject Animation0: available\n",
+                "    facet animation_asset_label subject Animation1: available\n",
+                "    facet animation_asset_label subject Animation2: available\n",
+            ),
+            input_sha256 = input_sha256,
+            input_bytes = input_bytes,
+            inventory_sha256 = inventory_sha256,
+            inventory_bytes = inventory_bytes,
+            closure_references = closure_references,
+            external_resources = external_resources,
+        ),
+        "text must remain an exact presentation of the validated JSON fields"
     );
     assert!(!text.contains(HOSTILE_PRESENTATION_TEXT), "{text}");
-    assert!(text.contains("\\n") && text.contains("\\u001B"), "{text}");
 
     let markdown = animsmith()
         .arg("--config")
@@ -1059,14 +1117,38 @@ fn generate_addressability_text_and_markdown_render_the_same_bounded_observation
         .expect("renders addressability Markdown");
     assert_eq!(markdown.status.code(), Some(0), "{}", stderr(&markdown));
     let markdown = stdout(&markdown);
-    assert!(markdown.starts_with("# glTF animation addressability v1\n"));
-    assert!(
-        markdown.contains("| 0 | `\"duplicate\"` | `0` |"),
-        "{markdown}"
-    );
-    assert!(
-        markdown.contains("| `animation_asset_label` | `Animation2` |"),
-        "{markdown}"
+    assert_eq!(
+        markdown,
+        format!(
+            concat!(
+                "# glTF animation addressability v1\n\n",
+                "- Input: `{input_sha256}` (`{input_bytes}` bytes)\n",
+                "- Inventory: `{inventory_sha256}` (`{inventory_bytes}` canonical bytes)\n",
+                "- Source format: `gltf_json`\n",
+                "- Dependency closure: `complete` (`{closure_references}` references, `{external_resources}` external resources)\n",
+                "- Animations: `complete` (`3` retained rows)\n\n",
+                "| Animation | Source name | Normalized clip | Channel coverage | Channels |\n",
+                "| ---: | --- | ---: | --- | ---: |\n",
+                "| 0 | `\"duplicate\"` | `0` | `complete` | 0 |\n",
+                "| 1 | `proven_absent` | `1` | `complete` | 0 |\n",
+                "| 2 | `\"forged\\\\nline\\\\u001B[31m\\\\u2028\\\\u2029\\\\u202E\"` | `2` | `complete` | 0 |\n\n",
+                "## Bevy adapter\n\n",
+                "Profile: `bevy` revision `1` (`0.19.0` / `gltf-asset-loader`).\n\n",
+                "Check `engine-addressability`: `selected` / `enabled` / `applicable` / `complete`.\n\n",
+                "| Scope | Subject | Prediction | Reasons |\n",
+                "| --- | --- | --- | --- |\n",
+                "| `animation_asset_label` | `Animation0` | `available` | `—` |\n",
+                "| `animation_asset_label` | `Animation1` | `available` | `—` |\n",
+                "| `animation_asset_label` | `Animation2` | `available` | `—` |\n",
+            ),
+            input_sha256 = input_sha256,
+            input_bytes = input_bytes,
+            inventory_sha256 = inventory_sha256,
+            inventory_bytes = inventory_bytes,
+            closure_references = closure_references,
+            external_resources = external_resources,
+        ),
+        "Markdown must remain an exact presentation of the validated JSON fields"
     );
     assert!(!markdown.contains(HOSTILE_PRESENTATION_TEXT), "{markdown}");
 }

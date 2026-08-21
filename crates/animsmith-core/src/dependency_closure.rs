@@ -1734,29 +1734,18 @@ fn canonical_identity(
     encode_u64(&mut bytes, DEPENDENCY_CLOSURE_V1_MAX_DEDUP_PROBES as u64);
     bytes.push(0); // DependencyClosureCoverageV1::Complete
     encode_identity(&mut bytes, primary);
-    encode_u64(&mut bytes, references.len() as u64);
-    for reference in references {
-        encode_u64(&mut bytes, reference.source_order_index as u64);
-        bytes.push(resource_kind_tag(reference.kind));
-        bytes.push(resource_purpose_tag(reference.purpose));
-        encode_u64(&mut bytes, reference.source_index);
-        match &reference.target {
-            DependencyReferenceTargetV1::Primary => bytes.push(0),
-            DependencyReferenceTargetV1::External { key } => {
-                bytes.push(1);
-                encode_text(&mut bytes, key.as_str());
-            }
-            DependencyReferenceTargetV1::Refused { .. }
-            | DependencyReferenceTargetV1::Unavailable { .. } => {
-                unreachable!("only complete reference targets enter closure identity")
-            }
+    encode_references(&mut bytes, references, |bytes, target| match target {
+        DependencyReferenceTargetV1::Primary => bytes.push(0),
+        DependencyReferenceTargetV1::External { key } => {
+            bytes.push(1);
+            encode_text(bytes, key.as_str());
         }
-    }
-    encode_u64(&mut bytes, resources.len() as u64);
-    for resource in resources {
-        encode_text(&mut bytes, resource.key.as_str());
-        encode_identity(&mut bytes, &resource.identity);
-    }
+        DependencyReferenceTargetV1::Refused { .. }
+        | DependencyReferenceTargetV1::Unavailable { .. } => {
+            unreachable!("only complete reference targets enter closure identity")
+        }
+    });
+    encode_external_resources(&mut bytes, resources);
     DependencyClosureIdentityV1(InputIdentity::from_bytes(&bytes))
 }
 
@@ -1798,35 +1787,28 @@ fn canonical_record_identity(closure: &DependencyClosureV1) -> InputIdentity {
         }
         None => bytes.push(0),
     }
-    encode_u64(&mut bytes, closure.references.len() as u64);
-    for reference in &closure.references {
-        encode_u64(&mut bytes, reference.source_order_index as u64);
-        bytes.push(resource_kind_tag(reference.kind));
-        bytes.push(resource_purpose_tag(reference.purpose));
-        encode_u64(&mut bytes, reference.source_index);
-        match &reference.target {
+    encode_references(
+        &mut bytes,
+        &closure.references,
+        |bytes, target| match target {
             DependencyReferenceTargetV1::Primary => bytes.push(0),
             DependencyReferenceTargetV1::External { key } => {
                 bytes.push(1);
-                encode_text(&mut bytes, key.as_str());
+                encode_text(bytes, key.as_str());
             }
             DependencyReferenceTargetV1::Refused { key, reason } => {
                 bytes.push(2);
-                encode_optional_key(&mut bytes, key.as_ref());
+                encode_optional_key(bytes, key.as_ref());
                 bytes.push(refusal_reason_tag(*reason));
             }
             DependencyReferenceTargetV1::Unavailable { key, reason } => {
                 bytes.push(3);
-                encode_optional_key(&mut bytes, key.as_ref());
+                encode_optional_key(bytes, key.as_ref());
                 bytes.push(unavailable_reason_tag(*reason));
             }
-        }
-    }
-    encode_u64(&mut bytes, closure.external_resources.len() as u64);
-    for resource in &closure.external_resources {
-        encode_text(&mut bytes, resource.key.as_str());
-        encode_identity(&mut bytes, &resource.identity);
-    }
+        },
+    );
+    encode_external_resources(&mut bytes, &closure.external_resources);
     let work = closure.work;
     encode_u64(&mut bytes, work.inspected_references as u64);
     encode_u64(&mut bytes, work.retained_references as u64);
@@ -1838,6 +1820,29 @@ fn canonical_record_identity(closure: &DependencyClosureV1) -> InputIdentity {
     encode_u64(&mut bytes, work.captured_external_resources as u64);
     encode_u64(&mut bytes, work.external_bytes_read_hashed);
     InputIdentity::from_bytes(&bytes)
+}
+
+fn encode_references(
+    bytes: &mut Vec<u8>,
+    references: &[DependencyClosureReferenceV1],
+    mut encode_target: impl FnMut(&mut Vec<u8>, &DependencyReferenceTargetV1),
+) {
+    encode_u64(bytes, references.len() as u64);
+    for reference in references {
+        encode_u64(bytes, reference.source_order_index as u64);
+        bytes.push(resource_kind_tag(reference.kind));
+        bytes.push(resource_purpose_tag(reference.purpose));
+        encode_u64(bytes, reference.source_index);
+        encode_target(bytes, &reference.target);
+    }
+}
+
+fn encode_external_resources(bytes: &mut Vec<u8>, resources: &[ExternalResourceIdentityV1]) {
+    encode_u64(bytes, resources.len() as u64);
+    for resource in resources {
+        encode_text(bytes, resource.key.as_str());
+        encode_identity(bytes, &resource.identity);
+    }
 }
 
 fn encode_optional_key(bytes: &mut Vec<u8>, key: Option<&DependencyResourceKeyV1>) {

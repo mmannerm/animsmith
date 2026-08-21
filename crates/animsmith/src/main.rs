@@ -96,8 +96,8 @@ enum Cmd {
         /// Input .glb, .gltf, or .fbx files.
         #[arg(required = true, value_name = "FILE")]
         files: Vec<PathBuf>,
-        #[arg(long, value_enum, default_value_t = LintFormat::Text)]
-        format: LintFormat,
+        #[arg(long, value_enum, default_value_t = PresentationFormat::Text)]
+        format: PresentationFormat,
         /// Treat warnings as errors for the exit code.
         #[arg(long)]
         deny_warnings: bool,
@@ -265,8 +265,8 @@ enum GenerateCmd {
         #[arg(value_name = "INPUT")]
         input: PathBuf,
         /// Render canonical JSON or a presentation-only text/Markdown view.
-        #[arg(long, value_enum, default_value_t = GenerateFormat::Json)]
-        format: GenerateFormat,
+        #[arg(long, value_enum, default_value_t = PresentationFormat::Json)]
+        format: PresentationFormat,
     },
 }
 
@@ -328,8 +328,10 @@ enum Format {
     Json,
 }
 
+/// JSON machine output plus the two presentation-only renderings shared by
+/// `lint` and `generate addressability`. Each command pins its own default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum GenerateFormat {
+enum PresentationFormat {
     Json,
     Text,
     Markdown,
@@ -567,17 +569,6 @@ fn run_conversion(request: &ConversionRequest<'_>, tool: ToolInfo) -> Result<Exi
         })?,
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// Output format for `lint`. Adds a presentation-only Markdown rendering
-/// on top of the shared text/JSON surface, suitable for pasting into CI
-/// comments and asset-review threads. JSON stays the machine-readable
-/// source of truth; Markdown carries no schema or stability guarantees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum LintFormat {
-    Text,
-    Json,
-    Markdown,
 }
 
 fn select_repairs(repairs: Vec<Repair>) -> Vec<Repair> {
@@ -942,7 +933,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             require_files(&files)?;
             let known_check_ids = full_check_ids()?;
             validate_check_selection(&known_check_ids, &select)?;
-            if format == LintFormat::Json && !allow.is_empty() {
+            if format == PresentationFormat::Json && !allow.is_empty() {
                 return Err(
                     "--allow is not supported with --format json; machine-readable results retain every content finding"
                         .into(),
@@ -1010,13 +1001,15 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 );
             }
             match format {
-                LintFormat::Json => {
+                PresentationFormat::Json => {
                     let envelope = LintEnvelope::new(current_tool(), reports)
                         .map_err(|error| error.to_string())?;
                     render::print_json(&envelope)?;
                 }
-                LintFormat::Text => publish::emit_text(&render::render_text(&reports, &allow)),
-                LintFormat::Markdown => {
+                PresentationFormat::Text => {
+                    publish::emit_text(&render::render_text(&reports, &allow));
+                }
+                PresentationFormat::Markdown => {
                     publish::emit_text(&render::render_markdown(&reports, &allow));
                 }
             }
@@ -1381,11 +1374,11 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 });
 
                 match format {
-                    GenerateFormat::Json => render::print_json(&report)?,
-                    GenerateFormat::Text => {
+                    PresentationFormat::Json => render::print_json(&report)?,
+                    PresentationFormat::Text => {
                         publish::emit_text(&render::render_addressability_text(&report));
                     }
-                    GenerateFormat::Markdown => {
+                    PresentationFormat::Markdown => {
                         publish::emit_text(&render::render_addressability_markdown(&report));
                     }
                 }

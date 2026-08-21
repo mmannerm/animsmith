@@ -17,10 +17,13 @@ use animsmith_core::{
     SourceFormatV1, SourceObservationStateV1, SourceSetCoverageStateV1, SourceTargetKindV1,
     SourceUnavailableReasonV1, ToolInfo,
 };
-use serde::de::Error as _;
+use serde::de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::value::RawValue;
+use std::convert::Infallible;
+use std::fmt;
 use std::io::Read;
+use std::marker::PhantomData;
 
 /// Version of the standalone glTF animation-addressability envelope.
 pub const GLTF_ANIMATION_ADDRESSABILITY_SCHEMA_VERSION: u32 = 1;
@@ -420,6 +423,7 @@ pub struct GltfAnimationAddressabilityChannelSetV1 {
 #[serde(deny_unknown_fields)]
 struct GltfAnimationAddressabilityChannelSetWireV1 {
     coverage: GltfAnimationCoverageV1,
+    #[serde(deserialize_with = "deserialize_channel_rows")]
     rows: Vec<GltfAnimationAddressabilityChannelV1>,
 }
 
@@ -429,31 +433,36 @@ impl<'de> Deserialize<'de> for GltfAnimationAddressabilityChannelSetV1 {
         D: Deserializer<'de>,
     {
         let wire = GltfAnimationAddressabilityChannelSetWireV1::deserialize(deserializer)?;
+        Self::from_wire(wire).map_err(D::Error::custom)
+    }
+}
+
+impl GltfAnimationAddressabilityChannelSetV1 {
+    fn from_wire(
+        wire: GltfAnimationAddressabilityChannelSetWireV1,
+    ) -> Result<Self, GltfAnimationAddressabilityError> {
         if wire.coverage.state == GltfAnimationCoverageStateV1::Unavailable && !wire.rows.is_empty()
         {
-            return Err(D::Error::custom(
-                GltfAnimationAddressabilityError::RowsWithUnavailableCoverage,
-            ));
+            return Err(GltfAnimationAddressabilityError::RowsWithUnavailableCoverage);
         }
         if wire.rows.len() >= animsmith_core::RAW_SOURCE_V1_MAX_OBSERVATIONS {
-            return Err(D::Error::custom(
-                GltfAnimationAddressabilityError::TooManyRows {
-                    found: wire.rows.len(),
-                    limit: animsmith_core::RAW_SOURCE_V1_MAX_OBSERVATIONS - 1,
-                },
-            ));
+            return Err(GltfAnimationAddressabilityError::TooManyRows {
+                found: wire.rows.len(),
+                limit: animsmith_core::RAW_SOURCE_V1_MAX_OBSERVATIONS - 1,
+            });
         }
         for (offset, row) in wire.rows.iter().enumerate() {
-            let expected = u64::try_from(offset)
-                .map_err(|_| D::Error::custom("channel index cannot be represented as u64"))?;
+            let expected = u64::try_from(offset).map_err(|_| {
+                GltfAnimationAddressabilityError::IndexOverflow {
+                    field: "channel index",
+                }
+            })?;
             if row.source_channel_index != expected {
-                return Err(D::Error::custom(
-                    GltfAnimationAddressabilityError::NonCanonicalChannelIndex {
-                        source_clip_index: 0,
-                        expected,
-                        actual: row.source_channel_index,
-                    },
-                ));
+                return Err(GltfAnimationAddressabilityError::NonCanonicalChannelIndex {
+                    source_clip_index: 0,
+                    expected,
+                    actual: row.source_channel_index,
+                });
             }
         }
         Ok(Self {
@@ -461,9 +470,7 @@ impl<'de> Deserialize<'de> for GltfAnimationAddressabilityChannelSetV1 {
             rows: wire.rows,
         })
     }
-}
 
-impl GltfAnimationAddressabilityChannelSetV1 {
     /// Exhaustiveness and typed reason for this channel domain.
     pub const fn coverage(&self) -> GltfAnimationCoverageV1 {
         self.coverage
@@ -500,24 +507,28 @@ impl<'de> Deserialize<'de> for GltfAnimationAddressabilityAnimationV1 {
         D: Deserializer<'de>,
     {
         let wire = GltfAnimationAddressabilityAnimationWireV1::deserialize(deserializer)?;
+        Self::from_wire(wire).map_err(D::Error::custom)
+    }
+}
+
+impl GltfAnimationAddressabilityAnimationV1 {
+    fn from_wire(
+        wire: GltfAnimationAddressabilityAnimationWireV1,
+    ) -> Result<Self, GltfAnimationAddressabilityError> {
         if wire.source_clip_index >= animsmith_core::RAW_SOURCE_V1_MAX_CLIPS as u64 {
-            return Err(D::Error::custom(
-                GltfAnimationAddressabilityError::SourceIndexOutOfRange {
-                    field: "source clip index",
-                    actual: wire.source_clip_index,
-                    limit: animsmith_core::RAW_SOURCE_V1_MAX_CLIPS,
-                },
-            ));
+            return Err(GltfAnimationAddressabilityError::SourceIndexOutOfRange {
+                field: "source clip index",
+                actual: wire.source_clip_index,
+                limit: animsmith_core::RAW_SOURCE_V1_MAX_CLIPS,
+            });
         }
         if let GltfAnimationObservationWireV1::Observed { value } = &wire.source_name
             && value.len() > animsmith_core::RAW_SOURCE_V1_MAX_TEXT_BYTES
         {
-            return Err(D::Error::custom(
-                GltfAnimationAddressabilityError::TextTooLong {
-                    found: value.len(),
-                    limit: animsmith_core::RAW_SOURCE_V1_MAX_TEXT_BYTES,
-                },
-            ));
+            return Err(GltfAnimationAddressabilityError::TextTooLong {
+                found: value.len(),
+                limit: animsmith_core::RAW_SOURCE_V1_MAX_TEXT_BYTES,
+            });
         }
         Ok(Self {
             source_clip_index: wire.source_clip_index,
@@ -526,9 +537,7 @@ impl<'de> Deserialize<'de> for GltfAnimationAddressabilityAnimationV1 {
             channels: wire.channels,
         })
     }
-}
 
-impl GltfAnimationAddressabilityAnimationV1 {
     /// Exact source animation-array index.
     pub const fn source_clip_index(&self) -> u64 {
         self.source_clip_index
@@ -562,6 +571,7 @@ pub struct GltfAnimationAddressabilityAnimationSetV1 {
 #[serde(deny_unknown_fields)]
 struct GltfAnimationAddressabilityAnimationSetWireV1 {
     coverage: GltfAnimationCoverageV1,
+    #[serde(deserialize_with = "deserialize_animation_rows")]
     rows: Vec<GltfAnimationAddressabilityAnimationV1>,
 }
 
@@ -798,15 +808,7 @@ impl GltfAnimationAddressabilityBevyAdapterV1 {
     ) -> Result<Self, GltfAnimationAddressabilityError> {
         validate_bevy_adapter(
             &prediction_provenance,
-            check.check_id(),
-            check.selection(),
-            check.configuration(),
-            check.applicability(),
-            check.evaluation(),
-            check.findings().len(),
-            check.evaluated_scopes(),
-            check.gaps().len(),
-            check.engine_prediction(),
+            BevyAddressabilityCheckView::from(&check),
             inventory,
         )?;
         Ok(Self {
@@ -854,15 +856,7 @@ impl GltfAnimationAddressabilityV1 {
         if let Some(adapter) = &bevy {
             validate_bevy_adapter(
                 adapter.prediction_provenance(),
-                adapter.check().check_id(),
-                adapter.check().selection(),
-                adapter.check().configuration(),
-                adapter.check().applicability(),
-                adapter.check().evaluation(),
-                adapter.check().findings().len(),
-                adapter.check().evaluated_scopes(),
-                adapter.check().gaps().len(),
-                adapter.check().engine_prediction(),
+                BevyAddressabilityCheckView::from(adapter.check()),
                 &inventory,
             )?;
         }
@@ -940,6 +934,446 @@ where
     T: Deserialize<'de>,
 {
     T::deserialize(deserializer).map(Some)
+}
+
+#[derive(Clone, Copy)]
+enum AddressabilitySequenceBound {
+    AnimationRows,
+    ChannelRows,
+    AggregateRows,
+    EvaluatedScopes,
+    EmptyCheckEntries,
+}
+
+impl AddressabilitySequenceBound {
+    const fn limit(self) -> usize {
+        match self {
+            Self::AnimationRows | Self::EvaluatedScopes => animsmith_core::RAW_SOURCE_V1_MAX_CLIPS,
+            Self::ChannelRows => animsmith_core::RAW_SOURCE_V1_MAX_OBSERVATIONS - 1,
+            Self::AggregateRows => animsmith_core::RAW_SOURCE_V1_MAX_OBSERVATIONS,
+            Self::EmptyCheckEntries => 0,
+        }
+    }
+
+    fn error(self) -> GltfAnimationAddressabilityError {
+        let limit = self.limit();
+        match self {
+            Self::AnimationRows => GltfAnimationAddressabilityError::TooManyAnimations {
+                found: limit + 1,
+                limit,
+            },
+            Self::ChannelRows => GltfAnimationAddressabilityError::TooManyRows {
+                found: limit + 1,
+                limit,
+            },
+            Self::AggregateRows => GltfAnimationAddressabilityError::TooManyRows {
+                found: limit + 1,
+                limit,
+            },
+            Self::EvaluatedScopes | Self::EmptyCheckEntries => {
+                GltfAnimationAddressabilityError::InvalidBevyCheckSubset
+            }
+        }
+    }
+}
+
+struct BoundedSequenceVisitor<T> {
+    bound: AddressabilitySequenceBound,
+    element: PhantomData<fn() -> T>,
+}
+
+impl<'de, T> Visitor<'de> for BoundedSequenceVisitor<T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = Vec<T>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "a sequence with at most {} elements",
+            self.bound.limit()
+        )
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let limit = self.bound.limit();
+        let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0).min(limit));
+        while values.len() < limit {
+            let Some(value) = sequence.next_element()? else {
+                return Ok(values);
+            };
+            values.push(value);
+        }
+        reject_next_element(&mut sequence, self.bound)?;
+        Ok(values)
+    }
+}
+
+struct RejectExtraElement(AddressabilitySequenceBound);
+
+impl<'de> DeserializeSeed<'de> for RejectExtraElement {
+    type Value = Infallible;
+
+    fn deserialize<D>(self, _deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Err(D::Error::custom(self.0.error()))
+    }
+}
+
+fn reject_next_element<'de, A>(
+    sequence: &mut A,
+    bound: AddressabilitySequenceBound,
+) -> Result<(), A::Error>
+where
+    A: SeqAccess<'de>,
+{
+    match sequence.next_element_seed(RejectExtraElement(bound)) {
+        Ok(None) => Ok(()),
+        Ok(Some(never)) => match never {},
+        Err(error) => Err(error),
+    }
+}
+
+fn deserialize_bounded_sequence<'de, D, T>(
+    deserializer: D,
+    bound: AddressabilitySequenceBound,
+) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    deserializer.deserialize_seq(BoundedSequenceVisitor {
+        bound,
+        element: PhantomData,
+    })
+}
+
+fn deserialize_animation_rows<'de, D>(
+    deserializer: D,
+) -> Result<Vec<GltfAnimationAddressabilityAnimationV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct AnimationRowsVisitor;
+
+    impl<'de> Visitor<'de> for AnimationRowsVisitor {
+        type Value = Vec<GltfAnimationAddressabilityAnimationV1>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a bounded sequence of animation rows")
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let animation_limit = animsmith_core::RAW_SOURCE_V1_MAX_CLIPS;
+            let mut remaining_rows = animsmith_core::RAW_SOURCE_V1_MAX_OBSERVATIONS;
+            let mut animations =
+                Vec::with_capacity(sequence.size_hint().unwrap_or(0).min(animation_limit));
+            loop {
+                let bound = if animations.len() == animation_limit {
+                    Some(AddressabilitySequenceBound::AnimationRows)
+                } else if remaining_rows == 0 {
+                    Some(AddressabilitySequenceBound::AggregateRows)
+                } else {
+                    None
+                };
+                if let Some(bound) = bound {
+                    reject_next_element(&mut sequence, bound)?;
+                    return Ok(animations);
+                }
+                let Some(animation) = sequence.next_element_seed(AnimationRowSeed {
+                    remaining_rows: &mut remaining_rows,
+                })?
+                else {
+                    return Ok(animations);
+                };
+                animations.push(animation);
+            }
+        }
+    }
+
+    deserializer.deserialize_seq(AnimationRowsVisitor)
+}
+
+struct AnimationRowSeed<'a> {
+    remaining_rows: &'a mut usize,
+}
+
+impl<'de> DeserializeSeed<'de> for AnimationRowSeed<'_> {
+    type Value = GltfAnimationAddressabilityAnimationV1;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        *self.remaining_rows -= 1;
+        deserializer.deserialize_struct(
+            "GltfAnimationAddressabilityAnimationV1",
+            ANIMATION_ROW_FIELDS,
+            AnimationRowVisitor {
+                remaining_rows: self.remaining_rows,
+            },
+        )
+    }
+}
+
+const ANIMATION_ROW_FIELDS: &[&str] = &[
+    "source_clip_index",
+    "source_name",
+    "normalized_clip_index",
+    "channels",
+];
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "snake_case")]
+enum AnimationRowField {
+    SourceClipIndex,
+    SourceName,
+    NormalizedClipIndex,
+    Channels,
+}
+
+struct AnimationRowVisitor<'a> {
+    remaining_rows: &'a mut usize,
+}
+
+impl<'de> Visitor<'de> for AnimationRowVisitor<'_> {
+    type Value = GltfAnimationAddressabilityAnimationV1;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a strict animation row object")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut source_clip_index = None;
+        let mut source_name = None;
+        let mut normalized_clip_index = None;
+        let mut channels = None;
+        while let Some(field) = map.next_key()? {
+            match field {
+                AnimationRowField::SourceClipIndex => {
+                    if source_clip_index.is_some() {
+                        return Err(A::Error::duplicate_field("source_clip_index"));
+                    }
+                    source_clip_index = Some(map.next_value()?);
+                }
+                AnimationRowField::SourceName => {
+                    if source_name.is_some() {
+                        return Err(A::Error::duplicate_field("source_name"));
+                    }
+                    source_name = Some(map.next_value()?);
+                }
+                AnimationRowField::NormalizedClipIndex => {
+                    if normalized_clip_index.is_some() {
+                        return Err(A::Error::duplicate_field("normalized_clip_index"));
+                    }
+                    normalized_clip_index = Some(map.next_value()?);
+                }
+                AnimationRowField::Channels => {
+                    if channels.is_some() {
+                        return Err(A::Error::duplicate_field("channels"));
+                    }
+                    channels = Some(map.next_value_seed(ChannelSetSeed {
+                        remaining_rows: self.remaining_rows,
+                    })?);
+                }
+            }
+        }
+        let wire = GltfAnimationAddressabilityAnimationWireV1 {
+            source_clip_index: source_clip_index
+                .ok_or_else(|| A::Error::missing_field("source_clip_index"))?,
+            source_name: source_name.ok_or_else(|| A::Error::missing_field("source_name"))?,
+            normalized_clip_index: normalized_clip_index
+                .ok_or_else(|| A::Error::missing_field("normalized_clip_index"))?,
+            channels: channels.ok_or_else(|| A::Error::missing_field("channels"))?,
+        };
+        GltfAnimationAddressabilityAnimationV1::from_wire(wire).map_err(A::Error::custom)
+    }
+}
+
+struct ChannelSetSeed<'a> {
+    remaining_rows: &'a mut usize,
+}
+
+impl<'de> DeserializeSeed<'de> for ChannelSetSeed<'_> {
+    type Value = GltfAnimationAddressabilityChannelSetV1;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_struct(
+            "GltfAnimationAddressabilityChannelSetV1",
+            CHANNEL_SET_FIELDS,
+            ChannelSetVisitor {
+                remaining_rows: self.remaining_rows,
+            },
+        )
+    }
+}
+
+const CHANNEL_SET_FIELDS: &[&str] = &["coverage", "rows"];
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "snake_case")]
+enum ChannelSetField {
+    Coverage,
+    Rows,
+}
+
+struct ChannelSetVisitor<'a> {
+    remaining_rows: &'a mut usize,
+}
+
+impl<'de> Visitor<'de> for ChannelSetVisitor<'_> {
+    type Value = GltfAnimationAddressabilityChannelSetV1;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a strict animation channel-set object")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut coverage = None;
+        let mut rows = None;
+        while let Some(field) = map.next_key()? {
+            match field {
+                ChannelSetField::Coverage => {
+                    if coverage.is_some() {
+                        return Err(A::Error::duplicate_field("coverage"));
+                    }
+                    coverage = Some(map.next_value()?);
+                }
+                ChannelSetField::Rows => {
+                    if rows.is_some() {
+                        return Err(A::Error::duplicate_field("rows"));
+                    }
+                    rows = Some(map.next_value_seed(AggregateChannelRowsSeed {
+                        remaining_rows: self.remaining_rows,
+                    })?);
+                }
+            }
+        }
+        let wire = GltfAnimationAddressabilityChannelSetWireV1 {
+            coverage: coverage.ok_or_else(|| A::Error::missing_field("coverage"))?,
+            rows: rows.ok_or_else(|| A::Error::missing_field("rows"))?,
+        };
+        GltfAnimationAddressabilityChannelSetV1::from_wire(wire).map_err(A::Error::custom)
+    }
+}
+
+struct AggregateChannelRowsSeed<'a> {
+    remaining_rows: &'a mut usize,
+}
+
+impl<'de> DeserializeSeed<'de> for AggregateChannelRowsSeed<'_> {
+    type Value = Vec<GltfAnimationAddressabilityChannelV1>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(AggregateChannelRowsVisitor {
+            remaining_rows: self.remaining_rows,
+        })
+    }
+}
+
+struct AggregateChannelRowsVisitor<'a> {
+    remaining_rows: &'a mut usize,
+}
+
+impl<'de> Visitor<'de> for AggregateChannelRowsVisitor<'_> {
+    type Value = Vec<GltfAnimationAddressabilityChannelV1>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a channel-row sequence within the remaining aggregate row budget")
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let channel_limit = animsmith_core::RAW_SOURCE_V1_MAX_OBSERVATIONS - 1;
+        let limit = (*self.remaining_rows).min(channel_limit);
+        let mut rows = Vec::with_capacity(sequence.size_hint().unwrap_or(0).min(limit));
+        while rows.len() < limit {
+            let Some(row) = sequence.next_element()? else {
+                return Ok(rows);
+            };
+            rows.push(row);
+            *self.remaining_rows -= 1;
+        }
+        let bound = if limit == channel_limit {
+            AddressabilitySequenceBound::ChannelRows
+        } else {
+            AddressabilitySequenceBound::AggregateRows
+        };
+        reject_next_element(&mut sequence, bound)?;
+        Ok(rows)
+    }
+}
+
+fn deserialize_channel_rows<'de, D>(
+    deserializer: D,
+) -> Result<Vec<GltfAnimationAddressabilityChannelV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_sequence(deserializer, AddressabilitySequenceBound::ChannelRows)
+}
+
+fn deserialize_evaluated_scopes<'de, D>(deserializer: D) -> Result<Vec<EvaluationScope>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_sequence(deserializer, AddressabilitySequenceBound::EvaluatedScopes)
+}
+
+#[derive(Debug, Default)]
+struct EmptyCheckSequence;
+
+impl<'de> Deserialize<'de> for EmptyCheckSequence {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct EmptyCheckSequenceVisitor;
+
+        impl<'de> Visitor<'de> for EmptyCheckSequenceVisitor {
+            type Value = EmptyCheckSequence;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an empty sequence")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                reject_next_element(
+                    &mut sequence,
+                    AddressabilitySequenceBound::EmptyCheckEntries,
+                )?;
+                Ok(EmptyCheckSequence)
+            }
+        }
+
+        deserializer.deserialize_seq(EmptyCheckSequenceVisitor)
+    }
 }
 
 fn required_nullable_value<T>(value: RequiredNullable<T>) -> Option<T> {
@@ -1101,13 +1535,11 @@ pub struct GltfAnimationAddressabilityCheckReadbackV1 {
     configuration: ConfigurationState,
     applicability: Applicability,
     evaluation: EvaluationState,
-    findings: Vec<Box<RawValue>>,
     evaluated_scopes: Vec<EvaluationScope>,
-    gaps: Vec<Box<RawValue>>,
     prediction: Option<EnginePredictionV1>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GltfAnimationAddressabilityCheckWireV1 {
     check_id: String,
@@ -1115,11 +1547,13 @@ struct GltfAnimationAddressabilityCheckWireV1 {
     configuration: ConfigurationState,
     applicability: Applicability,
     evaluation: EvaluationState,
-    findings: Vec<Box<RawValue>>,
-    #[serde(default)]
+    #[serde(rename = "findings")]
+    _findings: EmptyCheckSequence,
+    #[serde(default, deserialize_with = "deserialize_evaluated_scopes")]
     evaluated_scopes: Vec<EvaluationScope>,
     #[serde(default)]
-    gaps: Vec<Box<RawValue>>,
+    #[serde(rename = "gaps")]
+    _gaps: EmptyCheckSequence,
     #[serde(default, deserialize_with = "deserialize_present_non_null")]
     prediction: Option<EnginePredictionV1>,
 }
@@ -1132,9 +1566,7 @@ impl GltfAnimationAddressabilityCheckReadbackV1 {
             configuration: wire.configuration,
             applicability: wire.applicability,
             evaluation: wire.evaluation,
-            findings: wire.findings,
             evaluated_scopes: wire.evaluated_scopes,
-            gaps: wire.gaps,
             prediction: wire.prediction,
         }
     }
@@ -1179,20 +1611,9 @@ impl GltfAnimationAddressabilityCheckReadbackV1 {
         provenance: &PredictionProvenanceV1,
         inventory: &GltfAnimationAddressabilityInventoryV1,
     ) -> Result<(), GltfAnimationAddressabilityError> {
-        if !self.findings.is_empty() || !self.gaps.is_empty() {
-            return Err(GltfAnimationAddressabilityError::InvalidBevyCheckSubset);
-        }
         validate_bevy_adapter(
             provenance,
-            &self.check_id,
-            self.selection,
-            self.configuration,
-            self.applicability,
-            self.evaluation,
-            self.findings.len(),
-            &self.evaluated_scopes,
-            self.gaps.len(),
-            self.prediction.as_ref(),
+            BevyAddressabilityCheckView::from(self),
             inventory,
         )
     }
@@ -1578,18 +1999,54 @@ fn validate_animation_set(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn validate_bevy_adapter(
-    provenance: &PredictionProvenanceV1,
-    check_id: &str,
+#[derive(Clone, Copy)]
+struct BevyAddressabilityCheckView<'a> {
+    check_id: &'a str,
     selection: SelectionState,
     configuration: ConfigurationState,
     applicability: Applicability,
     evaluation: EvaluationState,
     finding_count: usize,
-    evaluated_scopes: &[EvaluationScope],
+    evaluated_scopes: &'a [EvaluationScope],
     gap_count: usize,
-    prediction: Option<&EnginePredictionV1>,
+    prediction: Option<&'a EnginePredictionV1>,
+}
+
+impl<'a> From<&'a CheckEvaluation> for BevyAddressabilityCheckView<'a> {
+    fn from(check: &'a CheckEvaluation) -> Self {
+        Self {
+            check_id: check.check_id(),
+            selection: check.selection(),
+            configuration: check.configuration(),
+            applicability: check.applicability(),
+            evaluation: check.evaluation(),
+            finding_count: check.findings().len(),
+            evaluated_scopes: check.evaluated_scopes(),
+            gap_count: check.gaps().len(),
+            prediction: check.engine_prediction(),
+        }
+    }
+}
+
+impl<'a> From<&'a GltfAnimationAddressabilityCheckReadbackV1> for BevyAddressabilityCheckView<'a> {
+    fn from(check: &'a GltfAnimationAddressabilityCheckReadbackV1) -> Self {
+        Self {
+            check_id: &check.check_id,
+            selection: check.selection,
+            configuration: check.configuration,
+            applicability: check.applicability,
+            evaluation: check.evaluation,
+            finding_count: 0,
+            evaluated_scopes: &check.evaluated_scopes,
+            gap_count: 0,
+            prediction: check.prediction.as_ref(),
+        }
+    }
+}
+
+fn validate_bevy_adapter(
+    provenance: &PredictionProvenanceV1,
+    check: BevyAddressabilityCheckView<'_>,
     inventory: &GltfAnimationAddressabilityInventoryV1,
 ) -> Result<(), GltfAnimationAddressabilityError> {
     provenance
@@ -1618,10 +2075,10 @@ fn validate_bevy_adapter(
         return Err(GltfAnimationAddressabilityError::InvalidBevyProfile);
     }
     validate_inventory_provenance_binding(provenance, inventory)?;
-    if check_id != ENGINE_ADDRESSABILITY_CHECK_ID
-        || selection != SelectionState::Selected
-        || finding_count != 0
-        || gap_count != 0
+    if check.check_id != ENGINE_ADDRESSABILITY_CHECK_ID
+        || check.selection != SelectionState::Selected
+        || check.finding_count != 0
+        || check.gap_count != 0
     {
         return Err(GltfAnimationAddressabilityError::InvalidBevyCheckSubset);
     }
@@ -1633,19 +2090,19 @@ fn validate_bevy_adapter(
     } else {
         Applicability::Applicable
     };
-    if applicability != expected_applicability {
+    if check.applicability != expected_applicability {
         return Err(GltfAnimationAddressabilityError::InvalidBevyCheckSubset);
     }
-    if configuration == ConfigurationState::Disabled {
-        if evaluation != EvaluationState::NotEvaluated
-            || !evaluated_scopes.is_empty()
-            || prediction.is_some()
+    if check.configuration == ConfigurationState::Disabled {
+        if check.evaluation != EvaluationState::NotEvaluated
+            || !check.evaluated_scopes.is_empty()
+            || check.prediction.is_some()
         {
             return Err(GltfAnimationAddressabilityError::InvalidBevyCheckSubset);
         }
         return Ok(());
     }
-    if let Some(prediction) = prediction {
+    if let Some(prediction) = check.prediction {
         prediction
             .validate_against_provenance(provenance)
             .map_err(GltfAnimationAddressabilityError::InvalidPrediction)?;
@@ -1654,25 +2111,26 @@ fn validate_bevy_adapter(
     let rows = inventory.animations.rows();
     match inventory.animations.coverage.state {
         GltfAnimationCoverageStateV1::Complete if rows.is_empty() => {
-            if applicability != Applicability::NotApplicable
-                || evaluation != EvaluationState::NotEvaluated
-                || !evaluated_scopes.is_empty()
-                || prediction.is_some()
+            if check.applicability != Applicability::NotApplicable
+                || check.evaluation != EvaluationState::NotEvaluated
+                || !check.evaluated_scopes.is_empty()
+                || check.prediction.is_some()
             {
                 return Err(GltfAnimationAddressabilityError::InvalidBevyCheckSubset);
             }
         }
         GltfAnimationCoverageStateV1::Complete => {
-            let prediction =
-                prediction.ok_or(GltfAnimationAddressabilityError::InvalidBevyCheckSubset)?;
-            if applicability != Applicability::Applicable
-                || evaluation != EvaluationState::Complete
+            let prediction = check
+                .prediction
+                .ok_or(GltfAnimationAddressabilityError::InvalidBevyCheckSubset)?;
+            if check.applicability != Applicability::Applicable
+                || check.evaluation != EvaluationState::Complete
                 || prediction.facets().len() != rows.len()
-                || evaluated_scopes.len() != rows.len()
+                || check.evaluated_scopes.len() != rows.len()
             {
                 return Err(GltfAnimationAddressabilityError::InvalidBevyCheckSubset);
             }
-            for (row, evaluated) in rows.iter().zip(evaluated_scopes) {
+            for (row, evaluated) in rows.iter().zip(check.evaluated_scopes) {
                 let source_clip_index = usize::try_from(row.source_clip_index).map_err(|_| {
                     GltfAnimationAddressabilityError::IndexOverflow {
                         field: "source clip index",
@@ -1707,15 +2165,16 @@ fn validate_bevy_adapter(
             }
         }
         GltfAnimationCoverageStateV1::Partial | GltfAnimationCoverageStateV1::Unavailable => {
-            let prediction =
-                prediction.ok_or(GltfAnimationAddressabilityError::InvalidBevyCheckSubset)?;
+            let prediction = check
+                .prediction
+                .ok_or(GltfAnimationAddressabilityError::InvalidBevyCheckSubset)?;
             let facets = prediction.facets();
             let expected = EvaluationScope::new(
                 animsmith_core::EvaluationScopeCode::ANIMATION_ASSET_LABEL_INVENTORY,
             );
-            if applicability != Applicability::Applicable
-                || evaluation != EvaluationState::NotEvaluated
-                || !evaluated_scopes.is_empty()
+            if check.applicability != Applicability::Applicable
+                || check.evaluation != EvaluationState::NotEvaluated
+                || !check.evaluated_scopes.is_empty()
                 || facets.len() != 1
                 || facets[0].state() != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
                 || facets[0].scope() != &expected
@@ -2212,6 +2671,19 @@ mod tests {
         }
     }
 
+    fn direct_channel(index: usize) -> GltfAnimationAddressabilityChannelV1 {
+        GltfAnimationAddressabilityChannelV1 {
+            source_channel_index: index as u64,
+            target: GltfAnimationTargetV1 {
+                kind: GltfAnimationTargetKindV1::Node,
+                index: 0,
+            },
+            property: GltfAnimationChannelPropertyV1::Translation,
+            input_accessor_index: (index * 2) as u64,
+            output_accessor_index: (index * 2 + 1) as u64,
+        }
+    }
+
     fn direct_inventory(
         animations: Vec<GltfAnimationAddressabilityAnimationV1>,
     ) -> GltfAnimationAddressabilityInventoryV1 {
@@ -2585,7 +3057,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_reader_rejects_explicit_null_prediction_for_a_disabled_check() {
+    fn strict_reader_rejects_noncanonical_collections_and_null_prediction() {
         let source = loaded_source(SourceFormatV1::GltfJson);
         let inventory = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
         let provenance = frozen_bevy_provenance(&source);
@@ -2601,10 +3073,23 @@ mod tests {
             Some(adapter),
         )
         .unwrap();
-        let mut json = serde_json::to_value(report).unwrap();
-        assert!(json["bevy"]["check"].get("prediction").is_none());
-        json["bevy"]["check"]["prediction"] = serde_json::Value::Null;
-        let bytes = serde_json::to_vec(&json).unwrap();
+        let json = serde_json::to_value(report).unwrap();
+        for field in ["findings", "gaps"] {
+            let mut nonempty = json.clone();
+            nonempty["bevy"]["check"][field] = serde_json::json!([null]);
+            let bytes = serde_json::to_vec(&nonempty).unwrap();
+            let input = GltfAnimationAddressabilityInput::read_from(Cursor::new(bytes)).unwrap();
+            assert!(matches!(
+                input.into_report(),
+                Err(GltfAnimationAddressabilityError::InvalidBevyCheckShape { reason })
+                    if reason.contains("exact engine-addressability subset")
+            ));
+        }
+
+        let mut null_prediction = json;
+        assert!(null_prediction["bevy"]["check"].get("prediction").is_none());
+        null_prediction["bevy"]["check"]["prediction"] = serde_json::Value::Null;
+        let bytes = serde_json::to_vec(&null_prediction).unwrap();
         let input = GltfAnimationAddressabilityInput::read_from(Cursor::new(bytes)).unwrap();
         assert!(matches!(
             input.into_report(),
@@ -2638,6 +3123,21 @@ mod tests {
         let mut unknown = json.clone();
         unknown["unknown"] = serde_json::json!(true);
         assert!(serde_json::from_value::<GltfAnimationAddressabilityInventoryV1>(unknown).is_err());
+        let mut unknown_animation = json.clone();
+        unknown_animation["animations"]["rows"][0]["unknown"] = serde_json::json!(true);
+        let error =
+            serde_json::from_value::<GltfAnimationAddressabilityInventoryV1>(unknown_animation)
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("unknown field `unknown`"), "{error}");
+        let mut unknown_channel_set = json.clone();
+        unknown_channel_set["animations"]["rows"][0]["channels"]["unknown"] =
+            serde_json::json!(true);
+        let error =
+            serde_json::from_value::<GltfAnimationAddressabilityInventoryV1>(unknown_channel_set)
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("unknown field `unknown`"), "{error}");
         let mut changed = json;
         changed["animations"]["rows"][0]["source_name"]["value"] = serde_json::json!("run");
         assert!(
@@ -2748,40 +3248,133 @@ mod tests {
             .collect();
         let inventory = direct_inventory(rows);
         let mut json = serde_json::to_value(&inventory).unwrap();
+        assert!(
+            serde_json::from_value::<GltfAnimationAddressabilityInventoryV1>(json.clone()).is_ok()
+        );
         let rows = json["animations"]["rows"].as_array_mut().unwrap();
-        rows.push(rows.last().unwrap().clone());
+        rows.push(serde_json::Value::Null);
         let error = serde_json::from_value::<GltfAnimationAddressabilityInventoryV1>(json)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("exceeding the V1 limit"), "{error}");
+        assert!(
+            error.contains("4097 animations, exceeding the V1 limit of 4096"),
+            "the N+1 sentinel must be rejected before its null shape is decoded: {error}"
+        );
     }
 
     #[test]
-    fn aggregate_row_collection_accepts_n_and_rejects_n_plus_one() {
+    fn channel_collection_accepts_n_and_rejects_n_plus_one() {
         let channels = (0..animsmith_core::RAW_SOURCE_V1_MAX_OBSERVATIONS - 1)
-            .map(|index| GltfAnimationAddressabilityChannelV1 {
-                source_channel_index: index as u64,
-                target: GltfAnimationTargetV1 {
-                    kind: GltfAnimationTargetKindV1::Node,
-                    index: 0,
-                },
-                property: GltfAnimationChannelPropertyV1::Translation,
-                input_accessor_index: (index * 2) as u64,
-                output_accessor_index: (index * 2 + 1) as u64,
-            })
+            .map(direct_channel)
             .collect();
         let mut animation = direct_animation(0, String::new());
         animation.channels.rows = channels;
         let inventory = direct_inventory(vec![animation]);
         let mut json = serde_json::to_value(&inventory).unwrap();
+        assert!(
+            serde_json::from_value::<GltfAnimationAddressabilityInventoryV1>(json.clone()).is_ok()
+        );
         let rows = json["animations"]["rows"][0]["channels"]["rows"]
             .as_array_mut()
             .unwrap();
-        rows.push(rows.last().unwrap().clone());
+        rows.push(serde_json::Value::Null);
         let error = serde_json::from_value::<GltfAnimationAddressabilityInventoryV1>(json)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("animation/channel rows"), "{error}");
+        assert!(
+            error.contains("65536 animation/channel rows, exceeding the V1 limit of 65535"),
+            "the N+1 sentinel must be rejected before its null shape is decoded: {error}"
+        );
+    }
+
+    #[test]
+    fn aggregate_row_budget_rejects_cross_animation_n_plus_one_before_decoding() {
+        let first_channel_count = animsmith_core::RAW_SOURCE_V1_MAX_OBSERVATIONS - 3;
+        let mut first = direct_animation(0, String::new());
+        first.channels.rows = (0..first_channel_count).map(direct_channel).collect();
+        let mut second = direct_animation(1, String::new());
+        second.channels.rows = vec![direct_channel(0)];
+        let inventory = direct_inventory(vec![first, second]);
+        let mut json = serde_json::to_value(&inventory).unwrap();
+        assert!(
+            serde_json::from_value::<GltfAnimationAddressabilityInventoryV1>(json.clone()).is_ok()
+        );
+
+        json["animations"]["rows"][1]["channels"]["rows"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::Null);
+        let error = serde_json::from_value::<GltfAnimationAddressabilityInventoryV1>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("65537 animation/channel rows, exceeding the V1 limit of 65536"),
+            "the global N+1 sentinel must be rejected before its null shape is decoded: {error}"
+        );
+    }
+
+    #[test]
+    fn evaluated_scope_collection_accepts_n_and_rejects_n_plus_one() {
+        let scopes: Vec<_> = (0..animsmith_core::RAW_SOURCE_V1_MAX_CLIPS)
+            .map(|index| {
+                serde_json::json!({
+                    "code": "animation_asset_label",
+                    "subject": format!("Animation{index}"),
+                })
+            })
+            .collect();
+        let mut check = serde_json::json!({
+            "check_id": ENGINE_ADDRESSABILITY_CHECK_ID,
+            "selection": "selected",
+            "configuration": "enabled",
+            "applicability": "applicable",
+            "evaluation": "complete",
+            "findings": [],
+            "evaluated_scopes": scopes,
+            "gaps": [],
+        });
+        let wire: GltfAnimationAddressabilityCheckWireV1 =
+            serde_json::from_value(check.clone()).unwrap();
+        assert_eq!(
+            wire.evaluated_scopes.len(),
+            animsmith_core::RAW_SOURCE_V1_MAX_CLIPS
+        );
+
+        check["evaluated_scopes"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::Null);
+        let error = serde_json::from_value::<GltfAnimationAddressabilityCheckWireV1>(check)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("exact engine-addressability subset"),
+            "the N+1 sentinel must be rejected before its null shape is decoded: {error}"
+        );
+    }
+
+    #[test]
+    fn embedded_check_rejects_first_finding_or_gap_without_materializing_it() {
+        for field in ["findings", "gaps"] {
+            let mut check = serde_json::json!({
+                "check_id": ENGINE_ADDRESSABILITY_CHECK_ID,
+                "selection": "selected",
+                "configuration": "enabled",
+                "applicability": "applicable",
+                "evaluation": "complete",
+                "findings": [],
+                "evaluated_scopes": [],
+                "gaps": [],
+            });
+            check[field] = serde_json::json!([null]);
+            let error = serde_json::from_value::<GltfAnimationAddressabilityCheckWireV1>(check)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("exact engine-addressability subset"),
+                "{field}'s first sentinel must be rejected before Box<RawValue> decoding: {error}"
+            );
+        }
     }
 
     #[test]
