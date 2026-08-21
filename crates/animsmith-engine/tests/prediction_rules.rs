@@ -1,10 +1,11 @@
 use animsmith_core::{
-    Check, CheckCtx, CheckSelection, Document, EnginePredictionBasisV1,
-    EnginePredictionFacetStateV1, MetricGrids, PredictionBasisReferenceV1,
-    PredictionUnavailableReasonV1, RawSourceBasisReferenceV1, RawSourceDomainV1,
-    RawSourceFactsBuilderV1, RawSourceFieldIdV1, RawSourceKeyV1, ResolvedRoles, SourceClipFactV1,
-    SourceFactDomainV1, SourceFactSetV1, SourceFormatV1, SourceLoaderDispositionV1,
-    SourceObservationV1, SourceProvenanceV1, SourceTextV1, SourceUnavailableReasonV1,
+    Check, CheckCtx, CheckSelection, DependencyClosureBuilderV1, DependencyResourceKeyV1, Document,
+    EnginePredictionBasisV1, EnginePredictionFacetStateV1, InputIdentity, MetricGrids,
+    PredictionBasisReferenceV1, PredictionUnavailableReasonV1, RawSourceBasisReferenceV1,
+    RawSourceDomainV1, RawSourceFactsBuilderV1, RawSourceFieldIdV1, RawSourceKeyV1, ResolvedRoles,
+    ResourceKeySyntaxV1, SourceClipFactV1, SourceFactDomainV1, SourceFactSetV1, SourceFormatV1,
+    SourceLoaderDispositionV1, SourceObservationV1, SourceProvenanceV1, SourceResourceKindV1,
+    SourceResourceLocatorV1, SourceResourceReferenceV1, SourceTextV1, SourceUnavailableReasonV1,
 };
 use animsmith_engine::{
     ENGINE_ADDRESSABILITY_CHECK_ID, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck,
@@ -84,6 +85,72 @@ fn loaded_source_with_primary(
     }
     facts
         .finish_with_dependency_closure(document, closure)
+        .unwrap()
+}
+
+fn loaded_source_with_external_resource(external_bytes: &[u8]) -> animsmith_core::LoadedSource {
+    let primary = InputIdentity::from_bytes(b"same-primary-and-raw-resource-facts");
+    let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::GltfJson, primary.clone());
+    assert!(facts.push_clip(SourceClipFactV1::new(
+        0,
+        SourceObservationV1::observed(
+            SourceTextV1::new("walk").unwrap(),
+            SourceProvenanceV1::format_defined(),
+            SourceLoaderDispositionV1::Preserved,
+        ),
+        SourceObservationV1::observed(
+            0,
+            SourceProvenanceV1::format_defined(),
+            SourceLoaderDispositionV1::Preserved,
+        ),
+        SourceObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+        SourceObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+        SourceFactSetV1::complete(Vec::new()),
+    )));
+    assert!(facts.push_resource(SourceResourceReferenceV1::new(
+        0,
+        SourceResourceKindV1::Buffer,
+        0,
+        SourceResourceLocatorV1::classify("buffers/animation.bin"),
+        SourceLoaderDispositionV1::Preserved,
+        SourceProvenanceV1::format_defined(),
+    )));
+    facts.mark_complete(SourceFactDomainV1::Clips);
+    facts.mark_complete(SourceFactDomainV1::Constructs);
+    facts.mark_complete(SourceFactDomainV1::Resources);
+
+    let key = DependencyResourceKeyV1::from_source_str(
+        "buffers/animation.bin",
+        ResourceKeySyntaxV1::GltfUri,
+    )
+    .unwrap();
+    let mut closure = DependencyClosureBuilderV1::new(
+        primary,
+        facts.resource_coverage(),
+        facts.resource_rows().len(),
+    );
+    assert!(closure.begin_reference(22, 2));
+    assert_eq!(closure.prepare_external_key(&key).unwrap(), Some(true));
+    closure.record_external_open_attempt(&key).unwrap();
+    assert!(
+        closure
+            .push_captured_external(
+                0,
+                SourceResourceKindV1::Buffer,
+                0,
+                key,
+                InputIdentity::from_bytes(external_bytes),
+            )
+            .unwrap()
+    );
+    let mut document = Document::default();
+    document.clips.push(animsmith_core::Clip {
+        name: "walk".into(),
+        duration_s: 0.0,
+        tracks: Vec::new(),
+    });
+    facts
+        .finish_with_dependency_closure(document, closure.finish().unwrap())
         .unwrap()
 }
 
@@ -300,6 +367,24 @@ fn construction_rejects_same_primary_with_different_source_coverage() {
 }
 
 #[test]
+fn construction_rejects_same_primary_and_raw_facts_with_different_dependency_content() {
+    let first = loaded_source_with_external_resource(b"external content one");
+    let second = loaded_source_with_external_resource(b"external content two");
+    let profile = bevy_profile(&first);
+    let provenance = project_prediction_provenance_v1(&profile, &first).unwrap();
+
+    assert_eq!(
+        animsmith_core::RawSourceBindingV1::from_source(first.source_facts()),
+        animsmith_core::RawSourceBindingV1::from_source(second.source_facts())
+    );
+    assert_ne!(first.dependency_closure(), second.dependency_closure());
+    assert!(matches!(
+        EngineAddressabilityCheck::new(&second, Some(&provenance)),
+        Err(PredictionRuleError::SourceProvenanceMismatch)
+    ));
+}
+
+#[test]
 fn construction_rejects_an_exact_tuple_with_altered_profile_facts_identity() {
     let source = loaded_source(ClipCoverage::Complete, &[Some("walk")]);
     let profile = bevy_profile(&source);
@@ -422,12 +507,14 @@ fn raw_clip_bound_uses_available_facets_at_4096_and_one_partial_inventory_facet(
     assert_eq!(facets.len(), 4096);
     let mut seen = vec![false; 4096];
     for facet in facets {
+        assert_eq!(facet.scope().code.as_str(), "animation_asset_label");
         let subject = facet.scope().subject.as_deref().unwrap();
         let index = subject
             .strip_prefix("Animation")
             .unwrap()
             .parse::<usize>()
             .unwrap();
+        assert_eq!(subject, format!("Animation{index}"));
         assert!(index < seen.len());
         assert!(!std::mem::replace(&mut seen[index], true));
         let expected_raw = RawSourceBasisReferenceV1::from_source(
@@ -439,12 +526,13 @@ fn raw_clip_bound_uses_available_facets_at_4096_and_one_partial_inventory_facet(
             source.source_facts(),
         )
         .unwrap();
-        assert!(
-            facet
-                .basis()
-                .references()
-                .contains(&PredictionBasisReferenceV1::raw_source(expected_raw))
-        );
+        let expected_basis = EnginePredictionBasisV1::new(vec![
+            PredictionBasisReferenceV1::profile_fact("animation_addressability").unwrap(),
+            PredictionBasisReferenceV1::primary_source("bevy-gltf-asset-label-0.19.0").unwrap(),
+            PredictionBasisReferenceV1::raw_source(expected_raw),
+        ])
+        .unwrap();
+        assert_eq!(facet.basis(), &expected_basis);
     }
     assert!(seen.into_iter().all(|was_seen| was_seen));
 
