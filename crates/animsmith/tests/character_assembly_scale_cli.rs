@@ -1752,6 +1752,11 @@ fn v7_accepts_external_fbx_texture_references_as_scale_irrelevant() {
         2,
         "the immutable evidence remains honest about both texture/video declarations"
     );
+    assert_eq!(
+        evidence["rest_bind_scale"]["inputs"][1]["source_projection"]["capability"]["external_resource_count"],
+        0,
+        "the clean clip keeps its own source projection rather than inheriting the base count"
+    );
     let artifact = animsmith_gltf::load(&dir.path().join("character.glb"))
         .expect("published artifact reloads");
     assert_eq!(
