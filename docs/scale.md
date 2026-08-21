@@ -41,8 +41,9 @@ There is no in-place mode, plan file, `animsmith.toml` key, implicit first
 skin/root, or per-run tolerance override. Input, artifact, and evidence paths
 must be three distinct files. For narrow FBX `rest-bind`, neither destination
 may name a safe dependency key retained by the same-load closure, and a
-symlink-refused dependency stops before publication. glTF/GLB artifacts keep
-the input container; narrow FBX `rest-bind` emits a new `.glb`.
+symlink-refused dependency or terminal closure-budget stop prevents
+publication. glTF/GLB artifacts keep the input container; narrow FBX
+`rest-bind` emits a new `.glb`.
 
 ## What one run proves
 

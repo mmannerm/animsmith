@@ -162,8 +162,9 @@ through the normalized artifact, and neither publication destination may name
 one of the safe source-relative dependency keys retained by that same-load
 closure, including a key whose capture was unavailable or refused. The frozen
 path stops before publication when a retained key was refused as
-symlink-mediated rather than resolving through the link. The frozen v7
-evidence retains declaration counts in its capability inventory; same-load raw
+symlink-mediated rather than resolving through the link, or when the closure
+resource budget leaves a declaration tail unchecked. The frozen v7 evidence
+retains declaration counts in its capability inventory; same-load raw
 facts and closure remain loader-side rather than being added to that wire
 record. Admission does not claim raw FBX object-property, material, or
 texture-assignment preservation. A

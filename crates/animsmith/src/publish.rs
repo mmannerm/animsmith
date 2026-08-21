@@ -55,7 +55,8 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "fbx")]
 use animsmith_core::{
-    DependencyClosureV1, DependencyReferenceTargetV1, DependencyResourceRefusalReasonV1,
+    DependencyClosureCoverageReasonV1, DependencyClosureV1, DependencyReferenceTargetV1,
+    DependencyResourceRefusalReasonV1,
 };
 use animsmith_gltf::fix::{FixReport, Repair};
 
@@ -439,8 +440,9 @@ pub(crate) fn input_identity(path: &Path) -> Result<PathBuf, String> {
 ///
 /// # Errors
 ///
-/// Returns an operator error when a dependency path cannot be inspected or
-/// when it names one of the supplied destinations.
+/// Returns an operator error when the closure stopped at its resource budget,
+/// a dependency path cannot be inspected, or a key names one of the supplied
+/// destinations.
 #[cfg(feature = "fbx")]
 pub(crate) fn require_external_dependencies_distinct_from_destinations(
     command: &str,
@@ -452,6 +454,15 @@ pub(crate) fn require_external_dependencies_distinct_from_destinations(
         .iter()
         .map(|(label, path)| Ok((*label, destination_identity(path)?)))
         .collect::<Result<Vec<_>, String>>()?;
+    if closure
+        .coverage()
+        .reasons()
+        .contains(&DependencyClosureCoverageReasonV1::ResourceBudgetExceeded)
+    {
+        return Err(format!(
+            "{command} dependency closure exceeded its resource budget, so publication cannot prove every source sidecar distinct"
+        ));
+    }
     for reference in closure.references() {
         let key = match reference.target() {
             DependencyReferenceTargetV1::External { key }

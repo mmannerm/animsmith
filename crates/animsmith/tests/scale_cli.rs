@@ -10,9 +10,9 @@
 //! `scale` is the first evidence-emitting producer in the minimal binary, and
 //! a feature-gated import here would silently drop that coverage.
 
-#[cfg(feature = "fbx")]
-use animsmith_core::model::Property;
 use animsmith_core::sha256_hex;
+#[cfg(feature = "fbx")]
+use animsmith_core::{DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES, model::Property};
 use animsmith_testkit::{
     clipless_mesh_scale_rig_glb, nodes_only_scale_rig_glb, oversized_proof_scale_rig_glb,
     rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf, rotation_only_meshless_scale_rig_glb,
@@ -2405,6 +2405,45 @@ Connections: {"#;
         )
 }
 
+#[cfg(feature = "fbx")]
+fn external_resource_closure_budget_fbx_fixture(last_locator: &str) -> String {
+    let mut videos = String::new();
+    for index in 0..=DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES {
+        let locator = if index == DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES {
+            last_locator.to_owned()
+        } else {
+            format!("resource{index}.bin")
+        };
+        videos.push_str(&format!(
+            concat!(
+                "\tVideo: {}, \"Video::resource{}\", \"Clip\" {{\n",
+                "\t\tType: \"Clip\"\n",
+                "\t\tFileName: {:?}\n",
+                "\t\tRelativeFilename: {:?}\n",
+                "\t}}\n"
+            ),
+            10_000 + index,
+            index,
+            locator,
+            locator
+        ));
+    }
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../animsmith-fbx/testdata/rigged_triangle.fbx"),
+    )
+    .expect("reads analytic FBX fixture")
+    .replace("\r\n", "\n")
+    .replacen(
+        "\tObjectType: \"Deformer\" { Count: 2 }\n}",
+        &format!(
+            "\tObjectType: \"Deformer\" {{ Count: 2 }}\n\tObjectType: \"Video\" {{ Count: {} }}\n}}",
+            DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES + 1
+        ),
+        1,
+    )
+    .replacen("}\nConnections: {", &format!("{videos}}}\nConnections: {{"), 1)
+}
+
 /// Two separate skins whose ordered named joint topologies deliberately
 /// collide after staging, while their selected parent root remains unique.
 #[cfg(feature = "fbx")]
@@ -2753,12 +2792,9 @@ fn fbx_rest_bind_protects_a_keyed_dependency_that_exceeds_the_capture_budget() {
         stderr(&result)
     );
     assert!(result.stdout.is_empty());
-    assert!(
-        stderr(&result).contains(
-            "scale external dependency \"oversized.png\" and evidence must be different paths"
-        ),
-        "stderr:\n{}",
-        stderr(&result)
+    assert_eq!(
+        stderr(&result),
+        "animsmith: scale dependency closure exceeded its resource budget, so publication cannot prove every source sidecar distinct\n"
     );
     assert_eq!(std::fs::metadata(&dependency).unwrap().len(), oversized_len);
     let mut prefix = [0u8; 8];
@@ -2766,6 +2802,42 @@ fn fbx_rest_bind_protects_a_keyed_dependency_that_exceeds_the_capture_budget() {
     std::io::Read::read_exact(&mut dependency_file, &mut prefix).unwrap();
     assert_eq!(prefix, TINY_PNG[..8]);
     assert_eq!(std::fs::read(peer).unwrap(), prior_peer);
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn fbx_rest_bind_rejects_a_truncated_dependency_closure_before_publication() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::write(
+        dir.path().join("rig.fbx"),
+        external_resource_closure_budget_fbx_fixture("out.json"),
+    )
+    .unwrap();
+    let artifact = dir.path().join("out.glb");
+    let evidence = dir.path().join("out.json");
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"source-sidecar sentinel";
+    std::fs::write(&artifact, prior_artifact).unwrap();
+    std::fs::write(&evidence, prior_evidence).unwrap();
+
+    let result =
+        fbx_rest_bind_command(dir.path(), "rig.fbx", "out.glb", "out.json", "0.01", "json")
+            .output()
+            .expect("runs dependency-closure budget preflight");
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        stderr(&result)
+    );
+    assert!(result.stdout.is_empty());
+    assert_eq!(
+        stderr(&result),
+        "animsmith: scale dependency closure exceeded its resource budget, so publication cannot prove every source sidecar distinct\n"
+    );
+    assert_eq!(std::fs::read(artifact).unwrap(), prior_artifact);
+    assert_eq!(std::fs::read(evidence).unwrap(), prior_evidence);
 }
 
 #[cfg(feature = "fbx")]

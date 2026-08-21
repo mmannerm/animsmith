@@ -378,7 +378,8 @@ exact failed fact or counter. An artifact or evidence destination that names
 one of the safe source-relative dependency keys retained by the same-load
 closure is an operator error even when capture was unavailable or refused;
 symlink-mediated dependency keys stop before publication rather than resolving
-through the link. Publication never replaces a source sidecar. The command
+through the link, and resource-budget truncation stops rather than trusting an
+unchecked tail. Publication never replaces a source sidecar. The command
 validates the base plus every clip's versioned skeleton basis before
 remapping any keys. V7 retains v6's composition with
 `canonicalize_skin`, `ground_and_center`, and `remove_nodes`: it applies those
