@@ -2657,6 +2657,53 @@ fn fbx_rest_bind_captures_an_admitted_external_texture_before_staging() {
 
 #[cfg(feature = "fbx")]
 #[test]
+fn fbx_rest_bind_refuses_destinations_that_alias_captured_dependencies() {
+    for (destination, locator, output, evidence) in [
+        ("evidence", "normal.png", "out.glb", "nested/normal.png"),
+        ("output", "artifact.glb", "nested/artifact.glb", "out.json"),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        let source = external_normal_texture_fbx_fixture().replace("normal.png", locator);
+        std::fs::write(dir.path().join("nested/rig.fbx"), source).unwrap();
+        let dependency = dir.path().join("nested").join(locator);
+        std::fs::write(&dependency, TINY_PNG).unwrap();
+
+        let result = fbx_rest_bind_command(
+            dir.path(),
+            "nested/rig.fbx",
+            output,
+            evidence,
+            "0.01",
+            "json",
+        )
+        .output()
+        .expect("runs destructive-alias preflight");
+
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert!(result.stdout.is_empty());
+        assert!(
+            stderr(&result).contains(&format!(
+                "scale external dependency {locator:?} and {destination} must be different paths"
+            )),
+            "stderr:\n{}",
+            stderr(&result)
+        );
+        assert_eq!(
+            std::fs::read(dependency).unwrap(),
+            TINY_PNG,
+            "publication must not replace the captured source dependency"
+        );
+    }
+}
+
+#[cfg(feature = "fbx")]
+#[test]
 fn fbx_rest_bind_maps_a_second_skin_and_preserves_every_baked_take() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::write(dir.path().join("two-skins.fbx"), two_skin_fbx_fixture())

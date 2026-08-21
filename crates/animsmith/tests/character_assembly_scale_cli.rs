@@ -1772,6 +1772,56 @@ fn v7_accepts_external_fbx_texture_references_as_scale_irrelevant() {
 }
 
 #[test]
+fn v7_refuses_a_destination_that_aliases_a_captured_fbx_dependency() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir_all(dir.path().join("inputs/nested")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/nested/base.fbx"),
+        external_normal_texture_fbx(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("inputs/nested/walk.fbx"),
+        RIGGED_TRIANGLE_FBX,
+    )
+    .unwrap();
+    let dependency = dir.path().join("inputs/nested/normal.png");
+    std::fs::write(&dependency, TINY_PNG).unwrap();
+    let recipe = fbx_recipe_v7("nested/walk.fbx").replace(
+        "base_input = \"base.fbx\"",
+        "base_input = \"nested/base.fbx\"",
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run_to(
+        dir.path(),
+        "recipe.toml",
+        "character.glb",
+        "inputs/nested/normal.png",
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "assemble external dependency \"normal.png\" and evidence must be different paths"
+        ),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read(dependency).unwrap(),
+        TINY_PNG,
+        "assembly publication must not replace the captured source dependency"
+    );
+    assert!(!dir.path().join("character.glb").exists());
+}
+
+#[test]
 fn v7_external_texture_does_not_mask_a_real_unmodeled_construct() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();

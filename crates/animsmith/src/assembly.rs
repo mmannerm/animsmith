@@ -9,7 +9,8 @@ use crate::material_recipe::{
 };
 use crate::publish::{
     destination_identity, emit, emit_text, parent_or_current, publish_pair, read_digest,
-    require_writable_destination, serialize_record,
+    require_external_dependencies_distinct_from_destinations, require_writable_destination,
+    serialize_record,
 };
 use crate::{Format, render};
 use animsmith_core::InputIdentity;
@@ -385,6 +386,12 @@ struct PreparedScaleInput {
     compatibility_basis: AssemblyScaleCompatibilityBasis,
     evidence: AssemblyRestBindScaleInputEvidence,
     selector: ResolvedRestBindScaleSelector,
+}
+
+struct AssemblyPublicationContext<'a> {
+    staging_parent: &'a Path,
+    output: &'a Path,
+    evidence: &'a Path,
 }
 
 struct PreparedAssemblyClip {
@@ -836,7 +843,7 @@ fn prepare_scale_input(
     resolved: &Path,
     scale: &AssemblyRestBindScaleRecipe,
     recipe_version: u32,
-    staging_parent: &Path,
+    publication: &AssemblyPublicationContext<'_>,
     tool: &ToolInfo,
 ) -> Result<PreparedScaleInput, crate::producer::Failure> {
     use crate::producer::{Classify as _, Failure, Kind, Stage};
@@ -884,6 +891,16 @@ fn prepare_scale_input(
             )
         })
         .refusal(Stage::Load, Kind::UnreadableSource)?;
+        require_external_dependencies_distinct_from_destinations(
+            "assemble",
+            resource_root,
+            fbx_source.dependency_closure(),
+            &[
+                ("output", publication.output),
+                ("evidence", publication.evidence),
+            ],
+        )
+        .operator()?;
         let primary_identity = fbx_source.source_facts().primary_identity();
         let sha256 = primary_identity.sha256().to_owned();
         let byte_count = primary_identity.bytes();
@@ -904,9 +921,11 @@ fn prepare_scale_input(
             })
             .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
         let operation = rest_bind_operation(&selector, scale.expected_factor());
-        let staged =
-            crate::scale::serialize_fbx_rest_bind_stage(fbx_source.document(), staging_parent)
-                .operator()?;
+        let staged = crate::scale::serialize_fbx_rest_bind_stage(
+            fbx_source.document(),
+            publication.staging_parent,
+        )
+        .operator()?;
         let staged_source = preflight_scale_source_bytes(staged.path(), staged.bytes())
             .map_err(|error| {
                 format!(
@@ -1264,13 +1283,18 @@ fn assemble_inner(
     let mut prepared_scale_inputs = BTreeMap::<PathBuf, PreparedScaleInput>::new();
     let mut rest_bind_input_evidence = Vec::new();
     if let Some(scale) = &recipe.rest_bind_scale {
+        let publication = AssemblyPublicationContext {
+            staging_parent: output_parent,
+            output,
+            evidence: evidence_output,
+        };
         let prepared = prepare_scale_input(
             "base".to_owned(),
             &recipe.base_input,
             &base_path,
             scale,
             recipe.schema_version,
-            output_parent,
+            &publication,
             &tool,
         )?;
         let base_basis = prepared.compatibility_basis.clone();
@@ -1291,7 +1315,7 @@ fn assemble_inner(
                 &resolved,
                 scale,
                 recipe.schema_version,
-                output_parent,
+                &publication,
                 &tool,
             )?;
             require_input_scale_compatibility(&base_basis, &prepared.compatibility_basis)

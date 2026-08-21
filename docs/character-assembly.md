@@ -158,7 +158,8 @@ resource/construct coverage, or an incompatible basis fails closed. The
 source-aware gate may admit user-defined properties and bounded external
 texture/video declarations because neither supplies rest/bind state to the
 normalized GLB bridge. Rooted capture retains supported linked texture bytes
-through the normalized artifact. The frozen v7 evidence retains declaration
+through the normalized artifact, and neither publication destination may name
+one of those captured source dependencies. The frozen v7 evidence retains declaration
 counts in its capability inventory; same-load raw facts and closure remain
 loader-side rather than being added to that wire record. Admission does not
 claim raw FBX object-property, material, or texture-assignment preservation. A

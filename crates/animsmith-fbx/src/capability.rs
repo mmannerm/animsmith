@@ -2,8 +2,8 @@
 
 use animsmith_core::scale::{ScaleCapabilityCoverage, ScaleCapabilityFacts};
 use animsmith_core::{
-    Document, LoadedSource, SourceConstructKindV1, SourceFactsViewV1, SourceResourceLocatorV1,
-    SourceSetCoverageStateV1,
+    DependencyClosureV1, Document, LoadedSource, SourceConstructKindV1, SourceFactsViewV1,
+    SourceResourceLocatorV1, SourceSetCoverageStateV1,
 };
 use serde::Serialize;
 
@@ -376,6 +376,11 @@ impl FbxScaleSource {
     /// The bounded importer-sensitive facts retained from the same ufbx parse.
     pub fn source_facts(&self) -> SourceFactsViewV1<'_> {
         self.source.source_facts()
+    }
+
+    /// The bounded dependency closure captured with the same ufbx parse.
+    pub fn dependency_closure(&self) -> &DependencyClosureV1 {
+        self.source.dependency_closure()
     }
 
     /// The conservative ufbx-side inventory.

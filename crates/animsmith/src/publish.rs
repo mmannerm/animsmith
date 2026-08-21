@@ -53,6 +53,8 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "fbx")]
+use animsmith_core::DependencyClosureV1;
 use animsmith_gltf::fix::{FixReport, Repair};
 
 /// Serialize one record or envelope as the pretty, newline-terminated JSON
@@ -383,6 +385,44 @@ pub(crate) fn destination_identity(path: &Path) -> Result<PathBuf, String> {
 /// failure it is.
 pub(crate) fn input_identity(path: &Path) -> Result<PathBuf, String> {
     fs::canonicalize(path).map_err(|error| format!("cannot read {}: {error}", path.display()))
+}
+
+/// Reject publication destinations that name a captured external dependency.
+///
+/// Rooted format loaders may consume more files than their primary input. A
+/// producer must treat every captured external key as source data for the same
+/// destructive-alias check it already applies to the primary input; otherwise
+/// a successful pair publication can replace a linked texture or other
+/// sidecar with the artifact or evidence record.
+///
+/// # Errors
+///
+/// Returns an operator error when a captured dependency can no longer be
+/// resolved or when it names one of the supplied destinations.
+#[cfg(feature = "fbx")]
+pub(crate) fn require_external_dependencies_distinct_from_destinations(
+    command: &str,
+    resource_root: &Path,
+    closure: &DependencyClosureV1,
+    destinations: &[(&str, &Path)],
+) -> Result<(), String> {
+    let destinations = destinations
+        .iter()
+        .map(|(label, path)| Ok((*label, destination_identity(path)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    for resource in closure.external_resources() {
+        let dependency = input_identity(&resource_root.join(resource.key().as_str()))?;
+        for (destination_label, destination) in &destinations {
+            if dependency == *destination {
+                return Err(format!(
+                    "{command} external dependency {:?} and {destination_label} must be different paths, but both resolve to {}",
+                    resource.key().as_str(),
+                    dependency.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Reject a destination whose directory does not exist, or which exists as

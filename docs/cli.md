@@ -374,7 +374,9 @@ properties and bounded external texture/video declarations after same-load
 evidence proves they are not scale-bearing; it still refuses incomplete
 resource or construct coverage, unknown source elements, extensions, and every
 unsupported transform, geometry, bind, or animation fact. A refusal names the
-exact failed fact or counter. The command validates the base plus every clip's
+exact failed fact or counter. An artifact or evidence destination that names
+one of those captured external dependencies is an operator error; publication
+never replaces a source sidecar. The command validates the base plus every clip's
 versioned skeleton basis before
 remapping any keys. V7 retains v6's composition with
 `canonicalize_skin`, `ground_and_center`, and `remove_nodes`: it applies those

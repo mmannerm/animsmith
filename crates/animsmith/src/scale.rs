@@ -67,6 +67,8 @@
 //! per-channel, so the evidence record for such a rig is large; §D.6 asks
 //! for the raw manifest and a digest of one is not a manifest.
 
+#[cfg(feature = "fbx")]
+use crate::publish::require_external_dependencies_distinct_from_destinations;
 use crate::publish::{
     destination_identity, emit, emit_error_text, emit_text, input_identity, parent_or_current,
     publish_pair, read_digest, require_writable_destination, serialize_record,
@@ -1235,6 +1237,12 @@ fn run_fbx_rest_bind(request: &Request, tool: ToolInfo) -> Result<ExitCode, Stri
             );
         }
     };
+    require_external_dependencies_distinct_from_destinations(
+        "scale",
+        resource_root,
+        source.dependency_closure(),
+        &[("output", &request.output), ("evidence", &request.evidence)],
+    )?;
     let identity = source.source_facts().primary_identity().clone();
     match rest_bind_capability_facts_for_source(&source) {
         Ok(_) => {}
