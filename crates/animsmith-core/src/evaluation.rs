@@ -199,11 +199,10 @@ builtin_codes!(
         emitted_by = ["engine-addressability"],
 );
 
-/// Stable built-in evidence emitters implemented outside `animsmith-core`.
-///
-/// This is evidence-vocabulary authority, not a runnable check catalog.
-/// Frontends obtain runnable external checks from their owning crates.
-pub const EXTERNAL_BUILTIN_CHECK_IDS: &[&str] = &["engine-addressability"];
+// Private evidence-vocabulary authority for built-in emitters implemented
+// outside core. Owning crates publish their runnable check catalogs.
+#[cfg(test)]
+const EXTERNAL_BUILTIN_CHECK_IDS: &[&str] = &["engine-addressability"];
 
 impl EvaluationScopeCode {
     const fn from_static(code: &'static str) -> Self {

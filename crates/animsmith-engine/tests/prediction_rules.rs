@@ -130,11 +130,6 @@ fn bevy_animation_index_rule_emits_one_available_facet_per_complete_source_row()
     let output = evaluate(&check, &source);
 
     assert_eq!(ENGINE_CHECK_IDS_V1, &[ENGINE_ADDRESSABILITY_CHECK_ID]);
-    assert_eq!(
-        ENGINE_CHECK_IDS_V1,
-        animsmith_core::evaluation::EXTERNAL_BUILTIN_CHECK_IDS,
-        "engine catalog and core-owned evidence-emitter vocabulary must agree"
-    );
     assert!(output.findings().is_empty());
     assert_eq!(output.evaluated_scopes().len(), 1);
     assert_eq!(

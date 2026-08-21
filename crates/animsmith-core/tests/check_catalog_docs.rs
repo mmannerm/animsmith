@@ -1,4 +1,3 @@
-use animsmith_core::evaluation::EXTERNAL_BUILTIN_CHECK_IDS;
 use animsmith_core::{all_checks, mechanical_checks};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -11,6 +10,7 @@ const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "animsmith-gltf",
     "animsmith-report",
     "bevy",
+    "engine-addressability",
     "fix",
     "gltf-asset-loader",
     "humanoid",
@@ -34,11 +34,6 @@ fn docs_check_ids_match_the_registered_catalog() {
 
 fn assert_catalog_docs(readme: &str, game_ready_clips: &str, pipeline_scenarios: &str) {
     let catalog = registered_check_ids();
-    let known = catalog
-        .iter()
-        .copied()
-        .chain(EXTERNAL_BUILTIN_CHECK_IDS.iter().copied())
-        .collect::<BTreeSet<_>>();
     let mechanical = registered_mechanical_check_ids();
     let contract_aware: BTreeSet<_> = catalog.difference(&mechanical).copied().collect();
 
@@ -67,12 +62,12 @@ fn assert_catalog_docs(readme: &str, game_ready_clips: &str, pipeline_scenarios:
         ("README.md", readme),
         ("docs/game-ready-clips.md", game_ready_clips),
     ] {
-        assert_no_unknown_check_ids(path, markdown, &known);
+        assert_no_unknown_check_ids(path, markdown, &catalog);
     }
 
     let pipeline_matrix =
         markdown_table_after(pipeline_scenarios, PIPELINE_MATRIX_MARKER).join("\n");
-    assert_no_unknown_check_ids("docs/pipeline-scenarios.md", &pipeline_matrix, &known);
+    assert_no_unknown_check_ids("docs/pipeline-scenarios.md", &pipeline_matrix, &catalog);
 }
 
 #[test]
