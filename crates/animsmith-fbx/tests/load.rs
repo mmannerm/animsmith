@@ -497,118 +497,177 @@ fn narrow_rest_bind_gate_consumes_every_inventory_refusal_signal() {
         "the checked-in normalized fixture is the accepted subset"
     );
 
-    let cases: &[(&str, InventoryMutation)] = &[
-        ("target-not-y-up", |inventory| {
-            inventory.coordinate_normalization.target_right_handed_y_up = false
-        }),
-        ("target-not-meters", |inventory| {
-            inventory.coordinate_normalization.target_unit_meters = 0.01
-        }),
-        ("unadjusted-transforms", |inventory| {
-            inventory.coordinate_normalization.adjust_transforms = false
-        }),
-        ("takes-not-baked", |inventory| {
-            inventory.animation_takes_baked = false
-        }),
-        ("authored-curves-retained", |inventory| {
-            inventory.authored_curve_keys_preserved = true
-        }),
-        ("missing-normal", |inventory| {
-            inventory.missing_normal_mesh_count = 1
-        }),
-        ("inherited-mode-uncompensated", |inventory| {
-            inventory.inherit_modes_compensated = false
-        }),
-        ("empty-skin", |inventory| {
+    let cases: &[(&str, &str, InventoryMutation)] = &[
+        (
+            "target-not-y-up",
+            "target_right_handed_y_up=false",
+            |inventory| inventory.coordinate_normalization.target_right_handed_y_up = false,
+        ),
+        (
+            "target-not-meters",
+            "target_unit_meters=0.01",
+            |inventory| inventory.coordinate_normalization.target_unit_meters = 0.01,
+        ),
+        (
+            "unadjusted-transforms",
+            "adjust_transforms=false",
+            |inventory| inventory.coordinate_normalization.adjust_transforms = false,
+        ),
+        (
+            "takes-not-baked",
+            "animation_takes_baked=false",
+            |inventory| inventory.animation_takes_baked = false,
+        ),
+        (
+            "authored-curves-retained",
+            "authored_curve_keys_preserved=true",
+            |inventory| inventory.authored_curve_keys_preserved = true,
+        ),
+        (
+            "missing-normal",
+            "missing_normal_mesh_count=1",
+            |inventory| inventory.missing_normal_mesh_count = 1,
+        ),
+        (
+            "inherited-mode-uncompensated",
+            "inherit_modes_compensated=false",
+            |inventory| inventory.inherit_modes_compensated = false,
+        ),
+        ("empty-skin", "empty_skin_deformer_count=1", |inventory| {
             inventory.empty_skin_deformer_count = 1
         }),
-        ("convenience-bind-overwrite", |inventory| {
-            inventory.bone_convenience_bind_overwrite_count = 1
-        }),
-        ("invented-bind-default", |inventory| {
-            inventory.identity_bind_defaults_invented = true
-        }),
-        ("triangulated-face", |inventory| {
-            inventory.triangulated_face_count = 1
-        }),
-        ("omitted-face", |inventory| {
-            inventory.omitted_non_polygon_face_count = 1
-        }),
-        ("multiple-skins", |inventory| {
-            inventory.multiple_skin_deformer_mesh_count = 1
-        }),
-        ("dual-quaternion", |inventory| {
-            inventory.dual_quaternion_skin_count = 1
-        }),
-        ("blend-deformer", |inventory| {
+        (
+            "convenience-bind-overwrite",
+            "bone_convenience_bind_overwrite_count=1",
+            |inventory| inventory.bone_convenience_bind_overwrite_count = 1,
+        ),
+        (
+            "invented-bind-default",
+            "identity_bind_defaults_invented=true",
+            |inventory| inventory.identity_bind_defaults_invented = true,
+        ),
+        (
+            "triangulated-face",
+            "triangulated_face_count=1",
+            |inventory| inventory.triangulated_face_count = 1,
+        ),
+        (
+            "omitted-face",
+            "omitted_non_polygon_face_count=1",
+            |inventory| inventory.omitted_non_polygon_face_count = 1,
+        ),
+        (
+            "multiple-skins",
+            "multiple_skin_deformer_mesh_count=1",
+            |inventory| inventory.multiple_skin_deformer_mesh_count = 1,
+        ),
+        (
+            "dual-quaternion",
+            "dual_quaternion_skin_count=1",
+            |inventory| inventory.dual_quaternion_skin_count = 1,
+        ),
+        ("blend-deformer", "blend_deformer_count=1", |inventory| {
             inventory.blend_deformer_count = 1
         }),
-        ("blend-channel", |inventory| {
+        ("blend-channel", "blend_channel_count=1", |inventory| {
             inventory.blend_channel_count = 1
         }),
-        ("blend-shape", |inventory| inventory.blend_shape_count = 1),
-        ("cache-deformer", |inventory| {
+        ("blend-shape", "blend_shape_count=1", |inventory| {
+            inventory.blend_shape_count = 1
+        }),
+        ("cache-deformer", "cache_deformer_count=1", |inventory| {
             inventory.cache_deformer_count = 1
         }),
-        ("unsupported-vertex-payload", |inventory| {
-            inventory.unsupported_vertex_payload_mesh_count = 1
-        }),
-        ("shared-mesh", |inventory| {
-            inventory.shared_mesh_definition_count = 1
-        }),
-        ("unknown-source-element", |inventory| {
-            inventory.unsupported_source_element_count = 1
-        }),
-        ("source-property", |inventory| {
-            inventory.user_defined_property_count = 1
-        }),
-        ("external-resource", |inventory| {
-            inventory.external_resource_count = 1
-        }),
-        ("truncated-influence", |inventory| {
-            inventory.truncated_influence_vertex_count = 1
-        }),
-        ("discarded-influence", |inventory| {
-            inventory.discarded_influence_count = 1
-        }),
-        ("renormalized-influence", |inventory| {
-            inventory.renormalized_influence_vertex_count = 1
-        }),
-        ("rejected-influence", |inventory| {
-            inventory.rejected_influence_count = 1
-        }),
-        ("missing-influence", |inventory| {
-            inventory.missing_skin_influence_corner_count = 1
-        }),
-        ("incomplete-bind", |inventory| {
-            inventory.incomplete_bind_cluster_count = 1
-        }),
-        ("empty-mesh", |inventory| {
+        (
+            "unsupported-vertex-payload",
+            "unsupported_vertex_payload_mesh_count=1",
+            |inventory| inventory.unsupported_vertex_payload_mesh_count = 1,
+        ),
+        (
+            "shared-mesh",
+            "shared_mesh_definition_count=1",
+            |inventory| inventory.shared_mesh_definition_count = 1,
+        ),
+        (
+            "unknown-source-element",
+            "unsupported_source_element_count=1",
+            |inventory| inventory.unsupported_source_element_count = 1,
+        ),
+        (
+            "truncated-influence",
+            "truncated_influence_vertex_count=1",
+            |inventory| inventory.truncated_influence_vertex_count = 1,
+        ),
+        (
+            "discarded-influence",
+            "discarded_influence_count=1",
+            |inventory| inventory.discarded_influence_count = 1,
+        ),
+        (
+            "renormalized-influence",
+            "renormalized_influence_vertex_count=1",
+            |inventory| inventory.renormalized_influence_vertex_count = 1,
+        ),
+        (
+            "rejected-influence",
+            "rejected_influence_count=1",
+            |inventory| inventory.rejected_influence_count = 1,
+        ),
+        (
+            "missing-influence",
+            "missing_skin_influence_corner_count=1",
+            |inventory| inventory.missing_skin_influence_corner_count = 1,
+        ),
+        (
+            "incomplete-bind",
+            "incomplete_bind_cluster_count=1",
+            |inventory| inventory.incomplete_bind_cluster_count = 1,
+        ),
+        ("empty-mesh", "empty_mesh_definition_count=1", |inventory| {
             inventory.empty_mesh_definition_count = 1
         }),
-        ("uninstanced-mesh", |inventory| {
-            inventory.uninstanced_mesh_definition_count = 1
-        }),
-        ("weld-mismatch", |inventory| {
+        (
+            "uninstanced-mesh",
+            "uninstanced_mesh_definition_count=1",
+            |inventory| inventory.uninstanced_mesh_definition_count = 1,
+        ),
+        ("weld-mismatch", "weld_vertex_count=", |inventory| {
             inventory.post_weld_vertex_count = inventory.pre_weld_vertex_count + 1
         }),
-        ("camera", |inventory| inventory.camera_count = 1),
-        ("light", |inventory| inventory.light_count = 1),
-        ("unsupported-domain", |inventory| {
-            inventory.domains.morphs = FbxScaleDomainStatus::Unsupported
+        ("camera", "camera_count=1", |inventory| {
+            inventory.camera_count = 1
         }),
-        ("verifiable-raw-span", |inventory| {
-            inventory.domains.image_payload_aliases = FbxScaleDomainStatus::Absent
+        ("light", "light_count=1", |inventory| {
+            inventory.light_count = 1
         }),
+        (
+            "unsupported-domain",
+            "domain.morphs=unsupported",
+            |inventory| inventory.domains.morphs = FbxScaleDomainStatus::Unsupported,
+        ),
+        (
+            "verifiable-raw-span",
+            "domain.image_payload_aliases=absent",
+            |inventory| inventory.domains.image_payload_aliases = FbxScaleDomainStatus::Absent,
+        ),
     ];
-    for (label, mutate) in cases {
+    for (label, expected, mutate) in cases {
         let mut inventory = baseline.clone();
         mutate(&mut inventory);
+        let error = animsmith_fbx::rest_bind_capability_facts(&inventory)
+            .expect_err("mutated inventory must refuse the narrow rest/bind bridge");
         assert!(
-            animsmith_fbx::rest_bind_capability_facts(&inventory).is_err(),
-            "{label} must refuse the narrow rest/bind bridge"
+            error.contains(expected),
+            "{label} must name {expected:?}, found {error:?}"
         );
     }
+
+    let mut custom_property = baseline.clone();
+    custom_property.user_defined_property_count = 1;
+    custom_property.domains.collision_and_custom_data = FbxScaleDomainStatus::Unsupported;
+    let custom_facts = animsmith_fbx::rest_bind_capability_facts(&custom_property)
+        .expect("user-defined properties are discarded before the scale-bearing GLB stage");
+    assert!(!custom_facts.extras_present);
 }
 
 #[test]
@@ -1068,6 +1127,12 @@ fn valid_unmodeled_ufbx_typed_lists_are_counted_conservatively() {
         "the detached cache record is unsupported mesh/source payload"
     );
     assert!(animsmith_fbx::capability_facts(loaded.inventory()).unregistered_extensions_present);
+    let error = animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect_err("unmodeled source elements remain a rest/bind refusal");
+    assert!(
+        error.contains("raw_source.construct=unknown_element(fbx:unmodeled-elements; count=4)"),
+        "the refusal must identify the exact raw-source fact: {error}"
+    );
     let constructs = loaded.source_facts().constructs();
     assert!(constructs.rows().iter().any(|row| {
         row.kind() == SourceConstructKindV1::UnknownElement
@@ -1664,6 +1729,9 @@ fn user_defined_properties_are_reported_as_an_unsupported_aggregate() {
     assert_eq!(custom.name().as_str(), "fbx:user-defined-properties");
     assert_eq!(custom.count(), 1);
     assert_eq!(custom.disposition(), SourceLoaderDispositionV1::Unsupported);
+    let facts = animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect("discarded custom properties do not obscure the normalized rest/bind domain");
+    assert!(!facts.extras_present);
 }
 
 #[test]
@@ -1942,6 +2010,9 @@ fn byte_loader_resolves_external_texture_relative_to_supplied_path() {
     assert_eq!(source.inventory().external_resource_count, 2);
     assert!(animsmith_fbx::capability_facts(source.inventory()).external_resources_present);
     assert_normal_texture(source.document());
+    let facts = animsmith_fbx::rest_bind_capability_facts_for_source(&source)
+        .expect("captured external texture bytes are orthogonal to rest/bind transforms");
+    assert!(!facts.external_resources_present);
 }
 
 #[test]

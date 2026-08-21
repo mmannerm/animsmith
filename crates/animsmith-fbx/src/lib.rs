@@ -505,6 +505,7 @@ fn load_scale_source_bytes_inner(
         capture_dependency_closure(&scene, &raw_facts, resource_root)?;
     let (assets, conversion) = extract_assets(&scene, &resource_capture);
     let inventory = capability::inventory(&scene, &conversion, construct_counts);
+    let rest_bind_safe_unmodeled_resource_link_count = scene.texture_files.len();
 
     let document = Document {
         skeleton: Skeleton { bones },
@@ -517,7 +518,11 @@ fn load_scale_source_bytes_inner(
     };
     let source = raw_facts.finish_with_dependency_closure(document, dependency_closure)?;
 
-    Ok(FbxScaleSource { source, inventory })
+    Ok(FbxScaleSource {
+        source,
+        inventory,
+        rest_bind_safe_unmodeled_resource_link_count,
+    })
 }
 
 /// The per-key capture result retained for later aliases without another open.

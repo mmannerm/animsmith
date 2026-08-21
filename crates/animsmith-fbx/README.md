@@ -119,11 +119,21 @@ claim that raw FBX transform members or object payloads were preserved.
 
 `capability_facts` remains the deliberately unsupported generic projection.
 `rest_bind_capability_facts` is its narrower companion for `animsmith scale
-rest-bind`: it accepts only a complete normalized ufbx inventory and is used
-to stage a private GLB, rewrite and prove the exact emitted GLB, then atomically
-publish a `.glb` artifact/evidence pair. Whole-document FBX scaling remains
-disabled. No API claims raw FBX bytes, raw object properties, authored curve
-keys, or source vertex identity are preserved.
+rest-bind`: it accepts only a complete normalized ufbx inventory whose
+scale-bearing domains are proven. The source-aware
+`rest_bind_capability_facts_for_source` additionally distinguishes
+parser-known texture-file linkage from genuinely unknown source elements. It
+may admit bounded texture/video declarations and user-defined properties
+because the normalized GLB bridge does not use either as rest/bind state; the
+immutable inventory, raw-source facts, and dependency closure still report
+them honestly. The inventory-only API remains conservative when it cannot make
+that same-load distinction. Refusals identify the exact coverage domain,
+semantic row, or counter that failed. The accepted source is staged as a
+private GLB, rewritten and proven as the exact emitted GLB, then atomically
+published as a `.glb` artifact/evidence pair. Whole-document FBX scaling
+remains disabled. No API claims raw FBX bytes, raw object properties, authored
+curve keys, material/texture assignment, or source vertex identity are
+preserved.
 
 ## Install
 

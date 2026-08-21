@@ -369,7 +369,12 @@ both required. Every input must resolve that name to exactly one source node
 and exactly one source skin whose joint set contains it. Boundary whitespace
 is invalid rather than trimmed. The block accepts
 glTF/GLB plus the narrow normalized/baked FBX subset admitted by the existing
-rest-bind capability boundary, and validates the base plus every clip's
+rest-bind capability boundary. That boundary may admit user-defined FBX
+properties and bounded external texture/video declarations after same-load
+evidence proves they are not scale-bearing; it still refuses incomplete
+resource or construct coverage, unknown source elements, extensions, and every
+unsupported transform, geometry, bind, or animation fact. A refusal names the
+exact failed fact or counter. The command validates the base plus every clip's
 versioned skeleton basis before
 remapping any keys. V7 retains v6's composition with
 `canonicalize_skin`, `ground_and_center`, and `remove_nodes`: it applies those
