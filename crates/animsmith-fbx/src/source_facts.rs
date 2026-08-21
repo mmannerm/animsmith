@@ -473,8 +473,9 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> (usize, usize) {
         audio_clips,
         poses,
         metadata_objects,
-        // Texture-file records carry source linkage beyond the rebuilt
-        // texture subset, so they are conservatively unmodeled.
+        // ufbx derives this deduplicated file view from `textures`; keep its
+        // count as same-parse admission evidence rather than projecting a
+        // second set of resource rows for the same logical declarations.
         texture_files,
         // Scene-wide structural indexes are parser-derived views, not source
         // element domains that need independent semantic counting.

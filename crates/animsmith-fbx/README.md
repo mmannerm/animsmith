@@ -69,9 +69,11 @@ and every key-derived component/final target must be non-symlink; unsafe,
 missing, unreadable, or budget-exceeded declarations become typed closure
 outcomes without host path or error text. The shared V1 limits cap one external
 read at 64 MiB, distinct captured bytes at 256 MiB, and distinct keys at 1,024;
-the first N+1 boundary retains only its deterministic prefix. `texture_files`
-and audio clips remain conservatively unmodeled, so their presence makes
-closure coverage partial even when the represented rows were captured.
+the first N+1 boundary retains only its deterministic prefix. ufbx's
+`texture_files` list is a deduplicated view derived from the represented
+texture rows, so it does not independently make closure coverage partial.
+Audio clips remain conservatively unmodeled because they have no V1 raw
+resource row.
 
 The exact captured bytes are reused for optional PNG/JPEG `TextureAsset`s;
 there is no post-load reread or path fallback. A separate 256 MiB FBX asset

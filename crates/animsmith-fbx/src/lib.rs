@@ -581,11 +581,12 @@ fn capture_dependency_closure(
         facts.resource_coverage(),
         facts.resource_rows().len(),
     );
-    if !scene.texture_files.is_empty() || !scene.audio_clips.is_empty() {
-        // ufbx exposes texture-file linkage and audio clips as additional
-        // resource-bearing domains, but the normalized document has no
-        // one-to-one row shape for either yet. Never claim a complete closure
-        // while either is present.
+    if !scene.audio_clips.is_empty() {
+        // Audio clips are an additional resource-bearing domain without a raw
+        // reference row. `texture_files`, in contrast, is ufbx's deduplicated
+        // view derived from the already-enumerated `textures` list: every file
+        // texture carries its `file_index`, and the texture row binds the same
+        // logical locator. Do not make that represented alias view unmodeled.
         closure.mark_unmodeled_resource_domain();
     }
 

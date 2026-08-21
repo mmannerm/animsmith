@@ -2162,20 +2162,14 @@ fn source_facts_keep_texture_and_video_alias_declarations_separate() {
 }
 
 #[test]
-fn rooted_capture_opens_and_hashes_a_texture_video_alias_once() {
+fn rooted_capture_completely_models_and_hashes_a_texture_video_alias_once() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = write_normal_material(&dir, NormalImage::Linked(TINY_PNG));
 
     let loaded = animsmith_fbx::load_source(&path).expect("linked-resource FBX loads");
     let closure = loaded.dependency_closure();
-    assert!(!closure.coverage().is_complete());
-    assert!(closure.identity().is_none());
-    assert!(
-        closure
-            .coverage()
-            .reasons()
-            .contains(&DependencyClosureCoverageReasonV1::UnmodeledResourceDomain)
-    );
+    assert!(closure.coverage().is_complete());
+    assert!(closure.identity().is_some());
     assert_eq!(closure.references().len(), 2);
     assert_eq!(closure.external_resources().len(), 1);
     assert_eq!(closure.external_resources()[0].key().as_str(), "normal.png");
