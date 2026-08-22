@@ -1090,7 +1090,7 @@ mod tests {
     /// was finite — the ratio then divides out non-finite, not "no
     /// subject". This is the only known route to
     /// [`FootCycleMetrics::loop_seam_ratio`]'s "real stride but
-    /// undirivable" `None`, and it requires magnitudes far outside any
+    /// underivable" `None`, and it requires magnitudes far outside any
     /// real animation.
     #[test]
     fn foot_metrics_real_stride_with_seam_beyond_f32_squaring_range_has_no_ratio() {
