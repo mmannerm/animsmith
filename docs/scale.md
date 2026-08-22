@@ -126,7 +126,12 @@ its converted rows are finite, unambiguous, and agree with the converted
 cluster bind or node rest-world matrix already consumed by the bridge; a
 source without a Pose remains valid. The raw aggregate still counts all
 admitted rows. Residual unmodeled typed lists fail closed with exact nonzero
-kind counts. It
+kind counts. The same-load gate may also admit enumerated scale-invariant
+conversion fidelity—omitted authored vertex/face/edge metadata, influence
+projection with complete effective coverage, triangulation, and exact-bit
+welding—without removing any inventory evidence. Missing influence coverage,
+omitted point/line or mesh geometry, unsupported skinning/deformers, incomplete
+binds or normals, and unclassified payload remain blockers. It
 records the full FBX inventory and staged GLB digest in scale-evidence v5. The
 published artifact is a re-encoded GLB: no raw FBX byte, object-property,
 marker/camera behavior, or authored-curve-key preservation is claimed. FBX

@@ -339,6 +339,117 @@ fn translated_fbx_clip() -> String {
     )
 }
 
+fn scale_invariant_fidelity_fbx() -> String {
+    let payload = r#"
+		Edges: *4 { a: 0,1,2,3 }
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "uv"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *8 { a: 0,0,1,0,1,1,0,1 }
+		}
+		LayerElementTangent: 0 {
+			Version: 101
+			Name: "tangent"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Tangents: *12 { a: 1,0,0,1,0,0,1,0,0,1,0,0 }
+		}
+		LayerElementColor: 0 {
+			Version: 101
+			Name: "color"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Colors: *16 { a: 1,0,0,1,0,1,0,1,0,0,1,1,1,1,1,1 }
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement: { Type: "LayerElementUV" TypedIndex: 0 }
+			LayerElement: { Type: "LayerElementTangent" TypedIndex: 0 }
+		}
+"#;
+    let bone_models = (3..=7)
+        .map(|suffix| format!("\tModel: 100{suffix}, \"Model::bone{suffix}\", \"Limb\" {{}}\n"))
+        .collect::<String>();
+    let positive_clusters = (3..=6)
+        .map(|suffix| {
+            format!(
+                concat!(
+                    "\tDeformer: 400{0}, \"SubDeformer::bone{0}_cluster\", \"Cluster\" {{\n",
+                    "\t\tVersion: 100\n",
+                    "\t\tIndexes: *4 {{ a: 0,1,2,3 }}\n",
+                    "\t\tWeights: *4 {{ a: 1,1,1,1 }}\n",
+                    "\t\tTransform: *16 {{ a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }}\n",
+                    "\t\tTransformLink: *16 {{ a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }}\n",
+                    "\t}}\n",
+                ),
+                suffix
+            )
+        })
+        .collect::<String>();
+    let rejected_cluster = concat!(
+        "\tDeformer: 4007, \"SubDeformer::rejected_cluster\", \"Cluster\" {\n",
+        "\t\tVersion: 100\n",
+        "\t\tIndexes: *4 { a: 0,1,2,3 }\n",
+        "\t\tWeights: *4 { a: -0.25,-0.25,-0.25,-0.25 }\n",
+        "\t\tTransform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+        "\t\tTransformLink: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+        "\t}\n",
+    );
+    let extra_connections = (3..=7)
+        .map(|suffix| {
+            format!(
+                concat!(
+                    "\tC: \"OO\",400{0},4001\n",
+                    "\tC: \"OO\",100{0},400{0}\n",
+                    "\tC: \"OO\",100{0},1001\n",
+                ),
+                suffix
+            )
+        })
+        .collect::<String>();
+    RIGGED_TRIANGLE_FBX
+        .replacen("\tCount: 8", "\tCount: 18", 1)
+        .replacen(
+            "ObjectType: \"Model\" { Count: 2 }",
+            "ObjectType: \"Model\" { Count: 7 }",
+            1,
+        )
+        .replacen(
+            "ObjectType: \"Deformer\" { Count: 2 }",
+            "ObjectType: \"Deformer\" { Count: 7 }",
+            1,
+        )
+        .replacen(
+            "Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }",
+            "Vertices: *12 { a: 0,0,0,100,0,0,100,100,0,0,100,0 }",
+            1,
+        )
+        .replacen(
+            "PolygonVertexIndex: *3 { a: 0,1,-3 }",
+            &format!("PolygonVertexIndex: *4 {{ a: 0,1,2,-4 }}{payload}"),
+            1,
+        )
+        .replacen("Indexes: *3 { a: 0,1,2 }", "Indexes: *4 { a: 0,1,2,3 }", 1)
+        .replacen("Weights: *3 { a: 1,1,1 }", "Weights: *4 { a: 2,2,2,2 }", 1)
+        .replacen(
+            "\tDeformer: 4001",
+            &format!("{bone_models}\tDeformer: 4001"),
+            1,
+        )
+        .replacen(
+            "\tAnimationStack: 3001",
+            &format!("{positive_clusters}{rejected_cluster}\tAnimationStack: 3001"),
+            1,
+        )
+        .replacen(
+            "\tC: \"OO\",4001,2001",
+            &format!("{extra_connections}\tC: \"OO\",4001,2001"),
+            1,
+        )
+}
+
 fn write_cubic_asset_from(path: &Path, bytes: &[u8], offset: f32) {
     let mut document = animsmith_gltf::load_bytes(Path::new("source.glb"), bytes).unwrap();
     let track = document.clips[0]
@@ -1347,6 +1458,80 @@ fn v7_resolves_each_fbx_input_by_name_and_records_deterministic_selectors() {
         first_artifact
     );
     assert_eq!(second.stdout, first_evidence);
+}
+
+#[test]
+fn v7_admits_scale_invariant_fbx_conversion_fidelity_without_erasing_evidence() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = scale_invariant_fidelity_fbx();
+    std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), &source).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let artifact = std::fs::read(dir.path().join("character.glb")).unwrap();
+    let evidence_bytes = std::fs::read(dir.path().join("character.json")).unwrap();
+    assert_eq!(output.stdout, evidence_bytes);
+    let evidence: Value = serde_json::from_slice(&evidence_bytes).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
+    assert_eq!(
+        evidence["rest_bind_scale"]["read_back_sha256"],
+        evidence["artifact"]["sha256"]
+    );
+    for input in evidence["rest_bind_scale"]["inputs"].as_array().unwrap() {
+        let capability = &input["source_projection"]["capability"];
+        assert_eq!(capability["unsupported_vertex_payload_mesh_count"], 1);
+        assert_eq!(
+            capability["domains"]["other_vertex_and_source_data"],
+            "unsupported"
+        );
+        assert_eq!(capability["non_triangle_face_count"], 1);
+        assert_eq!(capability["triangulated_face_count"], 1);
+        assert_eq!(capability["omitted_non_polygon_face_count"], 0);
+        assert_eq!(capability["truncated_influence_vertex_count"], 4);
+        assert_eq!(capability["discarded_influence_count"], 4);
+        assert_eq!(capability["rejected_influence_count"], 4);
+        assert_eq!(capability["renormalized_influence_vertex_count"], 4);
+        assert_eq!(capability["bone_convenience_bind_overwrite_count"], 0);
+        assert_eq!(capability["missing_skin_influence_corner_count"], 0);
+        assert_eq!(capability["pre_weld_vertex_count"], 6);
+        assert_eq!(capability["post_weld_vertex_count"], 4);
+    }
+    animsmith_gltf::load_bytes(Path::new("character.glb"), &artifact)
+        .expect("the exact published artifact reloads");
+    assert_eq!(
+        evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
+        true
+    );
+    assert!(
+        evidence["rest_bind_scale"]["proof"]["proof"]["residuals"]
+            .as_object()
+            .is_some_and(|residuals| residuals
+                .values()
+                .all(|value| value.get("evaluated").is_some())),
+        "the shared rest/bind proof must evaluate every normalized before/after residual"
+    );
+    assert!(
+        evidence["rest_bind_scale"]["residual_comparison_counts"]
+            .as_object()
+            .is_some_and(|counts| counts.values().filter_map(Value::as_u64).sum::<u64>() > 0),
+        "the admitted path must exercise the normalized before/after proof"
+    );
+
+    let second = run(dir.path());
+    assert!(second.status.success());
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        artifact
+    );
+    assert_eq!(second.stdout, evidence_bytes);
 }
 
 #[test]

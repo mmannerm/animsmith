@@ -106,6 +106,11 @@ cargo run -p animsmith --example embed
    touches and every exposed converted row is finite, unambiguous, and agrees
    with the cluster bind or node rest-world matrix the bridge consumes; a
    source with no Pose remains valid.
+   The same-load source can also prove that enumerated payload omission,
+   influence projection with complete effective coverage, triangulation, and
+   exact-bit welding are conversion-fidelity facts rather than scale-bearing
+   blockers. The inventory retains them, and unknown payload or missing
+   effective geometry/influence coverage still fails closed.
    The inventory-only
    `rest_bind_capability_facts` remains conservative where its frozen aggregate
    cannot make that distinction. Whole-document FBX scaling remains refused.

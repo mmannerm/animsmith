@@ -127,7 +127,16 @@ scale-bearing domains are proven. The source-aware
 parser-known texture-file linkage from genuinely unknown source elements. It
 may admit bounded texture/video declarations and user-defined properties
 because the normalized GLB bridge does not use either as rest/bind state. On
-the same-load proof path it also admits exactly ufbx's marker, LOD-group,
+the same-load proof path it may also admit enumerated scale-invariant
+conversion-fidelity facts: authored color/tangent/bitangent/UV, face/edge,
+crease/subdivision payload omitted by the normalized bridge; influence
+truncation, rejection, and renormalization when effective normalized coverage
+remains complete; polygon triangulation; and exact-bit welding. Their public
+inventory counters and unsupported domain status remain unchanged as evidence.
+Missing effective influences, omitted point/line geometry, empty or uninstanced
+meshes, unsupported skinning/deformers, incomplete binds or normals, and any
+unclassified payload remain fail-closed. The same-load proof path also admits
+exactly ufbx's marker, LOD-group,
 stereo-camera, and camera-switcher typed lists: those node-attribute kinds do
 not supply hierarchy transforms, skin binds, animation tracks, or geometry to
 that bridge. Shader and binding-table records are admitted on the same basis.

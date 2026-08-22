@@ -151,9 +151,13 @@ source-array index is reused across files. Recipe v7 accepts glTF/GLB and the
 narrow FBX subset admitted by the existing normalized/baked rest-bind
 capability boundary. That boundary
 requires a complete ufbx inventory for the normalized metre/Y-up hierarchy,
-derived bind evidence, rebuilt geometry, and baked animation. Incomplete
-source-skeleton projection, unsupported payload, altered skin influences,
-incomplete bind evidence, residual unmodeled source elements or extensions,
+derived bind evidence, rebuilt geometry, and baked animation. Its same-load
+gate may admit enumerated scale-invariant conversion fidelity, including
+omitted authored vertex/face/edge metadata, influence projection with complete
+effective coverage, triangulation, and exact-bit welding, while retaining every
+inventory fact. Incomplete source-skeleton projection, unclassified payload,
+missing effective influences or geometry, incomplete bind evidence, residual
+unmodeled source elements or extensions,
 incomplete resource/construct coverage, or an incompatible basis fails closed.
 The source-aware gate may admit user-defined properties and bounded external
 texture/video declarations because neither supplies rest/bind state to the

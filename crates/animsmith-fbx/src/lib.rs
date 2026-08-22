@@ -31,9 +31,13 @@
 //! [`rest_bind_capability_facts`] admits only the complete normalized subset
 //! used by the CLI's narrow FBX rest/bind path: it stages a new GLB, proves
 //! that emitted GLB, and never claims raw FBX preservation. Its source-aware
-//! companion admits material shader metadata and only those BindPoses whose
-//! converted rows reconcile with the cluster/node matrices consumed by that
-//! bridge. Whole-document FBX scaling remains refused.
+//! companion admits material shader metadata, enumerated scale-invariant
+//! conversion-fidelity facts such as triangulation, exact welding, retained
+//! effective skinning, and omitted face/edge payload, and only those BindPoses
+//! whose converted rows reconcile with the cluster/node matrices consumed by
+//! that bridge. The public inventory still records every conversion and its
+//! inventory-only projection remains conservative. Whole-document FBX scaling
+//! remains refused.
 //!
 //! # Quick start
 //!
@@ -506,7 +510,8 @@ fn load_scale_source_bytes_inner(
     let (dependency_closure, resource_capture) =
         capture_dependency_closure(&scene, &raw_facts, resource_root)?;
     let (assets, conversion) = extract_assets(&scene, &resource_capture);
-    let inventory = capability::inventory(&scene, &conversion, construct_counts);
+    let (inventory, rest_bind_mesh_payload_counts) =
+        capability::inventory(&scene, &conversion, construct_counts);
 
     let document = Document {
         skeleton: Skeleton { bones },
@@ -523,6 +528,8 @@ fn load_scale_source_bytes_inner(
         source,
         inventory,
         rest_bind_construct_counts: construct_counts.rest_bind,
+        rest_bind_scale_invariant_payload_mesh_count: rest_bind_mesh_payload_counts
+            .scale_invariant_mesh_count,
     })
 }
 

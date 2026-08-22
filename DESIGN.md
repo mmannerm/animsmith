@@ -2027,6 +2027,14 @@ metadata is equally non-bearing. BindPose rows are admitted only after the
 same-load converted matrices reconcile with the cluster/node matrices the
 bridge consumes; no Pose is required. Other unmodeled typed lists remain
 fail-closed and are reported by exact nonzero kind counts. The same-load
+boundary may also classify an exhaustive set of conversion-fidelity facts as
+scale-invariant: omitted authored vertex/face/edge metadata, influence
+truncation/rejection/renormalization with complete effective coverage,
+triangulation, and exact-bit welding. The frozen inventory continues to report
+those losses and its detached projection remains conservative. Missing
+effective influences, omitted point/line or mesh definitions, unsupported
+skinning/deformers, incomplete binds or normals, and unclassified payload stay
+fail-closed. The same-load
 `FbxScaleSource` retains the raw facts and dependency closure, while v5 keeps
 the frozen inventory projection rather than adding either sidecar to its wire
 shape. The three raw-span rows are deliberately
