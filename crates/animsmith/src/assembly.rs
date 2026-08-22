@@ -18,9 +18,10 @@ use animsmith_core::model::{
     Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
 };
 use animsmith_core::scale::{
-    AssemblyScaleBasis, AssemblyScaleCompatibilityBasis, AssemblyScaleSelectorRequest,
-    ScaleOperation, ScaleRequest, assembly_scale_compatibility_basis, plan_scale,
-    require_assembly_scale_compatibility_with_selectors,
+    AssemblyScaleBasis, AssemblyScaleCompatibilityBasis, AssemblyScaleNamedSelectorResolutionError,
+    AssemblyScaleSelectorRequest, ScaleOperation, ScaleRequest, assembly_scale_compatibility_basis,
+    plan_scale, require_assembly_scale_compatibility_with_selectors,
+    resolve_assembly_scale_named_selector,
 };
 use animsmith_core::{Config, ToolInfo, resolve_configured_roles, sha256_hex};
 use animsmith_fbx::FbxScaleCapabilityInventory;
@@ -796,43 +797,20 @@ fn resolve_rest_bind_scale_selector(
     let root_node_name = scale
         .root_node_name()
         .ok_or_else(|| "rest_bind_scale has no selector".to_owned())?;
-    let root_matches = document
-        .assets
-        .source_skeleton
-        .nodes
-        .iter()
-        .filter_map(|node| {
-            node.bone
-                .and_then(|bone| document.skeleton.bones.get(bone))
-                .filter(|bone| bone.name == root_node_name)
-                .map(|_| node.source_node_index)
-        })
-        .collect::<Vec<_>>();
-    let [source_root_node_index] = root_matches.as_slice() else {
-        return Err(format!(
-            "rest_bind_scale root_node_name {root_node_name:?} resolves to {} source nodes; expected exactly one",
-            root_matches.len()
-        ));
-    };
-    let skin_matches = document
-        .assets
-        .source_skeleton
-        .skins
-        .iter()
-        .filter(|skin| {
-            skin.joint_source_node_indices
-                .contains(source_root_node_index)
-        })
-        .collect::<Vec<_>>();
-    let [skin] = skin_matches.as_slice() else {
-        return Err(format!(
-            "rest_bind_scale root_node_name {root_node_name:?} is a joint of {} source skins; expected exactly one",
-            skin_matches.len()
-        ));
-    };
+    let resolved = resolve_assembly_scale_named_selector(document, root_node_name).map_err(
+        |error| match &error {
+            AssemblyScaleNamedSelectorResolutionError::RootNotUnique { matches } => format!(
+                "rest_bind_scale root_node_name {root_node_name:?} resolves to {matches} source nodes; expected exactly one"
+            ),
+            AssemblyScaleNamedSelectorResolutionError::SkinNotUnique { matches } => format!(
+                "rest_bind_scale root_node_name {root_node_name:?} fully governs {matches} source skins; expected exactly one"
+            ),
+            _ => format!("rest_bind_scale root_node_name {root_node_name:?} is invalid: {error}"),
+        },
+    )?;
     Ok(ResolvedRestBindScaleSelector {
-        source_skin_index: skin.source_skin_index,
-        source_root_node_index: *source_root_node_index,
+        source_skin_index: resolved.source_skin_index,
+        source_root_node_index: resolved.source_root_node_index,
         root_node_name: root_node_name.to_owned(),
     })
 }

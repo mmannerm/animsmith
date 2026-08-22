@@ -1631,7 +1631,42 @@ fn v7_uses_the_declared_exact_name_without_a_root_literal_special_case() {
 }
 
 #[test]
-fn v7_name_selector_refuses_missing_and_ambiguous_roots_or_skins_atomically() {
+fn v7_name_selector_resolves_a_scaled_ancestor_above_the_selected_skin() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = rest_bind_scale_rig_gltf();
+    std::fs::write(dir.path().join("inputs/base.gltf"), &source).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.gltf"), &source).unwrap();
+    let recipe = fbx_recipe_v7("walk.gltf")
+        .replace("base_input = \"base.fbx\"", "base_input = \"base.gltf\"")
+        .replace("take = \"take\"", "take = \"clip\"");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let artifact = std::fs::read(dir.path().join("character.glb")).unwrap();
+    let evidence_bytes = std::fs::read(dir.path().join("character.json")).unwrap();
+    assert_eq!(output.stdout, evidence_bytes);
+    let evidence: Value = serde_json::from_slice(&evidence_bytes).unwrap();
+    assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
+    assert_eq!(evidence["artifact"]["bytes"], artifact.len());
+    for input in evidence["rest_bind_scale"]["inputs"].as_array().unwrap() {
+        assert_eq!(input["resolved_root_node_name"], "root");
+        assert_eq!(input["resolved_source_root_node_index"], 0);
+        assert_eq!(input["resolved_source_skin_index"], 0);
+    }
+    assert_eq!(
+        evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
+        true
+    );
+}
+
+#[test]
+fn v7_name_selector_refuses_missing_ambiguous_or_outside_roots_atomically() {
     let mut ambiguous_root: Value = serde_json::from_slice(&rest_bind_scale_rig_gltf()).unwrap();
     ambiguous_root["nodes"][1]["name"] = Value::String("root".into());
     let mut ambiguous_skin: Value = serde_json::from_slice(&rest_bind_scale_rig_gltf()).unwrap();
@@ -1640,7 +1675,6 @@ fn v7_name_selector_refuses_missing_and_ambiguous_roots_or_skins_atomically() {
         .as_array_mut()
         .unwrap()
         .push(duplicate_skin);
-
     for (ordinal, input_name, base_bytes, root_name, expected) in [
         (
             0,
@@ -1653,8 +1687,8 @@ fn v7_name_selector_refuses_missing_and_ambiguous_roots_or_skins_atomically() {
             1,
             "base.gltf",
             rest_bind_scale_rig_gltf(),
-            "root",
-            "is a joint of 0 source skins; expected exactly one",
+            "holder",
+            "fully governs 0 source skins; expected exactly one",
         ),
         (
             2,
@@ -1667,8 +1701,8 @@ fn v7_name_selector_refuses_missing_and_ambiguous_roots_or_skins_atomically() {
             3,
             "base.gltf",
             serde_json::to_vec(&ambiguous_skin).unwrap(),
-            "joint",
-            "is a joint of 2 source skins; expected exactly one",
+            "root",
+            "fully governs 2 source skins; expected exactly one",
         ),
     ] {
         let dir = tempfile::tempdir().expect("temporary directory");
@@ -1715,8 +1749,12 @@ fn v7_resolves_every_clip_selector_and_refuses_clip_side_misses_atomically() {
     for (ordinal, mutation, expected) in [
         (0, "missing-root", "resolves to 0 source nodes"),
         (1, "ambiguous-root", "resolves to 2 source nodes"),
-        (2, "missing-skin", "is a joint of 0 source skins"),
-        (3, "ambiguous-skin", "is a joint of 2 source skins"),
+        (
+            2,
+            "different-skin",
+            "assembly scale basis mismatch (source-name-selector)",
+        ),
+        (3, "ambiguous-skin", "fully governs 2 source skins"),
     ] {
         let dir = tempfile::tempdir().expect("temporary directory");
         std::fs::create_dir(dir.path().join("inputs")).unwrap();
@@ -1726,7 +1764,7 @@ fn v7_resolves_every_clip_selector_and_refuses_clip_side_misses_atomically() {
         match mutation {
             "missing-root" => clip["nodes"][1]["name"] = Value::String("other".into()),
             "ambiguous-root" => clip["nodes"][2]["name"] = Value::String("root".into()),
-            "missing-skin" => clip["skins"][0]["joints"] = serde_json::json!([2]),
+            "different-skin" => clip["skins"][0]["joints"] = serde_json::json!([2]),
             "ambiguous-skin" => {
                 let duplicate = clip["skins"][0].clone();
                 clip["skins"].as_array_mut().unwrap().push(duplicate);
@@ -1743,7 +1781,6 @@ fn v7_resolves_every_clip_selector_and_refuses_clip_side_misses_atomically() {
         let output = run(dir.path());
         assert_eq!(output.status.code(), Some(1), "case {ordinal}");
         let detail = refusal_detail(&output);
-        assert!(detail.contains("selector rejected input walk.gltf"));
         assert!(detail.contains(expected), "case {ordinal}: {detail}");
         assert_eq!(
             std::fs::read(dir.path().join("character.glb")).unwrap(),

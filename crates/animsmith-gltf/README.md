@@ -193,10 +193,11 @@ stage explicitly; it does not claim raw FBX span or authored-curve preservation.
 
 Recipe v7 leaves v6 immutable and replaces its unobservable cross-file source
 indices with one exact `root_node_name`. Every captured base and clip must map
-that name to exactly one normalized source node and exactly one source skin
-whose joint set contains it. The resulting per-input indices enter the same
-plan-taking writer, private FBX stage, and proof boundaries; v7 evidence records
-both the declared name and every resolved name/index tuple.
+that name to exactly one normalized source node and exactly one non-empty
+source skin whose every joint is that node or its descendant. The resulting
+per-input indices enter the same plan-taking writer, private FBX stage, and
+proof boundaries; v7 evidence records both the declared name and every resolved
+name/index tuple.
 
 [scale workflow]: https://github.com/mmannerm/animsmith/blob/main/docs/scale.md
 [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md#scale-plan-and-proof-contracts

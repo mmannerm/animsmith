@@ -6,7 +6,7 @@ use super::{
 };
 use crate::model::{Document, SourceNodeLocalRest};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Stable semantic version of [`AssemblyScaleBasis`].
 pub const ASSEMBLY_SCALE_BASIS_VERSION: u32 = 1;
@@ -124,6 +124,33 @@ pub enum AssemblyScaleSelectorRequest<'a> {
     },
 }
 
+/// Format-neutral source indices resolved from one exact named assembly root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssemblyScaleResolvedNamedSelector {
+    /// The unique non-empty source skin fully governed by the named root.
+    pub source_skin_index: usize,
+    /// The unique source node projected from the named normalized root.
+    pub source_root_node_index: usize,
+}
+
+/// Why a named assembly scale selector did not resolve exactly once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum AssemblyScaleNamedSelectorResolutionError {
+    /// The exact normalized name matched zero or multiple source nodes.
+    #[error("named assembly scale root resolves to {matches} source nodes; expected exactly one")]
+    RootNotUnique {
+        /// Number of matching projected source nodes.
+        matches: usize,
+    },
+    /// The resolved root fully governed zero or multiple source skins.
+    #[error("named assembly scale root fully governs {matches} source skins; expected exactly one")]
+    SkinNotUnique {
+        /// Number of non-empty fully governed source skins.
+        matches: usize,
+    },
+}
+
 #[derive(Debug, Clone)]
 enum AssemblyScaleSelectorIdentity {
     Indexed,
@@ -136,11 +163,117 @@ enum AssemblyScaleSelectorIdentity {
 /// One assembly basis paired with core-validated selector identity.
 ///
 /// Named identity cannot be assembled directly by a caller: it is derived
-/// from the source document's unique root and containing-skin facts.
+/// from the source document's unique root and fully governed skin facts.
 #[derive(Debug, Clone)]
 pub struct AssemblyScaleCompatibilityBasis {
     basis: AssemblyScaleBasis,
     selector: AssemblyScaleSelectorIdentity,
+}
+
+fn governed_source_node_indices(
+    parent_by_index: &BTreeMap<usize, Option<usize>>,
+    source_root_node_index: usize,
+) -> BTreeSet<usize> {
+    if !parent_by_index.contains_key(&source_root_node_index) {
+        return BTreeSet::new();
+    }
+
+    let mut children_by_index = BTreeMap::<usize, Vec<usize>>::new();
+    for (&source_node_index, parent_source_node_index) in parent_by_index {
+        if let Some(parent_source_node_index) = parent_source_node_index {
+            children_by_index
+                .entry(*parent_source_node_index)
+                .or_default()
+                .push(source_node_index);
+        }
+    }
+
+    let mut governed = BTreeSet::new();
+    let mut pending = vec![source_root_node_index];
+    while let Some(source_node_index) = pending.pop() {
+        if governed.insert(source_node_index)
+            && let Some(children) = children_by_index.get(&source_node_index)
+        {
+            pending.extend(children.iter().copied());
+        }
+    }
+    governed
+}
+
+fn source_skin_is_fully_governed(
+    governed_source_node_indices: &BTreeSet<usize>,
+    joint_source_node_indices: &[usize],
+) -> bool {
+    !joint_source_node_indices.is_empty()
+        && joint_source_node_indices
+            .iter()
+            .all(|joint| governed_source_node_indices.contains(joint))
+}
+
+/// Resolve one exact normalized root name to its unique fully governed skin.
+///
+/// A skin matches only when it is non-empty and every joint is the resolved
+/// root or one of its descendants in the authoritative source-node hierarchy.
+/// Callers remain responsible for choosing named versus indexed selector mode;
+/// this helper only centralizes the format-neutral named-resolution rule.
+///
+/// # Errors
+///
+/// Returns [`AssemblyScaleNamedSelectorResolutionError::RootNotUnique`] when
+/// the name does not resolve to exactly one projected source node, or
+/// [`AssemblyScaleNamedSelectorResolutionError::SkinNotUnique`] when that node
+/// does not fully govern exactly one non-empty source skin.
+pub fn resolve_assembly_scale_named_selector(
+    document: &Document,
+    root_node_name: &str,
+) -> Result<AssemblyScaleResolvedNamedSelector, AssemblyScaleNamedSelectorResolutionError> {
+    let root_matches = document
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            node.bone
+                .and_then(|bone| document.skeleton.bones.get(bone))
+                .filter(|bone| bone.name == root_node_name)
+                .map(|_| node.source_node_index)
+        })
+        .collect::<Vec<_>>();
+    let [source_root_node_index] = root_matches.as_slice() else {
+        return Err(AssemblyScaleNamedSelectorResolutionError::RootNotUnique {
+            matches: root_matches.len(),
+        });
+    };
+    let parent_by_index = document
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .map(|node| (node.source_node_index, node.parent_source_node_index))
+        .collect::<BTreeMap<_, _>>();
+    let governed_source_node_indices =
+        governed_source_node_indices(&parent_by_index, *source_root_node_index);
+    let skin_matches = document
+        .assets
+        .source_skeleton
+        .skins
+        .iter()
+        .filter(|skin| {
+            source_skin_is_fully_governed(
+                &governed_source_node_indices,
+                &skin.joint_source_node_indices,
+            )
+        })
+        .collect::<Vec<_>>();
+    let [skin] = skin_matches.as_slice() else {
+        return Err(AssemblyScaleNamedSelectorResolutionError::SkinNotUnique {
+            matches: skin_matches.len(),
+        });
+    };
+    Ok(AssemblyScaleResolvedNamedSelector {
+        source_skin_index: skin.source_skin_index,
+        source_root_node_index: *source_root_node_index,
+    })
 }
 
 impl AssemblyScaleCompatibilityBasis {
@@ -293,43 +426,32 @@ pub fn assembly_scale_compatibility_basis(
     let selector = match selector {
         AssemblyScaleSelectorRequest::Indexed => AssemblyScaleSelectorIdentity::Indexed,
         AssemblyScaleSelectorRequest::Named { root_node_name } => {
-            let root_matches = document
-                .assets
-                .source_skeleton
-                .nodes
-                .iter()
-                .filter(|node| {
-                    node.bone
-                        .and_then(|bone| document.skeleton.bones.get(bone))
-                        .is_some_and(|bone| bone.name == root_node_name)
-                })
-                .collect::<Vec<_>>();
-            let [root] = root_matches.as_slice() else {
-                return Err(ScaleError::PlanDocumentMismatch {
-                    reason: "assembly_basis_named_selector_root_not_unique",
-                });
-            };
-            if root.source_node_index != basis.source_root_node_index {
+            let resolved = resolve_assembly_scale_named_selector(document, root_node_name)
+                .map_err(|error| ScaleError::PlanDocumentMismatch {
+                    reason: match error {
+                        AssemblyScaleNamedSelectorResolutionError::RootNotUnique { .. } => {
+                            "assembly_basis_named_selector_root_not_unique"
+                        }
+                        AssemblyScaleNamedSelectorResolutionError::SkinNotUnique { .. } => {
+                            "assembly_basis_named_selector_skin_not_unique"
+                        }
+                    },
+                })?;
+            if resolved.source_root_node_index != basis.source_root_node_index {
                 return Err(ScaleError::PlanDocumentMismatch {
                     reason: "assembly_basis_named_selector_root_disagrees_with_plan",
                 });
             }
-            let skin_matches = document
+            let skin = document
                 .assets
                 .source_skeleton
                 .skins
                 .iter()
-                .filter(|skin| {
-                    skin.joint_source_node_indices
-                        .contains(&root.source_node_index)
-                })
-                .collect::<Vec<_>>();
-            let [skin] = skin_matches.as_slice() else {
-                return Err(ScaleError::PlanDocumentMismatch {
+                .find(|skin| skin.source_skin_index == resolved.source_skin_index)
+                .ok_or(ScaleError::PlanDocumentMismatch {
                     reason: "assembly_basis_named_selector_skin_not_unique",
-                });
-            };
-            if skin.source_skin_index != basis.source_skin_index {
+                })?;
+            if resolved.source_skin_index != basis.source_skin_index {
                 return Err(ScaleError::PlanDocumentMismatch {
                     reason: "assembly_basis_named_selector_skin_disagrees_with_plan",
                 });

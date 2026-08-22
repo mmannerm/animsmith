@@ -2150,10 +2150,11 @@ Assembly recipe v7 exposes the same rest/bind operation through an optional
 `[rest_bind_scale]` block whose exact `root_node_name` and factor are required.
 The name rejects leading or trailing whitespace instead of normalizing it.
 For every captured base and clip input, that name must resolve to exactly one
-normalized source node and exactly one source skin whose joint set contains the
-node. The resolved per-input source indices feed the unchanged core operation
-and private staging bridge; no cross-file source-array index is inferred or
-reused. It accepts glTF/GLB plus the narrow FBX inventory admitted by the
+normalized source node and exactly one non-empty source skin whose every joint
+is that node or its descendant. The resolved per-input source indices feed the
+unchanged core operation and private staging bridge; no cross-file source-array
+index is inferred or reused. It accepts glTF/GLB plus the narrow FBX inventory
+admitted by the
 standalone rest/bind boundary, validates every base and clip basis before
 applying the operation or remapping keys, and records the declared name,
 resolved per-input name/indices, and normalized/baked FBX projection rather
@@ -2354,7 +2355,7 @@ The implementation status is:
   versioned basis fingerprint/comparator, pre-remap clip rebasing, exact input
   digests, compatibility evidence, and proof over the exact staged artifact;
 - shipped: recipe/evidence v7 exact-name rest/bind selection, with a unique
-  source-node and containing-skin resolution for every captured input and
+  source-node and fully-governed-skin resolution for every captured input and
   explicit declared/resolved selector evidence (issue #459);
 - shipped: issue #286-A's explicit conservative ufbx-side status for every
   current D.4 domain and documented normalized source-skeleton projection;

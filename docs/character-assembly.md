@@ -143,10 +143,11 @@ expected_factor = 0.01
 
 The block has no defaults: the exact normalized root-node name and finite
 positive expected factor are both required. In every captured base and clip,
-the name must resolve to exactly one source node and exactly one source skin
-whose joint set contains that node. Missing or repeated names and zero or
-multiple applicable skins fail closed. Leading or trailing whitespace is
-invalid rather than silently trimmed; internal whitespace remains exact. No
+the name must resolve to exactly one source node and exactly one non-empty
+source skin whose every joint is that node or its descendant. Missing or
+repeated names and zero or multiple applicable skins fail closed. Leading or
+trailing whitespace is invalid rather than silently trimmed; internal
+whitespace remains exact. No
 source-array index is reused across files. Recipe v7 accepts glTF/GLB and the
 narrow FBX subset admitted by the existing normalized/baked rest-bind
 capability boundary. That boundary

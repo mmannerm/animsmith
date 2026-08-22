@@ -725,7 +725,7 @@
         "resolved_source_skin_index": {
           "type": "integer",
           "minimum": 0,
-          "description": "The unique source skin in this captured input whose joint set contains the resolved root."
+          "description": "The unique non-empty source skin in this captured input whose every joint is the resolved root or its descendant."
         },
         "resolved_source_root_node_index": {
           "type": "integer",
