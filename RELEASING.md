@@ -115,7 +115,8 @@ Before closing the milestone:
    installed. Before closing the milestone, run `--version` from at least one
    archive that is native to the verification host, confirm the output names
    the expected release version, and retain that comparison. If no release
-   target is native to that host, use a fresh VM or runner for one supported
+   target is native to that host, perform the same execution, expected-version
+   comparison, and evidence retention on a fresh VM or runner for one supported
    target.
    If `gh release download` leaves the destination empty, fetch each release
    asset by id through `gh api -H 'Accept: application/octet-stream'
