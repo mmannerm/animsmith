@@ -112,7 +112,10 @@ Before closing the milestone:
    archive and one `.sha256` file per target. Download them, run `sha256sum -c`,
    inspect `.tar.gz` contents with `tar -tzf`, and inspect `.zip` contents with
    `python3 -m zipfile -l` so verification does not depend on `unzip` being
-   installed. Run the native archive's binary with `--version` where possible.
+   installed. Before closing the milestone, run `--version` from at least one
+   archive that is native to the verification host. If no release target is
+   native to that host, use a fresh VM or runner for one supported target and
+   retain its output.
    If `gh release download` leaves the destination empty, fetch each release
    asset by id through `gh api -H 'Accept: application/octet-stream'
    repos/<owner>/<repo>/releases/assets/<id>` instead.
