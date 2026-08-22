@@ -2,11 +2,11 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — 0.3.0 baseline/contracts, 0.3.1-bound gait remediation, and Unity 6000.5.8f1 co-import probes; no visual controller, target character, Unreal Engine, Godot, or Bevy pass.
+> Evaluation completeness: **partial** — complete 0.4.0 baseline, contract, and remediation on one frozen evaluator, plus engine-profile advice/refusals and a retained Unity probe; no visual controller, target character, or engine pass.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-17**
+> Evaluation date: **2026-08-21**
 >
 > Report format: **1**
 >
@@ -14,11 +14,11 @@
 
 ## Technical decision
 
-Use the 108 Unity-Humanoid gameplay clips as a full-body one-handed combat mode, after quarantining `Humanoid@Blocked1hMelee.fbx` and `Humanoid@IdleBlock1hMelee.fbx`. The remaining sampled paths execute in Unity unchanged.
+Use the 108 Unity-Humanoid gameplay clips as a full-body one-handed combat mode, after quarantining `Humanoid@Blocked1hMelee.fbx` and `Humanoid@IdleBlock1hMelee.fbx`. The remaining sampled paths execute unchanged in Unity.
 
-AnimSmith measures the 56-bone majority without setup and exposes loop, phase, speed, and track risks. At `674396f`, gait anchoring produces 24 IP candidates and reduces walk/run/crouch phase spreads from 0.554/0.734/0.714 to 0.064/0.108/0.039. They remain experimental: RM was untouched and Unity, visual, and trajectory acceptance were not performed. Constant-track pruning also exports but remains unaccepted.
+This refresh runs the baseline, contract pass, and gait remediation on one evaluator, AnimSmith **`v0.4.0`**, replacing the earlier mixed `b7c215b`/`674396f` story. Re-inventory reproduces the published manifest exactly (113 FBXs, 0 changed): the pack is unchanged. Gait anchoring produces 24 IP candidates, cutting walk/run/crouch phase spreads from 0.554/0.734/0.714 to 0.064/0.108/0.039, matching pre-release `674396f` to seven decimals: the release preserves 0.3.1's gait behavior. Candidates stay unpromoted: no Humanoid-retarget or visual import, and the retained project has no GLB importer. Pruning exports one unaccepted candidate.
 
-Replace the delivered loop policy, preserve per-direction speeds, and retain runtime offsets until generated candidates pass visual and engine acceptance. Visually author/accept grip, contacts, hit windows, equipment visibility, and transitions. The headless mask pass is only a candidate: displacement-bearing attacks should remain full-body by default.
+Replace the delivered loop policy, preserve per-direction speeds, and retain runtime offsets until generated candidates pass visual/engine acceptance. Visually author/accept grip, contacts, hit windows, equipment visibility, and transitions. The headless mask pass is only a candidate: displacement-bearing attacks stay full-body by default.
 
 ## Capability coverage
 
@@ -29,7 +29,7 @@ Replace the delivered loop policy, preserve per-direction speeds, and retain run
 
 ### Partial supporting gameplay
 
-- Blocking loses two delivered Generic clips; attacks lack events, cancellation rules, contact/IK proof, and visual acceptance.
+- Blocking loses two Generic clips; attacks lack events, cancellation rules, contact/IK proof, and visual acceptance.
 - Upper-body composition executes headlessly, but pelvis torque, support, grip, and weapon arcs are unaccepted.
 
 ### Absent
@@ -38,7 +38,7 @@ Replace the delivered loop policy, preserve per-direction speeds, and retain run
 
 ## Runtime sets and authored motion
 
-Coordinates are `(right,forward)`; speeds are measured RM magnitudes. IP/RM counterparts have nearly identical pair phases, but each ring is mutually out of phase.
+Coordinates are `(right,forward)`; speeds are measured RM magnitudes. IP/RM pairs share phase; rings are mutually out of phase.
 
 | Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
 |---|---|---|---|---|---|
@@ -71,47 +71,47 @@ Coordinates are `(right,forward)`; speeds are measured RM magnitudes. IP/RM coun
 | Hold forward speed | sprint | IP `Humanoid@SprintHold1hMelee.fbx`; RM `Humanoid@SprintHold1hMelee_RM.fbx` | variant=paired-ip-rm | duration=0.400 s; rm_speed=7.500 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
 | Draw/combat/put-away | ordered | `Humanoid@DrawWeapon1hMelee.fbx`; `Humanoid@IdleCombat1hMelee.fbx`; `Humanoid@PutBackWeapon1hMelee.fbx` | set_type=transition-chain | N/A | transition=at-end; state=armed-combat |
 
-RM speed ratios are 1.94× walk, 1.11× run, 1.52× crouch, and 9.52× across the intended hold speed chain. Preserve directional velocity or tune playback; do not normalize silently. Raw walk/run/crouch phase spreads are 0.554/0.734/0.714; current IP candidates reduce them to 0.064/0.108/0.039 but still require acceptance and residual offsets.
+RM speed ratios are 1.94× walk, 1.11× run, 1.52× crouch, and 9.52× across the intended hold speed chain. Preserve directional velocity or tune playback; do not normalize silently.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=separate-ip-rm-combat-graphs`; create the three directional graphs and hold speed chain from the exact table members, and exclude both quarantined block clips.
-2. **Timing/synchronization:** `sync=validated-ip-anchor-plus-offsets`; loop reviewed locomotion/idles/holds; use raw clips with runtime offsets until the IP candidates pass engine/visual gates, never apply this evidence to RM, and keep actions/recoveries one-shot.
-3. **State ownership:** `owner=split-by-movement-variant`; the controller owns IP translation/yaw, animation owns accepted RM translation/yaw, and every RM action gets an explicit owner decision.
-4. **Composition constraints:** `composition=full-body-combat-default`; attach the bludgeon to the right hand and promote upper-body masks only after pelvis, contact, grip, and target-character review.
+1. **Members/topology:** `topology=separate-ip-rm-combat-graphs`; build the three directional graphs and hold speed chain from the exact table members; exclude both quarantined block clips.
+2. **Timing/synchronization:** `sync=validated-ip-anchor-plus-offsets`; loop reviewed locomotion/idles/holds; use raw clips with runtime offsets until IP candidates pass engine/visual gates; never apply to RM; keep actions one-shot.
+3. **State ownership:** `owner=validate-per-axis`; controller owns IP translation; validate RM ownership per axis, since sampled RM clips bake root rotation.
+4. **Composition constraints:** `composition=full-body-combat-default`; attach the bludgeon to the right hand; promote upper-body masks after pelvis, contact, grip, and target-character review.
 5. **Acceptance gate:** `gate=target-character-combat-review`; test complete rings, wraps, draw/put-away, attacks, hits, contacts, root extraction, masks, deformation, compression, and builds.
 
 ## Technical issue register
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| OH-001 | blocker | [Rig/import disagreement](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) leaves both block clips outside the Unity Humanoid runtime; one also has a 73-bone hierarchy. | artist-author | Quarantine both and use another reaction/idle until corrected exports exist. | Detection can improve; author intent and Humanoid metadata cannot be safely invented. | Unity imports both as Generic; AnimSmith distinguishes the 73-bone outlier. |
-| OH-002 | major | [Incorrect loop declarations](../game-ready-clips.md#the-loop-pops) mark 30 obvious attacks, combos, hits, and recoveries as loops, risking repeated actions and hard wraps. | engine-config | Override one-shot-like flags and review remaining loop candidates. | A metadata/role-aware audit is feasible; universal intent inference is not. | 93/110 delivered loop flags; 87 declared-loop contract failures. |
-| OH-003 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) risks foot skating. | animsmith-current-declared | Trial the 24 IP candidates, then validate and offset residual phase; keep RM raw. | IP support shipped via [#426](https://github.com/mmannerm/animsmith/issues/426); trajectory-preserving RM was not tested. | Spreads fall 0.554–0.734 → 0.039–0.108; no engine/visual acceptance. |
-| OH-004 | major | [Directional RM speed variation](../game-ready-clips.md#directional-blend-members-travel-at-different-speeds) can make input magnitude change with direction. | engine-config | Preserve velocity per member or tune playback against controller policy. | Cross-member policy checks are tracked by [#411](https://github.com/mmannerm/animsmith/issues/411). | Walk 1.94×; crouch 1.52×; run 1.11×. |
-| OH-005 | moderate | [RM action ownership](../game-ready-clips.md#the-character-glides-or-runs-in-place) is not established by `_RM` or horizontal speed alone, risking doubled or missing displacement/yaw. | engine-config | Inspect displacement and yaw per attack/reaction before enabling root motion. | Independent translation/yaw evidence is tracked by [#408](https://github.com/mmannerm/animsmith/issues/408). | Eleven RM action/reaction files; yaw not summarized. |
-| OH-006 | moderate | [Dense constant tracks](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) may waste memory; unproved pruning can change sparse-track behavior. | animsmith-current-declared | Keep sources until runtime/equivalence gates pass. | Current pruning works mechanically; stronger proof remains tracked by [#401](https://github.com/mmannerm/animsmith/issues/401) and [#402](https://github.com/mmannerm/animsmith/issues/402). | 13,360 contract notes; one verified export candidate. |
+| OH-001 | blocker | [Rig/import disagreement](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) leaves both block clips outside the Unity Humanoid runtime; one also has a 73-bone hierarchy. | artist-author | Quarantine both; use another reaction/idle until corrected exports exist. | Detection can improve; author intent cannot be safely invented. | Unity imports both as Generic; AnimSmith distinguishes the 73-bone outlier. |
+| OH-002 | major | [Incorrect loop declarations](../game-ready-clips.md#the-loop-pops) mark 30 obvious attacks, combos, hits, and recoveries as loops, risking repeated actions and hard wraps. | engine-config | Override one-shot-like flags and review remaining loop candidates. | A metadata/role-aware audit is feasible; universal intent inference is not. | 93/110 loop flags; 87 declared-loop contract failures; 37 no-stride/stationary clips now `not_evaluated`, not mislabelled. |
+| OH-003 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) risks foot skating. | animsmith-current-declared | Trial the 24 IP candidates, then validate and offset residual phase; keep RM raw. | Closed [#426](https://github.com/mmannerm/animsmith/issues/426) shipped IP heading support; trajectory-preserving RM remains untested. | Reproduces the pre-release result to seven decimals; still no engine/visual acceptance. |
+| OH-004 | major | [Directional RM speed variation](../game-ready-clips.md#directional-blend-members-travel-at-different-speeds) can make input magnitude change with direction. | engine-config | Preserve velocity per member or tune playback against controller policy. | Cross-member checks are tracked by [#411](https://github.com/mmannerm/animsmith/issues/411). | Walk 1.94×; crouch 1.52×; run 1.11×. |
+| OH-005 | moderate | [RM action ownership](../game-ready-clips.md#the-character-glides-or-runs-in-place) is not established by `_RM` or horizontal speed alone, risking doubled or missing displacement/yaw. | engine-config | Review the new root-trajectory measurements; never infer ownership from measured travel. | Closed [#408](https://github.com/mmannerm/animsmith/issues/408) shipped per-clip displacement/yaw; continuous-curve extraction proof unknown. | 112/112 measured: 39 moving, 72 stationary, 0 yawing; `heading_axis`=`positive_y` on 111/111 — sampled facts, not extraction proof. |
+| OH-006 | moderate | [Dense constant tracks](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) may waste memory; unproved pruning can change sparse-track behavior. | animsmith-current-declared | Keep sources until runtime/equivalence gates pass. | Closed [#402](https://github.com/mmannerm/animsmith/issues/402) shipped per-clip channel coverage; pruning stays open as [#401](https://github.com/mmannerm/animsmith/issues/401). | 13,360 contract notes; one export candidate (`Humanoid@IdleCombat1hMelee.fbx`), source unmodified. |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | Eight-pack co-import + headless Playables/mask/attachment | **Conditional pass:** 108/110 individual clips are Humanoid; all six required samples, two cross-pack mixers, one mask, and the prop check pass. | Visual controller, contacts, grip, root motion, retargeting, compression, build. |
-| Unreal Engine | Documentation only | **Not evaluated.** Root Motion, Blend Spaces, montages, and layered blends can express the policy; no native UE package is delivered. | FBX import, retarget, graphs, contacts, build. |
-| Godot | Documentation only | **Not evaluated.** AnimationTree can express blend spaces, one-shots, filters, and root extraction. | Import/conversion, retarget, graphs, contacts, export. |
-| Bevy | Documentation only | **Not evaluated.** AnimationGraph masks exist; FBX conversion and retargeting remain project work. | glTF conversion, retarget path, graph, root motion, performance. |
+| Unity | Retained eight-pack co-import (2026-08-17) + fresh advice | **Conditional pass:** 108/110 clips Humanoid; six samples, two mixers, mask, prop pass (retained). New advice matches **observed** locks: IP bakes; RM mostly extracts XZ (31/36). | Visual controller, contacts, grip, root motion, retargeting, compression, build. |
+| Unreal Engine | Import-advice | **Not evaluated:** typed refusal `profile_settings_unmodeled` (exit 1). | FBX import, retarget, graphs, contacts, build. |
+| Godot | Import-advice | **Not evaluated:** typed refusal `profile_settings_unmodeled` (exit 1). | Import/conversion, retarget, graphs, contacts, export. |
+| Bevy | Addressability, generated GLB | **Not evaluated for playback.** Exit 0: selector `Animation0` predicted, 0 findings — inventory/selector prediction only. | glTF conversion, retarget path, graph, root motion, performance. |
 
 ## Fit and limitations
 
-Best fit: third-person action RPGs or melee prototypes with a dedicated full-body one-handed armed state and capacity to configure contacts, events, and controller ownership.
+Best fit: third-person action RPGs or melee prototypes with a full-body one-handed armed state and capacity to configure contacts, events, and controller ownership.
 
 Poor fit: blocking-critical gameplay without substitute clips, first-person, traversal-heavy, motion-matching, or network-root-motion systems without further authoring.
 
-The majority 56-bone structure matches Basic Locomotion, Sword & Shield, and Dual Swords; all shared package paths are byte-identical. Unity mixers and a Basic-locomotion mask execute, but use full-body state handoffs between weapon modes until style, pose, grip, and contact are visually accepted. The [partial collection rollup](protofactor-ultimate-animation-collection.md) owns the cross-pack conclusion.
+The majority 56-bone structure matches Basic Locomotion, Sword & Shield, and Dual Swords; shared package paths are byte-identical. Unity mixers and a Basic-locomotion mask execute; use full-body handoffs until style, pose, grip, and contact are accepted. The [partial collection rollup](protofactor-ultimate-animation-collection.md) owns the cross-pack conclusion.
 
 ## Evidence status
 
-All 113 FBXs were analyzed; the v1 manifest covers 72 logical motions and 110 individual files. Baseline/contracts remain captured at `b7c215b`; remediation was refreshed with AnimSmith `0.3.0` at `674396f0f53b10c4344e7315a5756fe5ef71b469`. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-one-handed-melee-evidence.md) define remaining boundaries. The local archive came from the user's Protofactor Ultimate collection download; current pages do not prove its constituent revision or historical terms.
+All 113 FBXs were analyzed; the v1 manifest covers 72 logical motions and 110 individual files. Baseline, contracts, and remediation now share one frozen evaluator, AnimSmith `v0.4.0` (commit `6b37ad63`), captured 2026-08-21 — superseding the prior mixed `b7c215b`/`674396f` story. The retained Unity import keeps its original 2026-08-17 date; the source is byte-identical. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-one-handed-melee-evidence.md) define remaining boundaries. The local archive came from the user's Protofactor Ultimate collection download; current pages do not prove its constituent revision or historical terms.
 
 ## Sources
 

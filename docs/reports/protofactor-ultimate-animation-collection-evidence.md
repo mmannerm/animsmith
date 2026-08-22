@@ -4,7 +4,7 @@
 >
 > Evidence status: **partial** — eight constituent manifests, all 28 pairwise shared-file comparisons, and an eight-pack Unity project with retained contextual and melee probe phases are recorded; 15 listed constituents and visual acceptance are absent.
 >
-> Evaluation date: **2026-08-17**
+> Evaluation date: **2026-08-21**
 >
 > Report format: **1**
 
@@ -93,7 +93,7 @@ The count above is the versioned manifest-record count: 76 constituent records p
 | Root motion | `evaluated-finding` | IP/RM families inventoried; vertical/yaw evidence and outliers remain bounded. |
 | Conform | `partially-evaluated` | Standard 56-bone family, 58-bone 2-Handed twist variant, and shared Unity Avatars co-exist; outliers and target/other engines open. |
 | Validate | `evaluated-finding` | Constituent contracts and combined Unity graph probes ran; visuals open. |
-| Optimize | `partially-evaluated` | Current main emits gait-anchor candidates for 72 selected melee IP members and representative pruning trials remain bounded; no generated collection output was promoted. |
+| Optimize | `partially-evaluated` | AnimSmith 0.4.0 emits 159 candidates across the collection: 134 gait-anchor, 12 slice, 12 prune-constant-tracks, and 1 drop-duplicate-loop-endpoint. Pruning stays bounded by open [#401](https://github.com/mmannerm/animsmith/issues/401); no generated collection output was promoted. |
 | Export | `partially-evaluated` | Native Unity assets co-imported; other-engine exports not accepted. |
 | Gate/report | `partially-evaluated` | Eight report pairs and this rollup are versioned; 15 constituents and visual gates remain. |
 
@@ -152,7 +152,7 @@ Every pairwise logical-delivery comparison found exactly 25 overlapping paths, a
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
 | Basic negative-time keys | Declared slice to Unity clip ranges | 12/12 candidate outputs remove strict-time errors | Post-transform checks | Visual/engine acceptance still required |
-| Gait phase across packs | Historical Basic, Sword, and Injured trials retain their constituent results. Re-run 24 selected IP ring members per new melee pack with the 0.3.1-bound revision after [#426](https://github.com/mmannerm/animsmith/issues/426). | All 72 transforms exit 0 and emit GLBs. Walk/run/crouch spread changes: 1-Handed 0.554/0.734/0.714 to 0.063903/0.108198/0.039432; 2-Handed 0.711/0.602/0.580 to 0.069337/0.142914/0.053758; Dual Swords 0.709/0.673/0.618 to 0.052993/0.135051/0.058715. | Inspect, measure, and fix dry-run exit 0 for 72/72; lint and diff exit 1 for all transformed outputs as expected from retained findings and intentional edits. | Only IP transformed; residual runtime offsets, GLB engine import, visual review, and independent acceptance remain open. |
+| Gait phase across packs | Re-run every selected IP ring member on one frozen AnimSmith 0.4.0 evaluator, after delivered [#426](https://github.com/mmannerm/animsmith/issues/426) extended anchoring to rigs whose root local forward axis is vertical. Selection is unchanged from each constituent's published run. | All 134 transforms across the six gait-bearing packs exit 0 and emit GLB candidates; none refuse, against 62 refusals for Basic, Sword, and Injured under 0.3.0. Circular walk/run/crouch phase spread: Basic 0.6598/0.4630/0.7156 to 0.072442/0.093840/0.050191; Sword & Shield 0.7231/0.6605/0.6974 to 0.059938/0.137277/0.052440; Injured walk/run 0.6025/0.5541 to 0.051348/0.109841; 1-Handed 0.5538/0.7342/0.7136 to 0.063903/0.108198/0.039432; 2-Handed 0.7112/0.6024/0.5774 to 0.069337/0.142914/0.053758; Dual Swords 0.7086/0.6732/0.6184 to 0.052993/0.135051/0.058715. The three melee packs reproduce their pre-release figures to seven decimal places. | Every one of the 134 candidates re-reads under `inspect`. Spread is the smallest arc containing all ring members, so cyclic wrap is not mistaken for divergence. 2-Handed phase is measurable only under its explicit `[rig.roles]` config. | Only IP members transformed; Campfire and Climbing have no in-place ring. Residual runtime offsets, GLB engine import, visual review, and independent trajectory acceptance remain open. |
 | 2-Handed role resolution | Explicit `[rig.roles]` mapping for the capitalized 58-bone family | Restores role-backed measurements on all 118 accepted files without modifying assets | Configured baseline and config digest | Config must be retained; generic case-tolerant resolution is tracked by [#437](https://github.com/mmannerm/animsmith/issues/437) |
 | Constant tracks | Representative pruning in all eight packs | Smaller GLBs reopen and retain declared findings | Inspect/measure/lint/diff/fix dry-run | Runtime equivalence unproven; no candidate promoted |
 | Rig/import outliers | No safe repair | Six files quarantined/excluded | AnimSmith and Unity agree | Artist/vendor source required |
@@ -201,6 +201,33 @@ The eight-pack rollup and new melee evaluations used AnimSmith 0.3.0 at revision
 The gait-only refresh used the pre-release 0.3.1 code at revision `674396f0f53b10c4344e7315a5756fe5ef71b469`; its binary identified as `animsmith 0.3.0 (v0.3.0-39-g674396f)` and has SHA-256 `7744b71580e04d80f9e5738efce76e0295323ccb3150fa57b0ad9b37c5ff1513`. The later 0.3.1 release commit changes version metadata, example assets, and one fixture test, not transform/core source. The combined refresh summary SHA-256 is `118116c9173df4e3e782cdfe3b712deb9fb14cec23c8e0e75cd484e8156d7f4b`; pack command-result SHA-256 values are 1-Handed `6f8717ec84797cbb89d830e7098baf529fdc6f37eb1b877775a0f6c5d514c5d6`, 2-Handed `65d6a098d67478e6ce4af1c758e48b3b737e96b10a8df5e5444f861147cfcb5e`, and Dual Swords `16d31a27a961180154afc30613e1ab3e5e4a7cdb8aab94238861947c8e819a15`. Baseline, contract, manifest, Unity, and non-gait remediation evidence remain tied to their earlier recorded revisions.
 
 Rebuild the namespaced manifest, verify all pairwise overlaps, validate its schema, then reconstruct the eight authorized Unity deliveries outside the repository and run the retained probes. Re-run constituent contracts when their source, evaluator, declared policy, or target runtime changes. To reproduce the gait refresh, select only each new melee manifest's 24 in-place walk/run/crouch ring members, write new GLBs, and rerun inspect, measure, lint, diff, and fix dry-run while retaining every exit code.
+
+### Evaluator currency: AnimSmith 0.4.1
+
+AnimSmith 0.4.1 (tag `v0.4.1`, commit `46e4adfc14947d2afbf433386b0ab9857ea935aa`,
+changelog-dated 2026-08-22) was released after this evidence was captured. The
+evidence in this appendix remains attributable to 0.4.0, which produced it;
+relabelling it would be false attribution. 0.4.1 was instead verified equivalent
+for this collection before that decision was made:
+
+| Comparison | Scope | Result |
+|---|---|---|
+| Baseline `measure`/`lint` content and exit codes | 918 delivered FBXs, all eight packs | 0 files differ |
+| Declared-contract `lint` | 177 per-clip contracts | 0 differ |
+| `generate import-advice` payload | Unity profile | identical |
+| Gait anchoring | 24-member ring | 24/24 anchored; circular spreads identical to seven decimals |
+| Generated GLB candidates | 24 | motion payload byte-identical; only the glTF `asset.generator` string differs |
+| Contract versions | — | unchanged at output v10 / measurements v15 |
+
+The tool-identity block is excluded from those comparisons because it necessarily
+differs between releases. 0.4.1 fixes [#502](https://github.com/mmannerm/animsmith/issues/502),
+which affects the `scale rest-bind` admission path this evaluation never invoked,
+and [#503](https://github.com/mmannerm/animsmith/issues/503), a diagnostics defect
+this evaluation reported: 0.4.0 emits `missing required engine setting
+BakeAxisConversion` while 0.4.1 emits the accepted key `bake_axis_conversion`.
+Neither fix changes a measurement here. Issue and release state are
+time-sensitive; re-query them before reuse.
+
 
 ## Sources
 
