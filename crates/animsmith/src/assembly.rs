@@ -389,10 +389,14 @@ struct PreparedScaleInput {
     selector: ResolvedRestBindScaleSelector,
 }
 
-struct AssemblyPublicationContext<'a> {
+struct AssemblyScalePreparationContext<'a> {
     staging_parent: &'a Path,
     output: &'a Path,
     evidence: &'a Path,
+    recipe_version: u32,
+    remove_nodes: &'a [String],
+    retained_mesh_instances: &'a [String],
+    tool: &'a ToolInfo,
 }
 
 struct PreparedAssemblyClip {
@@ -815,14 +819,83 @@ fn resolve_rest_bind_scale_selector(
     })
 }
 
+fn remove_unskinned_instances_in_subtree(
+    document: &mut Document,
+    removal: &animsmith_core::assembly::NodeSubtreeRemovalPlan,
+    explicitly_retained: &[String],
+) -> usize {
+    let explicitly_retained = explicitly_retained
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let skeleton = &document.skeleton;
+    let before = document.assets.instances.len();
+    document.assets.instances.retain(|instance| {
+        !instance.skin_joints.is_empty()
+            || !removal.removes(instance.node)
+            || skeleton
+                .bones
+                .get(instance.node)
+                .is_some_and(|bone| explicitly_retained.contains(bone.name.as_str()))
+    });
+    before - document.assets.instances.len()
+}
+
+fn remove_declared_unskinned_instances(
+    document: &mut Document,
+    remove_nodes: &[String],
+    explicitly_retained: &[String],
+) -> Result<usize, String> {
+    let applicable = remove_nodes
+        .iter()
+        .filter(|name| {
+            document
+                .skeleton
+                .bones
+                .iter()
+                .any(|bone| bone.name == name.as_str())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if applicable.is_empty() {
+        return Ok(0);
+    }
+    let removal = animsmith_core::assembly::plan_node_subtree_removal(document, &applicable)
+        .map_err(|error| format!("cannot plan declared node removal: {error}"))?;
+    Ok(remove_unskinned_instances_in_subtree(
+        document,
+        &removal,
+        explicitly_retained,
+    ))
+}
+
+fn fbx_scale_stage_document(
+    document: &Document,
+    remove_nodes: &[String],
+    explicitly_retained: &[String],
+) -> Result<Document, String> {
+    let mut projected = document.clone();
+    remove_declared_unskinned_instances(&mut projected, remove_nodes, explicitly_retained)?;
+    Ok(projected)
+}
+
+fn retain_surviving_mesh_instance_names(retained: &mut Vec<String>, document: &Document) {
+    let surviving = document
+        .assets
+        .instances
+        .iter()
+        .filter_map(|instance| document.skeleton.bones.get(instance.node))
+        .map(|bone| bone.name.as_str())
+        .collect::<BTreeSet<_>>();
+    retained.retain(|name| surviving.contains(name.as_str()));
+}
+
 fn prepare_scale_input(
     role: String,
     declared: &Path,
     resolved: &Path,
     scale: &AssemblyRestBindScaleRecipe,
-    recipe_version: u32,
-    publication: &AssemblyPublicationContext<'_>,
-    tool: &ToolInfo,
+    context: &AssemblyScalePreparationContext<'_>,
 ) -> Result<PreparedScaleInput, crate::producer::Failure> {
     use crate::producer::{Classify as _, Failure, Kind, Stage};
     let extension = resolved
@@ -831,8 +904,8 @@ fn prepare_scale_input(
         .unwrap_or_default();
     let is_gltf = extension.eq_ignore_ascii_case("gltf") || extension.eq_ignore_ascii_case("glb");
     let is_fbx = extension.eq_ignore_ascii_case("fbx");
-    if !is_gltf && !(recipe_version >= RECIPE_SCHEMA_VERSION_V6 && is_fbx) {
-        if recipe_version < RECIPE_SCHEMA_VERSION_V6 {
+    if !is_gltf && !(context.recipe_version >= RECIPE_SCHEMA_VERSION_V6 && is_fbx) {
+        if context.recipe_version < RECIPE_SCHEMA_VERSION_V6 {
             return Err(Failure::operator(format!(
                 "rest_bind_scale input {} is not glTF/GLB; assembly scale integration is glTF-only",
                 declared.display()
@@ -873,10 +946,7 @@ fn prepare_scale_input(
             "assemble",
             resource_root,
             fbx_source.dependency_closure(),
-            &[
-                ("output", publication.output),
-                ("evidence", publication.evidence),
-            ],
+            &[("output", context.output), ("evidence", context.evidence)],
         )
         .operator()?;
         let primary_identity = fbx_source.source_facts().primary_identity();
@@ -899,9 +969,21 @@ fn prepare_scale_input(
             })
             .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
         let operation = rest_bind_operation(&selector, scale.expected_factor());
-        let staged = crate::scale::serialize_fbx_rest_bind_stage(
+        let scale_stage_document = fbx_scale_stage_document(
             fbx_source.document(),
-            publication.staging_parent,
+            context.remove_nodes,
+            context.retained_mesh_instances,
+        )
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale removal projection rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+        let staged = crate::scale::serialize_fbx_rest_bind_stage(
+            &scale_stage_document,
+            context.staging_parent,
         )
         .operator()?;
         let staged_source = preflight_scale_source_bytes(staged.path(), staged.bytes())
@@ -1001,7 +1083,7 @@ fn prepare_scale_input(
     }
     let fingerprint_bytes = serde_json::to_vec(&Fingerprint {
         schema: "urn:animsmith:character-assembly-scale-basis:1",
-        tool,
+        tool: context.tool,
         input_sha256: &sha256,
         basis: compatibility_basis.basis(),
     })
@@ -1020,14 +1102,15 @@ fn prepare_scale_input(
             basis_fingerprint: sha256_hex(&fingerprint_bytes),
             compatible: true,
             compatibility: "compatible",
-            input_format: (recipe_version >= RECIPE_SCHEMA_VERSION_V6).then_some(input_format),
-            source_projection: (recipe_version >= RECIPE_SCHEMA_VERSION_V6)
+            input_format: (context.recipe_version >= RECIPE_SCHEMA_VERSION_V6)
+                .then_some(input_format),
+            source_projection: (context.recipe_version >= RECIPE_SCHEMA_VERSION_V6)
                 .then_some(source_projection),
-            resolved_root_node_name: (recipe_version == RECIPE_SCHEMA_VERSION_V7)
+            resolved_root_node_name: (context.recipe_version == RECIPE_SCHEMA_VERSION_V7)
                 .then(|| selector.root_node_name.clone()),
-            resolved_source_skin_index: (recipe_version == RECIPE_SCHEMA_VERSION_V7)
+            resolved_source_skin_index: (context.recipe_version == RECIPE_SCHEMA_VERSION_V7)
                 .then_some(selector.source_skin_index),
-            resolved_source_root_node_index: (recipe_version == RECIPE_SCHEMA_VERSION_V7)
+            resolved_source_root_node_index: (context.recipe_version == RECIPE_SCHEMA_VERSION_V7)
                 .then_some(selector.source_root_node_index),
         },
         selector,
@@ -1254,25 +1337,33 @@ fn assemble_inner(
     };
 
     let base_path = resolver.resolve(&recipe.base_input).operator()?;
-    // Every versioned scale path captures and validates every source before any
-    // assembly transform, remap, or copy. The same captured normalized
-    // documents feed assembly; no later reopen can race validation.
+    // Every versioned scale path captures every source before any remap or
+    // copy. V7's private FBX scale stage may exclude unskinned instances in a
+    // declared removal closure, but the captured raw document still feeds
+    // assembly and no later reopen can race validation.
     let mut prepared_scale_inputs = BTreeMap::<PathBuf, PreparedScaleInput>::new();
     let mut rest_bind_input_evidence = Vec::new();
     if let Some(scale) = &recipe.rest_bind_scale {
-        let publication = AssemblyPublicationContext {
+        let scale_remove_nodes = if recipe.schema_version == RECIPE_SCHEMA_VERSION_V7 {
+            recipe.remove_nodes.as_slice()
+        } else {
+            &[]
+        };
+        let scale_context = AssemblyScalePreparationContext {
             staging_parent: output_parent,
             output,
             evidence: evidence_output,
+            recipe_version: recipe.schema_version,
+            remove_nodes: scale_remove_nodes,
+            retained_mesh_instances: &recipe.mesh_instances,
+            tool: &tool,
         };
         let prepared = prepare_scale_input(
             "base".to_owned(),
             &recipe.base_input,
             &base_path,
             scale,
-            recipe.schema_version,
-            &publication,
-            &tool,
+            &scale_context,
         )?;
         let base_basis = prepared.compatibility_basis.clone();
         rest_bind_input_evidence.push(prepared.evidence.clone());
@@ -1291,9 +1382,7 @@ fn assemble_inner(
                 &clip_recipe.input,
                 &resolved,
                 scale,
-                recipe.schema_version,
-                &publication,
-                &tool,
+                &scale_context,
             )?;
             require_input_scale_compatibility(&base_basis, &prepared.compatibility_basis)
                 .map_err(|error| {
@@ -1328,11 +1417,26 @@ fn assemble_inner(
     let mut rebased_base = prepared_scale_inputs
         .get(&base_path)
         .map(|prepared| prepared.rebased_document.clone());
+    let base_scale_uses_fbx = prepared_scale_inputs
+        .get(&base_path)
+        .and_then(|prepared| prepared.evidence.input_format)
+        == Some("fbx")
+        && recipe.schema_version == RECIPE_SCHEMA_VERSION_V7;
     ensure_unique_bones(&base.skeleton, "base input")
         .refusal(Stage::Load, Kind::InvalidAssetStructure)?;
-    let (retained_mesh_instances, removed_mesh_instances) =
+    let (mut retained_mesh_instances, mut removed_mesh_instances) =
         select_mesh_instances(&mut base, &recipe.mesh_instances)
             .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+    if base_scale_uses_fbx {
+        removed_mesh_instances += remove_declared_unskinned_instances(
+            &mut base,
+            &recipe.remove_nodes,
+            &recipe.mesh_instances,
+        )
+        .map_err(|error| format!("cannot project declared node removal: {error}"))
+        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+        retain_surviving_mesh_instance_names(&mut retained_mesh_instances, &base);
+    }
     if let Some(reference) = &mut rebased_base {
         select_mesh_instances(reference, &recipe.mesh_instances)
             .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
@@ -2726,6 +2830,38 @@ mod tests {
         assert_eq!(document.assets.materials[0].name, "body-material");
         assert_eq!(document.assets.instances[0].mesh, 0);
         assert_eq!(document.assets.meshes[0].primitives[0].material, Some(0));
+    }
+
+    #[test]
+    fn surviving_mesh_evidence_preserves_canonical_order_and_uniqueness() {
+        use animsmith_core::model::{MeshInstance, SceneAssets};
+
+        let document = Document {
+            skeleton: skeleton(&["z-body", "removed", "a-accessory"]),
+            assets: SceneAssets {
+                instances: vec![
+                    MeshInstance {
+                        node: 0,
+                        ..Default::default()
+                    },
+                    MeshInstance {
+                        node: 0,
+                        ..Default::default()
+                    },
+                    MeshInstance {
+                        node: 2,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut retained = vec!["a-accessory".into(), "removed".into(), "z-body".into()];
+
+        retain_surviving_mesh_instance_names(&mut retained, &document);
+
+        assert_eq!(retained, ["a-accessory", "z-body"]);
     }
 
     #[test]

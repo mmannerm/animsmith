@@ -410,8 +410,11 @@ pruning disabled where consumers need dense transition coverage and do not
 explicitly reset omitted properties; property-scoped selection is tracked in
 [#401](https://github.com/mmannerm/animsmith/issues/401).
 Root-level `remove_nodes` exact-names base nodes and removes their descendant
-closure after animation transforms; any surviving track, mesh-instance, or
-skin reference refuses the operation.
+closure after animation transforms; any surviving track, skinned mesh-instance,
+or skin reference refuses the operation. With FBX `rest_bind_scale`, an
+unskinned mesh instance attached inside that declared closure is excluded from
+the private scale stage and removed with the node. It still blocks the scale
+plan when the node is not declared for removal.
 It performs no material, texture, or mesh garbage collection. Recipe/evidence
 v1 through v6 remain immutable historical contracts; v3 rejects
 `rest_bind_scale` as unknown.

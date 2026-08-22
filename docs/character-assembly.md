@@ -268,11 +268,15 @@ descendant of a removed node belongs to the removal closure.
 Removal is planned before track completion, and closure nodes are excluded
 from completion targets. The structural projection is applied only after
 clip processing and constant-track pruning. It is
-refused if a final track still targets the closure, if a mesh instance is
-attached to it, or if a selected node remains referenced by a skin joint or
-complete source-skin identity. Per-clip `strip_bones` and constant-track
-pruning can make an animated decorative subtree removable; `remove_nodes`
-never weakens the final-reference refusal. The effective clip's
+refused if a final track still targets the closure, if a skinned mesh instance
+is attached to it, or if a selected node remains referenced by a skin joint or
+complete source-skin identity. For an FBX input with `rest_bind_scale`, an
+unskinned mesh instance attached inside the declared closure is excluded from
+the private normalized scale stage and removed with that closure. The same
+instance still blocks scale when its node is not declared for removal. This is
+the only attachment reference consumed implicitly; per-clip `strip_bones` and
+constant-track pruning remain necessary to make an animated decorative
+subtree removable. The effective clip's
 `animates_bones` configuration still protects named tracks from pruning, so a
 protected surviving track causes removal to fail. `[rig] required_bones` is a
 lint presence policy, not a node-removal selector or protection list.
@@ -295,10 +299,13 @@ Accepted projection preserves the original order and parent links of every
 surviving node, remaps all surviving node references through one stable map,
 and clears optional source-native skeleton projection because it can no longer
 describe the authored source completely. Node removal performs no mesh,
-material, or texture garbage collection. A mesh instance inside the closure
-is refused, so accepted removal cannot newly orphan its resources; the earlier
+material, or texture garbage collection. Outside the bounded FBX scale
+composition above, a mesh instance inside the closure is refused. The earlier
 explicit `mesh_instances` selection and its existing resource pruning remain
-the only assembly resource-selection pass.
+the only assembly resource-garbage-collection pass. Evidence counts an
+unskinned instance consumed by declared node removal in
+`transforms.removed_mesh_instances` and omits its node name from
+`retained_mesh_instances`.
 
 An optional `material_texture_recipe` reuses the exact material-name recipe
 boundary described in [Material texture recipes](material-texture-recipes.md),
@@ -358,7 +365,9 @@ Each v7 scale-input row also identifies the captured container and its source
 projection. `raw-gltf` records authored-curve and raw-span preservation.
 `normalized-baked-fbx` explicitly records both as false, embeds the complete
 FBX capability inventory, and binds the private normalized GLB stage by digest
-and byte count. This stage is not a second public artifact or evidence chain:
+and byte count. When declared node removal consumes an unskinned instance, that
+private stage excludes the instance while the raw input digest and capability
+inventory remain unchanged. This stage is not a second public artifact or evidence chain:
 assembly still serializes, rewrites, reloads, proves, digest-checks, and
 atomically publishes one final GLB/evidence pair.
 
