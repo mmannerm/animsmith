@@ -79,7 +79,7 @@ RM speed ratios are 1.10× walk, 1.01× run, 1.003× crouch, and 5.42× across f
 
 1. **Members/topology:** `topology=separate-ip-rm-combat-graphs`; build the three 8-way graphs and forward-speed graph from the exact table members.
 2. **Timing/synchronization:** `sync=runtime-phase-offsets`; offset raw clips and transformed residuals; loop reviewed locomotion/idles and make actions one-shots.
-3. **State ownership:** `owner=split-by-movement-variant`; the controller owns IP translation/yaw, animation owns accepted RM translation/yaw, and every RM action needs an explicit owner.
+3. **State ownership:** `owner=validate-per-axis`; controller owns IP translation; validate RM ownership per axis, since sampled RM clips bake root rotation.
 4. **Composition constraints:** `composition=full-body-dual-weapon-default`; attach one sword per hand and allow masks only after pelvis, support, grip, arc, and target-character review.
 5. **Acceptance gate:** `gate=target-character-combat-review`; test complete rings, wraps, draw/put-away, attacks/combos, blocking/parries, contacts, root extraction, masks, deformation, compression, and builds.
 

@@ -16,7 +16,7 @@
 
 Use the 108 Unity-Humanoid gameplay clips as a full-body one-handed combat mode, after quarantining `Humanoid@Blocked1hMelee.fbx` and `Humanoid@IdleBlock1hMelee.fbx`. The remaining sampled paths execute unchanged in Unity.
 
-This refresh runs the baseline, contract pass, and gait remediation on one evaluator, AnimSmith **`v0.4.0`**, replacing the earlier mixed `b7c215b`/`674396f` story. Re-inventory reproduces the published manifest exactly (113 FBXs, 0 changed): the pack is unchanged. Gait anchoring produces 24 IP candidates, cutting walk/run/crouch phase spreads from 0.554/0.734/0.714 to 0.064/0.108/0.039, matching pre-release `674396f` to seven decimals: the release preserves 0.3.1's gait behavior. Candidates stay unpromoted: no engine import ran this session, and the retained Unity project has no GLB importer. Pruning exports one unaccepted candidate.
+This refresh runs the baseline, contract pass, and gait remediation on one evaluator, AnimSmith **`v0.4.0`**, replacing the earlier mixed `b7c215b`/`674396f` story. Re-inventory reproduces the published manifest exactly (113 FBXs, 0 changed): the pack is unchanged. Gait anchoring produces 24 IP candidates, cutting walk/run/crouch phase spreads from 0.554/0.734/0.714 to 0.064/0.108/0.039, matching pre-release `674396f` to seven decimals: the release preserves 0.3.1's gait behavior. Candidates stay unpromoted: no Humanoid-retarget or visual import, and the retained project has no GLB importer. Pruning exports one unaccepted candidate.
 
 Replace the delivered loop policy, preserve per-direction speeds, and retain runtime offsets until generated candidates pass visual/engine acceptance. Visually author/accept grip, contacts, hit windows, equipment visibility, and transitions. The headless mask pass is only a candidate: displacement-bearing attacks stay full-body by default.
 
@@ -77,7 +77,7 @@ RM speed ratios are 1.94× walk, 1.11× run, 1.52× crouch, and 9.52× across th
 
 1. **Members/topology:** `topology=separate-ip-rm-combat-graphs`; build the three directional graphs and hold speed chain from the exact table members; exclude both quarantined block clips.
 2. **Timing/synchronization:** `sync=validated-ip-anchor-plus-offsets`; loop reviewed locomotion/idles/holds; use raw clips with runtime offsets until IP candidates pass engine/visual gates; never apply to RM; keep actions one-shot.
-3. **State ownership:** `owner=split-by-movement-variant`; controller owns IP translation/yaw; animation owns accepted RM translation/yaw; every RM action needs an explicit owner decision.
+3. **State ownership:** `owner=validate-per-axis`; controller owns IP translation; validate RM ownership per axis, since sampled RM clips bake root rotation.
 4. **Composition constraints:** `composition=full-body-combat-default`; attach the bludgeon to the right hand; promote upper-body masks after pelvis, contact, grip, and target-character review.
 5. **Acceptance gate:** `gate=target-character-combat-review`; test complete rings, wraps, draw/put-away, attacks, hits, contacts, root extraction, masks, deformation, compression, and builds.
 
@@ -96,7 +96,7 @@ RM speed ratios are 1.94× walk, 1.11× run, 1.52× crouch, and 9.52× across th
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity | Retained eight-pack co-import (2026-08-17) + fresh advice | **Conditional pass:** 108/110 clips Humanoid; six samples, two mixers, mask, prop pass (retained). New advice matches **observed** 6000.5.8f1 locks: in-place bakes, RM extracts XZ. | Visual controller, contacts, grip, root motion, retargeting, compression, build. |
+| Unity | Retained eight-pack co-import (2026-08-17) + fresh advice | **Conditional pass:** 108/110 clips Humanoid; six samples, two mixers, mask, prop pass (retained). New advice matches **observed** locks: IP bakes; RM mostly extracts XZ (31/36). | Visual controller, contacts, grip, root motion, retargeting, compression, build. |
 | Unreal Engine | Import-advice | **Not evaluated:** typed refusal `profile_settings_unmodeled` (exit 1). | FBX import, retarget, graphs, contacts, build. |
 | Godot | Import-advice | **Not evaluated:** typed refusal `profile_settings_unmodeled` (exit 1). | Import/conversion, retarget, graphs, contacts, export. |
 | Bevy | Addressability, generated GLB | **Not evaluated for playback.** Exit 0: selector `Animation0` predicted, 0 findings — inventory/selector prediction only. | glTF conversion, retarget path, graph, root motion, performance. |

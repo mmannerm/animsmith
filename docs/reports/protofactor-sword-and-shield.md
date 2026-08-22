@@ -16,7 +16,7 @@
 
 Use the individual FBXs as a **third-person sword-and-shield combat pack**, after quarantining `Humanoid@CrouchForwardRightS&S_RM.fbx` and replacing the delivered loop policy. Unity imports 131/132 humanoid clips; the quarantined two-node file yields no AnimationClip.
 
-The 28 locomotion motions supply IP/RM variants. 0.3.0 refused all 24 IP gait-anchor trials on an unmeasurable root basis; 0.4.0 resolves that, measures a vertical (`positive_y`) heading, and anchors all 24, cutting spread from 0.723/0.661/0.697 to 0.060/0.137/0.052. Candidates are unpromoted — no engine import ran this session — keep offsets or artist exports until gated. Duplicate-endpoint removal fixes only WalkForward closure, not seam derivatives.
+The 28 locomotion motions supply IP/RM variants. 0.3.0 refused all 24 IP gait-anchor trials on an unmeasurable root basis; 0.4.0 resolves that, measures a vertical (`positive_y`) heading, and anchors all 24, cutting spread from 0.723/0.661/0.697 to 0.060/0.137/0.052. Candidates are unpromoted — no Humanoid-retarget or visual import — keep offsets until gated. Duplicate-endpoint removal fixes only WalkForward closure, not seam derivatives.
 
 Unity metadata marks 118/132 files as loops, including 52 attack, defense, reaction, and taunt files that should start as one-shots. AnimSmith reports the consequences and can prune experimentally, but cannot reconstruct hierarchy, contacts, or every RM action's translation/yaw intent. Both props attach at plausible hand-local scale; grip, contacts, deformation, and quality remain unproved.
 
@@ -78,7 +78,7 @@ Speed ratios are 1.48× walk, 1.14× run, and 1.13× across seven valid crouch R
 
 1. **Members/topology:** `topology=separate-2d-blends`; build separate IP/RM graphs at the table coordinates, omit quarantined Crouch FR RM, and use the two equipment chains.
 2. **Timing/synchronization:** `sync=runtime-phase-offsets`; loop reviewed locomotion/idle/dead-hold members only; treat attacks, blocks, parries, reactions, taunts, equipment, and death/recovery as one-shots until confirmed.
-3. **State ownership:** `owner=split-by-movement-variant`; controller owns IP translation/yaw, animation owns validated RM translation/yaw, and each action gets an explicit owner.
+3. **State ownership:** `owner=validate-per-axis`; controller owns IP translation; validate RM ownership per axis, since sampled RM clips bake root rotation.
 4. **Composition constraints:** `composition=full-body-combat-default`; attach sword right-hand and shield left-hand, keep kicks/displacement attacks full-body, and promote masks only after pelvis/contact/IK/grip review.
 5. **Acceptance gate:** `gate=target-character-visual-review`; exercise complete rings, wraps, transitions, actions, contacts, root extraction, deformation, and crossfades.
 
@@ -99,7 +99,7 @@ Speed ratios are 1.48× walk, 1.14× run, and 1.13× across seven valid crouch R
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | Co-import probes (2026-08-17, retained); 0.4.0 `import-advice` (6000.3) | **Conditional pass:** 131/132 humanoid clips; 8/9 samples, 3/3 blends, 3/3 masks, both props. 0.4.0 advice (exit 0) matches **observed** locks: IP bakes, RM extracts XZ. | Visual controller, contacts, root motion, retargeting, compression, build. |
+| Unity 6000.5.8f1 | Co-import probes (2026-08-17, retained); 0.4.0 `import-advice` (6000.3) | **Conditional pass:** 131/132 humanoid clips; 8/9 samples, 3/3 blends, 3/3 masks, both props. 0.4.0 advice (exit 0) matches **observed** locks: IP bakes; RM mostly extracts XZ (31/36). | Visual controller, contacts, root motion, retargeting, compression, build. |
 | Unreal Engine | Documentation; 0.4.0 `import-advice` | **Not evaluated.** Typed refusal (exit 1); no native UE package. | FBX import, retarget, complete graphs, contacts, build. |
 | Godot | Documentation; 0.4.0 `import-advice` | **Not evaluated.** Typed refusal (exit 1). | Import/conversion, retarget, graph, contacts, build. |
 | Bevy | 0.4.0 `addressability`, generated GLB | **Advisory pass:** exit 0; selector `Animation0`, 0 findings; inventory only. | glTF loading, targets, graph wiring, playback, root motion, performance. |

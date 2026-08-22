@@ -18,7 +18,7 @@ Use 118 Unity-Humanoid clips as a full-body two-handed combat mode, after quaran
 
 AnimSmith 0.4.0 (`6b37ad636b1`) reproduces the published manifest byte-for-byte — a pure evaluator refresh. The default profile resolves almost nothing here (root trajectory 4/122, gait 3/122); the unchanged explicit `[rig.roles]` config resolves it fully (122/122; gait 121/122). Identical lint-note counts in both passes prove the map is repeatable configuration, not an asset repair — [#437](https://github.com/mmannerm/animsmith/issues/437) stays open (live 2026-08-21).
 
-Gait anchoring under the same contracts reproduces `674396f`'s circular phase spreads to seven decimals (~0.58–0.71 raw → ~0.05–0.14 anchored), confirming the release preserves 0.3.1 gait behavior; candidates stay unpromoted, no engine import this session.
+Gait anchoring under the same contracts reproduces `674396f`'s circular phase spreads to seven decimals (~0.58–0.71 raw → ~0.05–0.14 anchored), confirming the release preserves 0.3.1 gait behavior; candidates stay unpromoted, no Humanoid-retarget or visual import.
 
 Replace loop policy, retain runtime offsets for raw RM and residual IP phase, and review grip, contacts, hit windows, transitions, root-motion ownership, and one heavy-hit RM timing anomaly.
 
@@ -79,7 +79,7 @@ RM speed ratios are 1.35× walk, 1.22× run, 1.30× crouch, and 6.27× across th
 
 1. **Members/topology:** `topology=separate-ip-rm-combat-graphs`; build the table's directional/speed graphs; exclude both block outliers.
 2. **Timing/synchronization:** `sync=validated-ip-anchor-plus-offsets`; loop reviewed locomotion/idles/holds; use raw clips with runtime offsets until IP candidates pass engine/visual gates (never RM); keep actions/recoveries one-shot.
-3. **State ownership:** `owner=split-by-movement-variant`; controller owns IP translation/yaw, animation owns accepted RM translation/yaw, and each RM action gets an explicit owner decision.
+3. **State ownership:** `owner=validate-per-axis`; controller owns IP translation; validate RM ownership per axis, since sampled RM clips bake root rotation.
 4. **Composition constraints:** `composition=full-body-two-handed-default`; attach the sword right-handed; promote masks only after pelvis, grip, contact, and twist-bone review.
 5. **Acceptance gate:** `gate=target-character-combat-review`; test rings, wraps, equipment, combat actions, root extraction, masks, contacts, deformation, compression, and builds.
 
