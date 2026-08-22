@@ -78,10 +78,12 @@ mod validation;
 
 pub use assembly_basis::{
     ASSEMBLY_SCALE_BASIS_VERSION, AssemblyScaleBasis, AssemblyScaleCompatibilityBasis,
-    AssemblyScaleCompatibilityError, AssemblyScaleNamedNode, AssemblyScaleSelectorRequest,
-    AssemblyScaleSourceNode, AssemblyScaleSourceRest, AssemblyScaleTargetPath,
-    assembly_scale_basis, assembly_scale_compatibility_basis, require_assembly_scale_compatibility,
-    require_assembly_scale_compatibility_with_selectors,
+    AssemblyScaleCompatibilityError, AssemblyScaleNamedNode,
+    AssemblyScaleNamedSelectorResolutionError, AssemblyScaleResolvedNamedSelector,
+    AssemblyScaleSelectorRequest, AssemblyScaleSourceNode, AssemblyScaleSourceRest,
+    AssemblyScaleTargetPath, assembly_scale_basis, assembly_scale_compatibility_basis,
+    require_assembly_scale_compatibility, require_assembly_scale_compatibility_with_selectors,
+    resolve_assembly_scale_named_selector,
 };
 pub use planning::plan_scale;
 use planning::validate_plan_document_inventory;

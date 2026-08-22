@@ -170,6 +170,15 @@ fn assembly_basis_fingerprints_target_factors_and_rejects_orientation_or_helper_
     );
     assert_eq!(basis.target_paths.len(), 1);
     assert_eq!(basis.target_paths[0].factor_bits, 0.01f64.to_bits());
+    let ancestor_named = assembly_scale_compatibility_basis(
+        &document,
+        &plan,
+        AssemblyScaleSelectorRequest::Named {
+            root_node_name: "bone0",
+        },
+    )
+    .unwrap();
+    require_assembly_scale_compatibility_with_selectors(&ancestor_named, &ancestor_named).unwrap();
 
     let named_operation = ScaleOperation::RestBindUniformScale {
         source_skin_index: 0,
@@ -439,7 +448,7 @@ fn named_assembly_compatibility_rejects_a_different_resolved_skin_joint_identity
 }
 
 #[test]
-fn named_assembly_compatibility_constructor_rejects_a_plan_for_another_skin() {
+fn named_assembly_compatibility_constructor_rejects_multiple_governed_skins() {
     let nodes = vec![
         RigNode {
             parent: None,
@@ -482,7 +491,71 @@ fn named_assembly_compatibility_constructor_rejects_a_plan_for_another_skin() {
         )
         .unwrap_err()
         .to_string()
-        .contains("assembly_basis_named_selector_skin_disagrees_with_plan")
+        .contains("assembly_basis_named_selector_skin_not_unique")
+    );
+}
+
+#[test]
+fn named_assembly_selector_resolution_pins_governed_skin_boundaries_and_linear_walks() {
+    let nodes = vec![
+        rig(None, 0, Vec3::ZERO),
+        rig(Some(0), 1, Vec3::ZERO),
+        rig(Some(1), 2, Vec3::ZERO),
+        rig(None, 3, Vec3::ZERO),
+        rig(Some(4), 4, Vec3::ZERO),
+    ];
+    let document = rig_document(&nodes, &[1, 2], 0, Mat4::IDENTITY);
+    assert_eq!(
+        resolve_assembly_scale_named_selector(&document, "bone0").unwrap(),
+        AssemblyScaleResolvedNamedSelector {
+            source_skin_index: 0,
+            source_root_node_index: 0,
+        }
+    );
+
+    for joint_source_node_indices in [vec![], vec![2, 3], vec![4], vec![99]] {
+        let mut rejected = document.clone();
+        rejected.assets.source_skeleton.skins[0].joint_source_node_indices =
+            joint_source_node_indices;
+        assert_eq!(
+            resolve_assembly_scale_named_selector(&rejected, "bone0"),
+            Err(AssemblyScaleNamedSelectorResolutionError::SkinNotUnique { matches: 0 })
+        );
+    }
+    assert_eq!(
+        resolve_assembly_scale_named_selector(&document, "bone4"),
+        Err(AssemblyScaleNamedSelectorResolutionError::SkinNotUnique { matches: 0 })
+    );
+
+    let mut ambiguous = document.clone();
+    ambiguous
+        .assets
+        .source_skeleton
+        .skins
+        .push(SourceSkinAsset {
+            source_skin_index: 7,
+            name: None,
+            skeleton_root_source_node_index: None,
+            joint_source_node_indices: vec![2],
+            inverse_bind_accessor: SourceInverseBindAccessor::default(),
+            attachments: Vec::new(),
+        });
+    assert_eq!(
+        resolve_assembly_scale_named_selector(&ambiguous, "bone0"),
+        Err(AssemblyScaleNamedSelectorResolutionError::SkinNotUnique { matches: 2 })
+    );
+
+    let deep_nodes = (0_usize..4_096)
+        .map(|index| rig(index.checked_sub(1), index, Vec3::ZERO))
+        .collect::<Vec<_>>();
+    let deep_joints = (0_usize..4_096).collect::<Vec<_>>();
+    let deep = rig_document(&deep_nodes, &deep_joints, 0, Mat4::IDENTITY);
+    assert_eq!(
+        resolve_assembly_scale_named_selector(&deep, "bone0").unwrap(),
+        AssemblyScaleResolvedNamedSelector {
+            source_skin_index: 0,
+            source_root_node_index: 0,
+        }
     );
 }
 

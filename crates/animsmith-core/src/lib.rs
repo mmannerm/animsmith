@@ -31,8 +31,11 @@
 //! [`scale::plan_scale`] and independent [`scale::prove_scale`]. A format
 //! frontend owns exact source rewriting and hands the reloaded emitted
 //! document back through [`scale::ScaleCandidate::from_document`]; core does
-//! not expose a production candidate builder, decide selectors, publish
-//! artifacts, or write files.
+//! not expose a production candidate builder, choose named versus indexed
+//! selectors, publish artifacts, or write files. Core does own the
+//! format-neutral mapping from an already chosen exact named assembly selector
+//! to its source root and fully governed skin through
+//! [`scale::resolve_assembly_scale_named_selector`].
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
 //! formats into this model; their docs.rs pages continue the library path for
 //! format-specific loading and, for glTF, writing.

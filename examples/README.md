@@ -755,8 +755,8 @@ The example uses current recipe v7 without its optional rest/bind operation.
 For glTF/GLB or inventory-complete normalized/baked FBX assembly, add
 `[rest_bind_scale]` with the required exact `root_node_name` and
 `expected_factor` fields; every base and clip must resolve that name to one
-source node and one containing skin, then pass basis compatibility before
-remapping.
+source node and exactly one non-empty skin whose every joint is that node or a
+descendant, then pass basis compatibility before remapping.
 
 ```console
 $ animsmith assemble examples/character-assembly.toml \

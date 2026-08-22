@@ -89,7 +89,7 @@
           "type": "string",
           "minLength": 1,
           "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
-          "description": "Exact normalized source-node name without leading or trailing whitespace. Each input must resolve it to exactly one source node and exactly one source skin whose joint set contains that node."
+          "description": "Exact normalized source-node name without leading or trailing whitespace. Each input must resolve it to exactly one source node and exactly one non-empty source skin whose every joint is that node or its descendant."
         },
         "expected_factor": {
           "type": "number",
