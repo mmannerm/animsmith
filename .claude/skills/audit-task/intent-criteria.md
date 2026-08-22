@@ -54,6 +54,21 @@ verify it against `origin/main` rather than the diff. Only claims the
 diff is meant to **deliver or change** are subject to the NONE ⇒ BLOCK
 rule below.
 
+## Audit evidence is not a diff deliverable
+
+A PR body may include a clearly labelled review-evidence section recording an
+exact HEAD, local gate result, live CI status, direct byte comparison, registry
+state, or external documentation-build status. These are attestations about
+the review and release process, not behavior the diff claims to implement.
+Exclude them from the delivery ledger and validate them in the corresponding
+audit step or retained evidence instead.
+
+This carve-out applies only to statements clearly presented as evidence or
+context. It does not exempt a product-behavior claim merely because the author
+calls it evidence. False, stale, or unrepeatable evidence is still an audit
+failure; report it under build/test/lint, docs freshness, or the relevant
+additional check rather than inventing a proving line in the diff.
+
 ## PRs with no tests (docs, prose, config)
 
 The ledger still applies to a diff that ships no tests (a skill, a

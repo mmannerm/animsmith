@@ -1,6 +1,12 @@
 ---
 name: audit-task
-description: End-of-task gate before marking a draft PR ready. Reads the PR description as the intent contract, verifies build/tests/lint, then orchestrates review passes for bugs, security plus this codebase's invariants, simplicity, and test quality, and posts ONE summary review comment on the PR (verdict + per-lens findings + proposed follow-up titles), re-edited in place on subsequent runs. Interactive mode (default): asks the user which proposed follow-ups to file as GitHub issues, then back-fills the PR comment with their issue numbers. Non-interactive mode (`--post-issues`): drops the ready-to-paste `gh issue create` blocks into a collapsed section of the PR comment.
+description: >-
+  End-of-task gate before marking a draft PR ready. Reads the PR description
+  as the intent contract, verifies build/tests/lint, then orchestrates review
+  passes for bugs, security plus this codebase's invariants, simplicity, and
+  test quality, and posts one summary review comment on the PR. Interactive
+  mode asks which proposed follow-ups to file; non-interactive mode emits
+  ready-to-paste issue commands.
 ---
 
 # Task audit
