@@ -113,9 +113,10 @@ Before closing the milestone:
    inspect `.tar.gz` contents with `tar -tzf`, and inspect `.zip` contents with
    `python3 -m zipfile -l` so verification does not depend on `unzip` being
    installed. Before closing the milestone, run `--version` from at least one
-   archive that is native to the verification host. If no release target is
-   native to that host, use a fresh VM or runner for one supported target and
-   retain its output.
+   archive that is native to the verification host, confirm the output names
+   the expected release version, and retain that comparison. If no release
+   target is native to that host, use a fresh VM or runner for one supported
+   target.
    If `gh release download` leaves the destination empty, fetch each release
    asset by id through `gh api -H 'Accept: application/octet-stream'
    repos/<owner>/<repo>/releases/assets/<id>` instead.
