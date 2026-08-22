@@ -2,7 +2,7 @@
 
 > Companion report: [technical evaluation](protofactor-basic-locomotion.md)
 >
-> Evidence status: **partial** — exhaustive file and AnimSmith 0.4.0 coverage, a retained Unity 6000.5.8f1 headless probe, and 0.4.0 advice-only engine profiles for Unity/Unreal/Godot/Bevy; target-character visual acceptance and any new-candidate engine import remain unevaluated.
+> Evidence status: **partial** — exhaustive file and AnimSmith 0.4.0 coverage, a retained Unity 6000.5.8f1 headless probe, 0.4.0 advice-only engine profiles for Unity/Unreal/Godot/Bevy now corrected by a direct Unity 6000.5.8f1 observation of import-advice root-lock declarations, and a headless Unity glTFast import of all 134 collection-wide gait-anchored GLB candidates (including this pack's 24); target-character visual acceptance and Humanoid retarget of the new candidates remain unevaluated.
 >
 > Evaluation date: **2026-08-21**
 >
@@ -214,6 +214,7 @@ The 12 negative-time files are:
 | Platform | Linux WSL2 x86_64; rustc 1.97.1 |
 | Output schemas | Command envelope v10; measurements v15 |
 | Evidence directory | `<evaluation-workspace>/evidence/animsmith-0.4.0` |
+| Rebuild reproducibility (2026-08-21) | Rebuilding tag `v0.4.0` at the same commit `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e` produced a binary with a **different** SHA-256, `1e53013bbe3224557a8783eafeb818f4ef9d74666590cbaa8c18ef48c5b7d6fa`, than the digest recorded above — the build is **not byte-reproducible**. Both builds emit byte-identical import-advice artifacts, verified by `diff`. The Unity headless-probe correction and GLB candidate-import evidence added below (2026-08-21) are therefore attributable to the tag and commit, not to the originally recorded binary digest. |
 
 **0.3.0 (historical, 2026-08-17).**
 
@@ -278,10 +279,31 @@ AnimSmith 0.4.0 adds exact, per-engine advice/refusal/addressability profiles, r
 
 | Profile | Engine/version | Subcommand | Result | Notes |
 |---|---|---|---|---|
-| `unity-humanoid` | Unity 6000.3, revision 1 | `import-advice` | `available`, exit 0 | Declarations were derived from delivered `.fbx.meta`: `useFileUnits: 1` on all metas; `lockRootRotation`/`lockRootHeightY`/`lockRootPositionXZ` are absent on all 918 collection metas, so the profile reads Unity's serialization default (`false` ⇒ `extract`) for each. **Assumption stated explicitly: an absent `.meta` key takes the Unity serialization default.** This is 6000.3 profile advice, not observed Unity 6000.5.8f1 behaviour. |
+| `unity-humanoid` | Unity 6000.3, revision 1 | `import-advice` | `available`, exit 0 | Declarations were originally derived from delivered `.fbx.meta`: `useFileUnits: 1` on all metas; `lockRootRotation`/`lockRootHeightY`/`lockRootPositionXZ` are absent on all 918 collection metas, so the profile read Unity's serialization default (`false` ⇒ `extract`) for each. **Assumption stated explicitly at the time: an absent `.meta` key takes the Unity serialization default.** That was a stated assumption, not an observation, and it is now falsified — see "Unity headless candidate probe (2026-08-21 correction)" immediately below. This row's `available`/exit 0 result is unaffected; only the assumed default-`false`/`extract` reading was wrong. |
 | `unreal` | Unreal Engine 5.8, revision 1 | `import-advice` | typed refusal `profile_settings_unmodeled`, exit 1 | No import was attempted; the profile itself declines to model this engine's settings surface yet. |
 | `godot` | Godot 4.7, revision 1 | `import-advice` | typed refusal `profile_settings_unmodeled`, exit 1 | Same refusal shape as Unreal; no import attempted. |
 | `bevy` | Bevy 0.19.0, revision 1 | `addressability` | exit 0 on a generated GLB candidate | 1 animation row, coverage complete, predicted selector `Animation0`, facet state `available`, 0 findings. Proves inventory/selector prediction only — not loading, targets, graph wiring, or playback. |
+
+### Unity headless candidate probe (2026-08-21 correction)
+
+The `unity-humanoid` advisory row above stated an explicit assumption: because `lockRootRotation`, `lockRootHeightY`, and `lockRootPositionXZ` are absent from every delivered `.fbx.meta`, the profile read Unity's serialization default of `false` for each key and projected `extract` for every clip. **That assumption is falsified by direct observation.** Unity `6000.5.8f1` was run headless (`-batchmode -nographics -quit -executeMethod CandidateProbe.Run`) in a **new**, disposable project — the retained eight-pack project described under Untouched import and playback above was not modified — reading `ModelImporterClipAnimation` on the delivered files together with their delivered `.meta`, across a 120-clip sample spanning all eight collection packs (including 24 of this pack's own root/root-adjacent files):
+
+| Variant | Clips | `lockRootRotation` true | `lockRootHeightY` true | `lockRootPositionXZ` true |
+|---|---:|---:|---:|---:|
+| In-place (non-`_RM`) | 84 | 84 | 84 | 83 |
+| Root-motion (`_RM`) | 36 | 36 | 28 | 5 |
+
+Aggregate across the sample: 120/120 clip definitions inspected, 120/120 `lockRootRotation` true, 112/120 `lockRootHeightY` true, 88/120 `lockRootPositionXZ` true. The delivered importer policy is therefore **bake**, not extract, and it is per-variant and axis-specific: `lockRootPositionXZ` is the discriminator — baked (`true`) for essentially all in-place clips and mostly extracted (`false`) for root-motion clips — a coherent authored root-motion policy, not an oversight or a random default.
+
+Two in-place files read `false` on all three flags in an earlier 24-file pass: `Humanoid@RunLeftUnarmed.fbx` and `Humanoid@RunRightUnarmed.fbx`. Both have no explicit clip definition in their `.meta` — consistent with the 15 per-motion files noted under Delivery and organization above that lack explicit `clipAnimations` metadata — so Unity falls back to `defaultClipAnimations` for these two specifically. That is a separate, file-identity cause and does not contradict the observed per-variant bake/extract policy for the other 118 sampled clips.
+
+This observation supersedes the stated default-value assumption in the `unity-humanoid` advisory row above; it does not change that row's `available`/exit 0 result, only the projected lock values. Both the original assumption and this correction are retained here for provenance: the assumption was reasonable given the delivered `.meta` alone, and only a direct Unity engine observation could falsify it.
+
+### GLB candidate import into Unity (2026-08-21)
+
+All 134/134 AnimSmith 0.4.0 gait-anchored GLB candidates across the eight-pack collection — including this pack's 24 anchored in-place walk/run/crouch candidates (see AnimSmith remediation evidence above) — were staged into a separate, **new** Unity 6000.5.8f1 project using `com.unity.cloud.gltfast` 6.9.0, because Unity has no native GLB importer; the retained eight-pack project above was not modified. Result: 134/134 files staged produced assets, 134/134 produced exactly one Unity `AnimationClip`, and every clip is non-legacy and non-empty.
+
+**Limit, stated plainly:** glTFast imports glTF animation as a **Generic** clip and does not reconstruct a Humanoid Avatar. This proves the candidates load and yield one well-formed clip in Unity; it does **not** test the Humanoid retarget path this pack actually uses, and it is not a visual or gameplay acceptance test. The 24 gait-anchored candidates for this pack therefore remain **unpromoted**, unchanged from the AnimSmith remediation evidence above.
 
 ### Performance and packaging
 
@@ -356,6 +378,8 @@ A meaningful future cross-pack report should compare at least: humanoid role map
 12. Root trajectory (movement over 1 cm, stationary, yaw over 1°) and the `positive_y` heading axis are sampled-grid regression facts on 179/179 clips, not continuous-curve or engine root-motion-extraction proof; no movement-ownership axis (which side owns XZ/Y/yaw translation) is inferred from them.
 13. The 24 gait-anchored GLB candidates produced under 0.4.0 were not imported into any engine or visually reviewed this session; treat them as unpromoted pending that gate.
 14. The integration recipe's `owner=split-by-movement-variant` step is a variant-level integration recommendation grounded in the delivered in-place/root-motion pairing, which is observed-file evidence. It is not a per-axis `movement_owner_xz` / `movement_owner_y` / `movement_owner_yaw` declaration, and no such declaration is derived from measured travel in this refresh. Measured root displacement and yaw are recorded as sampled facts only; choosing the per-axis owner remains a project and engine decision.
+15. A 2026-08-21 direct Unity 6000.5.8f1 headless probe falsified the `unity-humanoid` advisory's stated default-`false`/`extract` assumption for root-lock declarations (see Unity headless candidate probe above): the observed delivered policy is `bake` for in-place clips and per-axis `bake`/`extract` (XZ is the discriminator) for root-motion clips. The probe is still headless-import evidence over a 120-clip cross-pack sample, not continuous visual or gameplay acceptance, and it does not by itself validate the `unity-humanoid` profile's other advice fields.
+16. The 134/134 GLB-candidate Unity import (2026-08-21, including this pack's 24 candidates) proves glTFast produces one well-formed Generic `AnimationClip` per candidate in a fresh project; it does not exercise the Humanoid retarget path this pack uses, and it does not promote the candidates. A same-commit rebuild of AnimSmith `v0.4.0` produced a differently-hashed binary (SHA-256 `1e53013bbe3224557a8783eafeb818f4ef9d74666590cbaa8c18ef48c5b7d6fa`, versus the recorded `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`) — the build is not byte-reproducible — but both builds emit byte-identical import-advice artifacts, so this appendix's regenerated Unity evidence is attributable to the tag and commit, not to the originally recorded binary digest.
 
 ## Reproduction
 
@@ -520,6 +544,33 @@ Observed result: package import exit 0 and probe exit 0. Unity exposed 177 human
 | AnimSmith binary (0.3.0, historical) | Exact 0.3.0 evaluator executable | SHA-256 `a273f260d118de7de20e83d5c72c009540a63d63af352a4a6dd3cf97e62fbd5d` |
 | AnimSmith binary (0.4.0, current) | Exact 0.4.0 evaluator executable, tag `v0.4.0`, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e` | SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6` |
 | `evidence/animsmith-0.4.0/` | 0.4.0 baseline, contract, remediation, and engine-profile command results, argv, exits, and evidence paths (parallel structure to the 0.3.0 tree above); specific per-file digests were not re-captured in this appendix | Not individually re-hashed here; see the 0.4.0 command reproduction above |
+
+### Evaluator currency: AnimSmith 0.4.1
+
+AnimSmith 0.4.1 (tag `v0.4.1`, commit `46e4adfc14947d2afbf433386b0ab9857ea935aa`,
+changelog-dated 2026-08-22) was released after this evidence was captured. The
+evidence in this appendix remains attributable to 0.4.0, which produced it;
+relabelling it would be false attribution. 0.4.1 was instead verified equivalent
+for this collection before that decision was made:
+
+| Comparison | Scope | Result |
+|---|---|---|
+| Baseline `measure`/`lint` content and exit codes | 918 delivered FBXs, all eight packs | 0 files differ |
+| Declared-contract `lint` | 177 per-clip contracts | 0 differ |
+| `generate import-advice` payload | Unity profile | identical |
+| Gait anchoring | 24-member ring | 24/24 anchored; circular spreads identical to seven decimals |
+| Generated GLB candidates | 24 | motion payload byte-identical; only the glTF `asset.generator` string differs |
+| Contract versions | — | unchanged at output v10 / measurements v15 |
+
+The tool-identity block is excluded from those comparisons because it necessarily
+differs between releases. 0.4.1 fixes [#502](https://github.com/mmannerm/animsmith/issues/502),
+which affects the `scale rest-bind` admission path this evaluation never invoked,
+and [#503](https://github.com/mmannerm/animsmith/issues/503), a diagnostics defect
+this evaluation reported: 0.4.0 emits `missing required engine setting
+BakeAxisConversion` while 0.4.1 emits the accepted key `bake_axis_conversion`.
+Neither fix changes a measurement here. Issue and release state are
+time-sensitive; re-query them before reuse.
+
 
 ## Sources
 

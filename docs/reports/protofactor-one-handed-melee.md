@@ -96,7 +96,7 @@ RM speed ratios are 1.94× walk, 1.11× run, 1.52× crouch, and 9.52× across th
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity | Retained eight-pack co-import (2026-08-17) + fresh advice | **Conditional pass:** 108/110 clips Humanoid; six samples, two mixers, mask, prop pass (retained). New advice assumes default `extract` root motion; not observed 6000.5.8f1. | Visual controller, contacts, grip, root motion, retargeting, compression, build. |
+| Unity | Retained eight-pack co-import (2026-08-17) + fresh advice | **Conditional pass:** 108/110 clips Humanoid; six samples, two mixers, mask, prop pass (retained). New advice matches **observed** 6000.5.8f1 locks: in-place bakes, RM extracts XZ. | Visual controller, contacts, grip, root motion, retargeting, compression, build. |
 | Unreal Engine | Import-advice | **Not evaluated:** typed refusal `profile_settings_unmodeled` (exit 1). | FBX import, retarget, graphs, contacts, build. |
 | Godot | Import-advice | **Not evaluated:** typed refusal `profile_settings_unmodeled` (exit 1). | Import/conversion, retarget, graphs, contacts, export. |
 | Bevy | Addressability, generated GLB | **Not evaluated for playback.** Exit 0: selector `Animation0` predicted, 0 findings — inventory/selector prediction only. | glTF conversion, retarget path, graph, root motion, performance. |

@@ -18,9 +18,9 @@ This is a strong **third-person locomotion source pack**, not a drop-in controll
 
 Directional root-motion speeds span 1.35–1.49× per gait, diagonal faster than forward in every ring (AP-014); loader-projected hierarchy/rest evidence is unchanged under 0.4.0, with hands about 0.01 scale across all 179 FBXs (AP-011) — verify weapon/socket compensation in engine.
 
-AnimSmith 0.4.0 slices the 12 negative-time files cleanly and anchors all 24 in-place ring members via a measured vertical yaw heading axis, where 0.3.0 refused all 24 (AP-003); the resulting GLB candidates stay unpromoted pending an engine/visual gate, and the 0.2.1 aligned outputs remain historical only.
+AnimSmith 0.4.0 slices the 12 negative-time files cleanly and anchors all 24 in-place ring members via a measured vertical yaw heading axis, where 0.3.0 refused all 24 (AP-003); the GLB candidates stay unpromoted pending a visual gate, and the 0.2.1 outputs remain historical.
 
-Root trajectory is now sampled on all 179 clips as a grid fact, not continuous-curve or extraction proof (AP-012); these numbers are descriptive only, and movement ownership stays a controller decision. It still requires deliberate controller setup and target-character visual acceptance testing.
+Root trajectory is now sampled on all 179 clips as a grid fact, not continuous-curve or extraction proof (AP-012); it is descriptive only, and movement ownership stays a controller decision. It still requires deliberate controller setup and target-character visual acceptance.
 
 The archive was evaluated as authorized input; a fresh 0.4.0 re-inventory reproduces the published manifest exactly (0 added/removed/changed) — an evaluator-only refresh, not an asset revision. License and provenance boundaries are appendix evidence, not pack defects.
 
@@ -106,7 +106,7 @@ Retired: AP-007 (provenance), AP-008 (Unity rerun), AP-010 (appendix metadata).
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | Import + Playables (retained), 0.4.0 advice | **Conditional pass:** 177 clips imported; 6/6 samples, 3/3 blends passed; combined FBX hit AP-009. Advice: `available`, exit 0, from `.fbx.meta` defaults. | Visual blends, root motion, masks, retargeting, build. |
+| Unity 6000.5.8f1 | Import + Playables (retained), 0.4.0 advice | **Conditional pass:** 177 clips imported; 6/6 samples, 3/3 blends passed; combined FBX hit AP-009. Advice: `available`, exit 0, matching **observed** locks (IP bakes, RM extracts XZ), correcting an earlier meta-inferred `extract` reading. | Visual blends, root motion, masks, retargeting, build. |
 | Unreal Engine | Documentation only, 0.4.0 advice (UE 5.8) | **Not evaluated.** Typed refusal `profile_settings_unmodeled`, exit 1. | Import, retarget, blends, root motion, layers. |
 | Godot | Documentation only, 0.4.0 advice (4.7) | **Not evaluated.** Typed refusal `profile_settings_unmodeled`, exit 1. | Import/retarget, reset, root motion, masks. |
 | Bevy | Documentation only, 0.4.0 addressability probe | **Not evaluated.** Addressability exit 0 on a generated GLB: 1 clip, selector `Animation0`, 0 findings; selector prediction only. | Conversion, graph, root motion, playback. |

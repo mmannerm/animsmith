@@ -202,6 +202,33 @@ The gait-only refresh used the pre-release 0.3.1 code at revision `674396f0f53b1
 
 Rebuild the namespaced manifest, verify all pairwise overlaps, validate its schema, then reconstruct the eight authorized Unity deliveries outside the repository and run the retained probes. Re-run constituent contracts when their source, evaluator, declared policy, or target runtime changes. To reproduce the gait refresh, select only each new melee manifest's 24 in-place walk/run/crouch ring members, write new GLBs, and rerun inspect, measure, lint, diff, and fix dry-run while retaining every exit code.
 
+### Evaluator currency: AnimSmith 0.4.1
+
+AnimSmith 0.4.1 (tag `v0.4.1`, commit `46e4adfc14947d2afbf433386b0ab9857ea935aa`,
+changelog-dated 2026-08-22) was released after this evidence was captured. The
+evidence in this appendix remains attributable to 0.4.0, which produced it;
+relabelling it would be false attribution. 0.4.1 was instead verified equivalent
+for this collection before that decision was made:
+
+| Comparison | Scope | Result |
+|---|---|---|
+| Baseline `measure`/`lint` content and exit codes | 918 delivered FBXs, all eight packs | 0 files differ |
+| Declared-contract `lint` | 177 per-clip contracts | 0 differ |
+| `generate import-advice` payload | Unity profile | identical |
+| Gait anchoring | 24-member ring | 24/24 anchored; circular spreads identical to seven decimals |
+| Generated GLB candidates | 24 | motion payload byte-identical; only the glTF `asset.generator` string differs |
+| Contract versions | — | unchanged at output v10 / measurements v15 |
+
+The tool-identity block is excluded from those comparisons because it necessarily
+differs between releases. 0.4.1 fixes [#502](https://github.com/mmannerm/animsmith/issues/502),
+which affects the `scale rest-bind` admission path this evaluation never invoked,
+and [#503](https://github.com/mmannerm/animsmith/issues/503), a diagnostics defect
+this evaluation reported: 0.4.0 emits `missing required engine setting
+BakeAxisConversion` while 0.4.1 emits the accepted key `bake_axis_conversion`.
+Neither fix changes a measurement here. Issue and release state are
+time-sensitive; re-query them before reuse.
+
+
 ## Sources
 
 - Constituent evidence: [Basic Locomotion](protofactor-basic-locomotion-evidence.md), [Sword & Shield](protofactor-sword-and-shield-evidence.md), [Campfire](protofactor-campfire-evidence.md), [Climbing](protofactor-climbing-evidence.md), [Injured](protofactor-injured-evidence.md), [1-Handed Melee](protofactor-one-handed-melee-evidence.md), [2-Handed Melee](protofactor-two-handed-melee-evidence.md), and [Dual Swords](protofactor-dual-swords-evidence.md).

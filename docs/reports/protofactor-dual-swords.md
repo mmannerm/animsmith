@@ -97,7 +97,7 @@ RM speed ratios are 1.10× walk, 1.01× run, 1.003× crouch, and 5.42× across f
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity | 0.4.0 advice (6000.3) + retained probe (6000.5.8f1, 2026-08-17) | **Conditional pass:** retained 186/186 Humanoid, seven samples, two mixers, mask, both attachments; new advice exits 0 (meta-derived assumptions only). | Visual controller, contacts, grips, root motion, retargeting, compression, build. |
+| Unity | 0.4.0 advice (6000.3) + retained probe (6000.5.8f1, 2026-08-17) | **Conditional pass:** retained 186/186 Humanoid, seven samples, two mixers, mask, both attachments; new advice exits 0, matching **observed** root locks. | Visual controller, contacts, grips, root motion, retargeting, compression, build. |
 | Unreal Engine | 0.4.0 advice attempt (5.8); else documentation only | **Not evaluated.** Typed refusal `profile_settings_unmodeled` (exit 1); Root Motion and layered blends remain documented only. | FBX import, retarget, graphs, contacts, build. |
 | Godot | 0.4.0 advice attempt (4.7); else documentation only | **Not evaluated.** Typed refusal `profile_settings_unmodeled` (exit 1); AnimationTree blend spaces and root extraction remain documented only. | Import/conversion, retarget, graphs, contacts, export. |
 | Bevy | 0.4.0 addressability (0.19.0) on a generated GLB; masks documented only | **Selector prediction only:** exit 0, one clip, predicted `Animation0`, 0 findings; not a runtime load. | FBX→glTF, retarget path, graph, root motion, performance. |

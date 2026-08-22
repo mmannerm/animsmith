@@ -99,7 +99,7 @@ Speed ratios are 1.48× walk, 1.14× run, and 1.13× across seven valid crouch R
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | Co-import probes (2026-08-17, retained); 0.4.0 `import-advice` (6000.3) | **Conditional pass:** 131/132 humanoid clips; 8/9 samples, 3/3 blends, 3/3 masks, both props. 0.4.0 advice (exit 0) predicts extraction; not observed 6000.5.8f1. | Visual controller, contacts, root motion, retargeting, compression, build. |
+| Unity 6000.5.8f1 | Co-import probes (2026-08-17, retained); 0.4.0 `import-advice` (6000.3) | **Conditional pass:** 131/132 humanoid clips; 8/9 samples, 3/3 blends, 3/3 masks, both props. 0.4.0 advice (exit 0) matches **observed** locks: IP bakes, RM extracts XZ. | Visual controller, contacts, root motion, retargeting, compression, build. |
 | Unreal Engine | Documentation; 0.4.0 `import-advice` | **Not evaluated.** Typed refusal (exit 1); no native UE package. | FBX import, retarget, complete graphs, contacts, build. |
 | Godot | Documentation; 0.4.0 `import-advice` | **Not evaluated.** Typed refusal (exit 1). | Import/conversion, retarget, graph, contacts, build. |
 | Bevy | 0.4.0 `addressability`, generated GLB | **Advisory pass:** exit 0; selector `Animation0`, 0 findings; inventory only. | glTF loading, targets, graph wiring, playback, root motion, performance. |
