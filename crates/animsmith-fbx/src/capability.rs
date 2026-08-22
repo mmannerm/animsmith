@@ -365,6 +365,9 @@ pub struct FbxScaleSource {
     /// normalized GLB bridge, where the texture/video declarations have their
     /// own bounded resource facts and cannot affect rest/bind transforms.
     pub(crate) rest_bind_construct_counts: crate::source_facts::RestBindSourceConstructCounts,
+    /// Same-parse meshes whose unsupported public payload aggregate consists
+    /// entirely of enumerated scale-invariant conversion-fidelity facts.
+    pub(crate) rest_bind_scale_invariant_payload_mesh_count: usize,
 }
 
 impl FbxScaleSource {
@@ -497,10 +500,11 @@ fn join_source_facts(
 /// resource classification and capture can be validated before staging. The
 /// frozen inventory alone remains conservative for external references because
 /// it cannot prove that boundary. Neither known class is a scale-bearing
-/// ambiguity. Unknown source elements,
-/// incomplete bind evidence, altered skin influences, or an incomplete
-/// coordinate projection remain stable refusals before the producer can stage
-/// any output.
+/// ambiguity. The source-aware form may also admit enumerated scale-invariant
+/// conversion-fidelity facts while retaining them in the inventory. Unknown
+/// source elements, missing effective influence coverage, incomplete bind
+/// evidence, or an incomplete coordinate projection remain stable refusals
+/// before the producer can stage any output.
 pub fn rest_bind_capability_facts(
     inventory: &FbxScaleCapabilityInventory,
 ) -> Result<ScaleCapabilityFacts, String> {
@@ -513,15 +517,34 @@ pub fn rest_bind_capability_facts(
             )],
         ));
     }
-    rest_bind_capability_facts_with_construct_counts(inventory, None)
+    rest_bind_capability_facts_with_context(inventory, RestBindCapabilityContext::InventoryOnly)
 }
 
-fn rest_bind_capability_facts_with_construct_counts(
+#[derive(Debug, Clone, Copy)]
+enum RestBindCapabilityContext<'a> {
+    InventoryOnly,
+    CapturedSource {
+        counts: &'a crate::source_facts::RestBindSourceConstructCounts,
+        scale_invariant_payload_mesh_count: usize,
+    },
+}
+
+fn rest_bind_capability_facts_with_context(
     inventory: &FbxScaleCapabilityInventory,
-    source_counts: Option<crate::source_facts::RestBindSourceConstructCounts>,
+    context: RestBindCapabilityContext<'_>,
 ) -> Result<ScaleCapabilityFacts, String> {
+    let captured_source = match context {
+        RestBindCapabilityContext::InventoryOnly => None,
+        RestBindCapabilityContext::CapturedSource {
+            counts,
+            scale_invariant_payload_mesh_count,
+        } => Some((counts, scale_invariant_payload_mesh_count)),
+    };
     let mut violations = Vec::new();
     for (domain, status) in inventory.domains.rest_bind_semantic_statuses() {
+        if domain == "other_vertex_and_source_data" && captured_source.is_some() {
+            continue;
+        }
         if matches!(
             status,
             FbxScaleDomainStatus::Unsupported | FbxScaleDomainStatus::Unverifiable
@@ -555,7 +578,7 @@ fn rest_bind_capability_facts_with_construct_counts(
             fbx_scale_domain_status_name(expected_custom_status)
         ));
     }
-    if let Some(source_counts) = source_counts {
+    if let Some((source_counts, _)) = captured_source {
         if inventory.user_defined_property_count != source_counts.user_defined_property_count {
             violations.push(format!(
                 "user_defined_property_count={}!=source:{}",
@@ -569,7 +592,7 @@ fn rest_bind_capability_facts_with_construct_counts(
                 inventory.unsupported_source_element_count, source_unmodeled_count
             ));
         }
-        push_unmodeled_element_violation(&mut violations, source_counts);
+        push_unmodeled_element_violation(&mut violations, *source_counts);
     } else {
         push_nonzero_violation(
             &mut violations,
@@ -630,10 +653,6 @@ fn rest_bind_capability_facts_with_construct_counts(
         ),
         ("cache_deformer_count", inventory.cache_deformer_count),
         (
-            "unsupported_vertex_payload_mesh_count",
-            inventory.unsupported_vertex_payload_mesh_count,
-        ),
-        (
             "incomplete_bind_cluster_count",
             inventory.incomplete_bind_cluster_count,
         ),
@@ -650,27 +669,9 @@ fn rest_bind_capability_facts_with_construct_counts(
             inventory.bone_convenience_bind_overwrite_count,
         ),
         (
-            "truncated_influence_vertex_count",
-            inventory.truncated_influence_vertex_count,
-        ),
-        (
-            "discarded_influence_count",
-            inventory.discarded_influence_count,
-        ),
-        (
-            "renormalized_influence_vertex_count",
-            inventory.renormalized_influence_vertex_count,
-        ),
-        (
-            "rejected_influence_count",
-            inventory.rejected_influence_count,
-        ),
-        (
             "missing_skin_influence_corner_count",
             inventory.missing_skin_influence_corner_count,
         ),
-        ("non_triangle_face_count", inventory.non_triangle_face_count),
-        ("triangulated_face_count", inventory.triangulated_face_count),
         (
             "omitted_non_polygon_face_count",
             inventory.omitted_non_polygon_face_count,
@@ -678,11 +679,46 @@ fn rest_bind_capability_facts_with_construct_counts(
     ] {
         push_nonzero_violation(&mut violations, name, value);
     }
-    if inventory.pre_weld_vertex_count != inventory.post_weld_vertex_count {
-        violations.push(format!(
-            "weld_vertex_count={}!=post:{}",
-            inventory.pre_weld_vertex_count, inventory.post_weld_vertex_count
-        ));
+    if let Some((_, scale_invariant_payload_mesh_count)) = captured_source {
+        if inventory.unsupported_vertex_payload_mesh_count != scale_invariant_payload_mesh_count {
+            violations.push(format!(
+                "unsupported_vertex_payload_mesh_count={}!=scale_invariant_source:{}",
+                inventory.unsupported_vertex_payload_mesh_count, scale_invariant_payload_mesh_count
+            ));
+        }
+    } else {
+        for (name, value) in [
+            (
+                "unsupported_vertex_payload_mesh_count",
+                inventory.unsupported_vertex_payload_mesh_count,
+            ),
+            (
+                "truncated_influence_vertex_count",
+                inventory.truncated_influence_vertex_count,
+            ),
+            (
+                "discarded_influence_count",
+                inventory.discarded_influence_count,
+            ),
+            (
+                "renormalized_influence_vertex_count",
+                inventory.renormalized_influence_vertex_count,
+            ),
+            (
+                "rejected_influence_count",
+                inventory.rejected_influence_count,
+            ),
+            ("non_triangle_face_count", inventory.non_triangle_face_count),
+            ("triangulated_face_count", inventory.triangulated_face_count),
+        ] {
+            push_nonzero_violation(&mut violations, name, value);
+        }
+        if inventory.pre_weld_vertex_count != inventory.post_weld_vertex_count {
+            violations.push(format!(
+                "weld_vertex_count={}!=post:{}",
+                inventory.pre_weld_vertex_count, inventory.post_weld_vertex_count
+            ));
+        }
     }
     if !violations.is_empty() {
         return Err(format_rest_bind_violations(
@@ -703,6 +739,11 @@ fn rest_bind_capability_facts_with_construct_counts(
     facts.unsafe_accessor_layout_present = false;
     facts.extras_present = false;
     facts.external_resources_present = false;
+    if captured_source.is_some() {
+        facts.non_triangle_primitives_present = false;
+        facts.unsupported_vertex_attributes_present = false;
+        facts.secondary_skin_influences_present = false;
+    }
     if !facts.is_supported_for(
         animsmith_core::scale::ScaleOperation::RestBindUniformScale {
             source_skin_index: 0,
@@ -821,7 +862,14 @@ pub fn rest_bind_capability_facts_for_source(
 
     let mut facts = join_source_facts(
         source,
-        rest_bind_capability_facts_with_construct_counts(source.inventory(), Some(source_counts))?,
+        rest_bind_capability_facts_with_context(
+            source.inventory(),
+            RestBindCapabilityContext::CapturedSource {
+                counts: &source_counts,
+                scale_invariant_payload_mesh_count: source
+                    .rest_bind_scale_invariant_payload_mesh_count,
+            },
+        )?,
     );
     facts.unknown_source_members_present = false;
     facts.unregistered_extensions_present = false;
@@ -962,6 +1010,12 @@ pub(crate) struct AssetConversionFacts {
     pub(crate) post_weld_vertex_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RestBindMeshPayloadCounts {
+    pub(crate) unsupported_mesh_count: usize,
+    pub(crate) scale_invariant_mesh_count: usize,
+}
+
 fn identity(index: usize, element: &ufbx::Element) -> FbxSourceIdentity {
     FbxSourceIdentity {
         source_index: index,
@@ -974,7 +1028,7 @@ pub(crate) fn inventory(
     scene: &ufbx::Scene,
     conversion: &AssetConversionFacts,
     construct_counts: crate::source_facts::SourceConstructCounts,
-) -> FbxScaleCapabilityInventory {
+) -> (FbxScaleCapabilityInventory, RestBindMeshPayloadCounts) {
     let non_triangle_face_count = scene
         .meshes
         .iter()
@@ -1048,11 +1102,27 @@ pub(crate) fn inventory(
             skin.num_dq_weights > 0 || !matches!(skin.skinning_method, ufbx::SkinningMethod::Linear)
         })
         .count();
-    let unsupported_vertex_payload_mesh_count = scene
+    let mesh_payload_counts = scene
         .meshes
         .iter()
-        .filter(|mesh| mesh_has_unsupported_source_payload(mesh))
-        .count();
+        .map(|mesh| classify_mesh_source_payload(mesh))
+        .fold(
+            RestBindMeshPayloadCounts::default(),
+            |mut counts, classification| {
+                match classification {
+                    MeshSourcePayloadClassification::Absent => {}
+                    MeshSourcePayloadClassification::ScaleInvariantConversion => {
+                        counts.unsupported_mesh_count += 1;
+                        counts.scale_invariant_mesh_count += 1;
+                    }
+                    MeshSourcePayloadClassification::Unsupported => {
+                        counts.unsupported_mesh_count += 1;
+                    }
+                }
+                counts
+            },
+        );
+    let unsupported_vertex_payload_mesh_count = mesh_payload_counts.unsupported_mesh_count;
     let shared_mesh_definition_count = scene
         .meshes
         .iter()
@@ -1180,7 +1250,7 @@ pub(crate) fn inventory(
         image_payload_aliases: FbxScaleDomainStatus::Unverifiable,
     };
 
-    FbxScaleCapabilityInventory {
+    let inventory = FbxScaleCapabilityInventory {
         domains,
         coordinate_normalization: FbxCoordinateNormalization {
             original_up_axis: scene.settings.original_axis_up.into(),
@@ -1265,13 +1335,21 @@ pub(crate) fn inventory(
             .enumerate()
             .map(|(index, skin)| identity(index, &skin.element))
             .collect(),
-    }
+    };
+    (inventory, mesh_payload_counts)
 }
 
 /// Classify every field in `ufbx::Mesh` at one structural boundary. Omitting
 /// `..` is deliberate: a ufbx upgrade that adds mesh payload must fail to
 /// compile until extraction either models it or this predicate refuses it.
-fn mesh_has_unsupported_source_payload(mesh: &ufbx::Mesh) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MeshSourcePayloadClassification {
+    Absent,
+    ScaleInvariantConversion,
+    Unsupported,
+}
+
+fn classify_mesh_source_payload(mesh: &ufbx::Mesh) -> MeshSourcePayloadClassification {
     let ufbx::Mesh {
         element: _,
         num_vertices: _,
@@ -1332,7 +1410,16 @@ fn mesh_has_unsupported_source_payload(mesh: &ufbx::Mesh) -> bool {
         from_tessellated_nurbs,
     } = mesh;
 
-    !face_smoothing.is_empty()
+    // These fields are produced by ufbx's explicit subdivision/NURBS
+    // evaluators rather than by the raw polygon-mesh load used here. Keep
+    // them outside the patch-release allowlist until a reachable fixture can
+    // prove their normalized handoff independently.
+    let unsupported_generated_payload_present =
+        !matches!(subdivision_uv_boundary, ufbx::SubdivisionBoundary::Default)
+            || *subdivision_evaluated
+            || subdivision_result.is_some()
+            || *from_tessellated_nurbs;
+    let scale_invariant_conversion_facts_present = !face_smoothing.is_empty()
         || !face_group.is_empty()
         || !face_hole.is_empty()
         || !edges.is_empty()
@@ -1352,11 +1439,15 @@ fn mesh_has_unsupported_source_payload(mesh: &ufbx::Mesh) -> bool {
             subdivision_display_mode,
             ufbx::SubdivisionDisplayMode::Disabled
         )
-        || !matches!(subdivision_boundary, ufbx::SubdivisionBoundary::Default)
-        || !matches!(subdivision_uv_boundary, ufbx::SubdivisionBoundary::Default)
-        || *subdivision_evaluated
-        || subdivision_result.is_some()
-        || *from_tessellated_nurbs
+        || !matches!(subdivision_boundary, ufbx::SubdivisionBoundary::Default);
+
+    if unsupported_generated_payload_present {
+        MeshSourcePayloadClassification::Unsupported
+    } else if scale_invariant_conversion_facts_present {
+        MeshSourcePayloadClassification::ScaleInvariantConversion
+    } else {
+        MeshSourcePayloadClassification::Absent
+    }
 }
 
 #[cfg(test)]
@@ -1383,6 +1474,8 @@ mod tests {
         let document = baseline.document().clone();
         let mut inventory = baseline.inventory().clone();
         let mut rest_bind_construct_counts = baseline.rest_bind_construct_counts;
+        let rest_bind_scale_invariant_payload_mesh_count =
+            baseline.rest_bind_scale_invariant_payload_mesh_count;
         configure_counts(&mut rest_bind_construct_counts);
         inventory.user_defined_property_count =
             rest_bind_construct_counts.user_defined_property_count;
@@ -1403,6 +1496,7 @@ mod tests {
             source,
             inventory,
             rest_bind_construct_counts,
+            rest_bind_scale_invariant_payload_mesh_count,
         }
     }
 
@@ -1410,6 +1504,59 @@ mod tests {
         SourceProvenanceV1::parser_projected(
             SourceLogicalLocatorV1::fbx_parser_path(path).expect("test parser path is valid"),
         )
+    }
+
+    fn complete_captured_source() -> FbxScaleSource {
+        captured_with(|builder| {
+            builder.mark_complete(SourceFactDomainV1::Constructs);
+            builder.mark_complete(SourceFactDomainV1::Resources);
+        })
+    }
+
+    #[test]
+    fn source_aware_rest_bind_admits_only_reconciled_scale_invariant_conversion_facts() {
+        let mut source = complete_captured_source();
+        source.inventory.domains.other_vertex_and_source_data = FbxScaleDomainStatus::Unsupported;
+        source.inventory.unsupported_vertex_payload_mesh_count = 1;
+        source.rest_bind_scale_invariant_payload_mesh_count = 1;
+        source.inventory.truncated_influence_vertex_count = 1;
+        source.inventory.discarded_influence_count = 2;
+        source.inventory.renormalized_influence_vertex_count = 1;
+        source.inventory.rejected_influence_count = 1;
+        source.inventory.non_triangle_face_count = 1;
+        source.inventory.triangulated_face_count = 1;
+        source.inventory.post_weld_vertex_count = source.inventory.pre_weld_vertex_count - 1;
+
+        assert!(
+            rest_bind_capability_facts(source.inventory()).is_err(),
+            "a detached public inventory cannot prove these conversions are scale-invariant"
+        );
+        let facts = rest_bind_capability_facts_for_source(&source)
+            .expect("same-parse enumerated conversion facts are admissible");
+        assert!(!facts.non_triangle_primitives_present);
+        assert!(!facts.unsupported_vertex_attributes_present);
+        assert!(!facts.secondary_skin_influences_present);
+
+        source.rest_bind_scale_invariant_payload_mesh_count = 0;
+        assert_eq!(
+            rest_bind_capability_facts_for_source(&source).unwrap_err(),
+            concat!(
+                "FBX rest/bind capability inventory rejected: ",
+                "unsupported_vertex_payload_mesh_count=1!=scale_invariant_source:0"
+            ),
+            "an unclassified payload cannot hide inside the public aggregate"
+        );
+
+        source.rest_bind_scale_invariant_payload_mesh_count = 1;
+        source.inventory.missing_skin_influence_corner_count = 1;
+        assert_eq!(
+            rest_bind_capability_facts_for_source(&source).unwrap_err(),
+            concat!(
+                "FBX rest/bind capability inventory rejected: ",
+                "missing_skin_influence_corner_count=1"
+            ),
+            "conversion evidence never overrides missing effective skin coverage"
+        );
     }
 
     #[test]

@@ -381,7 +381,10 @@ cluster bind or node rest-world matrices already consumed by the bridge; no
 Pose remains required. Those rows remain counted in the raw aggregate; every
 other unmodeled typed list stays
 fail-closed, with exact nonzero kind counts in the refusal. The boundary still
-refuses incomplete resource or
+may admit enumerated scale-invariant conversion fidelity—omitted authored
+vertex/face/edge metadata, influence projection with complete effective
+coverage, triangulation, and exact-bit welding—while retaining the public
+inventory evidence. It refuses incomplete resource or
 construct coverage, extensions, and every unsupported transform, geometry,
 bind, or animation fact. A refusal names the exact failed fact or counter. An
 artifact or evidence destination that names

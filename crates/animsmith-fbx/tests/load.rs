@@ -818,6 +818,14 @@ fn polygon_triangulation_and_exact_welding_are_inventoried() {
     let facts = animsmith_fbx::capability_facts(inventory);
     assert!(facts.non_triangle_primitives_present);
     assert!(facts.unsupported_vertex_attributes_present);
+    assert!(
+        animsmith_fbx::rest_bind_capability_facts(inventory).is_err(),
+        "the inventory-only boundary cannot infer why geometry changed"
+    );
+    let rest_bind_facts = animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect("same-parse triangulation and exact welding are scale-invariant conversions");
+    assert!(!rest_bind_facts.non_triangle_primitives_present);
+    assert!(!rest_bind_facts.unsupported_vertex_attributes_present);
 }
 
 #[test]
@@ -911,6 +919,16 @@ fn point_line_and_empty_meshes_make_omitted_geometry_unsupported() {
             label == "empty",
             "{label}"
         );
+        let error = animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+            .expect_err("omitted point, line, or empty geometry remains a rest/bind blocker");
+        assert!(
+            error.contains(if label == "empty" {
+                "empty_mesh_definition_count=1"
+            } else {
+                "omitted_non_polygon_face_count=1"
+            }),
+            "{label}: {error}"
+        );
     }
 }
 
@@ -955,6 +973,11 @@ fn influence_truncation_renormalization_and_lossy_bone_bind_overwrite_are_invent
     assert_eq!(inventory.renormalized_influence_vertex_count, 3);
     assert!(!inventory.identity_bind_defaults_invented);
     assert!(animsmith_fbx::capability_facts(inventory).secondary_skin_influences_present);
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        "FBX rest/bind capability inventory rejected: bone_convenience_bind_overwrite_count=4",
+        "bounded influence conversion is admissible without omitted mesh payload; the independently lossy repeated-bone bind remains a blocker"
+    );
 }
 
 #[test]
@@ -1108,6 +1131,12 @@ fn zero_weight_skin_vertices_are_missing_effective_influence_evidence() {
             vec![[0.0; 4]; 3],
             "the convenience payload may remain zero but must not be called complete evidence"
         );
+        assert!(
+            animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+                .unwrap_err()
+                .contains("missing_skin_influence_corner_count=3"),
+            "discarded invalid influences are admissible only when effective coverage remains"
+        );
     }
 }
 
@@ -1158,6 +1187,13 @@ fn mixed_positive_and_negative_influences_retain_rejection_evidence() {
         loaded.document().assets.meshes[0].primitives[0].weights,
         vec![[1.0, 0.0, 0.0, 0.0]; 3],
         "the usable positive projection must not erase rejected negative source evidence"
+    );
+    let error = animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect_err("the duplicate-bone convenience bind remains independently unsupported");
+    assert_eq!(
+        error,
+        "FBX rest/bind capability inventory rejected: bone_convenience_bind_overwrite_count=1",
+        "rejected invalid influences are retained as evidence but are not themselves a blocker"
     );
 }
 
@@ -1885,6 +1921,14 @@ fn unsupported_vertex_payload_changes_other_source_data_from_rebuilt_to_unsuppor
     let path = dir.path().join("vertex-colors.fbx");
     std::fs::write(&path, source).expect("write analytic vertex-color fixture");
 
+    let parsed = ufbx::load_memory(
+        &std::fs::read(&path).expect("read analytic vertex-color fixture"),
+        ufbx::LoadOpts::default(),
+    )
+    .expect("inspect vertex-color fields");
+    assert!(parsed.meshes[0].vertex_color.exists);
+    assert_eq!(parsed.meshes[0].color_sets.len(), 1);
+
     let loaded = animsmith_fbx::load_scale_source(&path).expect("vertex-color fixture parses");
     assert_eq!(loaded.inventory().unsupported_vertex_payload_mesh_count, 1);
     assert_eq!(
@@ -1894,6 +1938,13 @@ fn unsupported_vertex_payload_changes_other_source_data_from_rebuilt_to_unsuppor
     assert!(
         animsmith_fbx::capability_facts(loaded.inventory()).unsupported_vertex_attributes_present
     );
+    assert!(
+        animsmith_fbx::rest_bind_capability_facts(loaded.inventory()).is_err(),
+        "the inventory-only boundary remains conservative"
+    );
+    let rest_bind_facts = animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect("same-parse vertex colors are scale-invariant conversion fidelity");
+    assert!(!rest_bind_facts.unsupported_vertex_attributes_present);
 }
 
 #[test]
@@ -1936,6 +1987,126 @@ fn authored_face_and_edge_payloads_are_independently_unsupported() {
 		}
 "#,
         ),
+        (
+            "edge-smoothing",
+            r#"
+		Edges: *3 { a: 0,1,2 }
+		LayerElementSmoothing: 0 {
+			Version: 102
+			Name: "edge-smoothing"
+			MappingInformationType: "ByEdge"
+			ReferenceInformationType: "Direct"
+			Smoothing: *3 { a: 1,0,1 }
+		}
+"#,
+        ),
+        (
+            "face-group",
+            r#"
+		LayerElementPolygonGroup: 0 {
+			Version: 100
+			Name: "group"
+			MappingInformationType: "ByPolygon"
+			ReferenceInformationType: "Direct"
+			PolygonGroup: *1 { a: 7 }
+		}
+"#,
+        ),
+        (
+            "edge-and-vertex-crease",
+            r#"
+		Edges: *3 { a: 0,1,2 }
+		LayerElementEdgeCrease: 0 {
+			Version: 100
+			Name: "edge-crease"
+			MappingInformationType: "ByEdge"
+			ReferenceInformationType: "Direct"
+			EdgeCrease: *3 { a: 0.25,0.5,0.75 }
+		}
+		LayerElementVertexCrease: 0 {
+			Version: 100
+			Name: "vertex-crease"
+			MappingInformationType: "ByVertex"
+			ReferenceInformationType: "Direct"
+			VertexCrease: *3 { a: 0.25,0.5,0.75 }
+		}
+"#,
+        ),
+        (
+            "tangent-basis",
+            r#"
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "uv"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *6 { a: 0,0,1,0,0,1 }
+		}
+		LayerElementTangent: 0 {
+			Version: 101
+			Name: "tangent"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Tangents: *9 { a: 1,0,0,1,0,0,1,0,0 }
+		}
+		LayerElementBinormal: 0 {
+			Version: 101
+			Name: "bitangent"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Binormals: *9 { a: 0,1,0,0,1,0,0,1,0 }
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement: { Type: "LayerElementUV" TypedIndex: 0 }
+			LayerElement: { Type: "LayerElementTangent" TypedIndex: 0 }
+			LayerElement: { Type: "LayerElementBinormal" TypedIndex: 0 }
+		}
+"#,
+        ),
+        (
+            "extra-uv-set",
+            r#"
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "uv0"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *6 { a: 0,0,1,0,0,1 }
+		}
+		LayerElementUV: 1 {
+			Version: 101
+			Name: "uv1"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *6 { a: 0.1,0.1,0.9,0.1,0.1,0.9 }
+		}
+"#,
+        ),
+        (
+            "subdivision-preview",
+            r#"
+		PreviewDivisionLevels: 1
+"#,
+        ),
+        (
+            "subdivision-render",
+            r#"
+		RenderDivisionLevels: 2
+"#,
+        ),
+        (
+            "subdivision-display",
+            r#"
+		Smoothness: 1
+"#,
+        ),
+        (
+            "subdivision-boundary",
+            r#"
+		BoundaryRule: 1
+"#,
+        ),
     ];
 
     for (label, payload) in cases {
@@ -1949,6 +2120,43 @@ fn authored_face_and_edge_payloads_are_independently_unsupported() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join(format!("{label}.fbx"));
         std::fs::write(&path, source).expect("write analytic face/edge fixture");
+
+        let parsed = ufbx::load_memory(
+            &std::fs::read(&path).expect("read analytic face/edge fixture"),
+            ufbx::LoadOpts::default(),
+        )
+        .expect("inspect the independently authored ufbx mesh field");
+        let mesh = &parsed.meshes[0];
+        match label {
+            "face-smoothing" => assert!(!mesh.face_smoothing.is_empty()),
+            "face-hole" => assert!(!mesh.face_hole.is_empty()),
+            "edge-visibility" => assert!(!mesh.edge_visibility.is_empty()),
+            "edge-smoothing" => assert!(!mesh.edge_smoothing.is_empty()),
+            "face-group" => {
+                assert!(!mesh.face_group.is_empty());
+                assert!(!mesh.face_groups.is_empty());
+            }
+            "edge-and-vertex-crease" => {
+                assert!(!mesh.edge_crease.is_empty());
+                assert!(mesh.vertex_crease.exists);
+            }
+            "tangent-basis" => {
+                assert!(mesh.vertex_tangent.exists);
+                assert!(mesh.vertex_bitangent.exists);
+            }
+            "extra-uv-set" => assert!(mesh.uv_sets.len() > 1),
+            "subdivision-preview" => assert!(mesh.subdivision_preview_levels > 0),
+            "subdivision-render" => assert!(mesh.subdivision_render_levels > 0),
+            "subdivision-display" => assert!(!matches!(
+                mesh.subdivision_display_mode,
+                ufbx::SubdivisionDisplayMode::Disabled
+            )),
+            "subdivision-boundary" => assert!(!matches!(
+                mesh.subdivision_boundary,
+                ufbx::SubdivisionBoundary::Default
+            )),
+            _ => unreachable!("all analytic member classes are named above"),
+        }
 
         let loaded = animsmith_fbx::load_scale_source(&path).expect("face/edge fixture parses");
         assert_eq!(
@@ -1965,6 +2173,12 @@ fn authored_face_and_edge_payloads_are_independently_unsupported() {
             animsmith_fbx::capability_facts(loaded.inventory())
                 .unsupported_vertex_attributes_present,
             "{label} must reach the format-neutral refusal"
+        );
+        let rest_bind_facts = animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+            .expect("same-parse face and edge payload is scale-invariant conversion fidelity");
+        assert!(
+            !rest_bind_facts.unsupported_vertex_attributes_present,
+            "{label}"
         );
     }
 }
