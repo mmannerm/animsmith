@@ -400,8 +400,11 @@ field names as `proof.residuals`, keeping every measured maximum paired with
 the count from the shared proof API without changing immutable scale-evidence
 v4. V7 retains v6's captured input container and either its raw
 glTF preservation boundary or its normalized/baked FBX capability inventory
-and private staged-GLB identity. Omitting the block omits this operation
-evidence and retains ordinary assembly behavior under the v7 envelope.
+and private staged-GLB identity. For FBX, that private stage may exclude an
+unskinned mesh instance inside a declared `remove_nodes` closure while the
+input digest and capability inventory continue to describe the captured raw
+source. Omitting the block omits this operation evidence and retains ordinary
+assembly behavior under the v7 envelope.
 
 The normative recipe and evidence contracts are
 [`character-assembly-recipe-v7.schema.json`](schemas/character-assembly-recipe-v7.schema.json)

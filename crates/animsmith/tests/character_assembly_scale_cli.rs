@@ -339,6 +339,50 @@ fn translated_fbx_clip() -> String {
     )
 }
 
+fn unskinned_prop_fbx() -> String {
+    let source = RIGGED_TRIANGLE_FBX.replace("\r\n", "\n");
+    let prop = concat!(
+        "\tModel: 1004, \"Model::prop-parent\", \"Null\" {\n",
+        "\t\tVersion: 232\n",
+        "\t\tProperties70: {\n",
+        "\t\t\tP: \"Lcl Translation\", \"Lcl Translation\", \"\", \"A\",0,0,0\n",
+        "\t\t\tP: \"Lcl Rotation\", \"Lcl Rotation\", \"\", \"A\",0,0,0\n",
+        "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n",
+        "\t\t}\n",
+        "\t}\n",
+        "\tGeometry: 2002, \"Geometry::prop\", \"Mesh\" {\n",
+        "\t\tVertices: *9 { a: 0,0,0,10,0,0,0,10,0 }\n",
+        "\t\tPolygonVertexIndex: *3 { a: 0,1,-3 }\n",
+        "\t}\n",
+        "\tModel: 1003, \"Model::prop\", \"Mesh\" {\n",
+        "\t\tVersion: 232\n",
+        "\t\tProperties70: {\n",
+        "\t\t\tP: \"Lcl Translation\", \"Lcl Translation\", \"\", \"A\",0,0,0\n",
+        "\t\t\tP: \"Lcl Rotation\", \"Lcl Rotation\", \"\", \"A\",0,0,0\n",
+        "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n",
+        "\t\t}\n",
+        "\t}\n",
+    );
+    source
+        .replacen("\tCount: 8", "\tCount: 11", 1)
+        .replacen(
+            "ObjectType: \"Model\" { Count: 2 }",
+            "ObjectType: \"Model\" { Count: 4 }",
+            1,
+        )
+        .replacen(
+            "ObjectType: \"Geometry\" { Count: 1 }",
+            "ObjectType: \"Geometry\" { Count: 2 }",
+            1,
+        )
+        .replacen("\tDeformer: 4001", &format!("{prop}\tDeformer: 4001"), 1)
+        .replacen(
+            "Connections: {",
+            "Connections: {\n\tC: \"OO\",1004,1001\n\tC: \"OO\",1003,1004\n\tC: \"OO\",2002,1003",
+            1,
+        )
+}
+
 fn scale_invariant_fidelity_fbx() -> String {
     let payload = r#"
 		Edges: *4 { a: 0,1,2,3 }
@@ -1458,6 +1502,136 @@ fn v7_resolves_each_fbx_input_by_name_and_records_deterministic_selectors() {
         first_artifact
     );
     assert_eq!(second.stdout, first_evidence);
+}
+
+#[test]
+fn v7_composes_fbx_rest_bind_scale_with_unskinned_prop_removal() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = unskinned_prop_fbx();
+    std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), &source).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let retained = run(dir.path());
+    assert_eq!(retained.status.code(), Some(1));
+    let detail = refusal_detail(&retained);
+    assert!(detail.contains("rest_bind_scale plan rejected input base.fbx"));
+    assert!(detail.contains("carries unskinned geometry inside the affected closure"));
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+
+    let wrong_removal =
+        fbx_recipe_v7("walk.fbx").replacen("fps = 30.0", "fps = 30.0\nremove_nodes = [\"tri\"]", 1);
+    std::fs::write(dir.path().join("recipe.toml"), wrong_removal).unwrap();
+    let retained = run(dir.path());
+    assert_eq!(retained.status.code(), Some(1));
+    let detail = refusal_detail(&retained);
+    assert!(detail.contains("rest_bind_scale plan rejected input base.fbx"));
+    assert!(detail.contains("carries unskinned geometry inside the affected closure"));
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+
+    let explicitly_retained = fbx_recipe_v7("walk.fbx").replacen(
+        "fps = 30.0",
+        "fps = 30.0\nmesh_instances = [\"prop\"]\nremove_nodes = [\"prop-parent\"]",
+        1,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), explicitly_retained).unwrap();
+    let retained = run(dir.path());
+    assert_eq!(retained.status.code(), Some(1));
+    let detail = refusal_detail(&retained);
+    assert!(detail.contains("rest_bind_scale plan rejected input base.fbx"));
+    assert!(detail.contains("carries unskinned geometry inside the affected closure"));
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+
+    let recipe = fbx_recipe_v7("walk.fbx").replacen(
+        "fps = 30.0",
+        "fps = 30.0\ncanonicalize_skin = true\nground_and_center = true\nremove_nodes = [\"prop-parent\"]",
+        1,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let removed = run(dir.path());
+    assert!(
+        removed.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&removed.stdout),
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    let artifact = std::fs::read(dir.path().join("character.glb")).unwrap();
+    let evidence_bytes = std::fs::read(dir.path().join("character.json")).unwrap();
+    assert_eq!(removed.stdout, evidence_bytes);
+    let evidence: Value = serde_json::from_slice(&evidence_bytes).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    assert_eq!(
+        evidence["transforms"]["retained_mesh_instances"],
+        serde_json::json!(["tri"])
+    );
+    assert_eq!(evidence["transforms"]["removed_mesh_instances"], 1);
+    assert_eq!(evidence["transforms"]["canonicalized_skin"], true);
+    assert_eq!(evidence["transforms"]["ground_and_center"], true);
+    let raw_stage = normalized_fbx_stage_bytes(dir.path(), "raw-prop", source.as_bytes());
+    for input in evidence["rest_bind_scale"]["inputs"].as_array().unwrap() {
+        assert_eq!(input["sha256"], sha256_hex(source.as_bytes()));
+        assert_eq!(input["source_projection"]["kind"], "normalized-baked-fbx");
+        assert_ne!(
+            input["source_projection"]["staged_source"]["sha256"],
+            sha256_hex(&raw_stage)
+        );
+    }
+    let removed_nodes = evidence["transforms"]["removed_nodes"].as_array().unwrap();
+    assert_eq!(removed_nodes.len(), 2);
+    assert!(
+        removed_nodes
+            .iter()
+            .any(|node| { node["name"] == "prop-parent" && node["selected"] == true })
+    );
+    assert!(
+        removed_nodes
+            .iter()
+            .any(|node| { node["name"] == "prop" && node["selected"] == false })
+    );
+    assert_eq!(
+        evidence["rest_bind_scale"]["read_back_sha256"],
+        evidence["artifact"]["sha256"]
+    );
+    assert_eq!(
+        evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
+        true
+    );
+    assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
+    let document = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(document.assets.instances.len(), 1);
+    assert!(
+        document
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.name != "prop")
+    );
 }
 
 #[test]
