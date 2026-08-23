@@ -380,11 +380,13 @@ glTF/GLB plus the narrow normalized/baked FBX subset admitted by the existing
 rest-bind capability boundary. That boundary may admit user-defined FBX
 properties and bounded external texture/video declarations after same-load
 evidence proves they are not scale-bearing. It also admits exactly ufbx's
-marker, LOD-group, stereo-camera, and camera-switcher typed lists because they
-cannot supply hierarchy transforms, skin binds, tracks, or geometry to the
-normalized rest/bind bridge, and admits shader/binding-table metadata on that
-same basis. BindPose rows are admitted only when they cover every joint of each
-skin they touch and are finite, unambiguous, and reconcile with the converted
+marker, LOD-group, stereo-camera, camera-switcher, and display-layer typed
+lists because they cannot supply hierarchy transforms, skin binds, tracks, or
+geometry to the normalized rest/bind bridge. Display layers contribute only
+node membership and editor visibility/freeze/color state. The boundary admits
+shader/binding-table metadata on the same basis. BindPose rows are admitted
+only when they cover every joint of each skin they touch and are finite,
+unambiguous, and reconcile with the converted
 cluster bind or node rest-world matrices already consumed by the bridge; no
 Pose remains required. Those rows remain counted in the raw aggregate; every
 other unmodeled typed list stays

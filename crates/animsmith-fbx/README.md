@@ -136,10 +136,11 @@ inventory counters and unsupported domain status remain unchanged as evidence.
 Missing effective influences, omitted point/line geometry, empty or uninstanced
 meshes, unsupported skinning/deformers, incomplete binds or normals, and any
 unclassified payload remain fail-closed. The same-load proof path also admits
-exactly ufbx's marker, LOD-group,
-stereo-camera, and camera-switcher typed lists: those node-attribute kinds do
-not supply hierarchy transforms, skin binds, animation tracks, or geometry to
-that bridge. Shader and binding-table records are admitted on the same basis.
+exactly ufbx's marker, LOD-group, stereo-camera, camera-switcher, and
+display-layer typed lists: those records do not supply hierarchy transforms,
+skin binds, animation tracks, or geometry to that bridge. Display layers
+contain only node membership and editor visibility/freeze/color state. Shader
+and binding-table records are admitted on the same basis.
 A BindPose is admitted only when it covers every joint of each skin it touches
 and its converted rows are finite, unambiguous, and agree component-wise under
 the fixed rest/bind tolerance with the converted cluster bind or node

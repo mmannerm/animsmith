@@ -166,10 +166,12 @@ incomplete resource/construct coverage, or an incompatible basis fails closed.
 The source-aware gate may admit user-defined properties and bounded external
 texture/video declarations because neither supplies rest/bind state to the
 normalized GLB bridge. It also admits exactly ufbx's marker, LOD-group,
-stereo-camera, and camera-switcher typed lists: they cannot supply hierarchy
-transforms, skin binds, tracks, or geometry to that bridge, and admits
-shader/binding-table metadata on the same basis. A BindPose is admitted only
-when it covers every joint of each skin it touches and its converted rows are
+stereo-camera, camera-switcher, and display-layer typed lists: they cannot
+supply hierarchy transforms, skin binds, tracks, or geometry to that bridge.
+Display layers contribute only node membership and editor
+visibility/freeze/color state; they do not alter projected nodes. The gate
+admits shader/binding-table metadata on the same basis. A BindPose is admitted
+only when it covers every joint of each skin it touches and its converted rows are
 finite, unambiguous, and agree with the converted cluster bind or node
 rest-world matrix already consumed by the bridge; no Pose remains required.
 Those elements remain counted in the raw aggregate, while every residual

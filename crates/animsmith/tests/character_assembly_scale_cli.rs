@@ -153,6 +153,26 @@ fn nonbearing_node_attributes_fbx(include_pose: bool) -> String {
     )
 }
 
+fn display_layer_fbx() -> String {
+    let display_layer = concat!(
+        "\tCollectionExclusive: 5401, \"DisplayLayer::animsmith-test\", \"DisplayLayer\" {\n",
+        "\t\tProperties70: {\n",
+        "\t\t\tP: \"Color\", \"ColorRGB\", \"Color\", \"\",0.1,0.2,0.3\n",
+        "\t\t\tP: \"Show\", \"bool\", \"\", \"\",0\n",
+        "\t\t\tP: \"Freeze\", \"bool\", \"\", \"\",1\n",
+        "\t\t}\n",
+        "\t}\n",
+    );
+    RIGGED_TRIANGLE_FBX
+        .replace("\r\n", "\n")
+        .replacen(
+            "\tAnimationStack: 3001",
+            &format!("{display_layer}\tAnimationStack: 3001"),
+            1,
+        )
+        .replacen("Connections: {", "Connections: {\n\tC: \"OO\",1001,5401", 1)
+}
+
 const IDENTITY_FBX_MATRIX: &str = "1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1";
 
 fn bind_pose_with_shader_fbx(root_matrix: &str) -> String {
@@ -3287,6 +3307,58 @@ fn v7_admits_exact_nonbearing_fbx_node_attributes_for_base_and_clip() {
             inputs[1]["source_projection"]["capability"]["unsupported_source_element_count"],
             usize::from(source_role == "clip") * 4,
             "{source_role}: clip evidence retains the raw aggregate"
+        );
+        assert!(dir.path().join("character.glb").exists(), "{source_role}");
+        assert!(dir.path().join("character.json").exists(), "{source_role}");
+    }
+}
+
+#[test]
+fn v7_admits_display_layer_editor_metadata_for_base_and_clip() {
+    for source_role in ["base", "clip"] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        std::fs::write(
+            dir.path().join("inputs/base.fbx"),
+            if source_role == "base" {
+                display_layer_fbx()
+            } else {
+                RIGGED_TRIANGLE_FBX.to_owned()
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("inputs/walk.fbx"),
+            if source_role == "clip" {
+                display_layer_fbx()
+            } else {
+                RIGGED_TRIANGLE_FBX.to_owned()
+            },
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+
+        let output = run(dir.path());
+        assert!(
+            output.status.success(),
+            "{source_role}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+        let inputs = evidence["rest_bind_scale"]["inputs"]
+            .as_array()
+            .expect("scale evidence inputs");
+        assert_eq!(inputs.len(), 2, "{source_role}");
+        assert_eq!(
+            inputs[0]["source_projection"]["capability"]["unsupported_source_element_count"],
+            usize::from(source_role == "base"),
+            "{source_role}: base evidence retains the raw display-layer declaration"
+        );
+        assert_eq!(
+            inputs[1]["source_projection"]["capability"]["unsupported_source_element_count"],
+            usize::from(source_role == "clip"),
+            "{source_role}: clip evidence retains the raw display-layer declaration"
         );
         assert!(dir.path().join("character.glb").exists(), "{source_role}");
         assert!(dir.path().join("character.json").exists(), "{source_role}");
