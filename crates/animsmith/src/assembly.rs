@@ -1980,17 +1980,11 @@ fn assemble_inner(
                     rebased_clip,
                     &protected_bones,
                 );
-                apply_authoritative_pruning(
+                evidence.pruned_constant_tracks = apply_authoritative_pruning(
                     staged_clip,
                     &base.skeleton,
                     &scale_base.skeleton,
                     &outcome.removed,
-                )
-                .refusal(Stage::Proof, Kind::ProofFailed)?;
-                evidence.pruned_constant_tracks = pruned_track_evidence(
-                    &scale_base.skeleton,
-                    &rebased_clip.name,
-                    outcome.removed,
                 )
                 .refusal(Stage::Proof, Kind::ProofFailed)?;
             }
@@ -2497,8 +2491,9 @@ fn apply_authoritative_pruning(
     staged_skeleton: &Skeleton,
     authoritative_skeleton: &Skeleton,
     removed: &[animsmith_core::transform::ConstantTrackPruneRecord],
-) -> Result<(), String> {
+) -> Result<Vec<PrunedConstantTrackEvidence>, String> {
     let mut removed_indices = BTreeSet::new();
+    let mut projected_evidence = Vec::with_capacity(removed.len());
     for record in removed {
         let authoritative_bone =
             authoritative_skeleton
@@ -2558,6 +2553,14 @@ fn apply_authoritative_pruning(
                 staged.name
             ));
         }
+        projected_evidence.push(PrunedConstantTrackEvidence {
+            original_track_index: staged_index,
+            bone: authoritative_bone.name.clone(),
+            bone_index: staged_bone,
+            property: record.property.as_str(),
+            interpolation: interpolation_name(record.interpolation),
+            key_count: record.key_count,
+        });
     }
     let tracks = std::mem::take(&mut staged.tracks);
     staged.tracks = tracks
@@ -2565,7 +2568,8 @@ fn apply_authoritative_pruning(
         .enumerate()
         .filter_map(|(index, track)| (!removed_indices.contains(&index)).then_some(track))
         .collect();
-    Ok(())
+    projected_evidence.sort_by_key(|record| record.original_track_index);
+    Ok(projected_evidence)
 }
 
 fn pruned_track_evidence(
@@ -3279,7 +3283,7 @@ mod tests {
             ],
         };
 
-        apply_authoritative_pruning(
+        let projected = apply_authoritative_pruning(
             &mut staged,
             &staged_skeleton,
             &authoritative_skeleton,
@@ -3287,6 +3291,11 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].original_track_index, 1);
+        assert_eq!(projected[0].bone, "retained");
+        assert_eq!(projected[0].bone_index, 2);
+        assert_eq!(projected[0].property, "rotation");
         assert_eq!(staged.tracks.len(), 1);
         assert_eq!(staged.tracks[0].bone, 0);
         assert_eq!(staged.tracks[0].property, Property::Translation);

@@ -2142,6 +2142,9 @@ fn v7_projects_authoritative_pruning_by_named_clip_channel_identity() {
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
     let source = document_local_bone_order_fbx();
     assert_document_local_bone_id_alias(dir.path(), &source);
+    let authoritative =
+        animsmith_fbx::load_bytes(Path::new("base.fbx"), source.as_bytes()).unwrap();
+    let staged_retained_second = unique_bone_id(&authoritative, "retained-second");
     std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
     write_document_local_order_clip(
         &dir.path().join("inputs/walk.glb"),
@@ -2189,6 +2192,18 @@ fn v7_projects_authoritative_pruning_by_named_clip_channel_identity() {
         pruned
             .iter()
             .all(|track| track["bone"] == "retained-second")
+    );
+    assert!(
+        pruned
+            .iter()
+            .all(|track| track["bone_index"] == staged_retained_second as u64)
+    );
+    assert_eq!(
+        pruned
+            .iter()
+            .map(|track| track["original_track_index"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![2, 3]
     );
     assert_eq!(
         pruned
