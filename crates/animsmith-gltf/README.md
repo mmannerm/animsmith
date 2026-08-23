@@ -192,14 +192,16 @@ boundaries. Its evidence identifies the FBX capability inventory and private
 stage explicitly; it does not claim raw FBX span or authored-curve preservation.
 
 Recipe v7 leaves v6 immutable and replaces its unobservable cross-file source
-indices with one exact `root_node_name`. The base and every skinned clip must
-map that name to exactly one normalized source node and exactly one non-empty
-source skin whose every joint is that node or its descendant. A compatible
-track-only clip is also accepted when complete source coverage proves it has no
-skins and the captured document independently has no mesh instances. The
-compatibility proof covers the selected skin joints, exact root, their named
-ancestry, and actual track targets, without requiring unreferenced base-only
-geometry descendants. The
+indices with one exact `root_node_name`. The base must map that name to exactly
+one normalized source node and exactly one non-empty source skin whose every
+joint is that node or its descendant. Every distinct FBX clip is projected to
+its normalized skeleton and baked takes before receiving the base plan, even
+when its raw container carries unused geometry or a skin. A glTF/GLB clip uses
+the compatible track-only path only when complete source coverage proves it has
+no skins and the captured document independently has no mesh instances. The
+compatibility proof covers the selected base skin joints, exact root, their
+named ancestry, and actual track targets, without requiring unreferenced
+base-only geometry descendants. The
 resulting per-input identities enter the same plan-taking writer, private FBX
 stage, and proof boundaries; v7 evidence records both the declared name and
 every resolved name/index tuple.

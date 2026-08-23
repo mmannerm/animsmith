@@ -754,14 +754,16 @@ extraction and project publication stay outside animsmith.
 The example uses current recipe v7 without its optional rest/bind operation.
 For glTF/GLB or inventory-complete normalized/baked FBX assembly, add
 `[rest_bind_scale]` with the required exact `root_node_name` and
-`expected_factor` fields. The base and every skinned clip must resolve that
-name to one source node and exactly one non-empty skin whose every joint is
-that node or a descendant. Recipe v7 also accepts a compatible track-only clip
-when complete source coverage proves it has no skins and the captured document
-independently has no mesh instances. Its basis proof covers the selected skin
-joints, exact root, their named ancestry, and actual track targets; unreferenced
-base-only geometry descendants need not appear in the clip. Every input passes
-basis compatibility before remapping.
+`expected_factor` fields. The base must resolve that name to one source node
+and exactly one non-empty skin whose every joint is that node or a descendant.
+Every distinct FBX clip is projected to its normalized skeleton and baked
+takes, even when its raw container carries unused geometry or a skin. A
+glTF/GLB clip uses the compatible track-only path only when complete source
+coverage proves it has no skins and the captured document independently has no
+mesh instances. The basis proof covers the selected base skin joints, exact
+root, their named ancestry, and actual track targets; unreferenced base-only
+geometry descendants need not appear in the clip. Every input passes basis
+compatibility before remapping.
 
 ```console
 $ animsmith assemble examples/character-assembly.toml \

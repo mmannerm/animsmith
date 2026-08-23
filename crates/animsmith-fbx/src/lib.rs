@@ -35,9 +35,12 @@
 //! conversion-fidelity facts such as triangulation, exact welding, retained
 //! effective skinning, and omitted face/edge payload, and only those BindPoses
 //! whose converted rows reconcile with the cluster/node matrices consumed by
-//! that bridge. The public inventory still records every conversion and its
-//! inventory-only projection remains conservative. Whole-document FBX scaling
-//! remains refused.
+//! that bridge. [`require_clip_track_capability_for_source`] keeps the same raw
+//! construct and animation/hierarchy checks while projecting away geometry,
+//! deformation, material, camera/light, and bind domains that a clip-only
+//! assembly input cannot contribute. The public inventory still records every
+//! conversion and its inventory-only projection remains conservative.
+//! Whole-document FBX scaling remains refused.
 //!
 //! # Quick start
 //!
@@ -83,7 +86,8 @@ mod source_facts;
 pub use capability::{
     FbxBindMatrixProvenance, FbxCoordinateAxis, FbxCoordinateNormalization,
     FbxScaleCapabilityInventory, FbxScaleDomainInventory, FbxScaleDomainStatus, FbxScaleSource,
-    FbxSourceIdentity, capability_facts, capability_facts_for_source, rest_bind_capability_facts,
+    FbxSourceIdentity, capability_facts, capability_facts_for_source,
+    require_clip_track_capability_for_source, rest_bind_capability_facts,
     rest_bind_capability_facts_for_source,
 };
 

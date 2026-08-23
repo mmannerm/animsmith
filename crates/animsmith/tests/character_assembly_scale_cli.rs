@@ -361,6 +361,30 @@ fn translated_fbx_clip() -> String {
     )
 }
 
+fn dual_quaternion_animation_fbx() -> String {
+    with_dual_quaternion_skin(rigged_limb_triangle_fbx())
+}
+
+fn dual_quaternion_material_animation_fbx() -> String {
+    with_dual_quaternion_skin(external_normal_texture_fbx()).replace(
+        "Vertices: *9 { a: 0,0,0,100,0,0,0,100,0 }",
+        "Vertices: *9 { a: 0,0,0,900,0,0,0,900,0 }",
+    )
+}
+
+fn with_dual_quaternion_skin(source: String) -> String {
+    source.replacen(
+        "\t\tLink_DeformAcuracy: 50",
+        concat!(
+            "\t\tLink_DeformAcuracy: 50\n",
+            "\t\tSkinningType: \"Blend\"\n",
+            "\t\tIndexes: *3 { a: 0,1,2 }\n",
+            "\t\tBlendWeights: *3 { a: 1,1,1 }",
+        ),
+        1,
+    )
+}
+
 fn rigged_limb_triangle_fbx() -> String {
     RIGGED_TRIANGLE_FBX
         .replace(
@@ -448,26 +472,6 @@ fn skinless_animation_fbx() -> String {
             "\tC: \"OP\",3003,1001,\"Lcl Translation\"",
             "\tC: \"OP\",3003,1002,\"Lcl Translation\"",
         )
-}
-
-fn skinless_geometry_animation_fbx() -> String {
-    skinless_animation_fbx()
-        .replace(
-            "Model: 1002, \"Model::tri\", \"Limb\"",
-            "Model: 1002, \"Model::tri\", \"Mesh\"",
-        )
-        .replacen(
-            "\tModel: 1002",
-            concat!(
-                "\tGeometry: 2001, \"Geometry::tri\", \"Mesh\" {\n",
-                "\t\tVertices: *9 { a: 0,0,0,100,0,0,0,100,0 }\n",
-                "\t\tPolygonVertexIndex: *3 { a: 0,1,-3 }\n",
-                "\t}\n",
-                "\tModel: 1002",
-            ),
-            1,
-        )
-        .replacen("Connections: {", "Connections: {\n\tC: \"OO\",2001,1002", 1)
 }
 
 fn two_centimetre_unit_fbx(source: &str) -> String {
@@ -1753,10 +1757,21 @@ fn v7_resolves_each_fbx_input_by_name_and_records_deterministic_selectors() {
     assert_eq!(scale["declared_root_node_name"], "root");
     assert!(scale.get("source_skin_index").is_none());
     assert!(scale.get("source_root_node_index").is_none());
-    for input in scale["inputs"].as_array().unwrap() {
-        assert_eq!(input["application"], "rest-bind");
+    for (index, input) in scale["inputs"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(
+            input["application"],
+            if index == 0 {
+                "rest-bind"
+            } else {
+                "skinless-clip-tracks"
+            }
+        );
         assert_eq!(input["resolved_root_node_name"], "root");
-        assert_eq!(input["resolved_source_skin_index"], 0);
+        if index == 0 {
+            assert_eq!(input["resolved_source_skin_index"], 0);
+        } else {
+            assert!(input.get("resolved_source_skin_index").is_none());
+        }
         assert_eq!(input["resolved_source_root_node_index"], 1);
         assert_eq!(input["input_format"], "fbx");
     }
@@ -2112,7 +2127,7 @@ fn v7_rebases_every_cubic_translation_value_and_tangent_in_a_skinless_clip() {
 }
 
 #[test]
-fn v7_refuses_skinless_clip_geometry_without_publishing() {
+fn v7_projects_unused_dual_quaternion_clip_geometry_before_scale_preparation() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
     std::fs::write(
@@ -2120,14 +2135,187 @@ fn v7_refuses_skinless_clip_geometry_without_publishing() {
         rigged_limb_triangle_fbx(),
     )
     .unwrap();
-    let clip = skinless_geometry_animation_fbx();
+    let clip = dual_quaternion_material_animation_fbx();
+    std::fs::write(dir.path().join("inputs/normal.png"), TINY_PNG).unwrap();
+    let loaded = animsmith_fbx::load_scale_source_bytes_with_resource_root(
+        Path::new("walk.fbx"),
+        clip.as_bytes(),
+        &dir.path().join("inputs"),
+    )
+    .expect("dual-quaternion analytic fixture loads");
+    assert_eq!(loaded.inventory().dual_quaternion_skin_count, 1);
+    assert_eq!(loaded.document().assets.source_skeleton.skins.len(), 1);
+    assert_eq!(loaded.document().assets.instances.len(), 1);
+    assert_eq!(loaded.document().assets.materials.len(), 1);
+    let expected_clip_sha256 = sha256_hex(clip.as_bytes());
+    let expected_clip_bytes = u64::try_from(clip.len()).unwrap();
+    let expected_capability = serde_json::to_value(loaded.inventory()).unwrap();
+
+    let baseline_dir = tempfile::tempdir().expect("baseline temporary directory");
+    std::fs::create_dir(baseline_dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        baseline_dir.path().join("inputs/base.fbx"),
+        rigged_limb_triangle_fbx(),
+    )
+    .unwrap();
+    let mut projected_clip = loaded.document().clone();
+    projected_clip.assets.meshes.clear();
+    projected_clip.assets.instances.clear();
+    projected_clip.assets.materials.clear();
+    projected_clip.assets.material_resources = Default::default();
+    projected_clip.assets.source_skeleton.skins.clear();
+    for bone in &mut projected_clip.skeleton.bones {
+        bone.inverse_bind = None;
+    }
+    animsmith_gltf::write::write(
+        &projected_clip,
+        &baseline_dir.path().join("inputs/walk.glb"),
+    )
+    .unwrap();
+    let expected_staged_clip = std::fs::read(baseline_dir.path().join("inputs/walk.glb")).unwrap();
+    let expected_staged_sha256 = sha256_hex(&expected_staged_clip);
+    let expected_staged_bytes = u64::try_from(expected_staged_clip.len()).unwrap();
+    std::fs::write(
+        baseline_dir.path().join("recipe.toml"),
+        fbx_recipe_v7("walk.glb"),
+    )
+    .unwrap();
+    let baseline_output = run(baseline_dir.path());
+    assert!(baseline_output.status.success());
+    let baseline_artifact = std::fs::read(baseline_dir.path().join("character.glb")).unwrap();
+
+    std::fs::write(dir.path().join("inputs/walk.fbx"), clip).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    let clip_input = &evidence["rest_bind_scale"]["inputs"][1];
+    assert_eq!(clip_input["application"], "skinless-clip-tracks");
+    assert_eq!(
+        (
+            clip_input["sha256"].as_str(),
+            clip_input["bytes"].as_u64(),
+            &clip_input["source_projection"]["capability"],
+        ),
+        (
+            Some(expected_clip_sha256.as_str()),
+            Some(expected_clip_bytes),
+            &expected_capability,
+        )
+    );
+    assert_eq!(
+        (
+            clip_input["source_projection"]["staged_source"]["sha256"].as_str(),
+            clip_input["source_projection"]["staged_source"]["bytes"].as_u64(),
+        ),
+        (
+            Some(expected_staged_sha256.as_str()),
+            Some(expected_staged_bytes),
+        ),
+        "the recorded private stage must be the independently constructed animation-only projection"
+    );
+    assert!(clip_input.get("resolved_source_skin_index").is_none());
+
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        baseline_artifact,
+        "discarding unused FBX domains must match an explicit animation-only source"
+    );
+    let output_positions =
+        &assembled.assets.meshes[assembled.assets.instances[0].mesh].primitives[0].positions;
+    assert!(
+        output_positions
+            .iter()
+            .all(|position| position.x.abs() <= 100.0 && position.y.abs() <= 100.0),
+        "the clip-only nine-metre geometry must not replace the base mesh"
+    );
+    assert_eq!(
+        (
+            assembled.assets.instances.len(),
+            assembled.assets.source_skeleton.skins.len(),
+            assembled.assets.materials.len(),
+        ),
+        (1, 1, 0),
+        "only base-owned geometry, skin, and materials reach the output"
+    );
+    assert_eq!(assembled.clips.len(), 1);
+    let translation = assembled.clips[0]
+        .tracks
+        .iter()
+        .find(|track| {
+            assembled.skeleton.bones[track.bone].name == "root"
+                && track.property == Property::Translation
+        })
+        .expect("clip translation survives the animation-only projection");
+    assert_eq!(
+        translation.key_vec3(translation.key_count() - 1),
+        Some(Vec3::new(1.0, 0.0, 0.0))
+    );
+}
+
+#[test]
+fn v7_still_refuses_dual_quaternion_geometry_on_the_base_atomically() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.fbx"),
+        dual_quaternion_animation_fbx(),
+    )
+    .unwrap();
+    let clip = skinless_animation_fbx();
     let loaded = animsmith_fbx::load_bytes(Path::new("walk.fbx"), clip.as_bytes()).unwrap();
     assert!(loaded.assets.source_skeleton.skins.is_empty());
-    assert_eq!(loaded.assets.instances.len(), 1);
+    assert!(loaded.assets.instances.is_empty());
     std::fs::write(dir.path().join("inputs/walk.fbx"), clip).unwrap();
-    let recipe =
-        fbx_recipe_v7("walk.fbx").replace("fps = 30.0", "fps = 30.0\nremove_nodes = [\"tri\"]");
-    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(refusal_detail(&output).contains("dual_quaternion_skin_count=1"));
+    assert_eq!(
+        (
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+        ),
+        (prior_artifact.to_vec(), prior_evidence.to_vec())
+    );
+}
+
+#[test]
+fn v7_preserves_the_skinless_gltf_geometry_refusal() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.fbx"),
+        rigged_limb_triangle_fbx(),
+    )
+    .unwrap();
+
+    let mut clip =
+        animsmith_fbx::load_bytes(Path::new("walk.fbx"), rigged_limb_triangle_fbx().as_bytes())
+            .expect("analytic FBX fixture loads");
+    clip.assets.source_skeleton.skins.clear();
+    for instance in &mut clip.assets.instances {
+        instance.skin_joints.clear();
+        instance.skin_ibms.clear();
+    }
+    for bone in &mut clip.skeleton.bones {
+        bone.inverse_bind = None;
+    }
+    animsmith_gltf::write::write(&clip, &dir.path().join("inputs/walk.glb")).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.glb")).unwrap();
     let prior_artifact = b"prior artifact";
     let prior_evidence = b"prior evidence";
     std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
@@ -2137,12 +2325,11 @@ fn v7_refuses_skinless_clip_geometry_without_publishing() {
     assert_eq!(output.status.code(), Some(1));
     assert!(refusal_detail(&output).contains("skinless-clip-has-mesh-instances"));
     assert_eq!(
-        std::fs::read(dir.path().join("character.glb")).unwrap(),
-        prior_artifact
-    );
-    assert_eq!(
-        std::fs::read(dir.path().join("character.json")).unwrap(),
-        prior_evidence
+        (
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+        ),
+        (prior_artifact.to_vec(), prior_evidence.to_vec())
     );
 }
 
@@ -2617,10 +2804,15 @@ fn v7_name_selector_resolves_a_scaled_ancestor_above_the_selected_skin() {
     let evidence: Value = serde_json::from_slice(&evidence_bytes).unwrap();
     assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
     assert_eq!(evidence["artifact"]["bytes"], artifact.len());
-    for input in evidence["rest_bind_scale"]["inputs"].as_array().unwrap() {
+    for (index, input) in evidence["rest_bind_scale"]["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+    {
         assert_eq!(input["resolved_root_node_name"], "root");
         assert_eq!(input["resolved_source_root_node_index"], 0);
-        assert_eq!(input["resolved_source_skin_index"], 0);
+        assert_eq!(input["resolved_source_skin_index"], 0, "input {index}");
     }
     assert_eq!(
         evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
@@ -2791,10 +2983,14 @@ fn v7_resolves_names_independently_across_mixed_fbx_and_gltf_inputs() {
         let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
         let inputs = evidence["rest_bind_scale"]["inputs"].as_array().unwrap();
-        for (input, expected_format) in inputs.iter().zip(expected_formats) {
+        for (index, (input, expected_format)) in inputs.iter().zip(expected_formats).enumerate() {
             assert_eq!(input["input_format"], expected_format);
             assert_eq!(input["resolved_root_node_name"], "root");
-            assert!(input["resolved_source_skin_index"].is_u64());
+            if index == 0 || expected_format != "fbx" {
+                assert!(input["resolved_source_skin_index"].is_u64());
+            } else {
+                assert!(input.get("resolved_source_skin_index").is_none());
+            }
             assert!(input["resolved_source_root_node_index"].is_u64());
         }
     }
@@ -3224,7 +3420,7 @@ fn v7_external_texture_does_not_mask_a_real_unmodeled_construct() {
     assert_eq!(
         refusal_detail(&output),
         concat!(
-            "rest_bind_scale FBX capability rejected input walk.fbx: ",
+            "rest_bind_scale FBX clip-track capability rejected input walk.fbx: ",
             "FBX rest/bind raw-source facts rejected: ",
             "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
             "count=1; incomplete_bind_poses=1)"
@@ -3238,12 +3434,12 @@ fn v7_external_texture_does_not_mask_a_real_unmodeled_construct() {
 fn v7_fbx_capability_refusal_names_the_exact_unsupported_source_fact() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
-    std::fs::write(dir.path().join("inputs/base.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
     std::fs::write(
-        dir.path().join("inputs/walk.fbx"),
+        dir.path().join("inputs/base.fbx"),
         nonbearing_node_attributes_fbx(true),
     )
     .unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), RIGGED_TRIANGLE_FBX).unwrap();
     std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
 
     let output = run(dir.path());
@@ -3251,7 +3447,7 @@ fn v7_fbx_capability_refusal_names_the_exact_unsupported_source_fact() {
     assert_eq!(
         refusal_detail(&output),
         concat!(
-            "rest_bind_scale FBX capability rejected input walk.fbx: ",
+            "rest_bind_scale FBX capability rejected input base.fbx: ",
             "FBX rest/bind raw-source facts rejected: ",
             "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
             "count=1; incomplete_bind_poses=1)"
@@ -3449,11 +3645,16 @@ fn v7_refuses_mismatched_bind_pose_for_base_and_clip() {
             refusal_detail(&output),
             format!(
                 concat!(
-                    "rest_bind_scale FBX capability rejected input {}.fbx: ",
+                    "rest_bind_scale FBX {}capability rejected input {}.fbx: ",
                     "FBX rest/bind raw-source facts rejected: ",
                     "raw_source.construct=unknown_element(fbx:unmodeled-elements; ",
                     "count=1; mismatched_bind_poses=1)"
                 ),
+                if source_role == "base" {
+                    ""
+                } else {
+                    "clip-track "
+                },
                 if source_role == "base" {
                     "base"
                 } else {

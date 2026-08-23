@@ -89,7 +89,7 @@
           "type": "string",
           "minLength": 1,
           "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
-          "description": "Exact normalized source-node name without leading or trailing whitespace. The base and every skinned clip must resolve it to exactly one source node and exactly one non-empty source skin whose every joint is that node or its descendant. A track-only clip may instead have complete source coverage proving no skins while the captured document independently has no mesh instances."
+          "description": "Exact normalized source-node name without leading or trailing whitespace. The base must resolve it to exactly one source node and exactly one non-empty source skin whose every joint is that node or its descendant. Every distinct FBX clip uses a normalized-skeleton and baked-take projection; a glTF/GLB clip uses the track-only path only when complete source coverage proves no skins and the captured document independently has no mesh instances."
         },
         "expected_factor": {
           "type": "number",

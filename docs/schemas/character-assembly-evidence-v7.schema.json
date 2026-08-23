@@ -707,7 +707,7 @@
             "rest-bind",
             "skinless-clip-tracks"
           ],
-          "description": "Whether this input received the full rest/bind rewrite or the narrow animation-target-only rebase for a meshless source with no skin."
+          "description": "Whether this input received the full rest/bind rewrite or the narrow animation-target-only rebase through an FBX projection that excludes clip-source geometry, deformation, materials, and bind state, or an already meshless and skinless glTF/GLB source."
         },
         "input_format": {
           "enum": [
