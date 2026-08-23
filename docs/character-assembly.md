@@ -142,13 +142,15 @@ expected_factor = 0.01
 ```
 
 The block has no defaults: the exact normalized root-node name and finite
-positive expected factor are both required. In the captured base, and in every
-skinned clip input, the name must resolve to exactly one source node and
-exactly one non-empty source skin whose every joint is that node or its
-descendant. Recipe v7 also admits the narrower track-only clip case described
-below when complete source coverage proves that the source has no skins and
-the captured document independently has no mesh instances. Missing or repeated
-names and zero or multiple applicable skins fail closed. Leading or trailing
+positive expected factor are both required. In the captured base, the name
+must resolve to exactly one source node and exactly one non-empty source skin
+whose every joint is that node or its descendant. Every distinct FBX
+clip-only input uses the track-only case described below, regardless of
+whether its raw container also carries geometry or a skin that assembly never
+selects. glTF/GLB inputs retain the existing full rest/bind path, or the
+track-only path when the captured source has no skin or mesh instance.
+Missing or repeated names and zero or multiple applicable base skins fail
+closed. Leading or trailing
 whitespace is invalid rather than
 silently trimmed; internal whitespace remains exact. No
 source-array index is reused across files. Recipe v7 accepts glTF/GLB and the
@@ -369,10 +371,16 @@ records let a consumer verify that assembly validated and transformed every
 participating input before remapping and that proof consumed the exact bytes
 subsequently published.
 
-V7 admits the track-only application only when complete source-skeleton
-coverage proves that a clip input has no source skins and the captured
-document independently has no mesh instances.
-Its exact named root, every joint in the selected base skin, and the named
+V7 constructs an explicit animation-only projection for each distinct FBX
+clip-only input. The projection retains complete source-skeleton node coverage
+and every normalized take, while excluding source meshes, mesh instances,
+materials, skins, and inverse-bind state that cannot contribute to assembly.
+The captured input digest and source-projection inventory still describe the
+unmodified source, including unsupported deformation such as dual-quaternion
+skinning. A glTF/GLB clip continues to use this track-only application only
+when strict raw preflight succeeds and the captured source has no skin or mesh
+instance; otherwise it retains the full rest/bind path. The clip projection's
+exact named root, every joint in the selected base skin, and the named
 ancestors connecting that rig domain must match the accepted skinned base
 basis in normalized topology. Rest translation, rotation, and scale remain
 strict independently for every node/property that any take omits; a component
@@ -383,13 +391,14 @@ must belong to the base plan's affected closure. Base-only geometry and
 attachment descendants do not become clip requirements merely because the
 base plan rewrites them. The
 base plan supplies each named translation/scale target factor; cubic-spline
-in/value/out triplets are rebased together. A skinless base, a skinless clip
-with geometry, more than one governed skin, or a skinned input whose root
-governs none still refuses. Bind matrices are neither synthesized nor claimed
-for the skinless row; the exact final assembled artifact remains covered by
-the shared skinned-base rewrite and proof. Independently serialized skinless
-FBX clip projections are compared under that proof's Appendix-D numeric
-tolerance; full rest/bind inputs retain exact pre-remap oracle comparison.
+in/value/out triplets are rebased together. A skinless base still refuses, as
+does any clip projection with incomplete source coverage, an incompatible
+named basis, or a track outside the base scale domain. Bind matrices are
+neither synthesized nor claimed for the track-only row; the exact final
+assembled artifact remains covered by the shared skinned-base rewrite and
+proof. Independently serialized animation-only FBX clip projections are
+compared under that proof's Appendix-D numeric tolerance; full rest/bind inputs
+retain exact pre-remap oracle comparison.
 
 Each v7 scale-input row also identifies the captured container and its source
 projection. `raw-gltf` records authored-curve and raw-span preservation.

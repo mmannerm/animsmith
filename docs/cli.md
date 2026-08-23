@@ -365,15 +365,20 @@ as a rollback-safe publication pair. The command owns generic asset transforms;
 source extraction, project policy, and publication remain consumer concerns.
 The current recipe/evidence pair is v7. Recipe v7 may include an optional
 `[rest_bind_scale]` block whose exact `root_node_name` and expected factor are
-both required. The base and every skinned clip input must resolve that name to
-exactly one source node and exactly one non-empty source skin whose every joint
-is that node or its descendant. A recipe-v7 clip may instead use the
-track-only application when complete source coverage proves it has no skins,
-the captured document independently has no mesh instances, and its named
-rest/topology basis and track targets are compatible with the base plan. That
-compatibility domain contains the selected skin joints, the root, their named
-ancestry, and each actual track target with its ancestry. Unreferenced
-base-only geometry or attachment descendants are not required in the clip.
+both required. The base must resolve that name to exactly one source node and
+exactly one non-empty source skin whose every joint is that node or its
+descendant. Every distinct FBX clip input uses an animation-only projection,
+even when its raw container carries a mesh or skin that assembly never
+selects. The projection retains the normalized skeleton and baked takes while
+excluding geometry, deformation, materials, and bind state. A glTF/GLB clip
+uses the existing track-only application only when complete source coverage
+proves it has no skins, the captured document independently has no mesh
+instances, and its named rest/topology basis and track targets are compatible
+with the base plan; otherwise its existing rest/bind admission or refusal is
+unchanged. The compatibility domain contains the selected base skin joints,
+the root, their named ancestry, and each actual track target with its ancestry.
+Unreferenced base-only geometry or attachment descendants are not required in
+the clip.
 Boundary whitespace is invalid rather than
 trimmed. The block accepts
 glTF/GLB plus the narrow normalized/baked FBX subset admitted by the existing
@@ -424,14 +429,16 @@ or skin reference refuses the operation. With FBX `rest_bind_scale`, an
 unskinned mesh instance attached inside that declared closure is excluded from
 the private scale stage and removed with the node. It still blocks the scale
 plan when the node is not declared for removal.
-For a clip input with no source skin and no mesh instances, v7 instead applies
-the accepted base plan's named animation-target factors (including cubic
-translation tangents) without inventing a bind rewrite. The named root and
-selected skin-joint basis must still match the skinned base, as must every
-actual track target and the named ancestry connecting those nodes. Unreferenced
-base-only geometry descendants do not participate in that clip proof. This
-exception does not apply to the base, geometry-bearing inputs, ambiguous skins,
-or a skinned input whose root governs no skin.
+For every distinct FBX clip input, v7 applies the accepted base plan's named
+animation-target factors (including cubic translation tangents) through the
+animation-only projection without inventing a bind rewrite. A glTF/GLB clip
+uses that application only when its captured source has no skin and no mesh
+instances. The named root and selected base skin-joint basis must still match,
+as must every actual track target and the named ancestry connecting those
+nodes. Unreferenced base-only geometry descendants do not participate in that
+clip proof. The projection never applies to the base; glTF/GLB keeps its
+existing refusal for a skinless clip that still carries geometry and its full
+rest/bind requirements for skinned inputs.
 It performs no material, texture, or mesh garbage collection. Recipe/evidence
 v1 through v6 remain immutable historical contracts; v3 rejects
 `rest_bind_scale` as unknown.

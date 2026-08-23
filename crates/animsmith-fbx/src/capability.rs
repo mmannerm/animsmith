@@ -160,6 +160,32 @@ impl FbxScaleDomainInventory {
             ("image_payload_aliases", self.image_payload_aliases),
         ]
     }
+
+    /// Semantic domains consumed by a clip-only assembly projection.
+    ///
+    /// This positive list is deliberately separate from the full rest/bind
+    /// inventory: geometry, deformation, materials, cameras/lights, and bind
+    /// state cannot enter a clip-only projection. Adding another admitted
+    /// source domain therefore requires an explicit policy decision here.
+    fn clip_track_semantic_statuses(&self) -> [(&'static str, FbxScaleDomainStatus); 6] {
+        [
+            ("rest_hierarchy", self.rest_hierarchy),
+            ("translation_animation", self.translation_animation),
+            (
+                "rotation_and_scale_animation",
+                self.rotation_and_scale_animation,
+            ),
+            ("root_motion_and_velocity", self.root_motion_and_velocity),
+            (
+                "out_of_contract_node_transforms",
+                self.out_of_contract_node_transforms,
+            ),
+            (
+                "animation_targeting_matrix_nodes",
+                self.animation_targeting_matrix_nodes,
+            ),
+        ]
+    }
 }
 
 /// A format-independent spelling of one FBX coordinate axis.
@@ -601,27 +627,7 @@ fn rest_bind_capability_facts_with_context(
         );
     }
 
-    if !inventory.coordinate_normalization.target_right_handed_y_up {
-        violations.push("coordinate_normalization.target_right_handed_y_up=false".into());
-    }
-    if inventory.coordinate_normalization.target_unit_meters != 1.0 {
-        violations.push(format!(
-            "coordinate_normalization.target_unit_meters={}",
-            inventory.coordinate_normalization.target_unit_meters
-        ));
-    }
-    if !inventory.coordinate_normalization.adjust_transforms {
-        violations.push("coordinate_normalization.adjust_transforms=false".into());
-    }
-    if !inventory.animation_takes_baked {
-        violations.push("animation_takes_baked=false".into());
-    }
-    if inventory.authored_curve_keys_preserved {
-        violations.push("authored_curve_keys_preserved=true".into());
-    }
-    if !inventory.inherit_modes_compensated {
-        violations.push("inherit_modes_compensated=false".into());
-    }
+    push_normalized_baked_animation_violations(&mut violations, inventory);
     if inventory.identity_bind_defaults_invented {
         violations.push("identity_bind_defaults_invented=true".into());
     }
@@ -759,20 +765,13 @@ fn rest_bind_capability_facts_with_context(
     Ok(facts)
 }
 
-/// Project the narrow FBX rest/bind subset from one captured source.
-///
-/// Shared construct/resource coverage is checked before the older
-/// operation-specific inventory. This prevents a truncated positive-only raw
-/// projection from being treated as proof of absence.
+/// Require complete raw-source coverage and reject unmodeled constructs.
 ///
 /// # Errors
 ///
-/// Returns a stable refusal naming each incomplete shared-raw coverage domain,
-/// unsupported construct row, semantic status, or inventory counter that
-/// prevents proof of the selected domain.
-pub fn rest_bind_capability_facts_for_source(
-    source: &FbxScaleSource,
-) -> Result<ScaleCapabilityFacts, String> {
+/// Returns a stable refusal naming each incomplete shared-raw coverage domain
+/// or unsupported construct row.
+fn require_supported_raw_source_facts(source: &FbxScaleSource) -> Result<(), String> {
     let source_facts = source.source_facts();
     let source_counts = source.rest_bind_construct_counts;
     let mut violations = Vec::new();
@@ -859,6 +858,25 @@ pub fn rest_bind_capability_facts_for_source(
     if !violations.is_empty() {
         return Err(format_rest_bind_violations("raw-source facts", &violations));
     }
+    Ok(())
+}
+
+/// Project the narrow FBX rest/bind subset from one captured source.
+///
+/// Shared construct/resource coverage is checked before the older
+/// operation-specific inventory. This prevents a truncated positive-only raw
+/// projection from being treated as proof of absence.
+///
+/// # Errors
+///
+/// Returns a stable refusal naming each incomplete shared-raw coverage domain,
+/// unsupported construct row, semantic status, or inventory counter that
+/// prevents proof of the selected domain.
+pub fn rest_bind_capability_facts_for_source(
+    source: &FbxScaleSource,
+) -> Result<ScaleCapabilityFacts, String> {
+    require_supported_raw_source_facts(source)?;
+    let source_counts = source.rest_bind_construct_counts;
 
     let mut facts = join_source_facts(
         source,
@@ -888,6 +906,71 @@ pub fn rest_bind_capability_facts_for_source(
             "joined capability",
             &scale_capability_violations(&facts),
         ))
+    }
+}
+
+/// Project the FBX domains required by an animation-only assembly input.
+///
+/// The captured source must retain complete, supported raw construct coverage,
+/// normalized hierarchy and coordinate semantics, and baked animation. Mesh,
+/// deformation, material, camera/light, and bind domains are excluded because
+/// assembly cannot copy them from a clip-only input. The original inventory is
+/// left unchanged for evidence.
+///
+/// # Errors
+///
+/// Returns a stable refusal when a non-projected raw construct or a required
+/// hierarchy/animation capability cannot be proved.
+pub fn require_clip_track_capability_for_source(source: &FbxScaleSource) -> Result<(), String> {
+    require_supported_raw_source_facts(source)?;
+    let inventory = source.inventory();
+    let mut violations = Vec::new();
+    for (domain, status) in inventory.domains.clip_track_semantic_statuses() {
+        if matches!(
+            status,
+            FbxScaleDomainStatus::Unsupported | FbxScaleDomainStatus::Unverifiable
+        ) {
+            violations.push(format!(
+                "domain.{domain}={}",
+                fbx_scale_domain_status_name(status)
+            ));
+        }
+    }
+    push_normalized_baked_animation_violations(&mut violations, inventory);
+    if !violations.is_empty() {
+        return Err(format_rest_bind_violations(
+            "clip-track capability inventory",
+            &violations,
+        ));
+    }
+
+    Ok(())
+}
+
+fn push_normalized_baked_animation_violations(
+    violations: &mut Vec<String>,
+    inventory: &FbxScaleCapabilityInventory,
+) {
+    if !inventory.coordinate_normalization.target_right_handed_y_up {
+        violations.push("coordinate_normalization.target_right_handed_y_up=false".into());
+    }
+    if inventory.coordinate_normalization.target_unit_meters != 1.0 {
+        violations.push(format!(
+            "coordinate_normalization.target_unit_meters={}",
+            inventory.coordinate_normalization.target_unit_meters
+        ));
+    }
+    if !inventory.coordinate_normalization.adjust_transforms {
+        violations.push("coordinate_normalization.adjust_transforms=false".into());
+    }
+    if !inventory.animation_takes_baked {
+        violations.push("animation_takes_baked=false".into());
+    }
+    if inventory.authored_curve_keys_preserved {
+        violations.push("authored_curve_keys_preserved=true".into());
+    }
+    if !inventory.inherit_modes_compensated {
+        violations.push("inherit_modes_compensated=false".into());
     }
 }
 
@@ -1556,6 +1639,62 @@ mod tests {
                 "missing_skin_influence_corner_count=1"
             ),
             "conversion evidence never overrides missing effective skin coverage"
+        );
+    }
+
+    #[test]
+    fn clip_track_projection_excludes_deformation_but_keeps_animation_gates() {
+        let mut source = complete_captured_source();
+        source.inventory.domains.base_mesh_geometry = FbxScaleDomainStatus::Unsupported;
+        source.inventory.domains.skin_binds = FbxScaleDomainStatus::Unsupported;
+        source.inventory.domains.morphs = FbxScaleDomainStatus::Unsupported;
+        source.inventory.domains.cameras_and_lights = FbxScaleDomainStatus::Unsupported;
+        source.inventory.domains.other_vertex_and_source_data = FbxScaleDomainStatus::Unsupported;
+        source.inventory.dual_quaternion_skin_count = 1;
+        source.inventory.incomplete_bind_cluster_count = 1;
+        source.inventory.blend_deformer_count = 1;
+        source.inventory.cache_deformer_count = 1;
+        assert!(rest_bind_capability_facts_for_source(&source).is_err());
+        require_clip_track_capability_for_source(&source)
+            .expect("clip-only projection excludes deformation and bind domains");
+
+        source.inventory.animation_takes_baked = false;
+        assert_eq!(
+            require_clip_track_capability_for_source(&source).unwrap_err(),
+            "FBX rest/bind clip-track capability inventory rejected: animation_takes_baked=false"
+        );
+        source.inventory.animation_takes_baked = true;
+        source.inventory.domains.out_of_contract_node_transforms =
+            FbxScaleDomainStatus::Unsupported;
+        assert_eq!(
+            require_clip_track_capability_for_source(&source).unwrap_err(),
+            "FBX rest/bind clip-track capability inventory rejected: domain.out_of_contract_node_transforms=unsupported"
+        );
+
+        macro_rules! required_domain_refuses {
+            ($field:ident) => {{
+                let mut source = complete_captured_source();
+                source.inventory.domains.$field = FbxScaleDomainStatus::Unsupported;
+                let error = require_clip_track_capability_for_source(&source).unwrap_err();
+                assert!(
+                    error.contains(concat!("domain.", stringify!($field), "=unsupported")),
+                    "{error}"
+                );
+            }};
+        }
+        required_domain_refuses!(rest_hierarchy);
+        required_domain_refuses!(translation_animation);
+        required_domain_refuses!(rotation_and_scale_animation);
+        required_domain_refuses!(root_motion_and_velocity);
+        required_domain_refuses!(out_of_contract_node_transforms);
+        required_domain_refuses!(animation_targeting_matrix_nodes);
+
+        let mut source = complete_captured_source();
+        source.inventory.domains.rest_hierarchy = FbxScaleDomainStatus::Unverifiable;
+        assert!(
+            require_clip_track_capability_for_source(&source)
+                .unwrap_err()
+                .contains("domain.rest_hierarchy=unverifiable")
         );
     }
 
