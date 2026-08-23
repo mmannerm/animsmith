@@ -197,6 +197,9 @@ map that name to exactly one normalized source node and exactly one non-empty
 source skin whose every joint is that node or its descendant. A compatible
 track-only clip is also accepted when complete source coverage proves it has no
 skins and the captured document independently has no mesh instances. The
+compatibility proof covers the selected skin joints, exact root, their named
+ancestry, and actual track targets, without requiring unreferenced base-only
+geometry descendants. The
 resulting per-input identities enter the same plan-taking writer, private FBX
 stage, and proof boundaries; v7 evidence records both the declared name and
 every resolved name/index tuple.

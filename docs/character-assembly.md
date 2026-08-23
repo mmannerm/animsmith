@@ -370,10 +370,13 @@ subsequently published.
 V7 admits the track-only application only when complete source-skeleton
 coverage proves that a clip input has no source skins and the captured
 document independently has no mesh instances.
-Its exact named root and normalized named
-topology, rest basis, and orientations over the base plan's affected closure
-must match the accepted skinned base basis. Every track must target that
-closure. The
+Its exact named root, every joint in the selected base skin, and the named
+ancestors connecting that rig domain must match the accepted skinned base
+basis in normalized topology, rest basis, and orientation. Each actual clip
+track target and its named ancestors join that compatibility domain, and the
+target must belong to the base plan's affected closure. Base-only geometry and
+attachment descendants do not become clip requirements merely because the
+base plan rewrites them. The
 base plan supplies each named translation/scale target factor; cubic-spline
 in/value/out triplets are rebased together. A skinless base, a skinless clip
 with geometry, more than one governed skin, or a skinned input whose root

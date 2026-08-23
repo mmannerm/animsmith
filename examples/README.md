@@ -758,8 +758,10 @@ For glTF/GLB or inventory-complete normalized/baked FBX assembly, add
 name to one source node and exactly one non-empty skin whose every joint is
 that node or a descendant. Recipe v7 also accepts a compatible track-only clip
 when complete source coverage proves it has no skins and the captured document
-independently has no mesh instances. Every input passes basis compatibility
-before remapping.
+independently has no mesh instances. Its basis proof covers the selected skin
+joints, exact root, their named ancestry, and actual track targets; unreferenced
+base-only geometry descendants need not appear in the clip. Every input passes
+basis compatibility before remapping.
 
 ```console
 $ animsmith assemble examples/character-assembly.toml \

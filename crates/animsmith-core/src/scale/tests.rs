@@ -546,6 +546,266 @@ fn skinless_clip_rebase_uses_the_base_plan_without_materializing_bind_state() {
 }
 
 #[test]
+fn skinless_clip_basis_requires_the_selected_rig_but_not_base_only_descendants() {
+    let nodes = vec![
+        RigNode {
+            parent: None,
+            source_node_index: 0,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        },
+        rig(Some(0), 1, Vec3::new(0.0, 100.0, 0.0)),
+        rig(Some(1), 2, Vec3::new(0.0, 100.0, 0.0)),
+        rig(Some(0), 3, Vec3::new(50.0, 0.0, 0.0)),
+    ];
+    let base = rig_document(&nodes, &[2], 0, Mat4::IDENTITY);
+    let plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 0,
+            expected_factor: 0.01,
+        },
+        document: &base,
+        capability: &complete_capability(),
+    })
+    .unwrap();
+    assert_eq!(plan.affected_nodes(), &[0, 1, 2, 3]);
+    let base_basis = assembly_scale_compatibility_basis(
+        &base,
+        &plan,
+        AssemblyScaleSelectorRequest::Named {
+            root_node_name: "bone0",
+        },
+    )
+    .unwrap();
+
+    let mut clip = base.clone();
+    clip.assets.instances.clear();
+    clip.assets.meshes.clear();
+    clip.assets.source_skeleton.skins.clear();
+    clip.skeleton.bones.pop();
+    clip.assets.source_skeleton.nodes.pop();
+    for bone in &mut clip.skeleton.bones {
+        bone.inverse_bind = None;
+    }
+    clip.clips = vec![Clip {
+        name: "clip".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 2,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::splat(10.0)]),
+        }],
+    }];
+
+    let (rebased, basis) =
+        rebase_assembly_scale_skinless_clip(&base_basis, &clip, "bone0").unwrap();
+    assert_eq!(
+        basis
+            .named_nodes
+            .iter()
+            .map(|node| node.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["bone0", "bone1", "bone2"]
+    );
+    assert_eq!(
+        rebased.clips[0].tracks[0].key_vec3(1),
+        Some(Vec3::splat(10.0 * 0.01f32))
+    );
+
+    let mut incompatible_root_topology = clip.clone();
+    for bone in &mut incompatible_root_topology.skeleton.bones {
+        bone.parent = bone.parent.map(|parent| parent + 1);
+    }
+    incompatible_root_topology.skeleton.bones.insert(
+        0,
+        Bone {
+            name: "clip-parent".into(),
+            parent: None,
+            rest: Transform::default(),
+            inverse_bind: None,
+        },
+    );
+    incompatible_root_topology.skeleton.bones[1].parent = Some(0);
+    incompatible_root_topology.clips[0].tracks[0].bone += 1;
+    for node in &mut incompatible_root_topology.assets.source_skeleton.nodes {
+        node.bone = node.bone.map(|bone| bone + 1);
+    }
+    incompatible_root_topology.assets.source_skeleton.nodes[0].parent_source_node_index = Some(3);
+    incompatible_root_topology.assets.source_skeleton.nodes[0]
+        .scene_root_indices
+        .clear();
+    incompatible_root_topology
+        .assets
+        .source_skeleton
+        .nodes
+        .insert(
+            0,
+            SourceNodeAsset {
+                source_node_index: 3,
+                name: Some("clip-parent".into()),
+                parent_source_node_index: None,
+                scene_root_indices: vec![0],
+                local_rest: SourceNodeLocalRest::Trs {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+                bone: Some(0),
+            },
+        );
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_root_topology, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-topology"
+    );
+    let mut incompatible_root_rest = clip.clone();
+    incompatible_root_rest.skeleton.bones[0].rest.translation.x = 1.0;
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_root_rest, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-rest-basis"
+    );
+    let mut incompatible_root_scale = clip.clone();
+    incompatible_root_scale.skeleton.bones[0].rest.scale.x = 0.02;
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_root_scale, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-rest-basis"
+    );
+    let mut incompatible_root_orientation = clip.clone();
+    incompatible_root_orientation.skeleton.bones[0]
+        .rest
+        .rotation = Quat::from_rotation_z(0.1);
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_root_orientation, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-orientation"
+    );
+
+    let mut animated_helper = base.clone();
+    animated_helper.assets.instances.clear();
+    animated_helper.assets.meshes.clear();
+    animated_helper.assets.source_skeleton.skins.clear();
+    for bone in &mut animated_helper.skeleton.bones {
+        bone.inverse_bind = None;
+    }
+    animated_helper.clips = vec![Clip {
+        name: "helper".into(),
+        duration_s: 1.0,
+        tracks: vec![Track {
+            bone: 3,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ONE]),
+        }],
+    }];
+    let (_, helper_basis) =
+        rebase_assembly_scale_skinless_clip(&base_basis, &animated_helper, "bone0").unwrap();
+    assert_eq!(
+        helper_basis
+            .named_nodes
+            .iter()
+            .map(|node| node.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["bone0", "bone1", "bone2", "bone3"]
+    );
+    let mut incompatible_helper_topology = animated_helper.clone();
+    incompatible_helper_topology.skeleton.bones[3].parent = Some(1);
+    incompatible_helper_topology.assets.source_skeleton.nodes[3].parent_source_node_index = Some(1);
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_helper_topology, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-topology"
+    );
+    let mut incompatible_helper_rest = animated_helper.clone();
+    incompatible_helper_rest.skeleton.bones[3]
+        .rest
+        .translation
+        .x = 51.0;
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_helper_rest, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-rest-basis"
+    );
+    let mut incompatible_helper_scale = animated_helper.clone();
+    incompatible_helper_scale.skeleton.bones[3].rest.scale.x = 2.0;
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_helper_scale, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-rest-basis"
+    );
+    let mut incompatible_helper_orientation = animated_helper;
+    incompatible_helper_orientation.skeleton.bones[3]
+        .rest
+        .rotation = Quat::from_rotation_x(0.1);
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_helper_orientation, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-orientation"
+    );
+
+    let mut missing_joint = clip.clone();
+    missing_joint.clips[0].tracks.clear();
+    missing_joint.skeleton.bones.pop();
+    missing_joint.assets.source_skeleton.nodes.pop();
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &missing_joint, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-topology"
+    );
+
+    let mut incompatible_joint = clip.clone();
+    incompatible_joint.skeleton.bones[1].rest.translation.x = 1.0;
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_joint, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-rest-basis"
+    );
+    let mut incompatible_joint_scale = clip.clone();
+    incompatible_joint_scale.skeleton.bones[2].rest.scale.x = 2.0;
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_joint_scale, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-rest-basis"
+    );
+    let mut incompatible_joint_orientation = clip.clone();
+    incompatible_joint_orientation.skeleton.bones[2]
+        .rest
+        .rotation = Quat::from_rotation_y(0.1);
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_joint_orientation, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-orientation"
+    );
+    let mut incompatible_joint_topology = clip;
+    incompatible_joint_topology.skeleton.bones[2].parent = Some(0);
+    incompatible_joint_topology.assets.source_skeleton.nodes[2].parent_source_node_index = Some(0);
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_joint_topology, "bone0")
+            .unwrap_err()
+            .reason,
+        "named-topology"
+    );
+}
+
+#[test]
 fn named_assembly_compatibility_rejects_a_different_resolved_skin_joint_identity() {
     let nodes = vec![
         RigNode {

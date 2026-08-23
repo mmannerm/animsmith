@@ -348,6 +348,47 @@ fn rigged_limb_triangle_fbx() -> String {
         .replace("\tC: \"OO\",1001,4002", "\tC: \"OO\",1002,4002")
 }
 
+fn rigged_limb_triangle_with_unskinned_prop_fbx() -> String {
+    rigged_limb_triangle_fbx()
+        .replace("\r\n", "\n")
+        .replace(
+            "ObjectType: \"Model\" { Count: 2 }",
+            "ObjectType: \"Model\" { Count: 3 }",
+        )
+        .replace(
+            "ObjectType: \"Geometry\" { Count: 1 }",
+            "ObjectType: \"Geometry\" { Count: 2 }",
+        )
+        .replacen(
+            "\tAnimationStack: 3001",
+            concat!(
+                "\tGeometry: 2002, \"Geometry::prop\", \"Mesh\" {\n",
+                "\t\tVertices: *9 { a: 0,0,0,10,0,0,0,10,0 }\n",
+                "\t\tPolygonVertexIndex: *3 { a: 0,1,-3 }\n",
+                "\t}\n",
+                "\tModel: 1003, \"Model::prop\", \"Mesh\" {\n",
+                "\t\tVersion: 232\n",
+                "\t\tProperties70: {\n",
+                "\t\t\tP: \"Lcl Translation\", \"Lcl Translation\", \"\", \"A\",50,0,0\n",
+                "\t\t\tP: \"Lcl Rotation\", \"Lcl Rotation\", \"\", \"A\",0,0,0\n",
+                "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n",
+                "\t\t}\n",
+                "\t}\n",
+                "\tAnimationStack: 3001",
+            ),
+            1,
+        )
+        .replacen(
+            "Connections: {",
+            concat!(
+                "Connections: {\n",
+                "\tC: \"OO\",1003,1001\n",
+                "\tC: \"OO\",2002,1003",
+            ),
+            1,
+        )
+}
+
 fn skinless_animation_fbx() -> String {
     rigged_limb_triangle_fbx()
         .replace("\r\n", "\n")
@@ -1734,6 +1775,75 @@ fn v7_rebases_a_meshless_skinless_fbx_clip_from_the_skinned_base_plan() {
     assert_eq!(
         evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
         true
+    );
+}
+
+#[test]
+fn v7_accepts_skinless_clip_without_base_only_geometry_descendants() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let base_source = rigged_limb_triangle_with_unskinned_prop_fbx();
+    let loaded_base =
+        animsmith_fbx::load_bytes(Path::new("base.fbx"), base_source.as_bytes()).unwrap();
+    assert_eq!(loaded_base.assets.instances.len(), 2);
+    assert!(
+        loaded_base
+            .skeleton
+            .bones
+            .iter()
+            .any(|bone| bone.name == "prop")
+    );
+    std::fs::write(dir.path().join("inputs/base.fbx"), base_source).unwrap();
+
+    let clip_source = skinless_animation_fbx();
+    let loaded_clip =
+        animsmith_fbx::load_bytes(Path::new("walk.fbx"), clip_source.as_bytes()).unwrap();
+    assert!(loaded_clip.assets.instances.is_empty());
+    assert!(
+        loaded_clip
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.name != "prop")
+    );
+    std::fs::write(dir.path().join("inputs/walk.fbx"), clip_source).unwrap();
+    let recipe =
+        fbx_recipe_v7("walk.fbx").replace("fps = 30.0", "fps = 30.0\nremove_nodes = [\"prop\"]");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    assert_eq!(
+        evidence["rest_bind_scale"]["inputs"][1]["application"],
+        "skinless-clip-tracks"
+    );
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert!(
+        assembled
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.name != "prop")
+    );
+    assert_eq!(assembled.clips.len(), 1);
+    let translation = assembled.clips[0]
+        .tracks
+        .iter()
+        .find(|track| {
+            assembled.skeleton.bones[track.bone].name == "tri"
+                && track.property == Property::Translation
+        })
+        .expect("skinless clip translation survives assembly");
+    assert_eq!(
+        translation.key_vec3(translation.key_count() - 1),
+        Some(Vec3::new(1.0, 0.0, 0.0))
     );
 }
 
