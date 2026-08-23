@@ -245,7 +245,10 @@ and proved once before the artifact/evidence pair can be published.
 the union of selected skin joints and nodes targeted by any emitted clip.
 Per-clip `strip_bones` entries stay excluded. Rotation key values are
 unit-normalized and made hemisphere-consistent without changing cubic tangent
-sign relationships.
+sign relationships. When FBX scale staging produces an independent reference
+skeleton, completion targets are carried by exact unique bone name and resolved
+separately in each skeleton; numeric bone IDs are document-local. Each
+skeleton's own node-removal closure is excluded before completion.
 
 `canonicalize_skin = true` bakes each skin's common geometry-to-world transform
 into positions and normals and rewrites inverse binds consistently.
@@ -262,11 +265,14 @@ completion-generated `(bone, property)` coverage when the completed value is
 constant, so it may undo part of `complete_tracks = true`. The carve-out uses
 the effective output clip's `animates_bones` exact names; it never uses
 `required_bones`, so declared motion evidence is preserved without retaining
-unrelated tracks. The canonical example leaves pruning disabled; opt in only
-after reviewing the completed clip and the consumer's transition behavior. A
-consumer that does not explicitly reset an omitted property during a transition
-can retain the outgoing clip's value, so leave pruning disabled where dense
-transition coverage matters until property-scoped selection is available (see
+unrelated tracks. For an independent scale reference, authoritative prune
+decisions and the final clip proof are projected by exact unique bone name and
+channel property rather than by document-local bone or track indices. The
+canonical example leaves pruning disabled; opt in only after reviewing the
+completed clip and the consumer's transition behavior. A consumer that does
+not explicitly reset an omitted property during a transition can retain the
+outgoing clip's value, so leave pruning disabled where dense transition
+coverage matters until property-scoped selection is available (see
 [#401](https://github.com/mmannerm/animsmith/issues/401)). Set it to `false` or
 omit it to retain every otherwise eligible track.
 
