@@ -667,6 +667,48 @@ fn unskinned_prop_fbx() -> String {
         )
 }
 
+fn renamed_skinned_holder_with_unselected_prop_fbx() -> String {
+    let materials = concat!(
+        "\tMaterial: 5001, \"Material::body-material\", \"\" {\n",
+        "\t\tVersion: 102\n",
+        "\t\tShadingModel: \"phong\"\n",
+        "\t}\n",
+        "\tMaterial: 5002, \"Material::prop-material\", \"\" {\n",
+        "\t\tVersion: 102\n",
+        "\t\tShadingModel: \"phong\"\n",
+        "\t}\n",
+    );
+    unskinned_prop_fbx()
+        .replacen("\tCount: 11", "\tCount: 13", 1)
+        .replacen(
+            "\tObjectType: \"Deformer\" { Count: 2 }",
+            concat!(
+                "\tObjectType: \"Deformer\" { Count: 2 }\n",
+                "\tObjectType: \"Material\" { Count: 2 }",
+            ),
+            1,
+        )
+        .replacen(
+            "\tModel: 1002, \"Model::tri\", \"Mesh\"",
+            "\tModel: 1002, \"Model::body-instance\", \"Mesh\"",
+            1,
+        )
+        .replacen(
+            "\tDeformer: 4001",
+            &format!("{materials}\tDeformer: 4001"),
+            1,
+        )
+        .replacen(
+            "Connections: {",
+            concat!(
+                "Connections: {\n",
+                "\tC: \"OO\",5001,1002\n",
+                "\tC: \"OO\",5002,1003",
+            ),
+            1,
+        )
+}
+
 fn scale_invariant_fidelity_fbx() -> String {
     let payload = r#"
 		Edges: *4 { a: 0,1,2,3 }
@@ -2532,9 +2574,15 @@ fn v7_composes_fbx_rest_bind_scale_with_unskinned_prop_removal() {
     std::fs::write(dir.path().join("recipe.toml"), explicitly_retained).unwrap();
     let retained = run(dir.path());
     assert_eq!(retained.status.code(), Some(1));
+    let refusal: Value = serde_json::from_slice(&retained.stdout).expect("typed refusal JSON");
+    assert_eq!(refusal["rejection"]["stage"], "selection");
+    assert_eq!(refusal["rejection"]["kind"], "asset-recipe-mismatch");
     let detail = refusal_detail(&retained);
-    assert!(detail.contains("rest_bind_scale plan rejected input base.fbx"));
-    assert!(detail.contains("carries unskinned geometry inside the affected closure"));
+    assert!(detail.contains("rest_bind_scale FBX base projection rejected input base.fbx"));
+    assert!(detail.contains(
+        "mesh_instances selection retains no skinned base mesh instance for rest_bind_scale"
+    ));
+    assert!(!detail.contains("staged GLB"));
     assert_eq!(
         std::fs::read(dir.path().join("character.glb")).unwrap(),
         prior_artifact
@@ -2607,6 +2655,215 @@ fn v7_composes_fbx_rest_bind_scale_with_unskinned_prop_removal() {
             .bones
             .iter()
             .all(|bone| bone.name != "prop")
+    );
+}
+
+#[test]
+fn v7_resolves_fbx_mesh_selection_before_private_holder_rename() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = renamed_skinned_holder_with_unselected_prop_fbx();
+    std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), &source).unwrap();
+    let raw = animsmith_fbx::load_bytes(Path::new("base.fbx"), source.as_bytes())
+        .expect("analytic renamed-holder FBX loads");
+    assert_eq!(
+        raw.assets
+            .instances
+            .iter()
+            .map(|instance| raw.skeleton.bone_name(instance.node))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["body-instance", "prop"])
+    );
+    assert_eq!(
+        raw.assets
+            .meshes
+            .iter()
+            .map(|mesh| mesh.name.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["prop", "tri"]),
+        "the selected raw instance name deliberately differs from its mesh definition"
+    );
+    assert_eq!(
+        raw.assets
+            .materials
+            .iter()
+            .map(|material| material.name.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["body-material", "prop-material"])
+    );
+    let mut expected_stage = raw.clone();
+    let expected_skeleton = &expected_stage.skeleton;
+    expected_stage
+        .assets
+        .instances
+        .retain(|instance| expected_skeleton.bone_name(instance.node) == "body-instance");
+    assert_eq!(expected_stage.assets.instances[0].mesh, 0);
+    expected_stage.assets.meshes.truncate(1);
+    expected_stage.assets.materials.truncate(1);
+    let expected_stage_path = dir.path().join("expected-selected-stage.glb");
+    animsmith_gltf::write::write(&expected_stage, &expected_stage_path).unwrap();
+    let expected_stage_bytes = std::fs::read(expected_stage_path).unwrap();
+    let expected_stage_sha256 = sha256_hex(&expected_stage_bytes);
+    let expected_stage_size = u64::try_from(expected_stage_bytes.len()).unwrap();
+
+    let recipe = fbx_recipe_v7("walk.fbx").replacen(
+        "fps = 30.0",
+        "fps = 30.0\nmesh_instances = [\"body-instance\"]",
+        1,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let artifact_bytes = std::fs::read(dir.path().join("character.glb")).unwrap();
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    assert_eq!(
+        evidence["transforms"]["retained_mesh_instances"],
+        serde_json::json!(["body-instance"])
+    );
+    assert_eq!(evidence["transforms"]["removed_mesh_instances"], 1);
+    assert_eq!(
+        (
+            evidence["rest_bind_scale"]["inputs"][0]["source_projection"]["staged_source"]
+                ["sha256"]
+                .as_str(),
+            evidence["rest_bind_scale"]["inputs"][0]["source_projection"]["staged_source"]
+                ["bytes"]
+                .as_u64(),
+        ),
+        (
+            Some(expected_stage_sha256.as_str()),
+            Some(expected_stage_size),
+        ),
+        "the private scale source must be the independently selected raw-node projection"
+    );
+    assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact_bytes));
+    assert_eq!(
+        evidence["rest_bind_scale"]["read_back_sha256"],
+        evidence["artifact"]["sha256"]
+    );
+    assert_eq!(
+        evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
+        true
+    );
+
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(
+        (
+            assembled.assets.instances.len(),
+            assembled.assets.meshes.len(),
+            assembled.assets.materials.len(),
+        ),
+        (1, 1, 1),
+        "the unselected instance, mesh definition, and material must not reappear"
+    );
+    let instance = &assembled.assets.instances[0];
+    assert_eq!(assembled.skeleton.bone_name(instance.node), "tri_skinned");
+    assert_eq!(assembled.assets.meshes[instance.mesh].name, "tri");
+    assert_eq!(assembled.assets.materials[0].name, "body-material");
+    assert_eq!(
+        assembled.assets.meshes[instance.mesh].primitives[0].material,
+        Some(0)
+    );
+    assert!(!instance.skin_joints.is_empty());
+    assert_eq!(instance.skin_joints.len(), instance.skin_ibms.len());
+    assert!(
+        instance
+            .skin_joints
+            .iter()
+            .all(|joint| *joint < assembled.skeleton.bones.len())
+    );
+    assert!(instance.skin_ibms.iter().all(|ibm| ibm.is_finite()));
+}
+
+#[test]
+fn v7_missing_raw_fbx_mesh_instance_name_refuses_atomically() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = renamed_skinned_holder_with_unselected_prop_fbx();
+    std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), &source).unwrap();
+    let recipe = fbx_recipe_v7("walk.fbx").replacen(
+        "fps = 30.0",
+        "fps = 30.0\nmesh_instances = [\"tri\"]",
+        1,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        refusal_detail(&output)
+            .contains("mesh_instances entry \"tri\" matches no base mesh instance node")
+    );
+    assert_eq!(
+        (
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+        ),
+        (prior_artifact.to_vec(), prior_evidence.to_vec())
+    );
+}
+
+#[test]
+fn v7_ambiguous_raw_fbx_mesh_instance_name_refuses_atomically() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = renamed_skinned_holder_with_unselected_prop_fbx().replacen(
+        "\tModel: 1003, \"Model::prop\", \"Mesh\"",
+        "\tModel: 1003, \"Model::body-instance\", \"Mesh\"",
+        1,
+    );
+    let raw = animsmith_fbx::load_bytes(Path::new("base.fbx"), source.as_bytes())
+        .expect("analytic ambiguous-instance FBX loads");
+    assert_eq!(
+        raw.assets
+            .instances
+            .iter()
+            .filter(|instance| raw.skeleton.bone_name(instance.node) == "body-instance")
+            .map(|instance| instance.node)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        2,
+        "the selected name belongs to two distinct raw instance nodes"
+    );
+    std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), &source).unwrap();
+    let recipe = fbx_recipe_v7("walk.fbx").replacen(
+        "fps = 30.0",
+        "fps = 30.0\nmesh_instances = [\"body-instance\"]",
+        1,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        refusal_detail(&output).contains(
+            "mesh_instances entry \"body-instance\" matches 2 base mesh instance nodes; expected exactly one"
+        )
+    );
+    assert_eq!(
+        (
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+        ),
+        (prior_artifact.to_vec(), prior_evidence.to_vec())
     );
 }
 
