@@ -388,6 +388,13 @@ struct PreparedScaleInput {
     rebased_document: Document,
     application: PreparedScaleApplication,
     evidence: AssemblyRestBindScaleInputEvidence,
+    mesh_selection: Option<PreparedMeshInstanceSelection>,
+}
+
+#[derive(Clone)]
+struct PreparedMeshInstanceSelection {
+    retained: Vec<String>,
+    removed: usize,
 }
 
 enum PreparedScaleApplication {
@@ -896,6 +903,26 @@ fn fbx_scale_stage_document(
     Ok(projected)
 }
 
+fn selected_fbx_base_scale_stage_document(
+    document: &Document,
+    remove_nodes: &[String],
+    requested_mesh_instances: &[String],
+) -> Result<(Document, PreparedMeshInstanceSelection), String> {
+    let mut projected = document.clone();
+    let (mut retained, mut removed) =
+        select_mesh_instances(&mut projected, requested_mesh_instances)?;
+    removed += remove_declared_unskinned_instances(
+        &mut projected,
+        remove_nodes,
+        requested_mesh_instances,
+    )?;
+    retain_surviving_mesh_instance_names(&mut retained, &projected);
+    Ok((
+        projected,
+        PreparedMeshInstanceSelection { retained, removed },
+    ))
+}
+
 /// Project one clip-only input to the domains assembly can actually consume.
 ///
 /// Clip assembly reads the normalized skeleton and selected take tracks, then
@@ -1000,6 +1027,7 @@ fn prepare_clip_scale_input(
         document,
         rebased_document,
         application: PreparedScaleApplication::ClipTracks,
+        mesh_selection: None,
         evidence: AssemblyRestBindScaleInputEvidence {
             role,
             declared_path: declared.display().to_string(),
@@ -1058,6 +1086,7 @@ fn prepare_scale_input(
         input_format,
         source_projection,
         selector,
+        mesh_selection,
     ) = if is_fbx {
         let resource_root = parent_or_current(resolved);
         let fbx_source = animsmith_fbx::load_scale_source_bytes_with_resource_root(
@@ -1135,18 +1164,38 @@ fn prepare_scale_input(
                 )
             })
             .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
-        let scale_stage_document = fbx_scale_stage_document(
-            fbx_source.document(),
-            context.remove_nodes,
-            context.retained_mesh_instances,
-        )
-        .map_err(|error| {
-            format!(
-                "rest_bind_scale removal projection rejected input {}: {error}",
-                declared.display()
+        let (scale_stage_document, mesh_selection) = if context.recipe_version
+            == RECIPE_SCHEMA_VERSION_V7
+            && matches!(input_role, AssemblyScaleInputRole::Base)
+        {
+            let (document, selection) = selected_fbx_base_scale_stage_document(
+                fbx_source.document(),
+                context.remove_nodes,
+                context.retained_mesh_instances,
             )
-        })
-        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale FBX base projection rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+            (document, Some(selection))
+        } else {
+            let document = fbx_scale_stage_document(
+                fbx_source.document(),
+                context.remove_nodes,
+                context.retained_mesh_instances,
+            )
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale removal projection rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+            (document, None)
+        };
         let staged = crate::scale::serialize_fbx_rest_bind_stage(
             &scale_stage_document,
             context.staging_parent,
@@ -1194,15 +1243,21 @@ fn prepare_scale_input(
             staged_operation,
             scale.compatibility_selector(),
         )?;
+        let prepared_document = if mesh_selection.is_some() {
+            scale_stage_document
+        } else {
+            fbx_source.document().clone()
+        };
         (
             sha256,
             byte_count,
-            fbx_source.document().clone(),
+            prepared_document,
             rebased_document,
             compatibility_basis,
             "fbx",
             source_projection,
             selector,
+            mesh_selection,
         )
     } else {
         let source = preflight_scale_source_bytes(resolved, &bytes)
@@ -1270,6 +1325,7 @@ fn prepare_scale_input(
                 raw_source_spans_preserved: true,
             },
             selector,
+            None,
         )
     };
     #[derive(Serialize)]
@@ -1316,6 +1372,7 @@ fn prepare_scale_input(
             compatibility_basis: Box::new(compatibility_basis),
             selector,
         },
+        mesh_selection,
     })
 }
 
@@ -1638,27 +1695,21 @@ fn assemble_inner(
     let mut rebased_base = prepared_scale_inputs
         .get(&base_path)
         .map(|prepared| prepared.rebased_document.clone());
-    let base_scale_uses_fbx = prepared_scale_inputs
+    let prepared_mesh_selection = prepared_scale_inputs
         .get(&base_path)
-        .and_then(|prepared| prepared.evidence.input_format)
-        == Some("fbx")
-        && recipe.schema_version == RECIPE_SCHEMA_VERSION_V7;
+        .and_then(|prepared| prepared.mesh_selection.clone());
     ensure_unique_bones(&base.skeleton, "base input")
         .refusal(Stage::Load, Kind::InvalidAssetStructure)?;
-    let (mut retained_mesh_instances, mut removed_mesh_instances) =
-        select_mesh_instances(&mut base, &recipe.mesh_instances)
-            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-    if base_scale_uses_fbx {
-        removed_mesh_instances += remove_declared_unskinned_instances(
-            &mut base,
-            &recipe.remove_nodes,
-            &recipe.mesh_instances,
-        )
-        .map_err(|error| format!("cannot project declared node removal: {error}"))
-        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-        retain_surviving_mesh_instance_names(&mut retained_mesh_instances, &base);
-    }
-    if let Some(reference) = &mut rebased_base {
+    let (retained_mesh_instances, removed_mesh_instances) =
+        if let Some(selection) = &prepared_mesh_selection {
+            (selection.retained.clone(), selection.removed)
+        } else {
+            select_mesh_instances(&mut base, &recipe.mesh_instances)
+                .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?
+        };
+    if let Some(reference) = &mut rebased_base
+        && prepared_mesh_selection.is_none()
+    {
         select_mesh_instances(reference, &recipe.mesh_instances)
             .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
     }
@@ -2797,29 +2848,42 @@ fn select_mesh_instances(
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let mut matched = BTreeSet::new();
-    let before = doc.assets.instances.len();
-    doc.assets.instances.retain(|instance| {
-        let keep = doc
-            .skeleton
-            .bones
-            .get(instance.node)
-            .is_some_and(|bone| requested.contains(bone.name.as_str()));
-        if keep {
-            matched.insert(doc.skeleton.bone_name(instance.node).to_owned());
-        }
-        keep
-    });
-    for name in &requested {
-        if !matched.contains(*name) {
-            return Err(format!(
-                "mesh_instances entry {name:?} matches no base mesh instance node"
-            ));
+    let mut matched_nodes = BTreeMap::<&str, BTreeSet<usize>>::new();
+    for instance in &doc.assets.instances {
+        if let Some(bone) = doc.skeleton.bones.get(instance.node)
+            && requested.contains(bone.name.as_str())
+        {
+            matched_nodes
+                .entry(bone.name.as_str())
+                .or_default()
+                .insert(instance.node);
         }
     }
+    for name in &requested {
+        match matched_nodes.get(name).map_or(0, BTreeSet::len) {
+            0 => {
+                return Err(format!(
+                    "mesh_instances entry {name:?} matches no base mesh instance node"
+                ));
+            }
+            1 => {}
+            matches => {
+                return Err(format!(
+                    "mesh_instances entry {name:?} matches {matches} base mesh instance nodes; expected exactly one"
+                ));
+            }
+        }
+    }
+    let before = doc.assets.instances.len();
+    doc.assets.instances.retain(|instance| {
+        doc.skeleton
+            .bones
+            .get(instance.node)
+            .is_some_and(|bone| requested.contains(bone.name.as_str()))
+    });
     prune_assets(doc)?;
     Ok((
-        matched.into_iter().collect(),
+        requested.into_iter().map(str::to_owned).collect(),
         before - doc.assets.instances.len(),
     ))
 }
@@ -3264,6 +3328,36 @@ mod tests {
         assert_eq!(document.assets.materials[0].name, "body-material");
         assert_eq!(document.assets.instances[0].mesh, 0);
         assert_eq!(document.assets.meshes[0].primitives[0].material, Some(0));
+    }
+
+    #[test]
+    fn mesh_selection_refuses_one_name_on_distinct_instance_nodes() {
+        use animsmith_core::model::{MeshInstance, SceneAssets};
+
+        let mut document = Document {
+            skeleton: skeleton(&["body", "body"]),
+            assets: SceneAssets {
+                instances: vec![
+                    MeshInstance {
+                        node: 0,
+                        ..Default::default()
+                    },
+                    MeshInstance {
+                        node: 1,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let error = select_mesh_instances(&mut document, &["body".into()]).unwrap_err();
+        assert_eq!(
+            error,
+            "mesh_instances entry \"body\" matches 2 base mesh instance nodes; expected exactly one"
+        );
+        assert_eq!(document.assets.instances.len(), 2, "refusal is atomic");
     }
 
     #[test]
