@@ -370,7 +370,10 @@ exactly one source node and exactly one non-empty source skin whose every joint
 is that node or its descendant. A recipe-v7 clip may instead use the
 track-only application when complete source coverage proves it has no skins,
 the captured document independently has no mesh instances, and its named
-rest/topology basis and track targets are compatible with the base plan.
+rest/topology basis and track targets are compatible with the base plan. That
+compatibility domain contains the selected skin joints, the root, their named
+ancestry, and each actual track target with its ancestry. Unreferenced
+base-only geometry or attachment descendants are not required in the clip.
 Boundary whitespace is invalid rather than
 trimmed. The block accepts
 glTF/GLB plus the narrow normalized/baked FBX subset admitted by the existing
@@ -422,9 +425,11 @@ plan when the node is not declared for removal.
 For a clip input with no source skin and no mesh instances, v7 instead applies
 the accepted base plan's named animation-target factors (including cubic
 translation tangents) without inventing a bind rewrite. The named root and
-normalized skeleton basis must still match the skinned base. This exception
-does not apply to the base, geometry-bearing inputs, ambiguous skins, or a
-skinned input whose root governs no skin.
+selected skin-joint basis must still match the skinned base, as must every
+actual track target and the named ancestry connecting those nodes. Unreferenced
+base-only geometry descendants do not participate in that clip proof. This
+exception does not apply to the base, geometry-bearing inputs, ambiguous skins,
+or a skinned input whose root governs no skin.
 It performs no material, texture, or mesh garbage collection. Recipe/evidence
 v1 through v6 remain immutable historical contracts; v3 rejects
 `rest_bind_scale` as unknown.

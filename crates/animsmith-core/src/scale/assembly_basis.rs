@@ -544,12 +544,14 @@ pub fn assembly_scale_compatibility_basis(
 /// named base plan.
 ///
 /// The base plan remains the sole owner of rest/bind selection and proof. The
-/// clip must have the same normalized named topology and rest basis over the
-/// base plan's affected closure and its ancestors, exactly one source node for
-/// `root_node_name`, no source skins, and no mesh instances. Every animation
-/// target must remain inside that closure. Only animation values are changed;
-/// cubic-spline tangent triplets are stored in the same value array and
-/// therefore receive the same factor.
+/// clip must have the same normalized named topology and rest basis for the
+/// selected skin's joints, the root, each actual animation target, and their
+/// named ancestry. Targets must remain inside the base plan's affected closure,
+/// but unreferenced base-only descendants are not clip requirements. The clip
+/// must also have exactly one source node for `root_node_name`, no source skins,
+/// and no mesh instances. Only animation values are changed; cubic-spline
+/// tangent triplets are stored in the same value array and therefore receive
+/// the same factor.
 ///
 /// # Errors
 ///
@@ -563,7 +565,7 @@ pub fn rebase_assembly_scale_skinless_clip(
 ) -> Result<(Document, AssemblyScaleSkinlessClipBasis), AssemblyScaleCompatibilityError> {
     let AssemblyScaleSelectorIdentity::Named {
         root_node_name: base_root,
-        ..
+        skin_joint_names,
     } = &base.selector
     else {
         return Err(AssemblyScaleCompatibilityError {
@@ -613,7 +615,39 @@ pub fn rebase_assembly_scale_skinless_clip(
     let input_named_nodes = named_nodes(document).map_err(|_| AssemblyScaleCompatibilityError {
         reason: "named-topology",
     })?;
-    let mut relevant_names = base.affected_node_names.clone();
+    // A meshless clip must carry the complete selected rig, not geometry-only
+    // descendants that happen to lie in the base plan's broader rewrite
+    // closure. Actual animation targets widen that rig domain when the base
+    // plan also governs them, so animated helpers remain proved rather than
+    // being admitted by a permissive name intersection.
+    let mut relevant_names = skin_joint_names.iter().cloned().collect::<BTreeSet<_>>();
+    relevant_names.insert(base_root.clone());
+    for clip in &document.clips {
+        for track in &clip.tracks {
+            let bone =
+                document
+                    .skeleton
+                    .bones
+                    .get(track.bone)
+                    .ok_or(AssemblyScaleCompatibilityError {
+                        reason: "animation-target-bone",
+                    })?;
+            if !base
+                .animation_target_factors
+                .contains_key(&(bone.name.clone(), track.property))
+            {
+                return Err(AssemblyScaleCompatibilityError {
+                    reason: "animation-target-bone",
+                });
+            }
+            if !base.affected_node_names.contains(&bone.name) {
+                return Err(AssemblyScaleCompatibilityError {
+                    reason: "animation-target-outside-scale-domain",
+                });
+            }
+            relevant_names.insert(bone.name.clone());
+        }
+    }
     loop {
         let before = relevant_names.len();
         for node in &base.basis.named_nodes {
@@ -673,11 +707,6 @@ pub fn rebase_assembly_scale_skinless_clip(
                 .ok_or(AssemblyScaleCompatibilityError {
                     reason: "animation-target-bone",
                 })?;
-            if !relevant_names.contains(&bone.name) {
-                return Err(AssemblyScaleCompatibilityError {
-                    reason: "animation-target-outside-scale-domain",
-                });
-            }
             match (&mut track.values, track.property) {
                 (TrackValues::Vec3s(values), Property::Translation) => {
                     let factor = factor as f32;
