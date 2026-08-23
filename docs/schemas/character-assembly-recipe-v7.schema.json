@@ -89,7 +89,7 @@
           "type": "string",
           "minLength": 1,
           "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
-          "description": "Exact normalized source-node name without leading or trailing whitespace. Each input must resolve it to exactly one source node and exactly one non-empty source skin whose every joint is that node or its descendant."
+          "description": "Exact normalized source-node name without leading or trailing whitespace. The base and every skinned clip must resolve it to exactly one source node and exactly one non-empty source skin whose every joint is that node or its descendant. A track-only clip may instead have complete source coverage proving no skins while the captured document independently has no mesh instances."
         },
         "expected_factor": {
           "type": "number",

@@ -80,8 +80,9 @@ pub use assembly_basis::{
     ASSEMBLY_SCALE_BASIS_VERSION, AssemblyScaleBasis, AssemblyScaleCompatibilityBasis,
     AssemblyScaleCompatibilityError, AssemblyScaleNamedNode,
     AssemblyScaleNamedSelectorResolutionError, AssemblyScaleResolvedNamedSelector,
-    AssemblyScaleSelectorRequest, AssemblyScaleSourceNode, AssemblyScaleSourceRest,
-    AssemblyScaleTargetPath, assembly_scale_basis, assembly_scale_compatibility_basis,
+    AssemblyScaleSelectorRequest, AssemblyScaleSkinlessClipBasis, AssemblyScaleSourceNode,
+    AssemblyScaleSourceRest, AssemblyScaleTargetPath, assembly_scale_basis,
+    assembly_scale_compatibility_basis, rebase_assembly_scale_skinless_clip,
     require_assembly_scale_compatibility, require_assembly_scale_compatibility_with_selectors,
     resolve_assembly_scale_named_selector,
 };

@@ -390,11 +390,15 @@ failure remains exit 2 with empty stdout.
 
 When the optional recipe-v7 `rest_bind_scale` operation is active, evidence
 also pins the declared root name, every input's resolved root name/source-node
-index/source-skin index, the effective staged source selectors and factor, the exact digest
+index and applicable source-skin index, the effective staged source selectors and factor, the exact digest
 and versioned basis fingerprint for the base and every clip input, each
-semantic compatibility result, and the shared scale proof over the exact
-staged artifact bytes. Each input explicitly names the basis fingerprint
-contract as `urn:animsmith:character-assembly-scale-basis:1`.
+semantic compatibility result, its `rest-bind` or `skinless-clip-tracks`
+application, and the shared scale proof over the exact staged artifact bytes.
+Full rest/bind rows name
+`urn:animsmith:character-assembly-scale-basis:1`; meshless clip rows with no
+skin name
+`urn:animsmith:character-assembly-skinless-clip-scale-basis:1` and omit the
+inapplicable resolved skin index.
 `residual_comparison_counts` uses the same twelve stable
 field names as `proof.residuals`, keeping every measured maximum paired with
 the count from the shared proof API without changing immutable scale-evidence

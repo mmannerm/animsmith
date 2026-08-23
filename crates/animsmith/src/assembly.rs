@@ -19,9 +19,9 @@ use animsmith_core::model::{
 };
 use animsmith_core::scale::{
     AssemblyScaleBasis, AssemblyScaleCompatibilityBasis, AssemblyScaleNamedSelectorResolutionError,
-    AssemblyScaleSelectorRequest, ScaleOperation, ScaleRequest, assembly_scale_compatibility_basis,
-    plan_scale, require_assembly_scale_compatibility_with_selectors,
-    resolve_assembly_scale_named_selector,
+    AssemblyScaleSelectorRequest, AssemblyScaleSkinlessClipBasis, ScaleOperation, ScaleRequest,
+    assembly_scale_compatibility_basis, plan_scale, rebase_assembly_scale_skinless_clip,
+    require_assembly_scale_compatibility_with_selectors, resolve_assembly_scale_named_selector,
 };
 use animsmith_core::{Config, ToolInfo, resolve_configured_roles, sha256_hex};
 use animsmith_fbx::FbxScaleCapabilityInventory;
@@ -335,6 +335,8 @@ struct AssemblyRestBindScaleInputEvidence {
     compatible: bool,
     compatibility: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    application: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     input_format: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_projection: Option<AssemblyScaleInputProjectionEvidence>,
@@ -384,9 +386,16 @@ struct AssemblyRestBindScaleEvidence {
 struct PreparedScaleInput {
     document: Document,
     rebased_document: Document,
-    compatibility_basis: AssemblyScaleCompatibilityBasis,
+    application: PreparedScaleApplication,
     evidence: AssemblyRestBindScaleInputEvidence,
-    selector: ResolvedRestBindScaleSelector,
+}
+
+enum PreparedScaleApplication {
+    RestBind {
+        compatibility_basis: Box<AssemblyScaleCompatibilityBasis>,
+        selector: ResolvedRestBindScaleSelector,
+    },
+    SkinlessClipTracks,
 }
 
 struct AssemblyScalePreparationContext<'a> {
@@ -890,12 +899,103 @@ fn retain_surviving_mesh_instance_names(retained: &mut Vec<String>, document: &D
     retained.retain(|name| surviving.contains(name.as_str()));
 }
 
+#[allow(clippy::too_many_arguments)]
+fn prepare_skinless_clip_scale_input(
+    role: String,
+    declared: &Path,
+    sha256: String,
+    bytes: u64,
+    document: Document,
+    projection_document: &Document,
+    base_basis: &AssemblyScaleCompatibilityBasis,
+    scale: &AssemblyRestBindScaleRecipe,
+    context: &AssemblyScalePreparationContext<'_>,
+    input_format: &'static str,
+    source_projection: AssemblyScaleInputProjectionEvidence,
+) -> Result<PreparedScaleInput, crate::producer::Failure> {
+    use crate::producer::{Classify as _, Kind, Stage};
+    // Admission is a property of the captured input, not of the private FBX
+    // projection after recipe node removal. Otherwise a geometry-bearing
+    // source could become apparently meshless only because staging deleted it.
+    if !document.assets.instances.is_empty() {
+        return Err(format!(
+            "rest_bind_scale skinless clip rejected input {}: assembly scale basis mismatch (skinless-clip-has-mesh-instances)",
+            declared.display()
+        ))
+        .refusal(Stage::Proof, Kind::ProofFailed);
+    }
+    let root_node_name = scale
+        .root_node_name()
+        .ok_or_else(|| {
+            "skinless clip track rebasing requires the v7 named rest_bind_scale selector".to_owned()
+        })
+        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+    let (rebased_projection, basis) =
+        rebase_assembly_scale_skinless_clip(base_basis, projection_document, root_node_name)
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale skinless clip rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Proof, Kind::ProofFailed)?;
+    let rebased_stage =
+        crate::scale::serialize_fbx_rest_bind_stage(&rebased_projection, context.staging_parent)
+            .operator()?;
+    let rebased_document = animsmith_gltf::load_bytes(rebased_stage.path(), rebased_stage.bytes())
+        .map_err(|error| {
+            format!(
+                "cannot reload rest_bind_scale skinless clip rewrite for input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Proof, Kind::ProofFailed)?;
+    #[derive(Serialize)]
+    struct Fingerprint<'a> {
+        schema: &'static str,
+        tool: &'a ToolInfo,
+        input_sha256: &'a str,
+        basis: &'a AssemblyScaleSkinlessClipBasis,
+    }
+    let basis_schema = "urn:animsmith:character-assembly-skinless-clip-scale-basis:1";
+    let fingerprint_bytes = serde_json::to_vec(&Fingerprint {
+        schema: basis_schema,
+        tool: context.tool,
+        input_sha256: &sha256,
+        basis: &basis,
+    })
+    .map_err(|error| format!("cannot serialize assembly skinless clip scale basis: {error}"))
+    .operator()?;
+    Ok(PreparedScaleInput {
+        document,
+        rebased_document,
+        application: PreparedScaleApplication::SkinlessClipTracks,
+        evidence: AssemblyRestBindScaleInputEvidence {
+            role,
+            declared_path: declared.display().to_string(),
+            sha256,
+            bytes,
+            basis_schema,
+            basis_fingerprint: sha256_hex(&fingerprint_bytes),
+            compatible: true,
+            compatibility: "compatible",
+            application: Some("skinless-clip-tracks"),
+            input_format: Some(input_format),
+            source_projection: Some(source_projection),
+            resolved_root_node_name: Some(root_node_name.to_owned()),
+            resolved_source_skin_index: None,
+            resolved_source_root_node_index: Some(basis.source_root_node_index),
+        },
+    })
+}
+
 fn prepare_scale_input(
     role: String,
     declared: &Path,
     resolved: &Path,
     scale: &AssemblyRestBindScaleRecipe,
     context: &AssemblyScalePreparationContext<'_>,
+    skinless_clip_base: Option<&AssemblyScaleCompatibilityBasis>,
 ) -> Result<PreparedScaleInput, crate::producer::Failure> {
     use crate::producer::{Classify as _, Failure, Kind, Stage};
     let extension = resolved
@@ -960,15 +1060,6 @@ fn prepare_scale_input(
                 )
             })
             .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
-        let selector = resolve_rest_bind_scale_selector(fbx_source.document(), scale)
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale selector rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-        let operation = rest_bind_operation(&selector, scale.expected_factor());
         let scale_stage_document = fbx_scale_stage_document(
             fbx_source.document(),
             context.remove_nodes,
@@ -994,6 +1085,44 @@ fn prepare_scale_input(
                 )
             })
             .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
+        let source_projection = AssemblyScaleInputProjectionEvidence::NormalizedBakedFbx {
+            authored_curve_keys_preserved: false,
+            raw_source_spans_preserved: false,
+            staged_source: staged_source.source_facts().primary_identity().clone(),
+            capability: Box::new(fbx_source.inventory().clone()),
+        };
+        if context.recipe_version == RECIPE_SCHEMA_VERSION_V7
+            && fbx_source
+                .document()
+                .assets
+                .source_skeleton
+                .skins
+                .is_empty()
+            && let Some(base_basis) = skinless_clip_base
+        {
+            return prepare_skinless_clip_scale_input(
+                role,
+                declared,
+                sha256,
+                byte_count,
+                fbx_source.document().clone(),
+                staged_source.document(),
+                base_basis,
+                scale,
+                context,
+                "fbx",
+                source_projection,
+            );
+        }
+        let selector = resolve_rest_bind_scale_selector(fbx_source.document(), scale)
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale selector rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+        let operation = rest_bind_operation(&selector, scale.expected_factor());
         let staged_operation = crate::scale::map_fbx_staged_rest_bind_operation(
             fbx_source.document(),
             staged_source.document(),
@@ -1020,12 +1149,7 @@ fn prepare_scale_input(
             rebased_document,
             compatibility_basis,
             "fbx",
-            AssemblyScaleInputProjectionEvidence::NormalizedBakedFbx {
-                authored_curve_keys_preserved: false,
-                raw_source_spans_preserved: false,
-                staged_source: staged_source.source_facts().primary_identity().clone(),
-                capability: Box::new(fbx_source.inventory().clone()),
-            },
+            source_projection,
             selector,
         )
     } else {
@@ -1040,6 +1164,32 @@ fn prepare_scale_input(
         let primary_identity = source.source_facts().primary_identity();
         let sha256 = primary_identity.sha256().to_owned();
         let byte_count = primary_identity.bytes();
+        let input_format = if extension.eq_ignore_ascii_case("glb") {
+            "glb"
+        } else {
+            "gltf"
+        };
+        if context.recipe_version == RECIPE_SCHEMA_VERSION_V7
+            && source.document().assets.source_skeleton.skins.is_empty()
+            && let Some(base_basis) = skinless_clip_base
+        {
+            return prepare_skinless_clip_scale_input(
+                role,
+                declared,
+                sha256,
+                byte_count,
+                source.document().clone(),
+                source.document(),
+                base_basis,
+                scale,
+                context,
+                input_format,
+                AssemblyScaleInputProjectionEvidence::RawGltf {
+                    authored_curve_keys_preserved: true,
+                    raw_source_spans_preserved: true,
+                },
+            );
+        }
         let selector = resolve_rest_bind_scale_selector(source.document(), scale)
             .map_err(|error| {
                 format!(
@@ -1062,11 +1212,7 @@ fn prepare_scale_input(
             source.document().clone(),
             rebased_document,
             compatibility_basis,
-            if extension.eq_ignore_ascii_case("glb") {
-                "glb"
-            } else {
-                "gltf"
-            },
+            input_format,
             AssemblyScaleInputProjectionEvidence::RawGltf {
                 authored_curve_keys_preserved: true,
                 raw_source_spans_preserved: true,
@@ -1092,7 +1238,6 @@ fn prepare_scale_input(
     Ok(PreparedScaleInput {
         document,
         rebased_document,
-        compatibility_basis,
         evidence: AssemblyRestBindScaleInputEvidence {
             role,
             declared_path: declared.display().to_string(),
@@ -1102,6 +1247,8 @@ fn prepare_scale_input(
             basis_fingerprint: sha256_hex(&fingerprint_bytes),
             compatible: true,
             compatibility: "compatible",
+            application: (context.recipe_version == RECIPE_SCHEMA_VERSION_V7)
+                .then_some("rest-bind"),
             input_format: (context.recipe_version >= RECIPE_SCHEMA_VERSION_V6)
                 .then_some(input_format),
             source_projection: (context.recipe_version >= RECIPE_SCHEMA_VERSION_V6)
@@ -1113,7 +1260,10 @@ fn prepare_scale_input(
             resolved_source_root_node_index: (context.recipe_version == RECIPE_SCHEMA_VERSION_V7)
                 .then_some(selector.source_root_node_index),
         },
-        selector,
+        application: PreparedScaleApplication::RestBind {
+            compatibility_basis: Box::new(compatibility_basis),
+            selector,
+        },
     })
 }
 
@@ -1364,8 +1514,18 @@ fn assemble_inner(
             &base_path,
             scale,
             &scale_context,
+            None,
         )?;
-        let base_basis = prepared.compatibility_basis.clone();
+        let base_basis = match &prepared.application {
+            PreparedScaleApplication::RestBind {
+                compatibility_basis,
+                ..
+            } => compatibility_basis.as_ref().clone(),
+            PreparedScaleApplication::SkinlessClipTracks => {
+                return Err("base rest_bind_scale input did not produce a skinned basis".to_owned())
+                    .refusal(Stage::Proof, Kind::ProofFailed);
+            }
+        };
         rest_bind_input_evidence.push(prepared.evidence.clone());
         prepared_scale_inputs.insert(base_path.clone(), prepared);
         for clip_recipe in &recipe.clips {
@@ -1383,15 +1543,22 @@ fn assemble_inner(
                 &resolved,
                 scale,
                 &scale_context,
+                Some(&base_basis),
             )?;
-            require_input_scale_compatibility(&base_basis, &prepared.compatibility_basis)
-                .map_err(|error| {
-                    format!(
-                        "rest_bind_scale input {} is incompatible with base: {error}",
-                        clip_recipe.input.display()
-                    )
-                })
-                .refusal(Stage::Proof, Kind::ProofFailed)?;
+            if let PreparedScaleApplication::RestBind {
+                compatibility_basis,
+                ..
+            } = &prepared.application
+            {
+                require_input_scale_compatibility(&base_basis, compatibility_basis)
+                    .map_err(|error| {
+                        format!(
+                            "rest_bind_scale input {} is incompatible with base: {error}",
+                            clip_recipe.input.display()
+                        )
+                    })
+                    .refusal(Stage::Proof, Kind::ProofFailed)?;
+            }
             rest_bind_input_evidence.push(prepared.evidence.clone());
             prepared_scale_inputs.insert(resolved, prepared);
         }
@@ -1543,8 +1710,20 @@ fn assemble_inner(
     let mut clip_evidence = Vec::with_capacity(recipe.clips.len());
     let mut output_clips = Vec::with_capacity(recipe.clips.len());
     let mut expected_rebased_clips = Vec::with_capacity(recipe.clips.len());
+    let mut skinless_rebased_clip_names = BTreeSet::new();
     for clip_recipe in &recipe.clips {
         let resolved = resolver.resolve(&clip_recipe.input).operator()?;
+        if prepared_scale_inputs
+            .get(&resolved)
+            .is_some_and(|prepared| {
+                matches!(
+                    &prepared.application,
+                    PreparedScaleApplication::SkinlessClipTracks
+                )
+            })
+        {
+            skinless_rebased_clip_names.insert(clip_recipe.name.clone());
+        }
         if !loaded.contains_key(&resolved) {
             if let Some(prepared) = prepared_scale_inputs.get(&resolved) {
                 inputs.push(AssemblyInputEvidence {
@@ -1739,11 +1918,19 @@ fn assemble_inner(
             .ok_or_else(|| "missing captured base scale input".to_owned())
             .refusal(Stage::Proof, Kind::ProofFailed)?
             .document;
-        let base_selector = &prepared_scale_inputs
+        let base_application = &prepared_scale_inputs
             .get(&base_path)
             .ok_or_else(|| "missing captured base scale input".to_owned())
             .refusal(Stage::Proof, Kind::ProofFailed)?
-            .selector;
+            .application;
+        let PreparedScaleApplication::RestBind {
+            selector: base_selector,
+            ..
+        } = base_application
+        else {
+            return Err("captured base scale input has no rest/bind selector".to_owned())
+                .refusal(Stage::Proof, Kind::ProofFailed);
+        };
         let staged_operation = map_staged_rest_bind_operation(
             original_base,
             staged_source.document(),
@@ -1794,8 +1981,12 @@ fn assemble_inner(
         let reloaded = animsmith_gltf::load_bytes(&artifact_temp, &read_back_bytes)
             .map_err(|error| format!("cannot reload proved assembly artifact: {error}"))
             .refusal(Stage::Proof, Kind::ProofFailed)?;
-        require_rebased_clips_match(&expected_rebased_clips, &reloaded.clips)
-            .refusal(Stage::Proof, Kind::ProofFailed)?;
+        require_rebased_clips_match(
+            &expected_rebased_clips,
+            &reloaded.clips,
+            &skinless_rebased_clip_names,
+        )
+        .refusal(Stage::Proof, Kind::ProofFailed)?;
         rest_bind_scale_evidence = Some(AssemblyRestBindScaleEvidence {
             source_skin_index: scale.indexed_selector().map(|selector| selector.0),
             source_root_node_index: scale.indexed_selector().map(|selector| selector.1),
@@ -2239,7 +2430,11 @@ fn map_staged_rest_bind_operation(
     })
 }
 
-fn require_rebased_clips_match(expected: &[Clip], actual: &[Clip]) -> Result<(), String> {
+fn require_rebased_clips_match(
+    expected: &[Clip],
+    actual: &[Clip],
+    tolerant_clip_names: &BTreeSet<String>,
+) -> Result<(), String> {
     if expected.len() != actual.len() {
         return Err(format!(
             "proved artifact has {} clips but pre-remap rebase expected {}",
@@ -2248,6 +2443,7 @@ fn require_rebased_clips_match(expected: &[Clip], actual: &[Clip]) -> Result<(),
         ));
     }
     for (clip_index, (expected_clip, actual_clip)) in expected.iter().zip(actual).enumerate() {
+        let tolerant = tolerant_clip_names.contains(&expected_clip.name);
         if expected_clip.name != actual_clip.name
             || expected_clip.tracks.len() != actual_clip.tracks.len()
         {
@@ -2291,9 +2487,24 @@ fn require_rebased_clips_match(expected: &[Clip], actual: &[Clip]) -> Result<(),
                             .zip(actual_value.to_array())
                             .enumerate()
                         {
-                            if expected_component.to_bits() != actual_component.to_bits() {
+                            let tolerance =
+                                animsmith_core::scale::ScaleTolerancePolicy::APPENDIX_D_V6;
+                            // Only an independently serialized skinless clip
+                            // crosses this numeric oracle; full rest/bind rows
+                            // remain bit-exact above this tolerant branch.
+                            let close = expected_component.is_finite()
+                                && actual_component.is_finite()
+                                && (f64::from(expected_component) - f64::from(actual_component))
+                                    .abs()
+                                    <= tolerance.scalar_tolerance(
+                                        f64::from(expected_component),
+                                        f64::from(actual_component),
+                                    );
+                            if expected_component.to_bits() != actual_component.to_bits()
+                                && !(tolerant && close)
+                            {
                                 return Err(format!(
-                                    "proved artifact clip {clip_index} track {track_index} stored value {value_index} component {component} differs from its pre-remap rebase"
+                                    "proved artifact clip {clip_index} track {track_index} stored value {value_index} component {component} differs from its pre-remap rebase: expected {expected_component:?}, observed {actual_component:?}"
                                 ));
                             }
                         }
@@ -2695,25 +2906,122 @@ mod tests {
         let clip = Clip {
             name: "walk".into(),
             duration_s: 1.0,
-            tracks: vec![Track {
-                bone: 0,
-                property: Property::Translation,
-                interpolation: Interpolation::CubicSpline,
-                times: vec![0.0, 1.0],
-                values: TrackValues::Vec3s(vec![animsmith_core::glam::Vec3::ZERO; 6]),
-            }],
+            tracks: vec![
+                Track {
+                    bone: 0,
+                    property: Property::Translation,
+                    interpolation: Interpolation::CubicSpline,
+                    times: vec![0.0, 1.0],
+                    values: TrackValues::Vec3s(vec![animsmith_core::glam::Vec3::ZERO; 6]),
+                },
+                Track {
+                    bone: 0,
+                    property: Property::Rotation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 1.0],
+                    values: TrackValues::Quats(vec![animsmith_core::glam::Quat::IDENTITY; 2]),
+                },
+            ],
         };
-        require_rebased_clips_match(std::slice::from_ref(&clip), std::slice::from_ref(&clip))
-            .unwrap();
-        let mut changed = clip.clone();
-        let TrackValues::Vec3s(values) = &mut changed.tracks[0].values else {
-            panic!("translation fixture")
-        };
-        values[5].x = f32::from_bits(1);
-        assert!(
-            require_rebased_clips_match(std::slice::from_ref(&clip), &[changed])
+        require_rebased_clips_match(
+            std::slice::from_ref(&clip),
+            std::slice::from_ref(&clip),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        for property in [Property::Translation, Property::Scale] {
+            for component in 0..3 {
+                let mut expected_clip = clip.clone();
+                expected_clip.tracks[0].property = property;
+                let mut changed = expected_clip.clone();
+                let TrackValues::Vec3s(values) = &mut changed.tracks[0].values else {
+                    panic!("vector fixture")
+                };
+                values[5].as_mut()[component] = f32::from_bits(1);
+                assert!(
+                    require_rebased_clips_match(
+                        std::slice::from_ref(&expected_clip),
+                        &[changed],
+                        &BTreeSet::new(),
+                    )
+                    .unwrap_err()
+                    .contains(&format!("stored value 5 component {component} differs"))
+                );
+            }
+        }
+        for component in 0..4 {
+            let mut changed = clip.clone();
+            let TrackValues::Quats(values) = &mut changed.tracks[1].values else {
+                panic!("rotation fixture")
+            };
+            let mut components = values[1].to_array();
+            components[component] = if component == 3 {
+                1.0f32.next_up()
+            } else {
+                f32::from_bits(1)
+            };
+            values[1] = animsmith_core::glam::Quat::from_array(components);
+            assert!(
+                require_rebased_clips_match(
+                    std::slice::from_ref(&clip),
+                    &[changed],
+                    &BTreeSet::new(),
+                )
                 .unwrap_err()
-                .contains("stored value 5 component 0 differs")
+                .contains("rotation values differ")
+            );
+        }
+        let mut skinless_names = BTreeSet::new();
+        skinless_names.insert("walk".to_owned());
+        let tolerance = animsmith_core::scale::ScaleTolerancePolicy::APPENDIX_D_V6;
+        for expected in [0.0f32, 1_000.0] {
+            let closes = |observed: f32| {
+                (f64::from(observed) - f64::from(expected)).abs()
+                    <= tolerance.scalar_absolute
+                        + tolerance.scalar_relative
+                            * f64::from(expected).abs().max(f64::from(observed).abs())
+            };
+            let limit =
+                tolerance.scalar_absolute + tolerance.scalar_relative * f64::from(expected).abs();
+            let mut accepted = expected + limit as f32;
+            while !closes(accepted) {
+                accepted = accepted.next_down();
+            }
+            let mut refused = accepted.next_up();
+            while closes(refused) {
+                refused = refused.next_up();
+            }
+            for (observed, should_pass) in [(accepted, true), (refused, false)] {
+                let mut rounded = clip.clone();
+                let TrackValues::Vec3s(values) = &mut rounded.tracks[0].values else {
+                    panic!("translation fixture")
+                };
+                values[5].x = expected;
+                let mut actual = clip.clone();
+                let TrackValues::Vec3s(values) = &mut actual.tracks[0].values else {
+                    panic!("translation fixture")
+                };
+                values[5].x = observed;
+                assert_eq!(
+                    require_rebased_clips_match(&[rounded], &[actual], &skinless_names).is_ok(),
+                    should_pass,
+                    "Appendix-D boundary expected={expected} observed={observed}"
+                );
+            }
+        }
+        let mut rounded_rotation = clip.clone();
+        let TrackValues::Quats(values) = &mut rounded_rotation.tracks[1].values else {
+            panic!("rotation fixture")
+        };
+        values[1].x = f32::from_bits(1);
+        assert!(
+            require_rebased_clips_match(
+                std::slice::from_ref(&clip),
+                &[rounded_rotation],
+                &skinless_names,
+            )
+            .unwrap_err()
+            .contains("rotation values differ")
         );
         require_assembly_read_back_match("proved", "proved").unwrap();
         let mismatch = require_assembly_read_back_match("mutated", "proved").unwrap_err();
