@@ -365,10 +365,14 @@ as a rollback-safe publication pair. The command owns generic asset transforms;
 source extraction, project policy, and publication remain consumer concerns.
 The current recipe/evidence pair is v7. Recipe v7 may include an optional
 `[rest_bind_scale]` block whose exact `root_node_name` and expected factor are
-both required. Every input must resolve that name to exactly one source node
-and exactly one non-empty source skin whose every joint is that node or its
-descendant. Boundary whitespace is invalid rather than trimmed. The block
-accepts
+both required. The base and every skinned clip input must resolve that name to
+exactly one source node and exactly one non-empty source skin whose every joint
+is that node or its descendant. A recipe-v7 clip may instead use the
+track-only application when complete source coverage proves it has no skins,
+the captured document independently has no mesh instances, and its named
+rest/topology basis and track targets are compatible with the base plan.
+Boundary whitespace is invalid rather than
+trimmed. The block accepts
 glTF/GLB plus the narrow normalized/baked FBX subset admitted by the existing
 rest-bind capability boundary. That boundary may admit user-defined FBX
 properties and bounded external texture/video declarations after same-load

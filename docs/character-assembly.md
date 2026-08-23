@@ -142,12 +142,15 @@ expected_factor = 0.01
 ```
 
 The block has no defaults: the exact normalized root-node name and finite
-positive expected factor are both required. In every captured base and clip,
-the name must resolve to exactly one source node and exactly one non-empty
-source skin whose every joint is that node or its descendant. Missing or
-repeated names and zero or multiple applicable skins fail closed. Leading or
-trailing whitespace is invalid rather than silently trimmed; internal
-whitespace remains exact. No
+positive expected factor are both required. In the captured base, and in every
+skinned clip input, the name must resolve to exactly one source node and
+exactly one non-empty source skin whose every joint is that node or its
+descendant. Recipe v7 also admits the narrower track-only clip case described
+below when complete source coverage proves that the source has no skins and
+the captured document independently has no mesh instances. Missing or repeated
+names and zero or multiple applicable skins fail closed. Leading or trailing
+whitespace is invalid rather than
+silently trimmed; internal whitespace remains exact. No
 source-array index is reused across files. Recipe v7 accepts glTF/GLB and the
 narrow FBX subset admitted by the existing normalized/baked rest-bind
 capability boundary. That boundary
@@ -364,8 +367,10 @@ records let a consumer verify that assembly validated and transformed every
 participating input before remapping and that proof consumed the exact bytes
 subsequently published.
 
-V7 admits the track-only application only for a clip input with no source
-skins and no mesh instances. Its exact named root and normalized named
+V7 admits the track-only application only when complete source-skeleton
+coverage proves that a clip input has no source skins and the captured
+document independently has no mesh instances.
+Its exact named root and normalized named
 topology, rest basis, and orientations over the base plan's affected closure
 must match the accepted skinned base basis. Every track must target that
 closure. The

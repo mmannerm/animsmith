@@ -4,7 +4,10 @@ use super::{
     ScaleError, ScaleOperation, ScalePlan, ScaleProjectedRole, ScaleSourceNodeKind,
     ScaleTolerancePolicy,
 };
-use crate::model::{Document, Property, SourceNodeLocalRest, TrackValues};
+use crate::model::{
+    Document, Property, SourceNodeLocalRest, SourceSkeletonCoverage, TrackValues,
+    validate_document_shape,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -572,6 +575,14 @@ pub fn rebase_assembly_scale_skinless_clip(
             reason: "source-name-selector",
         });
     }
+    validate_document_shape(document).map_err(|_| AssemblyScaleCompatibilityError {
+        reason: "skinless-clip-invalid-document",
+    })?;
+    if document.assets.source_skeleton.coverage != SourceSkeletonCoverage::Complete {
+        return Err(AssemblyScaleCompatibilityError {
+            reason: "skinless-clip-source-coverage",
+        });
+    }
     if !document.assets.source_skeleton.skins.is_empty() {
         return Err(AssemblyScaleCompatibilityError {
             reason: "skinless-clip-has-source-skins",
@@ -695,6 +706,9 @@ pub fn rebase_assembly_scale_skinless_clip(
             });
         }
     }
+    validate_document_shape(&rebased).map_err(|_| AssemblyScaleCompatibilityError {
+        reason: "skinless-clip-rebase-invalid-document",
+    })?;
     Ok((
         rebased,
         AssemblyScaleSkinlessClipBasis {

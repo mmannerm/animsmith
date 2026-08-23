@@ -3,7 +3,7 @@
 #![cfg(feature = "fbx")]
 
 use animsmith_core::glam::{Mat4, Quat, Vec3};
-use animsmith_core::model::{Document, Interpolation, Property, TrackValues};
+use animsmith_core::model::{Document, Interpolation, Property, Track, TrackValues};
 use animsmith_core::scale::{
     AssemblyScaleBasis, ScaleOperation, ScaleRequest, assembly_scale_basis, plan_scale,
 };
@@ -407,6 +407,18 @@ fn skinless_geometry_animation_fbx() -> String {
         .replacen("Connections: {", "Connections: {\n\tC: \"OO\",2001,1002", 1)
 }
 
+fn two_centimetre_unit_fbx(source: &str) -> String {
+    source
+        .replace(
+            "P: \"UnitScaleFactor\", \"double\", \"Number\", \"\",1",
+            "P: \"UnitScaleFactor\", \"double\", \"Number\", \"\",2",
+        )
+        .replace(
+            "P: \"OriginalUnitScaleFactor\", \"double\", \"Number\", \"\",1",
+            "P: \"OriginalUnitScaleFactor\", \"double\", \"Number\", \"\",2",
+        )
+}
+
 fn write_skinless_cubic_clip(path: &Path) {
     let mut document = animsmith_fbx::load_bytes(
         Path::new("source.fbx"),
@@ -431,8 +443,62 @@ fn write_skinless_cubic_clip(path: &Path) {
         Vec3::new(100.0, 0.0, 0.0),
         Vec3::new(40.0, 0.0, 0.0),
     ]);
+    document.clips[0].tracks.truncate(1);
+    let root = document
+        .skeleton
+        .bones
+        .iter()
+        .position(|bone| bone.name == "root")
+        .expect("fixture has root");
+    let limb = document
+        .skeleton
+        .bones
+        .iter()
+        .position(|bone| bone.name == "tri")
+        .expect("fixture has animated limb");
+    document.clips[0].tracks.extend([
+        Track {
+            bone: root,
+            property: Property::Scale,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![Vec3::splat(2.0), Vec3::splat(3.0)]),
+        },
+        Track {
+            bone: limb,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_z(0.5)]),
+        },
+    ]);
     document.clips[0].duration_s = 1.0;
     animsmith_gltf::write::write(&document, path).expect("writes skinless cubic clip");
+}
+
+fn write_skinless_outside_domain_clip(base_path: &Path, clip_path: &Path) {
+    let mut document = animsmith_gltf::load(base_path).expect("loads unaffected-domain fixture");
+    document.assets.instances.clear();
+    document.assets.meshes.clear();
+    document.assets.source_skeleton.skins.clear();
+    for bone in &mut document.skeleton.bones {
+        bone.inverse_bind = None;
+    }
+    let outside = document
+        .skeleton
+        .bones
+        .iter()
+        .position(|bone| bone.name == "joint2")
+        .expect("fixture has an unaffected sibling root");
+    document.clips[0].tracks = vec![Track {
+        bone: outside,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X]),
+    }];
+    animsmith_gltf::write::write(&document, clip_path)
+        .expect("writes a skinless out-of-domain clip");
 }
 
 fn unskinned_prop_fbx() -> String {
@@ -1570,6 +1636,7 @@ fn v7_resolves_each_fbx_input_by_name_and_records_deterministic_selectors() {
     assert!(scale.get("source_skin_index").is_none());
     assert!(scale.get("source_root_node_index").is_none());
     for input in scale["inputs"].as_array().unwrap() {
+        assert_eq!(input["application"], "rest-bind");
         assert_eq!(input["resolved_root_node_name"], "root");
         assert_eq!(input["resolved_source_skin_index"], 0);
         assert_eq!(input["resolved_source_root_node_index"], 1);
@@ -1671,6 +1738,42 @@ fn v7_rebases_a_meshless_skinless_fbx_clip_from_the_skinned_base_plan() {
 }
 
 #[test]
+fn v7_derives_skinless_translation_factors_from_the_selected_base_plan() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.fbx"),
+        two_centimetre_unit_fbx(&rigged_limb_triangle_fbx()),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("inputs/walk.fbx"),
+        two_centimetre_unit_fbx(&skinless_animation_fbx()),
+    )
+    .unwrap();
+    let recipe =
+        fbx_recipe_v7("walk.fbx").replace("expected_factor = 0.01", "expected_factor = 0.02");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    let translation = assembled.clips[0]
+        .tracks
+        .iter()
+        .find(|track| track.property == Property::Translation)
+        .expect("translation track survives");
+    assert_eq!(
+        translation.key_vec3(translation.key_count() - 1),
+        Some(Vec3::new(2.0, 0.0, 0.0))
+    );
+}
+
+#[test]
 fn v7_rebases_every_cubic_translation_value_and_tangent_in_a_skinless_clip() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
@@ -1690,7 +1793,11 @@ fn v7_rebases_every_cubic_translation_value_and_tangent_in_a_skinless_clip() {
         String::from_utf8_lossy(&output.stderr)
     );
     let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
-    let track = &assembled.clips[0].tracks[0];
+    let track = assembled.clips[0]
+        .tracks
+        .iter()
+        .find(|track| track.property == Property::Translation)
+        .expect("translation track survives");
     assert_eq!(track.interpolation, Interpolation::CubicSpline);
     let TrackValues::Vec3s(values) = &track.values else {
         panic!("translation track must retain Vec3 storage")
@@ -1705,6 +1812,24 @@ fn v7_rebases_every_cubic_translation_value_and_tangent_in_a_skinless_clip() {
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(0.4, 0.0, 0.0),
         ]
+    );
+    let scale = assembled.clips[0]
+        .tracks
+        .iter()
+        .find(|track| track.property == Property::Scale)
+        .expect("scale track survives");
+    assert_eq!(scale.key_vec3(0), Some(Vec3::splat(200.0)));
+    assert_eq!(scale.key_vec3(1), Some(Vec3::splat(300.0)));
+    let rotation = assembled.clips[0]
+        .tracks
+        .iter()
+        .find(|track| track.property == Property::Rotation)
+        .expect("rotation track survives");
+    assert_eq!(rotation.key_quat(0), Some(Quat::IDENTITY));
+    assert!(
+        rotation
+            .key_quat(1)
+            .is_some_and(|value| value.dot(Quat::from_rotation_z(0.5)).abs() > 1.0 - 1.0e-6)
     );
 }
 
@@ -1722,7 +1847,9 @@ fn v7_refuses_skinless_clip_geometry_without_publishing() {
     assert!(loaded.assets.source_skeleton.skins.is_empty());
     assert_eq!(loaded.assets.instances.len(), 1);
     std::fs::write(dir.path().join("inputs/walk.fbx"), clip).unwrap();
-    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+    let recipe =
+        fbx_recipe_v7("walk.fbx").replace("fps = 30.0", "fps = 30.0\nremove_nodes = [\"tri\"]");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
     let prior_artifact = b"prior artifact";
     let prior_evidence = b"prior evidence";
     std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
@@ -1739,6 +1866,99 @@ fn v7_refuses_skinless_clip_geometry_without_publishing() {
         std::fs::read(dir.path().join("character.json")).unwrap(),
         prior_evidence
     );
+}
+
+#[test]
+fn v7_refuses_skinless_tracks_outside_the_base_scale_domain_atomically() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let base_path = dir.path().join("inputs/base.glb");
+    std::fs::write(&base_path, unaffected_bind_scale_rig_glb()).unwrap();
+    write_skinless_outside_domain_clip(&base_path, &dir.path().join("inputs/walk.glb"));
+    let recipe = fbx_recipe_v7("walk.glb")
+        .replace("base_input = \"base.fbx\"", "base_input = \"base.glb\"")
+        .replace("take = \"take\"", "take = \"clip\"");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(refusal_detail(&output).contains("animation-target-outside-scale-domain"));
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[test]
+fn v7_refuses_skinless_root_and_basis_ambiguity_atomically() {
+    for (ordinal, mutation, expected) in [
+        (0, "missing-root", "source-root-name-not-unique"),
+        (1, "ambiguous-root", "source-root-name-not-unique"),
+        (2, "topology", "named-topology"),
+        (3, "rest", "named-rest-basis"),
+        (4, "orientation", "named-orientation"),
+    ] {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        std::fs::create_dir(dir.path().join("inputs")).unwrap();
+        std::fs::write(
+            dir.path().join("inputs/base.fbx"),
+            rigged_limb_triangle_fbx(),
+        )
+        .unwrap();
+        let mut clip =
+            animsmith_fbx::load_bytes(Path::new("walk.fbx"), skinless_animation_fbx().as_bytes())
+                .expect("skinless fixture loads");
+        let root = clip
+            .skeleton
+            .bones
+            .iter()
+            .position(|bone| bone.name == "root")
+            .unwrap();
+        let limb = clip
+            .skeleton
+            .bones
+            .iter()
+            .position(|bone| bone.name == "tri")
+            .unwrap();
+        match mutation {
+            "missing-root" => clip.skeleton.bones[root].name = "other-root".into(),
+            "ambiguous-root" => clip.skeleton.bones[limb].name = "root".into(),
+            "topology" => clip.skeleton.bones[limb].parent = None,
+            "rest" => clip.skeleton.bones[limb].rest.translation.x += 1.0,
+            "orientation" => clip.skeleton.bones[limb].rest.rotation = Quat::from_rotation_z(0.5),
+            _ => unreachable!(),
+        }
+        animsmith_gltf::write::write(&clip, &dir.path().join("inputs/walk.glb")).unwrap();
+        std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.glb")).unwrap();
+        let prior_artifact = b"prior artifact";
+        let prior_evidence = b"prior evidence";
+        std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+        std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+        let output = run(dir.path());
+        assert_eq!(output.status.code(), Some(1), "case {ordinal}");
+        assert!(
+            refusal_detail(&output).contains(expected),
+            "case {ordinal}: {}",
+            refusal_detail(&output)
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            prior_artifact
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+            prior_evidence
+        );
+    }
 }
 
 #[test]

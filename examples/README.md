@@ -754,9 +754,12 @@ extraction and project publication stay outside animsmith.
 The example uses current recipe v7 without its optional rest/bind operation.
 For glTF/GLB or inventory-complete normalized/baked FBX assembly, add
 `[rest_bind_scale]` with the required exact `root_node_name` and
-`expected_factor` fields; every base and clip must resolve that name to one
-source node and exactly one non-empty skin whose every joint is that node or a
-descendant, then pass basis compatibility before remapping.
+`expected_factor` fields. The base and every skinned clip must resolve that
+name to one source node and exactly one non-empty skin whose every joint is
+that node or a descendant. Recipe v7 also accepts a compatible track-only clip
+when complete source coverage proves it has no skins and the captured document
+independently has no mesh instances. Every input passes basis compatibility
+before remapping.
 
 ```console
 $ animsmith assemble examples/character-assembly.toml \

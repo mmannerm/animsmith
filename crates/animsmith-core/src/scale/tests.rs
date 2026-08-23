@@ -394,6 +394,158 @@ fn assembly_basis_fingerprints_target_factors_and_rejects_orientation_or_helper_
 }
 
 #[test]
+fn skinless_clip_rebase_uses_the_base_plan_without_materializing_bind_state() {
+    let nodes = vec![
+        RigNode {
+            parent: None,
+            source_node_index: 0,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        },
+        rig(Some(0), 1, Vec3::new(0.0, 100.0, 0.0)),
+        rig(None, 2, Vec3::ZERO),
+    ];
+    let base = rig_document(&nodes, &[1], 0, Mat4::IDENTITY);
+    let plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 0,
+            expected_factor: 0.01,
+        },
+        document: &base,
+        capability: &complete_capability(),
+    })
+    .unwrap();
+    assert_eq!(plan.affected_nodes(), &[0, 1]);
+    let base_basis = assembly_scale_compatibility_basis(
+        &base,
+        &plan,
+        AssemblyScaleSelectorRequest::Named {
+            root_node_name: "bone0",
+        },
+    )
+    .unwrap();
+
+    let mut clip = base.clone();
+    clip.assets.instances.clear();
+    clip.assets.meshes.clear();
+    clip.assets.source_skeleton.skins.clear();
+    for bone in &mut clip.skeleton.bones {
+        bone.inverse_bind = None;
+    }
+    clip.clips = vec![Clip {
+        name: "clip".into(),
+        duration_s: 1.0,
+        tracks: vec![
+            Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::CubicSpline,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::splat(10.0); 6]),
+            },
+            Track {
+                bone: 0,
+                property: Property::Scale,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::splat(2.0), Vec3::splat(3.0)]),
+            },
+            Track {
+                bone: 1,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_z(0.5)]),
+            },
+        ],
+    }];
+    let source_clip = clip.clips[0].clone();
+    let (rebased, basis) =
+        rebase_assembly_scale_skinless_clip(&base_basis, &clip, "bone0").unwrap();
+
+    assert!(rebased.assets.source_skeleton.skins.is_empty());
+    assert!(rebased.assets.instances.is_empty());
+    assert!(
+        rebased
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.inverse_bind.is_none())
+    );
+    assert_eq!(clip.clips[0].tracks[0].key_vec3(0), Some(Vec3::splat(10.0)));
+    let TrackValues::Vec3s(cubic_values) = &rebased.clips[0].tracks[0].values else {
+        panic!("cubic translation retains vector storage")
+    };
+    assert_eq!(cubic_values, &vec![Vec3::splat(10.0 * 0.01f32); 6]);
+    assert_eq!(
+        rebased.clips[0].tracks[1].key_vec3(0),
+        Some(Vec3::splat(200.0))
+    );
+    assert_eq!(
+        rebased.clips[0].tracks[2].key_quat(1),
+        source_clip.tracks[2].key_quat(1)
+    );
+    assert_eq!(
+        basis
+            .target_paths
+            .iter()
+            .map(|path| (path.property, f64::from_bits(path.factor_bits)))
+            .collect::<Vec<_>>(),
+        vec![("translation", 0.01), ("scale", 100.0), ("rotation", 1.0)]
+    );
+
+    let mut with_source_skin = clip.clone();
+    with_source_skin.assets.source_skeleton.skins = base.assets.source_skeleton.skins.clone();
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &with_source_skin, "bone0")
+            .unwrap_err()
+            .reason,
+        "skinless-clip-has-source-skins"
+    );
+
+    let mut incomplete_source = clip.clone();
+    incomplete_source.assets.source_skeleton.coverage = SourceSkeletonCoverage::Unavailable;
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &incomplete_source, "bone0")
+            .unwrap_err()
+            .reason,
+        "skinless-clip-source-coverage"
+    );
+
+    let mut malformed_track = clip.clone();
+    malformed_track.clips[0].tracks[0].times.pop();
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &malformed_track, "bone0")
+            .unwrap_err()
+            .reason,
+        "skinless-clip-invalid-document"
+    );
+
+    let mut overflowing_scale = clip.clone();
+    let TrackValues::Vec3s(values) = &mut overflowing_scale.clips[0].tracks[1].values else {
+        panic!("scale fixture")
+    };
+    values[0] = Vec3::splat(f32::MAX);
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &overflowing_scale, "bone0")
+            .unwrap_err()
+            .reason,
+        "skinless-clip-rebase-invalid-document"
+    );
+
+    let mut outside = clip.clone();
+    outside.clips[0].tracks[0].bone = 2;
+    assert_eq!(
+        rebase_assembly_scale_skinless_clip(&base_basis, &outside, "bone0")
+            .unwrap_err()
+            .reason,
+        "animation-target-outside-scale-domain"
+    );
+}
+
+#[test]
 fn named_assembly_compatibility_rejects_a_different_resolved_skin_joint_identity() {
     let nodes = vec![
         RigNode {
