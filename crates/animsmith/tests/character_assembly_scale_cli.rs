@@ -1954,6 +1954,15 @@ fn v7_accepts_fully_keyed_skinless_clip_with_take_pose_rest() {
         .iter()
         .position(|bone| bone.name == "tri")
         .expect("assembled fixture retains the animated limb");
+    assert_eq!(
+        assembled.skeleton.bones[limb].rest,
+        Transform {
+            translation: base_limb.rest.translation * 0.01,
+            rotation: base_limb.rest.rotation,
+            scale: base_limb.rest.scale,
+        },
+        "the clip take-pose rest must not replace the proved base rest"
+    );
     let tracks = assembled.clips[0]
         .tracks
         .iter()

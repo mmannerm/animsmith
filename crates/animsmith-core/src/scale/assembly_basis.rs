@@ -624,9 +624,9 @@ pub fn rebase_assembly_scale_skinless_clip(
     // being admitted by a permissive name intersection.
     let mut relevant_names = skin_joint_names.iter().cloned().collect::<BTreeSet<_>>();
     relevant_names.insert(base_root.clone());
-    let mut universally_animated_properties = None::<BTreeSet<(String, Property)>>;
+    let mut universally_animated_properties = None::<BTreeMap<String, BTreeSet<Property>>>;
     for clip in &document.clips {
-        let mut clip_properties = BTreeSet::new();
+        let mut clip_properties = BTreeMap::<String, BTreeSet<Property>>::new();
         for track in &clip.tracks {
             let bone =
                 document
@@ -650,10 +650,19 @@ pub fn rebase_assembly_scale_skinless_clip(
                 });
             }
             relevant_names.insert(bone.name.clone());
-            clip_properties.insert((bone.name.clone(), track.property));
+            clip_properties
+                .entry(bone.name.clone())
+                .or_default()
+                .insert(track.property);
         }
         if let Some(properties) = &mut universally_animated_properties {
-            properties.retain(|property| clip_properties.contains(property));
+            properties.retain(|name, properties| {
+                let Some(clip_properties) = clip_properties.get(name) else {
+                    return false;
+                };
+                properties.retain(|property| clip_properties.contains(property));
+                !properties.is_empty()
+            });
         } else {
             universally_animated_properties = Some(clip_properties);
         }
@@ -692,7 +701,7 @@ pub fn rebase_assembly_scale_skinless_clip(
     if !same_named_rest(
         &base_named_nodes,
         &input_named_nodes,
-        Some(&universally_animated_properties),
+        &universally_animated_properties,
         &tolerance,
     ) {
         return Err(AssemblyScaleCompatibilityError {
@@ -702,7 +711,7 @@ pub fn rebase_assembly_scale_skinless_clip(
     if !same_named_orientations(
         &base_named_nodes,
         &input_named_nodes,
-        Some(&universally_animated_properties),
+        &universally_animated_properties,
         &tolerance,
     ) {
         return Err(AssemblyScaleCompatibilityError {
@@ -820,6 +829,7 @@ fn require_assembly_scale_compatibility_inner(
     input_selector: &AssemblyScaleSelectorIdentity,
 ) -> Result<(), AssemblyScaleCompatibilityError> {
     let tolerance = ScaleTolerancePolicy::APPENDIX_D_V6;
+    let no_rest_waivers = BTreeMap::new();
     let named_selectors = match (base_selector, input_selector) {
         (AssemblyScaleSelectorIdentity::Indexed, AssemblyScaleSelectorIdentity::Indexed) => None,
         (
@@ -860,9 +870,19 @@ fn require_assembly_scale_compatibility_inner(
         Some("expected-factor")
     } else if !same_named_topology(&base.named_nodes, &input.named_nodes) {
         Some("named-topology")
-    } else if !same_named_rest(&base.named_nodes, &input.named_nodes, None, &tolerance) {
+    } else if !same_named_rest(
+        &base.named_nodes,
+        &input.named_nodes,
+        &no_rest_waivers,
+        &tolerance,
+    ) {
         Some("named-rest-basis")
-    } else if !same_named_orientations(&base.named_nodes, &input.named_nodes, None, &tolerance) {
+    } else if !same_named_orientations(
+        &base.named_nodes,
+        &input.named_nodes,
+        &no_rest_waivers,
+        &tolerance,
+    ) {
         Some("named-orientation")
     } else if (named_selectors.is_some()
         && !same_named_source_layout(&base.source_nodes, &input.source_nodes))
@@ -895,7 +915,7 @@ fn same_named_topology(base: &[AssemblyScaleNamedNode], input: &[AssemblyScaleNa
 fn same_named_rest(
     base: &[AssemblyScaleNamedNode],
     input: &[AssemblyScaleNamedNode],
-    universally_animated_properties: Option<&BTreeSet<(String, Property)>>,
+    universally_animated_properties: &BTreeMap<String, BTreeSet<Property>>,
     tolerance: &ScaleTolerancePolicy,
 ) -> bool {
     base.iter().zip(input).all(|(base, input)| {
@@ -917,7 +937,7 @@ fn same_named_rest(
 fn same_named_orientations(
     base: &[AssemblyScaleNamedNode],
     input: &[AssemblyScaleNamedNode],
-    universally_animated_properties: Option<&BTreeSet<(String, Property)>>,
+    universally_animated_properties: &BTreeMap<String, BTreeSet<Property>>,
     tolerance: &ScaleTolerancePolicy,
 ) -> bool {
     base.iter().zip(input).all(|(base, input)| {
@@ -931,12 +951,13 @@ fn same_named_orientations(
 }
 
 fn named_property_is_universally_animated(
-    universally_animated_properties: Option<&BTreeSet<(String, Property)>>,
+    universally_animated_properties: &BTreeMap<String, BTreeSet<Property>>,
     name: &str,
     property: Property,
 ) -> bool {
     universally_animated_properties
-        .is_some_and(|properties| properties.contains(&(name.to_owned(), property)))
+        .get(name)
+        .is_some_and(|properties| properties.contains(&property))
 }
 
 fn same_source_layout(base: &[AssemblyScaleSourceNode], input: &[AssemblyScaleSourceNode]) -> bool {
