@@ -2813,6 +2813,57 @@ fn v7_missing_raw_fbx_mesh_instance_name_refuses_atomically() {
 }
 
 #[test]
+fn v7_ambiguous_raw_fbx_mesh_instance_name_refuses_atomically() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = renamed_skinned_holder_with_unselected_prop_fbx().replacen(
+        "\tModel: 1003, \"Model::prop\", \"Mesh\"",
+        "\tModel: 1003, \"Model::body-instance\", \"Mesh\"",
+        1,
+    );
+    let raw = animsmith_fbx::load_bytes(Path::new("base.fbx"), source.as_bytes())
+        .expect("analytic ambiguous-instance FBX loads");
+    assert_eq!(
+        raw.assets
+            .instances
+            .iter()
+            .filter(|instance| raw.skeleton.bone_name(instance.node) == "body-instance")
+            .map(|instance| instance.node)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        2,
+        "the selected name belongs to two distinct raw instance nodes"
+    );
+    std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), &source).unwrap();
+    let recipe = fbx_recipe_v7("walk.fbx").replacen(
+        "fps = 30.0",
+        "fps = 30.0\nmesh_instances = [\"body-instance\"]",
+        1,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        refusal_detail(&output).contains(
+            "mesh_instances entry \"body-instance\" matches 2 base mesh instance nodes; expected exactly one"
+        )
+    );
+    assert_eq!(
+        (
+            std::fs::read(dir.path().join("character.glb")).unwrap(),
+            std::fs::read(dir.path().join("character.json")).unwrap(),
+        ),
+        (prior_artifact.to_vec(), prior_evidence.to_vec())
+    );
+}
+
+#[test]
 fn v7_admits_scale_invariant_fbx_conversion_fidelity_without_erasing_evidence() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
