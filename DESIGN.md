@@ -2050,8 +2050,8 @@ once, read-back-digest checks it, and atomically publishes the resulting GLB
 with immutable scale-evidence v5. V5 records the complete FBX inventory and
 the private staged-GLB identity plus the nested raw-GLB proof; it makes no raw
 FBX span, object-property, authored-curve, material, or texture-assignment
-preservation claim, nor a marker/camera behavior claim; supported linked
-texture bytes are nevertheless captured before staging so admission cannot
+preservation claim, nor a marker/camera/display-layer behavior claim; supported
+linked texture bytes are nevertheless captured before staging so admission cannot
 silently remove them. Refusals name the exact incomplete coverage domain,
 semantic row, inventory counter, or residual unmodeled kind.
 
