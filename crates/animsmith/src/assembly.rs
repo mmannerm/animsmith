@@ -1901,24 +1901,50 @@ fn assemble_inner(
             expected_rebased_clips.push(rebased.clip);
         }
     }
-    let mut completion_targets = base
-        .assets
-        .instances
-        .iter()
-        .flat_map(|instance| instance.skin_joints.iter().copied())
-        .collect::<BTreeSet<_>>();
-    completion_targets.extend(
-        output_clips
-            .iter()
-            .flat_map(|clip| clip.tracks.iter().map(|track| track.bone)),
-    );
-    completion_targets.retain(|bone| !node_removal.removes(*bone));
+    let completion_identities = recipe
+        .complete_tracks
+        .then(|| completion_target_identities(&base, &output_clips))
+        .transpose()
+        .refusal(Stage::Transform, Kind::TransformRefused)?;
+    let staged_completion_targets = completion_identities
+        .as_ref()
+        .map(|identities| {
+            project_completion_targets(&base.skeleton, identities, &node_removal, "base completion")
+        })
+        .transpose()
+        .refusal(Stage::Transform, Kind::TransformRefused)?
+        .unwrap_or_default();
+    let reference_completion_targets =
+        match (rebased_base.as_ref(), reference_node_removal.as_ref()) {
+            (Some(reference), Some(removal)) => Some(
+                completion_identities
+                    .as_ref()
+                    .map(|identities| {
+                        project_completion_targets(
+                            &reference.skeleton,
+                            identities,
+                            removal,
+                            "reference completion",
+                        )
+                    })
+                    .transpose()
+                    .refusal(Stage::Transform, Kind::TransformRefused)?
+                    .unwrap_or_default(),
+            ),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "reference completion requires a matching node-removal plan".to_owned(),
+                )
+                .refusal(Stage::Proof, Kind::ProofFailed);
+            }
+        };
     for (index, clip_recipe) in recipe.clips.iter().enumerate() {
         let staged_clip = &mut output_clips[index];
         let staged_completed = complete_and_normalize_clip(
             staged_clip,
             &base.skeleton,
-            &completion_targets,
+            &staged_completion_targets,
             clip_recipe,
             recipe.complete_tracks,
             false,
@@ -1929,10 +1955,17 @@ fn assemble_inner(
 
         if let Some(scale_base) = rebased_base.as_ref() {
             let rebased_clip = &mut expected_rebased_clips[index];
+            let completion_targets = reference_completion_targets
+                .as_ref()
+                .ok_or_else(|| {
+                    "reference completion targets were not prepared with the reference skeleton"
+                        .to_owned()
+                })
+                .refusal(Stage::Transform, Kind::TransformRefused)?;
             let rebased_completed = complete_and_normalize_clip(
                 rebased_clip,
                 &scale_base.skeleton,
-                &completion_targets,
+                completion_targets,
                 clip_recipe,
                 recipe.complete_tracks,
                 true,
@@ -1947,12 +1980,11 @@ fn assemble_inner(
                     rebased_clip,
                     &protected_bones,
                 );
-                apply_authoritative_pruning(staged_clip, &outcome.removed)
-                    .refusal(Stage::Proof, Kind::ProofFailed)?;
-                evidence.pruned_constant_tracks = pruned_track_evidence(
+                evidence.pruned_constant_tracks = apply_authoritative_pruning(
+                    staged_clip,
+                    &base.skeleton,
                     &scale_base.skeleton,
-                    &rebased_clip.name,
-                    outcome.removed,
+                    &outcome.removed,
                 )
                 .refusal(Stage::Proof, Kind::ProofFailed)?;
             }
@@ -2095,9 +2127,16 @@ fn assemble_inner(
         let reloaded = animsmith_gltf::load_bytes(&artifact_temp, &read_back_bytes)
             .map_err(|error| format!("cannot reload proved assembly artifact: {error}"))
             .refusal(Stage::Proof, Kind::ProofFailed)?;
+        let expected_rebased_skeleton = &rebased_base
+            .as_ref()
+            .ok_or_else(|| "missing rebased assembly reference".to_owned())
+            .refusal(Stage::Proof, Kind::ProofFailed)?
+            .skeleton;
         require_rebased_clips_match(
             &expected_rebased_clips,
+            expected_rebased_skeleton,
             &reloaded.clips,
+            &reloaded.skeleton,
             &projected_rebased_clip_names,
         )
         .refusal(Stage::Proof, Kind::ProofFailed)?;
@@ -2303,6 +2342,88 @@ fn process_clip_before_copy(
     })
 }
 
+fn completion_target_identities(
+    base: &Document,
+    clips: &[Clip],
+) -> Result<BTreeSet<String>, String> {
+    let mut identities = BTreeSet::new();
+    for (instance_index, instance) in base.assets.instances.iter().enumerate() {
+        for bone in &instance.skin_joints {
+            let target = base.skeleton.bones.get(*bone).ok_or_else(|| {
+                format!(
+                    "base mesh instance {instance_index} completion target {bone} is outside its skeleton"
+                )
+            })?;
+            if target.name.is_empty() {
+                return Err(format!(
+                    "base mesh instance {instance_index} completion target {bone} has no stable bone name"
+                ));
+            }
+            identities.insert(target.name.clone());
+        }
+    }
+    for clip in clips {
+        for (track_index, track) in clip.tracks.iter().enumerate() {
+            let target = base.skeleton.bones.get(track.bone).ok_or_else(|| {
+                format!(
+                    "clip {:?} track {track_index} completion target {} is outside the base skeleton",
+                    clip.name, track.bone
+                )
+            })?;
+            if target.name.is_empty() {
+                return Err(format!(
+                    "clip {:?} track {track_index} completion target {} has no stable bone name",
+                    clip.name, track.bone
+                ));
+            }
+            identities.insert(target.name.clone());
+        }
+    }
+    Ok(identities)
+}
+
+fn resolve_unique_bone_identity(
+    skeleton: &Skeleton,
+    name: &str,
+    context: &str,
+) -> Result<usize, String> {
+    if name.is_empty() {
+        return Err(format!("{context} contains an empty stable bone identity"));
+    }
+    let mut matches = skeleton
+        .bones
+        .iter()
+        .enumerate()
+        .filter_map(|(index, bone)| (bone.name == name).then_some(index));
+    let Some(index) = matches.next() else {
+        return Err(format!(
+            "{context} cannot resolve stable bone identity {name:?}"
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(format!(
+            "{context} found ambiguous stable bone identity {name:?}"
+        ));
+    }
+    Ok(index)
+}
+
+fn project_completion_targets(
+    skeleton: &Skeleton,
+    identities: &BTreeSet<String>,
+    removal: &animsmith_core::assembly::NodeSubtreeRemovalPlan,
+    context: &str,
+) -> Result<BTreeSet<usize>, String> {
+    identities
+        .iter()
+        .map(|name| resolve_unique_bone_identity(skeleton, name, context))
+        .filter_map(|result| match result {
+            Ok(bone) if removal.removes(bone) => None,
+            result => Some(result),
+        })
+        .collect()
+}
+
 fn complete_and_normalize_clip(
     clip: &mut Clip,
     skeleton: &Skeleton,
@@ -2367,40 +2488,88 @@ fn protected_clip_bones(skeleton: &Skeleton, config: &Config, clip_name: &str) -
 
 fn apply_authoritative_pruning(
     staged: &mut Clip,
+    staged_skeleton: &Skeleton,
+    authoritative_skeleton: &Skeleton,
     removed: &[animsmith_core::transform::ConstantTrackPruneRecord],
-) -> Result<(), String> {
-    let removed_indices = removed
-        .iter()
-        .map(|record| {
-            let track = staged
-                .tracks
-                .get(record.original_track_index)
+) -> Result<Vec<PrunedConstantTrackEvidence>, String> {
+    let mut removed_indices = BTreeSet::new();
+    let mut projected_evidence = Vec::with_capacity(removed.len());
+    for record in removed {
+        let authoritative_bone =
+            authoritative_skeleton
+                .bones
+                .get(record.bone)
                 .ok_or_else(|| {
                     format!(
-                        "rebased pruning selected missing staged track {} for clip {:?}",
-                        record.original_track_index, staged.name
+                        "rebased pruning selected missing authoritative bone {} for clip {:?}",
+                        record.bone, staged.name
                     )
                 })?;
-            if track.bone != record.bone
-                || track.property != record.property
-                || track.interpolation != record.interpolation
-                || track.key_count() != record.key_count
-            {
-                return Err(format!(
-                    "rebased pruning track {} does not match staged clip {:?}",
-                    record.original_track_index, staged.name
-                ));
-            }
-            Ok(record.original_track_index)
-        })
-        .collect::<Result<BTreeSet<_>, String>>()?;
+        let authoritative_index = resolve_unique_bone_identity(
+            authoritative_skeleton,
+            &authoritative_bone.name,
+            "authoritative pruning",
+        )?;
+        if authoritative_index != record.bone {
+            return Err(format!(
+                "rebased pruning record bone {} does not match authoritative identity {:?} for clip {:?}",
+                record.bone, authoritative_bone.name, staged.name
+            ));
+        }
+        let staged_bone = resolve_unique_bone_identity(
+            staged_skeleton,
+            &authoritative_bone.name,
+            "staged pruning",
+        )?;
+        let mut matching_tracks = staged
+            .tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, track)| {
+                (track.bone == staged_bone && track.property == record.property)
+                    .then_some((index, track))
+            });
+        let Some((staged_index, track)) = matching_tracks.next() else {
+            return Err(format!(
+                "rebased pruning cannot resolve staged {:?} track for bone {:?} in clip {:?}",
+                record.property, authoritative_bone.name, staged.name
+            ));
+        };
+        if matching_tracks.next().is_some() {
+            return Err(format!(
+                "rebased pruning found ambiguous staged {:?} tracks for bone {:?} in clip {:?}",
+                record.property, authoritative_bone.name, staged.name
+            ));
+        }
+        if track.interpolation != record.interpolation || track.key_count() != record.key_count {
+            return Err(format!(
+                "rebased pruning track for bone {:?} does not match authoritative shape in clip {:?}",
+                authoritative_bone.name, staged.name
+            ));
+        }
+        if !removed_indices.insert(staged_index) {
+            return Err(format!(
+                "rebased pruning selected staged track {staged_index} more than once for clip {:?}",
+                staged.name
+            ));
+        }
+        projected_evidence.push(PrunedConstantTrackEvidence {
+            original_track_index: staged_index,
+            bone: authoritative_bone.name.clone(),
+            bone_index: staged_bone,
+            property: record.property.as_str(),
+            interpolation: interpolation_name(record.interpolation),
+            key_count: record.key_count,
+        });
+    }
     let tracks = std::mem::take(&mut staged.tracks);
     staged.tracks = tracks
         .into_iter()
         .enumerate()
         .filter_map(|(index, track)| (!removed_indices.contains(&index)).then_some(track))
         .collect();
-    Ok(())
+    projected_evidence.sort_by_key(|record| record.original_track_index);
+    Ok(projected_evidence)
 }
 
 fn pruned_track_evidence(
@@ -2546,7 +2715,9 @@ fn map_staged_rest_bind_operation(
 
 fn require_rebased_clips_match(
     expected: &[Clip],
+    expected_skeleton: &Skeleton,
     actual: &[Clip],
+    actual_skeleton: &Skeleton,
     tolerant_clip_names: &BTreeSet<String>,
 ) -> Result<(), String> {
     if expected.len() != actual.len() {
@@ -2565,15 +2736,47 @@ fn require_rebased_clips_match(
                 "proved artifact clip {clip_index} structure differs from its pre-remap rebase"
             ));
         }
-        for (track_index, (expected_track, actual_track)) in expected_clip
-            .tracks
-            .iter()
-            .zip(&actual_clip.tracks)
-            .enumerate()
-        {
-            if expected_track.bone != actual_track.bone
-                || expected_track.property != actual_track.property
-                || expected_track.interpolation != actual_track.interpolation
+        for (track_index, expected_track) in expected_clip.tracks.iter().enumerate() {
+            let expected_bone = expected_skeleton
+                .bones
+                .get(expected_track.bone)
+                .ok_or_else(|| {
+                    format!(
+                        "pre-remap rebase clip {clip_index} track {track_index} targets missing bone {}",
+                        expected_track.bone
+                    )
+                })?;
+            let expected_bone_index = resolve_unique_bone_identity(
+                expected_skeleton,
+                &expected_bone.name,
+                "pre-remap rebase proof",
+            )?;
+            if expected_bone_index != expected_track.bone {
+                return Err(format!(
+                    "pre-remap rebase clip {clip_index} track {track_index} bone identity is inconsistent"
+                ));
+            }
+            let actual_bone = resolve_unique_bone_identity(
+                actual_skeleton,
+                &expected_bone.name,
+                "proved artifact clip proof",
+            )?;
+            let mut actual_matches = actual_clip.tracks.iter().filter(|track| {
+                track.bone == actual_bone && track.property == expected_track.property
+            });
+            let Some(actual_track) = actual_matches.next() else {
+                return Err(format!(
+                    "proved artifact clip {clip_index} is missing the {:?} track for bone {:?}",
+                    expected_track.property, expected_bone.name
+                ));
+            };
+            if actual_matches.next().is_some() {
+                return Err(format!(
+                    "proved artifact clip {clip_index} has ambiguous {:?} tracks for bone {:?}",
+                    expected_track.property, expected_bone.name
+                ));
+            }
+            if expected_track.interpolation != actual_track.interpolation
                 || expected_track.times.len() != actual_track.times.len()
                 || expected_track
                     .times
@@ -2582,7 +2785,7 @@ fn require_rebased_clips_match(
                     .any(|(left, right)| left.to_bits() != right.to_bits())
             {
                 return Err(format!(
-                    "proved artifact clip {clip_index} track {track_index} identity differs from its pre-remap rebase"
+                    "proved artifact clip {clip_index} track {track_index} shape differs from its pre-remap rebase"
                 ));
             }
             match (&expected_track.values, &actual_track.values) {
@@ -3032,6 +3235,73 @@ mod tests {
     }
 
     #[test]
+    fn authoritative_pruning_projects_bone_and_track_indices_by_stable_identity() {
+        let authoritative_skeleton = skeleton(&["root", "retained", "other"]);
+        let staged_skeleton = skeleton(&["root", "other", "retained"]);
+        let translation = Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![
+                animsmith_core::glam::Vec3::ZERO,
+                animsmith_core::glam::Vec3::X,
+            ]),
+        };
+        let rotation = Track {
+            bone: 1,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY; 2]),
+        };
+        let mut authoritative = Clip {
+            name: "walk".into(),
+            duration_s: 1.0,
+            tracks: vec![rotation.clone(), translation.clone()],
+        };
+        let outcome = animsmith_core::transform::prune_constant_tracks(
+            &authoritative_skeleton,
+            &mut authoritative,
+            &[],
+        );
+        assert_eq!(outcome.removed.len(), 1);
+        assert_eq!(outcome.removed[0].original_track_index, 0);
+        assert_eq!(outcome.removed[0].bone, 1);
+        let mut staged = Clip {
+            name: "walk".into(),
+            duration_s: 1.0,
+            tracks: vec![
+                translation,
+                Track {
+                    bone: 2,
+                    property: Property::Rotation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 1.0],
+                    values: TrackValues::Quats(vec![Quat::IDENTITY; 2]),
+                },
+            ],
+        };
+
+        let projected = apply_authoritative_pruning(
+            &mut staged,
+            &staged_skeleton,
+            &authoritative_skeleton,
+            &outcome.removed,
+        )
+        .unwrap();
+
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].original_track_index, 1);
+        assert_eq!(projected[0].bone, "retained");
+        assert_eq!(projected[0].bone_index, 2);
+        assert_eq!(projected[0].property, "rotation");
+        assert_eq!(staged.tracks.len(), 1);
+        assert_eq!(staged.tracks[0].bone, 0);
+        assert_eq!(staged.tracks[0].property, Property::Translation);
+    }
+
+    #[test]
     fn exact_final_clip_agreement_and_read_back_are_fail_closed() {
         let clip = Clip {
             name: "walk".into(),
@@ -3053,9 +3323,12 @@ mod tests {
                 },
             ],
         };
+        let proof_skeleton = skeleton(&["root"]);
         require_rebased_clips_match(
             std::slice::from_ref(&clip),
+            &proof_skeleton,
             std::slice::from_ref(&clip),
+            &proof_skeleton,
             &BTreeSet::new(),
         )
         .unwrap();
@@ -3071,7 +3344,9 @@ mod tests {
                 assert!(
                     require_rebased_clips_match(
                         std::slice::from_ref(&expected_clip),
+                        &proof_skeleton,
                         &[changed],
+                        &proof_skeleton,
                         &BTreeSet::new(),
                     )
                     .unwrap_err()
@@ -3094,7 +3369,9 @@ mod tests {
             assert!(
                 require_rebased_clips_match(
                     std::slice::from_ref(&clip),
+                    &proof_skeleton,
                     &[changed],
+                    &proof_skeleton,
                     &BTreeSet::new(),
                 )
                 .unwrap_err()
@@ -3133,7 +3410,14 @@ mod tests {
                 };
                 values[5].x = observed;
                 assert_eq!(
-                    require_rebased_clips_match(&[rounded], &[actual], &skinless_names).is_ok(),
+                    require_rebased_clips_match(
+                        &[rounded],
+                        &proof_skeleton,
+                        &[actual],
+                        &proof_skeleton,
+                        &skinless_names,
+                    )
+                    .is_ok(),
                     should_pass,
                     "Appendix-D boundary expected={expected} observed={observed}"
                 );
@@ -3147,7 +3431,9 @@ mod tests {
         assert!(
             require_rebased_clips_match(
                 std::slice::from_ref(&clip),
+                &proof_skeleton,
                 &[rounded_rotation],
+                &proof_skeleton,
                 &skinless_names,
             )
             .unwrap_err()

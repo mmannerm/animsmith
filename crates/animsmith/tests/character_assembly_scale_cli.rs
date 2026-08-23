@@ -474,6 +474,152 @@ fn skinless_animation_fbx() -> String {
         )
 }
 
+fn document_local_bone_order_fbx() -> String {
+    let node = |id: u32, name: &str| {
+        format!(
+            concat!(
+                "\tModel: {id}, \"Model::{name}\", \"Null\" {{\n",
+                "\t\tVersion: 232\n",
+                "\t\tProperties70: {{\n",
+                "\t\t\tP: \"Lcl Translation\", \"Lcl Translation\", \"\", \"A\",0,0,0\n",
+                "\t\t\tP: \"Lcl Rotation\", \"Lcl Rotation\", \"\", \"A\",0,0,0\n",
+                "\t\t\tP: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n",
+                "\t\t}}\n",
+                "\t}}\n",
+            ),
+            id = id,
+            name = name,
+        )
+    };
+    let branch = node(1003, "branch");
+    let remove = node(1004, "remove");
+    let retained_second = node(1005, "retained-second");
+    rigged_limb_triangle_fbx()
+        .replace("\r\n", "\n")
+        .replacen("\tCount: 8", "\tCount: 11", 1)
+        .replacen(
+            "ObjectType: \"Model\" { Count: 2 }",
+            "ObjectType: \"Model\" { Count: 5 }",
+            1,
+        )
+        .replacen("\tGeometry: 2001", &format!("{branch}\tGeometry: 2001"), 1)
+        .replacen(
+            "Model: 1002, \"Model::tri\", \"Limb\"",
+            "Model: 1002, \"Model::retained-first\", \"Limb\"",
+            1,
+        )
+        .replacen(
+            "\tDeformer: 4001",
+            &format!("{remove}{retained_second}\tDeformer: 4001"),
+            1,
+        )
+        .replacen(
+            "Connections: {",
+            concat!(
+                "Connections: {\n",
+                "\tC: \"OO\",1003,1001\n",
+                "\tC: \"OO\",1004,1001\n",
+                "\tC: \"OO\",1005,1003",
+            ),
+            1,
+        )
+}
+
+fn write_document_local_order_clip(
+    path: &Path,
+    source: &str,
+    animated: &[&str],
+    constant_channels_for: Option<&str>,
+) {
+    let mut document = animsmith_fbx::load_bytes(Path::new("source.fbx"), source.as_bytes())
+        .expect("document-local-order FBX fixture loads");
+    document.assets.instances.clear();
+    document.assets.meshes.clear();
+    document.assets.source_skeleton.skins.clear();
+    for bone in &mut document.skeleton.bones {
+        bone.inverse_bind = None;
+    }
+    document.clips[0].tracks = animated
+        .iter()
+        .enumerate()
+        .map(|(ordinal, name)| {
+            let bone = document
+                .skeleton
+                .bones
+                .iter()
+                .position(|bone| bone.name == *name)
+                .expect("animated fixture bone exists");
+            Track {
+                bone,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::ZERO,
+                    Vec3::new(100.0 + ordinal as f32, 0.0, 0.0),
+                ]),
+            }
+        })
+        .collect();
+    if let Some(name) = constant_channels_for {
+        let bone = unique_bone_id(&document, name);
+        document.clips[0].tracks.extend([
+            Track {
+                bone,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Quats(vec![Quat::IDENTITY; 2]),
+            },
+            Track {
+                bone,
+                property: Property::Scale,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ONE; 2]),
+            },
+        ]);
+    }
+    document.clips[0].duration_s = 1.0;
+    animsmith_gltf::write::write(&document, path)
+        .expect("writes document-local-order skinless clip");
+}
+
+fn unique_bone_id(document: &Document, name: &str) -> usize {
+    let matches = document
+        .skeleton
+        .bones
+        .iter()
+        .enumerate()
+        .filter_map(|(index, bone)| (bone.name == name).then_some(index))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "fixture bone {name:?} is exact and unique"
+    );
+    matches[0]
+}
+
+fn assert_document_local_bone_id_alias(dir: &Path, source: &str) {
+    let authoritative =
+        animsmith_fbx::load_bytes(Path::new("base.fbx"), source.as_bytes()).unwrap();
+    let staged_path = dir.join("document-local-order-private-stage.glb");
+    animsmith_gltf::write::write(&authoritative, &staged_path).unwrap();
+    let reference = animsmith_gltf::load(&staged_path).unwrap();
+    let authoritative_retained = unique_bone_id(&authoritative, "retained-second");
+    let reference_removed = unique_bone_id(&reference, "remove");
+    assert_eq!(
+        authoritative_retained, reference_removed,
+        "fixture must alias a retained authoritative BoneId to a removed reference BoneId"
+    );
+    assert_ne!(
+        authoritative_retained,
+        unique_bone_id(&reference, "retained-second"),
+        "the stable retained identity must move in the reference namespace"
+    );
+}
+
 fn two_centimetre_unit_fbx(source: &str) -> String {
     source
         .replace(
@@ -1909,6 +2055,233 @@ fn v7_rebases_a_meshless_skinless_fbx_clip_from_the_skinned_base_plan() {
     assert_eq!(
         evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
         true
+    );
+}
+
+#[test]
+fn v7_projects_completion_targets_through_each_document_bone_namespace() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = document_local_bone_order_fbx();
+    assert_document_local_bone_id_alias(dir.path(), &source);
+    std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
+    write_document_local_order_clip(
+        &dir.path().join("inputs/walk.glb"),
+        &source,
+        &["retained-second"],
+        None,
+    );
+    let recipe = fbx_recipe_v7("walk.glb").replacen(
+        "fps = 30.0",
+        concat!(
+            "fps = 30.0\n",
+            "complete_tracks = true\n",
+            "remove_nodes = [\"remove\"]",
+        ),
+        1,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    assert_eq!(evidence["clips"][0]["completed_tracks"], 5);
+    assert_eq!(
+        evidence["transforms"]["removed_nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| node["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["remove"]
+    );
+    assert_eq!(
+        evidence["rest_bind_scale"]["read_back_sha256"],
+        evidence["artifact"]["sha256"]
+    );
+    assert_eq!(
+        evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
+        true
+    );
+
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert!(
+        assembled
+            .skeleton
+            .bones
+            .iter()
+            .all(|bone| bone.name != "remove")
+    );
+    assert!(
+        assembled.clips[0]
+            .tracks
+            .iter()
+            .all(|track| { assembled.skeleton.bones[track.bone].name != "remove" })
+    );
+    let retained_second = unique_bone_id(&assembled, "retained-second");
+    assert_eq!(
+        assembled.clips[0]
+            .tracks
+            .iter()
+            .filter(|track| track.bone == retained_second)
+            .map(|track| track.property.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["rotation", "scale", "translation"])
+    );
+}
+
+#[test]
+fn v7_projects_authoritative_pruning_by_named_clip_channel_identity() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = document_local_bone_order_fbx();
+    assert_document_local_bone_id_alias(dir.path(), &source);
+    let authoritative =
+        animsmith_fbx::load_bytes(Path::new("base.fbx"), source.as_bytes()).unwrap();
+    let staged_retained_second = unique_bone_id(&authoritative, "retained-second");
+    std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
+    write_document_local_order_clip(
+        &dir.path().join("inputs/walk.glb"),
+        &source,
+        &["retained-first", "retained-second"],
+        Some("retained-second"),
+    );
+    let recipe = fbx_recipe_v7("walk.glb")
+        .replacen(
+            "fps = 30.0",
+            concat!(
+                "fps = 30.0\n",
+                "complete_tracks = true\n",
+                "prune_constant_tracks = true\n",
+                "remove_nodes = [\"remove\"]",
+            ),
+            1,
+        )
+        .replacen(
+            "take = \"take\"",
+            "take = \"take\"\nstrip_bones = [\"remove\"]",
+            1,
+        );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    std::fs::write(
+        dir.path().join("animsmith.toml"),
+        concat!("[clips.walk]\n", "animates_bones = [\"retained-first\"]\n",),
+    )
+    .unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    let pruned = evidence["clips"][0]["pruned_constant_tracks"]
+        .as_array()
+        .unwrap();
+    assert_eq!(pruned.len(), 2, "evidence: {evidence:#}");
+    assert!(
+        pruned
+            .iter()
+            .all(|track| track["bone"] == "retained-second")
+    );
+    assert!(
+        pruned
+            .iter()
+            .all(|track| track["bone_index"] == staged_retained_second as u64)
+    );
+    assert_eq!(
+        pruned
+            .iter()
+            .map(|track| track["original_track_index"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    assert_eq!(
+        pruned
+            .iter()
+            .map(|track| track["property"].as_str().unwrap())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["rotation", "scale"])
+    );
+    assert_eq!(
+        evidence["rest_bind_scale"]["read_back_sha256"],
+        evidence["artifact"]["sha256"]
+    );
+    assert_eq!(
+        evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
+        true
+    );
+
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    let retained_first = unique_bone_id(&assembled, "retained-first");
+    let retained_second = unique_bone_id(&assembled, "retained-second");
+    let properties = |bone| {
+        assembled.clips[0]
+            .tracks
+            .iter()
+            .filter(|track| track.bone == bone)
+            .map(|track| track.property.as_str())
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(
+        properties(retained_first),
+        BTreeSet::from(["rotation", "scale", "translation"])
+    );
+    assert_eq!(properties(retained_second), BTreeSet::from(["translation"]));
+}
+
+#[test]
+fn v7_still_refuses_an_authored_track_into_the_removed_reference_closure() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let source = document_local_bone_order_fbx();
+    assert_document_local_bone_id_alias(dir.path(), &source);
+    std::fs::write(dir.path().join("inputs/base.fbx"), &source).unwrap();
+    write_document_local_order_clip(
+        &dir.path().join("inputs/walk.glb"),
+        &source,
+        &["remove"],
+        None,
+    );
+    let recipe = fbx_recipe_v7("walk.glb").replacen(
+        "fps = 30.0",
+        concat!(
+            "fps = 30.0\n",
+            "complete_tracks = true\n",
+            "remove_nodes = [\"remove\"]",
+        ),
+        1,
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    let refusal: Value = serde_json::from_slice(&output.stdout).expect("typed refusal JSON");
+    assert_eq!(refusal["rejection"]["stage"], "transform");
+    assert_eq!(refusal["rejection"]["kind"], "transform-refused");
+    let detail = refusal_detail(&output);
+    assert!(detail.contains("cannot remove selected reference nodes"));
+    assert!(detail.contains("still targets selected node"));
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
     );
 }
 
