@@ -372,9 +372,12 @@ coverage proves that a clip input has no source skins and the captured
 document independently has no mesh instances.
 Its exact named root, every joint in the selected base skin, and the named
 ancestors connecting that rig domain must match the accepted skinned base
-basis in normalized topology, rest basis, and orientation. Each actual clip
-track target and its named ancestors join that compatibility domain, and the
-target must belong to the base plan's affected closure. Base-only geometry and
+basis in normalized topology. Rest translation, rotation, and scale remain
+strict independently for every node/property that any take omits; a component
+may differ only when every take explicitly authors that named channel, so
+assembly never falls back to the differing clip rest. Each actual clip track
+target and its named ancestors join that compatibility domain, and the target
+must belong to the base plan's affected closure. Base-only geometry and
 attachment descendants do not become clip requirements merely because the
 base plan rewrites them. The
 base plan supplies each named translation/scale target factor; cubic-spline

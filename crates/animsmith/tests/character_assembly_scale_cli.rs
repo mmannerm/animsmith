@@ -3,7 +3,9 @@
 #![cfg(feature = "fbx")]
 
 use animsmith_core::glam::{Mat4, Quat, Vec3};
-use animsmith_core::model::{Document, Interpolation, Property, Track, TrackValues};
+use animsmith_core::model::{
+    Document, Interpolation, Property, SourceNodeLocalRest, Track, TrackValues, Transform,
+};
 use animsmith_core::scale::{
     AssemblyScaleBasis, ScaleOperation, ScaleRequest, assembly_scale_basis, plan_scale,
 };
@@ -13,7 +15,7 @@ use animsmith_testkit::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -515,6 +517,61 @@ fn write_skinless_cubic_clip(path: &Path) {
     ]);
     document.clips[0].duration_s = 1.0;
     animsmith_gltf::write::write(&document, path).expect("writes skinless cubic clip");
+}
+
+fn write_skinless_take_pose_clip(path: &Path) {
+    let mut document =
+        animsmith_fbx::load_bytes(Path::new("source.fbx"), skinless_animation_fbx().as_bytes())
+            .expect("analytic skinless FBX fixture loads");
+    let limb = document
+        .skeleton
+        .bones
+        .iter()
+        .position(|bone| bone.name == "tri")
+        .expect("fixture has animated limb");
+    let take_pose = Transform {
+        translation: Vec3::new(250.0, 0.0, 0.0),
+        rotation: Quat::from_rotation_z(0.25),
+        scale: Vec3::splat(2.0),
+    };
+    document.skeleton.bones[limb].rest = take_pose;
+    let source_node = document
+        .assets
+        .source_skeleton
+        .nodes
+        .iter_mut()
+        .find(|node| node.bone == Some(limb))
+        .expect("fixture limb has a projected source node");
+    source_node.local_rest = SourceNodeLocalRest::Trs {
+        translation: take_pose.translation,
+        rotation: take_pose.rotation,
+        scale: take_pose.scale,
+    };
+    document.clips[0].tracks = vec![
+        Track {
+            bone: limb,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![take_pose.translation, Vec3::new(350.0, 0.0, 0.0)]),
+        },
+        Track {
+            bone: limb,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![take_pose.rotation, Quat::from_rotation_z(0.5)]),
+        },
+        Track {
+            bone: limb,
+            property: Property::Scale,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Vec3s(vec![take_pose.scale, Vec3::splat(3.0)]),
+        },
+    ];
+    document.clips[0].duration_s = 1.0;
+    animsmith_gltf::write::write(&document, path).expect("writes skinless take-pose clip");
 }
 
 fn write_skinless_outside_domain_clip(base_path: &Path, clip_path: &Path) {
@@ -1848,6 +1905,97 @@ fn v7_accepts_skinless_clip_without_base_only_geometry_descendants() {
 }
 
 #[test]
+fn v7_accepts_fully_keyed_skinless_clip_with_take_pose_rest() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.fbx"),
+        rigged_limb_triangle_fbx(),
+    )
+    .unwrap();
+    write_skinless_take_pose_clip(&dir.path().join("inputs/walk.glb"));
+    let base = animsmith_fbx::load(&dir.path().join("inputs/base.fbx")).unwrap();
+    let clip = animsmith_gltf::load(&dir.path().join("inputs/walk.glb")).unwrap();
+    let base_limb = base
+        .skeleton
+        .bones
+        .iter()
+        .find(|bone| bone.name == "tri")
+        .unwrap();
+    let clip_limb = clip
+        .skeleton
+        .bones
+        .iter()
+        .find(|bone| bone.name == "tri")
+        .unwrap();
+    assert_ne!(base_limb.rest.translation, clip_limb.rest.translation);
+    assert_ne!(base_limb.rest.rotation, clip_limb.rest.rotation);
+    assert_ne!(base_limb.rest.scale, clip_limb.rest.scale);
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.glb")).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    assert_eq!(
+        evidence["rest_bind_scale"]["inputs"][1]["application"],
+        "skinless-clip-tracks"
+    );
+
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    let limb = assembled
+        .skeleton
+        .bones
+        .iter()
+        .position(|bone| bone.name == "tri")
+        .expect("assembled fixture retains the animated limb");
+    assert_eq!(
+        assembled.skeleton.bones[limb].rest,
+        Transform {
+            translation: base_limb.rest.translation * 0.01,
+            rotation: base_limb.rest.rotation,
+            scale: base_limb.rest.scale,
+        },
+        "the clip take-pose rest must not replace the proved base rest"
+    );
+    let tracks = assembled.clips[0]
+        .tracks
+        .iter()
+        .filter(|track| track.bone == limb)
+        .map(|track| (track.property, track))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        tracks[&Property::Translation].key_vec3(0),
+        Some(Vec3::new(2.5, 0.0, 0.0))
+    );
+    assert_eq!(
+        tracks[&Property::Translation].key_vec3(1),
+        Some(Vec3::new(3.5, 0.0, 0.0))
+    );
+    assert!(
+        tracks[&Property::Rotation]
+            .key_quat(0)
+            .is_some_and(|value| value.dot(Quat::from_rotation_z(0.25)).abs() > 1.0 - 1.0e-6)
+    );
+    assert!(
+        tracks[&Property::Rotation]
+            .key_quat(1)
+            .is_some_and(|value| value.dot(Quat::from_rotation_z(0.5)).abs() > 1.0 - 1.0e-6)
+    );
+    assert_eq!(tracks[&Property::Scale].key_vec3(0), Some(Vec3::splat(2.0)));
+    assert_eq!(tracks[&Property::Scale].key_vec3(1), Some(Vec3::splat(3.0)));
+    assert_eq!(
+        evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
+        true
+    );
+}
+
+#[test]
 fn v7_derives_skinless_translation_factors_from_the_selected_base_plan() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
@@ -2042,8 +2190,40 @@ fn v7_refuses_skinless_root_and_basis_ambiguity_atomically() {
             "missing-root" => clip.skeleton.bones[root].name = "other-root".into(),
             "ambiguous-root" => clip.skeleton.bones[limb].name = "root".into(),
             "topology" => clip.skeleton.bones[limb].parent = None,
-            "rest" => clip.skeleton.bones[limb].rest.translation.x += 1.0,
-            "orientation" => clip.skeleton.bones[limb].rest.rotation = Quat::from_rotation_z(0.5),
+            "rest" => {
+                clip.skeleton.bones[root].rest.translation.x += 100.0;
+                let source_node = clip
+                    .assets
+                    .source_skeleton
+                    .nodes
+                    .iter_mut()
+                    .find(|node| node.bone == Some(root))
+                    .unwrap();
+                let SourceNodeLocalRest::Trs { translation, .. } = &mut source_node.local_rest
+                else {
+                    panic!("fixture root uses TRS rest")
+                };
+                translation.x += 100.0;
+            }
+            "orientation" => {
+                let rotation = Quat::from_rotation_z(0.5);
+                clip.skeleton.bones[root].rest.rotation = rotation;
+                let source_node = clip
+                    .assets
+                    .source_skeleton
+                    .nodes
+                    .iter_mut()
+                    .find(|node| node.bone == Some(root))
+                    .unwrap();
+                let SourceNodeLocalRest::Trs {
+                    rotation: source_rotation,
+                    ..
+                } = &mut source_node.local_rest
+                else {
+                    panic!("fixture root uses TRS rest")
+                };
+                *source_rotation = rotation;
+            }
             _ => unreachable!(),
         }
         animsmith_gltf::write::write(&clip, &dir.path().join("inputs/walk.glb")).unwrap();

@@ -732,12 +732,8 @@ fn skinless_clip_basis_requires_the_selected_rig_but_not_base_only_descendants()
         .rest
         .translation
         .x = 51.0;
-    assert_eq!(
-        rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_helper_rest, "bone0")
-            .unwrap_err()
-            .reason,
-        "named-rest-basis"
-    );
+    rebase_assembly_scale_skinless_clip(&base_basis, &incompatible_helper_rest, "bone0")
+        .expect("the helper's authored translation replaces its source rest translation");
     let mut incompatible_helper_scale = animated_helper.clone();
     incompatible_helper_scale.skeleton.bones[3].rest.scale.x = 2.0;
     assert_eq!(
@@ -803,6 +799,130 @@ fn skinless_clip_basis_requires_the_selected_rig_but_not_base_only_descendants()
             .reason,
         "named-topology"
     );
+}
+
+#[test]
+fn skinless_clip_rest_may_differ_only_for_properties_keyed_in_every_take() {
+    let nodes = vec![
+        RigNode {
+            parent: None,
+            source_node_index: 0,
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(0.01),
+        },
+        rig(Some(0), 1, Vec3::new(0.0, 100.0, 0.0)),
+        rig(Some(1), 2, Vec3::new(0.0, 100.0, 0.0)),
+    ];
+    let base = rig_document(&nodes, &[2], 0, Mat4::IDENTITY);
+    let plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::RestBindUniformScale {
+            source_skin_index: 0,
+            source_root_node_index: 0,
+            expected_factor: 0.01,
+        },
+        document: &base,
+        capability: &complete_capability(),
+    })
+    .unwrap();
+    let base_basis = assembly_scale_compatibility_basis(
+        &base,
+        &plan,
+        AssemblyScaleSelectorRequest::Named {
+            root_node_name: "bone0",
+        },
+    )
+    .unwrap();
+
+    let mut clip = base.clone();
+    clip.assets.instances.clear();
+    clip.assets.meshes.clear();
+    clip.assets.source_skeleton.skins.clear();
+    for bone in &mut clip.skeleton.bones {
+        bone.inverse_bind = None;
+    }
+    let take_poses = [
+        Transform {
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            rotation: Quat::from_rotation_x(0.25),
+            scale: Vec3::splat(1.5),
+        },
+        Transform {
+            translation: Vec3::new(4.0, 5.0, 6.0),
+            rotation: Quat::from_rotation_y(0.5),
+            scale: Vec3::splat(2.0),
+        },
+        Transform {
+            translation: Vec3::new(7.0, 8.0, 9.0),
+            rotation: Quat::from_rotation_z(0.75),
+            scale: Vec3::splat(2.5),
+        },
+    ];
+    let mut tracks = Vec::new();
+    for (bone, take_pose) in take_poses.into_iter().enumerate() {
+        clip.skeleton.bones[bone].rest = take_pose;
+        clip.assets.source_skeleton.nodes[bone].local_rest = SourceNodeLocalRest::Trs {
+            translation: take_pose.translation,
+            rotation: take_pose.rotation,
+            scale: take_pose.scale,
+        };
+        tracks.extend([
+            Track {
+                bone,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![take_pose.translation; 2]),
+            },
+            Track {
+                bone,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Quats(vec![take_pose.rotation; 2]),
+            },
+            Track {
+                bone,
+                property: Property::Scale,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![take_pose.scale; 2]),
+            },
+        ]);
+    }
+    clip.clips = vec![
+        Clip {
+            name: "first".into(),
+            duration_s: 1.0,
+            tracks: tracks.clone(),
+        },
+        Clip {
+            name: "second".into(),
+            duration_s: 1.0,
+            tracks,
+        },
+    ];
+
+    rebase_assembly_scale_skinless_clip(&base_basis, &clip, "bone0")
+        .expect("take-pose rest is irrelevant when every take keys local TRS");
+
+    for (bone, property, expected_reason) in [
+        (0, Property::Translation, "named-rest-basis"),
+        (1, Property::Rotation, "named-orientation"),
+        (2, Property::Scale, "named-rest-basis"),
+    ] {
+        let mut missing_fallback = clip.clone();
+        missing_fallback.clips[1]
+            .tracks
+            .retain(|track| track.bone != bone || track.property != property);
+        assert_eq!(
+            rebase_assembly_scale_skinless_clip(&base_basis, &missing_fallback, "bone0")
+                .unwrap_err()
+                .reason,
+            expected_reason,
+            "a take missing bone {bone} {property:?} still depends on its source rest"
+        );
+    }
 }
 
 #[test]
