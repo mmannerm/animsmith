@@ -346,20 +346,37 @@ empty. See
 
 When `rest_bind_scale` is active, v7 pins each exact base/clip
 input digest and its versioned basis fingerprint, the declared root name,
-each input's resolved root name/source-node index/source-skin index, and the
+each input's resolved root name/source-node index, the source-skin index for
+full rest/bind inputs, and the
 effective staged selectors after canonicalization/removal,
 the factor, every compatibility result, and the shared final-artifact scale proof.
 The staged-source digest and exact emitted-byte read-back digest make the two
 serialization boundaries explicit; the read-back digest equals the published
 artifact identity on every accepted run.
-Each input names the fingerprint contract explicitly as
-`urn:animsmith:character-assembly-scale-basis:1`, so consumers never infer its
-version from the digest. The operation record also carries
+Each input records `application = rest-bind` with fingerprint contract
+`urn:animsmith:character-assembly-scale-basis:1`, or
+`application = skinless-clip-tracks` with
+`urn:animsmith:character-assembly-skinless-clip-scale-basis:1`, so consumers
+never infer the applied domain or version from the digest. The operation record also carries
 the sibling `residual_comparison_counts` record pairing every shared
 maximum residual to its comparison count by the same stable field name. These
 records let a consumer verify that assembly validated and transformed every
 participating input before remapping and that proof consumed the exact bytes
 subsequently published.
+
+V7 admits the track-only application only for a clip input with no source
+skins and no mesh instances. Its exact named root and normalized named
+topology, rest basis, and orientations over the base plan's affected closure
+must match the accepted skinned base basis. Every track must target that
+closure. The
+base plan supplies each named translation/scale target factor; cubic-spline
+in/value/out triplets are rebased together. A skinless base, a skinless clip
+with geometry, more than one governed skin, or a skinned input whose root
+governs none still refuses. Bind matrices are neither synthesized nor claimed
+for the skinless row; the exact final assembled artifact remains covered by
+the shared skinned-base rewrite and proof. Independently serialized skinless
+FBX clip projections are compared under that proof's Appendix-D numeric
+tolerance; full rest/bind inputs retain exact pre-remap oracle comparison.
 
 Each v7 scale-input row also identifies the captured container and its source
 projection. `raw-gltf` records authored-curve and raw-span preservation.

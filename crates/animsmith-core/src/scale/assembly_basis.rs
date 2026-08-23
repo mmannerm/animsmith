@@ -4,7 +4,7 @@ use super::{
     ScaleError, ScaleOperation, ScalePlan, ScaleProjectedRole, ScaleSourceNodeKind,
     ScaleTolerancePolicy,
 };
-use crate::model::{Document, SourceNodeLocalRest};
+use crate::model::{Document, Property, SourceNodeLocalRest, TrackValues};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -99,6 +99,30 @@ pub struct AssemblyScaleBasis {
     pub target_paths: Vec<AssemblyScaleTargetPath>,
 }
 
+/// Versioned semantic basis for a meshless clip whose source has no skin.
+///
+/// Such a clip has animation targets to rebase, but no inverse-bind domain.
+/// This basis deliberately cannot be mistaken for [`AssemblyScaleBasis`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AssemblyScaleSkinlessClipBasis {
+    /// Basis schema version.
+    pub version: u32,
+    /// Fixed model coordinate convention.
+    pub coordinate_convention: &'static str,
+    /// Tolerance identity used for semantic compatibility.
+    pub tolerance_policy_id: &'static str,
+    /// Exact named selector resolved in this input.
+    pub root_node_name: String,
+    /// Format-local source root selected by that name.
+    pub source_root_node_index: usize,
+    /// Declared factor bits inherited from the proved base plan.
+    pub expected_factor_bits: u64,
+    /// Normalized named topology and rest/orientation basis.
+    pub named_nodes: Vec<AssemblyScaleNamedNode>,
+    /// Animation target paths and base-plan-owned effective factors.
+    pub target_paths: Vec<AssemblyScaleTargetPath>,
+}
+
 /// Why two independently supplied assembly inputs do not share one basis.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("assembly scale basis mismatch ({reason})")]
@@ -168,6 +192,36 @@ enum AssemblyScaleSelectorIdentity {
 pub struct AssemblyScaleCompatibilityBasis {
     basis: AssemblyScaleBasis,
     selector: AssemblyScaleSelectorIdentity,
+    animation_target_factors: BTreeMap<(String, Property), f64>,
+    affected_node_names: BTreeSet<String>,
+}
+
+fn named_nodes(document: &Document) -> Result<Vec<AssemblyScaleNamedNode>, ScaleError> {
+    let mut names = BTreeSet::new();
+    let mut named_nodes = Vec::with_capacity(document.skeleton.bones.len());
+    for (index, bone) in document.skeleton.bones.iter().enumerate() {
+        if bone.name.is_empty() || !names.insert(bone.name.as_str()) {
+            return Err(ScaleError::PlanDocumentMismatch {
+                reason: "assembly_basis_requires_unique_named_nodes",
+            });
+        }
+        named_nodes.push(AssemblyScaleNamedNode {
+            name: bone.name.clone(),
+            parent: bone
+                .parent
+                .and_then(|parent| document.skeleton.bones.get(parent))
+                .map(|parent| parent.name.clone()),
+            translation_bits: bone.rest.translation.to_array().map(f32::to_bits),
+            rotation_bits: bone.rest.rotation.to_array().map(f32::to_bits),
+            scale_bits: bone.rest.scale.to_array().map(f32::to_bits),
+        });
+        if bone.parent.is_some_and(|parent| parent >= index) {
+            return Err(ScaleError::PlanDocumentMismatch {
+                reason: "assembly_basis_parent_order",
+            });
+        }
+    }
+    Ok(named_nodes)
 }
 
 fn governed_source_node_indices(
@@ -305,30 +359,7 @@ pub fn assembly_scale_basis(
             reason: "assembly_basis_requires_rest_bind",
         });
     };
-    let mut names = BTreeSet::new();
-    let mut named_nodes = Vec::with_capacity(document.skeleton.bones.len());
-    for (index, bone) in document.skeleton.bones.iter().enumerate() {
-        if bone.name.is_empty() || !names.insert(bone.name.as_str()) {
-            return Err(ScaleError::PlanDocumentMismatch {
-                reason: "assembly_basis_requires_unique_named_nodes",
-            });
-        }
-        named_nodes.push(AssemblyScaleNamedNode {
-            name: bone.name.clone(),
-            parent: bone
-                .parent
-                .and_then(|parent| document.skeleton.bones.get(parent))
-                .map(|parent| parent.name.clone()),
-            translation_bits: bone.rest.translation.to_array().map(f32::to_bits),
-            rotation_bits: bone.rest.rotation.to_array().map(f32::to_bits),
-            scale_bits: bone.rest.scale.to_array().map(f32::to_bits),
-        });
-        if bone.parent.is_some_and(|parent| parent >= index) {
-            return Err(ScaleError::PlanDocumentMismatch {
-                reason: "assembly_basis_parent_order",
-            });
-        }
-    }
+    let named_nodes = named_nodes(document)?;
     let source_by_index = document
         .assets
         .source_skeleton
@@ -483,7 +514,200 @@ pub fn assembly_scale_compatibility_basis(
             }
         }
     };
-    Ok(AssemblyScaleCompatibilityBasis { basis, selector })
+    let mut animation_target_factors = BTreeMap::new();
+    for (bone, named) in document.skeleton.bones.iter().enumerate() {
+        for property in [Property::Translation, Property::Rotation, Property::Scale] {
+            animation_target_factors.insert(
+                (named.name.clone(), property),
+                plan.animation_target_factor_unchecked(document, bone, property)?,
+            );
+        }
+    }
+    let affected_node_names = plan
+        .affected_nodes()
+        .iter()
+        .filter_map(|&bone| document.skeleton.bones.get(bone))
+        .map(|bone| bone.name.clone())
+        .collect();
+    Ok(AssemblyScaleCompatibilityBasis {
+        basis,
+        selector,
+        animation_target_factors,
+        affected_node_names,
+    })
+}
+
+/// Rebase animation targets in one meshless, skinless clip against a proved
+/// named base plan.
+///
+/// The base plan remains the sole owner of rest/bind selection and proof. The
+/// clip must have the same normalized named topology and rest basis over the
+/// base plan's affected closure and its ancestors, exactly one source node for
+/// `root_node_name`, no source skins, and no mesh instances. Every animation
+/// target must remain inside that closure. Only animation values are changed;
+/// cubic-spline tangent triplets are stored in the same value array and
+/// therefore receive the same factor.
+///
+/// # Errors
+///
+/// Returns a stable compatibility mismatch when the input is not the narrow
+/// meshless animation-clip domain or its normalized skeleton/track targets are
+/// malformed.
+pub fn rebase_assembly_scale_skinless_clip(
+    base: &AssemblyScaleCompatibilityBasis,
+    document: &Document,
+    root_node_name: &str,
+) -> Result<(Document, AssemblyScaleSkinlessClipBasis), AssemblyScaleCompatibilityError> {
+    let AssemblyScaleSelectorIdentity::Named {
+        root_node_name: base_root,
+        ..
+    } = &base.selector
+    else {
+        return Err(AssemblyScaleCompatibilityError {
+            reason: "source-selector-mode",
+        });
+    };
+    if base_root != root_node_name {
+        return Err(AssemblyScaleCompatibilityError {
+            reason: "source-name-selector",
+        });
+    }
+    if !document.assets.source_skeleton.skins.is_empty() {
+        return Err(AssemblyScaleCompatibilityError {
+            reason: "skinless-clip-has-source-skins",
+        });
+    }
+    if !document.assets.instances.is_empty() {
+        return Err(AssemblyScaleCompatibilityError {
+            reason: "skinless-clip-has-mesh-instances",
+        });
+    }
+    let root_matches = document
+        .assets
+        .source_skeleton
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            node.bone
+                .and_then(|bone| document.skeleton.bones.get(bone))
+                .filter(|bone| bone.name == root_node_name)
+                .map(|_| node.source_node_index)
+        })
+        .collect::<Vec<_>>();
+    let [source_root_node_index] = root_matches.as_slice() else {
+        return Err(AssemblyScaleCompatibilityError {
+            reason: "source-root-name-not-unique",
+        });
+    };
+    let input_named_nodes = named_nodes(document).map_err(|_| AssemblyScaleCompatibilityError {
+        reason: "named-topology",
+    })?;
+    let mut relevant_names = base.affected_node_names.clone();
+    loop {
+        let before = relevant_names.len();
+        for node in &base.basis.named_nodes {
+            if relevant_names.contains(&node.name)
+                && let Some(parent) = &node.parent
+            {
+                relevant_names.insert(parent.clone());
+            }
+        }
+        if relevant_names.len() == before {
+            break;
+        }
+    }
+    let base_named_nodes = base
+        .basis
+        .named_nodes
+        .iter()
+        .filter(|node| relevant_names.contains(&node.name))
+        .cloned()
+        .collect::<Vec<_>>();
+    let input_named_nodes = input_named_nodes
+        .into_iter()
+        .filter(|node| relevant_names.contains(&node.name))
+        .collect::<Vec<_>>();
+    let tolerance = ScaleTolerancePolicy::APPENDIX_D_V6;
+    if !same_named_topology(&base_named_nodes, &input_named_nodes) {
+        return Err(AssemblyScaleCompatibilityError {
+            reason: "named-topology",
+        });
+    }
+    if !same_named_rest(&base_named_nodes, &input_named_nodes, &tolerance) {
+        return Err(AssemblyScaleCompatibilityError {
+            reason: "named-rest-basis",
+        });
+    }
+    if !same_named_orientations(&base_named_nodes, &input_named_nodes, &tolerance) {
+        return Err(AssemblyScaleCompatibilityError {
+            reason: "named-orientation",
+        });
+    }
+
+    let mut rebased = document.clone();
+    let mut target_paths = Vec::new();
+    for (clip_index, clip) in rebased.clips.iter_mut().enumerate() {
+        for (track_index, track) in clip.tracks.iter_mut().enumerate() {
+            let bone =
+                document
+                    .skeleton
+                    .bones
+                    .get(track.bone)
+                    .ok_or(AssemblyScaleCompatibilityError {
+                        reason: "animation-target-bone",
+                    })?;
+            let factor = *base
+                .animation_target_factors
+                .get(&(bone.name.clone(), track.property))
+                .ok_or(AssemblyScaleCompatibilityError {
+                    reason: "animation-target-bone",
+                })?;
+            if !relevant_names.contains(&bone.name) {
+                return Err(AssemblyScaleCompatibilityError {
+                    reason: "animation-target-outside-scale-domain",
+                });
+            }
+            match (&mut track.values, track.property) {
+                (TrackValues::Vec3s(values), Property::Translation) => {
+                    let factor = factor as f32;
+                    for value in values {
+                        *value *= factor;
+                    }
+                }
+                (TrackValues::Vec3s(values), Property::Scale) => {
+                    for value in values {
+                        *value = (value.as_dvec3() * factor).as_vec3();
+                    }
+                }
+                (TrackValues::Quats(_), Property::Rotation) => {}
+                _ => {
+                    return Err(AssemblyScaleCompatibilityError {
+                        reason: "animation-value-kind",
+                    });
+                }
+            }
+            target_paths.push(AssemblyScaleTargetPath {
+                clip_index,
+                track_index,
+                bone: bone.name.clone(),
+                property: track.property.as_str(),
+                factor_bits: factor.to_bits(),
+            });
+        }
+    }
+    Ok((
+        rebased,
+        AssemblyScaleSkinlessClipBasis {
+            version: ASSEMBLY_SCALE_BASIS_VERSION,
+            coordinate_convention: base.basis.coordinate_convention,
+            tolerance_policy_id: base.basis.tolerance_policy_id,
+            root_node_name: root_node_name.to_owned(),
+            source_root_node_index: *source_root_node_index,
+            expected_factor_bits: base.basis.expected_factor_bits,
+            named_nodes: input_named_nodes,
+            target_paths,
+        },
+    ))
 }
 
 /// Require two bases to agree on every static semantic field.

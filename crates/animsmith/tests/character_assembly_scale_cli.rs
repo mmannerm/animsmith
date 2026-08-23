@@ -339,6 +339,102 @@ fn translated_fbx_clip() -> String {
     )
 }
 
+fn rigged_limb_triangle_fbx() -> String {
+    RIGGED_TRIANGLE_FBX
+        .replace(
+            "Model: 1002, \"Model::tri\", \"Mesh\"",
+            "Model: 1002, \"Model::tri\", \"Limb\"",
+        )
+        .replace("\tC: \"OO\",1001,4002", "\tC: \"OO\",1002,4002")
+}
+
+fn skinless_animation_fbx() -> String {
+    rigged_limb_triangle_fbx()
+        .replace("\r\n", "\n")
+        .replace(
+            concat!(
+                "\tGeometry: 2001, \"Geometry::tri\", \"Mesh\" {\n",
+                "\t\tVertices: *9 { a: 0,0,0,100,0,0,0,100,0 }\n",
+                "\t\tPolygonVertexIndex: *3 { a: 0,1,-3 }\n",
+                "\t}\n",
+            ),
+            "",
+        )
+        .replace(
+            concat!(
+                "\tDeformer: 4001, \"Deformer::skin\", \"Skin\" {\n",
+                "\t\tVersion: 101\n",
+                "\t\tLink_DeformAcuracy: 50\n",
+                "\t}\n",
+                "\tDeformer: 4002, \"SubDeformer::root_cluster\", \"Cluster\" {\n",
+                "\t\tVersion: 100\n",
+                "\t\tIndexes: *3 { a: 0,1,2 }\n",
+                "\t\tWeights: *3 { a: 1,1,1 }\n",
+                "\t\tTransform: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+                "\t\tTransformLink: *16 { a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1 }\n",
+                "\t}\n",
+            ),
+            "",
+        )
+        .replace("\tC: \"OO\",2001,1002\n", "")
+        .replace("\tC: \"OO\",4001,2001\n", "")
+        .replace("\tC: \"OO\",4002,4001\n", "")
+        .replace("\tC: \"OO\",1001,4002\n", "")
+        .replace("\tC: \"OO\",1002,4002\n", "")
+        .replace(
+            "\tC: \"OP\",3003,1001,\"Lcl Translation\"",
+            "\tC: \"OP\",3003,1002,\"Lcl Translation\"",
+        )
+}
+
+fn skinless_geometry_animation_fbx() -> String {
+    skinless_animation_fbx()
+        .replace(
+            "Model: 1002, \"Model::tri\", \"Limb\"",
+            "Model: 1002, \"Model::tri\", \"Mesh\"",
+        )
+        .replacen(
+            "\tModel: 1002",
+            concat!(
+                "\tGeometry: 2001, \"Geometry::tri\", \"Mesh\" {\n",
+                "\t\tVertices: *9 { a: 0,0,0,100,0,0,0,100,0 }\n",
+                "\t\tPolygonVertexIndex: *3 { a: 0,1,-3 }\n",
+                "\t}\n",
+                "\tModel: 1002",
+            ),
+            1,
+        )
+        .replacen("Connections: {", "Connections: {\n\tC: \"OO\",2001,1002", 1)
+}
+
+fn write_skinless_cubic_clip(path: &Path) {
+    let mut document = animsmith_fbx::load_bytes(
+        Path::new("source.fbx"),
+        rigged_limb_triangle_fbx().as_bytes(),
+    )
+    .expect("analytic FBX fixture loads");
+    document.assets.instances.clear();
+    document.assets.meshes.clear();
+    document.assets.source_skeleton.skins.clear();
+    for bone in &mut document.skeleton.bones {
+        bone.inverse_bind = None;
+    }
+    let track = &mut document.clips[0].tracks[0];
+    track.bone = 2;
+    track.interpolation = Interpolation::CubicSpline;
+    track.times = vec![0.0, 1.0];
+    track.values = TrackValues::Vec3s(vec![
+        Vec3::new(10.0, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(20.0, 0.0, 0.0),
+        Vec3::new(30.0, 0.0, 0.0),
+        Vec3::new(100.0, 0.0, 0.0),
+        Vec3::new(40.0, 0.0, 0.0),
+    ]);
+    document.clips[0].duration_s = 1.0;
+    animsmith_gltf::write::write(&document, path).expect("writes skinless cubic clip");
+}
+
 fn unskinned_prop_fbx() -> String {
     let source = RIGGED_TRIANGLE_FBX.replace("\r\n", "\n");
     let prop = concat!(
@@ -1502,6 +1598,169 @@ fn v7_resolves_each_fbx_input_by_name_and_records_deterministic_selectors() {
         first_artifact
     );
     assert_eq!(second.stdout, first_evidence);
+}
+
+#[test]
+fn v7_rebases_a_meshless_skinless_fbx_clip_from_the_skinned_base_plan() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let base_source = rigged_limb_triangle_fbx();
+    let loaded_base =
+        animsmith_fbx::load_bytes(Path::new("base.fbx"), base_source.as_bytes()).unwrap();
+    std::fs::write(dir.path().join("inputs/base.fbx"), base_source).unwrap();
+    let clip = skinless_animation_fbx();
+    let loaded = animsmith_fbx::load_bytes(Path::new("walk.fbx"), clip.as_bytes()).unwrap();
+    assert!(loaded.assets.source_skeleton.skins.is_empty());
+    assert!(loaded.assets.instances.is_empty());
+    assert_eq!(
+        loaded_base
+            .skeleton
+            .bones
+            .iter()
+            .map(|bone| (&bone.name, bone.parent))
+            .collect::<Vec<_>>(),
+        loaded
+            .skeleton
+            .bones
+            .iter()
+            .map(|bone| (&bone.name, bone.parent))
+            .collect::<Vec<_>>()
+    );
+    std::fs::write(dir.path().join("inputs/walk.fbx"), clip).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    let inputs = evidence["rest_bind_scale"]["inputs"].as_array().unwrap();
+    assert_eq!(inputs[0]["application"], "rest-bind");
+    assert_eq!(inputs[0]["resolved_source_skin_index"], 0);
+    assert_eq!(inputs[1]["application"], "skinless-clip-tracks");
+    assert_eq!(
+        inputs[1]["basis_schema"],
+        "urn:animsmith:character-assembly-skinless-clip-scale-basis:1"
+    );
+    assert!(inputs[1].get("resolved_source_skin_index").is_none());
+    assert_eq!(inputs[1]["resolved_root_node_name"], "root");
+    assert_eq!(inputs[1]["resolved_source_root_node_index"], 1);
+
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    let track = assembled.clips[0]
+        .tracks
+        .iter()
+        .find(|track| {
+            assembled.skeleton.bones[track.bone].name == "tri"
+                && track.property == Property::Translation
+        })
+        .expect("skinless clip translation survives assembly");
+    assert_eq!(track.key_vec3(0), Some(Vec3::ZERO));
+    assert_eq!(
+        track.key_vec3(track.key_count() - 1),
+        Some(Vec3::new(1.0, 0.0, 0.0))
+    );
+    assert_eq!(
+        evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
+        true
+    );
+}
+
+#[test]
+fn v7_rebases_every_cubic_translation_value_and_tangent_in_a_skinless_clip() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.fbx"),
+        rigged_limb_triangle_fbx(),
+    )
+    .unwrap();
+    write_skinless_cubic_clip(&dir.path().join("inputs/walk.glb"));
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.glb")).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    let track = &assembled.clips[0].tracks[0];
+    assert_eq!(track.interpolation, Interpolation::CubicSpline);
+    let TrackValues::Vec3s(values) = &track.values else {
+        panic!("translation track must retain Vec3 storage")
+    };
+    assert_eq!(
+        values,
+        &[
+            Vec3::new(0.1, 0.0, 0.0),
+            Vec3::ZERO,
+            Vec3::new(0.2, 0.0, 0.0),
+            Vec3::new(0.3, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.4, 0.0, 0.0),
+        ]
+    );
+}
+
+#[test]
+fn v7_refuses_skinless_clip_geometry_without_publishing() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.fbx"),
+        rigged_limb_triangle_fbx(),
+    )
+    .unwrap();
+    let clip = skinless_geometry_animation_fbx();
+    let loaded = animsmith_fbx::load_bytes(Path::new("walk.fbx"), clip.as_bytes()).unwrap();
+    assert!(loaded.assets.source_skeleton.skins.is_empty());
+    assert_eq!(loaded.assets.instances.len(), 1);
+    std::fs::write(dir.path().join("inputs/walk.fbx"), clip).unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(refusal_detail(&output).contains("skinless-clip-has-mesh-instances"));
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[test]
+fn v7_keeps_refusing_a_skinless_base() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(dir.path().join("inputs/base.fbx"), skinless_animation_fbx()).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/walk.fbx"),
+        rigged_limb_triangle_fbx(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.fbx")).unwrap();
+
+    let output = run(dir.path());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        refusal_detail(&output)
+            .contains("root_node_name \"root\" fully governs 0 source skins; expected exactly one")
+    );
+    assert!(!dir.path().join("character.glb").exists());
+    assert!(!dir.path().join("character.json").exists());
 }
 
 #[test]

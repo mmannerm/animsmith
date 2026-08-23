@@ -665,10 +665,10 @@
         "basis_fingerprint",
         "compatible",
         "compatibility",
+        "application",
         "input_format",
         "source_projection",
         "resolved_root_node_name",
-        "resolved_source_skin_index",
         "resolved_source_root_node_index"
       ],
       "properties": {
@@ -688,7 +688,10 @@
           "minimum": 0
         },
         "basis_schema": {
-          "const": "urn:animsmith:character-assembly-scale-basis:1"
+          "enum": [
+            "urn:animsmith:character-assembly-scale-basis:1",
+            "urn:animsmith:character-assembly-skinless-clip-scale-basis:1"
+          ]
         },
         "basis_fingerprint": {
           "$ref": "#/$defs/sha256"
@@ -698,6 +701,13 @@
         },
         "compatibility": {
           "const": "compatible"
+        },
+        "application": {
+          "enum": [
+            "rest-bind",
+            "skinless-clip-tracks"
+          ],
+          "description": "Whether this input received the full rest/bind rewrite or the narrow animation-target-only rebase for a meshless source with no skin."
         },
         "input_format": {
           "enum": [
@@ -751,6 +761,32 @@
           "else": {
             "properties": {
               "source_projection": { "$ref": "#/$defs/raw_gltf_projection" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "application": { "const": "rest-bind" }
+            },
+            "required": ["application"]
+          },
+          "then": {
+            "required": ["resolved_source_skin_index"],
+            "properties": {
+              "basis_schema": {
+                "const": "urn:animsmith:character-assembly-scale-basis:1"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": ["resolved_source_skin_index"]
+            },
+            "properties": {
+              "basis_schema": {
+                "const": "urn:animsmith:character-assembly-skinless-clip-scale-basis:1"
+              }
             }
           }
         }

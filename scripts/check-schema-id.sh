@@ -327,14 +327,17 @@ if ! cmp -s <(jq -S . docs/schemas/character-assembly-evidence-v6.schema.json) <
     | .["$defs"].rest_bind_scale.properties.source_skin_index = $old[0]["$defs"].rest_bind_scale.properties.source_skin_index
     | .["$defs"].rest_bind_scale.properties.source_root_node_index = $old[0]["$defs"].rest_bind_scale.properties.source_root_node_index
     | .["$defs"].rest_bind_scale_input.required = $old[0]["$defs"].rest_bind_scale_input.required
+    | .["$defs"].rest_bind_scale_input.allOf = $old[0]["$defs"].rest_bind_scale_input.allOf
+    | .["$defs"].rest_bind_scale_input.properties.basis_schema = $old[0]["$defs"].rest_bind_scale_input.properties.basis_schema
     | del(
+        .["$defs"].rest_bind_scale_input.properties.application,
         .["$defs"].rest_bind_scale_input.properties.resolved_root_node_name,
         .["$defs"].rest_bind_scale_input.properties.resolved_source_skin_index,
         .["$defs"].rest_bind_scale_input.properties.resolved_source_root_node_index
       )
   ' docs/schemas/character-assembly-evidence-v7.schema.json
 ); then
-  fail 'character-assembly-evidence-v7 must differ from immutable evidence-v6 only by identity and declared/resolved name-selector evidence'
+  fail 'character-assembly-evidence-v7 must differ from immutable evidence-v6 only by identity, named selectors, and skinless clip track-rebase evidence'
 fi
 if ! jq -e '
   .["$defs"].residual_comparison_counts.required

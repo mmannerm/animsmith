@@ -415,6 +415,12 @@ or skin reference refuses the operation. With FBX `rest_bind_scale`, an
 unskinned mesh instance attached inside that declared closure is excluded from
 the private scale stage and removed with the node. It still blocks the scale
 plan when the node is not declared for removal.
+For a clip input with no source skin and no mesh instances, v7 instead applies
+the accepted base plan's named animation-target factors (including cubic
+translation tangents) without inventing a bind rewrite. The named root and
+normalized skeleton basis must still match the skinned base. This exception
+does not apply to the base, geometry-bearing inputs, ambiguous skins, or a
+skinned input whose root governs no skin.
 It performs no material, texture, or mesh garbage collection. Recipe/evidence
 v1 through v6 remain immutable historical contracts; v3 rejects
 `rest_bind_scale` as unknown.
