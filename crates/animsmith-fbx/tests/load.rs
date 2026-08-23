@@ -1404,6 +1404,66 @@ fn add_shader_and_binding(source: &str) -> String {
     )
 }
 
+fn add_display_layers(source: &str) -> String {
+    let display_layers = concat!(
+        "\tCollectionExclusive: 5401, \"DisplayLayer::animsmith-test\", \"DisplayLayer\" {\n",
+        "\t\tProperties70: {\n",
+        "\t\t\tP: \"Color\", \"ColorRGB\", \"Color\", \"\",0.1,0.2,0.3\n",
+        "\t\t\tP: \"Show\", \"bool\", \"\", \"\",0\n",
+        "\t\t\tP: \"Freeze\", \"bool\", \"\", \"\",1\n",
+        "\t\t}\n",
+        "\t}\n",
+        "\tCollectionExclusive: 5402, \"DisplayLayer::animsmith-test-2\", \"DisplayLayer\" {\n",
+        "\t\tProperties70: {\n",
+        "\t\t\tP: \"Color\", \"ColorRGB\", \"Color\", \"\",0.4,0.5,0.6\n",
+        "\t\t\tP: \"Show\", \"bool\", \"\", \"\",1\n",
+        "\t\t\tP: \"Freeze\", \"bool\", \"\", \"\",0\n",
+        "\t\t}\n",
+        "\t}\n",
+    );
+    source
+        .replace("\r\n", "\n")
+        .replacen(
+            "\tAnimationStack: 3001",
+            &format!("{display_layers}\tAnimationStack: 3001"),
+            1,
+        )
+        .replacen(
+            "Connections: {",
+            concat!(
+                "Connections: {\n",
+                "\tC: \"OO\",1001,5401\n",
+                "\tC: \"OO\",1001,5402",
+            ),
+            1,
+        )
+}
+
+fn add_selection_set(source: &str) -> String {
+    let objects = concat!(
+        "\tCollection: 5501, \"SelectionSet::animsmith-test\", \"SelectionSet\" {}\n",
+        "\tSelectionNode: 5502, \"SelectionNode::root\", \"\" {\n",
+        "\t\tIsTheNodeInSet: 1\n",
+        "\t}\n",
+    );
+    source
+        .replace("\r\n", "\n")
+        .replacen(
+            "\tAnimationStack: 3001",
+            &format!("{objects}\tAnimationStack: 3001"),
+            1,
+        )
+        .replacen(
+            "Connections: {",
+            concat!(
+                "Connections: {\n",
+                "\tC: \"OO\",5502,5501\n",
+                "\tC: \"OO\",1001,5502",
+            ),
+            1,
+        )
+}
+
 fn add_second_root_cluster(source: &str, bind_matrix: &str) -> String {
     source
         .replacen(
@@ -1499,6 +1559,73 @@ fn rest_bind_admits_shader_bindings_and_a_reconciled_bind_pose() {
     }));
     animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
         .expect("reconciled bind pose and shader metadata are scale-safe");
+}
+
+#[test]
+fn rest_bind_admits_exact_display_layer_editor_metadata_count() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = add_display_layers(&source);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("display-layer.fbx");
+    std::fs::write(&path, source).expect("write analytic display-layer fixture");
+
+    let scene = ufbx::load_memory(
+        &std::fs::read(&path).expect("read analytic fixture"),
+        ufbx::LoadOpts::default(),
+    )
+    .expect("inspect display layer");
+    assert_eq!(scene.display_layers.len(), 2);
+    let layer = &scene.display_layers[0];
+    assert_eq!(layer.nodes.len(), 1);
+    assert_eq!(layer.nodes[0].element.name, "root");
+    assert!(!layer.visible);
+    assert!(layer.frozen);
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("display layer parses");
+    assert_eq!(loaded.inventory().unsupported_source_element_count, 2);
+    assert!(loaded.source_facts().constructs().rows().iter().any(|row| {
+        row.kind() == SourceConstructKindV1::UnknownElement
+            && row.name().as_str() == "fbx:unmodeled-elements"
+            && row.count() == 2
+    }));
+    animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
+        .expect("display-layer editor metadata is scale-irrelevant");
+}
+
+#[test]
+fn rest_bind_keeps_selection_sets_and_nodes_unsupported() {
+    let source = std::fs::read_to_string(fixture()).expect("read fixture");
+    let source = add_selection_set(&source);
+    let source = add_display_layers(&source);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("selection-set.fbx");
+    std::fs::write(&path, source).expect("write analytic selection-set fixture");
+
+    let scene = ufbx::load_memory(
+        &std::fs::read(&path).expect("read analytic fixture"),
+        ufbx::LoadOpts::default(),
+    )
+    .expect("inspect selection set");
+    assert_eq!(scene.selection_sets.len(), 1);
+    assert_eq!(scene.selection_nodes.len(), 1);
+    assert_eq!(scene.selection_sets[0].nodes.len(), 1);
+    assert_eq!(scene.display_layers.len(), 2);
+
+    let loaded = animsmith_fbx::load_scale_source(&path).expect("selection set parses");
+    assert_eq!(loaded.inventory().unsupported_source_element_count, 4);
+    assert!(loaded.source_facts().constructs().rows().iter().any(|row| {
+        row.kind() == SourceConstructKindV1::UnknownElement
+            && row.name().as_str() == "fbx:unmodeled-elements"
+            && row.count() == 4
+    }));
+    assert_eq!(
+        animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
+        concat!(
+            "FBX rest/bind raw-source facts rejected: ",
+            "raw_source.construct=unknown_element(fbx:unmodeled-elements; count=2; ",
+            "selection_sets=1; selection_nodes=1)"
+        )
+    );
 }
 
 #[test]

@@ -376,7 +376,7 @@ pub(crate) struct RestBindSourceConstructCounts {
     pub(crate) user_defined_property_count: usize,
     pub(crate) safe_texture_file_link_count: usize,
     admitted_unmodeled_element_count: usize,
-    unsupported_unmodeled_element_counts: [(&'static str, usize); 24],
+    unsupported_unmodeled_element_counts: [(&'static str, usize); 23],
 }
 
 impl RestBindSourceConstructCounts {
@@ -736,7 +736,9 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceCons
         // skin binds, animation tracks, or geometry into the normalized GLB
         // rest/bind bridge. Their source elements remain counted in the raw
         // aggregate, while same-load admission discharges only these exact
-        // classes.
+        // classes. Display layers contain only node membership plus editor
+        // visibility/freeze/color metadata; they do not alter node transforms
+        // or any rest/bind payload.
         admitted_unmodeled_element_count: stereo_cameras
             .len()
             .saturating_add(camera_switchers.len())
@@ -744,6 +746,7 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceCons
             .saturating_add(lod_groups.len())
             .saturating_add(shaders.len())
             .saturating_add(shader_bindings.len())
+            .saturating_add(display_layers.len())
             .saturating_add(bind_poses.admitted),
         // Keep the diagnostic label and parser count together. Because every
         // destructured residual list is consumed here, compiler warnings also
@@ -759,7 +762,6 @@ fn rest_bind_unmodeled_element_counts(scene: &ufbx::Scene) -> RestBindSourceCons
             ("blend_channels", blend_channels.len()),
             ("blend_shapes", blend_shapes.len()),
             ("cache_files", cache_files.len()),
-            ("display_layers", display_layers.len()),
             ("selection_sets", selection_sets.len()),
             ("selection_nodes", selection_nodes.len()),
             ("characters", characters.len()),

@@ -1685,9 +1685,11 @@ by bounded resource facts and dependency-closure evidence rather than a
 transform field. The source-aware gate may therefore admit those two known
 classes while retaining their inventory/evidence rows; rooted capture keeps
 supported texture assignments in the normalized document and private GLB. The
-same proof boundary admits exactly ufbx's marker, LOD-group, stereo-camera, and
-camera-switcher typed lists: those node-attribute types supply no hierarchy
-transform, skin bind, animation track, or geometry to the normalized bridge.
+same proof boundary admits exactly ufbx's marker, LOD-group, stereo-camera,
+camera-switcher, and display-layer typed lists: those records supply no
+hierarchy transform, skin bind, animation track, or geometry to the normalized
+bridge. Display layers contain only node membership and editor
+visibility/freeze/color state.
 Shader and binding-table records are material-evaluation metadata and are
 admitted on the same basis. BindPose is different rest/bind-domain evidence:
 the same-load gate admits it only when it covers every joint of each skin it
@@ -1699,8 +1701,9 @@ as distinct residual kinds. All admitted rows remain counted in the raw
 unmodeled-element aggregate. Every residual
 unmodeled typed list fails closed, and its refusal retains the exact nonzero
 kind counts. This remains a normalized re-encoding rather than a raw FBX
-object-property, marker/camera behavior, material, or texture-assignment
-preservation claim. Extensions, incomplete construct/resource coverage, and
+object-property, marker/camera/display-layer behavior, material, or
+texture-assignment preservation claim. Extensions, incomplete
+construct/resource coverage, and
 every unsupported transform, geometry, bind, or animation fact still reject.
 The inventory-only API remains conservative because its frozen v5 aggregate
 cannot distinguish these discharged classes from another unmodeled source
@@ -2021,11 +2024,12 @@ rest/bind subset: adjusted metre/Y-up coordinates, compensated inheritance,
 complete finite bind provenance, unchanged four-slot influences, and no
 unsupported scale-bearing semantic D.4 row. Same-load source facts may prove
 that user-defined properties, bounded texture/video declarations, or exact
-marker, LOD-group, stereo-camera, and camera-switcher typed lists are known,
-non-scale-bearing inputs to this normalized bridge. Shader and binding-table
-metadata is equally non-bearing. BindPose rows are admitted only after the
-same-load converted matrices reconcile with the cluster/node matrices the
-bridge consumes; no Pose is required. Other unmodeled typed lists remain
+marker, LOD-group, stereo-camera, camera-switcher, and display-layer typed
+lists are known, non-scale-bearing inputs to this normalized bridge. Display
+layers contain only node membership and editor visibility/freeze/color state.
+Shader and binding-table metadata is equally non-bearing. BindPose rows are
+admitted only after the same-load converted matrices reconcile with the
+cluster/node matrices the bridge consumes; no Pose is required. Other unmodeled typed lists remain
 fail-closed and are reported by exact nonzero kind counts. The same-load
 boundary may also classify an exhaustive set of conversion-fidelity facts as
 scale-invariant: omitted authored vertex/face/edge metadata, influence
@@ -2046,8 +2050,8 @@ once, read-back-digest checks it, and atomically publishes the resulting GLB
 with immutable scale-evidence v5. V5 records the complete FBX inventory and
 the private staged-GLB identity plus the nested raw-GLB proof; it makes no raw
 FBX span, object-property, authored-curve, material, or texture-assignment
-preservation claim, nor a marker/camera behavior claim; supported linked
-texture bytes are nevertheless captured before staging so admission cannot
+preservation claim, nor a marker/camera/display-layer behavior claim; supported
+linked texture bytes are nevertheless captured before staging so admission cannot
 silently remove them. Refusals name the exact incomplete coverage domain,
 semantic row, inventory counter, or residual unmodeled kind.
 

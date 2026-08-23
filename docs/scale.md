@@ -119,8 +119,10 @@ accepts only the inventory-complete normalized subset. It requires the same
 explicit skin/root/factor declarations, stages a private normalized GLB,
 maps both selectors by exact unique named identity, then uses the existing raw
 GLB rewrite/reload/proof path. The same-load gate admits exact marker,
-LOD-group, stereo-camera, and camera-switcher typed lists because none can
-supply rest/bind state to that bridge, plus shader/binding-table metadata. It
+LOD-group, stereo-camera, camera-switcher, and display-layer typed lists
+because none can supply rest/bind state to that bridge, plus
+shader/binding-table metadata. Display layers contribute only node membership
+and editor visibility/freeze/color state; they do not alter projected nodes. It
 admits a BindPose only when it covers every joint of each skin it touches and
 its converted rows are finite, unambiguous, and agree with the converted
 cluster bind or node rest-world matrix already consumed by the bridge; a
@@ -134,8 +136,8 @@ omitted point/line or mesh geometry, unsupported skinning/deformers, incomplete
 binds or normals, and unclassified payload remain blockers. It
 records the full FBX inventory and staged GLB digest in scale-evidence v5. The
 published artifact is a re-encoded GLB: no raw FBX byte, object-property,
-marker/camera behavior, or authored-curve-key preservation is claimed. FBX
-whole-document conversion remains refused. Character assembly
+marker/camera/display-layer behavior, or authored-curve-key preservation is
+claimed. FBX whole-document conversion remains refused. Character assembly
 likewise does not silently apply either scale operation. Its existing bind-pose
 canonicalization remains a distinct, explicit recipe operation.
 Morph support intentionally remains a raw glTF whole-document capability; it
