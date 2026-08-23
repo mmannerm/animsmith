@@ -1596,6 +1596,7 @@ fn rest_bind_admits_exact_display_layer_editor_metadata_count() {
 fn rest_bind_keeps_selection_sets_and_nodes_unsupported() {
     let source = std::fs::read_to_string(fixture()).expect("read fixture");
     let source = add_selection_set(&source);
+    let source = add_display_layers(&source);
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("selection-set.fbx");
     std::fs::write(&path, source).expect("write analytic selection-set fixture");
@@ -1608,9 +1609,15 @@ fn rest_bind_keeps_selection_sets_and_nodes_unsupported() {
     assert_eq!(scene.selection_sets.len(), 1);
     assert_eq!(scene.selection_nodes.len(), 1);
     assert_eq!(scene.selection_sets[0].nodes.len(), 1);
+    assert_eq!(scene.display_layers.len(), 2);
 
     let loaded = animsmith_fbx::load_scale_source(&path).expect("selection set parses");
-    assert_eq!(loaded.inventory().unsupported_source_element_count, 2);
+    assert_eq!(loaded.inventory().unsupported_source_element_count, 4);
+    assert!(loaded.source_facts().constructs().rows().iter().any(|row| {
+        row.kind() == SourceConstructKindV1::UnknownElement
+            && row.name().as_str() == "fbx:unmodeled-elements"
+            && row.count() == 4
+    }));
     assert_eq!(
         animsmith_fbx::rest_bind_capability_facts_for_source(&loaded).unwrap_err(),
         concat!(
