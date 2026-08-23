@@ -1404,8 +1404,8 @@ fn add_shader_and_binding(source: &str) -> String {
     )
 }
 
-fn add_display_layer(source: &str) -> String {
-    let display_layer = concat!(
+fn add_display_layers(source: &str) -> String {
+    let display_layers = concat!(
         "\tCollectionExclusive: 5401, \"DisplayLayer::animsmith-test\", \"DisplayLayer\" {\n",
         "\t\tProperties70: {\n",
         "\t\t\tP: \"Color\", \"ColorRGB\", \"Color\", \"\",0.1,0.2,0.3\n",
@@ -1413,15 +1413,30 @@ fn add_display_layer(source: &str) -> String {
         "\t\t\tP: \"Freeze\", \"bool\", \"\", \"\",1\n",
         "\t\t}\n",
         "\t}\n",
+        "\tCollectionExclusive: 5402, \"DisplayLayer::animsmith-test-2\", \"DisplayLayer\" {\n",
+        "\t\tProperties70: {\n",
+        "\t\t\tP: \"Color\", \"ColorRGB\", \"Color\", \"\",0.4,0.5,0.6\n",
+        "\t\t\tP: \"Show\", \"bool\", \"\", \"\",1\n",
+        "\t\t\tP: \"Freeze\", \"bool\", \"\", \"\",0\n",
+        "\t\t}\n",
+        "\t}\n",
     );
     source
         .replace("\r\n", "\n")
         .replacen(
             "\tAnimationStack: 3001",
-            &format!("{display_layer}\tAnimationStack: 3001"),
+            &format!("{display_layers}\tAnimationStack: 3001"),
             1,
         )
-        .replacen("Connections: {", "Connections: {\n\tC: \"OO\",1001,5401", 1)
+        .replacen(
+            "Connections: {",
+            concat!(
+                "Connections: {\n",
+                "\tC: \"OO\",1001,5401\n",
+                "\tC: \"OO\",1001,5402",
+            ),
+            1,
+        )
 }
 
 fn add_selection_set(source: &str) -> String {
@@ -1547,9 +1562,9 @@ fn rest_bind_admits_shader_bindings_and_a_reconciled_bind_pose() {
 }
 
 #[test]
-fn rest_bind_admits_display_layer_editor_metadata() {
+fn rest_bind_admits_exact_display_layer_editor_metadata_count() {
     let source = std::fs::read_to_string(fixture()).expect("read fixture");
-    let source = add_display_layer(&source);
+    let source = add_display_layers(&source);
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("display-layer.fbx");
     std::fs::write(&path, source).expect("write analytic display-layer fixture");
@@ -1559,7 +1574,7 @@ fn rest_bind_admits_display_layer_editor_metadata() {
         ufbx::LoadOpts::default(),
     )
     .expect("inspect display layer");
-    assert_eq!(scene.display_layers.len(), 1);
+    assert_eq!(scene.display_layers.len(), 2);
     let layer = &scene.display_layers[0];
     assert_eq!(layer.nodes.len(), 1);
     assert_eq!(layer.nodes[0].element.name, "root");
@@ -1567,11 +1582,11 @@ fn rest_bind_admits_display_layer_editor_metadata() {
     assert!(layer.frozen);
 
     let loaded = animsmith_fbx::load_scale_source(&path).expect("display layer parses");
-    assert_eq!(loaded.inventory().unsupported_source_element_count, 1);
+    assert_eq!(loaded.inventory().unsupported_source_element_count, 2);
     assert!(loaded.source_facts().constructs().rows().iter().any(|row| {
         row.kind() == SourceConstructKindV1::UnknownElement
             && row.name().as_str() == "fbx:unmodeled-elements"
-            && row.count() == 1
+            && row.count() == 2
     }));
     animsmith_fbx::rest_bind_capability_facts_for_source(&loaded)
         .expect("display-layer editor metadata is scale-irrelevant");
