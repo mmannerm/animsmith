@@ -1964,12 +1964,22 @@ fn v7_accepts_fully_keyed_skinless_clip_with_take_pose_rest() {
         tracks[&Property::Translation].key_vec3(0),
         Some(Vec3::new(2.5, 0.0, 0.0))
     );
+    assert_eq!(
+        tracks[&Property::Translation].key_vec3(1),
+        Some(Vec3::new(3.5, 0.0, 0.0))
+    );
     assert!(
         tracks[&Property::Rotation]
             .key_quat(0)
             .is_some_and(|value| value.dot(Quat::from_rotation_z(0.25)).abs() > 1.0 - 1.0e-6)
     );
+    assert!(
+        tracks[&Property::Rotation]
+            .key_quat(1)
+            .is_some_and(|value| value.dot(Quat::from_rotation_z(0.5)).abs() > 1.0 - 1.0e-6)
+    );
     assert_eq!(tracks[&Property::Scale].key_vec3(0), Some(Vec3::splat(2.0)));
+    assert_eq!(tracks[&Property::Scale].key_vec3(1), Some(Vec3::splat(3.0)));
     assert_eq!(
         evidence["rest_bind_scale"]["proof"]["proof"]["read_back_digest_matches"],
         true

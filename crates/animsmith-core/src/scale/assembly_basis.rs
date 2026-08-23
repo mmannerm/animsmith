@@ -689,20 +689,20 @@ pub fn rebase_assembly_scale_skinless_clip(
             reason: "named-topology",
         });
     }
-    if !same_skinless_named_rest(
+    if !same_named_rest(
         &base_named_nodes,
         &input_named_nodes,
-        &universally_animated_properties,
+        Some(&universally_animated_properties),
         &tolerance,
     ) {
         return Err(AssemblyScaleCompatibilityError {
             reason: "named-rest-basis",
         });
     }
-    if !same_skinless_named_orientations(
+    if !same_named_orientations(
         &base_named_nodes,
         &input_named_nodes,
-        &universally_animated_properties,
+        Some(&universally_animated_properties),
         &tolerance,
     ) {
         return Err(AssemblyScaleCompatibilityError {
@@ -860,9 +860,9 @@ fn require_assembly_scale_compatibility_inner(
         Some("expected-factor")
     } else if !same_named_topology(&base.named_nodes, &input.named_nodes) {
         Some("named-topology")
-    } else if !same_named_rest(&base.named_nodes, &input.named_nodes, &tolerance) {
+    } else if !same_named_rest(&base.named_nodes, &input.named_nodes, None, &tolerance) {
         Some("named-rest-basis")
-    } else if !same_named_orientations(&base.named_nodes, &input.named_nodes, &tolerance) {
+    } else if !same_named_orientations(&base.named_nodes, &input.named_nodes, None, &tolerance) {
         Some("named-orientation")
     } else if (named_selectors.is_some()
         && !same_named_source_layout(&base.source_nodes, &input.source_nodes))
@@ -895,49 +895,48 @@ fn same_named_topology(base: &[AssemblyScaleNamedNode], input: &[AssemblyScaleNa
 fn same_named_rest(
     base: &[AssemblyScaleNamedNode],
     input: &[AssemblyScaleNamedNode],
-    tolerance: &ScaleTolerancePolicy,
-) -> bool {
-    base.iter().zip(input).all(|(base, input)| {
-        close_f32_bits(&base.translation_bits, &input.translation_bits, tolerance)
-            && close_f32_bits(&base.scale_bits, &input.scale_bits, tolerance)
-    })
-}
-
-fn same_skinless_named_rest(
-    base: &[AssemblyScaleNamedNode],
-    input: &[AssemblyScaleNamedNode],
-    universally_animated_properties: &BTreeSet<(String, Property)>,
+    universally_animated_properties: Option<&BTreeSet<(String, Property)>>,
     tolerance: &ScaleTolerancePolicy,
 ) -> bool {
     base.iter().zip(input).all(|(base, input)| {
         (close_f32_bits(&base.translation_bits, &input.translation_bits, tolerance)
-            || universally_animated_properties
-                .contains(&(base.name.clone(), Property::Translation)))
+            || named_property_is_universally_animated(
+                universally_animated_properties,
+                &base.name,
+                Property::Translation,
+            ))
             && (close_f32_bits(&base.scale_bits, &input.scale_bits, tolerance)
-                || universally_animated_properties.contains(&(base.name.clone(), Property::Scale)))
+                || named_property_is_universally_animated(
+                    universally_animated_properties,
+                    &base.name,
+                    Property::Scale,
+                ))
     })
 }
 
 fn same_named_orientations(
     base: &[AssemblyScaleNamedNode],
     input: &[AssemblyScaleNamedNode],
-    tolerance: &ScaleTolerancePolicy,
-) -> bool {
-    base.iter()
-        .zip(input)
-        .all(|(base, input)| same_quaternion(&base.rotation_bits, &input.rotation_bits, tolerance))
-}
-
-fn same_skinless_named_orientations(
-    base: &[AssemblyScaleNamedNode],
-    input: &[AssemblyScaleNamedNode],
-    universally_animated_properties: &BTreeSet<(String, Property)>,
+    universally_animated_properties: Option<&BTreeSet<(String, Property)>>,
     tolerance: &ScaleTolerancePolicy,
 ) -> bool {
     base.iter().zip(input).all(|(base, input)| {
         same_quaternion(&base.rotation_bits, &input.rotation_bits, tolerance)
-            || universally_animated_properties.contains(&(base.name.clone(), Property::Rotation))
+            || named_property_is_universally_animated(
+                universally_animated_properties,
+                &base.name,
+                Property::Rotation,
+            )
     })
+}
+
+fn named_property_is_universally_animated(
+    universally_animated_properties: Option<&BTreeSet<(String, Property)>>,
+    name: &str,
+    property: Property,
+) -> bool {
+    universally_animated_properties
+        .is_some_and(|properties| properties.contains(&(name.to_owned(), property)))
 }
 
 fn same_source_layout(base: &[AssemblyScaleSourceNode], input: &[AssemblyScaleSourceNode]) -> bool {
