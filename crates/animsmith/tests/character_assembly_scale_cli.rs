@@ -2574,11 +2574,15 @@ fn v7_composes_fbx_rest_bind_scale_with_unskinned_prop_removal() {
     std::fs::write(dir.path().join("recipe.toml"), explicitly_retained).unwrap();
     let retained = run(dir.path());
     assert_eq!(retained.status.code(), Some(1));
+    let refusal: Value = serde_json::from_slice(&retained.stdout).expect("typed refusal JSON");
+    assert_eq!(refusal["rejection"]["stage"], "selection");
+    assert_eq!(refusal["rejection"]["kind"], "asset-recipe-mismatch");
     let detail = refusal_detail(&retained);
-    assert!(detail.contains("rest_bind_scale FBX selector mapping rejected input base.fbx"));
-    assert!(
-        detail.contains("does not contain exactly one skin with the selected named joint topology")
-    );
+    assert!(detail.contains("rest_bind_scale FBX base projection rejected input base.fbx"));
+    assert!(detail.contains(
+        "mesh_instances selection retains no skinned base mesh instance for rest_bind_scale"
+    ));
+    assert!(!detail.contains("staged GLB"));
     assert_eq!(
         std::fs::read(dir.path().join("character.glb")).unwrap(),
         prior_artifact

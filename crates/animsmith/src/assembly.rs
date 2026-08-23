@@ -916,6 +916,18 @@ fn selected_fbx_base_scale_stage_document(
         remove_nodes,
         requested_mesh_instances,
     )?;
+    if !requested_mesh_instances.is_empty()
+        && projected
+            .assets
+            .instances
+            .iter()
+            .all(|instance| instance.skin_joints.is_empty())
+    {
+        return Err(
+            "mesh_instances selection retains no skinned base mesh instance for rest_bind_scale"
+                .into(),
+        );
+    }
     retain_surviving_mesh_instance_names(&mut retained, &projected);
     Ok((
         projected,
