@@ -3482,7 +3482,11 @@ The strict tagged `operation` object has exactly these V1 shapes:
 - `{"kind":"time_warp","version":1,"output_duration_s":d,"control_points":[{"input_time":0,"output_time":0}, ...]}`.
 
 The control-point array is ordered, finite, starts at `(0, 0)`, ends at
-`(1, 1)`, and has strictly increasing input and output coordinates. `input`
+`(1, 1)`, and has strictly increasing input and output coordinates. The mapping
+is piecewise linear: an exact input knot maps to its declared output knot; for
+adjacent knots `(x0, y0)` and `(x1, y1)`, an input `t` strictly between them
+maps to `y0 + (t - x0) * (y1 - y0) / (x1 - x0)`. Point times and both window
+endpoints use that same mapping. `input`
 has exactly `{artifact:{sha256,bytes}, fragment:{sha256,bytes}}` and refers to
 the separately supplied input fragment; the input fragment is not duplicated
 inline. A successful `output` has exactly
@@ -3498,7 +3502,7 @@ accepted in V1.
 V1 operation mappings are exact: `trim` and `slice` carry a finite retained
 interval `[a, b]` with `0 <= a < b <= 1` and map an in-range `t` to
 `(t - a) / (b - a)`; `resample` carries the identity mapping on normalized
-time; and `time_warp` carries the ordered control points above. A point outside
+time; and `time_warp` carries the piecewise-linear control points above. A point outside
 a trim/slice interval has outcome `outside` and is omitted only from a
 successful output fragment; a window wholly outside has the same outcome. A
 window that intersects an interval boundary has outcome `refused` with code
