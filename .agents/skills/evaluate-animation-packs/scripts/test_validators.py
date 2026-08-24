@@ -8,9 +8,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path, PurePosixPath
 
@@ -1620,6 +1622,43 @@ class ReportValidatorTests(unittest.TestCase):
             report_validator.validate_appendix(appendix),
         )
 
+    def test_vendor_marker_validator_scope_matches_the_typos_grammar(self) -> None:
+        marker = "`Saber Foward & (Spin)/v2`<!-- vendor-id -->"
+        for document, validator, raw_html_error in (
+            (valid_report(), report_validator.validate, "report must not contain raw HTML"),
+            (
+                valid_appendix(),
+                report_validator.validate_appendix,
+                "appendix must not contain raw HTML",
+            ),
+        ):
+            marked = document.replace("Fixture.", f"{marker}.", 1)
+            self.assertNotIn(raw_html_error, validator(marked))
+            for malformed in (
+                f"`Saber Foward`<!-- vendor-id-->",
+                f"``Saber Foward`<!-- vendor-id -->",
+                f"```Saber Foward`<!-- vendor-id -->",
+                "`first``Saber Foward & (Spin)/v2`<!-- vendor-id -->",
+                r"\`Saber Foward`<!-- vendor-id -->",
+            ):
+                candidate = document + f"\n{malformed}\n"
+                self.assertIn(raw_html_error, validator(candidate), malformed)
+
+        fenced = valid_report() + (
+            "\n```markdown\n"
+            "`Saber Foward & (Spin)/v2`<!-- vendor-id -->\n"
+            "```\n\n"
+            "A valid inline marker remains `Saber Foward & (Spin)/v2`<!-- vendor-id -->.\n"
+        )
+        self.assertNotIn(
+            "report must not contain raw HTML",
+            report_validator.validate(fenced),
+        )
+        self.assertIn(
+            "report must not contain raw HTML",
+            report_validator.validate(valid_report() + "\n<div>visible</div>\n"),
+        )
+
     def test_requires_runtime_set_member_and_contract_columns(self) -> None:
         replacements = (
             ("Exact members", "Members omitted"),
@@ -3035,10 +3074,145 @@ class RegenerationContractTests(unittest.TestCase):
         )
 
         self.assertIn("complete identifier", skill)
-        self.assertIn("exact-identifier exception", taxonomy)
-        self.assertIn("allowlist the misspelled substring globally", taxonomy)
+        self.assertIn("complete single-backtick code span", taxonomy)
+        self.assertIn("<!-- vendor-id -->", taxonomy)
+        self.assertIn("exact identifier", taxonomy)
+        self.assertIn("spaces and punctuation", taxonomy)
+        self.assertIn("an identical spelling in ordinary prose remains checked", taxonomy)
         self.assertIn("root translation or yaw", appendix_template)
         self.assertIn("displacement and yaw proof", appendix_template)
+
+    def test_vendor_identifier_typos_are_marked_and_prose_is_not_exempt(self) -> None:
+        config = (self.repository / "_typos.toml").read_text(encoding="utf-8")
+        config_data = tomllib.loads(config)
+        self.assertNotIn("extend-ignore-re", config_data["default"])
+        self.assertEqual(
+            config_data["files"]["extend-exclude"],
+            ["*.fbx", "*.glb", "Cargo.lock"],
+        )
+        self.assertEqual(
+            config_data["type"]["md"]["extend-ignore-re"],
+            [report_validator.VENDOR_ID_MARKER_RE.pattern],
+        )
+
+        report_identifiers = {
+            self.repository
+            / "docs/reports/protofactor-basic-locomotion-evidence.md": "WalkForwadRight",
+            self.repository
+            / "docs/reports/protofactor-sword-and-shield-evidence.md": "ParryHight2",
+        }
+        for report, identifier in report_identifiers.items():
+            text = report.read_text(encoding="utf-8")
+            self.assertIn(f"`{identifier}`<!-- vendor-id -->", text)
+            self.assertNotIn(f"vendor-id:{identifier}", text)
+
+        marker = report_validator.VENDOR_ID_MARKER_RE
+        synthetic_identifier = "Saber Foward & (Spin)/v2"
+        self.assertRegex(
+            f"the exact `{synthetic_identifier}`<!-- vendor-id --> member", marker
+        )
+        self.assertNotRegex(f"ordinary prose says {synthetic_identifier}", marker)
+        self.assertIsNotNone(
+            marker.fullmatch(f"`{synthetic_identifier}`<!-- vendor-id -->")
+        )
+        self.assertIsNone(marker.fullmatch("`Saber Foward`\n`member`<!-- vendor-id -->"))
+        self.assertIsNone(marker.fullmatch("`Saber Foward`\r`member`<!-- vendor-id -->"))
+        self.assertIsNone(
+            marker.fullmatch("`Saber `Foward`<!-- vendor-id -->")
+        )
+        for delimiters in ("``", "```"):
+            self.assertIsNone(
+                marker.search(
+                    f"{delimiters}{synthetic_identifier}`<!-- vendor-id -->"
+                )
+            )
+        self.assertIsNone(
+            marker.search(
+                f"`first``{synthetic_identifier}`<!-- vendor-id -->"
+            )
+        )
+
+        typos = shutil.which("typos")
+        if typos is None:
+            self.skipTest("typos is required by the full local gate")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            marked = directory / "marked.md"
+            ordinary_contexts = {
+                "paragraph.md": f"Narrative accidentally repeats {synthetic_identifier}.\n",
+                "heading.md": f"# {synthetic_identifier}\n",
+                "table-cell.md": (
+                    "| member |\n| --- |\n"
+                    f"| {synthetic_identifier} |\n"
+                ),
+            }
+            marked.write_text(
+                f"The delivered name is `{synthetic_identifier}`<!-- vendor-id -->.\n",
+                encoding="utf-8",
+            )
+            marked_result = subprocess.run(
+                [typos, "--config", str(self.repository / "_typos.toml"), str(marked)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(marked_result.returncode, 0, marked_result.stderr)
+            non_markdown = directory / "marked.txt"
+            non_markdown.write_text(marked.read_text(encoding="utf-8"), encoding="utf-8")
+            non_markdown_result = subprocess.run(
+                [
+                    typos,
+                    "--config",
+                    str(self.repository / "_typos.toml"),
+                    str(non_markdown),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(non_markdown_result.returncode, 0, "marked.txt")
+            self.assertIn(
+                "Foward",
+                non_markdown_result.stdout + non_markdown_result.stderr,
+                "marked.txt",
+            )
+            for filename, contents in ordinary_contexts.items():
+                context = directory / filename
+                context.write_text(contents, encoding="utf-8")
+                result = subprocess.run(
+                    [
+                        typos,
+                        "--config",
+                        str(self.repository / "_typos.toml"),
+                        str(context),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0, filename)
+                self.assertIn("Foward", result.stdout + result.stderr, filename)
+            for filename, contents in {
+                "double-delimiter.md": f"The delivered name is ``{synthetic_identifier}`<!-- vendor-id -->.\n",
+                "triple-delimiter.md": f"The delivered name is ```{synthetic_identifier}`<!-- vendor-id -->.\n",
+                "adjacent-delimiters.md": f"The delivered names are `{synthetic_identifier}` `{synthetic_identifier}`<!-- vendor-id -->.\n",
+                "escaped-opening.md": f"The delivered name is \\`{synthetic_identifier}`<!-- vendor-id -->.\n",
+            }.items():
+                context = directory / filename
+                context.write_text(contents, encoding="utf-8")
+                result = subprocess.run(
+                    [
+                        typos,
+                        "--config",
+                        str(self.repository / "_typos.toml"),
+                        str(context),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0, filename)
+                self.assertIn("Foward", result.stdout + result.stderr, filename)
 
     def test_version_refresh_keeps_refusal_distinct_from_remediation(self) -> None:
         skill = self.rendered_paragraph_text("SKILL.md")

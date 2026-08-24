@@ -8,6 +8,7 @@ import functools
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from datetime import date
@@ -94,6 +95,22 @@ CONTRACT_KEYS = {
 LOOP_VALUES = {"true", "false", "unknown", "not-applicable"}
 GUIDANCE_PREFIX = "../game-ready-clips.md#"
 CANONICAL_LADDER = "../game-ready-clips.md#the-readiness-ladder"
+VENDOR_ID_MARKER = "<!-- vendor-id -->"
+VENDOR_ID_MARKER_RE = re.compile(r"(?:^|[^\w`\\])`[^`\r\n]+`<!-- vendor-id -->")
+
+
+def _parse_report_markdown(text: str) -> dict[str, Any]:
+    """Parse reports while admitting only exact inline vendor-id comments."""
+    document = parse_markdown(text)
+    if (
+        document["has_raw_html"]
+        and not document["has_raw_html_block"]
+        and document["inline_html"]
+        and len(document["vendor_id_markers"]) == len(document["inline_html"])
+        and all(value == VENDOR_ID_MARKER for value in document["inline_html"])
+    ):
+        document["has_raw_html"] = False
+    return document
 
 
 def parse_args() -> argparse.Namespace:
@@ -568,7 +585,7 @@ def _validate_recipe(document: dict[str, Any]) -> list[str]:
 
 
 def validate(text: str) -> list[str]:
-    document = parse_markdown(text)
+    document = _parse_report_markdown(text)
     errors: list[str] = []
     if document["has_raw_html"]:
         errors.append("report must not contain raw HTML")
@@ -679,7 +696,7 @@ def _appendix_table(
 
 
 def validate_appendix(text: str) -> list[str]:
-    document = parse_markdown(text)
+    document = _parse_report_markdown(text)
     errors: list[str] = []
     if document["has_raw_html"]:
         errors.append("appendix must not contain raw HTML")
