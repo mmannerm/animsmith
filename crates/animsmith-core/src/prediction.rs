@@ -47,8 +47,8 @@ use crate::source_facts::{
 };
 use crate::{
     DEPENDENCY_CLOSURE_V1_ID, DependencyClosureV1, InputIdentity, MEASUREMENTS_SCHEMA_ID,
-    MeasurementContract, OUTPUT_SCHEMA_ID, SourceInverseBindAccessorStatus, SourceNodeLocalRest,
-    SourceSkeletonCoverage,
+    MeasurementContract, OUTPUT_V10_SCHEMA_ID, SourceInverseBindAccessorStatus,
+    SourceNodeLocalRest, SourceSkeletonCoverage,
 };
 
 /// Immutable prediction-provenance V1 schema identity.
@@ -2210,7 +2210,7 @@ where
 }
 
 const CONSUMED_CONTRACTS_V1: [&str; 5] = [
-    OUTPUT_SCHEMA_ID,
+    OUTPUT_V10_SCHEMA_ID,
     MEASUREMENTS_SCHEMA_ID,
     RAW_SOURCE_FACTS_V1_ID,
     DEPENDENCY_CLOSURE_V1_ID,

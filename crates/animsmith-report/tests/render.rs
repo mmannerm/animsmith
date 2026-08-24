@@ -91,7 +91,7 @@ fn chart_roles(doc: &animsmith_core::Document) -> ResolvedRoles {
             (Role::Root, "root".to_string()),
             (Role::Hips, "hips".to_string()),
             (Role::LeftFoot, "foot".to_string()),
-            (Role::RightFoot, "foot".to_string()),
+            (Role::RightFoot, "right_foot".to_string()),
         ],
     )
 }
@@ -221,7 +221,10 @@ fn render_embeds_pose_grid_and_uses_no_external_urls() {
 
 #[test]
 fn render_self_contained_with_roles_findings_and_charts() {
-    let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let mut doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let mut right_foot = doc.skeleton.bones[2].clone();
+    right_foot.name = "right_foot".into();
+    doc.skeleton.bones.push(right_foot);
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
     let checks = evaluations(vec![
@@ -248,7 +251,7 @@ fn render_self_contained_with_roles_findings_and_charts() {
     assert_eq!(data["clips"][0]["trails"]["root"], 0);
     assert_eq!(data["clips"][0]["trails"]["hips"], 1);
     assert_eq!(data["clips"][0]["trails"]["left_foot"], 2);
-    assert_eq!(data["clips"][0]["trails"]["right_foot"], 2);
+    assert_eq!(data["clips"][0]["trails"]["right_foot"], 3);
     assert_eq!(
         data["findings"].as_array().expect("findings array").len(),
         1

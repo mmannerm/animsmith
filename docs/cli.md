@@ -545,7 +545,7 @@ Godot, and Bevy expose no V1 settings, so supplying any setting is an error.
 All statically knowable tuple, setting, value, scope, and applicability errors
 are reported before input I/O. Accepted input format and required per-clip
 materialization are checked after loading. Profile selection never changes
-`measure` values. Output v10 records resolved profile provenance on lint files.
+`measure` values. Output v11 records resolved profile provenance on lint files.
 
 The first production rule is `engine-addressability` for the exact Bevy
 revision 1 / 0.19.0 / `gltf-asset-loader` tuple. With complete glTF/GLB source
@@ -603,9 +603,9 @@ named-map winners, or extension support, and it does not certify a runtime
 load. Consumers using the strict staged reader must also keep each report at or
 below 256 MiB; the reader enforces this byte cap before UTF-8 or JSON decoding.
 
-An output-v10 measure report deliberately has no engine provenance or
+An output-v11 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.
-When its operands are JSON reports, `diff` validates the complete v10 records
+When its operands are JSON reports, `diff` validates the complete v11 records
 and compares only measurements-v15; a selected engine profile does not change
 that report meaning. When its operands are source assets, the profile is still
 resolved against each loader-owned source format before measurement.
@@ -633,15 +633,15 @@ absent selector field or explicit empty list means no runtime-node policy.
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
 See [output.md](output.md) and
-[`output-v10.schema.json`](schemas/output-v10.schema.json). Nested measurement
+[`output-v11.schema.json`](schemas/output-v11.schema.json). Nested measurement
 evidence has its own
 [`measurements-v15.schema.json`](schemas/measurements-v15.schema.json) contract.
-Output-v9 and earlier reports, including reports carrying measurements v14,
-are historical contracts; regenerate a current output-v10 report from the
+Output-v10 and earlier reports, including reports carrying measurements v14,
+are historical contracts; regenerate a current output-v11 report from the
 original asset with the current CLI before using `diff`.
 
 `collection lint COLLECTION.toml --format json` emits the separate immutable
-`urn:animsmith:schema:collection-output:1` contract. The manifest directory is
+`urn:animsmith:schema:collection-output:2` contract. The manifest directory is
 the control root; safe missing/unreadable sources, rejected readable bytes,
 digest/take mismatches, and incomplete runtime-set members remain typed rows
 and exit 1 while later safe sources continue. Invalid manifests, unsafe or
@@ -649,7 +649,8 @@ nonregular paths, and missing/malformed selected configs exit 2 without an
 envelope. Source, clip, and set rows are canonical; member order remains the
 manifest order. Each established clip binds an exact source take index/name
 to a normalized clip index and carries duplicate-safe indexed measurements.
-The nested whole-document lint envelope retains output v10/measurements v15.
+The nested whole-document lint envelope advances to output v11 while retaining
+measurements v15.
 Runtime sets keep `decision: not_evaluated`; they make no blend, controller,
 engine, artistic, or gameplay claim. Every declared member carries raw
 `root_travel`: its existing `duration_s`, root-trajectory translation
@@ -662,13 +663,13 @@ carry raw gait-phase availability, and only a fully established, phase-measured
 set emits `evidence.gait_phase.phase_spread` with basis
 `max_circular_deviation_from_mean`; this preserves existing gait lint
 threshold semantics. See
-[`collection-output-v1.schema.json`](schemas/collection-output-v1.schema.json).
+[`collection-output-v2.schema.json`](schemas/collection-output-v2.schema.json).
 
 `generate addressability` has a separate immutable contract,
 `urn:animsmith:schema:gltf-animation-addressability:1`; see
 [output.md](output.md#gltf-animation-addressability) and
 [`gltf-animation-addressability-v1.schema.json`](schemas/gltf-animation-addressability-v1.schema.json).
-It is not output-v10 and cannot be used as a `diff` measurement operand.
+It is not output-v11 and cannot be used as a `diff` measurement operand.
 
 `generate import-advice` requires an exact `[engine]` selection and all
 required settings, then binds that resolved profile to one input and the

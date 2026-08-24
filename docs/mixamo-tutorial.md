@@ -93,15 +93,15 @@ well-formed, not that the motion is usable —
 $ animsmith inspect walking.glb
 walking.glb
 rig profile: mixamo (9 roles)
-  hips         -> mixamorig:Hips
-  spine        -> mixamorig:Spine
-  head         -> mixamorig:Head
-  left_foot    -> mixamorig:LeftFoot
-  right_foot   -> mixamorig:RightFoot
-  left_toe     -> mixamorig:LeftToeBase
-  right_toe    -> mixamorig:RightToeBase
-  left_hand    -> mixamorig:LeftHand
-  right_hand   -> mixamorig:RightHand
+  hips         -> mixamorig:Hips (exact)
+  spine        -> mixamorig:Spine (exact)
+  head         -> mixamorig:Head (exact)
+  left_foot    -> mixamorig:LeftFoot (exact)
+  right_foot   -> mixamorig:RightFoot (exact)
+  left_toe     -> mixamorig:LeftToeBase (exact)
+  right_toe    -> mixamorig:RightToeBase (exact)
+  left_hand    -> mixamorig:LeftHand (exact)
+  right_hand   -> mixamorig:RightHand (exact)
 skeleton: 9 bones
   mixamorig:Hips
     mixamorig:LeftFoot
@@ -239,8 +239,8 @@ sample values as vendor evidence:
 ```console
 $ animsmith measure --format json walking.glb
 {
-  "schema_version": 10,
-  "schema": "urn:animsmith:schema:output:10",
+  "schema_version": 11,
+  "schema": "urn:animsmith:schema:output:11",
   "tool": { "name": "animsmith", "version": "0.4.4",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -252,9 +252,11 @@ $ animsmith measure --format json walking.glb
         "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "bytes": 123456
       },
-      "rig": { "profile": "mixamo", "resolved_roles": {
-        "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
-        "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" } },
+      "rig": { "profile": "mixamo", "resolution_outcome": "resolved",
+        "resolved_roles": { "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
+          "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" },
+        "resolved_role_policies": { "hips": "exact", "spine": "exact",
+          "left_foot": "exact", "right_foot": "exact" } },
       "measurements": {
         "schema_version": 15,
         "schema": "urn:animsmith:schema:measurements:15",

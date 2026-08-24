@@ -12,7 +12,7 @@
 //! [`serialize_record`] produces pretty JSON bytes and [`emit`] writes them to
 //! stdout. A producer calls it once and hands the same `Vec<u8>` to its
 //! evidence file and to stdout, so the two cannot drift apart;
-//! [`crate::render::print_json`] routes the output-v10 envelopes through the
+//! [`crate::render::print_json`] routes the output-v11 envelopes through the
 //! same pair, so every `--format json` path renders and fails alike.
 //!
 //! # What a crash between the two renames leaves
@@ -1317,7 +1317,7 @@ mod tests {
     /// in `character_assembly_cli.rs` and `scale_cli.rs` pass either way.
     ///
     /// What *is* mechanically checkable is that only one serializer exists.
-    /// [`crate::render::print_json`] routes the output-v10 envelopes through
+    /// [`crate::render::print_json`] routes the output-v11 envelopes through
     /// this same helper, so every byte of pretty JSON this CLI writes — an
     /// evidence record or an envelope — is produced here. This is a source
     /// scan rather than a type-level constraint because `serde_json`'s free
@@ -1360,7 +1360,7 @@ mod tests {
             std::collections::BTreeMap::from([("publish.rs".to_owned(), 1)]),
             "pretty JSON has exactly one producer: `publish::serialize_record`. Evidence \
              records go through it once and its bytes reach both the evidence file and \
-             stdout; the output-v10 envelopes reach it through `render::print_json`. Route \
+             stdout; the output-v11 envelopes reach it through `render::print_json`. Route \
              a new call through one of those two entry points instead of adding a second \
              serializer."
         );

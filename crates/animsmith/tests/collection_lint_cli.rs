@@ -4,12 +4,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:1";
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
+const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:2";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:11";
+const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const COLLECTION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-output-v1.schema.json");
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
+    include_str!("../../../docs/schemas/collection-output-v2.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v11.schema.json");
+const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v15.schema.json");
 
@@ -35,8 +37,11 @@ fn collection(manifest: &Path) -> Output {
 fn collection_validator() -> Validator {
     let collection: Value = serde_json::from_str(COLLECTION_SCHEMA).unwrap();
     let output: Value = serde_json::from_str(OUTPUT_SCHEMA).unwrap();
+    let output_v10: Value = serde_json::from_str(OUTPUT_V10_SCHEMA).unwrap();
     let measurements: Value = serde_json::from_str(MEASUREMENTS_SCHEMA).unwrap();
     let registry = jsonschema::Registry::new()
+        .add(OUTPUT_V10_SCHEMA_ID, output_v10)
+        .unwrap()
         .add(OUTPUT_SCHEMA_ID, output)
         .unwrap()
         .add(MEASUREMENTS_SCHEMA_ID, measurements)
@@ -408,7 +413,7 @@ members = ["com.example.failures/bad", "com.example.failures/digest", "com.examp
     assert_eq!(sources[5]["result"]["state"], "available");
     assert_eq!(
         sources[5]["result"]["envelope"]["schema"],
-        "urn:animsmith:schema:output:10"
+        "urn:animsmith:schema:output:11"
     );
     assert_eq!(sources[5]["result"]["envelope"]["command"], "lint");
     assert_eq!(

@@ -41,6 +41,7 @@ check_schema docs/schemas/output-v7.schema.json urn:animsmith:schema:output:7
 check_schema docs/schemas/output-v8.schema.json urn:animsmith:schema:output:8
 check_schema docs/schemas/output-v9.schema.json urn:animsmith:schema:output:9
 check_schema docs/schemas/output-v10.schema.json urn:animsmith:schema:output:10 crates/animsmith-core/src/contract.rs docs/output.md
+check_schema docs/schemas/output-v11.schema.json urn:animsmith:schema:output:11 crates/animsmith-core/src/contract.rs docs/output.md
 check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8
 check_schema docs/schemas/measurements-v9.schema.json urn:animsmith:schema:measurements:9
 check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:measurements:10
@@ -121,7 +122,8 @@ check_schema docs/schemas/scale-evidence-v5.schema.json urn:animsmith:schema:sca
 check_schema docs/schemas/gltf-animation-addressability-v1.schema.json urn:animsmith:schema:gltf-animation-addressability:1 crates/animsmith-engine/src/addressability.rs docs/output.md docs/cli.md
 check_schema docs/schemas/engine-import-advice-v1.schema.json urn:animsmith:schema:engine-import-advice:1 crates/animsmith-engine/src/import_advice.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-manifest-v1.schema.json urn:animsmith:schema:collection-manifest:1 crates/animsmith-core/src/collection.rs crates/animsmith/src/collection_manifest.rs DESIGN.md
-check_schema docs/schemas/collection-output-v1.schema.json urn:animsmith:schema:collection-output:1 crates/animsmith/src/collection_output.rs DESIGN.md docs/output.md docs/cli.md
+check_schema docs/schemas/collection-output-v1.schema.json urn:animsmith:schema:collection-output:1 DESIGN.md
+check_schema docs/schemas/collection-output-v2.schema.json urn:animsmith:schema:collection-output:2 crates/animsmith/src/collection_output.rs DESIGN.md docs/output.md docs/cli.md
 check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2
 check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs
 check_schema docs/schemas/character-assembly-recipe-v4.schema.json urn:animsmith:schema:character-assembly-recipe:4 crates/animsmith/src/assembly.rs
@@ -362,10 +364,10 @@ done
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer
 # contract when it advances.
-grep -Fq 'Final output-v10 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
-  || fail 'CheckEvaluation documentation does not identify output v10'
-grep -Fq 'regenerate a current output-v10 report from the original' docs/output.md \
-  || fail 'report migration documentation does not identify output v10'
+grep -Fq 'Final output-v11 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
+  || fail 'CheckEvaluation documentation does not identify output v11'
+grep -Fq 'regenerate a current output-v11 report from the original' docs/output.md \
+  || fail 'report migration documentation does not identify output v11'
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \

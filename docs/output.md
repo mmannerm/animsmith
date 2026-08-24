@@ -8,11 +8,11 @@ prediction facets beside its sampled-motion view.
 ## Collection lint
 
 `animsmith collection lint COLLECTION.toml --format json` emits the separate
-immutable `urn:animsmith:schema:collection-output:1` envelope described by
-[`collection-output-v1.schema.json`](schemas/collection-output-v1.schema.json).
+immutable `urn:animsmith:schema:collection-output:2` envelope described by
+[`collection-output-v2.schema.json`](schemas/collection-output-v2.schema.json).
 It binds the exact manifest bytes to canonically ordered source, logical clip,
 and runtime-set records while preserving each set's declared member order.
-Every available source embeds its ordinary one-file output-v10 lint result;
+Every available source embeds its ordinary one-file output-v11 lint result;
 each established logical clip separately carries the existing
 `ClipMeasurements` value selected by raw source take index and exact authored
 take name, then mapped through the loader's observed normalized clip index.
@@ -28,7 +28,7 @@ exit 1; manifest, rooted-path, selected-config, serialization, and tool errors
 exit 2 with no envelope. The frontend preflights the complete control plane
 before source execution and reads sources sequentially.
 
-Runtime-set V1 concludes only whether every declared membership and required
+Runtime-set evidence concludes only whether every declared membership and required
 indexed measurement was established. Its decision is always `not_evaluated`;
 it does not infer blending, synchronization, retargeting, controller policy,
 engine behavior, or artistic/gameplay readiness. A `gait-group` additionally
@@ -41,8 +41,14 @@ complete group (every declared member established and phase-measured) carries
 `circular_phase_spread` value, not a smallest covering arc, and is calculated
 from logical-ID-sorted phases even though member rows retain manifest order.
 Incomplete groups keep every member visible and omit both scalar fields;
-non-gait sets omit gait-phase evidence. The strict reader applies a
-256 MiB N+1 cap before JSON decoding, validates nested output-v10 through its
+non-gait sets omit gait-phase evidence. Every declared member also carries raw
+`root_travel`: duration, translation availability, signed horizontal X/Z
+displacement, sampled horizontal travel, and speed availability/value.
+Set-level `evidence.root_travel` counts only members with every required raw
+fact and is complete only when all declared members are fully measured; it
+never reduces the set or adds direction, ratios, thresholds, or policy.
+The strict reader applies a 256 MiB N+1 cap before JSON decoding, validates
+nested output-v11 through its
 existing reader, recomputes all summaries/work/set lifecycles, and rejects
 unknown fields or contradictory identities and states. Producer and reader
 also freeze 1 GiB per primary source, 16 GiB aggregate primary reads, and the
@@ -50,9 +56,9 @@ collection-manifest V1 row/member/work limits.
 Derived normalized clip names allow at most 4,101 bytes: the 4,096-byte
 authored-name bound plus `#` and the largest duplicate ordinal permitted by the
 4,096-clip manifest bound. Available nested measurement keys retain
-output-v10's 4,096-byte bound.
+output-v11's 4,096-byte bound.
 If such a derived name cannot fit the immutable 4,096-byte text bound of the
-nested output-v10 contract, indexed clip measurements and physical binding are
+nested output-v11 contract, indexed clip measurements and physical binding are
 retained, but the nested document and its name-addressed check reference are
 `nested_output_unavailable`; the collection exits 1 instead of publishing
 schema-invalid nested JSON.
@@ -67,7 +73,7 @@ contract with immutable identity
 `urn:animsmith:schema:gltf-animation-addressability:1`. Its retrievable schema
 is
 [`gltf-animation-addressability-v1.schema.json`](schemas/gltf-animation-addressability-v1.schema.json).
-It is not an output-v10 measure/lint/diff envelope, and the two roots reject
+It is not an output-v11 measure/lint/diff envelope, and the two roots reject
 one another on readback. The staged reader accepts at most 256 MiB and applies
 that byte cap before UTF-8 or JSON decoding.
 
@@ -100,7 +106,7 @@ conclusions.
 contract with immutable identity
 `urn:animsmith:schema:engine-import-advice:1`. Its retrievable schema is
 [`engine-import-advice-v1.schema.json`](schemas/engine-import-advice-v1.schema.json).
-It is neither output-v10 nor the glTF addressability root; strict readers
+It is neither output-v11 nor the glTF addressability root; strict readers
 reject the other shapes. The staged reader applies a 256 MiB byte cap before
 UTF-8 or JSON decoding.
 
@@ -134,9 +140,9 @@ presentation views; JSON remains the contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v10 with the
-immutable protocol identity `urn:animsmith:schema:output:10`. The retrievable
-schema is [`output-v10.schema.json`](schemas/output-v10.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v11 with the
+immutable protocol identity `urn:animsmith:schema:output:11`. The retrievable
+schema is [`output-v11.schema.json`](schemas/output-v11.schema.json); its repository URL
 is a retrieval location, not the protocol identity.
 
 Measurement evidence is nested and independently versioned as
@@ -151,14 +157,23 @@ a distinction a bare optional value cannot express. Version 13 retains each
 per-joint source-declaration inverse-bind matrix beside the observations
 derived from it, refuses non-affine sources, and publishes a scale-free
 reciprocal infinity-norm condition number before trusting an inversion.
-Measurements v14 and earlier, and output v9 and earlier, remain immutable
+Measurements v14 and earlier, and output v10 and earlier, remain immutable
 historical contracts.
-Output v9 first pinned measurements-v15. Output v10 retains measurements-v15
-and adds the prediction-provenance substrate described below; any future
-nested measurement revision will likewise require a new outer identity.
+The historical output-v10 identity is `urn:animsmith:schema:output:10`.
+Output v9 first paired measurements-v15. Output v10 retained it and added the
+prediction-provenance substrate described below. Output v11 retains those
+contracts and adds
+role-resolution provenance: each delivered resolved bone name remains in
+`rig.resolved_roles`, while the matching policy appears in the parallel
+`rig.resolved_role_policies` map. Its `rig.resolution_outcome` is one of
+`resolved`, `coverage`, `ambiguous_exact_match`, `ambiguous_folded_match`,
+`role_collision`, or `ambiguous_profile`. Built-in profile fallback is only
+unique ASCII case-insensitive matching; explicit `[rig.roles]` entries remain
+exact and use `explicit`. Any future nested measurement revision will likewise
+require a new outer identity.
 
 `convert --format json` is deliberately a separate conversion-evidence
-contract, not another command in the output-v10 envelope. Its immutable
+contract, not another command in the output-v11 envelope. Its immutable
 identity is `urn:animsmith:schema:conversion-evidence:2`; its retrievable
 schema is
 [`conversion-evidence-v2.schema.json`](schemas/conversion-evidence-v2.schema.json).
@@ -223,18 +238,19 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 [`output-v5`](schemas/output-v5.schema.json),
 [`output-v6`](schemas/output-v6.schema.json),
 [`output-v7`](schemas/output-v7.schema.json),
-[`output-v8`](schemas/output-v8.schema.json), and
-[`output-v9`](schemas/output-v9.schema.json) remain historical immutable
+[`output-v8`](schemas/output-v8.schema.json),
+[`output-v9`](schemas/output-v9.schema.json), and
+[`output-v10`](schemas/output-v10.schema.json) remain historical immutable
 contracts. The current CLI emits and
-`diff` reads output-v10; regenerate a current output-v10 report from the original
+`diff` reads output-v11; regenerate a current output-v11 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Common envelope
 
 ```json
 {
-  "schema_version": 10,
-  "schema": "urn:animsmith:schema:output:10",
+  "schema_version": 11,
+  "schema": "urn:animsmith:schema:output:11",
   "tool": {
     "name": "animsmith",
     "version": "0.4.4",
@@ -1151,7 +1167,7 @@ present measurement remains a contract error and exit 2.
 The report reader caps each serialized input at 256 MiB before UTF-8 or JSON
 parsing. It validates provenance and measurement-independent prediction links,
 then the complete measurements-v15 contract, then measurement-pointer values,
-before `diff` can extract measurements. Output v9 and earlier inputs receive
+before `diff` can extract measurements. Output v10 and earlier inputs receive
 the normal regeneration guidance.
 
 `lint --format json` deliberately rejects `--allow` so machine evidence is
@@ -1185,13 +1201,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v10 header and emits `inputs`, a
+`diff --format json` uses the same output v11 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 10,
-  "schema": "urn:animsmith:schema:output:10",
+  "schema_version": 11,
+  "schema": "urn:animsmith:schema:output:11",
   "tool": {
     "name": "animsmith",
     "version": "0.4.4",
@@ -1206,7 +1222,7 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v10 `measure`/`lint` reports carrying
+`diff` accepts asset files or one-file v11 `measure`/`lint` reports carrying
 measurement contract v15. v14 and earlier reports are historical and are rejected with
 guidance to regenerate them from the original asset. Multi-file reports and
 other unsupported contract versions are also rejected as operator errors.

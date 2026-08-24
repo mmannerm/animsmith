@@ -249,12 +249,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file output-v10 `measure` or `lint` JSON carrying measurements-v15) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file output-v11 `measure` or `lint` JSON carrying measurements-v15) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v10 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v11 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v10 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v11 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -269,13 +269,13 @@ enum CollectionCmd {
         /// Strict collection-manifest V1 TOML input.
         #[arg(value_name = "COLLECTION.toml")]
         manifest: PathBuf,
-        /// Emit the collection-output V1 JSON contract.
+        /// Emit the collection-output V2 JSON contract.
         #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
         format: CollectionFormat,
     },
 }
 
-/// Collection output has one machine-readable presentation in V1.
+/// Collection output has one machine-readable presentation in V2.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum CollectionFormat {
     Json,
@@ -1538,7 +1538,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// output-v10 `measure`/`lint` JSON report carrying measurements-v15.
+/// output-v11 `measure`/`lint` JSON report carrying measurements-v15.
 fn load_measurements(
     path: &Path,
     loaded_config: &LoadedConfig,
@@ -1558,7 +1558,7 @@ fn load_measurements(
             }
             _ => format!("{} {error}", path.display()),
         })?;
-        // Only the current output-v10 envelope with measurement contract v15 is
+        // Only the current output-v11 envelope with measurement contract v15 is
         // accepted. Older report shapes are intentionally not retained while
         // the project is alpha.
         let file_count = report.file_count();

@@ -1206,9 +1206,13 @@ pub(crate) fn render_inspect<'a>(
     });
     let role_lines = roles.iter().map(|(role, bone)| {
         format!(
-            "  {:<12} -> {}",
+            "  {:<12} -> {} ({})",
             role.as_str(),
-            text_atom(&doc.skeleton.bones[bone].name)
+            text_atom(&doc.skeleton.bones[bone].name),
+            roles
+                .policy(role)
+                .expect("resolved roles retain their resolution policy")
+                .as_str()
         )
     });
     let skeleton = std::iter::once(format!("skeleton: {} bones", doc.skeleton.bones.len()));
@@ -3116,8 +3120,8 @@ mod tests {
             render_inspect(&doc, &roles).collect::<Vec<_>>(),
             vec![
                 "rig profile: custom (2 roles)",
-                "  root         -> root",
-                "  hips         -> hips",
+                "  root         -> root (explicit)",
+                "  hips         -> hips (explicit)",
                 "skeleton: 3 bones",
                 "  root",
                 "    hips",

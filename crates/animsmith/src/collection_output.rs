@@ -1,4 +1,4 @@
-//! Internal producer and strict reader types for collection-output V1.
+//! Internal producer and strict reader types for collection-output V2.
 //!
 //! This is deliberately a CLI-local contract.  Core owns the validated
 //! collection declaration vocabulary; this module owns the command's evidence
@@ -21,13 +21,13 @@ use serde_json::value::RawValue;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read, Write};
 
-pub(crate) const COLLECTION_OUTPUT_V1_ID: &str = "urn:animsmith:schema:collection-output:1";
-pub(crate) const COLLECTION_OUTPUT_V1_SCHEMA_VERSION: u32 = 1;
-pub(crate) const COLLECTION_OUTPUT_V1_BUDGET_ID: &str = "urn:animsmith:collection-output-budget:1";
-pub(crate) const COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
-pub(crate) const COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
-pub(crate) const COLLECTION_OUTPUT_V1_MAX_SERIALIZED_BYTES: u64 = 256 * 1024 * 1024;
-const COLLECTION_OUTPUT_V1_MAX_NORMALIZED_CLIP_NAME_BYTES: usize =
+pub(crate) const COLLECTION_OUTPUT_V2_ID: &str = "urn:animsmith:schema:collection-output:2";
+pub(crate) const COLLECTION_OUTPUT_V2_SCHEMA_VERSION: u32 = 2;
+pub(crate) const COLLECTION_OUTPUT_V2_BUDGET_ID: &str = "urn:animsmith:collection-output-budget:1";
+pub(crate) const COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
+pub(crate) const COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+pub(crate) const COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES: u64 = 256 * 1024 * 1024;
+const COLLECTION_OUTPUT_V2_MAX_NORMALIZED_CLIP_NAME_BYTES: usize =
     COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES
         + 1
         + decimal_digits(COLLECTION_MANIFEST_V1_MAX_CLIPS.saturating_sub(1) as u64);
@@ -48,10 +48,10 @@ pub(crate) struct CollectionOutputBudgetV1 {
 impl CollectionOutputBudgetV1 {
     pub(crate) const fn v1() -> Self {
         Self {
-            id: COLLECTION_OUTPUT_V1_BUDGET_ID,
-            max_source_bytes: COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES,
-            max_aggregate_source_bytes: COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES,
-            max_serialized_bytes: COLLECTION_OUTPUT_V1_MAX_SERIALIZED_BYTES,
+            id: COLLECTION_OUTPUT_V2_BUDGET_ID,
+            max_source_bytes: COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES,
+            max_aggregate_source_bytes: COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES,
+            max_serialized_bytes: COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES,
             max_sources: COLLECTION_MANIFEST_V1_MAX_SOURCES,
             max_clips: COLLECTION_MANIFEST_V1_MAX_CLIPS,
             max_runtime_sets: COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS,
@@ -768,8 +768,8 @@ impl CollectionOutput {
             serialized_bytes,
         )?;
         let output = Self {
-            schema_version: COLLECTION_OUTPUT_V1_SCHEMA_VERSION,
-            schema: COLLECTION_OUTPUT_V1_ID,
+            schema_version: COLLECTION_OUTPUT_V2_SCHEMA_VERSION,
+            schema: COLLECTION_OUTPUT_V2_ID,
             tool,
             command: "collection lint",
             manifest,
@@ -790,8 +790,8 @@ impl CollectionOutput {
         // Only the decimal width of `serialized_bytes` can change the next
         // length. Starting at zero, there are at most as many transitions as
         // the decimal digits in the immutable output cap, plus one stable pass.
-        for _ in 0..=decimal_digits(COLLECTION_OUTPUT_V1_MAX_SERIALIZED_BYTES) {
-            let bytes = serialize_json_bounded(self, COLLECTION_OUTPUT_V1_MAX_SERIALIZED_BYTES)?;
+        for _ in 0..=decimal_digits(COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES) {
+            let bytes = serialize_json_bounded(self, COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES)?;
             if self.work.serialized_bytes == bytes.len() as u64 {
                 return Ok(bytes);
             }
@@ -903,11 +903,11 @@ pub(crate) fn read_collection_output(
     let mut bytes = Vec::new();
     let mut limited = reader
         .by_ref()
-        .take(COLLECTION_OUTPUT_V1_MAX_SERIALIZED_BYTES + 1);
+        .take(COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES + 1);
     limited
         .read_to_end(&mut bytes)
         .map_err(|_| CollectionOutputError::Read)?;
-    if bytes.len() as u64 > COLLECTION_OUTPUT_V1_MAX_SERIALIZED_BYTES {
+    if bytes.len() as u64 > COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES {
         return Err(CollectionOutputError::TooLarge);
     }
     let wire = serde_json::from_slice::<CollectionOutputWire>(&bytes)
@@ -934,8 +934,8 @@ impl CollectionOutputInput {
 
     fn validate(&self, read_bytes: u64) -> Result<(), CollectionOutputError> {
         let wire = &self.wire;
-        if wire.schema_version != COLLECTION_OUTPUT_V1_SCHEMA_VERSION
-            || wire.schema != COLLECTION_OUTPUT_V1_ID
+        if wire.schema_version != COLLECTION_OUTPUT_V2_SCHEMA_VERSION
+            || wire.schema != COLLECTION_OUTPUT_V2_ID
             || wire.command != "collection lint"
             || !valid_tool(&wire.tool)
             || wire.manifest.schema != animsmith_core::COLLECTION_MANIFEST_V1_ID
@@ -1029,14 +1029,14 @@ impl CollectionOutputInput {
             read_bytes,
         )?;
         if wire.work != expected_work
-            || primary_bytes > COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES + 1
+            || primary_bytes > COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1
             || wire.sources.iter().any(|source| {
                 matches!(&source.input,
                 SourceInputStateWire::Available { input }
-                    if input.bytes > COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES)
+                    if input.bytes > COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES)
                     || matches!(&source.input,
                     SourceInputStateWire::Unavailable { inspected_bytes, .. }
-                    if *inspected_bytes > COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES + 1)
+                    if *inspected_bytes > COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES + 1)
             })
         {
             return Err(CollectionOutputError::Malformed);
@@ -1103,15 +1103,15 @@ fn validate_producer(output: &CollectionOutput) -> Result<(), CollectionOutputEr
             "rows must be unique and canonical",
         ));
     }
-    if output.work.primary_source_bytes > COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES + 1
-        || output.work.serialized_bytes > COLLECTION_OUTPUT_V1_MAX_SERIALIZED_BYTES
+    if output.work.primary_source_bytes > COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1
+        || output.work.serialized_bytes > COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES
         || output.work.aggregate_work > COLLECTION_MANIFEST_V1_MAX_AGGREGATE_WORK
     {
         return Err(CollectionOutputError::Contradictory("budget exceeded"));
     }
     for source in &output.sources {
-        if matches!(&source.input, SourceInputState::Available { input } if input.bytes() > COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES)
-            || matches!(&source.input, SourceInputState::Unavailable { inspected_bytes, .. } if *inspected_bytes > COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES + 1)
+        if matches!(&source.input, SourceInputState::Available { input } if input.bytes() > COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES)
+            || matches!(&source.input, SourceInputState::Unavailable { inspected_bytes, .. } if *inspected_bytes > COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES + 1)
         {
             return Err(CollectionOutputError::Contradictory(
                 "source budget exceeded",
@@ -1167,7 +1167,7 @@ fn validate_primary_source_sequence(sources: impl Iterator<Item = (bool, u64)>) 
     let mut exhausted = false;
     for (aggregate_exhausted, inspected_bytes) in sources {
         if aggregate_exhausted {
-            if inspected_bytes != 0 || total != COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES + 1
+            if inspected_bytes != 0 || total != COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1
             {
                 return None;
             }
@@ -1177,7 +1177,7 @@ fn validate_primary_source_sequence(sources: impl Iterator<Item = (bool, u64)>) 
                 return None;
             }
             total = total.checked_add(inspected_bytes)?;
-            if total > COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES + 1 {
+            if total > COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1 {
                 return None;
             }
         }
@@ -1503,10 +1503,10 @@ enum RuntimeSetMemberStateWire {
 }
 
 fn valid_budget(budget: &BudgetWire) -> bool {
-    budget.id == COLLECTION_OUTPUT_V1_BUDGET_ID
-        && budget.max_source_bytes == COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES
-        && budget.max_aggregate_source_bytes == COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES
-        && budget.max_serialized_bytes == COLLECTION_OUTPUT_V1_MAX_SERIALIZED_BYTES
+    budget.id == COLLECTION_OUTPUT_V2_BUDGET_ID
+        && budget.max_source_bytes == COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES
+        && budget.max_aggregate_source_bytes == COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES
+        && budget.max_serialized_bytes == COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES
         && budget.max_sources == COLLECTION_MANIFEST_V1_MAX_SOURCES
         && budget.max_clips == COLLECTION_MANIFEST_V1_MAX_CLIPS
         && budget.max_runtime_sets == COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS
@@ -1575,7 +1575,7 @@ fn validate_source(source: &CollectionSourceWire) -> Result<(), CollectionOutput
         match reason {
             SourceUnavailableReason::Missing if *inspected_bytes == 0 => {}
             SourceUnavailableReason::Unreadable
-                if *inspected_bytes <= COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES => {}
+                if *inspected_bytes <= COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES => {}
             SourceUnavailableReason::TooLarge if *inspected_bytes > 0 => {}
             SourceUnavailableReason::AggregateExhausted if *inspected_bytes == 0 => {}
             _ => return Err(CollectionOutputError::Malformed),
@@ -1735,7 +1735,7 @@ fn validate_source(source: &CollectionSourceWire) -> Result<(), CollectionOutput
         match &take.normalized {
             NormalizedClipState::Available { index, name }
                 if name.is_empty()
-                    || name.len() > COLLECTION_OUTPUT_V1_MAX_NORMALIZED_CLIP_NAME_BYTES
+                    || name.len() > COLLECTION_OUTPUT_V2_MAX_NORMALIZED_CLIP_NAME_BYTES
                     || !normalized_indices.insert(*index) =>
             {
                 return Err(CollectionOutputError::Malformed);
@@ -2680,14 +2680,14 @@ mod tests {
 
     #[test]
     fn aggregate_exhaustion_requires_a_prior_n_plus_one_witness() {
-        let full_source = (false, COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES);
+        let full_source = (false, COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES);
         let mut valid = vec![full_source; 16];
         valid.push((false, 1));
         valid.push((true, 0));
         valid.push((true, 0));
         assert_eq!(
             validate_primary_source_sequence(valid.into_iter()),
-            Some(COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES + 1)
+            Some(COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1)
         );
         assert_eq!(
             validate_primary_source_sequence([(true, 0)].into_iter()),
