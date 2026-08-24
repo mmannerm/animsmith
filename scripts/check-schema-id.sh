@@ -121,6 +121,7 @@ check_schema docs/schemas/scale-evidence-v5.schema.json urn:animsmith:schema:sca
 check_schema docs/schemas/gltf-animation-addressability-v1.schema.json urn:animsmith:schema:gltf-animation-addressability:1 crates/animsmith-engine/src/addressability.rs docs/output.md docs/cli.md
 check_schema docs/schemas/engine-import-advice-v1.schema.json urn:animsmith:schema:engine-import-advice:1 crates/animsmith-engine/src/import_advice.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-manifest-v1.schema.json urn:animsmith:schema:collection-manifest:1 crates/animsmith-core/src/collection.rs crates/animsmith/src/collection_manifest.rs DESIGN.md
+check_schema docs/schemas/collection-output-v1.schema.json urn:animsmith:schema:collection-output:1 crates/animsmith/src/collection_output.rs DESIGN.md docs/output.md docs/cli.md
 check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2
 check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs
 check_schema docs/schemas/character-assembly-recipe-v4.schema.json urn:animsmith:schema:character-assembly-recipe:4 crates/animsmith/src/assembly.rs

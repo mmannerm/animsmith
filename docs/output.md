@@ -5,6 +5,51 @@ Text and Markdown lint output are presentation views over the same evaluation
 results. The HTML report renders the same typed findings, coverage gaps, and
 prediction facets beside its sampled-motion view.
 
+## Collection lint
+
+`animsmith collection lint COLLECTION.toml --format json` emits the separate
+immutable `urn:animsmith:schema:collection-output:1` envelope described by
+[`collection-output-v1.schema.json`](schemas/collection-output-v1.schema.json).
+It binds the exact manifest bytes to canonically ordered source, logical clip,
+and runtime-set records while preserving each set's declared member order.
+Every available source embeds its ordinary one-file output-v10 lint result;
+each established logical clip separately carries the existing
+`ClipMeasurements` value selected by raw source take index and exact authored
+take name, then mapped through the loader's observed normalized clip index.
+This duplicate-safe indexed projection does not revise the immutable
+measurements-v15 name-keyed wire contract.
+
+Source input, digest pin, config, loader, take inventory, and document-result
+states stay orthogonal. A readable digest mismatch can therefore retain its
+observed identity, loader result, and take drift without authorizing the clip
+binding. Missing/unreadable sources, rejected readable bytes, digest/take
+mismatches, and unestablished members produce a complete typed envelope and
+exit 1; manifest, rooted-path, selected-config, serialization, and tool errors
+exit 2 with no envelope. The frontend preflights the complete control plane
+before source execution and reads sources sequentially.
+
+Runtime-set V1 concludes only whether every declared membership and required
+indexed measurement was established. Its decision is always `not_evaluated`;
+it does not infer blending, synchronization, retargeting, controller policy,
+engine behavior, or artistic/gameplay readiness. The strict reader applies a
+256 MiB N+1 cap before JSON decoding, validates nested output-v10 through its
+existing reader, recomputes all summaries/work/set lifecycles, and rejects
+unknown fields or contradictory identities and states. Producer and reader
+also freeze 1 GiB per primary source, 16 GiB aggregate primary reads, and the
+collection-manifest V1 row/member/work limits.
+Derived normalized clip names allow at most 4,101 bytes: the 4,096-byte
+authored-name bound plus `#` and the largest duplicate ordinal permitted by the
+4,096-clip manifest bound. Available nested measurement keys retain
+output-v10's 4,096-byte bound.
+If such a derived name cannot fit the immutable 4,096-byte text bound of the
+nested output-v10 contract, indexed clip measurements and physical binding are
+retained, but the nested document and its name-addressed check reference are
+`nested_output_unavailable`; the collection exits 1 instead of publishing
+schema-invalid nested JSON.
+After the aggregate N+1 witness is retained, later declared sources remain in
+the envelope as `aggregate_exhausted` with zero inspected bytes; they are not
+opened and cannot increase the terminal counter beyond N+1.
+
 ## glTF animation addressability
 
 `animsmith generate addressability INPUT` emits a separate, one-file V1

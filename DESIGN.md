@@ -3225,6 +3225,39 @@ readers. They are not copied into a nearly equivalent collection-only shape.
 Host absolute paths and raw host I/O messages are never emitted. A source row
 uses its safe declared locator; stable typed states carry failures.
 
+Collection-output V1 additionally carries one existing `ClipMeasurements`
+value per established logical clip, selected from a duplicate-safe
+normalized-index projection only after the raw source take index and exact
+authored name map to that normalized index. This additive in-memory projection
+does not change measurements-v15: ordinary output remains name-keyed. When two
+authored names remain equal after loader normalization, their indexed
+measurements remain distinct while a name-addressed check reference is typed
+unavailable; no first/last match is guessed. Runtime-set V1 completeness
+depends on the binding and indexed measurement, not that optional check
+reference, and its decision remains `not_evaluated` until a later typed set
+check owns a conclusion.
+The normalized name is bounded at 4,101 bytes: the 4,096-byte authored-name
+maximum plus `#` and the largest duplicate ordinal possible under the
+4,096-clip manifest cap. Available nested measurement keys retain output-v10's
+4,096-byte bound.
+When that derived key exceeds output-v10's immutable 4,096-byte text bound, V1
+retains physical binding and indexed measurements but marks the nested document
+and name-addressed check reference `nested_output_unavailable`, then exits 1;
+it never embeds a schema-invalid ordinary envelope.
+
+The immutable output budget permits 1 GiB per primary source, 16 GiB of
+aggregate primary-source reads, and 256 MiB of serialized/readback JSON. It
+reuses the manifest V1 source, clip, runtime-set, aggregate-membership, and
+aggregate-work limits. Primary reads and strict output readback stop at N+1;
+checked work counters retain the terminal observation needed to distinguish an
+exact limit from exhaustion.
+Producer serialization also writes through a 256 MiB N+1 sink before any full
+envelope can be allocated, and its self-reported byte count converges over the
+finite decimal widths permitted by that same cap.
+After an aggregate primary-read N+1 witness, later declared sources are retained
+as `aggregate_exhausted` without being opened, so the terminal counter cannot
+advance beyond that single witness.
+
 The manifest digest binds the exact input bytes. Reordering otherwise
 equivalent TOML therefore changes that input identity, while the decoded source,
 clip, and set record arrays remain canonically ordered and byte-identical. The

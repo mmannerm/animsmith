@@ -1,0 +1,3 @@
+crates/animsmith/testdata/collection-spike/*.md text eol=lf
+crates/animsmith/testdata/collection-spike/*.toml text eol=lf
+crates/animsmith/testdata/collection-spike/source/*.gltf text eol=lf

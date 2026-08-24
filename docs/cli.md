@@ -50,6 +50,7 @@ reference. The help output reflects compile-time features: a
 animsmith inspect <file>
 animsmith measure <file...> [--format text|json]
 animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
+animsmith collection lint <collection.toml> [--format json]
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
@@ -66,8 +67,11 @@ It inventories clips, bones, materials, and mesh-instance nodes, including each
 instance's mesh, skin status, and primitive/material context. Use those names
 when authoring `assemble` or material texture recipes.
 
-`--config animsmith.toml` is global. Without it, the CLI auto-loads
+`--config animsmith.toml` is global for document-local commands. Without it, the CLI auto-loads
 `./animsmith.toml` when present and otherwise uses built-in defaults.
+`collection lint` deliberately rejects the global spelling: each source uses
+the config declared in the collection manifest, or exact built-in defaults
+when none is declared. It never discovers an ambient `./animsmith.toml`.
 
 `transform --gait-anchor` is an explicit declaration that each selected clip
 is an in-place cyclic gait. Before rewriting, it samples the configured Root
@@ -194,13 +198,13 @@ tangents.
 | Code | Meaning |
 |---:|---|
 | 0 | No failing findings and no required-unavailable engine prediction facets; warnings, notes, or ordinary coverage gaps may remain. |
-| 1 | At least one failing finding, any `required_prediction_unavailable` facet (including an embedded Bevy addressability evaluation), a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
+| 1 | At least one failing finding, any `required_prediction_unavailable` facet (including an embedded Bevy addressability evaluation), an incomplete `collection lint` result, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 The code reports what the run *did*, never how well it could report it. This
 holds for **every stdout presentation**: parser-rendered help/version, text,
-Markdown, and every `--format json` path (`measure`, `lint`, `diff`, `convert`,
-`assemble`, `scale`, `generate addressability`). If
+Markdown, and every `--format json` path (`measure`, `lint`, `collection lint`,
+`diff`, `convert`, `assemble`, `scale`, `generate addressability`). If
 stdout cannot accept the result — a closed pipe or full filesystem — the
 checked write never panics, a best-effort checked diagnostic goes to stderr,
 and the stdout-bearing path's already-established code stands. Thus
@@ -629,7 +633,7 @@ absent selector field or explicit empty list means no runtime-node policy.
 
 ## Machine Output
 
-`measure`, `lint`, `diff`, `generate addressability`, and
+`measure`, `lint`, `collection lint`, `diff`, `generate addressability`, and
 `generate import-advice` support
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
@@ -640,6 +644,21 @@ evidence has its own
 Output-v9 and earlier reports, including reports carrying measurements v14,
 are historical contracts; regenerate a current output-v10 report from the
 original asset with the current CLI before using `diff`.
+
+`collection lint COLLECTION.toml --format json` emits the separate immutable
+`urn:animsmith:schema:collection-output:1` contract. The manifest directory is
+the control root; safe missing/unreadable sources, rejected readable bytes,
+digest/take mismatches, and incomplete runtime-set members remain typed rows
+and exit 1 while later safe sources continue. Invalid manifests, unsafe or
+nonregular paths, and missing/malformed selected configs exit 2 without an
+envelope. Source, clip, and set rows are canonical; member order remains the
+manifest order. Each established clip binds an exact source take index/name
+to a normalized clip index and carries duplicate-safe indexed measurements.
+The nested whole-document lint envelope retains output v10/measurements v15.
+Runtime sets prove membership completeness only and keep
+`decision: not_evaluated`; they make no blend, controller, engine, artistic,
+or gameplay claim. See
+[`collection-output-v1.schema.json`](schemas/collection-output-v1.schema.json).
 
 `generate addressability` has a separate immutable contract,
 `urn:animsmith:schema:gltf-animation-addressability:1`; see

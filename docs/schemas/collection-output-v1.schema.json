@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:collection-output:1",
+  "title": "animsmith collection output v1",
+  "description": "Deterministic aggregate evidence for one strict collection-manifest V1 lint run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "schema", "tool", "command", "manifest", "budget", "summary", "work", "sources", "clips", "runtime_sets"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "schema": { "const": "urn:animsmith:schema:collection-output:1" },
+    "tool": { "$ref": "urn:animsmith:schema:output:10#/$defs/tool" },
+    "command": { "const": "collection lint" },
+    "manifest": { "$ref": "#/$defs/manifest" },
+    "budget": { "$ref": "#/$defs/budget" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "work": { "$ref": "#/$defs/work" },
+    "sources": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/source" } },
+    "clips": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/clip" } },
+    "runtime_sets": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/runtime_set" } }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "bytes"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "schema_version", "collection_id", "input"],
+      "properties": {
+        "schema": { "const": "urn:animsmith:schema:collection-manifest:1" },
+        "schema_version": { "const": 1 },
+        "collection_id": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "input": { "$ref": "#/$defs/identity" }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "max_source_bytes", "max_aggregate_source_bytes", "max_serialized_bytes", "max_sources", "max_clips", "max_runtime_sets", "max_aggregate_members", "max_aggregate_work"],
+      "properties": {
+        "id": { "const": "urn:animsmith:collection-output-budget:1" },
+        "max_source_bytes": { "const": 1073741824 },
+        "max_aggregate_source_bytes": { "const": 17179869184 },
+        "max_serialized_bytes": { "const": 268435456 },
+        "max_sources": { "const": 4096 },
+        "max_clips": { "const": 4096 },
+        "max_runtime_sets": { "const": 4096 },
+        "max_aggregate_members": { "const": 16384 },
+        "max_aggregate_work": { "const": 24576 }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources", "readable_sources", "established_sources", "clips", "established_clips", "runtime_sets", "complete_runtime_sets", "incomplete"],
+      "properties": {
+        "sources": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "readable_sources": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "established_sources": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "clips": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "established_clips": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "runtime_sets": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "complete_runtime_sets": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "incomplete": { "type": "boolean" }
+      }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_rows", "runtime_set_members", "aggregate_work", "primary_source_bytes", "serialized_bytes"],
+      "properties": {
+        "manifest_rows": { "type": "integer", "minimum": 0, "maximum": 12288 },
+        "runtime_set_members": { "type": "integer", "minimum": 0, "maximum": 16384 },
+        "aggregate_work": { "type": "integer", "minimum": 0, "maximum": 24576 },
+        "primary_source_bytes": { "type": "integer", "minimum": 0, "maximum": 17179869185 },
+        "serialized_bytes": { "type": "integer", "minimum": 0, "maximum": 268435456 }
+      }
+    },
+    "source_input": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "input"], "properties": { "state": { "const": "available" }, "input": { "$ref": "#/$defs/identity" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason", "inspected_bytes"], "properties": { "state": { "const": "unavailable" }, "reason": { "enum": ["missing", "unreadable", "too_large", "aggregate_exhausted"] }, "inspected_bytes": { "type": "integer", "minimum": 0, "maximum": 1073741825 } } }
+      ]
+    },
+    "digest": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "unpinned" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "expected_sha256"], "properties": { "state": { "const": "matched" }, "expected_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "expected_sha256"], "properties": { "state": { "const": "mismatched" }, "expected_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "observed_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }
+      ]
+    },
+    "config": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "default" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "locator", "input"], "properties": { "state": { "const": "explicit" }, "locator": { "type": "string", "minLength": 1, "maxLength": 4096 }, "input": { "$ref": "#/$defs/identity" } } }
+      ]
+    },
+    "loader": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "ready" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "enum": ["source_unavailable", "unsupported_format", "malformed_input", "dependency_unavailable"] } } }
+      ]
+    },
+    "take_name_state": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "value"], "properties": { "state": { "const": "available" }, "value": { "type": "string", "maxLength": 4096 } } },
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "unavailable" } } }
+      ]
+    },
+    "normalized_state": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "index", "name"], "properties": { "state": { "const": "available" }, "index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "name": { "type": "string", "maxLength": 4101 } } },
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "unavailable" } } }
+      ]
+    },
+    "observed_take": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_take_index", "name", "normalized"],
+      "properties": {
+        "source_take_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "name": { "$ref": "#/$defs/take_name_state" },
+        "normalized": { "$ref": "#/$defs/normalized_state" }
+      }
+    },
+    "document_result": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "envelope"], "properties": { "state": { "const": "available" }, "envelope": { "allOf": [{ "$ref": "urn:animsmith:schema:output:10" }, { "properties": { "command": { "const": "lint" } }, "required": ["files"] }] } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "enum": ["source_unavailable", "loader_unavailable", "nested_output_unavailable"] } } }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "locator", "input", "digest", "config", "loader", "take_inventory", "observed_takes", "result"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "locator": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "input": { "$ref": "#/$defs/source_input" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "config": { "$ref": "#/$defs/config" },
+        "loader": { "$ref": "#/$defs/loader" },
+        "take_inventory": { "enum": ["complete", "unavailable"] },
+        "observed_takes": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/observed_take" } },
+        "result": { "$ref": "#/$defs/document_result" }
+      }
+    },
+    "clip_unavailable_reason": { "enum": ["source_unavailable", "digest_mismatched", "loader_unavailable", "document_unavailable", "take_inventory_unavailable", "take_index_missing", "take_name_unavailable", "take_name_mismatched", "normalized_clip_unavailable"] },
+    "check_reference": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "reference"], "properties": { "state": { "const": "available" }, "reference": { "type": "object", "additionalProperties": false, "required": ["source", "normalized_clip_index", "measurement_key"], "properties": { "source": { "type": "string", "minLength": 1 }, "normalized_clip_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "measurement_key": { "type": "string", "maxLength": 4096 } } } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "enum": ["duplicate_embedded_take_name", "nested_output_unavailable"] } } }
+      ]
+    },
+    "clip_binding": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "observed_source_take_index", "observed_take_name", "normalized_clip_index", "measurements", "check_reference"], "properties": { "state": { "const": "established" }, "observed_source_take_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "observed_take_name": { "type": "string", "maxLength": 4096 }, "normalized_clip_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "measurements": { "$ref": "urn:animsmith:schema:measurements:15#/$defs/clip_measurements" }, "check_reference": { "$ref": "#/$defs/check_reference" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "$ref": "#/$defs/clip_unavailable_reason" } } }
+      ]
+    },
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "take_index", "take_name", "binding"],
+      "properties": {
+        "id": { "type": "string", "minLength": 3, "maxLength": 255 },
+        "source": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "take_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "take_name": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "binding": { "$ref": "#/$defs/clip_binding" }
+      }
+    },
+    "member_resolution": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "established" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "$ref": "#/$defs/clip_unavailable_reason" } } }
+      ]
+    },
+    "runtime_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "members", "lifecycle", "decision", "gaps"],
+      "properties": {
+        "id": { "type": "string", "minLength": 3, "maxLength": 255 },
+        "kind": { "enum": ["gait-group", "sync-group", "directional-blend", "speed-blend", "transition-chain", "mask-composition", "retarget-group", "paired-interaction", "motion-database"] },
+        "members": { "type": "array", "minItems": 2, "maxItems": 4096, "items": { "type": "object", "additionalProperties": false, "required": ["id", "resolution"], "properties": { "id": { "type": "string", "minLength": 3, "maxLength": 255 }, "resolution": { "$ref": "#/$defs/member_resolution" } } } },
+        "lifecycle": { "enum": ["complete", "incomplete"] },
+        "decision": { "const": "not_evaluated" },
+        "gaps": { "type": "array", "maxItems": 4096, "items": { "type": "string", "minLength": 3, "maxLength": 255 } }
+      }
+    }
+  }
+}
