@@ -46,6 +46,7 @@ use std::process::ExitCode;
 
 #[cfg(feature = "fbx")]
 mod assembly;
+mod collection_directional_speed;
 mod collection_directional_speed_policy;
 mod collection_lint;
 mod collection_manifest;
@@ -75,7 +76,7 @@ const EXIT_OPERATOR: u8 = 2;
     about = "Inspect, validate, and repair skeletal animation clips"
 )]
 struct Cli {
-    /// Config for document-local commands (collection lint rejects this option).
+    /// Config for document-local commands (collection commands reject this option).
     #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[command(subcommand)]
@@ -291,9 +292,24 @@ enum CollectionCmd {
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
     },
+    /// Evaluate one declared directional-speed policy against collection-output V2 evidence.
+    #[command(
+        long_about = "Evaluate one strict manifest-bound directional-speed policy against one strict collection-output V2 document. The policy must declare every member of one directional-blend runtime set in manifest order; this command never infers members, filenames, controller behavior, or diagonal normalization. It writes only the immutable collection-directional-speed-evaluation V1 JSON result to stdout. Invalid, stale, wrong-kind, unreadable, malformed, or over-budget control inputs write no result and exit 2. Incomplete or not-evaluable evidence and declared-policy findings write a result and exit 1; only a complete passing policy exits 0."
+    )]
+    EvaluateDirectionalSpeed {
+        /// Strict collection-directional-speed-policy V1 TOML input.
+        #[arg(long, value_name = "POLICY.toml")]
+        policy: PathBuf,
+        /// Strict collection-output V2 JSON input.
+        #[arg(long, value_name = "COLLECTION-OUTPUT.json")]
+        evidence: PathBuf,
+        /// Emit the immutable directional-speed evaluation JSON contract.
+        #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
+        format: CollectionFormat,
+    },
 }
 
-/// Collection output has one machine-readable presentation in V2.
+/// Machine-only formats for collection-output and directional-speed evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum CollectionFormat {
     Json,
@@ -1137,7 +1153,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         Cmd::Collection { operation } => {
             if cli.config.is_some() {
                 return Err(
-                    "--config is not accepted by collection commands; declare each source config in the collection manifest"
+                    "--config is not accepted by collection commands; collection lint declares each source config in the collection manifest"
                         .into(),
                 );
             }
@@ -1158,6 +1174,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     format,
                     current_tool(),
                 ),
+                CollectionCmd::EvaluateDirectionalSpeed {
+                    policy,
+                    evidence,
+                    format,
+                } => {
+                    debug_assert_eq!(format, CollectionFormat::Json);
+                    collection_directional_speed::run(&policy, &evidence)
+                }
             }
         }
         #[cfg(feature = "report")]
