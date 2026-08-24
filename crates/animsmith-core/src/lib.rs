@@ -136,6 +136,7 @@ pub mod sample;
 pub mod scale;
 pub mod skinned_canonical;
 pub mod source_facts;
+pub mod stance_support;
 pub mod static_bake;
 pub mod transform;
 
@@ -263,6 +264,9 @@ pub use source_facts::{
     SourceRelativeLocatorV1, SourceResourceKindV1, SourceResourceLocatorV1,
     SourceResourceReferenceV1, SourceSetCoverageStateV1, SourceSetCoverageV1, SourceTargetKindV1,
     SourceTargetV1, SourceTextV1, SourceTimeRangeV1, SourceUnavailableReasonV1,
+};
+pub use stance_support::{
+    ResolvedStanceSupportV1, StanceSideV1, StanceSupportRunV1, resolve_stance_support_v1,
 };
 pub use static_bake::{
     StaticMeshBake, StaticMeshBakeError, StaticMeshBakeEvidence, StaticMeshBakeInstanceEvidence,

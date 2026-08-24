@@ -7,7 +7,7 @@ use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::{
     CheckCtx, CheckEvaluation, CheckSelection, Config, CoverageGapCode, EvaluationScopeCode,
-    EvaluationState, MetricGrids, Severity, all_checks, evaluate_checks,
+    EvaluationState, MetricGrids, Severity, Value, all_checks, evaluate_checks,
 };
 use glam::{Quat, Vec3};
 
@@ -179,6 +179,145 @@ fn slippery_stance_is_flagged() {
     let slides = of(&findings, "foot-slide");
     assert!(!slides.is_empty(), "slippery stance not flagged");
     assert_eq!(slides[0].severity, Severity::Warning);
+}
+
+/// The shared classifier is an internal refactor: this analytic treadmill
+/// fixture pins the complete observable foot-slide findings, including their
+/// order, coordinates, numeric evidence, selected bones, and prose.
+#[test]
+fn slippery_stance_keeps_legacy_foot_slide_findings() {
+    let doc = treadmill_doc(STANCE_SWEEP_M * 0.5);
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "in_place": true,
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+    let findings = lint_with(&doc, &config);
+    let slides = of(&findings, "foot-slide");
+    let evidence: Vec<_> = slides
+        .iter()
+        .map(|finding| {
+            let measured = match finding.measured.as_ref() {
+                Some(Value::Number(value)) => *value,
+                value => panic!("expected numeric slide measurement, got {value:?}"),
+            };
+            let expected = match finding.expected.as_ref() {
+                Some(Value::Number(value)) => *value,
+                value => panic!("expected numeric slide cap, got {value:?}"),
+            };
+            (
+                finding.bone.as_deref(),
+                finding.time_s,
+                measured,
+                expected,
+                finding.message.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        evidence,
+        [
+            (
+                Some("l_foot"),
+                Some(0.03125),
+                0.5,
+                0.3,
+                "left foot skates during stance: speed deviates 0.50 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime",
+            ),
+            (
+                Some("r_foot"),
+                Some(0.03125),
+                0.5,
+                0.3,
+                "right foot skates during stance: speed deviates 0.50 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime",
+            ),
+        ]
+    );
+}
+
+/// A rootless foot retains finite model-space X/Z when only its Y is NaN. Its
+/// first pair is uniquely fast, so FootSlide exposes the frozen classifier's
+/// inclusion of that NaN-touching stance pair as an observable finding.
+#[test]
+fn foot_slide_keeps_nan_height_as_legacy_stance() {
+    let skel = Skeleton {
+        bones: vec![
+            Bone {
+                name: "pelvis".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "l_foot".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "r_foot".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+        ],
+    };
+    let doc = Document {
+        skeleton: skel,
+        clips: vec![Clip {
+            name: "walk".into(),
+            duration_s: 1.0,
+            tracks: vec![
+                Track {
+                    bone: 0,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![
+                        Vec3::ZERO,
+                        Vec3::new(0.0, 0.0, 0.5),
+                        Vec3::new(0.0, 0.0, 1.0),
+                    ]),
+                },
+                Track {
+                    bone: 1,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![
+                        Vec3::new(0.0, f32::NAN, 0.0),
+                        Vec3::new(0.0, 0.0, 1.0),
+                        Vec3::new(0.0, 0.0, 1.0),
+                    ]),
+                },
+                Track {
+                    bone: 2,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, 0.5, 1.0],
+                    values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::ZERO, Vec3::ZERO]),
+                },
+            ],
+        }],
+        assets: Default::default(),
+        source: SourceInfo::default(),
+    };
+    let config = json_config(serde_json::json!({
+        "clips": { "walk": {
+            "in_place": false,
+            "speed_mps": { "value": 1.0, "tolerance": 0.25 }
+        }}
+    }));
+
+    let findings = lint_with(&doc, &config);
+    let slides = of(&findings, "foot-slide");
+    assert_eq!(slides.len(), 1);
+    let left = slides[0];
+    assert_eq!(left.bone.as_deref(), Some("l_foot"));
+    assert_eq!(left.time_s, Some(0.5));
+    assert!(matches!(left.measured, Some(Value::Number(value)) if value == 2.0));
+    assert!(matches!(left.expected, Some(Value::Number(value)) if value == 0.3));
 }
 
 #[test]
