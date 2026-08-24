@@ -2597,6 +2597,10 @@ mod tests {
         assert_eq!(set["members"][0]["id"], "com.example/clip-a");
         assert_eq!(set["members"][0]["root_travel"]["duration_s"], 1.0);
         assert_eq!(
+            set["members"][0]["root_travel"]["translation_availability"],
+            "measured"
+        );
+        assert_eq!(
             set["members"][0]["root_travel"]["horizontal_displacement_x_m"],
             1.0
         );
@@ -2604,6 +2608,15 @@ mod tests {
             set["members"][0]["root_travel"]["horizontal_displacement_z_m"],
             -2.0
         );
+        assert_eq!(
+            set["members"][0]["root_travel"]["horizontal_travel_m"],
+            5.0_f64.sqrt()
+        );
+        assert_eq!(
+            set["members"][0]["root_travel"]["speed_mps_availability"],
+            "measured"
+        );
+        assert_eq!(set["members"][0]["root_travel"]["speed_mps"], 2.0);
         assert_eq!(set["evidence"]["root_travel"]["lifecycle"], "incomplete");
         assert_eq!(set["evidence"]["root_travel"]["members_measured"], 1);
 
