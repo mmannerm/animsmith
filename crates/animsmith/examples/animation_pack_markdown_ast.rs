@@ -7,6 +7,7 @@
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use std::io::{self, Read};
+use std::ops::Range;
 
 #[derive(Clone, Default, Serialize)]
 struct RichText {
@@ -22,6 +23,14 @@ struct CodeSpan {
     start: usize,
     end: usize,
     text: String,
+}
+
+#[derive(Clone, Serialize)]
+struct VendorIdMarker {
+    code_start: usize,
+    code_end: usize,
+    marker_start: usize,
+    marker_end: usize,
 }
 
 #[derive(Clone, Serialize)]
@@ -92,6 +101,9 @@ struct Document {
     placeholders: Vec<String>,
     word_count: usize,
     has_raw_html: bool,
+    has_raw_html_block: bool,
+    inline_html: Vec<String>,
+    vendor_id_markers: Vec<VendorIdMarker>,
 }
 
 #[derive(Default)]
@@ -167,6 +179,17 @@ fn count_words(source: &str) -> usize {
     words
 }
 
+fn is_single_backtick_code_span(source: &str, range: &Range<usize>) -> bool {
+    let span = &source[range.clone()];
+    let bytes = span.as_bytes();
+    bytes.len() >= 2
+        && bytes[0] == b'`'
+        && bytes[bytes.len() - 1] == b'`'
+        && bytes[1..bytes.len() - 1]
+            .iter()
+            .all(|byte| *byte != b'`' && *byte != b'\r' && *byte != b'\n')
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut source = String::new();
     io::stdin().read_to_string(&mut source)?;
@@ -197,12 +220,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut current_code_block: Option<CodeBlock> = None;
     let mut html_block_depth = 0usize;
     let mut has_raw_html = false;
+    let mut has_raw_html_block = false;
+    let mut inline_html = Vec::new();
+    let mut vendor_id_markers = Vec::new();
+    let mut previous_code: Option<(Range<usize>, String)> = None;
     let mut strong_depth = 0usize;
     let mut strong_text = String::new();
     let mut current_link: Option<(String, String)> = None;
     let mut first_block = None;
 
-    for event in Parser::new_ext(&source, options) {
+    for (event, offsets) in Parser::new_ext(&source, options).into_offset_iter() {
+        let current_code = match &event {
+            Event::Code(value) => Some((offsets.clone(), value.to_string())),
+            _ => None,
+        };
+        if let Event::InlineHtml(value) = &event
+            && value.as_ref() == "<!-- vendor-id -->"
+            && let Some((code_range, _code_text)) = &previous_code
+            && code_range.end == offsets.start
+            && is_single_backtick_code_span(&source, code_range)
+        {
+            vendor_id_markers.push(VendorIdMarker {
+                code_start: code_range.start,
+                code_end: code_range.end,
+                marker_start: offsets.start,
+                marker_end: offsets.end,
+            });
+        }
         if first_block.is_none() {
             first_block = match &event {
                 Event::Start(Tag::Heading { level, .. }) => {
@@ -241,6 +285,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::Start(Tag::HtmlBlock) => {
                 html_block_depth += 1;
                 has_raw_html = true;
+                has_raw_html_block = true;
             }
             Event::End(TagEnd::HtmlBlock) => {
                 html_block_depth = html_block_depth.saturating_sub(1);
@@ -511,9 +556,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     append_break(item);
                 }
             }
-            Event::InlineHtml(_) => has_raw_html = true,
+            Event::InlineHtml(value) => {
+                has_raw_html = true;
+                inline_html.push(value.to_string());
+            }
             _ => {}
         }
+        previous_code = current_code;
     }
 
     let rendered_words = paragraphs
@@ -544,6 +593,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         placeholders: scan_placeholders(&source),
         word_count: rendered_words,
         has_raw_html,
+        has_raw_html_block,
+        inline_html,
+        vendor_id_markers,
     };
     serde_json::to_writer(io::stdout(), &document)?;
     Ok(())

@@ -127,7 +127,7 @@ The immutable source is `<authorized-local-source>/Animset@Sword&Shield_ASSET.ra
 
 The reconstructed Unity delivery has 313 regular files: 136 FBXs and 162 metadata files plus materials, textures, and the vendor list. The motion directory has 132 individual files plus `Protof-Actor@Sword&ShieldAnimset.fbx`. The other FBXs are the actor, sword, and shield. The vendor list and current listing both reconcile to 132 individual files: 45 `_RM` and 87 non-RM.
 
-Every normal individual file exposes embedded clip `Take 001`; meaningful identity comes from case-sensitive filenames and Unity metadata. The vendor list contains non-authoritative spellings/casing such as `RunFrowardRight`, `ParryHight2`, `swordAttack2`, and `3hitCombo1`; exact report members use delivered filenames.
+Every normal individual file exposes embedded clip `Take 001`; meaningful identity comes from case-sensitive filenames and Unity metadata. The vendor list contains non-authoritative spellings/casing such as `RunFrowardRight`, `ParryHight2`<!-- vendor-id -->, `swordAttack2`, and `3hitCombo1`; exact report members use delivered filenames.
 
 Unity metadata defines 133 clip entries: 118 loop true and 15 false including the actor. Fifty-two loop-true individual files are obvious one-shot-like candidates by role: 27 attacks, 10 defense actions, 12 reactions, and three taunts. Of the 132 individual motions, all except the malformed RM file produce AnimationClips. Stored source-avatar warnings appear in 131 metadata files, but Unity resolves and imports them; only the malformed file emits an active hierarchy error during the tested import.
 

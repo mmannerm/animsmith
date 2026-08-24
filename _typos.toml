@@ -19,8 +19,12 @@ metalness = "metalness"
 # Level-of-detail abbreviation surfaced by the ufbx API (`lod_groups`).
 lod = "lod"
 
-[type.md.extend-identifiers]
-# Exact observed identifier in the Protofactor combined-take animation list.
-WalkForwadRight = "WalkForwadRight"
-# Exact observed identifier in the Protofactor Sword & Shield animation list.
-ParryHight2 = "ParryHight2"
+[type.md]
+# Keep exact vendor spellings in a complete single-backtick code span preceded
+# only by a non-word, non-escape boundary (or start of input) and followed by the hidden
+# `<!-- vendor-id -->` marker. The boundary prevents matching a suffix inside
+# a multi-backtick delimiter. An identical spelling in ordinary prose remains
+# subject to the normal typo check. The span cannot contain a backtick or CR/LF.
+extend-ignore-re = [
+    "(?:^|[^\\w`\\\\])`[^`\\r\\n]+`<!-- vendor-id -->",
+]

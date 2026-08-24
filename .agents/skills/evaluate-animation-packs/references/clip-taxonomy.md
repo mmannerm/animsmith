@@ -112,9 +112,13 @@ case and spelling. A normalized display label or a separate vendor animation
 list is not a substitute; record any disagreement as evidence instead of
 silently correcting the member identifier.
 If a source typo triggers repository spelling checks, preserve the identifier
-and use only an exact-identifier exception scoped to the relevant file type. Do
-not allowlist the misspelled substring globally, because that would hide
-unrelated prose errors.
+and write it as a complete single-backtick code span immediately followed by
+the hidden marker `<!-- vendor-id -->`: `<exact identifier>`<!-- vendor-id -->.
+The exact identifier may contain spaces and punctuation, but not a backtick or
+CR/LF. The repository typo configuration ignores only that marked structure; an
+identical spelling in ordinary prose remains checked. Do not allowlist the
+misspelled substring globally, and do not exclude a Markdown/report path,
+because either would hide unrelated prose errors.
 
 ## Evaluation manifest
 
