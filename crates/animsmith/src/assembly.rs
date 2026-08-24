@@ -383,9 +383,12 @@ struct AssemblyRestBindScaleEvidence {
     proof: crate::scale::SharedScaleEvidence,
 }
 
-struct PreparedScaleInput {
-    document: Document,
-    rebased_document: Document,
+/// One role-admitted input projection shared by later assembly orchestration.
+/// The authoritative source domain and independently rebased reference stay
+/// separate through publication.
+struct PreparedScaleProjection {
+    authoritative_document: Document,
+    rebased_reference_document: Document,
     application: PreparedScaleApplication,
     evidence: AssemblyRestBindScaleInputEvidence,
     mesh_selection: Option<PreparedMeshInstanceSelection>,
@@ -417,10 +420,135 @@ struct AssemblyScalePreparationContext<'a> {
 
 #[derive(Clone, Copy)]
 enum AssemblyScaleInputRole<'a> {
-    Base,
-    Clip {
+    BaseRestBind,
+    ClipTracks {
         base_basis: &'a AssemblyScaleCompatibilityBasis,
     },
+}
+
+/// The typed domain projection a clip-track input has already earned from its
+/// format adapter. The authoritative document remains available to assembly;
+/// only `operation_document` can enter clip-track rebasing.
+enum PreparedClipTrackProjection {
+    /// Raw glTF/GLB has no private domain-removal stage. Its existing clip
+    /// contract therefore requires that the authoritative source is both
+    /// skinless and meshless.
+    RawGltfSkinlessMeshless {
+        authoritative_document: Document,
+        input_format: &'static str,
+        source_projection: AssemblyScaleInputProjectionEvidence,
+    },
+    /// FBX has been normalized through its bounded, animation-only private
+    /// stage. The raw authoritative document and staged operation source are
+    /// intentionally distinct.
+    NormalizedBakedFbx {
+        authoritative_document: Document,
+        staged_operation_document: Box<Document>,
+        source_projection: AssemblyScaleInputProjectionEvidence,
+    },
+}
+
+impl PreparedClipTrackProjection {
+    /// Admit the established raw glTF/GLB clip-track contract. A skinned
+    /// source remains eligible for the existing full RestBind fallback; a
+    /// skinless source with mesh instances retains its established refusal.
+    fn try_raw_gltf_clip_tracks(
+        declared: &Path,
+        authoritative_document: Document,
+        input_format: &'static str,
+        source_projection: AssemblyScaleInputProjectionEvidence,
+    ) -> Result<Option<Self>, crate::producer::Failure> {
+        use crate::producer::{Classify as _, Kind, Stage};
+
+        if !authoritative_document
+            .assets
+            .source_skeleton
+            .skins
+            .is_empty()
+        {
+            return Ok(None);
+        }
+        if !authoritative_document.assets.instances.is_empty() {
+            return Err(format!(
+                "rest_bind_scale skinless clip rejected input {}: assembly scale basis mismatch (skinless-clip-has-mesh-instances)",
+                declared.display()
+            ))
+            .refusal(Stage::Proof, Kind::ProofFailed);
+        }
+        Ok(Some(Self::RawGltfSkinlessMeshless {
+            authoritative_document,
+            input_format,
+            source_projection,
+        }))
+    }
+
+    fn normalized_baked_fbx(
+        authoritative_document: Document,
+        staged_operation_document: Document,
+        source_projection: AssemblyScaleInputProjectionEvidence,
+    ) -> Self {
+        Self::NormalizedBakedFbx {
+            authoritative_document,
+            staged_operation_document: Box::new(staged_operation_document),
+            source_projection,
+        }
+    }
+
+    fn into_documents_and_evidence(
+        self,
+    ) -> (
+        Document,
+        Document,
+        &'static str,
+        AssemblyScaleInputProjectionEvidence,
+    ) {
+        match self {
+            Self::RawGltfSkinlessMeshless {
+                authoritative_document,
+                input_format,
+                source_projection,
+            } => (
+                authoritative_document.clone(),
+                authoritative_document,
+                input_format,
+                source_projection,
+            ),
+            Self::NormalizedBakedFbx {
+                authoritative_document,
+                staged_operation_document,
+                source_projection,
+            } => (
+                authoritative_document,
+                *staged_operation_document,
+                "fbx",
+                source_projection,
+            ),
+        }
+    }
+}
+
+struct AdmittedRestBindProjection {
+    authoritative_document: Document,
+    rebased_reference_document: Document,
+    compatibility_basis: AssemblyScaleCompatibilityBasis,
+    input_format: &'static str,
+    source_projection: AssemblyScaleInputProjectionEvidence,
+    selector: ResolvedRestBindScaleSelector,
+    mesh_selection: Option<PreparedMeshInstanceSelection>,
+}
+
+enum AssemblyScaleInputFormat {
+    Gltf(&'static str),
+    Fbx,
+}
+
+struct AssemblyScaleInputRequest<'a> {
+    role: String,
+    declared: &'a Path,
+    resolved: &'a Path,
+    scale: &'a AssemblyRestBindScaleRecipe,
+    context: &'a AssemblyScalePreparationContext<'a>,
+    input_role: AssemblyScaleInputRole<'a>,
 }
 
 struct PreparedAssemblyClip {
@@ -973,26 +1101,14 @@ fn prepare_clip_scale_input(
     declared: &Path,
     sha256: String,
     bytes: u64,
-    document: Document,
-    projection_document: &Document,
+    projection: PreparedClipTrackProjection,
     base_basis: &AssemblyScaleCompatibilityBasis,
     scale: &AssemblyRestBindScaleRecipe,
     context: &AssemblyScalePreparationContext<'_>,
-    input_format: &'static str,
-    source_projection: AssemblyScaleInputProjectionEvidence,
-) -> Result<PreparedScaleInput, crate::producer::Failure> {
+) -> Result<PreparedScaleProjection, crate::producer::Failure> {
     use crate::producer::{Classify as _, Kind, Stage};
-    // Preserve the established glTF/GLB contract: its skinless track path is
-    // only defined for a source that is already meshless. FBX reaches this
-    // helper through an explicit role projection, so its unused raw instances
-    // are deliberately absent from `projection_document` instead.
-    if input_format != "fbx" && !document.assets.instances.is_empty() {
-        return Err(format!(
-            "rest_bind_scale skinless clip rejected input {}: assembly scale basis mismatch (skinless-clip-has-mesh-instances)",
-            declared.display()
-        ))
-        .refusal(Stage::Proof, Kind::ProofFailed);
-    }
+    let (document, operation_document, input_format, source_projection) =
+        projection.into_documents_and_evidence();
     let root_node_name = scale
         .root_node_name()
         .ok_or_else(|| {
@@ -1000,7 +1116,7 @@ fn prepare_clip_scale_input(
         })
         .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
     let (rebased_projection, basis) =
-        rebase_assembly_scale_skinless_clip(base_basis, projection_document, root_node_name)
+        rebase_assembly_scale_skinless_clip(base_basis, &operation_document, root_node_name)
             .map_err(|error| {
                 format!(
                     "rest_bind_scale clip projection rejected input {}: {error}",
@@ -1035,9 +1151,9 @@ fn prepare_clip_scale_input(
     })
     .map_err(|error| format!("cannot serialize assembly skinless clip scale basis: {error}"))
     .operator()?;
-    Ok(PreparedScaleInput {
-        document,
-        rebased_document,
+    Ok(PreparedScaleProjection {
+        authoritative_document: document,
+        rebased_reference_document: rebased_document,
         application: PreparedScaleApplication::ClipTracks,
         mesh_selection: None,
         evidence: AssemblyRestBindScaleInputEvidence {
@@ -1066,280 +1182,59 @@ fn prepare_scale_input(
     scale: &AssemblyRestBindScaleRecipe,
     context: &AssemblyScalePreparationContext<'_>,
     input_role: AssemblyScaleInputRole<'_>,
-) -> Result<PreparedScaleInput, crate::producer::Failure> {
-    use crate::producer::{Classify as _, Failure, Kind, Stage};
+) -> Result<PreparedScaleProjection, crate::producer::Failure> {
+    use crate::producer::{Classify as _, Failure};
     let extension = resolved
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or_default();
-    let is_gltf = extension.eq_ignore_ascii_case("gltf") || extension.eq_ignore_ascii_case("glb");
-    let is_fbx = extension.eq_ignore_ascii_case("fbx");
-    if !is_gltf && !(context.recipe_version >= RECIPE_SCHEMA_VERSION_V6 && is_fbx) {
-        if context.recipe_version < RECIPE_SCHEMA_VERSION_V6 {
-            return Err(Failure::operator(format!(
-                "rest_bind_scale input {} is not glTF/GLB; assembly scale integration is glTF-only",
-                declared.display()
-            )));
-        }
+    let format = if extension.eq_ignore_ascii_case("gltf") {
+        AssemblyScaleInputFormat::Gltf("gltf")
+    } else if extension.eq_ignore_ascii_case("glb") {
+        AssemblyScaleInputFormat::Gltf("glb")
+    } else if context.recipe_version >= RECIPE_SCHEMA_VERSION_V6
+        && extension.eq_ignore_ascii_case("fbx")
+    {
+        AssemblyScaleInputFormat::Fbx
+    } else if context.recipe_version < RECIPE_SCHEMA_VERSION_V6 {
+        return Err(Failure::operator(format!(
+            "rest_bind_scale input {} is not glTF/GLB; assembly scale integration is glTF-only",
+            declared.display()
+        )));
+    } else {
         return Err(Failure::operator(format!(
             "rest_bind_scale input {} is not glTF/GLB or FBX",
             declared.display()
         )));
-    }
+    };
     let bytes = fs::read(resolved)
         .map_err(|error| format!("cannot read input {}: {error}", declared.display()))
         .operator()?;
-    let (
-        sha256,
-        byte_count,
-        document,
-        rebased_document,
-        compatibility_basis,
-        input_format,
-        source_projection,
-        selector,
-        mesh_selection,
-    ) = if is_fbx {
-        let resource_root = parent_or_current(resolved);
-        let fbx_source = animsmith_fbx::load_scale_source_bytes_with_resource_root(
-            resolved,
-            &bytes,
-            resource_root,
-        )
-        .map_err(|error| {
-            format!(
-                "rest_bind_scale FBX load rejected input {}: {error}",
-                declared.display()
-            )
-        })
-        .refusal(Stage::Load, Kind::UnreadableSource)?;
-        require_external_dependencies_safe_for_publication(
-            "assemble",
-            resource_root,
-            fbx_source.dependency_closure(),
-            &[("output", context.output), ("evidence", context.evidence)],
-        )
-        .operator()?;
-        let primary_identity = fbx_source.source_facts().primary_identity();
-        let sha256 = primary_identity.sha256().to_owned();
-        let byte_count = primary_identity.bytes();
-        if context.recipe_version == RECIPE_SCHEMA_VERSION_V7
-            && let AssemblyScaleInputRole::Clip { base_basis } = input_role
-        {
-            animsmith_fbx::require_clip_track_capability_for_source(&fbx_source)
-                .map_err(|error| {
-                    format!(
-                        "rest_bind_scale FBX clip-track capability rejected input {}: {error}",
-                        declared.display()
-                    )
-                })
-                .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
-            let clip_projection = clip_scale_stage_document(fbx_source.document());
-            let staged = crate::scale::serialize_fbx_rest_bind_stage(
-                &clip_projection,
-                context.staging_parent,
-            )
-            .operator()?;
-            let staged_source = preflight_scale_source_bytes(staged.path(), staged.bytes())
-                .map_err(|error| {
-                    format!(
-                        "rest_bind_scale staged FBX clip projection preflight rejected input {}: {error}",
-                        declared.display()
-                    )
-                })
-                .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
-            let source_projection = AssemblyScaleInputProjectionEvidence::NormalizedBakedFbx {
-                authored_curve_keys_preserved: false,
-                raw_source_spans_preserved: false,
-                staged_source: staged_source.source_facts().primary_identity().clone(),
-                capability: Box::new(fbx_source.inventory().clone()),
-            };
-            return prepare_clip_scale_input(
-                role,
-                declared,
-                sha256,
-                byte_count,
-                fbx_source.document().clone(),
-                staged_source.document(),
-                base_basis,
-                scale,
-                context,
-                "fbx",
-                source_projection,
-            );
-        }
-        animsmith_fbx::rest_bind_capability_facts_for_source(&fbx_source)
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale FBX capability rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
-        let (scale_stage_document, mesh_selection) = if context.recipe_version
-            == RECIPE_SCHEMA_VERSION_V7
-            && matches!(input_role, AssemblyScaleInputRole::Base)
-        {
-            let (document, selection) = selected_fbx_base_scale_stage_document(
-                fbx_source.document(),
-                context.remove_nodes,
-                context.retained_mesh_instances,
-            )
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale FBX base projection rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-            (document, Some(selection))
-        } else {
-            let document = fbx_scale_stage_document(
-                fbx_source.document(),
-                context.remove_nodes,
-                context.retained_mesh_instances,
-            )
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale removal projection rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-            (document, None)
-        };
-        let staged = crate::scale::serialize_fbx_rest_bind_stage(
-            &scale_stage_document,
-            context.staging_parent,
-        )
-        .operator()?;
-        let staged_source = preflight_scale_source_bytes(staged.path(), staged.bytes())
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale staged FBX preflight rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
-        let source_projection = AssemblyScaleInputProjectionEvidence::NormalizedBakedFbx {
-            authored_curve_keys_preserved: false,
-            raw_source_spans_preserved: false,
-            staged_source: staged_source.source_facts().primary_identity().clone(),
-            capability: Box::new(fbx_source.inventory().clone()),
-        };
-        let selector = resolve_rest_bind_scale_selector(fbx_source.document(), scale)
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale selector rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-        let operation = rest_bind_operation(&selector, scale.expected_factor());
-        let staged_operation = crate::scale::map_fbx_staged_rest_bind_operation(
-            fbx_source.document(),
-            staged_source.document(),
-            operation,
-        )
-        .map_err(|error| {
-            format!(
-                "rest_bind_scale FBX selector mapping rejected input {}: {error}",
-                declared.display()
-            )
-        })
-        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-        let (rebased_document, compatibility_basis) = prepare_gltf_scale_projection(
-            declared,
-            staged.path(),
-            &staged_source,
-            staged_operation,
-            scale.compatibility_selector(),
-        )?;
-        let prepared_document = if mesh_selection.is_some() {
-            scale_stage_document
-        } else {
-            fbx_source.document().clone()
-        };
-        (
-            sha256,
-            byte_count,
-            prepared_document,
-            rebased_document,
-            compatibility_basis,
-            "fbx",
-            source_projection,
-            selector,
-            mesh_selection,
-        )
-    } else {
-        let source = preflight_scale_source_bytes(resolved, &bytes)
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale preflight rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Load, Kind::UnreadableSource)?;
-        let primary_identity = source.source_facts().primary_identity();
-        let sha256 = primary_identity.sha256().to_owned();
-        let byte_count = primary_identity.bytes();
-        let input_format = if extension.eq_ignore_ascii_case("glb") {
-            "glb"
-        } else {
-            "gltf"
-        };
-        if context.recipe_version == RECIPE_SCHEMA_VERSION_V7
-            && source.document().assets.source_skeleton.skins.is_empty()
-            && let AssemblyScaleInputRole::Clip { base_basis } = input_role
-        {
-            return prepare_clip_scale_input(
-                role,
-                declared,
-                sha256,
-                byte_count,
-                source.document().clone(),
-                source.document(),
-                base_basis,
-                scale,
-                context,
-                input_format,
-                AssemblyScaleInputProjectionEvidence::RawGltf {
-                    authored_curve_keys_preserved: true,
-                    raw_source_spans_preserved: true,
-                },
-            );
-        }
-        let selector = resolve_rest_bind_scale_selector(source.document(), scale)
-            .map_err(|error| {
-                format!(
-                    "rest_bind_scale selector rejected input {}: {error}",
-                    declared.display()
-                )
-            })
-            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-        let operation = rest_bind_operation(&selector, scale.expected_factor());
-        let (rebased_document, compatibility_basis) = prepare_gltf_scale_projection(
-            declared,
-            resolved,
-            &source,
-            operation,
-            scale.compatibility_selector(),
-        )?;
-        (
-            sha256,
-            byte_count,
-            source.document().clone(),
-            rebased_document,
-            compatibility_basis,
-            input_format,
-            AssemblyScaleInputProjectionEvidence::RawGltf {
-                authored_curve_keys_preserved: true,
-                raw_source_spans_preserved: true,
-            },
-            selector,
-            None,
-        )
+    let request = AssemblyScaleInputRequest {
+        role,
+        declared,
+        resolved,
+        scale,
+        context,
+        input_role,
     };
+    match format {
+        AssemblyScaleInputFormat::Gltf(input_format) => {
+            prepare_gltf_scale_input(request, &bytes, input_format)
+        }
+        AssemblyScaleInputFormat::Fbx => prepare_fbx_scale_input(request, &bytes),
+    }
+}
+
+fn finish_rest_bind_scale_input(
+    role: String,
+    declared: &Path,
+    sha256: String,
+    byte_count: u64,
+    context: &AssemblyScalePreparationContext<'_>,
+    admitted: AdmittedRestBindProjection,
+) -> Result<PreparedScaleProjection, crate::producer::Failure> {
+    use crate::producer::Classify as _;
     #[derive(Serialize)]
     struct Fingerprint<'a> {
         schema: &'static str,
@@ -1351,13 +1246,13 @@ fn prepare_scale_input(
         schema: "urn:animsmith:character-assembly-scale-basis:1",
         tool: context.tool,
         input_sha256: &sha256,
-        basis: compatibility_basis.basis(),
+        basis: admitted.compatibility_basis.basis(),
     })
     .map_err(|error| format!("cannot serialize assembly scale basis: {error}"))
     .operator()?;
-    Ok(PreparedScaleInput {
-        document,
-        rebased_document,
+    Ok(PreparedScaleProjection {
+        authoritative_document: admitted.authoritative_document,
+        rebased_reference_document: admitted.rebased_reference_document,
         evidence: AssemblyRestBindScaleInputEvidence {
             role,
             declared_path: declared.display().to_string(),
@@ -1370,22 +1265,287 @@ fn prepare_scale_input(
             application: (context.recipe_version == RECIPE_SCHEMA_VERSION_V7)
                 .then_some("rest-bind"),
             input_format: (context.recipe_version >= RECIPE_SCHEMA_VERSION_V6)
-                .then_some(input_format),
+                .then_some(admitted.input_format),
             source_projection: (context.recipe_version >= RECIPE_SCHEMA_VERSION_V6)
-                .then_some(source_projection),
+                .then_some(admitted.source_projection),
             resolved_root_node_name: (context.recipe_version == RECIPE_SCHEMA_VERSION_V7)
-                .then(|| selector.root_node_name.clone()),
+                .then(|| admitted.selector.root_node_name.clone()),
             resolved_source_skin_index: (context.recipe_version == RECIPE_SCHEMA_VERSION_V7)
-                .then_some(selector.source_skin_index),
+                .then_some(admitted.selector.source_skin_index),
             resolved_source_root_node_index: (context.recipe_version == RECIPE_SCHEMA_VERSION_V7)
-                .then_some(selector.source_root_node_index),
+                .then_some(admitted.selector.source_root_node_index),
         },
         application: PreparedScaleApplication::RestBind {
-            compatibility_basis: Box::new(compatibility_basis),
-            selector,
+            compatibility_basis: Box::new(admitted.compatibility_basis),
+            selector: admitted.selector,
         },
-        mesh_selection,
+        mesh_selection: admitted.mesh_selection,
     })
+}
+
+/// Owns FBX raw admission and its normalized/baked role projections.
+fn prepare_fbx_scale_input(
+    request: AssemblyScaleInputRequest<'_>,
+    bytes: &[u8],
+) -> Result<PreparedScaleProjection, crate::producer::Failure> {
+    use crate::producer::{Classify as _, Kind, Stage};
+
+    let AssemblyScaleInputRequest {
+        role,
+        declared,
+        resolved,
+        scale,
+        context,
+        input_role,
+    } = request;
+
+    let resource_root = parent_or_current(resolved);
+    let fbx_source =
+        animsmith_fbx::load_scale_source_bytes_with_resource_root(resolved, bytes, resource_root)
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale FBX load rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Load, Kind::UnreadableSource)?;
+    require_external_dependencies_safe_for_publication(
+        "assemble",
+        resource_root,
+        fbx_source.dependency_closure(),
+        &[("output", context.output), ("evidence", context.evidence)],
+    )
+    .operator()?;
+    let primary_identity = fbx_source.source_facts().primary_identity();
+    let sha256 = primary_identity.sha256().to_owned();
+    let byte_count = primary_identity.bytes();
+    if context.recipe_version == RECIPE_SCHEMA_VERSION_V7
+        && let AssemblyScaleInputRole::ClipTracks { base_basis } = input_role
+    {
+        animsmith_fbx::require_clip_track_capability_for_source(&fbx_source)
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale FBX clip-track capability rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
+        let clip_projection = clip_scale_stage_document(fbx_source.document());
+        let staged =
+            crate::scale::serialize_fbx_rest_bind_stage(&clip_projection, context.staging_parent)
+                .operator()?;
+        let staged_source = preflight_scale_source_bytes(staged.path(), staged.bytes())
+            .map_err(|error| {
+                format!(
+                    "rest_bind_scale staged FBX clip projection preflight rejected input {}: {error}",
+                    declared.display()
+                )
+            })
+            .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
+        let source_projection = AssemblyScaleInputProjectionEvidence::NormalizedBakedFbx {
+            authored_curve_keys_preserved: false,
+            raw_source_spans_preserved: false,
+            staged_source: staged_source.source_facts().primary_identity().clone(),
+            capability: Box::new(fbx_source.inventory().clone()),
+        };
+        return prepare_clip_scale_input(
+            role,
+            declared,
+            sha256,
+            byte_count,
+            PreparedClipTrackProjection::normalized_baked_fbx(
+                fbx_source.document().clone(),
+                staged_source.document().clone(),
+                source_projection,
+            ),
+            base_basis,
+            scale,
+            context,
+        );
+    }
+    animsmith_fbx::rest_bind_capability_facts_for_source(&fbx_source)
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale FBX capability rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
+    let (scale_stage_document, mesh_selection) = if context.recipe_version
+        == RECIPE_SCHEMA_VERSION_V7
+        && matches!(input_role, AssemblyScaleInputRole::BaseRestBind)
+    {
+        let (document, selection) = selected_fbx_base_scale_stage_document(
+            fbx_source.document(),
+            context.remove_nodes,
+            context.retained_mesh_instances,
+        )
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale FBX base projection rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+        (document, Some(selection))
+    } else {
+        let document = fbx_scale_stage_document(
+            fbx_source.document(),
+            context.remove_nodes,
+            context.retained_mesh_instances,
+        )
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale removal projection rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+        (document, None)
+    };
+    let staged =
+        crate::scale::serialize_fbx_rest_bind_stage(&scale_stage_document, context.staging_parent)
+            .operator()?;
+    let staged_source = preflight_scale_source_bytes(staged.path(), staged.bytes())
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale staged FBX preflight rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Transform, Kind::UnsupportedSourceDomain)?;
+    let selector = resolve_rest_bind_scale_selector(fbx_source.document(), scale)
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale selector rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+    let staged_operation = crate::scale::map_fbx_staged_rest_bind_operation(
+        fbx_source.document(),
+        staged_source.document(),
+        rest_bind_operation(&selector, scale.expected_factor()),
+    )
+    .map_err(|error| {
+        format!(
+            "rest_bind_scale FBX selector mapping rejected input {}: {error}",
+            declared.display()
+        )
+    })
+    .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+    let (rebased_reference_document, compatibility_basis) = prepare_gltf_scale_projection(
+        declared,
+        staged.path(),
+        &staged_source,
+        staged_operation,
+        scale.compatibility_selector(),
+    )?;
+    finish_rest_bind_scale_input(
+        role,
+        declared,
+        sha256,
+        byte_count,
+        context,
+        AdmittedRestBindProjection {
+            authoritative_document: if mesh_selection.is_some() {
+                scale_stage_document
+            } else {
+                fbx_source.document().clone()
+            },
+            rebased_reference_document,
+            compatibility_basis,
+            input_format: "fbx",
+            source_projection: AssemblyScaleInputProjectionEvidence::NormalizedBakedFbx {
+                authored_curve_keys_preserved: false,
+                raw_source_spans_preserved: false,
+                staged_source: staged_source.source_facts().primary_identity().clone(),
+                capability: Box::new(fbx_source.inventory().clone()),
+            },
+            selector,
+            mesh_selection,
+        },
+    )
+}
+
+/// Owns raw glTF/GLB admission and its existing role-dependent projection.
+fn prepare_gltf_scale_input(
+    request: AssemblyScaleInputRequest<'_>,
+    bytes: &[u8],
+    input_format: &'static str,
+) -> Result<PreparedScaleProjection, crate::producer::Failure> {
+    use crate::producer::{Classify as _, Kind, Stage};
+
+    let AssemblyScaleInputRequest {
+        role,
+        declared,
+        resolved,
+        scale,
+        context,
+        input_role,
+    } = request;
+
+    let source = preflight_scale_source_bytes(resolved, bytes)
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale preflight rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Load, Kind::UnreadableSource)?;
+    let primary_identity = source.source_facts().primary_identity();
+    let sha256 = primary_identity.sha256().to_owned();
+    let byte_count = primary_identity.bytes();
+    if context.recipe_version == RECIPE_SCHEMA_VERSION_V7
+        && let AssemblyScaleInputRole::ClipTracks { base_basis } = input_role
+        && let Some(projection) = PreparedClipTrackProjection::try_raw_gltf_clip_tracks(
+            declared,
+            source.document().clone(),
+            input_format,
+            AssemblyScaleInputProjectionEvidence::RawGltf {
+                authored_curve_keys_preserved: true,
+                raw_source_spans_preserved: true,
+            },
+        )?
+    {
+        return prepare_clip_scale_input(
+            role, declared, sha256, byte_count, projection, base_basis, scale, context,
+        );
+    }
+    let selector = resolve_rest_bind_scale_selector(source.document(), scale)
+        .map_err(|error| {
+            format!(
+                "rest_bind_scale selector rejected input {}: {error}",
+                declared.display()
+            )
+        })
+        .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+    let (rebased_reference_document, compatibility_basis) = prepare_gltf_scale_projection(
+        declared,
+        resolved,
+        &source,
+        rest_bind_operation(&selector, scale.expected_factor()),
+        scale.compatibility_selector(),
+    )?;
+    finish_rest_bind_scale_input(
+        role,
+        declared,
+        sha256,
+        byte_count,
+        context,
+        AdmittedRestBindProjection {
+            authoritative_document: source.document().clone(),
+            rebased_reference_document,
+            compatibility_basis,
+            input_format,
+            source_projection: AssemblyScaleInputProjectionEvidence::RawGltf {
+                authored_curve_keys_preserved: true,
+                raw_source_spans_preserved: true,
+            },
+            selector,
+            mesh_selection: None,
+        },
+    )
 }
 
 fn prepare_gltf_scale_projection(
@@ -1612,7 +1772,7 @@ fn assemble_inner(
     // copy. V7's private FBX scale stage may exclude unskinned instances in a
     // declared removal closure, but the captured raw document still feeds
     // assembly and no later reopen can race validation.
-    let mut prepared_scale_inputs = BTreeMap::<PathBuf, PreparedScaleInput>::new();
+    let mut prepared_scale_inputs = BTreeMap::<PathBuf, PreparedScaleProjection>::new();
     let mut rest_bind_input_evidence = Vec::new();
     if let Some(scale) = &recipe.rest_bind_scale {
         let scale_remove_nodes = if recipe.schema_version == RECIPE_SCHEMA_VERSION_V7 {
@@ -1635,7 +1795,7 @@ fn assemble_inner(
             &base_path,
             scale,
             &scale_context,
-            AssemblyScaleInputRole::Base,
+            AssemblyScaleInputRole::BaseRestBind,
         )?;
         let base_basis = match &prepared.application {
             PreparedScaleApplication::RestBind {
@@ -1664,7 +1824,7 @@ fn assemble_inner(
                 &resolved,
                 scale,
                 &scale_context,
-                AssemblyScaleInputRole::Clip {
+                AssemblyScaleInputRole::ClipTracks {
                     base_basis: &base_basis,
                 },
             )?;
@@ -1698,7 +1858,7 @@ fn assemble_inner(
     };
     let mut base = prepared_scale_inputs.get(&base_path).map_or_else(
         || load_input(&base_path),
-        |prepared| Ok(prepared.document.clone()),
+        |prepared| Ok(prepared.authoritative_document.clone()),
     )?;
     // When v5/v6 composes rest/bind reparameterization with assembly transforms,
     // this independently source-rebased branch is the exact final-clip oracle.
@@ -1706,7 +1866,7 @@ fn assemble_inner(
     // branch; only the eventual raw staged-GLB rewrite remains staged-only.
     let mut rebased_base = prepared_scale_inputs
         .get(&base_path)
-        .map(|prepared| prepared.rebased_document.clone());
+        .map(|prepared| prepared.rebased_reference_document.clone());
     let prepared_mesh_selection = prepared_scale_inputs
         .get(&base_path)
         .and_then(|prepared| prepared.mesh_selection.clone());
@@ -1846,7 +2006,7 @@ fn assemble_inner(
                     sha256: prepared.evidence.sha256.clone(),
                     bytes: prepared.evidence.bytes,
                 });
-                loaded.insert(resolved.clone(), prepared.document.clone());
+                loaded.insert(resolved.clone(), prepared.authoritative_document.clone());
             } else {
                 inputs.push(input_evidence("clip", &clip_recipe.input, &resolved).operator()?);
                 loaded.insert(resolved.clone(), load_input(&resolved)?);
@@ -1859,7 +2019,7 @@ fn assemble_inner(
         let rebased = if let (Some(scale_source), Some(scale_base)) = (
             prepared_scale_inputs
                 .get(&resolved)
-                .map(|prepared| &prepared.rebased_document),
+                .map(|prepared| &prepared.rebased_reference_document),
             rebased_base.as_ref(),
         ) {
             Some(
@@ -2063,7 +2223,7 @@ fn assemble_inner(
             .get(&base_path)
             .ok_or_else(|| "missing captured base scale input".to_owned())
             .refusal(Stage::Proof, Kind::ProofFailed)?
-            .document;
+            .authoritative_document;
         let base_application = &prepared_scale_inputs
             .get(&base_path)
             .ok_or_else(|| "missing captured base scale input".to_owned())
