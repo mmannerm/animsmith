@@ -102,7 +102,7 @@ fn addressability_validator() -> jsonschema::Validator {
     jsonschema::options()
         .with_registry(&registry)
         .build(&addressability)
-        .expect("addressability schema compiles with reused output-v11 definitions")
+        .expect("addressability schema compiles with reused historical output-v10 definitions")
 }
 
 fn assert_addressability_schema_valid(instance: &Value) {
@@ -3122,6 +3122,52 @@ fn embedded_contract_types_emit_the_published_v11_envelope() {
         json["files"][0]["measurements"]["schema"],
         animsmith_core::MEASUREMENTS_SCHEMA_ID
     );
+}
+
+#[test]
+fn published_v11_schema_requires_matching_role_policy_provenance() {
+    let output = animsmith()
+        .args([
+            "measure",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let base: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_output_schema_valid(&base);
+    let validator = output_validator();
+
+    let mut missing_policy = base.clone();
+    missing_policy["files"][0]["rig"]["resolved_roles"] = json!({ "hips": "hips" });
+    missing_policy["files"][0]["rig"]["resolved_role_policies"] = json!({});
+
+    let mut orphan_policy = base.clone();
+    orphan_policy["files"][0]["rig"]["resolved_roles"] = json!({});
+    orphan_policy["files"][0]["rig"]["resolved_role_policies"] = json!({ "hips": "exact" });
+
+    let mut unknown_role = base.clone();
+    unknown_role["files"][0]["rig"]["resolved_roles"] = json!({ "tail": "tail" });
+    unknown_role["files"][0]["rig"]["resolved_role_policies"] = json!({ "tail": "exact" });
+
+    let mut ambiguous_with_roles = base;
+    ambiguous_with_roles["files"][0]["rig"]["resolution_outcome"] = json!("ambiguous_folded_match");
+    ambiguous_with_roles["files"][0]["rig"]["resolved_roles"] = json!({ "hips": "hips" });
+    ambiguous_with_roles["files"][0]["rig"]["resolved_role_policies"] = json!({ "hips": "exact" });
+
+    for (name, invalid) in [
+        ("missing policy", missing_policy),
+        ("orphan policy", orphan_policy),
+        ("unknown role", unknown_role),
+        ("ambiguous outcome with roles", ambiguous_with_roles),
+    ] {
+        assert!(
+            !validator.is_valid(&invalid),
+            "output-v11 accepted {name}: {invalid:#}"
+        );
+    }
 }
 
 #[test]

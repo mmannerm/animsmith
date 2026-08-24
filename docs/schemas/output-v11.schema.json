@@ -141,13 +141,116 @@
         },
         "resolved_roles": {
           "type": "object",
+          "propertyNames": {
+            "enum": ["root", "hips", "spine", "head", "left_foot", "right_foot", "left_toe", "right_toe", "left_hand", "right_hand"]
+          },
           "additionalProperties": { "type": "string" }
         },
         "resolved_role_policies": {
           "type": "object",
+          "propertyNames": {
+            "enum": ["root", "hips", "spine", "head", "left_foot", "right_foot", "left_toe", "right_toe", "left_hand", "right_hand"]
+          },
           "additionalProperties": { "enum": ["exact", "ascii-case-insensitive", "explicit"] }
         }
       },
+      "allOf": [
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["root"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["root"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["root"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["root"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["hips"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["hips"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["hips"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["hips"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["spine"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["spine"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["spine"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["spine"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["head"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["head"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["head"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["head"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["left_foot"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["left_foot"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["left_foot"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["left_foot"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["right_foot"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["right_foot"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["right_foot"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["right_foot"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["left_toe"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["left_toe"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["left_toe"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["left_toe"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["right_toe"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["right_toe"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["right_toe"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["right_toe"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["left_hand"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["left_hand"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["left_hand"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["left_hand"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_roles": { "required": ["right_hand"] } } },
+          "then": { "properties": { "resolved_role_policies": { "required": ["right_hand"] } } }
+        },
+        {
+          "if": { "properties": { "resolved_role_policies": { "required": ["right_hand"] } } },
+          "then": { "properties": { "resolved_roles": { "required": ["right_hand"] } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "resolution_outcome": {
+                "enum": ["ambiguous_exact_match", "ambiguous_folded_match", "role_collision", "ambiguous_profile"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "resolved_roles": { "maxProperties": 0 },
+              "resolved_role_policies": { "maxProperties": 0 }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "measure_file_report": {
