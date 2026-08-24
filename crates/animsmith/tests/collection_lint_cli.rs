@@ -97,7 +97,18 @@ fn retained_spike_emits_exact_deterministic_collection_evidence() {
             .get("phase_spread")
             .is_none()
     );
-    assert!(value["runtime_sets"][1].get("evidence").is_none());
+    assert_eq!(
+        value["runtime_sets"][0]["members"][0]["root_travel"]["translation_availability"],
+        "not_applicable"
+    );
+    assert_eq!(
+        value["runtime_sets"][0]["evidence"]["root_travel"]["lifecycle"],
+        "incomplete"
+    );
+    assert_eq!(
+        value["runtime_sets"][1]["evidence"]["root_travel"]["members_measured"],
+        0
+    );
     assert!(
         value["runtime_sets"][1]["members"][0]
             .get("gait_phase")
@@ -118,6 +129,15 @@ fn retained_spike_emits_exact_deterministic_collection_evidence() {
     assert!(
         !collection_validator().is_valid(&non_gait_member_evidence),
         "the schema rejects gait-phase rows on non-gait sets"
+    );
+    let mut missing_root_travel = value.clone();
+    missing_root_travel["runtime_sets"][1]["members"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("root_travel");
+    assert!(
+        !collection_validator().is_valid(&missing_root_travel),
+        "the schema requires root-travel evidence for every declared member"
     );
     assert_eq!(value["work"]["serialized_bytes"], first.stdout.len());
 
@@ -401,6 +421,20 @@ members = ["com.example.failures/bad", "com.example.failures/digest", "com.examp
     );
     assert_eq!(value["clips"][5]["binding"]["state"], "established");
     assert_eq!(value["runtime_sets"][0]["lifecycle"], "incomplete");
+    assert_eq!(
+        value["runtime_sets"][0]["members"][0]["root_travel"]["translation_availability"],
+        "unavailable"
+    );
+    assert!(
+        value["runtime_sets"][0]["members"][0]["root_travel"]
+            .get("duration_s")
+            .is_none(),
+        "binding-unavailable rows remain explicit but do not invent duration"
+    );
+    assert_eq!(
+        value["runtime_sets"][0]["evidence"]["root_travel"]["lifecycle"],
+        "incomplete"
+    );
     assert_eq!(
         value["runtime_sets"][0]["members"]
             .as_array()
