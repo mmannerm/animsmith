@@ -368,6 +368,7 @@ pub(crate) enum RuntimeSetMemberState {
 pub(crate) struct RuntimeSetMember {
     id: String,
     resolution: RuntimeSetMemberState,
+    root_travel: RootTravelMemberEvidence,
     #[serde(skip_serializing_if = "Option::is_none")]
     gait_phase: Option<GaitPhaseMemberEvidence>,
 }
@@ -377,6 +378,7 @@ impl RuntimeSetMember {
         Self {
             id: id.into(),
             resolution,
+            root_travel: RootTravelMemberEvidence::unavailable(),
             gait_phase: None,
         }
     }
@@ -413,7 +415,59 @@ pub(crate) struct CollectionRuntimeSetRecord {
 #[derive(Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeSetEvidence {
-    gait_phase: GaitPhaseEvidence,
+    root_travel: RootTravelEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gait_phase: Option<GaitPhaseEvidence>,
+}
+
+/// Raw per-member duration, sampled horizontal root translation, and speed.
+/// This intentionally makes no direction or controller-policy inference.
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RootTravelMemberEvidence {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_s: Option<f64>,
+    translation_availability: MeasurementAvailability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    horizontal_displacement_x_m: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    horizontal_displacement_z_m: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    horizontal_travel_m: Option<f64>,
+    speed_mps_availability: MeasurementAvailability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speed_mps: Option<f64>,
+}
+
+impl RootTravelMemberEvidence {
+    const fn unavailable() -> Self {
+        Self {
+            duration_s: None,
+            translation_availability: MeasurementAvailability::Unavailable,
+            horizontal_displacement_x_m: None,
+            horizontal_displacement_z_m: None,
+            horizontal_travel_m: None,
+            speed_mps_availability: MeasurementAvailability::Unavailable,
+            speed_mps: None,
+        }
+    }
+
+    fn is_measured(&self) -> bool {
+        self.duration_s.is_some()
+            && self.translation_availability == MeasurementAvailability::Measured
+            && self.horizontal_displacement_x_m.is_some()
+            && self.horizontal_displacement_z_m.is_some()
+            && self.horizontal_travel_m.is_some()
+            && self.speed_mps_availability == MeasurementAvailability::Measured
+            && self.speed_mps.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RootTravelEvidence {
+    lifecycle: RuntimeSetLifecycle,
+    members_measured: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -468,9 +522,6 @@ impl CollectionRuntimeSetRecord {
         &mut self,
         clips: &BTreeMap<&str, &CollectionClipRecord>,
     ) -> Result<(), CollectionOutputError> {
-        if self.kind != CollectionRuntimeSetKindV1::GaitGroup {
-            return Ok(());
-        }
         let member_count = self.members.len();
         let mut phases = Vec::with_capacity(member_count);
         for member in &mut self.members {
@@ -480,6 +531,26 @@ impl CollectionRuntimeSetRecord {
                     .ok_or(CollectionOutputError::Contradictory(
                         "runtime-set member has no clip",
                     ))?;
+            member.root_travel = match (&member.resolution, &clip.binding) {
+                (
+                    RuntimeSetMemberState::Established,
+                    ClipBindingState::Established { measurements, .. },
+                ) => root_travel_from_measurements(measurements),
+                (
+                    RuntimeSetMemberState::Unavailable { reason },
+                    ClipBindingState::Unavailable {
+                        reason: clip_reason,
+                    },
+                ) if reason == clip_reason => RootTravelMemberEvidence::unavailable(),
+                _ => {
+                    return Err(CollectionOutputError::Contradictory(
+                        "runtime-set member resolution mismatch",
+                    ));
+                }
+            };
+            if self.kind != CollectionRuntimeSetKindV1::GaitGroup {
+                continue;
+            }
             let (availability, phase) = match (&member.resolution, &clip.binding) {
                 (
                     RuntimeSetMemberState::Established,
@@ -510,27 +581,82 @@ impl CollectionRuntimeSetRecord {
                 ));
             }
         }
-        let phase_spread = if phases.len() == member_count {
-            phases.sort_by(|left, right| left.0.cmp(&right.0));
-            Some(circular_phase_spread(
-                &phases.iter().map(|(_, phase)| *phase).collect::<Vec<_>>(),
-            ))
-        } else {
-            None
-        };
+        let phase_spread =
+            if self.kind == CollectionRuntimeSetKindV1::GaitGroup && phases.len() == member_count {
+                phases.sort_by(|left, right| left.0.cmp(&right.0));
+                Some(circular_phase_spread(
+                    &phases.iter().map(|(_, phase)| *phase).collect::<Vec<_>>(),
+                ))
+            } else {
+                None
+            };
         self.evidence = Some(RuntimeSetEvidence {
-            gait_phase: GaitPhaseEvidence {
-                lifecycle: if phase_spread.is_some() {
+            root_travel: RootTravelEvidence {
+                lifecycle: if self
+                    .members
+                    .iter()
+                    .all(|member| member.root_travel.is_measured())
+                {
                     RuntimeSetLifecycle::Complete
                 } else {
                     RuntimeSetLifecycle::Incomplete
                 },
-                members_measured: phases.len(),
-                spread_basis: phase_spread.map(|_| GAIT_PHASE_SPREAD_BASIS),
-                phase_spread,
+                members_measured: self
+                    .members
+                    .iter()
+                    .filter(|member| member.root_travel.is_measured())
+                    .count(),
             },
+            gait_phase: (self.kind == CollectionRuntimeSetKindV1::GaitGroup).then_some(
+                GaitPhaseEvidence {
+                    lifecycle: if phase_spread.is_some() {
+                        RuntimeSetLifecycle::Complete
+                    } else {
+                        RuntimeSetLifecycle::Incomplete
+                    },
+                    members_measured: phases.len(),
+                    spread_basis: phase_spread.map(|_| GAIT_PHASE_SPREAD_BASIS),
+                    phase_spread,
+                },
+            ),
         });
         Ok(())
+    }
+}
+
+fn root_travel_from_measurements(measurements: &ClipMeasurements) -> RootTravelMemberEvidence {
+    let (translation_availability, translation) = match measurements.root_trajectory_availability {
+        MeasurementAvailability::Measured => measurements
+            .root_trajectory
+            .as_ref()
+            .map(|trajectory| {
+                (
+                    trajectory.translation_availability,
+                    trajectory.translation.as_ref(),
+                )
+            })
+            .unwrap_or((MeasurementAvailability::Unavailable, None)),
+        availability => (availability, None),
+    };
+    let (horizontal_displacement_x_m, horizontal_displacement_z_m, horizontal_travel_m) =
+        match (translation_availability, translation) {
+            (MeasurementAvailability::Measured, Some(translation)) => (
+                Some(translation.horizontal_displacement_x_m),
+                Some(translation.horizontal_displacement_z_m),
+                Some(translation.horizontal_travel_m),
+            ),
+            _ => (None, None, None),
+        };
+    RootTravelMemberEvidence {
+        duration_s: Some(measurements.duration_s),
+        translation_availability,
+        horizontal_displacement_x_m,
+        horizontal_displacement_z_m,
+        horizontal_travel_m,
+        speed_mps_availability: measurements.speed_mps_availability,
+        speed_mps: (measurements.speed_mps_availability == MeasurementAvailability::Measured)
+            .then_some(measurements.speed_mps)
+            .flatten(),
     }
 }
 
@@ -1322,7 +1448,15 @@ struct RuntimeSetWire {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeSetEvidenceWire {
-    gait_phase: GaitPhaseEvidenceWire,
+    root_travel: RootTravelEvidenceWire,
+    gait_phase: Option<GaitPhaseEvidenceWire>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootTravelEvidenceWire {
+    lifecycle: RuntimeSetLifecycle,
+    members_measured: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1346,7 +1480,20 @@ struct GaitPhaseMemberEvidenceWire {
 struct RuntimeSetMemberWire {
     id: String,
     resolution: RuntimeSetMemberStateWire,
+    root_travel: RootTravelMemberEvidenceWire,
     gait_phase: Option<GaitPhaseMemberEvidenceWire>,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct RootTravelMemberEvidenceWire {
+    duration_s: Option<f64>,
+    translation_availability: MeasurementAvailability,
+    horizontal_displacement_x_m: Option<f64>,
+    horizontal_displacement_z_m: Option<f64>,
+    horizontal_travel_m: Option<f64>,
+    speed_mps_availability: MeasurementAvailability,
+    speed_mps: Option<f64>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
@@ -1811,21 +1958,53 @@ fn validate_set_evidence(
     set: &RuntimeSetWire,
     clips: &BTreeMap<&str, &ClipBindingStateWire>,
 ) -> Result<(), CollectionOutputError> {
-    if set._kind != CollectionRuntimeSetKindV1::GaitGroup {
-        return (set.evidence.is_none()
-            && set.members.iter().all(|member| member.gait_phase.is_none()))
-        .then_some(())
-        .ok_or(CollectionOutputError::Malformed);
-    }
     let evidence = set
         .evidence
         .as_ref()
         .ok_or(CollectionOutputError::Malformed)?;
+    let mut root_members_measured = 0;
     let mut phases = Vec::with_capacity(set.members.len());
     for member in &set.members {
         let binding = clips
             .get(member.id.as_str())
             .ok_or(CollectionOutputError::Malformed)?;
+        let expected_root_travel = match (binding, &member.resolution) {
+            (
+                ClipBindingStateWire::Established { measurements, .. },
+                RuntimeSetMemberStateWire::Established,
+            ) => root_travel_from_measurements(measurements),
+            (
+                ClipBindingStateWire::Unavailable {
+                    reason: clip_reason,
+                },
+                RuntimeSetMemberStateWire::Unavailable { reason },
+            ) if reason == clip_reason => RootTravelMemberEvidence::unavailable(),
+            _ => return Err(CollectionOutputError::Malformed),
+        };
+        if !valid_root_travel_member(&member.root_travel)
+            || member.root_travel.duration_s != expected_root_travel.duration_s
+            || member.root_travel.translation_availability
+                != expected_root_travel.translation_availability
+            || member.root_travel.horizontal_displacement_x_m
+                != expected_root_travel.horizontal_displacement_x_m
+            || member.root_travel.horizontal_displacement_z_m
+                != expected_root_travel.horizontal_displacement_z_m
+            || member.root_travel.horizontal_travel_m != expected_root_travel.horizontal_travel_m
+            || member.root_travel.speed_mps_availability
+                != expected_root_travel.speed_mps_availability
+            || member.root_travel.speed_mps != expected_root_travel.speed_mps
+        {
+            return Err(CollectionOutputError::Malformed);
+        }
+        if expected_root_travel.is_measured() {
+            root_members_measured += 1;
+        }
+        if set._kind != CollectionRuntimeSetKindV1::GaitGroup {
+            if member.gait_phase.is_some() {
+                return Err(CollectionOutputError::Malformed);
+            }
+            continue;
+        }
         let (availability, phase) = match (binding, &member.resolution) {
             (
                 ClipBindingStateWire::Established { measurements, .. },
@@ -1858,6 +2037,27 @@ fn validate_set_evidence(
             ));
         }
     }
+    let root_lifecycle = if root_members_measured == set.members.len() {
+        RuntimeSetLifecycle::Complete
+    } else {
+        RuntimeSetLifecycle::Incomplete
+    };
+    if evidence.root_travel.lifecycle != root_lifecycle
+        || evidence.root_travel.members_measured != root_members_measured
+    {
+        return Err(CollectionOutputError::Malformed);
+    }
+    if set._kind != CollectionRuntimeSetKindV1::GaitGroup {
+        return evidence
+            .gait_phase
+            .is_none()
+            .then_some(())
+            .ok_or(CollectionOutputError::Malformed);
+    }
+    let evidence_gait = evidence
+        .gait_phase
+        .as_ref()
+        .ok_or(CollectionOutputError::Malformed)?;
     let expected = if phases.len() == set.members.len() {
         phases.sort_by(|left, right| left.0.cmp(right.0));
         Some(circular_phase_spread(
@@ -1872,15 +2072,15 @@ fn validate_set_evidence(
     } else {
         RuntimeSetLifecycle::Incomplete
     };
-    if evidence.gait_phase.lifecycle != expected_lifecycle
-        || evidence.gait_phase.members_measured != members_measured
+    if evidence_gait.lifecycle != expected_lifecycle
+        || evidence_gait.members_measured != members_measured
     {
         return Err(CollectionOutputError::Malformed);
     }
     match (
         expected,
-        evidence.gait_phase.phase_spread,
-        evidence.gait_phase.spread_basis.as_deref(),
+        evidence_gait.phase_spread,
+        evidence_gait.spread_basis.as_deref(),
     ) {
         (None, None, None) => Ok(()),
         (Some(expected), Some(phase_spread), Some(spread_basis))
@@ -1893,6 +2093,41 @@ fn validate_set_evidence(
         }
         _ => Err(CollectionOutputError::Malformed),
     }
+}
+
+fn valid_root_travel_member(value: &RootTravelMemberEvidenceWire) -> bool {
+    let duration_valid = value
+        .duration_s
+        .is_none_or(|duration| duration.is_finite() && duration >= 0.0);
+    let translation_values = [
+        value.horizontal_displacement_x_m,
+        value.horizontal_displacement_z_m,
+        value.horizontal_travel_m,
+    ];
+    let translation_valid = match value.translation_availability {
+        MeasurementAvailability::Measured => {
+            translation_values
+                .iter()
+                .all(|value| value.is_some_and(f64::is_finite))
+                && value
+                    .horizontal_travel_m
+                    .is_some_and(|travel| travel >= 0.0)
+        }
+        MeasurementAvailability::NotApplicable | MeasurementAvailability::Unavailable => {
+            translation_values.iter().all(Option::is_none)
+        }
+        _ => false,
+    };
+    let speed_valid = match value.speed_mps_availability {
+        MeasurementAvailability::Measured => value
+            .speed_mps
+            .is_some_and(|speed| speed.is_finite() && speed >= 0.0),
+        MeasurementAvailability::NotApplicable | MeasurementAvailability::Unavailable => {
+            value.speed_mps.is_none()
+        }
+        _ => false,
+    };
+    duration_valid && translation_valid && speed_valid
 }
 fn summarize_wire(
     sources: &[CollectionSourceWire],
@@ -2083,6 +2318,49 @@ mod tests {
                 }))
                 .expect("synthetic gait measurement"),
             );
+        }
+        let clips = output
+            .clips
+            .iter()
+            .map(|clip| (clip.id.as_str(), clip))
+            .collect::<BTreeMap<_, _>>();
+        for set in &mut output.runtime_sets {
+            set.populate_evidence(&clips).unwrap();
+        }
+    }
+
+    fn set_root_travel(output: &mut CollectionOutput, values: &[(&str, f64, f64, f64, f64)]) {
+        for (id, duration_s, x, z, speed_mps) in values {
+            let clip = output
+                .clips
+                .iter_mut()
+                .find(|clip| clip.id == *id)
+                .expect("fixture clip exists");
+            let ClipBindingState::Established { measurements, .. } = &mut clip.binding else {
+                panic!("fixture clip is established");
+            };
+            measurements.duration_s = *duration_s;
+            measurements.root_trajectory_availability = MeasurementAvailability::Measured;
+            measurements.root_trajectory = Some(
+                serde_json::from_value(serde_json::json!({
+                    "bone_index": 0,
+                    "bone_name": "root",
+                    "source_role": "root",
+                    "translation": {
+                        "horizontal_displacement_x_m": x,
+                        "horizontal_displacement_z_m": z,
+                        "horizontal_travel_m": x.hypot(*z),
+                        "vertical_displacement_m": 0.0,
+                        "vertical_min_displacement_m": 0.0,
+                        "vertical_max_displacement_m": 0.0
+                    },
+                    "translation_availability": "measured",
+                    "yaw_availability": "unavailable"
+                }))
+                .expect("synthetic root trajectory"),
+            );
+            measurements.speed_mps_availability = MeasurementAvailability::Measured;
+            measurements.speed_mps = Some(*speed_mps);
         }
         let clips = output
             .clips
@@ -2308,6 +2586,36 @@ mod tests {
             .map(|clip| (clip.id.as_str(), &clip.binding))
             .collect::<BTreeMap<_, _>>();
         assert!(validate_set_evidence(&injected.runtime_sets[0], &clips).is_err());
+    }
+
+    #[test]
+    fn root_travel_evidence_keeps_member_order_and_requires_every_member() {
+        let mut output = output_model_fixture(true, true, 0);
+        set_root_travel(&mut output, &[("com.example/clip-a", 1.0, 1.0, -2.0, 2.0)]);
+        let value: JsonValue = serde_json::from_slice(&output.render_json_vec().unwrap()).unwrap();
+        let set = &value["runtime_sets"][0];
+        assert_eq!(set["members"][0]["id"], "com.example/clip-a");
+        assert_eq!(set["members"][0]["root_travel"]["duration_s"], 1.0);
+        assert_eq!(
+            set["members"][0]["root_travel"]["horizontal_displacement_x_m"],
+            1.0
+        );
+        assert_eq!(
+            set["members"][0]["root_travel"]["horizontal_displacement_z_m"],
+            -2.0
+        );
+        assert_eq!(set["evidence"]["root_travel"]["lifecycle"], "incomplete");
+        assert_eq!(set["evidence"]["root_travel"]["members_measured"], 1);
+
+        let mut mutated = value.clone();
+        mutated["runtime_sets"][0]["evidence"]["root_travel"]["lifecycle"] = "complete".into();
+        mutated["runtime_sets"][0]["evidence"]["root_travel"]["members_measured"] = 2.into();
+        rejects(mutated);
+
+        let mut mutated = value;
+        mutated["runtime_sets"][0]["members"][0]["root_travel"]["horizontal_displacement_x_m"] =
+            3.0.into();
+        rejects(mutated);
     }
 
     #[test]

@@ -197,6 +197,33 @@
         { "if": { "properties": { "availability": { "const": "unavailable" } }, "required": ["availability"] }, "then": { "not": { "required": ["phase"] } } }
       ]
     },
+    "root_travel_member_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["translation_availability", "speed_mps_availability"],
+      "properties": {
+        "duration_s": { "type": "number", "minimum": 0 },
+        "translation_availability": { "enum": ["measured", "not_applicable", "unavailable"] },
+        "horizontal_displacement_x_m": { "type": "number" },
+        "horizontal_displacement_z_m": { "type": "number" },
+        "horizontal_travel_m": { "type": "number", "minimum": 0 },
+        "speed_mps_availability": { "enum": ["measured", "not_applicable", "unavailable"] },
+        "speed_mps": { "type": "number", "minimum": 0 }
+      },
+      "allOf": [
+        { "if": { "properties": { "translation_availability": { "const": "measured" } }, "required": ["translation_availability"] }, "then": { "required": ["horizontal_displacement_x_m", "horizontal_displacement_z_m", "horizontal_travel_m"] }, "else": { "not": { "anyOf": [{ "required": ["horizontal_displacement_x_m"] }, { "required": ["horizontal_displacement_z_m"] }, { "required": ["horizontal_travel_m"] }] } } },
+        { "if": { "properties": { "speed_mps_availability": { "const": "measured" } }, "required": ["speed_mps_availability"] }, "then": { "required": ["speed_mps"] }, "else": { "not": { "required": ["speed_mps"] } } }
+      ]
+    },
+    "root_travel_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "members_measured"],
+      "properties": {
+        "lifecycle": { "enum": ["complete", "incomplete"] },
+        "members_measured": { "type": "integer", "minimum": 0, "maximum": 4096 }
+      }
+    },
     "gait_phase_evidence": {
       "type": "object",
       "additionalProperties": false,
@@ -214,8 +241,11 @@
     "runtime_set_evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["gait_phase"],
-      "properties": { "gait_phase": { "$ref": "#/$defs/gait_phase_evidence" } }
+      "required": ["root_travel"],
+      "properties": {
+        "root_travel": { "$ref": "#/$defs/root_travel_evidence" },
+        "gait_phase": { "$ref": "#/$defs/gait_phase_evidence" }
+      }
     },
     "runtime_set": {
       "type": "object",
@@ -224,7 +254,29 @@
       "properties": {
         "id": { "type": "string", "minLength": 3, "maxLength": 255 },
         "kind": { "enum": ["gait-group", "sync-group", "directional-blend", "speed-blend", "transition-chain", "mask-composition", "retarget-group", "paired-interaction", "motion-database"] },
-        "members": { "type": "array", "minItems": 2, "maxItems": 4096, "items": { "type": "object", "additionalProperties": false, "required": ["id", "resolution"], "properties": { "id": { "type": "string", "minLength": 3, "maxLength": 255 }, "resolution": { "$ref": "#/$defs/member_resolution" }, "gait_phase": { "$ref": "#/$defs/gait_phase_member_evidence" } } } },
+        "members": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "resolution", "root_travel"],
+            "properties": {
+              "id": { "type": "string", "minLength": 3, "maxLength": 255 },
+              "resolution": { "$ref": "#/$defs/member_resolution" },
+              "root_travel": { "$ref": "#/$defs/root_travel_member_evidence" },
+              "gait_phase": { "$ref": "#/$defs/gait_phase_member_evidence" }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "resolution": { "properties": { "state": { "const": "established" } }, "required": ["state"] } }, "required": ["resolution"] },
+                "then": { "properties": { "root_travel": { "required": ["duration_s"] } } },
+                "else": { "properties": { "root_travel": { "not": { "required": ["duration_s"] } } } }
+              }
+            ]
+          }
+        },
         "lifecycle": { "enum": ["complete", "incomplete"] },
         "decision": { "const": "not_evaluated" },
         "gaps": { "type": "array", "maxItems": 4096, "items": { "type": "string", "minLength": 3, "maxLength": 255 } },
@@ -235,11 +287,11 @@
           "if": { "properties": { "kind": { "const": "gait-group" } }, "required": ["kind"] },
           "then": {
             "required": ["evidence"],
-            "properties": { "members": { "items": { "required": ["gait_phase"] } } }
+            "properties": { "evidence": { "required": ["gait_phase"] }, "members": { "items": { "required": ["gait_phase"] } } }
           },
           "else": {
-            "not": { "required": ["evidence"] },
-            "properties": { "members": { "items": { "not": { "required": ["gait_phase"] } } } }
+            "required": ["evidence"],
+            "properties": { "evidence": { "not": { "required": ["gait_phase"] } }, "members": { "items": { "not": { "required": ["gait_phase"] } } } }
           }
         }
       ]

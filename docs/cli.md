@@ -651,9 +651,15 @@ manifest order. Each established clip binds an exact source take index/name
 to a normalized clip index and carries duplicate-safe indexed measurements.
 The nested whole-document lint envelope retains output v10/measurements v15.
 Runtime sets keep `decision: not_evaluated`; they make no blend, controller,
-engine, artistic, or gameplay claim. Gait-group member rows additionally carry
-raw gait-phase availability, and only a fully established, phase-measured set
-emits `evidence.gait_phase.phase_spread` with basis
+engine, artistic, or gameplay claim. Every declared member carries raw
+`root_travel`: its existing `duration_s`, root-trajectory translation
+availability, signed horizontal X/Z displacement, sampled horizontal travel,
+and speed availability/value. Binding-unavailable rows remain explicit with
+unavailable root-travel facts. `evidence.root_travel` reports the count of
+fully measured declared members and a complete/incomplete lifecycle; it never
+reduces the declared set to measurable rows. Gait-group member rows additionally
+carry raw gait-phase availability, and only a fully established, phase-measured
+set emits `evidence.gait_phase.phase_spread` with basis
 `max_circular_deviation_from_mean`; this preserves existing gait lint
 threshold semantics. See
 [`collection-output-v1.schema.json`](schemas/collection-output-v1.schema.json).

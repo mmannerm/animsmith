@@ -698,6 +698,14 @@ or both nested metric domains are unavailable. Translation and yaw are
 derived independently, so bad positions do not erase usable yaw and bad
 rotations do not erase usable translation.
 
+Collection lint projects the existing per-document `duration_s`, root
+trajectory translation availability and X/Z/travel values, plus `speed_mps`
+availability/value, into each declared runtime-set member's `root_travel`
+object. `evidence.root_travel.members_measured` counts only rows that have all
+of those raw facts, while its lifecycle is complete only when that count equals
+the declared member count. It retains manifest member order and does not infer
+a direction, reference member, ratio, threshold, finding, or controller policy.
+
 The translation domain is normalized right-handed, +Y-up model space in
 metres: +X is right and -Z is forward. Signed X/Z and Y displacement compare
 the final sample to sample zero. `horizontal_travel_m` sums the XZ length of
