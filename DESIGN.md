@@ -3381,12 +3381,27 @@ urn:animsmith:schema:contact-fragment:1
 The fragment is an importable envelope, not a second independently edited
 authority beside a host's measured sidecar. A V1 envelope contains `schema`,
 `schema_version`, `producer` (tool and tool-version), `artifact` (the exact
-analyzed artifact's existing `InputIdentity` wire `{sha256, bytes}`), one
-`clip` reference, a measured positive `duration_s`, and an ordered `events`
-array. The `sha256` field makes both the algorithm and digest explicit; this
-contract does not introduce an `{algorithm, digest, bytes}` shape. Unknown
-fields are rejected by the future strict reader. A digest mismatch makes the
-fragment stale rather than authorizing a consumer to use it.
+primary source bytes' existing `InputIdentity` wire `{sha256, bytes}`),
+`dependency_closure_identity` (the complete existing
+`DependencyClosureIdentityV1`,
+serialized through that same `{sha256, bytes}` wire), one `clip` reference, a
+measured positive `duration_s`, and an ordered `events` array. The `sha256`
+field makes both the algorithm and digest explicit; this contract does not
+introduce an `{algorithm, digest, bytes}` shape. Both identities are mandatory.
+The closure identity binds the primary source and every dependency in the
+loader's complete versioned dependency domain; partial or unavailable closure
+coverage refuses fragment generation. This is the identity only, not the full
+`dependency_closure` record used by output v10. The captured closure's
+`primary_input` must equal `artifact`; the producer and any consumer checking
+staleness validate that relationship against the complete captured closure.
+Unknown fields are rejected by the future strict reader. A mismatch in either
+identity makes the fragment stale rather than authorizing a consumer to use it.
+
+V1 deliberately requires the complete modeled closure, including declared
+dependencies such as textures that may not affect contact calculations. It can
+therefore refuse generation when an unrelated dependency is unavailable. This
+conservative policy avoids a second format-specific dependency-relevance
+authority; narrowing it requires a separately versioned contract.
 
 The clip reference is a tagged scope rather than a filename or animation-array
 index:
@@ -3394,9 +3409,10 @@ index:
 - `collection` carries the #409 logical clip id together with its physical
   `source`, take-index, and exact take-name witness. The witness lets a host
   detect a manifest edit or take reorder even when a logical id was retained.
-- `document` carries the exact embedded clip/take name and the artifact digest
-  that scopes that name. If the document exposes duplicate names or cannot
-  establish an unambiguous source-local take identity, the reference is
+- `document` carries the exact embedded clip/take name and the primary-plus-
+  dependency-closure binding that scopes that name. If the document exposes
+  duplicate names or cannot establish an unambiguous source-local take
+  identity, the reference is
   unavailable and the fragment is refused; no first/last animation match is
   guessed.
 
@@ -3470,7 +3486,7 @@ with a typed unsupported-extension result. Core fields remain closed and an
 extension cannot redefine them or add an engine event type.
 
 A minimal collection-scoped envelope is illustrative of the normative shape
-(the digest is the envelope's artifact digest, not a second clip digest):
+(the two input identities are not second clip digests):
 
 ```json
 {
@@ -3478,6 +3494,7 @@ A minimal collection-scoped envelope is illustrative of the normative shape
   "schema_version": 1,
   "producer": {"tool": "animsmith", "version": "0.5.0"},
   "artifact": {"sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "bytes": 123456},
+  "dependency_closure_identity": {"sha256": "1111111111111111111111111111111111111111111111111111111111111111", "bytes": 456},
   "clip": {"scope": "collection", "logical_id": "com.example.pack/locomotion/walk-forward-in-place", "source": "walk-forward", "take_index": 0, "take_name": "Take 001"},
   "duration_s": 1.2,
   "events": [
@@ -3489,7 +3506,7 @@ A minimal collection-scoped envelope is illustrative of the normative shape
 ```
 
 The standalone `document` clip variant replaces the collection fields with
-`clip_name` and the same envelope artifact digest. A host may deterministically
+`clip_name` and retains both envelope input identities. A host may deterministically
 merge this fragment into its existing sidecar, but the host remains the sole
 authority for that file's unrelated fields.
 
@@ -3500,7 +3517,8 @@ result has identity
 `schema_version`, `operation`, `input`, `outcome`, `event_outcomes`, and,
 only when `outcome = "transformed"`, `output`; a refusal additionally has a
 `refusal` object containing exactly a stable `code` and `message` for display.
-The strict tagged `operation` object has exactly these V1 shapes:
+The strict tagged `operation` object has exactly these structurally
+representable V1 shapes:
 
 - `{"kind":"trim","version":1,"interval":{"start":a,"end":b}}`;
 - `{"kind":"slice","version":1,"interval":{"start":a,"end":b}}`;
@@ -3512,18 +3530,27 @@ The control-point array is ordered, finite, starts at `(0, 0)`, ends at
 is piecewise linear: an exact input knot maps to its declared output knot; for
 adjacent knots `(x0, y0)` and `(x1, y1)`, an input `t` strictly between them
 maps to `y0 + (t - x0) * (y1 - y0) / (x1 - x0)`. Point times and both window
-endpoints use that same mapping. `input`
-has exactly `{artifact:{sha256,bytes}, fragment:{sha256,bytes}}` and refers to
+endpoints use that same mapping. Structural decoding retains a known V1
+operation even when its finite numeric domain or ordering is invalid, so a
+refusal can echo the request. An unknown kind, version, field, mapping token,
+missing field, or malformed field type is a strict request/reader error and
+produces no V1 transform result or event outcomes. `input`
+has exactly
+`{artifact:{sha256,bytes},dependency_closure_identity:{sha256,bytes},fragment:{sha256,bytes}}`
+and refers to
 the separately supplied input fragment; the input fragment is not duplicated
 inline. A successful `output` has exactly
-`{artifact:{sha256,bytes}, fragment:{sha256,bytes}, contact_fragment}`; its
+`{artifact:{sha256,bytes},dependency_closure_identity:{sha256,bytes},fragment:{sha256,bytes},contact_fragment}`;
+its
 inline `contact_fragment` is the complete transformed
 `urn:animsmith:schema:contact-fragment:1` value. The output `fragment`
 identity must equal the canonical serialized inline fragment's `{sha256,
 bytes}`, and the output `artifact` identity must equal the inline fragment's
-`artifact` binding. The output is absent, never a null placeholder, on
-refusal. No other operation kind, mapping token, or operation field is
-accepted in V1.
+`artifact` binding. The output `dependency_closure_identity` must equal the
+inline fragment's closure binding and must be freshly captured for the output
+artifact rather than copied from the input. Its captured closure's
+`primary_input` must equal the output `artifact`. The output is absent, never a
+null placeholder, on refusal.
 
 V1 operation mappings are exact: `trim` and `slice` carry a finite retained
 interval `[a, b]` with `0 <= a < b <= 1` and map an in-range `t` to
@@ -3567,19 +3594,23 @@ After input binding and fragment identity validation, `event_outcomes` contains
 exactly one object per input event, in the fragment's canonical input order.
 Each object has exactly `event_id` and `outcome`, plus `value` only when
 `outcome = "transformed"` (the exact mapped point or window) and `code` only
-when `outcome = "refused"`. A pre-inventory global binding or fragment
-identity refusal uses an empty `event_outcomes` list. Global success means
+when `outcome = "refused"`. A pre-inventory binding, fragment-identity,
+operation-validation, or extension-support refusal uses an empty
+`event_outcomes` list. Global success means
 `outcome = "transformed"`, an output is present, and every event outcome is
 `transformed` or `outside`; global refusal means `outcome = "refused"`, a
 typed top-level refusal is present, and output is absent. A refusal discovered
-after inventory has at least one refused event outcome; invalid intervals,
-mappings, duplicate/missing event outcomes, non-monotonic warps, or any
-non-finite value use refusal codes from `partial_window`, `invalid_mapping`,
-`invalid_binding`, `event_identity_mismatch`, `invalid_value`, or
-`unsupported_operation`; unsupported extension transformation uses
-`unsupported_extension` as specified above. The result records the operation,
-bindings, and outcomes; detector and operation implementation remain out of
-scope.
+after inventory has at least one refused event outcome. `partial_window` means
+the exact crossing predicate above; `invalid_mapping` means a structurally
+known operation has an out-of-domain interval, invalid endpoint/order, or
+non-monotonic control points; `invalid_binding` means the supplied fragment,
+primary artifact, or dependency-closure identity does not match current input;
+and `invalid_value` means valid finite inputs produced a non-finite arithmetic
+intermediate. Unsupported extension transformation uses
+`unsupported_extension` as specified above. A malformed fragment/result or
+duplicate, missing, or unknown event-outcome identity is a strict reader error,
+not another refusal result. The result records the operation, bindings, and
+outcomes; detector and operation implementation remain out of scope.
 
 AnimSmith owns contact facts and these identity/time/transform semantics. The
 host owns final file layout and merge, unrelated measurements and provenance,

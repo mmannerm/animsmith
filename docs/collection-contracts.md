@@ -9,15 +9,25 @@ They are interchange declarations, not new CLI commands or runtime systems.
 The contact-fragment V1 identity is
 `urn:animsmith:schema:contact-fragment:1`. It is an importable envelope that
 can be merged into a host's one authoritative measured sidecar. It binds
-contact facts to the exact analyzed artifact using a SHA-256 digest, byte
-count, producer/tool version, and an unambiguous clip reference. The wire is
-the existing `{sha256, bytes}` InputIdentity shape: `sha256` makes the
-algorithm and digest explicit, rather than adding separate `algorithm` and
-`digest` fields.
+contact facts to the exact primary source bytes and complete versioned
+dependency closure, plus producer/tool version and an unambiguous clip
+reference. `artifact` is the existing primary `InputIdentity`;
+`dependency_closure_identity` is the existing complete
+`DependencyClosureIdentityV1` rather than the full output-v10 closure record.
+Both serialize as `{sha256, bytes}`: `sha256` makes the algorithm and digest
+explicit rather than adding separate `algorithm` and `digest` fields. Partial
+or unavailable dependency coverage refuses fragment generation, and a
+mismatch in either identity makes an existing fragment stale.
+The complete captured closure's `primary_input` must equal `artifact`; producer
+and consumer validate that relationship against the captured closure.
+V1 deliberately binds every dependency in the complete modeled closure,
+including dependencies such as textures that may not affect contacts. This can
+refuse generation for an unavailable unrelated dependency, but avoids a second
+format-specific relevance policy.
 
 Collection-owned clips use the [#409 logical identity](../DESIGN.md#f2-logical-and-physical-clip-identity)
 plus its `source`, take-index, and exact take-name witness. Standalone
-documents use an exact embedded clip/take name scoped by the artifact digest;
+documents use an exact embedded clip/take name scoped by both input identities;
 ambiguous or duplicate names are refused. No animation-array index, filename,
 or engine asset handle is an identity.
 
@@ -62,6 +72,7 @@ A minimal collection-scoped envelope is:
   "schema_version": 1,
   "producer": {"tool": "animsmith", "version": "0.5.0"},
   "artifact": {"sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "bytes": 123456},
+  "dependency_closure_identity": {"sha256": "1111111111111111111111111111111111111111111111111111111111111111", "bytes": 456},
   "clip": {"scope": "collection", "logical_id": "com.example.pack/locomotion/walk-forward-in-place", "source": "walk-forward", "take_index": 0, "take_name": "Take 001"},
   "duration_s": 1.2,
   "events": [{"event_id": "left-foot/0", "role": "left_foot", "phase": "marker", "time": 0.23, "confidence": 0.92}],
@@ -84,8 +95,8 @@ Unicode normalization.
 
 Trim, slice, resample, and time-warp use the separate
 `urn:animsmith:schema:contact-transform-result:1` result. It binds input and,
-on success, output artifact `InputIdentity` plus canonical fragment SHA-256
-identity. Its strict top-level fields are `schema`, `schema_version`,
+on success, output primary, dependency-closure, and canonical-fragment
+identities. Its strict top-level fields are `schema`, `schema_version`,
 `operation`, `input`, `outcome`, and `event_outcomes`, with `output` only on
 success and `refusal { code, message }` only on refusal. `operation` is a
 strict tagged object: trim/slice use `interval { start, end }`, resample uses
@@ -94,23 +105,31 @@ strict tagged object: trim/slice use `interval { start, end }`, resample uses
 from `(0,0)` to `(1,1)`. Between adjacent knots `(x0, y0)` and `(x1, y1)`, it
 maps `t` by the exact piecewise-linear formula
 `y0 + (t - x0) * (y1 - y0) / (x1 - x0)`; exact knots map exactly, and both
-window endpoints use the same rule. `input` has exactly
-`{artifact:{sha256,bytes}, fragment:{sha256,bytes}}` and refers to a separately
+window endpoints use the same rule. A known V1 tag with an invalid numeric
+domain or ordering remains representable for an `invalid_mapping` refusal and
+uses an empty pre-inventory `event_outcomes` list. An unknown kind, version,
+field, mapping token, missing field, or malformed field type is a strict
+request/reader error and produces no V1 result or event outcomes. `input` has
+exactly
+`{artifact:{sha256,bytes},dependency_closure_identity:{sha256,bytes},fragment:{sha256,bytes}}`
+and refers to a separately
 supplied input fragment. Successful `output` has exactly
-`{artifact:{sha256,bytes}, fragment:{sha256,bytes}, contact_fragment}`, reusing
-the existing InputIdentity wire; its identities must match the inline complete
-`contact-fragment:1` and its artifact binding. No other operation kind, mapping
-token, or operation field is accepted in V1. For trim/slice `[a,b]`, a point is
+`{artifact:{sha256,bytes},dependency_closure_identity:{sha256,bytes},fragment:{sha256,bytes},contact_fragment}`;
+all three identities must match the inline complete `contact-fragment:1` and
+its two input bindings. The output closure identity is freshly captured rather
+than copied, and its closure `primary_input` must equal output `artifact`. For
+trim/slice `[a,b]`, a point is
 outside exactly when `t < a || t > b`; endpoints are included. A window is
 outside exactly when `end < a || start > b`, contained exactly when
 `a <= start && end <= b`, and otherwise boundary-crossing. A crossing window
 receives `refused` with code `partial_window` and refuses the whole operation.
-Invalid mappings, bindings, extensions, or event outcomes produce a typed
-`refused` result with no `output` field.
+Known-operation mapping failures, binding mismatches, unsupported extensions,
+or partial windows produce a typed `refused` result with no `output` field.
 After binding and identity validation, `event_outcomes` has exactly one
 `{event_id, outcome}` object per input event in canonical input order. It adds
 `value` only for transformed exact point/window values and `code` only for
-refused events; pre-inventory binding/identity refusal uses an empty list.
+refused events; pre-inventory binding, identity, mapping-validation, or
+extension-support refusal uses an empty list.
 Global success requires all events to be transformed or outside and requires
 `output`; global refusal requires top-level `refusal` and omits `output`.
 The inline output duration is `input_duration_s * (b - a)` for trim/slice,
@@ -125,8 +144,9 @@ Trim/slice uses `span = rn(b - a)`, `mapped = rn(rn(t - a) / span)`, and
 binary64 round-to-nearest, ties-to-even, with no fused or extended-precision
 intermediate, so independent producers feed the same numeric results to JCS.
 Refusal codes are `partial_window`, `invalid_mapping`, `invalid_binding`,
-`event_identity_mismatch`, `invalid_value`, `unsupported_operation`, and
-`unsupported_extension`.
+`invalid_value`, and `unsupported_extension`. Malformed fragments/results and
+duplicate, missing, or unknown event-outcome identities are strict reader
+errors, not refusal results.
 
 The success shape is illustrative:
 
@@ -135,7 +155,7 @@ The success shape is illustrative:
   "schema": "urn:animsmith:schema:contact-transform-result:1",
   "schema_version": 1,
   "operation": {"kind": "trim", "version": 1, "interval": {"start": 0.1, "end": 0.9}},
-  "input": {"artifact": {"sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "bytes": 123456}, "fragment": {"sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", "bytes": 789}},
+  "input": {"artifact": {"sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "bytes": 123456}, "dependency_closure_identity": {"sha256": "1111111111111111111111111111111111111111111111111111111111111111", "bytes": 456}, "fragment": {"sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", "bytes": 789}},
   "outcome": "transformed",
   "event_outcomes": [
     {"event_id": "left-foot/0", "outcome": "transformed", "value": {"time": 0.1625}},
@@ -143,12 +163,14 @@ The success shape is illustrative:
   ],
   "output": {
     "artifact": {"sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", "bytes": 123456},
-    "fragment": {"sha256": "c463776d20d82a9d89fb1369a3d081b214a98b6ba1eb5918546d9ad3b4652f08", "bytes": 609},
+    "dependency_closure_identity": {"sha256": "2222222222222222222222222222222222222222222222222222222222222222", "bytes": 654},
+    "fragment": {"sha256": "a1d63b5e10381d2aa635cfd74218a4e5d42f3d61c1451765e25d47a23e02d633", "bytes": 729},
     "contact_fragment": {
       "schema": "urn:animsmith:schema:contact-fragment:1",
       "schema_version": 1,
       "producer": {"tool": "animsmith", "version": "0.5.0"},
       "artifact": {"sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", "bytes": 123456},
+      "dependency_closure_identity": {"sha256": "2222222222222222222222222222222222222222222222222222222222222222", "bytes": 654},
       "clip": {"scope": "collection", "logical_id": "com.example.pack/locomotion/walk-forward-in-place", "source": "walk-forward", "take_index": 0, "take_name": "Take 001"},
       "duration_s": 0.96,
       "events": [
