@@ -3367,3 +3367,317 @@ generated transitions, engine graph output, archive extraction, filename-based
 intent inference, source renaming/merging, motion rewriting, cross-pack
 compatibility claims, or a generic untyped runtime policy language. Those
 remain later consumers or separately accepted contracts.
+
+### F.10 Contact-fragment V1 (#147)
+
+Issue #147 freezes the interchange contract for contact facts without adding
+a detector, generator, or host-side sidecar writer. Its independently versioned
+identity is:
+
+```text
+urn:animsmith:schema:contact-fragment:1
+```
+
+The fragment is an importable envelope, not a second independently edited
+authority beside a host's measured sidecar. A V1 envelope contains `schema`,
+`schema_version`, `producer` (tool and tool-version), `artifact` (the exact
+analyzed artifact's existing `InputIdentity` wire `{sha256, bytes}`), one
+`clip` reference, a measured positive `duration_s`, and an ordered `events`
+array. The `sha256` field makes both the algorithm and digest explicit; this
+contract does not introduce an `{algorithm, digest, bytes}` shape. Unknown
+fields are rejected by the future strict reader. A digest mismatch makes the
+fragment stale rather than authorizing a consumer to use it.
+
+The clip reference is a tagged scope rather than a filename or animation-array
+index:
+
+- `collection` carries the #409 logical clip id together with its physical
+  `source`, take-index, and exact take-name witness. The witness lets a host
+  detect a manifest edit or take reorder even when a logical id was retained.
+- `document` carries the exact embedded clip/take name and the artifact digest
+  that scopes that name. If the document exposes duplicate names or cannot
+  establish an unambiguous source-local take identity, the reference is
+  unavailable and the fragment is refused; no first/last animation match is
+  guessed.
+
+An event has a stable `event_id`, an engine-neutral `role` and `phase`, and
+either a point `time` or a window `{start, end}`. Times are normalized to the
+closed interval `[0, 1]`; `start <= end` is required for a window. A point or
+window is never identified by its array position. Optional confidence and
+explicitly versioned extension data are non-normative additions; confidence,
+when present, is finite and lies in `[0, 1]`. Unity, Unreal, Bevy, and
+gameplay-specific event types do not belong in V1. An
+`event_id` is unique within the clip and remains stable when the same fact is
+regenerated. It is opaque to consumers, is not an engine handle, and is not
+derived from array position.
+
+V1's closed role vocabulary is `left_foot`, `right_foot`, `left_hand`,
+`right_hand`, `left_toe`, `right_toe`, `left_knee`, `right_knee`, `left_elbow`,
+`right_elbow`, `root`, `prop`, and `body`. Its closed phase vocabulary is
+`begin`, `end`, and `marker`. A producer that needs another semantic role or
+phase must propose a versioned contract extension; it must not smuggle an
+engine enum or arbitrary string into V1.
+
+Canonical serialization is UTF-8 JSON with no insignificant whitespace and
+schema-order object members. A mixed point/window event sort key is exactly
+`(start, kind_rank, end_key, role, phase, event_id)`: a point has
+`kind_rank = 0` and the end sentinel `end_key = null`, which sorts before every
+numeric window end; a window has `kind_rank = 1` and `end_key = end`. Thus a
+point and a window at the same start have a deterministic order, including
+when their numeric endpoints are otherwise equal. Extension arrays retain
+their declared order, while keys inside an explicitly versioned extension
+payload are ordered by that extension's schema. Seconds and frame numbers, if
+present for display, are derived values and never identity or comparison
+coordinates. The future implementation must reject unknown fields in the
+core envelope and events, duplicate event ids, non-finite values, out-of-range
+times, and ambiguous references before accepting the fragment. These rules
+make a regenerated fragment reviewable without making event detection part of
+this contract.
+
+Extensions, when present, are an array of strict envelopes. Each envelope has
+exactly `schema`, `schema_version`, and `payload`; `schema` is the extension's
+versioned identity, `schema_version` is a positive integer, and `payload` is a
+JSON object validated by that extension's schema. The core reader rejects
+unknown envelope fields and preserves a well-formed unsupported extension as
+opaque data; a consumer that requires its semantics may reject the fragment
+with a typed unsupported-extension result. Core fields remain closed and an
+extension cannot redefine them or add an engine event type.
+
+A minimal collection-scoped envelope is illustrative of the normative shape
+(the digest is the envelope's artifact digest, not a second clip digest):
+
+```json
+{
+  "schema": "urn:animsmith:schema:contact-fragment:1",
+  "schema_version": 1,
+  "producer": {"tool": "animsmith", "version": "0.5.0"},
+  "artifact": {"sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "bytes": 123456},
+  "clip": {"scope": "collection", "logical_id": "com.example.pack/locomotion/walk-forward-in-place", "source": "walk-forward", "take_index": 0, "take_name": "Take 001"},
+  "duration_s": 1.2,
+  "events": [
+    {"event_id": "left-foot/0", "role": "left_foot", "phase": "marker", "time": 0.23, "confidence": 0.92},
+    {"event_id": "right-foot/0", "role": "right_foot", "phase": "begin", "window": {"start": 0.71, "end": 0.79}}
+  ],
+  "extensions": [{"schema": "urn:example:contact-quality:1", "schema_version": 1, "payload": {"quality": "high"}}]
+}
+```
+
+The standalone `document` clip variant replaces the collection fields with
+`clip_name` and the same envelope artifact digest. A host may deterministically
+merge this fragment into its existing sidecar, but the host remains the sole
+authority for that file's unrelated fields.
+
+Trim, slice, resample, and time-warp are contract-preserving only when the
+contact fragment is transformed in the same operation. The minimal transform
+result has identity
+`urn:animsmith:schema:contact-transform-result:1` and fields `schema`,
+`schema_version`, `operation`, `input`, `outcome`, `event_outcomes`, and,
+only when `outcome = "transformed"`, `output`; a refusal additionally has a
+`refusal` object containing exactly a stable `code` and `message` for display.
+The strict tagged `operation` object has exactly these V1 shapes:
+
+- `{"kind":"trim","version":1,"interval":{"start":a,"end":b}}`;
+- `{"kind":"slice","version":1,"interval":{"start":a,"end":b}}`;
+- `{"kind":"resample","version":1,"mapping":"identity"}`; and
+- `{"kind":"time_warp","version":1,"output_duration_s":d,"control_points":[{"input_time":0,"output_time":0}, ...]}`.
+
+The control-point array is ordered, finite, starts at `(0, 0)`, ends at
+`(1, 1)`, and has strictly increasing input and output coordinates. `input`
+has exactly `{artifact:{sha256,bytes}, fragment:{sha256,bytes}}` and refers to
+the separately supplied input fragment; the input fragment is not duplicated
+inline. A successful `output` has exactly
+`{artifact:{sha256,bytes}, fragment:{sha256,bytes}, contact_fragment}`; its
+inline `contact_fragment` is the complete transformed
+`urn:animsmith:schema:contact-fragment:1` value. The output `fragment`
+identity must equal the canonical serialized inline fragment's `{sha256,
+bytes}`, and the output `artifact` identity must equal the inline fragment's
+`artifact` binding. The output is absent, never a null placeholder, on
+refusal. No other operation kind, mapping token, or operation field is
+accepted in V1.
+
+V1 operation mappings are exact: `trim` and `slice` carry a finite retained
+interval `[a, b]` with `0 <= a < b <= 1` and map an in-range `t` to
+`(t - a) / (b - a)`; `resample` carries the identity mapping on normalized
+time; and `time_warp` carries the ordered control points above. A point outside
+a trim/slice interval has outcome `outside` and is omitted only from a
+successful output fragment; a window wholly outside has the same outcome. A
+window that intersects an interval boundary has outcome `refused` with code
+`partial_window` and refuses the entire operation—no partial window is
+silently clamped.
+
+The inline output fragment's `duration_s` is exact: trim and slice use
+`input_duration_s * (b - a)`, resample preserves `input_duration_s`, and
+`time_warp` requires a finite positive `output_duration_s` field in its
+operation object, which the output fragment must equal. These duration rules
+apply even when every event is outside the retained interval.
+
+After input binding and fragment identity validation, `event_outcomes` contains
+exactly one object per input event, in the fragment's canonical input order.
+Each object has exactly `event_id` and `outcome`, plus `value` only when
+`outcome = "transformed"` (the exact mapped point or window) and `code` only
+when `outcome = "refused"`. A pre-inventory global binding or fragment
+identity refusal uses an empty `event_outcomes` list. Global success means
+`outcome = "transformed"`, an output is present, and every event outcome is
+`transformed` or `outside`; global refusal means `outcome = "refused"`, a
+typed top-level refusal is present, and output is absent. A refusal discovered
+after inventory has at least one refused event outcome; invalid intervals,
+mappings, duplicate/missing event outcomes, non-monotonic warps, or any
+non-finite value use refusal codes from `partial_window`, `invalid_mapping`,
+`invalid_binding`, `event_identity_mismatch`, `invalid_value`, or
+`unsupported_operation`. The result records the operation, bindings, and
+outcomes; detector and operation implementation remain out of scope.
+
+AnimSmith owns contact facts and these identity/time/transform semantics. The
+host owns final file layout and merge, unrelated measurements and provenance,
+runtime scheduling, and engine-native mapping. V1 does not detect contacts,
+generate events, infer gameplay meaning, validate foot placement, or claim
+engine, artistic, or gameplay correctness. Production generation remains
+tracked by #152 in 0.6.0.
+
+### F.11 Transition-family declaration V1 (#148)
+
+Issue #148 freezes declarations for transition families without implementing
+transition checks, reports, inferred graph edges, or runtime generation. Its
+independent identity is:
+
+```text
+urn:animsmith:schema:transition-family:1
+```
+
+The declaration has a tagged `scope`, a stable `family_id`, an explicit
+ordered `members` array, a `boundary` (`entry`, `exit`, or `both`), a typed
+`basis`, and typed named `tolerances`. A family has at least two members.
+`family_id` is unique within its owner and is never inferred from filenames,
+directories, embedded names, or member order. Unknown fields and duplicate
+members are invalid.
+
+Document-local family ids are one lowercase-ASCII token, 1–255 bytes, starting
+with `[a-z0-9]` and continuing with `[a-z0-9._-]`. The table key is the id and
+there is no duplicate `family_id` field. TOML must quote the key whenever it
+contains punctuation or a dot (the canonical spelling quotes it always), for
+example `[transition_families."walk_to_run"]` or
+`[transition_families."combat.entry.v1"]`. Collection family ids retain
+Appendix F's slash-qualified logical-id grammar and collection-id prefix.
+
+The two scopes are intentionally different authorities:
+
+- `document` declarations are placed in the existing `animsmith.toml` config
+  basis under `[transition_families."<family_id>"]`. The table key itself is
+  the family id; it is a reusable config declaration and carries no artifact
+  digest. The future evaluator binds the exact document `InputIdentity` in its
+  output, while members use exact embedded take-index/name witnesses. A
+  repeated or loader-ambiguous take name is a strict resolution failure.
+- `collection` declarations are a separate declaration envelope, not an
+  extension of collection-manifest V1 and not another path/member authority.
+  The envelope binds the exact collection-manifest `InputIdentity` `{sha256,
+  bytes}`, collection id, and one or more family records. Each record
+  references a declared logical clip id plus its corresponding `source`,
+  take-index, and take-name witness.
+
+A declaration cannot mix scopes, use a filesystem path, use an animation-array
+index as identity, or import a member from another document or collection.
+Missing, duplicate, cross-scope, and ambiguous members are strict resolution
+failures. `stale_digest` is a collection-only failure: it means the envelope's
+manifest `InputIdentity` or a manifest-bound source `InputIdentity` no longer
+matches the declaration. A reusable document-local config has no stale-digest
+state at parse time; the future evaluator binds the exact document
+`InputIdentity` and reports its source/take resolution in its output. A family
+is not silently reduced to the members that happen to resolve, and a
+collection family is not copied into a document-local config. The existing `[clips]`, `[gait_groups]`, and
+`[sync_groups]` sections retain their document-local embedded-name semantics;
+this declaration does not replace, reinterpret, or create a second authority
+for them. The document-local table and collection envelope share the same
+`transition-family:1` family-record semantics; only their ownership and
+placement differ.
+
+V1's basis is explicit and engine-neutral: translation is metres in the
+declared skeleton-local basis, rotation is degrees in the same basis, and time
+is normalized clip time in `[0, 1]`. The named tolerance record is closed and
+unit-bearing: `translation_m`, `rotation_deg`, and `time_normalized`, each a
+finite non-negative value. `boundary` selects whether a future evaluator
+considers entry, exit, or both; it does not itself perform a comparison.
+Additional policy fields require a separately versioned contract, not a
+generic TOML map or untyped extension payload.
+
+For example, a collection-owned declaration can be written as the following
+typed TOML-like value. The logical id and source/take witnesses must agree with
+the collection manifest; they are repeated here to make a stale or reordered
+member explicit rather than silently resolving by name:
+
+```toml
+schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "collection"
+collection_id = "com.example.pack"
+manifest_input_identity = { sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", bytes = 9876 }
+
+[[families]]
+family_id = "com.example.pack/transitions/walk-to-run"
+boundary = "both"
+
+[families.basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+
+[families.tolerances]
+translation_m = 0.05
+rotation_deg = 5.0
+time_normalized = 0.02
+
+[[families.members]]
+logical_id = "com.example.pack/locomotion/walk-forward-in-place"
+source = "walk-forward"
+take_index = 0
+take_name = "Take 001"
+
+[[families.members]]
+logical_id = "com.example.pack/locomotion/run-forward-in-place"
+source = "run-forward"
+take_index = 0
+take_name = "Take 001"
+```
+
+The document-local placement uses the existing config basis and the same
+family-record fields:
+
+```toml
+[transition_families."walk_to_run"]
+schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "document"
+boundary = "entry"
+
+[transition_families."walk_to_run".basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+
+[transition_families."walk_to_run".tolerances]
+translation_m = 0.05
+rotation_deg = 5.0
+time_normalized = 0.02
+
+[[transition_families."walk_to_run".members]]
+take_index = 0
+take_name = "Walk"
+
+[[transition_families."walk_to_run".members]]
+take_index = 1
+take_name = "Run"
+```
+
+The future strict reader rejects a missing, duplicate, stale, or cross-scope
+member before a declaration becomes available to a consumer. The collection
+envelope's manifest digest/bytes binding makes a manifest reorder or edit
+stale even when its collection id and logical ids are unchanged.
+
+Canonical serialization sorts family declarations by their stable
+`family_id`, preserves declared member order, emits tolerance fields in their
+fixed schema order, and uses the same UTF-8 JSON/no-insignificant-whitespace
+rules as other V1 deterministic contracts. The future strict reader validates
+owner/scope, member resolution, basis, units, finite tolerances, and
+canonicalization before a declaration is accepted. This is a declaration
+contract only: checks, findings, reports, required gameplay metadata, inferred
+edges, state machines, blend trees, and runtime transition generation remain
+follow-up work tracked by #153/#164 in 0.6.0 or later.
