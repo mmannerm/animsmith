@@ -162,6 +162,20 @@ fn role_collisions_and_auto_ties_are_typed_and_fail_closed() {
 }
 
 #[test]
+fn auto_does_not_select_a_lower_score_profile_around_folded_ambiguity() {
+    let roles = detect_profile_detailed(&skeleton_of(&[
+        "root",
+        "pelvis",
+        "foot_l",
+        "Humanoid_ Pelvis",
+        "HUMANOID_ PELVIS",
+    ]));
+
+    assert_eq!(roles.outcome(), ResolutionOutcome::AmbiguousFoldedMatch);
+    assert!(roles.is_empty());
+}
+
+#[test]
 fn detects_mixamo_with_namespace() {
     let skel = skeleton_of(&[
         "Armature",
@@ -395,6 +409,23 @@ fn auto_with_only_explicit_matches_keeps_the_custom_map_without_a_profile_tie() 
     assert_eq!(roles.get(Role::Hips), Some(0));
     assert_eq!(roles.get(Role::LeftFoot), Some(1));
     assert_eq!(roles.get(Role::RightFoot), Some(2));
+}
+
+#[test]
+fn named_profile_without_an_unoverridden_match_remains_coverage_incomplete() {
+    let skel = skeleton_of(&["custom_hips"]);
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "rig": {
+            "profile": "ue-mannequin",
+            "roles": { "hips": "custom_hips" }
+        }
+    }))
+    .unwrap();
+
+    let roles = resolve_configured_roles(&skel, &config.rig);
+    assert_eq!(roles.profile, "custom");
+    assert_eq!(roles.outcome(), ResolutionOutcome::Coverage);
+    assert_eq!(roles.get(Role::Hips), Some(0));
 }
 
 #[test]

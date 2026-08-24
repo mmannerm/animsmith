@@ -433,6 +433,16 @@ fn detect_profile_excluding(
         .iter()
         .map(|profile| profile.resolve_builtin_excluding(skeleton, excluded_roles))
         .collect();
+    let ambiguities: Vec<_> = resolved
+        .iter()
+        .filter_map(|roles| roles.outcome.is_ambiguous().then_some(roles.outcome))
+        .collect();
+    if ambiguities.len() == 1 {
+        return unresolved("unknown", ambiguities[0]);
+    }
+    if ambiguities.len() > 1 {
+        return unresolved("unknown", ResolutionOutcome::AmbiguousProfile);
+    }
     let candidates: Vec<_> = resolved
         .iter()
         .filter(|roles| {
@@ -441,16 +451,6 @@ fn detect_profile_excluding(
         .cloned()
         .collect();
     let Some(best_score) = candidates.iter().map(ResolvedRoles::len).max() else {
-        let ambiguities: Vec<_> = resolved
-            .iter()
-            .filter_map(|roles| roles.outcome.is_ambiguous().then_some(roles.outcome))
-            .collect();
-        if ambiguities.len() == 1 {
-            return unresolved("unknown", ambiguities[0]);
-        }
-        if ambiguities.len() > 1 {
-            return unresolved("unknown", ResolutionOutcome::AmbiguousProfile);
-        }
         return ResolvedRoles::default();
     };
     let mut best = candidates
@@ -551,7 +551,8 @@ pub fn resolve_configured_roles(skeleton: &Skeleton, rig: &RigConfig) -> Resolve
         (true, true) => format!("{}+custom", base.profile),
     };
     let outcome = if explicit_coverage_gap
-        || (base_contributed && base.outcome == ResolutionOutcome::Coverage)
+        || (base.outcome == ResolutionOutcome::Coverage
+            && (base_contributed || rig.profile != "auto"))
         || map.is_empty()
     {
         ResolutionOutcome::Coverage
