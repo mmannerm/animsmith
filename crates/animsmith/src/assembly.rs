@@ -15,7 +15,8 @@ use crate::publish::{
 use crate::{Format, render};
 use animsmith_core::InputIdentity;
 use animsmith_core::model::{
-    Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, TrackValues,
+    Clip, Document, Interpolation, MaterialAsset, MeshAsset, Property, Skeleton, SourceNodeAsset,
+    SourceSkinAsset, TrackValues,
 };
 use animsmith_core::scale::{
     AssemblyScaleBasis, AssemblyScaleCompatibilityBasis, AssemblyScaleNamedSelectorResolutionError,
@@ -559,6 +560,235 @@ struct PreparedAssemblyClip {
     stripped_tracks: usize,
     stripped_bone_motion: Vec<StrippedBoneMotionEvidence>,
     gait_anchor_frame_offset: Option<i32>,
+}
+
+#[derive(Clone)]
+struct AssemblyBoneIndex {
+    by_name: BTreeMap<String, usize>,
+    names_by_index: Vec<String>,
+    parent_by_index: Vec<Option<usize>>,
+    ambiguous: BTreeSet<String>,
+}
+
+impl AssemblyBoneIndex {
+    fn new(skeleton: &Skeleton, _context: &str) -> Result<Self, String> {
+        let mut by_name = BTreeMap::new();
+        let mut names_by_index = Vec::with_capacity(skeleton.bones.len());
+        let parent_by_index = skeleton.bones.iter().map(|bone| bone.parent).collect();
+        let mut ambiguous = BTreeSet::new();
+        for (index, bone) in skeleton.bones.iter().enumerate() {
+            if bone.name.is_empty() {
+                return Err(format!("{_context} contains an empty stable bone identity"));
+            }
+            if by_name.insert(bone.name.clone(), index).is_some() {
+                ambiguous.insert(bone.name.clone());
+            }
+            names_by_index.push(bone.name.clone());
+        }
+        Ok(Self {
+            by_name,
+            names_by_index,
+            parent_by_index,
+            ambiguous,
+        })
+    }
+
+    fn resolve(&self, name: &str, context: &str) -> Result<usize, String> {
+        if self.ambiguous.contains(name) {
+            return Err(format!(
+                "{context} found ambiguous stable bone identity {name:?}"
+            ));
+        }
+        self.by_name
+            .get(name)
+            .copied()
+            .ok_or_else(|| format!("{context} cannot resolve stable bone identity {name:?}"))
+    }
+
+    fn name(&self, index: usize, context: &str) -> Result<&str, String> {
+        let name = self
+            .names_by_index
+            .get(index)
+            .map(String::as_str)
+            .ok_or_else(|| format!("{context} references missing bone index {index}"))?;
+        if name.is_empty() {
+            return Err(format!("{context} contains an empty stable bone identity"));
+        }
+        Ok(name)
+    }
+
+    fn ancestry(&self, index: usize, context: &str) -> Result<Vec<&str>, String> {
+        let mut ancestry = Vec::new();
+        let mut seen = BTreeSet::from([index]);
+        let mut parent = *self
+            .parent_by_index
+            .get(index)
+            .ok_or_else(|| format!("{context} references missing bone index {index}"))?;
+        while let Some(parent_index) = parent {
+            if !seen.insert(parent_index) {
+                return Err(format!(
+                    "{context} contains a cyclic parent chain at bone index {parent_index}"
+                ));
+            }
+            let parent_name = self.name(parent_index, context)?;
+            self.resolve(parent_name, context)?;
+            ancestry.push(parent_name);
+            parent = *self.parent_by_index.get(parent_index).ok_or_else(|| {
+                format!("{context} references missing parent bone index {parent_index}")
+            })?;
+        }
+        Ok(ancestry)
+    }
+}
+
+#[derive(Clone)]
+struct AssemblyBoneCorrespondence {
+    left: AssemblyBoneIndex,
+    right: AssemblyBoneIndex,
+}
+
+impl AssemblyBoneCorrespondence {
+    fn new(left: &Skeleton, right: &Skeleton, context: &str) -> Result<Self, String> {
+        Ok(Self {
+            left: AssemblyBoneIndex::new(left, &format!("{context} left space"))?,
+            right: AssemblyBoneIndex::new(right, &format!("{context} right space"))?,
+        })
+    }
+
+    fn left(&self, name: &str, context: &str) -> Result<usize, String> {
+        self.left.resolve(name, context)
+    }
+
+    fn right(&self, name: &str, context: &str) -> Result<usize, String> {
+        self.right.resolve(name, context)
+    }
+
+    fn map_left_name(&self, name: &str, context: &str) -> Result<usize, String> {
+        let left = self.left(name, context)?;
+        let left_ancestry = self.left.ancestry(left, context)?;
+        let right = self.right(name, context)?;
+        let right_ancestry = self.right.ancestry(right, context)?;
+        if left_ancestry != right_ancestry {
+            return Err(format!(
+                "{context} ancestor identity for bone {name:?} differs between correspondence spaces"
+            ));
+        }
+        Ok(right)
+    }
+
+    fn map_right_name(&self, name: &str, context: &str) -> Result<usize, String> {
+        let right = self.right(name, context)?;
+        let right_ancestry = self.right.ancestry(right, context)?;
+        let left = self.left(name, context)?;
+        let left_ancestry = self.left.ancestry(left, context)?;
+        if left_ancestry != right_ancestry {
+            return Err(format!(
+                "{context} ancestor identity for bone {name:?} differs between correspondence spaces"
+            ));
+        }
+        Ok(left)
+    }
+
+    fn map_staged_selector_name(&self, name: &str, context: &str) -> Result<usize, String> {
+        let left = self.left(name, context)?;
+        let mut left_ancestry = self.left.ancestry(left, context)?;
+        let right = self.right(name, context)?;
+        let mut right_ancestry = self.right.ancestry(right, context)?;
+        left_ancestry.retain(|ancestor| *ancestor != "animsmith-canonical-root");
+        right_ancestry.retain(|ancestor| *ancestor != "animsmith-canonical-root");
+        if left_ancestry != right_ancestry {
+            return Err(format!(
+                "{context} ancestor identity for bone {name:?} differs between selector spaces"
+            ));
+        }
+        Ok(right)
+    }
+
+    fn require_names(&self, names: &[String], context: &str) -> Result<(), String> {
+        for name in names {
+            self.map_left_name(name, context)?;
+        }
+        Ok(())
+    }
+
+    fn channels(
+        &self,
+        expected: &Clip,
+        actual: &Clip,
+        clip_index: usize,
+    ) -> Result<Vec<(usize, usize)>, String> {
+        let expected_channels = indexed_clip_channels(
+            expected,
+            &self.left,
+            &format!("pre-remap rebase clip {clip_index}"),
+        )?;
+        let actual_channels = indexed_clip_channels(
+            actual,
+            &self.right,
+            &format!("proved artifact clip {clip_index}"),
+        )?;
+        let mut matches = Vec::with_capacity(expected_channels.len());
+        for ((name, property), expected_channel) in expected_channels {
+            let actual_bone = self.map_left_name(&name, "final clip channel correspondence")?;
+            let actual_name = self
+                .right
+                .name(actual_bone, "final clip channel correspondence")?;
+            let actual_channel = actual_channels.get(&(actual_name.to_owned(), property)).ok_or_else(|| {
+                format!(
+                    "proved artifact clip {clip_index} is missing the {property:?} track for bone {name:?}"
+                )
+            })?;
+            if expected_channel.interpolation != actual_channel.interpolation
+                || expected_channel.key_count != actual_channel.key_count
+                || expected_channel.times != actual_channel.times
+            {
+                return Err(format!(
+                    "proved artifact clip {clip_index} track {} shape differs from its pre-remap rebase",
+                    expected_channel.track_index
+                ));
+            }
+            matches.push((expected_channel.track_index, actual_channel.track_index));
+        }
+        Ok(matches)
+    }
+}
+
+struct AssemblyClipChannel {
+    track_index: usize,
+    interpolation: Interpolation,
+    key_count: usize,
+    times: Vec<u32>,
+}
+
+fn indexed_clip_channels(
+    clip: &Clip,
+    bones: &AssemblyBoneIndex,
+    context: &str,
+) -> Result<BTreeMap<(String, Property), AssemblyClipChannel>, String> {
+    let mut channels = BTreeMap::new();
+    for (track_index, track) in clip.tracks.iter().enumerate() {
+        let name = bones.name(track.bone, &format!("{context} track {track_index}"))?;
+        bones.ancestry(track.bone, &format!("{context} track {track_index}"))?;
+        let key = (name.to_owned(), track.property);
+        if channels
+            .insert(
+                key.clone(),
+                AssemblyClipChannel {
+                    track_index,
+                    interpolation: track.interpolation,
+                    key_count: track.key_count(),
+                    times: track.times.iter().map(|time| time.to_bits()).collect(),
+                },
+            )
+            .is_some()
+        {
+            return Err(format!(
+                "{context} has ambiguous {:?} tracks for bone {:?}",
+                key.1, key.0
+            ));
+        }
+    }
+    Ok(channels)
 }
 
 /// What one published assembly leaves for the caller to report: the counts
@@ -1422,7 +1652,7 @@ fn prepare_fbx_scale_input(
             )
         })
         .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
-    let staged_operation = crate::scale::map_fbx_staged_rest_bind_operation(
+    let staged_operation = map_staged_rest_bind_operation(
         fbx_source.document(),
         staged_source.document(),
         rest_bind_operation(&selector, scale.expected_factor()),
@@ -1969,6 +2199,22 @@ fn assemble_inner(
     }
     ensure_unique_bones(&base.skeleton, "post-canonicalization base input")
         .refusal(Stage::Transform, Kind::InvalidAssetStructure)?;
+    let reference_correspondence = rebased_base
+        .as_ref()
+        .map(|reference| {
+            AssemblyBoneCorrespondence::new(
+                &base.skeleton,
+                &reference.skeleton,
+                "base/reference correspondence",
+            )
+            .refusal(Stage::Transform, Kind::TransformRefused)
+        })
+        .transpose()?;
+    if let Some(correspondence) = &reference_correspondence {
+        correspondence
+            .require_names(&recipe.remove_nodes, "node-removal correspondence")
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+    }
     let node_removal =
         animsmith_core::assembly::plan_node_subtree_removal(&base, &recipe.remove_nodes)
             .map_err(|error| format!("cannot plan node removal: {error}"))
@@ -1982,7 +2228,14 @@ fn assemble_inner(
                 .refusal(Stage::Selection, Kind::AssetRecipeMismatch)
         })
         .transpose()?;
-
+    if let (Some(reference), Some(reference_removal)) =
+        (rebased_base.as_ref(), reference_node_removal.as_ref())
+    {
+        require_matching_removal_closure(&base, &node_removal, reference, reference_removal)
+            .refusal(Stage::Selection, Kind::AssetRecipeMismatch)?;
+    }
+    let base_index = AssemblyBoneIndex::new(&base.skeleton, "base completion")
+        .refusal(Stage::Transform, Kind::TransformRefused)?;
     let mut loaded = BTreeMap::<PathBuf, Document>::new();
     let mut clip_evidence = Vec::with_capacity(recipe.clips.len());
     let mut output_clips = Vec::with_capacity(recipe.clips.len());
@@ -2069,19 +2322,22 @@ fn assemble_inner(
     let staged_completion_targets = completion_identities
         .as_ref()
         .map(|identities| {
-            project_completion_targets(&base.skeleton, identities, &node_removal, "base completion")
+            project_completion_targets(&base_index, identities, &node_removal, "base completion")
         })
         .transpose()
         .refusal(Stage::Transform, Kind::TransformRefused)?
         .unwrap_or_default();
     let reference_completion_targets =
         match (rebased_base.as_ref(), reference_node_removal.as_ref()) {
-            (Some(reference), Some(removal)) => Some(
+            (Some(_), Some(removal)) => Some(
                 completion_identities
                     .as_ref()
                     .map(|identities| {
                         project_completion_targets(
-                            &reference.skeleton,
+                            &reference_correspondence
+                                .as_ref()
+                                .ok_or_else(|| "missing base/reference correspondence".to_owned())?
+                                .right,
                             identities,
                             removal,
                             "reference completion",
@@ -2142,8 +2398,12 @@ fn assemble_inner(
                 );
                 evidence.pruned_constant_tracks = apply_authoritative_pruning(
                     staged_clip,
-                    &base.skeleton,
-                    &scale_base.skeleton,
+                    reference_correspondence
+                        .as_ref()
+                        .ok_or_else(|| {
+                            "missing reference/base correspondence for pruning".to_owned()
+                        })
+                        .refusal(Stage::Proof, Kind::ProofFailed)?,
                     &outcome.removed,
                 )
                 .refusal(Stage::Proof, Kind::ProofFailed)?;
@@ -2292,11 +2552,16 @@ fn assemble_inner(
             .ok_or_else(|| "missing rebased assembly reference".to_owned())
             .refusal(Stage::Proof, Kind::ProofFailed)?
             .skeleton;
-        require_rebased_clips_match(
-            &expected_rebased_clips,
+        let final_correspondence = AssemblyBoneCorrespondence::new(
             expected_rebased_skeleton,
-            &reloaded.clips,
             &reloaded.skeleton,
+            "final artifact correspondence",
+        )
+        .refusal(Stage::Proof, Kind::ProofFailed)?;
+        require_rebased_clips_match_with_correspondence(
+            &expected_rebased_clips,
+            &reloaded.clips,
+            &final_correspondence,
             &projected_rebased_clip_names,
         )
         .refusal(Stage::Proof, Kind::ProofFailed)?;
@@ -2462,7 +2727,12 @@ fn process_clip_before_copy(
     if recipe.hold_frames > 0 {
         animsmith_core::transform::hold_extend(&mut clip, f64::from(recipe.hold_frames) / fps);
     }
-    let bone_remaps = bone_remap_evidence(&clip, &source.skeleton, &base.skeleton)?;
+    let bone_correspondence = AssemblyBoneCorrespondence::new(
+        &source.skeleton,
+        &base.skeleton,
+        &format!("{context} bone correspondence"),
+    )?;
+    let bone_remaps = bone_remap_evidence(&clip, &bone_correspondence)?;
     let remapped_tracks = clip.tracks.len();
     clip = animsmith_core::assembly::remap_clip_to_base(&clip, &source.skeleton, &base.skeleton)
         .map_err(|error| format!("{context} {:?}: {error}", clip.name))?;
@@ -2542,41 +2812,15 @@ fn completion_target_identities(
     Ok(identities)
 }
 
-fn resolve_unique_bone_identity(
-    skeleton: &Skeleton,
-    name: &str,
-    context: &str,
-) -> Result<usize, String> {
-    if name.is_empty() {
-        return Err(format!("{context} contains an empty stable bone identity"));
-    }
-    let mut matches = skeleton
-        .bones
-        .iter()
-        .enumerate()
-        .filter_map(|(index, bone)| (bone.name == name).then_some(index));
-    let Some(index) = matches.next() else {
-        return Err(format!(
-            "{context} cannot resolve stable bone identity {name:?}"
-        ));
-    };
-    if matches.next().is_some() {
-        return Err(format!(
-            "{context} found ambiguous stable bone identity {name:?}"
-        ));
-    }
-    Ok(index)
-}
-
 fn project_completion_targets(
-    skeleton: &Skeleton,
+    index: &AssemblyBoneIndex,
     identities: &BTreeSet<String>,
     removal: &animsmith_core::assembly::NodeSubtreeRemovalPlan,
     context: &str,
 ) -> Result<BTreeSet<usize>, String> {
     identities
         .iter()
-        .map(|name| resolve_unique_bone_identity(skeleton, name, context))
+        .map(|name| index.resolve(name, context))
         .filter_map(|result| match result {
             Ok(bone) if removal.removes(bone) => None,
             result => Some(result),
@@ -2648,63 +2892,37 @@ fn protected_clip_bones(skeleton: &Skeleton, config: &Config, clip_name: &str) -
 
 fn apply_authoritative_pruning(
     staged: &mut Clip,
-    staged_skeleton: &Skeleton,
-    authoritative_skeleton: &Skeleton,
+    correspondence: &AssemblyBoneCorrespondence,
     removed: &[animsmith_core::transform::ConstantTrackPruneRecord],
 ) -> Result<Vec<PrunedConstantTrackEvidence>, String> {
+    let staged_channels = indexed_clip_channels(staged, &correspondence.left, "rebased pruning")?;
     let mut removed_indices = BTreeSet::new();
     let mut projected_evidence = Vec::with_capacity(removed.len());
     for record in removed {
-        let authoritative_bone =
-            authoritative_skeleton
-                .bones
-                .get(record.bone)
-                .ok_or_else(|| {
-                    format!(
-                        "rebased pruning selected missing authoritative bone {} for clip {:?}",
-                        record.bone, staged.name
-                    )
-                })?;
-        let authoritative_index = resolve_unique_bone_identity(
-            authoritative_skeleton,
-            &authoritative_bone.name,
-            "authoritative pruning",
+        let authoritative_name = correspondence.right.name(
+            record.bone,
+            &format!("rebased pruning clip {:?}", staged.name),
         )?;
-        if authoritative_index != record.bone {
-            return Err(format!(
-                "rebased pruning record bone {} does not match authoritative identity {:?} for clip {:?}",
-                record.bone, authoritative_bone.name, staged.name
-            ));
-        }
-        let staged_bone = resolve_unique_bone_identity(
-            staged_skeleton,
-            &authoritative_bone.name,
-            "staged pruning",
-        )?;
-        let mut matching_tracks = staged
-            .tracks
-            .iter()
-            .enumerate()
-            .filter_map(|(index, track)| {
-                (track.bone == staged_bone && track.property == record.property)
-                    .then_some((index, track))
-            });
-        let Some((staged_index, track)) = matching_tracks.next() else {
-            return Err(format!(
-                "rebased pruning cannot resolve staged {:?} track for bone {:?} in clip {:?}",
-                record.property, authoritative_bone.name, staged.name
-            ));
-        };
-        if matching_tracks.next().is_some() {
-            return Err(format!(
-                "rebased pruning found ambiguous staged {:?} tracks for bone {:?} in clip {:?}",
-                record.property, authoritative_bone.name, staged.name
-            ));
-        }
+        let staged_bone = correspondence.map_right_name(authoritative_name, "staged pruning")?;
+        let staged_channel = staged_channels
+            .get(&(authoritative_name.to_owned(), record.property))
+            .ok_or_else(|| {
+                format!(
+                    "rebased pruning cannot resolve staged {:?} track for bone {:?} in clip {:?}",
+                    record.property, authoritative_name, staged.name
+                )
+            })?;
+        let staged_index = staged_channel.track_index;
+        let track = staged.tracks.get(staged_index).ok_or_else(|| {
+            format!(
+                "rebased pruning track index {staged_index} is stale for clip {:?}",
+                staged.name
+            )
+        })?;
         if track.interpolation != record.interpolation || track.key_count() != record.key_count {
             return Err(format!(
                 "rebased pruning track for bone {:?} does not match authoritative shape in clip {:?}",
-                authoritative_bone.name, staged.name
+                authoritative_name, staged.name
             ));
         }
         if !removed_indices.insert(staged_index) {
@@ -2715,7 +2933,7 @@ fn apply_authoritative_pruning(
         }
         projected_evidence.push(PrunedConstantTrackEvidence {
             original_track_index: staged_index,
-            bone: authoritative_bone.name.clone(),
+            bone: authoritative_name.to_owned(),
             bone_index: staged_bone,
             property: record.property.as_str(),
             interpolation: interpolation_name(record.interpolation),
@@ -2771,13 +2989,22 @@ fn map_staged_rest_bind_operation(
     else {
         return Err("assembly staging only maps rest/bind operations".into());
     };
-    let original_root = original
-        .assets
-        .source_skeleton
-        .nodes
-        .iter()
-        .find(|node| node.source_node_index == source_root_node_index)
-        .and_then(|node| node.bone)
+    let original_nodes = indexed_source_nodes(&original.assets.source_skeleton.nodes, "base")?;
+    let staged_nodes = indexed_source_nodes(&staged.assets.source_skeleton.nodes, "staged")?;
+    let original_skins = indexed_source_skins(&original.assets.source_skeleton.skins, "base")?;
+    let staged_skins = indexed_source_skins(&staged.assets.source_skeleton.skins, "staged")?;
+    validate_source_node_parents(&original_nodes, "base")?;
+    validate_source_node_parents(&staged_nodes, "staged")?;
+    let correspondence = AssemblyBoneCorrespondence::new(
+        &original.skeleton,
+        &staged.skeleton,
+        "staged selector correspondence",
+    )?;
+    let original_root = original_nodes
+        .get(&source_root_node_index)
+        .ok_or_else(|| format!("base source root id {source_root_node_index} is absent"))?;
+    let original_root_bone = original_root
+        .bone
         .and_then(|bone| original.skeleton.bones.get(bone))
         .ok_or_else(|| {
             format!(
@@ -2785,87 +3012,121 @@ fn map_staged_rest_bind_operation(
                 source_root_node_index
             )
         })?;
-    let staged_root_bone = staged
-        .skeleton
-        .bones
-        .iter()
-        .position(|bone| bone.name == original_root.name)
-        .ok_or_else(|| {
-            format!(
-                "assembled artifact has no root node named {:?}",
-                original_root.name
-            )
-        })?;
-    let staged_root_matches = staged
-        .assets
-        .source_skeleton
-        .nodes
-        .iter()
+    let staged_root_bone = correspondence.map_staged_selector_name(
+        &original_root_bone.name,
+        "assembled artifact root correspondence",
+    )?;
+    let staged_root_matches = staged_nodes
+        .values()
         .filter(|node| node.bone == Some(staged_root_bone))
         .map(|node| node.source_node_index)
         .collect::<Vec<_>>();
     let [staged_root_node_index] = staged_root_matches.as_slice() else {
         return Err(format!(
             "assembled artifact does not map root {:?} to exactly one raw node",
-            original_root.name
+            original_root_bone.name
         ));
     };
-    let original_skin = original
-        .assets
-        .source_skeleton
-        .skins
-        .iter()
-        .find(|skin| skin.source_skin_index == source_skin_index)
-        .ok_or_else(|| {
-            format!(
-                "source_skin_index {} is absent from base input",
-                source_skin_index
-            )
-        })?;
+    let staged_root = staged_nodes
+        .get(staged_root_node_index)
+        .ok_or_else(|| format!("staged source root id {staged_root_node_index} is absent"))?;
+    require_source_parent_correspondence(
+        original_root,
+        staged_root,
+        &original_nodes,
+        &staged_nodes,
+        &original.skeleton,
+        &staged.skeleton,
+        "assembled artifact root correspondence",
+    )?;
+    let original_skin = original_skins
+        .get(&source_skin_index)
+        .ok_or_else(|| format!("base source skin id {source_skin_index} is absent"))?;
     let joint_names = original_skin
         .joint_source_node_indices
         .iter()
         .map(|source_index| {
-            original
-                .assets
-                .source_skeleton
-                .nodes
-                .iter()
-                .find(|node| node.source_node_index == *source_index)
-                .and_then(|node| node.bone)
-                .and_then(|bone| original.skeleton.bones.get(bone))
-                .map(|bone| bone.name.as_str())
-                .ok_or_else(|| format!("selected base skin joint {source_index} is not named"))
+            original_nodes
+                .get(source_index)
+                .ok_or_else(|| format!("base skin joint source id {source_index} is absent"))
+                .and_then(|node| {
+                    node.bone
+                        .and_then(|bone| original.skeleton.bones.get(bone))
+                        .ok_or_else(|| {
+                            format!("selected base skin joint {source_index} is not named")
+                        })
+                })
+                .map(|bone| bone.name.clone())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let staged_skin_matches = staged
-        .assets
-        .source_skeleton
-        .skins
-        .iter()
-        .filter(|skin| {
+    if joint_names.is_empty() {
+        return Err("selected base skin has no stable joint topology".into());
+    }
+    if joint_names.iter().collect::<BTreeSet<_>>().len() != joint_names.len() {
+        return Err("selected base skin has duplicate named joint identities".into());
+    }
+    let staged_skin_matches = staged_skins
+        .values()
+        .filter_map(|skin| {
             let names = skin
                 .joint_source_node_indices
                 .iter()
-                .filter_map(|source_index| {
-                    staged
-                        .assets
-                        .source_skeleton
-                        .nodes
-                        .iter()
-                        .find(|node| node.source_node_index == *source_index)
-                        .and_then(|node| node.bone)
-                        .and_then(|bone| staged.skeleton.bones.get(bone))
-                        .map(|bone| bone.name.as_str())
+                .map(|source_index| {
+                    staged_nodes
+                        .get(source_index)
+                        .ok_or_else(|| {
+                            format!("staged skin joint source id {source_index} is absent")
+                        })
+                        .and_then(|node| {
+                            node.bone
+                                .and_then(|bone| staged.skeleton.bones.get(bone))
+                                .map(|bone| bone.name.clone())
+                                .ok_or_else(|| {
+                                    format!("staged skin joint {source_index} is not named")
+                                })
+                        })
                 })
-                .collect::<Vec<_>>();
-            names == joint_names
+                .collect::<Result<Vec<_>, _>>();
+            match names {
+                Ok(names) if names == joint_names => Some(Ok(skin.source_skin_index)),
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            }
         })
-        .map(|skin| skin.source_skin_index)
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     let [staged_skin_index] = staged_skin_matches.as_slice() else {
         return Err("assembled artifact does not contain exactly one skin with the selected named joint topology".into());
     };
+    let selected_staged_skin = staged_skins
+        .get(staged_skin_index)
+        .ok_or_else(|| format!("staged source skin id {staged_skin_index} is absent"))?;
+    for (original_joint, staged_joint) in original_skin
+        .joint_source_node_indices
+        .iter()
+        .zip(&selected_staged_skin.joint_source_node_indices)
+    {
+        let original_node = original_nodes
+            .get(original_joint)
+            .ok_or_else(|| format!("base skin joint source id {original_joint} is absent"))?;
+        let staged_node = staged_nodes
+            .get(staged_joint)
+            .ok_or_else(|| format!("staged skin joint source id {staged_joint} is absent"))?;
+        let original_bone = original_node
+            .bone
+            .and_then(|bone| original.skeleton.bones.get(bone))
+            .ok_or_else(|| format!("base skin joint source id {original_joint} is not named"))?;
+        correspondence
+            .map_staged_selector_name(&original_bone.name, "staged skin joint correspondence")?;
+        require_source_parent_correspondence(
+            original_node,
+            staged_node,
+            &original_nodes,
+            &staged_nodes,
+            &original.skeleton,
+            &staged.skeleton,
+            "staged skin joint correspondence",
+        )?;
+    }
     Ok(ScaleOperation::RestBindUniformScale {
         source_skin_index: *staged_skin_index,
         source_root_node_index: *staged_root_node_index,
@@ -2873,11 +3134,211 @@ fn map_staged_rest_bind_operation(
     })
 }
 
+fn require_source_parent_correspondence(
+    left: &SourceNodeAsset,
+    right: &SourceNodeAsset,
+    left_nodes: &BTreeMap<usize, &SourceNodeAsset>,
+    right_nodes: &BTreeMap<usize, &SourceNodeAsset>,
+    left_skeleton: &Skeleton,
+    right_skeleton: &Skeleton,
+    context: &str,
+) -> Result<(), String> {
+    let ancestry = |node: &SourceNodeAsset,
+                    nodes: &BTreeMap<usize, &SourceNodeAsset>,
+                    skeleton: &Skeleton|
+     -> Result<Vec<(bool, String)>, String> {
+        let mut ancestry = Vec::new();
+        let mut seen = BTreeSet::from([node.source_node_index]);
+        let mut parent = node.parent_source_node_index;
+        while let Some(parent_index) = parent {
+            if !seen.insert(parent_index) {
+                return Err(format!(
+                    "{context} source node {} has a cyclic parent chain at source id {parent_index}",
+                    node.source_node_index
+                ));
+            }
+            let parent_node = nodes.get(&parent_index).ok_or_else(|| {
+                format!(
+                    "{context} source node {} has stale parent id {parent_index}",
+                    node.source_node_index
+                )
+            })?;
+            let identity = if let Some(bone) = parent_node.bone {
+                let bone = skeleton.bones.get(bone).ok_or_else(|| {
+                    format!(
+                        "{context} source parent {parent_index} references missing normalized bone {bone}"
+                    )
+                })?;
+                if bone.name.is_empty() {
+                    return Err(format!(
+                        "{context} source parent {parent_index} has an empty normalized identity"
+                    ));
+                }
+                if bone.name != "animsmith-canonical-root" {
+                    Some((true, bone.name.clone()))
+                } else {
+                    None
+                }
+            } else {
+                let name = parent_node.name.as_deref().ok_or_else(|| {
+                    format!("{context} source parent {parent_index} has no stable source identity")
+                })?;
+                if name.is_empty() {
+                    return Err(format!(
+                        "{context} source parent {parent_index} has an empty source identity"
+                    ));
+                }
+                Some((false, name.to_owned()))
+            };
+            if let Some(identity) = identity {
+                if ancestry.contains(&identity) {
+                    return Err(format!(
+                        "{context} source node {} has duplicate ancestor identity {:?}",
+                        node.source_node_index, identity.1
+                    ));
+                }
+                ancestry.push(identity);
+            }
+            parent = parent_node.parent_source_node_index;
+        }
+        Ok(ancestry)
+    };
+    let left_ancestry = ancestry(left, left_nodes, left_skeleton)?;
+    let right_ancestry = ancestry(right, right_nodes, right_skeleton)?;
+    if left_ancestry != right_ancestry {
+        return Err(format!(
+            "{context} ancestor identity differs for consumed source node {}",
+            left.source_node_index
+        ));
+    }
+    Ok(())
+}
+
+fn indexed_source_nodes<'a>(
+    nodes: &'a [SourceNodeAsset],
+    context: &str,
+) -> Result<BTreeMap<usize, &'a SourceNodeAsset>, String> {
+    let mut indexed = BTreeMap::new();
+    for node in nodes {
+        if indexed.insert(node.source_node_index, node).is_some() {
+            return Err(format!(
+                "{context} source node id {} is duplicated",
+                node.source_node_index
+            ));
+        }
+    }
+    Ok(indexed)
+}
+
+fn require_matching_removal_closure(
+    left: &Document,
+    left_plan: &animsmith_core::assembly::NodeSubtreeRemovalPlan,
+    right: &Document,
+    right_plan: &animsmith_core::assembly::NodeSubtreeRemovalPlan,
+) -> Result<(), String> {
+    let signature = |document: &Document,
+                     plan: &animsmith_core::assembly::NodeSubtreeRemovalPlan,
+                     context: &str|
+     -> Result<BTreeMap<String, (Option<String>, bool)>, String> {
+        let mut result = BTreeMap::new();
+        for node in plan.removed_nodes() {
+            let parent_name = node
+                .original_parent_node_index
+                .map(|parent| {
+                    document
+                        .skeleton
+                        .bones
+                        .get(parent)
+                        .map(|bone| bone.name.clone())
+                        .ok_or_else(|| {
+                            format!(
+                                "{context} removal node {:?} has stale parent index {parent}",
+                                node.name
+                            )
+                        })
+                })
+                .transpose()?;
+            if result
+                .insert(node.name.clone(), (parent_name, node.selected))
+                .is_some()
+            {
+                return Err(format!(
+                    "{context} removal closure contains duplicate identity {:?}",
+                    node.name
+                ));
+            }
+        }
+        Ok(result)
+    };
+    let left_signature = signature(left, left_plan, "base")?;
+    let right_signature = signature(right, right_plan, "reference")?;
+    if left_signature != right_signature {
+        return Err(
+            "base/reference node-removal closures differ by stable identity or parent topology"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn indexed_source_skins<'a>(
+    skins: &'a [SourceSkinAsset],
+    context: &str,
+) -> Result<BTreeMap<usize, &'a SourceSkinAsset>, String> {
+    let mut indexed = BTreeMap::new();
+    for skin in skins {
+        if indexed.insert(skin.source_skin_index, skin).is_some() {
+            return Err(format!(
+                "{context} source skin id {} is duplicated",
+                skin.source_skin_index
+            ));
+        }
+    }
+    Ok(indexed)
+}
+
+fn validate_source_node_parents(
+    nodes: &BTreeMap<usize, &SourceNodeAsset>,
+    context: &str,
+) -> Result<(), String> {
+    for node in nodes.values() {
+        if let Some(parent) = node.parent_source_node_index
+            && !nodes.contains_key(&parent)
+        {
+            return Err(format!(
+                "{context} source node {} references absent parent source id {parent}",
+                node.source_node_index
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn require_rebased_clips_match(
     expected: &[Clip],
     expected_skeleton: &Skeleton,
     actual: &[Clip],
     actual_skeleton: &Skeleton,
+    tolerant_clip_names: &BTreeSet<String>,
+) -> Result<(), String> {
+    let correspondence = AssemblyBoneCorrespondence::new(
+        expected_skeleton,
+        actual_skeleton,
+        "final artifact correspondence",
+    )?;
+    require_rebased_clips_match_with_correspondence(
+        expected,
+        actual,
+        &correspondence,
+        tolerant_clip_names,
+    )
+}
+
+fn require_rebased_clips_match_with_correspondence(
+    expected: &[Clip],
+    actual: &[Clip],
+    correspondence: &AssemblyBoneCorrespondence,
     tolerant_clip_names: &BTreeSet<String>,
 ) -> Result<(), String> {
     if expected.len() != actual.len() {
@@ -2896,58 +3357,10 @@ fn require_rebased_clips_match(
                 "proved artifact clip {clip_index} structure differs from its pre-remap rebase"
             ));
         }
-        for (track_index, expected_track) in expected_clip.tracks.iter().enumerate() {
-            let expected_bone = expected_skeleton
-                .bones
-                .get(expected_track.bone)
-                .ok_or_else(|| {
-                    format!(
-                        "pre-remap rebase clip {clip_index} track {track_index} targets missing bone {}",
-                        expected_track.bone
-                    )
-                })?;
-            let expected_bone_index = resolve_unique_bone_identity(
-                expected_skeleton,
-                &expected_bone.name,
-                "pre-remap rebase proof",
-            )?;
-            if expected_bone_index != expected_track.bone {
-                return Err(format!(
-                    "pre-remap rebase clip {clip_index} track {track_index} bone identity is inconsistent"
-                ));
-            }
-            let actual_bone = resolve_unique_bone_identity(
-                actual_skeleton,
-                &expected_bone.name,
-                "proved artifact clip proof",
-            )?;
-            let mut actual_matches = actual_clip.tracks.iter().filter(|track| {
-                track.bone == actual_bone && track.property == expected_track.property
-            });
-            let Some(actual_track) = actual_matches.next() else {
-                return Err(format!(
-                    "proved artifact clip {clip_index} is missing the {:?} track for bone {:?}",
-                    expected_track.property, expected_bone.name
-                ));
-            };
-            if actual_matches.next().is_some() {
-                return Err(format!(
-                    "proved artifact clip {clip_index} has ambiguous {:?} tracks for bone {:?}",
-                    expected_track.property, expected_bone.name
-                ));
-            }
-            if expected_track.interpolation != actual_track.interpolation
-                || expected_track.times.len() != actual_track.times.len()
-                || expected_track
-                    .times
-                    .iter()
-                    .zip(&actual_track.times)
-                    .any(|(left, right)| left.to_bits() != right.to_bits())
-            {
-                return Err(format!(
-                    "proved artifact clip {clip_index} track {track_index} shape differs from its pre-remap rebase"
-                ));
-            }
+        let channel_matches = correspondence.channels(expected_clip, actual_clip, clip_index)?;
+        for (track_index, actual_index) in channel_matches {
+            let expected_track = &expected_clip.tracks[track_index];
+            let actual_track = &actual_clip.tracks[actual_index];
             match (&expected_track.values, &actual_track.values) {
                 (TrackValues::Vec3s(expected_values), TrackValues::Vec3s(actual_values)) => {
                     if expected_values.len() != actual_values.len() {
@@ -3028,40 +3441,35 @@ fn require_assembly_read_back_match(observed: &str, expected: &str) -> Result<()
 
 fn bone_remap_evidence(
     clip: &Clip,
-    source: &Skeleton,
-    base: &Skeleton,
+    correspondence: &AssemblyBoneCorrespondence,
 ) -> Result<Vec<AssemblyBoneRemapEvidence>, String> {
     let referenced = clip
         .tracks
         .iter()
         .map(|track| track.bone)
         .collect::<BTreeSet<_>>();
-    let base_by_name = base
-        .bones
-        .iter()
-        .enumerate()
-        .map(|(index, bone)| (bone.name.as_str(), index))
-        .collect::<BTreeMap<_, _>>();
     referenced
         .into_iter()
         .map(|source_index| {
-            let source_bone = source.bones.get(source_index).ok_or_else(|| {
-                format!(
-                    "clip {:?} references source bone {source_index}, but its skeleton has {} bones",
-                    clip.name,
-                    source.bones.len()
-                )
-            })?;
-            let base_index = *base_by_name.get(source_bone.name.as_str()).ok_or_else(|| {
-                format!(
-                    "clip {:?} source bone {:?} is absent from the base skeleton",
-                    clip.name, source_bone.name
-                )
-            })?;
-            Ok(AssemblyBoneRemapEvidence {
-                source_bone: source_bone.name.clone(),
+            let source_name = correspondence.left.name(
                 source_index,
-                base_bone: base.bones[base_index].name.clone(),
+                &format!("clip {:?} source bone remap", clip.name),
+            )?;
+            correspondence.left(
+                source_name,
+                &format!("clip {:?} source bone remap", clip.name),
+            )?;
+            let base_index = correspondence.right(
+                source_name,
+                &format!("clip {:?} base bone remap", clip.name),
+            )?;
+            Ok(AssemblyBoneRemapEvidence {
+                source_bone: source_name.to_owned(),
+                source_index,
+                base_bone: correspondence
+                    .right
+                    .name(base_index, "base bone remap")?
+                    .to_owned(),
                 base_index,
             })
         })
@@ -3396,8 +3804,10 @@ mod tests {
 
     #[test]
     fn authoritative_pruning_projects_bone_and_track_indices_by_stable_identity() {
-        let authoritative_skeleton = skeleton(&["root", "retained", "other"]);
-        let staged_skeleton = skeleton(&["root", "other", "retained"]);
+        let mut authoritative_skeleton = skeleton(&["root", "retained", "other"]);
+        let mut staged_skeleton = skeleton(&["root", "other", "retained"]);
+        authoritative_skeleton.bones[2].parent = Some(0);
+        staged_skeleton.bones[2].parent = Some(0);
         let translation = Track {
             bone: 0,
             property: Property::Translation,
@@ -3443,13 +3853,15 @@ mod tests {
             ],
         };
 
-        let projected = apply_authoritative_pruning(
-            &mut staged,
+        let correspondence = AssemblyBoneCorrespondence::new(
             &staged_skeleton,
             &authoritative_skeleton,
-            &outcome.removed,
+            "pruning test correspondence",
         )
         .unwrap();
+
+        let projected =
+            apply_authoritative_pruning(&mut staged, &correspondence, &outcome.removed).unwrap();
 
         assert_eq!(projected.len(), 1);
         assert_eq!(projected[0].original_track_index, 1);
@@ -3459,6 +3871,26 @@ mod tests {
         assert_eq!(staged.tracks.len(), 1);
         assert_eq!(staged.tracks[0].bone, 0);
         assert_eq!(staged.tracks[0].property, Property::Translation);
+    }
+
+    #[test]
+    fn removal_correspondence_rejects_a_stale_reference_closure() {
+        let base = Document {
+            skeleton: skeleton(&["root", "cut", "leaf"]),
+            ..Document::default()
+        };
+        let mut reference = base.clone();
+        reference.skeleton.bones[2].parent = Some(0);
+        let selected = vec!["cut".to_owned()];
+        let base_plan =
+            animsmith_core::assembly::plan_node_subtree_removal(&base, &selected).unwrap();
+        let reference_plan =
+            animsmith_core::assembly::plan_node_subtree_removal(&reference, &selected).unwrap();
+
+        let error =
+            require_matching_removal_closure(&base, &base_plan, &reference, &reference_plan)
+                .unwrap_err();
+        assert!(error.contains("node-removal closures differ"), "{error}");
     }
 
     #[test]
@@ -3492,6 +3924,114 @@ mod tests {
             &BTreeSet::new(),
         )
         .unwrap();
+        let independent_skeleton = |names: &[&str]| Skeleton {
+            bones: names
+                .iter()
+                .map(|name| Bone {
+                    name: (*name).into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                })
+                .collect(),
+        };
+        let empty_identity = independent_skeleton(&["root", ""]);
+        assert!(
+            require_rebased_clips_match(
+                std::slice::from_ref(&clip),
+                &empty_identity,
+                std::slice::from_ref(&clip),
+                &proof_skeleton,
+                &BTreeSet::new(),
+            )
+            .unwrap_err()
+            .contains("empty stable bone identity")
+        );
+        let reordered_expected_skeleton = independent_skeleton(&["root", "other"]);
+        let reordered_actual_skeleton = independent_skeleton(&["other", "root"]);
+        let mut reordered_actual = clip.clone();
+        reordered_actual.tracks[0].bone = 1;
+        reordered_actual.tracks[1].bone = 1;
+        require_rebased_clips_match(
+            std::slice::from_ref(&clip),
+            &reordered_expected_skeleton,
+            &[reordered_actual],
+            &reordered_actual_skeleton,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        let drift_expected_skeleton = skeleton(&["root", "child"]);
+        let drift_actual_skeleton = skeleton(&["child", "root"]);
+        let mut drift_actual = clip.clone();
+        drift_actual.tracks[0].bone = 1;
+        drift_actual.tracks[1].bone = 1;
+        assert!(
+            require_rebased_clips_match(
+                std::slice::from_ref(&clip),
+                &drift_expected_skeleton,
+                &[drift_actual],
+                &drift_actual_skeleton,
+                &BTreeSet::new(),
+            )
+            .unwrap_err()
+            .contains("ancestor identity")
+        );
+        let grandparent_expected = skeleton(&["root", "parent", "child"]);
+        let grandparent_actual = skeleton(&["other", "parent", "child"]);
+        let mut grandparent_clip = clip.clone();
+        for track in &mut grandparent_clip.tracks {
+            track.bone = 2;
+        }
+        assert!(
+            require_rebased_clips_match(
+                std::slice::from_ref(&grandparent_clip),
+                &grandparent_expected,
+                std::slice::from_ref(&grandparent_clip),
+                &grandparent_actual,
+                &BTreeSet::new(),
+            )
+            .unwrap_err()
+            .contains("ancestor identity")
+        );
+        let mut renamed = clip.clone();
+        renamed.name = "run".into();
+        assert!(
+            require_rebased_clips_match(
+                std::slice::from_ref(&clip),
+                &proof_skeleton,
+                &[renamed],
+                &proof_skeleton,
+                &BTreeSet::new(),
+            )
+            .unwrap_err()
+            .contains("clip 0 structure differs")
+        );
+        let mut second = clip.clone();
+        second.name = "run".into();
+        assert!(
+            require_rebased_clips_match(
+                &[clip.clone(), second.clone()],
+                &proof_skeleton,
+                &[second, clip.clone()],
+                &proof_skeleton,
+                &BTreeSet::new(),
+            )
+            .unwrap_err()
+            .contains("clip 0 structure differs")
+        );
+        let mut wrong_channel = clip.clone();
+        wrong_channel.tracks[1].property = Property::Translation;
+        assert!(
+            require_rebased_clips_match(
+                std::slice::from_ref(&clip),
+                &proof_skeleton,
+                &[wrong_channel],
+                &proof_skeleton,
+                &BTreeSet::new(),
+            )
+            .unwrap_err()
+            .contains("has ambiguous")
+        );
         for property in [Property::Translation, Property::Scale] {
             for component in 0..3 {
                 let mut expected_clip = clip.clone();
@@ -3637,6 +4177,206 @@ mod tests {
                 source_root_node_index: 0,
                 expected_factor: 0.01,
             }
+        );
+
+        let mut duplicate_root = staged.clone();
+        duplicate_root
+            .skeleton
+            .bones
+            .push(duplicate_root.skeleton.bones[0].clone());
+        let error = map_staged_rest_bind_operation(
+            &original,
+            &duplicate_root,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("ambiguous stable bone identity"), "{error}");
+
+        let staged_joint_bone = staged
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.source_node_index == 1)
+            .and_then(|node| node.bone)
+            .unwrap();
+        let mut reparented_joint = staged.clone();
+        reparented_joint.skeleton.bones[staged_joint_bone].parent = None;
+        let reparented = map_staged_rest_bind_operation(
+            &original,
+            &reparented_joint,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(reparented.contains("ancestor identity"), "{reparented}");
+
+        let mut cyclic_joint = staged.clone();
+        cyclic_joint.skeleton.bones[staged_joint_bone].parent = Some(staged_joint_bone);
+        let cyclic = map_staged_rest_bind_operation(
+            &original,
+            &cyclic_joint,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(cyclic.contains("cyclic parent chain"), "{cyclic}");
+
+        let mut source_ancestor_drift = staged.clone();
+        let mut alternate_parent = source_ancestor_drift.assets.source_skeleton.nodes[0].clone();
+        alternate_parent.source_node_index = 99;
+        alternate_parent.parent_source_node_index = None;
+        alternate_parent.bone = None;
+        alternate_parent.name = Some("other-parent".into());
+        source_ancestor_drift
+            .assets
+            .source_skeleton
+            .nodes
+            .push(alternate_parent);
+        source_ancestor_drift
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == 0)
+            .unwrap()
+            .parent_source_node_index = Some(99);
+        let source_drift = map_staged_rest_bind_operation(
+            &original,
+            &source_ancestor_drift,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(source_drift.contains("ancestor identity"), "{source_drift}");
+
+        let missing = map_staged_rest_bind_operation(
+            &original,
+            &staged,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 999,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            missing.contains("source root id 999 is absent"),
+            "{missing}"
+        );
+
+        let mut duplicate_source = original.clone();
+        duplicate_source
+            .assets
+            .source_skeleton
+            .nodes
+            .push(duplicate_source.assets.source_skeleton.nodes[0].clone());
+        let duplicate = map_staged_rest_bind_operation(
+            &duplicate_source,
+            &staged,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(duplicate.contains("source node id"), "{duplicate}");
+
+        let mut duplicate_skin = original.clone();
+        duplicate_skin
+            .assets
+            .source_skeleton
+            .skins
+            .push(duplicate_skin.assets.source_skeleton.skins[0].clone());
+        let duplicate_skin_error = map_staged_rest_bind_operation(
+            &duplicate_skin,
+            &staged,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            duplicate_skin_error.contains("base source skin id 7 is duplicated"),
+            "{duplicate_skin_error}"
+        );
+
+        let mut stale_parent = original.clone();
+        stale_parent.assets.source_skeleton.nodes[1].parent_source_node_index = Some(999);
+        let stale = map_staged_rest_bind_operation(
+            &stale_parent,
+            &staged,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(stale.contains("absent parent source id 999"), "{stale}");
+
+        let mut missing_joint = original.clone();
+        missing_joint.assets.source_skeleton.skins[0].joint_source_node_indices = vec![999];
+        let missing_joint_error = map_staged_rest_bind_operation(
+            &missing_joint,
+            &staged,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(missing_joint_error.contains("skin joint source id 999 is absent"));
+
+        let mut empty_topology = original.clone();
+        empty_topology.assets.source_skeleton.skins[0].joint_source_node_indices = Vec::new();
+        let empty_topology_error = map_staged_rest_bind_operation(
+            &empty_topology,
+            &staged,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            empty_topology_error.contains("no stable joint topology"),
+            "{empty_topology_error}"
+        );
+
+        let mut duplicate_topology = original.clone();
+        duplicate_topology.assets.source_skeleton.skins[0].joint_source_node_indices = vec![11, 11];
+        let duplicate_topology_error = map_staged_rest_bind_operation(
+            &duplicate_topology,
+            &staged,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            duplicate_topology_error.contains("duplicate named joint identities"),
+            "{duplicate_topology_error}"
         );
     }
 
