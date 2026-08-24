@@ -74,6 +74,8 @@ use crate::publish::{
     PublicationDestination, emit, emit_error_text, emit_text, input_identity, parent_or_current,
     publish_pair, read_digest, require_writable_destination, serialize_record,
 };
+#[cfg(feature = "fbx")]
+use crate::staged_selector::map_rest_bind_operation;
 use crate::{Format, render};
 use animsmith_core::scale::{
     ScaleError, ScaleOperation, ScalePlan, ScaleProof, ScaleProofResidual, ScaleRequest,
@@ -90,8 +92,6 @@ use animsmith_gltf::{
 };
 use serde::ser::Error as _;
 use serde::{Serialize, Serializer};
-#[cfg(feature = "fbx")]
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -1504,125 +1504,7 @@ pub(crate) fn map_fbx_staged_rest_bind_operation(
     staged: &Document,
     operation: ScaleOperation,
 ) -> Result<ScaleOperation, String> {
-    let ScaleOperation::RestBindUniformScale {
-        source_skin_index,
-        source_root_node_index,
-        expected_factor,
-    } = operation
-    else {
-        return Err("FBX staging only maps rest/bind operations".into());
-    };
-    let original_root = original
-        .assets
-        .source_skeleton
-        .nodes
-        .iter()
-        .find(|node| node.source_node_index == source_root_node_index)
-        .and_then(|node| node.bone)
-        .and_then(|bone| original.skeleton.bones.get(bone))
-        .ok_or_else(|| {
-            format!(
-                "FBX source_root_node_index {source_root_node_index} has no named normalized node"
-            )
-        })?;
-    let staged_root_bones = staged
-        .skeleton
-        .bones
-        .iter()
-        .enumerate()
-        .filter_map(|(index, bone)| (bone.name == original_root.name).then_some(index))
-        .collect::<Vec<_>>();
-    let [staged_root_bone] = staged_root_bones.as_slice() else {
-        return Err(format!(
-            "staged GLB does not map root {:?} to exactly one normalized bone",
-            original_root.name
-        ));
-    };
-    let staged_root_nodes = staged
-        .assets
-        .source_skeleton
-        .nodes
-        .iter()
-        .filter(|node| node.bone == Some(*staged_root_bone))
-        .map(|node| node.source_node_index)
-        .collect::<Vec<_>>();
-    let [staged_root_node_index] = staged_root_nodes.as_slice() else {
-        return Err(format!(
-            "staged GLB does not map root {:?} to exactly one raw node",
-            original_root.name
-        ));
-    };
-    let original_skin = original
-        .assets
-        .source_skeleton
-        .skins
-        .iter()
-        .find(|skin| skin.source_skin_index == source_skin_index)
-        .ok_or_else(|| format!("FBX source_skin_index {source_skin_index} is absent"))?;
-    let joint_names = original_skin
-        .joint_source_node_indices
-        .iter()
-        .map(|source_index| {
-            original
-                .assets
-                .source_skeleton
-                .nodes
-                .iter()
-                .find(|node| node.source_node_index == *source_index)
-                .and_then(|node| node.bone)
-                .and_then(|bone| original.skeleton.bones.get(bone))
-                .map(|bone| bone.name.as_str())
-                .ok_or_else(|| format!("FBX skin joint {source_index} is not named"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    require_unique_fbx_staged_joint_names(&joint_names)?;
-    let staged_skins = staged
-        .assets
-        .source_skeleton
-        .skins
-        .iter()
-        .filter(|skin| {
-            skin.joint_source_node_indices
-                .iter()
-                .map(|source_index| {
-                    staged
-                        .assets
-                        .source_skeleton
-                        .nodes
-                        .iter()
-                        .find(|node| node.source_node_index == *source_index)
-                        .and_then(|node| node.bone)
-                        .and_then(|bone| staged.skeleton.bones.get(bone))
-                        .map(|bone| bone.name.as_str())
-                })
-                .collect::<Option<Vec<_>>>()
-                .is_some_and(|names| names == joint_names)
-        })
-        .map(|skin| skin.source_skin_index)
-        .collect::<Vec<_>>();
-    let [staged_skin_index] = staged_skins.as_slice() else {
-        return Err(
-            "staged GLB does not contain exactly one skin with the selected named joint topology"
-                .into(),
-        );
-    };
-    Ok(ScaleOperation::RestBindUniformScale {
-        source_skin_index: *staged_skin_index,
-        source_root_node_index: *staged_root_node_index,
-        expected_factor,
-    })
-}
-
-/// The FBX staging bridge uses names as its stable cross-format identity, so
-/// an ordered skin topology cannot contain an ambiguous repeated name.
-#[cfg(feature = "fbx")]
-fn require_unique_fbx_staged_joint_names(joint_names: &[&str]) -> Result<(), String> {
-    (joint_names.iter().copied().collect::<HashSet<_>>().len() == joint_names.len())
-        .then_some(())
-        .ok_or_else(|| {
-            "FBX selected skin has duplicate normalized joint names; staging identity is ambiguous"
-                .into()
-        })
+    map_rest_bind_operation(original, staged, operation, "FBX staging")
 }
 
 /// The plan, artifact and proof one successful run produced.
@@ -1815,38 +1697,500 @@ mod tests {
     };
 
     #[cfg(feature = "fbx")]
-    #[test]
-    fn fbx_staged_selector_mapping_rejects_repeated_joint_names() {
-        let mut original = animsmith_gltf::load_bytes(
+    fn staged_selector_fixture() -> (Document, Document, ScaleOperation) {
+        let staged = animsmith_gltf::load_bytes(
             Path::new("fixture.glb"),
             &animsmith_testkit::rest_bind_scale_rig_glb(),
         )
         .expect("analytic rig loads");
-        let duplicate_node = original
+        let mut staged = staged;
+        staged.assets.source_skeleton.skins[0].joint_source_node_indices = vec![1, 2];
+        let mut original = staged.clone();
+        reindex_staged_source(&mut original, 10, 7);
+        (
+            original,
+            staged,
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 7,
+                source_root_node_index: 10,
+                expected_factor: 0.01,
+            },
+        )
+    }
+
+    #[cfg(feature = "fbx")]
+    fn reindex_staged_source(document: &mut Document, node_offset: usize, skin_index: usize) {
+        for node in &mut document.assets.source_skeleton.nodes {
+            node.source_node_index += node_offset;
+            node.parent_source_node_index = node
+                .parent_source_node_index
+                .map(|index| index + node_offset);
+        }
+        for skin in &mut document.assets.source_skeleton.skins {
+            skin.source_skin_index = skin_index;
+            skin.joint_source_node_indices = skin
+                .joint_source_node_indices
+                .iter()
+                .map(|index| index + node_offset)
+                .collect();
+            skin.skeleton_root_source_node_index = skin
+                .skeleton_root_source_node_index
+                .map(|index| index + node_offset);
+        }
+    }
+
+    #[cfg(feature = "fbx")]
+    fn add_consumed_raw_parent(
+        document: &mut Document,
+        child_source_node_index: usize,
+        parent_source_node_index: usize,
+        parent_parent_source_node_index: Option<usize>,
+        name: &str,
+    ) {
+        let mut parent = document.assets.source_skeleton.nodes[0].clone();
+        parent.source_node_index = parent_source_node_index;
+        parent.parent_source_node_index = parent_parent_source_node_index;
+        parent.bone = None;
+        parent.name = Some(name.into());
+        document.assets.source_skeleton.nodes.push(parent);
+        document
+            .assets
+            .source_skeleton
+            .nodes
+            .iter_mut()
+            .find(|node| node.source_node_index == child_source_node_index)
+            .expect("consumed source node is present")
+            .parent_source_node_index = Some(parent_source_node_index);
+    }
+
+    #[cfg(feature = "fbx")]
+    fn add_unconsumed_raw_node(document: &mut Document, source_node_index: usize, name: &str) {
+        let mut node = document.assets.source_skeleton.nodes[0].clone();
+        node.source_node_index = source_node_index;
+        node.parent_source_node_index = None;
+        node.bone = None;
+        node.name = Some(name.into());
+        document.assets.source_skeleton.nodes.push(node);
+    }
+
+    #[cfg(feature = "fbx")]
+    #[test]
+    fn fbx_staged_selector_correspondence_reindexes_without_hardcoded_raw_ids() {
+        let (original, staged, operation) = staged_selector_fixture();
+        assert_eq!(
+            map_fbx_staged_rest_bind_operation(&original, &staged, operation).unwrap(),
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            }
+        );
+
+        let mut reindexed_staged = staged.clone();
+        reindex_staged_source(&mut reindexed_staged, 20, 17);
+        assert_eq!(
+            map_fbx_staged_rest_bind_operation(&original, &reindexed_staged, operation).unwrap(),
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 17,
+                source_root_node_index: 20,
+                expected_factor: 0.01,
+            }
+        );
+
+        let mut third_original = staged.clone();
+        reindex_staged_source(&mut third_original, 30, 23);
+        let mut third_staged = staged.clone();
+        reindex_staged_source(&mut third_staged, 40, 29);
+        assert_eq!(
+            map_fbx_staged_rest_bind_operation(
+                &third_original,
+                &third_staged,
+                ScaleOperation::RestBindUniformScale {
+                    source_skin_index: 23,
+                    source_root_node_index: 30,
+                    expected_factor: 0.01,
+                },
+            )
+            .unwrap(),
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 29,
+                source_root_node_index: 40,
+                expected_factor: 0.01,
+            }
+        );
+
+        let mut unrelated = staged.clone();
+        let mut unrelated_node = unrelated.assets.source_skeleton.nodes[0].clone();
+        unrelated_node.source_node_index = 99;
+        unrelated_node.bone = None;
+        unrelated_node.name = Some("unconsumed".into());
+        unrelated_node.parent_source_node_index = Some(999);
+        unrelated.assets.source_skeleton.nodes.push(unrelated_node);
+        let mut unrelated_skin = unrelated.assets.source_skeleton.skins[0].clone();
+        unrelated_skin.source_skin_index = 99;
+        unrelated_skin.joint_source_node_indices = vec![999];
+        unrelated.assets.source_skeleton.skins.push(unrelated_skin);
+        assert_eq!(
+            map_fbx_staged_rest_bind_operation(&original, &unrelated, operation).unwrap(),
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            }
+        );
+
+        let mut unrelated_original = original.clone();
+        let mut unrelated_node = unrelated_original.assets.source_skeleton.nodes[0].clone();
+        unrelated_node.source_node_index = 99;
+        unrelated_node.bone = None;
+        unrelated_node.name = Some("unconsumed".into());
+        unrelated_node.parent_source_node_index = Some(999);
+        unrelated_original
+            .assets
+            .source_skeleton
+            .nodes
+            .push(unrelated_node);
+        let mut unrelated_skin = unrelated_original.assets.source_skeleton.skins[0].clone();
+        unrelated_skin.source_skin_index = 99;
+        unrelated_skin.joint_source_node_indices = vec![999];
+        unrelated_original
+            .assets
+            .source_skeleton
+            .skins
+            .push(unrelated_skin);
+        assert_eq!(
+            map_fbx_staged_rest_bind_operation(&unrelated_original, &staged, operation).unwrap(),
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            }
+        );
+
+        let mut same_named_unconsumed_original = original.clone();
+        add_consumed_raw_parent(
+            &mut same_named_unconsumed_original,
+            10,
+            98,
+            None,
+            "shared-unconsumed-raw-name",
+        );
+        add_unconsumed_raw_node(
+            &mut same_named_unconsumed_original,
+            99,
+            "shared-unconsumed-raw-name",
+        );
+        let mut same_named_unconsumed_staged = staged.clone();
+        add_consumed_raw_parent(
+            &mut same_named_unconsumed_staged,
+            0,
+            98,
+            None,
+            "shared-unconsumed-raw-name",
+        );
+        add_unconsumed_raw_node(
+            &mut same_named_unconsumed_staged,
+            99,
+            "shared-unconsumed-raw-name",
+        );
+        assert_eq!(
+            map_fbx_staged_rest_bind_operation(
+                &same_named_unconsumed_original,
+                &same_named_unconsumed_staged,
+                operation,
+            )
+            .unwrap(),
+            ScaleOperation::RestBindUniformScale {
+                source_skin_index: 0,
+                source_root_node_index: 0,
+                expected_factor: 0.01,
+            }
+        );
+    }
+
+    #[cfg(feature = "fbx")]
+    #[test]
+    fn fbx_staged_selector_correspondence_refuses_original_identity_and_ancestry_drift() {
+        let (original, staged, operation) = staged_selector_fixture();
+        let mut duplicate_node = original.clone();
+        duplicate_node
+            .assets
+            .source_skeleton
+            .nodes
+            .push(duplicate_node.assets.source_skeleton.nodes[0].clone());
+        let irrelevant_duplicate = duplicate_node
+            .assets
+            .source_skeleton
+            .nodes
+            .last_mut()
+            .expect("duplicate source node is present");
+        irrelevant_duplicate.bone = None;
+        irrelevant_duplicate.name = Some("unconsumed".into());
+        irrelevant_duplicate.parent_source_node_index = Some(999);
+        let duplicate_node_error =
+            map_fbx_staged_rest_bind_operation(&duplicate_node, &staged, operation).unwrap_err();
+        assert!(
+            duplicate_node_error.contains("base source node id 10 is duplicated"),
+            "{duplicate_node_error}"
+        );
+
+        let mut duplicate_skin = original.clone();
+        duplicate_skin
+            .assets
+            .source_skeleton
+            .skins
+            .push(duplicate_skin.assets.source_skeleton.skins[0].clone());
+        let duplicate_skin_error =
+            map_fbx_staged_rest_bind_operation(&duplicate_skin, &staged, operation).unwrap_err();
+        assert!(
+            duplicate_skin_error.contains("base source skin id 7 is duplicated"),
+            "{duplicate_skin_error}"
+        );
+
+        let mut stale_parent = original.clone();
+        stale_parent.assets.source_skeleton.nodes[0].parent_source_node_index = Some(999);
+        let stale_parent_error =
+            map_fbx_staged_rest_bind_operation(&stale_parent, &staged, operation).unwrap_err();
+        assert!(
+            stale_parent_error.contains("stale parent id 999"),
+            "{stale_parent_error}"
+        );
+
+        let mut cyclic_parent = original.clone();
+        cyclic_parent.assets.source_skeleton.nodes[2].parent_source_node_index = Some(12);
+        let cyclic_parent_error =
+            map_fbx_staged_rest_bind_operation(&cyclic_parent, &staged, operation).unwrap_err();
+        assert!(
+            cyclic_parent_error.contains("cyclic parent chain"),
+            "{cyclic_parent_error}"
+        );
+
+        let joint_bone = original
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .find(|node| node.source_node_index == 12)
+            .and_then(|node| node.bone)
+            .expect("joint has a normalized identity");
+        let mut ancestry_drift = original.clone();
+        ancestry_drift.skeleton.bones[joint_bone].parent = None;
+        let ancestry_drift_error =
+            map_fbx_staged_rest_bind_operation(&ancestry_drift, &staged, operation).unwrap_err();
+        assert!(
+            ancestry_drift_error.contains("ancestor identity"),
+            "{ancestry_drift_error}"
+        );
+        let mut raw_ancestry_drift = original.clone();
+        raw_ancestry_drift.assets.source_skeleton.nodes[2].parent_source_node_index = None;
+        let raw_ancestry_drift_error =
+            map_fbx_staged_rest_bind_operation(&raw_ancestry_drift, &staged, operation)
+                .unwrap_err();
+        assert!(
+            raw_ancestry_drift_error.contains("ancestor identity"),
+            "{raw_ancestry_drift_error}"
+        );
+
+        let mut repeated_joint = original.clone();
+        repeated_joint.assets.source_skeleton.skins[0].joint_source_node_indices = vec![11, 11];
+        let repeated_joint_error =
+            map_fbx_staged_rest_bind_operation(&repeated_joint, &staged, operation).unwrap_err();
+        assert!(
+            repeated_joint_error.contains("duplicate named joint identities"),
+            "{repeated_joint_error}"
+        );
+
+        let mut missing_second_joint = original.clone();
+        missing_second_joint.assets.source_skeleton.skins[0].joint_source_node_indices =
+            vec![11, 999];
+        let missing_second_joint_error =
+            map_fbx_staged_rest_bind_operation(&missing_second_joint, &staged, operation)
+                .unwrap_err();
+        assert!(
+            missing_second_joint_error.contains("base skin joint source id 999 is absent"),
+            "{missing_second_joint_error}"
+        );
+
+        let mut swapped_joint_order = original.clone();
+        swapped_joint_order.assets.source_skeleton.skins[0]
+            .joint_source_node_indices
+            .swap(0, 1);
+        let swapped_joint_order_error =
+            map_fbx_staged_rest_bind_operation(&swapped_joint_order, &staged, operation)
+                .unwrap_err();
+        assert!(
+            swapped_joint_order_error.contains("exactly one skin"),
+            "{swapped_joint_order_error}"
+        );
+    }
+
+    #[cfg(feature = "fbx")]
+    #[test]
+    fn fbx_staged_selector_correspondence_refuses_staged_identity_and_ancestry_drift() {
+        let (original, staged, operation) = staged_selector_fixture();
+        let mut duplicate_node = staged.clone();
+        duplicate_node
+            .assets
+            .source_skeleton
+            .nodes
+            .push(duplicate_node.assets.source_skeleton.nodes[0].clone());
+        let irrelevant_duplicate = duplicate_node
+            .assets
+            .source_skeleton
+            .nodes
+            .last_mut()
+            .expect("duplicate source node is present");
+        irrelevant_duplicate.bone = None;
+        irrelevant_duplicate.name = Some("unconsumed".into());
+        irrelevant_duplicate.parent_source_node_index = Some(999);
+        let duplicate_node_error =
+            map_fbx_staged_rest_bind_operation(&original, &duplicate_node, operation).unwrap_err();
+        assert!(
+            duplicate_node_error.contains("staged source node id 0 is duplicated"),
+            "{duplicate_node_error}"
+        );
+
+        let mut duplicate_skin = staged.clone();
+        duplicate_skin
+            .assets
+            .source_skeleton
+            .skins
+            .push(duplicate_skin.assets.source_skeleton.skins[0].clone());
+        let duplicate_skin_error =
+            map_fbx_staged_rest_bind_operation(&original, &duplicate_skin, operation).unwrap_err();
+        assert!(
+            duplicate_skin_error.contains("staged source skin id 0 is duplicated"),
+            "{duplicate_skin_error}"
+        );
+
+        let mut stale_parent = staged.clone();
+        stale_parent.assets.source_skeleton.nodes[0].parent_source_node_index = Some(999);
+        let stale_parent_error =
+            map_fbx_staged_rest_bind_operation(&original, &stale_parent, operation).unwrap_err();
+        assert!(
+            stale_parent_error.contains("stale parent id 999"),
+            "{stale_parent_error}"
+        );
+
+        let mut cyclic_parent = staged.clone();
+        cyclic_parent.assets.source_skeleton.nodes[2].parent_source_node_index = Some(2);
+        let cyclic_parent_error =
+            map_fbx_staged_rest_bind_operation(&original, &cyclic_parent, operation).unwrap_err();
+        assert!(
+            cyclic_parent_error.contains("cyclic parent chain"),
+            "{cyclic_parent_error}"
+        );
+
+        let staged_joint_bone = staged
             .assets
             .source_skeleton
             .nodes
             .iter()
             .find(|node| node.source_node_index == 2)
             .and_then(|node| node.bone)
-            .expect("attach node is normalized into the skeleton");
-        original.skeleton.bones[duplicate_node].name = "joint".into();
-        original.assets.source_skeleton.skins[0]
-            .joint_source_node_indices
-            .push(2);
-        let staged = original.clone();
+            .expect("joint has a normalized identity");
+        let mut normalized_ancestry_drift = staged.clone();
+        normalized_ancestry_drift.skeleton.bones[staged_joint_bone].parent = None;
+        let normalized_ancestry_drift_error =
+            map_fbx_staged_rest_bind_operation(&original, &normalized_ancestry_drift, operation)
+                .unwrap_err();
+        assert!(
+            normalized_ancestry_drift_error.contains("ancestor identity"),
+            "{normalized_ancestry_drift_error}"
+        );
 
-        let error = map_fbx_staged_rest_bind_operation(
-            &original,
-            &staged,
-            ScaleOperation::RestBindUniformScale {
-                source_skin_index: 0,
-                source_root_node_index: 0,
-                expected_factor: 0.01,
-            },
-        )
-        .expect_err("repeated names cannot identify a staged skin exactly");
-        assert!(error.contains("duplicate normalized joint names"));
+        let mut raw_ancestry_drift = staged.clone();
+        raw_ancestry_drift.assets.source_skeleton.nodes[2].parent_source_node_index = None;
+        let raw_ancestry_drift_error =
+            map_fbx_staged_rest_bind_operation(&original, &raw_ancestry_drift, operation)
+                .unwrap_err();
+        assert!(
+            raw_ancestry_drift_error.contains("ancestor identity"),
+            "{raw_ancestry_drift_error}"
+        );
+
+        let mut duplicate_root = staged.clone();
+        let mut extra_root = duplicate_root.assets.source_skeleton.nodes[0].clone();
+        extra_root.source_node_index = 99;
+        duplicate_root.assets.source_skeleton.nodes.push(extra_root);
+        let duplicate_root_error =
+            map_fbx_staged_rest_bind_operation(&original, &duplicate_root, operation).unwrap_err();
+        assert!(
+            duplicate_root_error.contains("exactly one raw node"),
+            "{duplicate_root_error}"
+        );
+
+        let mut duplicate_match_skin = staged.clone();
+        let mut extra_skin = duplicate_match_skin.assets.source_skeleton.skins[0].clone();
+        extra_skin.source_skin_index = 99;
+        duplicate_match_skin
+            .assets
+            .source_skeleton
+            .skins
+            .push(extra_skin);
+        let duplicate_match_skin_error =
+            map_fbx_staged_rest_bind_operation(&original, &duplicate_match_skin, operation)
+                .unwrap_err();
+        assert!(
+            duplicate_match_skin_error.contains("exactly one skin"),
+            "{duplicate_match_skin_error}"
+        );
+
+        let mut missing_second_joint = staged.clone();
+        missing_second_joint.assets.source_skeleton.skins[0].joint_source_node_indices =
+            vec![1, 999];
+        let missing_second_joint_error =
+            map_fbx_staged_rest_bind_operation(&original, &missing_second_joint, operation)
+                .unwrap_err();
+        assert!(
+            missing_second_joint_error.contains("exactly one skin"),
+            "{missing_second_joint_error}"
+        );
+
+        let mut swapped_joint_order = staged.clone();
+        swapped_joint_order.assets.source_skeleton.skins[0]
+            .joint_source_node_indices
+            .swap(0, 1);
+        let swapped_joint_order_error =
+            map_fbx_staged_rest_bind_operation(&original, &swapped_joint_order, operation)
+                .unwrap_err();
+        assert!(
+            swapped_joint_order_error.contains("exactly one skin"),
+            "{swapped_joint_order_error}"
+        );
+    }
+
+    #[cfg(feature = "fbx")]
+    #[test]
+    fn fbx_staged_selector_correspondence_refuses_duplicate_consumed_raw_identities() {
+        let (original, staged, operation) = staged_selector_fixture();
+        let mut duplicate_original = original.clone();
+        add_consumed_raw_parent(&mut duplicate_original, 10, 98, None, "shared-raw-parent");
+        add_consumed_raw_parent(
+            &mut duplicate_original,
+            12,
+            99,
+            Some(10),
+            "shared-raw-parent",
+        );
+        let duplicate_original_error =
+            map_fbx_staged_rest_bind_operation(&duplicate_original, &staged, operation)
+                .unwrap_err();
+        assert!(
+            duplicate_original_error.contains("base consumed raw source nodes 98 and 99"),
+            "{duplicate_original_error}"
+        );
+
+        let mut duplicate_staged = staged.clone();
+        add_consumed_raw_parent(&mut duplicate_staged, 0, 98, None, "shared-raw-parent");
+        add_consumed_raw_parent(&mut duplicate_staged, 2, 99, Some(0), "shared-raw-parent");
+        let duplicate_staged_error =
+            map_fbx_staged_rest_bind_operation(&original, &duplicate_staged, operation)
+                .unwrap_err();
+        assert!(
+            duplicate_staged_error.contains("staged consumed raw source nodes 98 and 99"),
+            "{duplicate_staged_error}"
+        );
     }
 
     #[test]
