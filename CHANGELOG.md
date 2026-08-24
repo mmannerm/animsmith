@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4](https://github.com/mmannerm/animsmith/compare/v0.4.3...v0.4.4) - 2026-08-24
+
+### Fixed
+
+- *(assemble)* preserve pruning evidence namespace
+- *(assemble)* project document-local reference identities
+- *(assemble)* keep FBX selection refusals recipe-facing
+- *(assemble)* carry FBX mesh selection through staging
+- *(assemble)* project clip-only source domains
+- *(fbx)* admit display layer metadata
+- *(assemble)* admit fully keyed clip rest
+- *(assemble)* scope skinless clip basis to its rig
+- *(assemble)* rebase skinless clip tracks ([#524](https://github.com/mmannerm/animsmith/pull/524))
+- *(assemble)* compose FBX scale with node removal
+- correct 'undirivable' to 'underivable' in loop_seam_ratio docstring
+
 ## [0.4.3](https://github.com/mmannerm/animsmith/compare/v0.4.2...v0.4.3) - 2026-08-22
 
 ### Fixed
