@@ -6,10 +6,11 @@
 //! candidate document exists.
 
 use crate::{
-    LoadError, load_source_bytes, resolve_buffers, topology, validate_animations,
-    validate_document, validate_glb_framing,
+    LoadError, build_document, capture_dependency_closure, extract_source_skeleton,
+    has_extension_object, project_extension_facts, project_resource_facts, resolve_buffers,
+    source_facts_builder, topology, validate_animations, validate_document, validate_glb_framing,
 };
-use animsmith_core::{Document, LoadedSource, SourceFactsViewV1};
+use animsmith_core::{Document, LoadedSource, SourceFactsViewV1, SourceSetCoverageStateV1};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -287,7 +288,7 @@ pub struct GltfCapabilityViolation {
     pub kind: GltfCapabilityViolationKind,
 }
 
-/// A captured, immutable source that passed the common scale preflight.
+/// A captured, immutable source that passed its declared preflight policy.
 ///
 /// This type deliberately has no mutation or write method. Scale operations
 /// consume its manifest and captured bytes without reopening the input.
@@ -300,6 +301,7 @@ pub struct GltfScaleSource {
     source_bytes: Vec<u8>,
     raw_json: Value,
     resolved_buffers: Vec<Vec<u8>>,
+    clip_track_projection_required: bool,
 }
 
 impl GltfScaleSource {
@@ -335,6 +337,15 @@ impl GltfScaleSource {
     /// Resolved source buffers in buffer-index order.
     pub fn resolved_buffers(&self) -> &[Vec<u8>] {
         &self.resolved_buffers
+    }
+
+    /// Whether clip-track capture excluded one or more raw source violations.
+    ///
+    /// A caller selecting between its established whole-source path and a
+    /// clip-track projection uses this only as an in-memory policy result. It
+    /// does not alter the exact source bytes, source identity, or manifest.
+    pub const fn requires_clip_track_projection(&self) -> bool {
+        self.clip_track_projection_required
     }
 }
 
@@ -389,6 +400,52 @@ pub fn preflight_scale_source_bytes(
     capture_scale_source(path, bytes, GatePolicy::Enforce)
 }
 
+/// Read and preflight a glTF/GLB clip-track source without creating output.
+///
+/// This role-specific capture admits only the raw domains an assembly-style
+/// clip-track projection consumes: the framing and parsed document, node
+/// topology and rest transforms, animation data, raw construct/resource
+/// coverage, and complete captured source identity. Geometry, material,
+/// deformation, and inverse-bind payload violations are ignored only when
+/// they are exclusively in those projected-away domains. The returned
+/// [`GltfScaleSource`] still retains their complete manifest, so it cannot be
+/// mistaken for a whole-document or rest/bind scale admission.
+///
+/// Accessor layout and alias violations remain fatal whenever they name an
+/// animation sampler accessor. This is deliberately a role-specific policy,
+/// not a bypass of the common preflight gate.
+///
+/// # Errors
+///
+/// Returns [`GltfScalePreflightError::Load`] for malformed framing, parser,
+/// document, topology, dependency, or animation input. Returns
+/// [`GltfScalePreflightError::Unsupported`] when a retained raw domain is not
+/// covered, including animation-owned accessor faults.
+pub fn preflight_clip_track_source(
+    path: &Path,
+) -> Result<GltfScaleSource, GltfScalePreflightError> {
+    let bytes = std::fs::read(path).map_err(|source| LoadError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    preflight_clip_track_source_bytes(path, &bytes)
+}
+
+/// Preflight captured glTF/GLB bytes for an animation clip-track projection.
+///
+/// `path` is retained only as source provenance. Successful captures are
+/// fully in-memory and retain the exact primary bytes and raw manifest.
+///
+/// # Errors
+///
+/// Returns the same errors as [`preflight_clip_track_source`].
+pub fn preflight_clip_track_source_bytes(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<GltfScaleSource, GltfScalePreflightError> {
+    capture_source(path, bytes, CapturePolicy::ClipTracks)
+}
+
 /// Whether a captured source must clear the preflight's violation gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GatePolicy {
@@ -417,6 +474,25 @@ fn capture_scale_source(
     bytes: &[u8],
     policy: GatePolicy,
 ) -> Result<GltfScaleSource, GltfScalePreflightError> {
+    capture_source(path, bytes, CapturePolicy::Scale(policy))
+}
+
+/// Policy selected by the public capture boundaries after shared raw preflight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapturePolicy {
+    /// Preserve the whole-source scale contract, with its test-only bypass.
+    Scale(GatePolicy),
+    /// Admit only raw violations discarded by the clip-track projection.
+    ClipTracks,
+}
+
+/// Capture one raw source through the common parser, inventory, topology, and
+/// accessor-layout preflight, then apply the role's explicit admission policy.
+fn capture_source(
+    path: &Path,
+    bytes: &[u8],
+    policy: CapturePolicy,
+) -> Result<GltfScaleSource, GltfScalePreflightError> {
     validate_glb_framing(bytes)?;
     let (container, json_bytes) = raw_json_bytes(bytes)?;
     let raw_json: Value = serde_json::from_slice(json_bytes)
@@ -434,7 +510,7 @@ fn capture_scale_source(
         Err(error) => return Err(LoadError::Gltf(error).into()),
     }
     validate_animations(&gltf.document)?;
-    topology(&gltf.document)?;
+    let topology = topology(&gltf.document)?;
 
     let can_resolve_buffers = !manifest
         .buffers
@@ -453,12 +529,30 @@ fn capture_scale_source(
             &mut violations,
         );
     }
-    violations.sort();
-    violations.dedup();
-    let refuse = match policy {
-        GatePolicy::Enforce => !violations.is_empty(),
-        #[cfg(test)]
-        GatePolicy::Bypass => false,
+    let (clip_track_projection_required, refuse) = match policy {
+        CapturePolicy::Scale(policy) => {
+            violations.sort();
+            violations.dedup();
+            (
+                false,
+                match policy {
+                    GatePolicy::Enforce => !violations.is_empty(),
+                    #[cfg(test)]
+                    GatePolicy::Bypass => false,
+                },
+            )
+        }
+        CapturePolicy::ClipTracks => {
+            let animation_accessors = animation_accessor_indices(&raw_json);
+            let projection_required = violations
+                .iter()
+                .any(|violation| clip_track_projects_away(violation, &animation_accessors));
+            violations
+                .retain(|violation| !clip_track_projects_away(violation, &animation_accessors));
+            violations.sort();
+            violations.dedup();
+            (projection_required, !violations.is_empty())
+        }
     };
     if refuse {
         let count = violations.len();
@@ -469,16 +563,173 @@ fn capture_scale_source(
         });
     }
 
-    let loaded_source = load_source_bytes(path, bytes)?;
-    Ok(GltfScaleSource {
+    // A clean source follows the exact strict-loader path, preserving its
+    // complete normalized document and assets for callers that retain the
+    // established rest/bind application. Only a source that needed this role
+    // projection takes the narrower document build below.
+    if !clip_track_projection_required {
+        let loaded_source = crate::load_source_bytes(path, bytes)?;
+        if matches!(policy, CapturePolicy::ClipTracks)
+            && !clip_track_source_facts_complete(loaded_source.source_facts())
+        {
+            return Err(LoadError::Malformed(
+                "clip-track raw source facts coverage is incomplete".into(),
+            )
+            .into());
+        }
+        return Ok(captured_scale_source(
+            loaded_source,
+            bytes,
+            manifest,
+            raw_json,
+            resolved_buffers,
+            false,
+        ));
+    }
+
+    // This mirrors the strict loader's source-fact/dependency binding but
+    // intentionally stops before primitive validation and asset extraction.
+    // Those are exactly the raw domains a clip-track projection removes.
+    let mut facts = source_facts_builder(bytes).map_err(LoadError::from)?;
+    project_extension_facts(&gltf.document, &mut facts);
+    project_resource_facts(&gltf.document, &mut facts);
+    let has_unmodeled_extension_domain = has_extension_object(bytes)
+        || gltf.document.extensions_used().next().is_some()
+        || gltf.document.extensions_required().next().is_some();
+    let (dependency_closure, _) = capture_dependency_closure(
+        &facts,
+        None,
+        has_unmodeled_extension_domain,
+        &mut crate::read_external_file,
+    )?;
+    let source_skeleton = extract_source_skeleton(&gltf.document, &resolved_buffers, &topology);
+    let mut document = build_document(&gltf, &resolved_buffers, path, &topology, &mut facts)?;
+    document.assets.source_skeleton = source_skeleton;
+    let loaded_source = facts
+        .finish_with_dependency_closure(document, dependency_closure)
+        .map_err(LoadError::from)?;
+    if !clip_track_source_facts_complete(loaded_source.source_facts()) {
+        return Err(LoadError::Malformed(
+            "clip-track raw source facts coverage is incomplete".into(),
+        )
+        .into());
+    }
+
+    Ok(captured_scale_source(
+        loaded_source,
+        bytes,
+        manifest,
+        raw_json,
+        resolved_buffers,
+        clip_track_projection_required,
+    ))
+}
+
+/// Package one policy-admitted raw capture without duplicating identity state.
+fn captured_scale_source(
+    loaded_source: LoadedSource,
+    source_bytes: &[u8],
+    manifest: GltfCapabilityManifest,
+    raw_json: Value,
+    resolved_buffers: Vec<Vec<u8>>,
+    clip_track_projection_required: bool,
+) -> GltfScaleSource {
+    GltfScaleSource {
         loaded_source,
         #[cfg(test)]
         document_override: None,
         manifest,
-        source_bytes: bytes.to_vec(),
+        source_bytes: source_bytes.to_vec(),
         raw_json,
         resolved_buffers,
-    })
+        clip_track_projection_required,
+    }
+}
+
+/// Whether one common-preflight violation belongs solely to a discarded
+/// clip-source domain.
+fn clip_track_projects_away(
+    violation: &GltfCapabilityViolation,
+    animation_accessors: &BTreeSet<usize>,
+) -> bool {
+    use GltfCapabilityViolationKind as Kind;
+    match violation.kind {
+        Kind::MorphTarget
+        | Kind::MorphWeights
+        | Kind::NonTrianglePrimitive
+        | Kind::UnsupportedVertexAttribute
+        | Kind::SecondarySkinInfluences
+        | Kind::MissingInverseBinds
+        | Kind::EmptyInverseBindAccessor
+        | Kind::InverseBindCountMismatch
+        | Kind::UnreadableInverseBinds => true,
+        Kind::UnsafeAccessorLayout
+        | Kind::ConflictingAccessorUse
+        | Kind::OverlappingAccessorRanges => accessor_index_at(&violation.location)
+            .is_some_and(|accessor| !animation_accessors.contains(&accessor)),
+        // Image payload overlap is emitted only for a scale-bearing accessor.
+        // Its paired accessor violation above retains the error whenever that
+        // accessor belongs to animation; without that paired animation row,
+        // the image/material payload is projected away.
+        Kind::ImagePayloadOverlap => true,
+        Kind::ExternalResource
+        | Kind::Camera
+        | Kind::Light
+        | Kind::Instancing
+        | Kind::ExtensionDeclaration
+        | Kind::ExtensionPayload
+        | Kind::Extras
+        | Kind::UnknownJsonMember
+        | Kind::ConflictingNodeTransform
+        | Kind::NonAffineNodeMatrix
+        | Kind::AnimatedMatrixNode => false,
+    }
+}
+
+/// Exact sampler accessor identities for every raw animation declaration.
+fn animation_accessor_indices(root: &Value) -> BTreeSet<usize> {
+    let Some(animations) = root.get("animations").and_then(Value::as_array) else {
+        return BTreeSet::new();
+    };
+    animations
+        .iter()
+        .flat_map(|animation| {
+            animation
+                .get("samplers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .flat_map(|sampler| {
+            [
+                as_index(sampler.get("input")),
+                as_index(sampler.get("output")),
+            ]
+        })
+        .flatten()
+        .collect()
+}
+
+/// Parse the accessor index from an inventory location when it names one.
+fn accessor_index_at(location: &str) -> Option<usize> {
+    location
+        .strip_prefix("/accessors/")?
+        .split('/')
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Whether every raw source-fact domain a clip projection relies on was
+/// retained within the V1 capture budget.
+fn clip_track_source_facts_complete(source: SourceFactsViewV1<'_>) -> bool {
+    [
+        source.clips().coverage().state(),
+        source.constructs().coverage().state(),
+        source.resources().coverage().state(),
+    ]
+    .into_iter()
+    .all(|state| state == SourceSetCoverageStateV1::Complete)
 }
 
 /// Capture a [`GltfScaleSource`] from bytes the preflight gate would refuse.

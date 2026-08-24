@@ -195,16 +195,18 @@ Recipe v7 leaves v6 immutable and replaces its unobservable cross-file source
 indices with one exact `root_node_name`. The base must map that name to exactly
 one normalized source node and exactly one non-empty source skin whose every
 joint is that node or its descendant. Every distinct FBX clip is projected to
-its normalized skeleton and baked takes before receiving the base plan, even
-when its raw container carries unused geometry or a skin. A glTF/GLB clip uses
-the compatible track-only path only when complete source coverage proves it has
-no skins and the captured document independently has no mesh instances. The
+its normalized skeleton and takes before receiving the base plan. A glTF/GLB
+clip retains its existing successful full rest/bind or meshless track-only
+path; its clip-track gate additionally admits only failures in unused
+geometry, deformation, material, or bind domains while retaining strict
+framing, dependency, raw-coverage, named-skeleton, and animation
+accessor/layout obligations. The
 compatibility proof covers the selected base skin joints, exact root, their
 named ancestry, and actual track targets, without requiring unreferenced
 base-only geometry descendants. The
-resulting per-input identities enter the same plan-taking writer, private FBX
-stage, and proof boundaries; v7 evidence records both the declared name and
-every resolved name/index tuple.
+resulting per-input identities enter the same plan-taking writer and proof
+boundaries; FBX additionally records its private normalized stage, and v7
+evidence records both the declared name and every resolved name/index tuple.
 
 [scale workflow]: https://github.com/mmannerm/animsmith/blob/main/docs/scale.md
 [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md#scale-plan-and-proof-contracts

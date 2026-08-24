@@ -1,9 +1,10 @@
 //! Public raw-capability preflight contract tests.
 
+use animsmith_core::RAW_SOURCE_V1_MAX_CLIPS;
 use animsmith_gltf::{
     GltfBufferSourceKind, GltfCapabilityViolation, GltfCapabilityViolationKind, GltfContainerKind,
-    GltfNodeRestKind, GltfScalePreflightError, preflight_scale_source,
-    preflight_scale_source_bytes,
+    GltfNodeRestKind, GltfScalePreflightError, preflight_clip_track_source_bytes,
+    preflight_scale_source, preflight_scale_source_bytes,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
@@ -84,6 +85,25 @@ fn unsupported(
             (violations, *manifest)
         }
         other => panic!("expected typed capability rejection, got {other:?}"),
+    }
+}
+
+fn clip_track_unsupported(
+    value: &Value,
+) -> (
+    Vec<GltfCapabilityViolation>,
+    animsmith_gltf::GltfCapabilityManifest,
+) {
+    match preflight_clip_track_source_bytes(Path::new("synthetic.gltf"), &bytes(value)) {
+        Err(GltfScalePreflightError::Unsupported {
+            manifest,
+            violations,
+            count,
+        }) => {
+            assert_eq!(count, violations.len());
+            (violations, *manifest)
+        }
+        other => panic!("expected typed clip-track rejection, got {other:?}"),
     }
 }
 
@@ -280,6 +300,186 @@ fn accepts_dense_inverse_binds_and_ordinary_translation_animation() {
     assert_eq!(
         source.manifest().animation_channels[0].output_accessor_index,
         3
+    );
+    assert!(!source.requires_clip_track_projection());
+
+    let clip_source = preflight_clip_track_source_bytes(Path::new("skinned.gltf"), &bytes(&value))
+        .expect("a clean skinned source also passes clip-track preflight");
+    assert!(
+        !clip_source.requires_clip_track_projection(),
+        "a clean skinned source keeps its established rest/bind application"
+    );
+    assert_eq!(clip_source.source_bytes(), source.source_bytes());
+    assert_eq!(
+        clip_source.document().assets.meshes.len(),
+        source.document().assets.meshes.len()
+    );
+    assert_eq!(
+        clip_source.document().assets.instances.len(),
+        source.document().assets.instances.len()
+    );
+    assert_eq!(
+        clip_source.document().assets.materials.len(),
+        source.document().assets.materials.len()
+    );
+    assert_eq!(
+        clip_source.document().assets.scenes.len(),
+        source.document().assets.scenes.len()
+    );
+    assert_eq!(
+        clip_source.document().assets.source_skeleton.nodes.len(),
+        source.document().assets.source_skeleton.nodes.len()
+    );
+    assert_eq!(
+        clip_source.document().assets.source_skeleton.skins.len(),
+        source.document().assets.source_skeleton.skins.len()
+    );
+}
+
+/// A valid clip source with one deliberately unreadable bind-only accessor.
+///
+/// The bad `byteStride` is unsafe for inverse-bind reading, but all animation
+/// accessors are dense and valid. The role-specific projection must retain the
+/// source manifest while omitting the mesh/bind payload from its document.
+fn skinned_animation_with_unreadable_bind_layout() -> Value {
+    let mut value = base_json();
+    let mut buffer = vec![0; 132];
+    buffer[100..104].copy_from_slice(&1.0f32.to_le_bytes());
+    value["buffers"][0] = json!({ "uri": data_uri(&buffer), "byteLength": 132 });
+    value["bufferViews"] = json!([
+        { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+        { "buffer": 0, "byteOffset": 36, "byteLength": 64, "byteStride": 4 },
+        { "buffer": 0, "byteOffset": 100, "byteLength": 8 },
+        { "buffer": 0, "byteOffset": 108, "byteLength": 24 }
+    ]);
+    value["accessors"] = json!([
+        { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [0, 0, 0] },
+        { "bufferView": 1, "componentType": 5126, "count": 1, "type": "MAT4" },
+        { "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+        { "bufferView": 3, "componentType": 5126, "count": 2, "type": "VEC3" }
+    ]);
+    value["nodes"] = json!([{}, { "mesh": 0, "skin": 0 }]);
+    value["skins"] = json!([{
+        "joints": [0],
+        "skeleton": 0,
+        "inverseBindMatrices": 1
+    }]);
+    value["animations"] = json!([{
+        "samplers": [{ "input": 2, "interpolation": "LINEAR", "output": 3 }],
+        "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }]
+    }]);
+    value
+}
+
+#[test]
+fn clip_track_preflight_accepts_bind_only_layout_fault_and_retains_identity_manifest() {
+    let value = skinned_animation_with_unreadable_bind_layout();
+    let raw = bytes(&value);
+    let (violations, _) = unsupported(&value);
+    assert_has(
+        &violations,
+        GltfCapabilityViolationKind::UnsafeAccessorLayout,
+    );
+
+    let source = preflight_clip_track_source_bytes(Path::new("bind-only.gltf"), &raw)
+        .expect("clip-track projection ignores only the unreadable bind payload");
+    assert_eq!(source.source_bytes(), raw);
+    assert_eq!(
+        source.source_facts().primary_identity().bytes(),
+        raw.len() as u64
+    );
+    assert_eq!(
+        source.manifest().skins[0].inverse_bind_accessor_index,
+        Some(1)
+    );
+    assert_eq!(source.manifest().accessors[1].buffer_view_index, Some(1));
+    assert_eq!(source.document().clips.len(), 1);
+    assert_eq!(source.document().clips[0].tracks.len(), 1);
+    assert!(source.document().assets.instances.is_empty());
+    assert_eq!(source.document().assets.source_skeleton.skins.len(), 1);
+    assert!(source.requires_clip_track_projection());
+}
+
+#[test]
+fn clip_track_preflight_refuses_unsafe_animation_accessor_layout() {
+    let mut value = skinned_animation_with_unreadable_bind_layout();
+    value["bufferViews"][2]["byteLength"] = json!(4);
+
+    let (violations, _) = clip_track_unsupported(&value);
+    assert!(
+        locations(
+            &violations,
+            GltfCapabilityViolationKind::UnsafeAccessorLayout
+        )
+        .contains(&"/accessors/2")
+    );
+}
+
+#[test]
+fn clip_track_preflight_refuses_bind_alias_on_an_animation_accessor() {
+    let mut value = skinned_animation_with_unreadable_bind_layout();
+    value["skins"][0]["inverseBindMatrices"] = json!(2);
+
+    let (violations, _) = clip_track_unsupported(&value);
+    assert!(
+        locations(
+            &violations,
+            GltfCapabilityViolationKind::ConflictingAccessorUse
+        )
+        .contains(&"/accessors/2")
+    );
+}
+
+#[test]
+fn clip_track_preflight_refuses_external_dependency() {
+    let mut value = base_json();
+    value["buffers"][0]["uri"] = json!("clip.bin");
+
+    let (violations, manifest) = clip_track_unsupported(&value);
+    assert_has(&violations, GltfCapabilityViolationKind::ExternalResource);
+    assert_eq!(manifest.external_resource_locations, vec!["/buffers/0/uri"]);
+}
+
+#[test]
+fn clip_track_preflight_refuses_clean_source_with_incomplete_clip_facts() {
+    let mut value = base_json();
+    value["animations"] = Value::Array(
+        (0..=RAW_SOURCE_V1_MAX_CLIPS)
+            .map(|index| {
+                json!({
+                    "name": format!("clip-{index}"),
+                    "samplers": [],
+                    "channels": []
+                })
+            })
+            .collect(),
+    );
+
+    let error = preflight_clip_track_source_bytes(Path::new("many-clips.gltf"), &bytes(&value))
+        .expect_err("clip-track consumers require complete raw clip coverage");
+    assert!(
+        error
+            .to_string()
+            .contains("clip-track raw source facts coverage is incomplete"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn clip_track_preflight_retains_animated_matrix_node() {
+    let mut value = skinned_animation_with_unreadable_bind_layout();
+    value["bufferViews"][1]
+        .as_object_mut()
+        .expect("literal buffer view object")
+        .remove("byteStride");
+    value["nodes"][0] = json!({
+        "matrix": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    });
+
+    let (violations, _) = clip_track_unsupported(&value);
+    assert_eq!(
+        locations(&violations, GltfCapabilityViolationKind::AnimatedMatrixNode),
+        vec!["/animations/0/channels/0/target"]
     );
 }
 

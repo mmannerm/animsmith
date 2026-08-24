@@ -28,8 +28,8 @@ use animsmith_core::{Config, ToolInfo, resolve_configured_roles, sha256_hex};
 use animsmith_fbx::FbxScaleCapabilityInventory;
 use animsmith_gltf::write::WriteSummary;
 use animsmith_gltf::{
-    operation_capability_facts_for_source, preflight_scale_source_bytes, prove_rewritten_rest_bind,
-    rewrite_scale_plan,
+    operation_capability_facts_for_source, preflight_clip_track_source_bytes,
+    preflight_scale_source_bytes, prove_rewritten_rest_bind, rewrite_scale_plan,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -428,14 +428,15 @@ enum AssemblyScaleInputRole<'a> {
 }
 
 /// The typed domain projection a clip-track input has already earned from its
-/// format adapter. The authoritative document remains available to assembly;
-/// only `operation_document` can enter clip-track rebasing.
+/// format adapter. Its admitted normalized skeleton and clips remain
+/// authoritative to assembly; only `operation_document` can enter rebasing.
 enum PreparedClipTrackProjection {
-    /// Raw glTF/GLB has no private domain-removal stage. Its existing clip
-    /// contract therefore requires that the authoritative source is both
-    /// skinless and meshless.
-    RawGltfSkinlessMeshless {
+    /// Raw glTF/GLB has passed the clip-track capability policy. The exact raw
+    /// identity has already been captured for evidence, while only the
+    /// privately projected normalized document can enter rebasing.
+    RawGltfClipTracks {
         authoritative_document: Document,
+        staged_operation_document: Box<Document>,
         input_format: &'static str,
         source_projection: AssemblyScaleInputProjectionEvidence,
     },
@@ -450,37 +451,18 @@ enum PreparedClipTrackProjection {
 }
 
 impl PreparedClipTrackProjection {
-    /// Admit the established raw glTF/GLB clip-track contract. A skinned
-    /// source remains eligible for the existing full RestBind fallback; a
-    /// skinless source with mesh instances retains its established refusal.
-    fn try_raw_gltf_clip_tracks(
-        declared: &Path,
+    fn raw_gltf_clip_tracks(
         authoritative_document: Document,
         input_format: &'static str,
         source_projection: AssemblyScaleInputProjectionEvidence,
-    ) -> Result<Option<Self>, crate::producer::Failure> {
-        use crate::producer::{Classify as _, Kind, Stage};
-
-        if !authoritative_document
-            .assets
-            .source_skeleton
-            .skins
-            .is_empty()
-        {
-            return Ok(None);
-        }
-        if !authoritative_document.assets.instances.is_empty() {
-            return Err(format!(
-                "rest_bind_scale skinless clip rejected input {}: assembly scale basis mismatch (skinless-clip-has-mesh-instances)",
-                declared.display()
-            ))
-            .refusal(Stage::Proof, Kind::ProofFailed);
-        }
-        Ok(Some(Self::RawGltfSkinlessMeshless {
+    ) -> Self {
+        let staged_operation_document = clip_scale_stage_document(&authoritative_document);
+        Self::RawGltfClipTracks {
             authoritative_document,
+            staged_operation_document: Box::new(staged_operation_document),
             input_format,
             source_projection,
-        }))
+        }
     }
 
     fn normalized_baked_fbx(
@@ -504,13 +486,14 @@ impl PreparedClipTrackProjection {
         AssemblyScaleInputProjectionEvidence,
     ) {
         match self {
-            Self::RawGltfSkinlessMeshless {
+            Self::RawGltfClipTracks {
                 authoritative_document,
+                staged_operation_document,
                 input_format,
                 source_projection,
             } => (
-                authoritative_document.clone(),
                 authoritative_document,
+                *staged_operation_document,
                 input_format,
                 source_projection,
             ),
@@ -1715,29 +1698,40 @@ fn prepare_gltf_scale_input(
         input_role,
     } = request;
 
-    let source = preflight_scale_source_bytes(resolved, bytes)
-        .map_err(|error| {
+    let clip_track_application = context.recipe_version == RECIPE_SCHEMA_VERSION_V7
+        && matches!(input_role, AssemblyScaleInputRole::ClipTracks { .. });
+    let source = if clip_track_application {
+        preflight_clip_track_source_bytes(resolved, bytes).map_err(|error| {
+            format!(
+                "rest_bind_scale clip-track preflight rejected input {}: {error}",
+                declared.display()
+            )
+        })
+    } else {
+        preflight_scale_source_bytes(resolved, bytes).map_err(|error| {
             format!(
                 "rest_bind_scale preflight rejected input {}: {error}",
                 declared.display()
             )
         })
-        .refusal(Stage::Load, Kind::UnreadableSource)?;
+    }
+    .refusal(Stage::Load, Kind::UnreadableSource)?;
     let primary_identity = source.source_facts().primary_identity();
     let sha256 = primary_identity.sha256().to_owned();
     let byte_count = primary_identity.bytes();
-    if context.recipe_version == RECIPE_SCHEMA_VERSION_V7
+    let use_clip_track_projection = clip_track_application
+        && (source.manifest().skins.is_empty() || source.requires_clip_track_projection());
+    if use_clip_track_projection
         && let AssemblyScaleInputRole::ClipTracks { base_basis } = input_role
-        && let Some(projection) = PreparedClipTrackProjection::try_raw_gltf_clip_tracks(
-            declared,
+    {
+        let projection = PreparedClipTrackProjection::raw_gltf_clip_tracks(
             source.document().clone(),
             input_format,
             AssemblyScaleInputProjectionEvidence::RawGltf {
                 authored_curve_keys_preserved: true,
                 raw_source_spans_preserved: true,
             },
-        )?
-    {
+        );
         return prepare_clip_scale_input(
             role, declared, sha256, byte_count, projection, base_basis, scale, context,
         );
