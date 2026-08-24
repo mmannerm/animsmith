@@ -3529,7 +3529,7 @@ The control-point array is ordered, finite, starts at `(0, 0)`, ends at
 `(1, 1)`, and has strictly increasing input and output coordinates. The mapping
 is piecewise linear: an exact input knot maps to its declared output knot; for
 adjacent knots `(x0, y0)` and `(x1, y1)`, an input `t` strictly between them
-maps to `y0 + (t - x0) * (y1 - y0) / (x1 - x0)`. Point times and both window
+maps to `y0 + ((t - x0) / (x1 - x0)) * (y1 - y0)`. Point times and both window
 endpoints use that same mapping. Structural decoding retains a known V1
 operation even when its finite numeric domain or ordering is invalid, so a
 refusal can echo the request. An unknown kind, version, field, mapping token,

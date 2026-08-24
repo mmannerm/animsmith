@@ -104,7 +104,7 @@ strict tagged object: trim/slice use `interval { start, end }`, resample uses
 `output_duration_s` plus ordered `control_points` with `input_time`/`output_time`
 from `(0,0)` to `(1,1)`. Between adjacent knots `(x0, y0)` and `(x1, y1)`, it
 maps `t` by the exact piecewise-linear formula
-`y0 + (t - x0) * (y1 - y0) / (x1 - x0)`; exact knots map exactly, and both
+`y0 + ((t - x0) / (x1 - x0)) * (y1 - y0)`; exact knots map exactly, and both
 window endpoints use the same rule. A known V1 tag with an invalid numeric
 domain or ordering remains representable for an `invalid_mapping` refusal and
 uses an empty pre-inventory `event_outcomes` list. An unknown kind, version,
