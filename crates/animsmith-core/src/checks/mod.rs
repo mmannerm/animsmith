@@ -31,8 +31,53 @@ pub mod time_monotonic;
 mod vec3_trajectory;
 
 use crate::evaluation::{CoverageGap, CoverageGapCode};
+use crate::metrics::GaitPhaseOutcome;
 use crate::model::{Document, Track};
 use crate::profile::{ResolvedRoles, Role};
+
+/// Identifies the check-specific wording for a gait-phase coverage gap.
+#[derive(Clone, Copy)]
+pub(crate) enum GaitPhaseGapContext {
+    GaitGroup,
+    TimeComplement,
+}
+
+/// Map every gait-phase outcome to its check-specific coverage gap.
+///
+/// A measured phase is not a gap; the other outcomes retain the existing
+/// diagnostic wording while sharing the coverage classification authority.
+pub(crate) fn gait_phase_gap(
+    outcome: GaitPhaseOutcome,
+    context: GaitPhaseGapContext,
+) -> Option<CoverageGap> {
+    let message = match (outcome, context) {
+        (GaitPhaseOutcome::Measured(_), _) => return None,
+        (GaitPhaseOutcome::MissingBilateralFootRoles, GaitPhaseGapContext::GaitGroup) => {
+            "gait phase has no bilateral foot-role subject"
+        }
+        (GaitPhaseOutcome::MissingBilateralFootRoles, GaitPhaseGapContext::TimeComplement) => {
+            "gait phase has no bilateral foot-role subject for time-complement comparison"
+        }
+        (GaitPhaseOutcome::NoFootHeightSwing, GaitPhaseGapContext::GaitGroup) => {
+            "gait phase has no left/right foot-height swing"
+        }
+        (GaitPhaseOutcome::NoFootHeightSwing, GaitPhaseGapContext::TimeComplement) => {
+            "gait phase has no left/right foot-height swing for time-complement comparison"
+        }
+        (GaitPhaseOutcome::Unavailable, GaitPhaseGapContext::GaitGroup) => {
+            "gait phase could not be fitted from the sampled cycle"
+        }
+        (GaitPhaseOutcome::Unavailable, GaitPhaseGapContext::TimeComplement) => {
+            "gait phase could not be fitted for time-complement comparison"
+        }
+    };
+    let code = if matches!(outcome, GaitPhaseOutcome::MissingBilateralFootRoles) {
+        CoverageGapCode::ROLES_UNRESOLVED
+    } else {
+        CoverageGapCode::MEASUREMENT_UNAVAILABLE
+    };
+    Some(CoverageGap::new(code, message))
+}
 
 /// Whether an `f32`-derived metric exceeds a user-facing `f64` cap.
 ///
@@ -95,4 +140,30 @@ pub(crate) fn tracks(doc: &Document) -> impl Iterator<Item = (&str, &str, &Track
             (clip.name.as_str(), bone, track)
         })
     })
+}
+
+#[cfg(test)]
+mod gait_phase_gap_tests {
+    use super::{GaitPhaseGapContext, gait_phase_gap};
+    use crate::evaluation::CoverageGapCode;
+    use crate::metrics::GaitPhaseOutcome;
+
+    #[test]
+    fn defensive_unavailable_outcome_keeps_each_check_specific_measurement_gap() {
+        for (context, message) in [
+            (
+                GaitPhaseGapContext::GaitGroup,
+                "gait phase could not be fitted from the sampled cycle",
+            ),
+            (
+                GaitPhaseGapContext::TimeComplement,
+                "gait phase could not be fitted for time-complement comparison",
+            ),
+        ] {
+            let gap = gait_phase_gap(GaitPhaseOutcome::Unavailable, context)
+                .expect("unavailable phase is a defensive coverage gap");
+            assert_eq!(gap.code, CoverageGapCode::MEASUREMENT_UNAVAILABLE);
+            assert_eq!(gap.message, message);
+        }
+    }
 }

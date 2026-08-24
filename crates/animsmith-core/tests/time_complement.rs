@@ -591,17 +591,37 @@ fn zero_amplitude_pair_has_no_phase_subject_at_a_zero_evidence_floor() {
             .all(|scope| scope.code != EvaluationScopeCode::PHASE_COHERENCE),
         "zero-swing members must not be consumed as a completed pair comparison: {record:#?}"
     );
-    let subjects: Vec<_> = record
+    let phase_gaps: Vec<_> = record
         .gaps()
         .iter()
         .filter(|gap| {
-            gap.code.as_str() == "measurement_unavailable"
-                && gap.message
-                    == "gait phase has no left/right foot-height swing for time-complement comparison"
+            gap.scope
+                .as_ref()
+                .is_some_and(|scope| scope.code == EvaluationScopeCode::PHASE_MEASUREMENT)
         })
-        .map(|gap| gap.scope.as_ref().unwrap().subject.as_deref().unwrap())
+        .map(|gap| {
+            (
+                gap.code.as_str(),
+                gap.message.as_str(),
+                gap.scope.as_ref().unwrap().subject.as_deref().unwrap(),
+            )
+        })
         .collect();
-    assert_eq!(subjects, ["a", "b"]);
+    assert_eq!(
+        phase_gaps,
+        [
+            (
+                "measurement_unavailable",
+                "gait phase has no left/right foot-height swing for time-complement comparison",
+                "a",
+            ),
+            (
+                "measurement_unavailable",
+                "gait phase has no left/right foot-height swing for time-complement comparison",
+                "b",
+            ),
+        ]
+    );
 }
 
 #[test]
@@ -675,17 +695,36 @@ fn one_sided_phase_is_a_typed_gap() {
 
     assert_eq!(record.evaluation(), EvaluationState::Partial);
     assert!(record.findings().is_empty(), "{record:#?}");
+    let phase_gaps: Vec<_> = record
+        .gaps()
+        .iter()
+        .filter(|gap| {
+            gap.scope
+                .as_ref()
+                .is_some_and(|scope| scope.code == EvaluationScopeCode::PHASE_MEASUREMENT)
+        })
+        .map(|gap| {
+            (
+                gap.code.as_str(),
+                gap.message.as_str(),
+                gap.scope.as_ref().unwrap().subject.as_deref().unwrap(),
+            )
+        })
+        .collect();
     assert_eq!(
-        record
-            .gaps()
-            .iter()
-            .filter(|gap| {
-                gap.code.as_str() == "measurement_unavailable"
-                    && gap.message
-                        == "gait phase has no bilateral foot-role subject for time-complement comparison"
-            })
-            .count(),
-        2
+        phase_gaps,
+        [
+            (
+                "roles_unresolved",
+                "gait phase has no bilateral foot-role subject for time-complement comparison",
+                "a",
+            ),
+            (
+                "roles_unresolved",
+                "gait phase has no bilateral foot-role subject for time-complement comparison",
+                "b",
+            ),
+        ]
     );
     assert!(
         record

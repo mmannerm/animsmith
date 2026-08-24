@@ -7,7 +7,7 @@
 //! silently reported as verified.
 
 use crate::check::{Check, CheckCtx};
-use crate::checks::gait_gap;
+use crate::checks::{GaitPhaseGapContext, gait_gap, gait_phase_gap};
 use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
@@ -89,47 +89,17 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
                 );
                 continue;
             };
-            let phase = match metrics.gait_phase_outcome(ctx.roles) {
-                GaitPhaseOutcome::MissingBilateralFootRoles => {
-                    coverage.gaps.push(
-                        CoverageGap::new(
-                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                            "gait phase has no bilateral foot-role subject",
-                        )
+            let outcome = metrics.gait_phase_outcome(ctx.roles);
+            let GaitPhaseOutcome::Measured(phase) = outcome else {
+                coverage.gaps.push(
+                    gait_phase_gap(outcome, GaitPhaseGapContext::GaitGroup)
+                        .expect("non-measured gait phase outcome has a coverage gap")
                         .scope(
                             EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)
                                 .subject(clip_name),
                         ),
-                    );
-                    continue;
-                }
-                GaitPhaseOutcome::NoFootHeightSwing => {
-                    coverage.gaps.push(
-                        CoverageGap::new(
-                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                            "gait phase has no left/right foot-height swing",
-                        )
-                        .scope(
-                            EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)
-                                .subject(clip_name),
-                        ),
-                    );
-                    continue;
-                }
-                GaitPhaseOutcome::Measured(phase) => phase,
-                GaitPhaseOutcome::Unavailable => {
-                    coverage.gaps.push(
-                        CoverageGap::new(
-                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                            "gait phase could not be fitted from the sampled cycle",
-                        )
-                        .scope(
-                            EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)
-                                .subject(clip_name),
-                        ),
-                    );
-                    continue;
-                }
+                );
+                continue;
             };
             if metrics.lr_amplitude_m < group.min_lr_amplitude_m {
                 coverage.gaps.push(
