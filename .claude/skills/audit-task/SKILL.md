@@ -80,6 +80,11 @@ for that same HEAD. Do not run `just gates` again inside `audit-task`, a
 cross-model reviewer, or each audit subagent solely to duplicate that author
 gate or successful CI.
 
+For animation-pack workflow changes, retain and reuse the single
+`checks / animation-pack` result from the reusable checks workflow. It runs
+the same validator as `just animation-pack-skill` against the exact PR head;
+do not rerun that suite independently when the required result is available.
+
 If the recorded pre-push gate is missing or belongs to another commit, BLOCK
 until the author supplies one exact-head result. Reviewer independence comes
 from reading the raw artifacts and reaching an independent verdict, not from
