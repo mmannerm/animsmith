@@ -16,7 +16,7 @@ use crate::evaluation::{
 };
 use crate::finding::{Finding, Severity};
 use crate::metrics::root_motion_speed_mps;
-use crate::profile::Role;
+use crate::stance_support::{StanceSideV1, resolve_stance_support_v1};
 
 /// A foot within this height of its per-clip minimum is in contact.
 pub const DEFAULT_CONTACT_HEIGHT_M: f64 = 0.03;
@@ -96,17 +96,17 @@ impl Check for FootSlide {
 
             // Foot first, toe as fallback — matching `foot_cycle_metrics`
             // so a rig that resolves only toe roles is still judged (#57).
-            for (side_roles, label) in [
-                ([Role::LeftFoot, Role::LeftToe], "left"),
-                ([Role::RightFoot, Role::RightToe], "right"),
-            ] {
-                let scope = if label == "left" {
+            for side in [StanceSideV1::Left, StanceSideV1::Right] {
+                let label = side.label();
+                let scope = if side == StanceSideV1::Left {
                     EvaluationScope::new(EvaluationScopeCode::LEFT_FOOT_STANCE)
                 } else {
                     EvaluationScope::new(EvaluationScopeCode::RIGHT_FOOT_STANCE)
                 }
                 .subject(&clip.name);
-                let Some(foot) = side_roles.iter().find_map(|&r| ctx.roles.get(r)) else {
+                let Some(stance) =
+                    resolve_stance_support_v1(&grid, ctx.roles, side, contact_height)
+                else {
                     gaps.push(
                         CoverageGap::new(
                             CoverageGapCode::ROLES_UNRESOLVED,
@@ -116,25 +116,15 @@ impl Check for FootSlide {
                     );
                     continue;
                 };
-                let frames = grid.frame_count();
                 evaluated_scopes.push(scope);
-                let heights: Vec<f64> = (0..frames)
-                    .map(|f| grid.model_position(f, foot).y as f64)
-                    .collect();
-                let ground = heights.iter().copied().fold(f64::MAX, f64::min);
                 let mut worst: Option<(f64, usize)> = None;
-                for f in 1..frames {
-                    if heights[f] > ground + contact_height
-                        || heights[f - 1] > ground + contact_height
-                    {
-                        continue; // not a stance step
-                    }
+                for f in stance.supported_adjacent_frames() {
                     let dt = (grid.times[f] - grid.times[f - 1]) as f64;
                     if dt <= 0.0 {
                         continue;
                     }
-                    let a = grid.model_position(f - 1, foot);
-                    let b = grid.model_position(f, foot);
+                    let a = grid.model_position(f - 1, stance.bone());
+                    let b = grid.model_position(f, stance.bone());
                     let dx = (b.x - a.x) as f64;
                     let dz = (b.z - a.z) as f64;
                     let speed = dx.hypot(dz) / dt;
@@ -155,7 +145,7 @@ impl Check for FootSlide {
                             ),
                         )
                         .clip(&clip.name)
-                        .bone(ctx.doc.skeleton.bones[foot].name.clone())
+                        .bone(ctx.doc.skeleton.bones[stance.bone()].name.clone())
                         .time(grid.times[frame])
                         .measured(slide)
                         .expected(max_slide),
