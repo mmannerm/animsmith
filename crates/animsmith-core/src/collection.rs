@@ -752,9 +752,13 @@ mod tests {
     }
 
     fn source(value: &str) -> CollectionSourceV1 {
+        source_at(value, "motion.fbx")
+    }
+
+    fn source_at(value: &str, path: &str) -> CollectionSourceV1 {
         CollectionSourceV1::new(
             CollectionSourceKeyV1::new(value).unwrap(),
-            key("motion.fbx"),
+            key(path),
             None,
             None,
         )
@@ -802,12 +806,20 @@ mod tests {
         let value = manifest(
             vec![source("zebra"), source("alpha")],
             vec![clip(left, "alpha", 0), clip(forward, "zebra", 1)],
-            vec![set("com.example.pack/sets/ring", &[left, forward])],
+            vec![
+                set("com.example.pack/sets/zebra", &[forward, left]),
+                set("com.example.pack/sets/alpha", &[left, forward]),
+            ],
         )
         .unwrap();
         assert_eq!(value.sources()[0].key().as_str(), "alpha");
         assert_eq!(value.clips()[0].id().as_str(), forward);
+        assert_eq!(
+            value.runtime_sets()[0].id().as_str(),
+            "com.example.pack/sets/alpha"
+        );
         assert_eq!(value.runtime_sets()[0].members()[0].as_str(), left);
+        assert_eq!(value.runtime_sets()[0].members()[1].as_str(), forward);
         assert_eq!(value.schema(), COLLECTION_MANIFEST_V1_ID);
         assert_eq!(
             value.schema_version(),
@@ -817,7 +829,10 @@ mod tests {
         let shuffled = manifest(
             vec![source("alpha"), source("zebra")],
             vec![clip(forward, "zebra", 1), clip(left, "alpha", 0)],
-            vec![set("com.example.pack/sets/ring", &[left, forward])],
+            vec![
+                set("com.example.pack/sets/alpha", &[left, forward]),
+                set("com.example.pack/sets/zebra", &[forward, left]),
+            ],
         )
         .unwrap();
         assert_eq!(value, shuffled);
@@ -854,6 +869,8 @@ mod tests {
         .unwrap();
         assert_eq!(value.clips()[0].take_name(), "Take 001");
         assert_eq!(value.clips()[1].take_name(), "Take 001");
+        assert_eq!(value.clips()[0].take_index(), 1);
+        assert_eq!(value.clips()[1].take_index(), 0);
     }
 
     #[test]
@@ -862,7 +879,7 @@ mod tests {
         let other = "com.example.pack/locomotion/run";
         assert!(matches!(
             manifest(
-                vec![source("a"), source("a")],
+                vec![source_at("a", "first.fbx"), source_at("a", "second.fbx")],
                 vec![clip(id, "a", 0)],
                 vec![]
             ),
@@ -885,7 +902,7 @@ mod tests {
         assert!(matches!(
             manifest(
                 vec![source("a")],
-                vec![clip(id, "a", 0), clip(other, "a", 0)],
+                vec![clip(id, "a", 7), clip(other, "a", 7)],
                 vec![]
             ),
             Err(CollectionManifestError::Duplicate {
@@ -900,8 +917,12 @@ mod tests {
         assert!(matches!(
             manifest(
                 vec![source("a")],
-                vec![clip(id, "a", 0), clip(other, "a", 1)],
-                vec![set("com.example.pack/sets/a", &[id, id])]
+                vec![
+                    clip(id, "a", 0),
+                    clip(other, "a", 1),
+                    clip("com.example.pack/locomotion/jump", "a", 2),
+                ],
+                vec![set("com.example.pack/sets/a", &[id, other, id])]
             ),
             Err(CollectionManifestError::Duplicate {
                 field: "runtime set member",
@@ -933,7 +954,14 @@ mod tests {
                 vec![clip(id, "a", 0), clip(other, "a", 1)],
                 vec![
                     set("com.example.pack/sets/a", &[id, other]),
-                    set("com.example.pack/sets/a", &[other, id]),
+                    CollectionRuntimeSetV1::new(
+                        CollectionLogicalIdV1::new("com.example.pack/sets/a").unwrap(),
+                        CollectionRuntimeSetKindV1::SyncGroup,
+                        vec![
+                            CollectionLogicalIdV1::new(other).unwrap(),
+                            CollectionLogicalIdV1::new(id).unwrap(),
+                        ],
+                    ),
                 ]
             ),
             Err(CollectionManifestError::Duplicate {
@@ -963,6 +991,7 @@ mod tests {
         ));
         assert!(CollectionDigestPinV1::new("A".repeat(64)).is_err());
         assert!(CollectionDigestPinV1::new("0".repeat(63)).is_err());
+        assert!(CollectionDigestPinV1::new("0".repeat(65)).is_err());
         assert!(CollectionDigestPinV1::new("g".repeat(64)).is_err());
     }
 
@@ -1086,38 +1115,17 @@ mod tests {
     #[test]
     fn budget_record_exposes_every_frozen_core_limit() {
         let budget = CollectionManifestBudgetV1::v1();
-        assert_eq!(budget.id(), COLLECTION_MANIFEST_V1_BUDGET_ID);
-        assert_eq!(
-            budget.max_manifest_bytes(),
-            COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES
-        );
-        assert_eq!(budget.max_sources(), COLLECTION_MANIFEST_V1_MAX_SOURCES);
-        assert_eq!(budget.max_clips(), COLLECTION_MANIFEST_V1_MAX_CLIPS);
-        assert_eq!(
-            budget.max_runtime_sets(),
-            COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS
-        );
-        assert_eq!(
-            budget.max_aggregate_members(),
-            COLLECTION_MANIFEST_V1_MAX_AGGREGATE_MEMBERS
-        );
-        assert_eq!(
-            budget.max_aggregate_work(),
-            COLLECTION_MANIFEST_V1_MAX_AGGREGATE_WORK
-        );
-        assert_eq!(
-            budget.max_identifier_bytes(),
-            COLLECTION_MANIFEST_V1_MAX_IDENTIFIER_BYTES
-        );
-        assert_eq!(
-            budget.max_take_name_bytes(),
-            COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES
-        );
-        assert_eq!(budget.max_path_bytes(), DEPENDENCY_CLOSURE_V1_MAX_KEY_BYTES);
-        assert_eq!(
-            budget.max_path_components(),
-            DEPENDENCY_CLOSURE_V1_MAX_PATH_COMPONENTS
-        );
+        assert_eq!(budget.id(), "urn:animsmith:collection-manifest-budget:1");
+        assert_eq!(budget.max_manifest_bytes(), 8_388_608);
+        assert_eq!(budget.max_sources(), 4_096);
+        assert_eq!(budget.max_clips(), 4_096);
+        assert_eq!(budget.max_runtime_sets(), 4_096);
+        assert_eq!(budget.max_aggregate_members(), 16_384);
+        assert_eq!(budget.max_aggregate_work(), 24_576);
+        assert_eq!(budget.max_identifier_bytes(), 255);
+        assert_eq!(budget.max_take_name_bytes(), 4_096);
+        assert_eq!(budget.max_path_bytes(), 4_096);
+        assert_eq!(budget.max_path_components(), 128);
         assert_eq!(
             serde_json::to_value(budget).unwrap(),
             serde_json::json!({

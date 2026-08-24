@@ -301,7 +301,7 @@ impl CollectionPathResolver {
                 Ok(PathState::RegularOrDirectory {
                     canonical,
                     metadata,
-                }) if metadata.is_dir() && canonical.starts_with(&control_root) => canonical,
+                }) if metadata.is_dir() => canonical,
                 Ok(PathState::RegularOrDirectory { .. })
                 | Ok(PathState::NonRegular)
                 | Ok(PathState::Missing)
@@ -352,11 +352,6 @@ impl CollectionPathResolver {
                             CollectionControlKind::SourceNonRegular,
                         ));
                     }
-                    if !canonical.starts_with(&self.source_root) {
-                        return Err(CollectionControlError::new(
-                            CollectionControlKind::UnsafePath,
-                        ));
-                    }
                     if !canonical_sources.insert(canonical.clone()) {
                         return Err(CollectionControlError::new(
                             CollectionControlKind::CanonicalSourceAlias,
@@ -403,19 +398,12 @@ impl CollectionPathResolver {
             Ok(PathState::RegularOrDirectory {
                 canonical,
                 metadata,
-            }) if metadata.is_file() => {
-                if !canonical.starts_with(&self.control_root) {
-                    return Err(CollectionControlError::new(
-                        CollectionControlKind::UnsafePath,
-                    ));
-                }
-                Ok(CollectionConfigResolution::Explicit(
-                    CollectionResolvedPath {
-                        declared: declared.as_str().to_owned(),
-                        canonical,
-                    },
-                ))
-            }
+            }) if metadata.is_file() => Ok(CollectionConfigResolution::Explicit(
+                CollectionResolvedPath {
+                    declared: declared.as_str().to_owned(),
+                    canonical,
+                },
+            )),
             Ok(PathState::RegularOrDirectory { .. }) | Ok(PathState::NonRegular) => Err(
                 CollectionControlError::new(CollectionControlKind::ConfigNonRegular),
             ),
@@ -633,6 +621,9 @@ fn inspect_path(root: &Path, declared: &str) -> Result<PathState, PathFailure> {
                 }
                 Err(_) => return Ok(PathState::Unreadable),
             };
+            if !canonical.starts_with(root) {
+                return Err(PathFailure::Unsafe);
+            }
             return Ok(PathState::RegularOrDirectory {
                 canonical,
                 metadata,
@@ -692,6 +683,113 @@ take_name = "Take 001"
                 .unwrap_err()
                 .kind(),
             CollectionControlKind::ManifestMalformed
+        );
+
+        let clip = VALID.replace(
+            "take_name = \"Take 001\"",
+            "take_name = \"Take 001\"\nunknown = true",
+        );
+        assert_eq!(
+            parse_collection_manifest_bytes(clip.as_bytes())
+                .unwrap_err()
+                .kind(),
+            CollectionControlKind::ManifestMalformed
+        );
+
+        let runtime_set = format!(
+            "{VALID}\n[[clips]]\nid = \"com.example.test/locomotion/run\"\nsource = \"walk\"\ntake_index = 1\ntake_name = \"Take 002\"\n\n[[runtime_sets]]\nid = \"com.example.test/sets/loco\"\nkind = \"gait-group\"\nmembers = [\"com.example.test/locomotion/walk\", \"com.example.test/locomotion/run\"]\nunknown = true\n"
+        );
+        assert_eq!(
+            parse_collection_manifest_bytes(runtime_set.as_bytes())
+                .unwrap_err()
+                .kind(),
+            CollectionControlKind::ManifestMalformed
+        );
+    }
+
+    #[test]
+    fn parser_retains_every_wire_field_and_declared_member_order() {
+        let digest = "0".repeat(64);
+        let text = format!(
+            r#"
+schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example.full"
+input_root = "assets"
+
+[[sources]]
+key = "zebra"
+path = "zebra.fbx"
+config = "zebra.toml"
+expected_sha256 = "{digest}"
+
+[[sources]]
+key = "alpha"
+path = "alpha.glb"
+
+[[clips]]
+id = "com.example.full/locomotion/zebra"
+source = "zebra"
+take_index = 7
+take_name = "Take Z"
+
+[[clips]]
+id = "com.example.full/locomotion/alpha"
+source = "alpha"
+take_index = 3
+take_name = "Take A"
+
+[[runtime_sets]]
+id = "com.example.full/sets/zebra"
+kind = "sync-group"
+members = ["com.example.full/locomotion/zebra", "com.example.full/locomotion/alpha"]
+
+[[runtime_sets]]
+id = "com.example.full/sets/alpha"
+kind = "gait-group"
+members = ["com.example.full/locomotion/alpha", "com.example.full/locomotion/zebra"]
+"#
+        );
+
+        let manifest = parse_collection_manifest_bytes(text.as_bytes()).unwrap();
+        assert_eq!(manifest.collection_id().as_str(), "com.example.full");
+        assert_eq!(manifest.input_root().unwrap().as_str(), "assets");
+        assert_eq!(manifest.sources()[0].key().as_str(), "alpha");
+        assert_eq!(manifest.sources()[1].key().as_str(), "zebra");
+        assert_eq!(manifest.sources()[1].path().as_str(), "zebra.fbx");
+        assert_eq!(
+            manifest.sources()[1].config().unwrap().as_str(),
+            "zebra.toml"
+        );
+        assert_eq!(
+            manifest.sources()[1].expected_sha256().unwrap().as_str(),
+            digest
+        );
+        assert_eq!(
+            manifest.clips()[0].id().as_str(),
+            "com.example.full/locomotion/alpha"
+        );
+        assert_eq!(manifest.clips()[0].source().as_str(), "alpha");
+        assert_eq!(manifest.clips()[0].take_index(), 3);
+        assert_eq!(manifest.clips()[0].take_name(), "Take A");
+        assert_eq!(
+            manifest.runtime_sets()[0].id().as_str(),
+            "com.example.full/sets/alpha"
+        );
+        assert_eq!(
+            manifest.runtime_sets()[0].kind(),
+            CollectionRuntimeSetKindV1::GaitGroup
+        );
+        assert_eq!(
+            manifest.runtime_sets()[0]
+                .members()
+                .iter()
+                .map(CollectionLogicalIdV1::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "com.example.full/locomotion/alpha",
+                "com.example.full/locomotion/zebra"
+            ]
         );
     }
 
@@ -950,12 +1048,13 @@ take_name = "Take 001"
             resolver.resolve_config(None).unwrap(),
             CollectionConfigResolution::Default
         );
-        assert!(matches!(
-            resolver
-                .resolve_config(Some(&key("animsmith.toml")))
-                .unwrap(),
-            CollectionConfigResolution::Explicit(_)
-        ));
+        let CollectionConfigResolution::Explicit(config) = resolver
+            .resolve_config(Some(&key("animsmith.toml")))
+            .unwrap()
+        else {
+            panic!("declared config should resolve explicitly")
+        };
+        assert_eq!(config.declared(), "animsmith.toml");
 
         let duplicate = vec![
             CollectionSourceV1::new(source_key("a"), key("walk.gltf"), None, None),
@@ -1004,6 +1103,66 @@ take_name = "Take 001"
                 .kind(),
             CollectionControlKind::ConfigNonRegular
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_manifest_source_and_config_have_distinct_control_states() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let manifest = directory.path().join("collection.toml");
+        fs::write(&manifest, VALID).unwrap();
+        let locked = directory.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("source.gltf"), b"fixture").unwrap();
+        fs::write(locked.join("config.toml"), b"# fixture\n").unwrap();
+        let content_unreadable = directory.path().join("content-unreadable.gltf");
+        fs::write(&content_unreadable, b"fixture").unwrap();
+        let resolver = CollectionPathResolver::new(&manifest, None).unwrap();
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        fs::set_permissions(&manifest, fs::Permissions::from_mode(0o000)).unwrap();
+        fs::set_permissions(&content_unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+        let source_result = resolver.resolve_sources(&[CollectionSourceV1::new(
+            source_key("locked"),
+            key("locked/source.gltf"),
+            None,
+            None,
+        )]);
+        let config_result = resolver.resolve_config(Some(&key("locked/config.toml")));
+        let manifest_result = load_collection_manifest(&manifest);
+        let locator_only_result = resolver.resolve_sources(&[CollectionSourceV1::new(
+            source_key("locator-only"),
+            key("content-unreadable.gltf"),
+            None,
+            None,
+        )]);
+
+        fs::set_permissions(&manifest, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&content_unreadable, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let resolved = source_result.unwrap();
+        assert!(matches!(
+            resolved["locked"],
+            CollectionSourceResolution::Unavailable {
+                reason: CollectionSourceUnavailable::Unreadable,
+                ..
+            }
+        ));
+        assert_eq!(
+            config_result.unwrap_err().kind(),
+            CollectionControlKind::ConfigUnreadable
+        );
+        assert_eq!(
+            manifest_result.unwrap_err().kind(),
+            CollectionControlKind::ManifestRead
+        );
+        assert!(matches!(
+            locator_only_result.unwrap()["locator-only"],
+            CollectionSourceResolution::Ready(_)
+        ));
     }
 
     #[test]
