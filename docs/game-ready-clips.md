@@ -579,11 +579,16 @@ health:
   members against the retained manifest and state separately when a bundled
   animation list uses different spelling, casing, or ranges.
 
-AnimSmith's current gait and sync groups resolve clips inside one loaded
-document. [#409](https://github.com/mmannerm/animsmith/issues/409) tracks a
-file-scoped collection identity and cross-file set contract. Until that lands,
-keep per-file evidence and a deterministic external manifest; do not merge,
-rename, or infer set membership merely to make a check run.
+AnimSmith's gait and sync groups still resolve clips inside one loaded
+document. The file-scoped collection identity and cross-file set contract are
+recorded in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file-scoped-clip-identity-and-collections)
+and emitted by the explicit collection command. The 0.5.0
+[contact-fragment](collection-contracts.md#contact-fragments-147) and
+[transition-family](collection-contracts.md#transition-families-148) additions
+are schema-only interchange declarations: they do not make ordinary checks
+cross-file, infer membership, or add runtime policy. Keep per-file evidence
+and the collection manifest authoritative; do not merge, rename, or infer set
+membership merely to make a check run.
 
 ## The file is bloated, or the retargeter chokes
 
@@ -758,7 +763,7 @@ order; they are not general animation cleanup.
 | Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
 | Attachment, socket, or helper imports at the wrong size | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[runtime_nodes] selectors`; `[checks.rest-world-scale] expected_uniform_scale`, `uniform_scale_tolerance` | [Attachment nodes and inherited rest-world scale](#attachment-nodes-and-inherited-rest-world-scale) |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Skeleton signatures or cross-file clip identities disagree | per-file structural inspection and measurement; no cross-file contract yet ([#409](https://github.com/mmannerm/animsmith/issues/409)) | configure and test the retarget path; retain exact `(file, clip)` manifest identities | `[rig]`; collection contract is future work | [Skeleton and clip identity](#files-disagree-about-skeleton-or-clip-identity) |
+| Skeleton signatures or cross-file clip identities disagree | per-file structural inspection and measurement; collection identity and member binding are documented, while retargeting remains separate | configure and test the retarget path; retain exact `(file, clip)` manifest identities | `[rig]`; collection identity is in Appendix F, while cross-file checks remain future work | [Skeleton and clip identity](#files-disagree-about-skeleton-or-clip-identity) |
 | Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | inspect `constant-track`, then use `transform --prune-constant-tracks` only after reviewing transition coverage; otherwise clean/re-export in DCC | `[checks.<id>]` severity; `[clips.<name>] animates_bones` protects declared motion tracks | [Editing a clip](../examples/README.md#3-editing-a-clip) |
 
 Where the repair column says *re-export*, that is deliberate: animsmith
