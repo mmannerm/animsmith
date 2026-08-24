@@ -57,6 +57,8 @@ mod publish;
 mod render;
 mod scale;
 #[cfg(feature = "fbx")]
+mod staged_selector;
+#[cfg(feature = "fbx")]
 mod texture_processing;
 
 /// Exit codes, matching common asset-validation gate conventions:
