@@ -184,6 +184,7 @@ An asset-property refusal from `convert` or `assemble` is not success
 evidence. Under `--format json` it uses the separate immutable
 `urn:animsmith:schema:producer-refusal:1` contract, whose retrievable schema is
 [`producer-refusal-v1.schema.json`](schemas/producer-refusal-v1.schema.json).
+
 This keeps conversion evidence v1/v2, assembly evidence v1-v7, output v1-v9,
 and scale evidence v1-v5 immutable. The record has `outcome: "rejected"`, a
 null `result`, the command, and a typed `{stage, kind, detail}` rejection.
@@ -244,6 +245,20 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 contracts. The current CLI emits and
 `diff` reads output-v11; regenerate a current output-v11 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
+
+## Contact fragments
+
+[`contact-fragment-v1.schema.json`](schemas/contact-fragment-v1.schema.json)
+(`urn:animsmith:schema:contact-fragment:1`) is the strict, portable envelope
+for one selected clip's normalized contact facts. Its reader and RFC 8785
+canonical serializer live in `animsmith-core`; the 0.6.0 core contract
+validates the envelope but does not load assets, infer contacts, write
+sidecars, or implement trim/slice/resample/time-warp transforms. Those
+operations need their own complete output/refusal boundary and are deliberately
+deferred rather than exposing a partial transform API. Any future producer
+uses this reader and the existing `InputIdentity` and complete
+`DependencyClosureIdentityV1` bindings; it does not create another identity
+authority.
 
 ## Common envelope
 

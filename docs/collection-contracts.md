@@ -55,7 +55,12 @@ declaration or its tests.
 ## Contact fragments (#147)
 
 The contact-fragment V1 identity is
-`urn:animsmith:schema:contact-fragment:1`. It is an importable envelope that
+`urn:animsmith:schema:contact-fragment:1`.
+AnimSmith 0.6 now validates through a format-neutral strict core reader and
+bounded canonicalization seam. It still adds no asset loading/detection,
+sidecar publication, CLI command, transform, or runtime system.
+
+It is an importable envelope that
 can be merged into a host's one authoritative measured sidecar. It binds
 contact facts to the exact primary source bytes and complete versioned
 dependency closure, plus producer/tool version and an unambiguous clip
@@ -111,6 +116,15 @@ for its separate 16-level limit. Each exact maximum is accepted; N+1 is
 rejected during bounded decoding before the excess value is retained or an
 unbounded canonical buffer is allocated; canonical-byte limits use a bounded
 JCS sink.
+JSON Schema `maxLength` counts Unicode code points, while this reader's text
+and identifier limits count UTF-8 bytes, so a non-ASCII value may satisfy the
+schema and still be correctly refused by the reader. The reader accepts decoded
+IEEE-754 numbers only within the safe magnitude
+`[-9007199254740991, 9007199254740991]`; this includes identity byte counts
+and opaque extension payload numbers. Extension payloads are stored from their
+bounded canonical JCS bytes, so canonical serialization followed by strict
+reread preserves the validated fragment value. An explicitly empty `extensions` array
+is refused so omitted and present data do not canonicalize to the same value.
 
 A minimal collection-scoped envelope is:
 
@@ -118,7 +132,7 @@ A minimal collection-scoped envelope is:
 {
   "schema": "urn:animsmith:schema:contact-fragment:1",
   "schema_version": 1,
-  "producer": {"tool": "animsmith", "version": "0.5.0"},
+  "producer": {"tool": "animsmith", "version": "0.6.0"},
   "artifact": {"sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "bytes": 123456},
   "dependency_closure_identity": {"sha256": "1111111111111111111111111111111111111111111111111111111111111111", "bytes": 456},
   "clip": {"scope": "collection", "logical_id": "com.example.pack/locomotion/walk-forward-in-place", "source": "walk-forward", "take_index": 0, "take_name": "Take 001"},

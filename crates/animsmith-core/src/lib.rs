@@ -124,6 +124,7 @@ pub mod check;
 mod checks;
 pub mod collection;
 pub mod config;
+pub mod contact_fragment;
 pub mod contract;
 pub mod dependency_closure;
 pub mod diff;
@@ -162,6 +163,16 @@ pub use config::{
     ClipExpectations, Config, ConfigValidationError, GaitGroup, MovementOwner, Pinned,
     RuntimeNodeSelectorResolution, RuntimeNodeSelectors, RuntimeNodesConfig, SeveritySetting,
     SyncGroup, TimeComplementSettings,
+};
+pub use contact_fragment::{
+    CONTACT_FRAGMENT_V1_ID, CONTACT_FRAGMENT_V1_MAX_CANONICAL_BYTES, CONTACT_FRAGMENT_V1_MAX_DEPTH,
+    CONTACT_FRAGMENT_V1_MAX_EVENTS, CONTACT_FRAGMENT_V1_MAX_EXTENSION_PAYLOAD_BYTES,
+    CONTACT_FRAGMENT_V1_MAX_EXTENSION_PAYLOAD_DEPTH, CONTACT_FRAGMENT_V1_MAX_EXTENSIONS,
+    CONTACT_FRAGMENT_V1_MAX_IDENTIFIER_BYTES, CONTACT_FRAGMENT_V1_MAX_SAFE_INTEGER,
+    CONTACT_FRAGMENT_V1_MAX_SOURCE_BYTES, CONTACT_FRAGMENT_V1_MAX_TEXT_BYTES,
+    CONTACT_FRAGMENT_V1_SCHEMA_VERSION, ContactClipReferenceV1, ContactEventKindV1, ContactEventV1,
+    ContactEventWindowV1, ContactExtensionV1, ContactFragmentError, ContactFragmentV1,
+    ContactPhaseV1, ContactProducerV1, ContactRoleV1,
 };
 pub use contract::{
     DiffEnvelope, InputIdentity, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,

@@ -324,9 +324,11 @@ animsmith/
 ```
 
 - **animsmith-core**: deps `glam` (the de-facto Rust game-math crate — do
-  not hand-roll mat4/quat as the Python did), `serde`, `serde_json`, `sha2`,
-  and `thiserror`. It owns strict versioned JSON contract validation but no
-  file-format knowledge or filesystem/network I/O. This is what embedding
+  not hand-roll mat4/quat as the Python did), `serde`, `serde_json`,
+  `serde_jcs` for strict bounded core-owned RFC 8785 canonical JSON contracts,
+  `sha2`, and `thiserror`. Its JCS use remains engine-, format-, filesystem-,
+  and network-agnostic. It owns strict versioned JSON contract validation but
+  no file-format knowledge or filesystem/network I/O. This is what embedding
   pipelines link.
 - **animsmith-gltf**: the `gltf` crate with trimmed features (no image
   decoding); owns GLB emission via `gltf-json`.
@@ -3400,8 +3402,13 @@ coverage refuses fragment generation. This is the identity only, not the full
 `dependency_closure` record used by output v10. The captured closure's
 `primary_input` must equal `artifact`; the producer and any consumer checking
 staleness validate that relationship against the complete captured closure.
-Unknown fields are rejected by the future strict reader. A mismatch in either
+Unknown fields are rejected by the strict core reader implemented in 0.6. A mismatch in either
 identity makes the fragment stale rather than authorizing a consumer to use it.
+
+AnimSmith 0.6 implements this format-neutral strict reader and its bounded
+canonicalization/identity seam in `animsmith-core`. It does not load an asset,
+detect contacts, publish a sidecar, add a CLI command, or implement contact
+transforms; those producer and consumer boundaries remain separately deferred.
 
 V1 deliberately requires the complete modeled closure, including declared
 dependencies such as textures that may not affect contact calculations. It can
@@ -3445,6 +3452,12 @@ Canonical bytes use the complete [RFC 8785 JSON Canonicalization Scheme
 sorting, string escaping, and number serialization rules. Every value,
 including an opaque extension payload, must be JCS-canonicalizable or the
 fragment is refused; an extension does not supply a private key-ordering rule.
+The reader accepts decoded IEEE-754 numbers only within the safe magnitude
+`[-9007199254740991, 9007199254740991]`, including identity byte counts and
+extension-payload numbers. Lexical decimal aliases are therefore the same
+decoded JCS value, not distinct V1 facts. Extension payloads are reparsed from
+their bounded JCS bytes before storage, so canonical serialization followed by
+strict reread preserves the validated fragment value.
 Before JCS serialization, a mixed point/window event sort key is exactly
 `(start, kind_rank, end_key, role, phase, event_id)`: a point sets
 `start = time`, `kind_rank = 0`, and the end sentinel `end_key = null`, which
@@ -3457,7 +3470,7 @@ UTF-16 code units exactly as RFC 8785 orders object property names; no Unicode
 normalization is applied. Extension arrays retain
 their declared order. Seconds and frame numbers, if
 present for display, are derived values and never identity or comparison
-coordinates. The future implementation must reject unknown fields in the
+coordinates. The strict core reader rejects unknown fields in the
 core envelope and events, duplicate event ids, non-finite values, out-of-range
 times, and ambiguous references before accepting the fragment. These rules
 make a regenerated fragment reviewable without making event detection part of
@@ -3481,6 +3494,8 @@ reader accepts each exact maximum and rejects the first byte, element, string
 byte, or nesting level above it while decoding, before retaining that excess
 value or allocating an unbounded canonical buffer. Canonical byte limits are
 enforced with a bounded JCS sink.
+The published JSON Schema's `maxLength` limits are Unicode-code-point limits;
+the reader's UTF-8 byte limits are deliberately stricter for non-ASCII text.
 
 Extensions, when present, are an array of strict envelopes. Each envelope has
 exactly `schema`, `schema_version`, and `payload`; `schema` is the extension's
