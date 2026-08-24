@@ -1,8 +1,56 @@
 # Collection contract extensions
 
-AnimSmith 0.5.0 records two schema-only extensions to the file-scoped
+This document records versioned schema-only extensions to the file-scoped
 collection decision in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file-scoped-clip-identity-and-collections).
-They are interchange declarations, not new CLI commands or runtime systems.
+The contact-fragment V1 is retained in the 0.5.0 contract line; the
+directional-speed policy V1 is an ordered 0.6.0 slice. They are interchange
+declarations, not new CLI commands or runtime systems.
+
+## Directional-speed policy V1 (#552, ordered slice)
+
+The strict `collection-directional-speed-policy:1` reader is an ordered,
+manifest-bound declaration for a later directional-speed evaluator. It is a
+separate TOML envelope: it does not add fields to collection-manifest V1,
+revise collection-output V2, infer membership from filenames or paths, or add
+the eventual `collection evaluate-directional-speed` command. This slice only
+freezes the typed reader and binding contract; evaluation and result emission
+remain a follow-up.
+
+The envelope repeats the exact manifest identity (`collection_id` plus
+`{sha256, bytes}`), one directional-blend `runtime_set_id`, and every existing
+logical member exactly once in manifest order. Each member has one nonzero,
+unique semantic `[x, z]` coordinate. `source_basis.x` and `source_basis.z`
+are orientation witnesses for raw collection-output V2 +X/+Z endpoint
+displacement in that semantic plane; their magnitudes are nonsemantic, and a
+future evaluator uses unit axes for heading. They must be finite, bounded,
+nonzero, and perpendicular. `diagonal_behavior` is closed and applies to
+unit-input/base targets: for coordinate `c`, `preserve` uses gain
+`g(c) = hypot(c)` while `normalize` uses `g(c) = 1`. Thus uniform expected
+speed is `base * g(c)`, authored expected speed is the member's base
+`speed_mps * g(c)`, and ratios compare
+`expected_measured_ratio_i_to_ref = declared_expected_ratio_i * g(c_i) /
+g(c_ref)`, with the reference declaration fixed at `1.0`. Direction comparison
+is unaffected by this gain.
+
+The declaration also carries finite bounded `direction_tolerance_deg` in the
+inclusive range `0..=180` degrees. A future evaluator compares normalized raw
+endpoint displacement for heading, treats zero net displacement as typed
+complete/not_evaluated, and uses the published `speed_mps` for magnitude (not
+travel distance). It binds the raw policy and raw collection-output evidence
+by their exact `InputIdentity` values. An unrepresentable ratio comparison is
+a typed numeric-range/not_evaluated outcome, never an implicit pass or fail.
+
+`uniform` requires `uniform_speed_mps` and `speed_tolerance_mps`; `authored`
+requires each member's `speed_mps` plus `speed_tolerance_mps`; and `ratios`
+requires a declared `reference_member`, each member's `expected_ratio`, and a
+dimensionless `ratio_tolerance`. Mode-inapplicable fields are rejected. The
+strict reader rejects parse/declaration failures including unknown or
+duplicate fields, unknown tokens, malformed identities, duplicate member
+ids or coordinates, invalid coordinates or basis, nonfinite/out-of-range
+values, and N+1 members before retaining them. Separate binding validation
+rejects stale manifest identity, wrong runtime-set id or kind, and missing,
+extra, or reordered member sequences. No licensed asset data belongs in this
+declaration or its tests.
 
 ## Contact fragments (#147)
 

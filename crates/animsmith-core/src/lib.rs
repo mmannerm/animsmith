@@ -45,6 +45,11 @@
 //! fits in marketplace intake, mocap cleanup, outsourced acceptance, and CI.
 //! A [runnable example] exercises the complete library flow.
 //!
+//! The directional-speed policy V1 API freezes source-basis vectors as
+//! orientation witnesses for raw collection-output V2 +X/+Z endpoint
+//! displacement. Basis magnitudes are nonsemantic; future evaluation uses
+//! unit axes for heading and the raw evidence identity for binding.
+//!
 //! [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md
 //! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
 //! [runnable example]: https://github.com/mmannerm/animsmith/blob/main/crates/animsmith/examples/embed.rs
@@ -122,6 +127,7 @@ pub mod config;
 pub mod contract;
 pub mod dependency_closure;
 pub mod diff;
+pub mod directional_speed_policy;
 pub mod engine_contract;
 pub mod evaluation;
 pub mod finding;
@@ -177,6 +183,19 @@ pub use dependency_closure::{
     DependencyResourceKeyV1, DependencyResourcePurposeV1, DependencyResourceRefusalReasonV1,
     DependencyResourceUnavailableReasonV1, ExternalResourceIdentityV1, ResourceClosureBudgetV1,
     ResourceKeySyntaxV1,
+};
+pub use directional_speed_policy::{
+    COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_ID,
+    COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_AXIS_COSINE,
+    COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_COMPONENT,
+    COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_DIRECTION_TOLERANCE_DEG,
+    COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_MEMBERS,
+    COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_SCALAR,
+    COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_SCHEMA_VERSION,
+    CollectionDirectionalSpeedDiagonalBehaviorV1, CollectionDirectionalSpeedManifestIdentityV1,
+    CollectionDirectionalSpeedMemberV1, CollectionDirectionalSpeedModeV1,
+    CollectionDirectionalSpeedPolicyError, CollectionDirectionalSpeedPolicyV1,
+    CollectionDirectionalSpeedSourceBasisV1,
 };
 pub use engine_contract::{
     ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS, ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,

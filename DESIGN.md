@@ -3847,3 +3847,99 @@ canonicalization before a declaration is accepted. This is a declaration
 contract only: checks, findings, reports, required gameplay metadata, inferred
 edges, state machines, blend trees, and runtime transition generation remain
 follow-up work tracked by #153/#164 in 0.6.0 or later.
+
+### F.12 Directional-speed policy V1 (#552, ordered slice 1)
+
+The directional-speed policy is a separate, manifest-bound declaration for
+directional-blend runtime sets. It is not a field in collection-manifest V1,
+does not revise collection-output V2, and does not infer membership from
+filenames, paths, engine controller types, or other host metadata. Slice 1
+freezes only the typed contract and strict TOML reader. The evaluator,
+evaluation result, and CLI command remain later consumers of this contract.
+
+The schema identity is
+`urn:animsmith:schema:collection-directional-speed-policy:1`, with
+`schema_version = 1`. Its wire envelope has exactly these top-level fields:
+`schema`, `schema_version`, `manifest`, `runtime_set_id`, `source_basis`,
+`diagonal_behavior`, `direction_tolerance_deg`, `mode`, the mode-specific
+fields, and `members`. `manifest` has exactly the collection-manifest V1
+schema/version, `collection_id`, and `input = { sha256, bytes }`; that input
+identity is the exact manifest identity, not a digest of normalized values.
+`runtime_set_id` is a logical id that must bind to a manifest runtime set of
+kind `directional-blend`.
+
+The explicit `source_basis` contains `x` and `z`, each a semantic 2-D
+orientation witness for the raw collection-output V2 +X/+Z endpoint
+displacement. Their magnitudes are nonsemantic; a future evaluator uses unit
+axes for heading comparison. Every component is finite and has absolute value
+at most `1,000,000`. Each axis is nonzero. Perpendicularity is judged by the
+normalized dot product
+
+`abs(dot(x / ||x||, z / ||z||)) <= 1e-9`.
+
+The normalized calculation uses `hypot` lengths and component-wise division,
+so its decision is independent of axis scale and does not square tiny values
+or overflow large bounded values. The `1e-9` cosine threshold is the frozen
+`COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_AXIS_COSINE` bound. It rejects
+near-parallel and diagonal axes, including tiny vectors, while accepting
+orthogonal subnormal-scale axes when their finite representation has a
+nonzero length.
+
+`members` is an ordered sequence. Each member has exactly one logical `id`
+and one semantic `coordinate = [x, z]`; it may additionally carry
+`speed_mps` only for authored mode or `expected_ratio` only for ratios mode.
+Coordinates are finite, bounded by the same component limit, nonzero by
+component value, and unique by exact finite bit identity after canonicalizing
+both signed zeros to one zero key. The reader preserves declared order. A
+consumer binds the policy only when the manifest identity, runtime-set id,
+runtime-set kind, and complete member sequence all match exactly; missing,
+extra, or reordered members are binding errors.
+
+The closed `diagonal_behavior` tokens are `preserve` and `normalize`. The
+existing `speed_mps` and `expected_ratio` fields are unit-input/base targets.
+For a semantic coordinate `c`, `preserve` defines gain `g(c) = hypot(c)` and
+`normalize` defines gain `g(c) = 1`. Therefore uniform expected speed is
+`base * g(c)`, authored expected speed is the member base `speed_mps * g(c)`,
+and ratios compare
+`expected_measured_ratio_i_to_ref = declared_expected_ratio_i * g(c_i) /
+g(c_ref)`, with the reference declaration fixed at `1.0`. This gain does not
+affect direction comparison. The declaration carries finite
+non-negative `direction_tolerance_deg`, bounded inclusively by `180` degrees.
+The closed speed modes are:
+
+* `uniform`: requires finite non-negative bounded `uniform_speed_mps` and
+  `speed_tolerance_mps`; member speed and ratio fields are forbidden.
+* `authored`: requires finite non-negative bounded `speed_tolerance_mps` and
+  exactly one finite non-negative bounded `speed_mps` per member; uniform and
+  ratio fields are forbidden.
+* `ratios`: requires finite non-negative bounded `ratio_tolerance`, a
+  `reference_member`, and exactly one finite non-negative bounded
+  `expected_ratio` per member. The reference member must be present and its
+  expected ratio must be exactly `1.0`; speed fields are forbidden.
+
+All scalar bounds are inclusive. Unknown fields, duplicate TOML keys,
+unknown mode or diagonal tokens, missing or mode-inapplicable fields,
+malformed lowercase SHA-256 identities, invalid manifest schema/version,
+non-finite numbers, out-of-range components, invalid bases, invalid member
+coordinates, duplicate member ids, and duplicate coordinates are strict
+control errors. The source reader is capped at 8,388,608 bytes and 4,096
+members; each exact limit is accepted and the first excess member is rejected
+before it is retained. The reader first decodes only `schema` and
+`schema_version` so unsupported declarations receive stable unsupported-schema
+or unsupported-version classifications; it then performs the complete
+deny-unknown-fields decode and typed invariant validation. This two-pass
+lifecycle is classification, not a second policy authority.
+
+There is no evaluator inference or fallback. A future evaluator consumes a
+validated policy together with strict raw collection-output V2 evidence,
+compares normalized raw endpoint displacement for heading, and treats zero net
+displacement as typed `complete/not_evaluated`. It uses the published
+`speed_mps` for magnitude rather than travel distance, applies the diagonal
+gain above only to the expected speed target, preserves complete member
+coverage, and binds the raw policy and evidence by their exact
+`InputIdentity` values before emitting a separately versioned evaluation
+result. An unrepresentable ratio comparison is a typed
+`numeric-range/not_evaluated` outcome, not an implicit pass or fail.
+Those evaluator semantics, result schema, `collection
+evaluate-directional-speed` command, controller generation, retiming, stride
+rewriting, and universal speed rules are deferred to later ordered slices.
