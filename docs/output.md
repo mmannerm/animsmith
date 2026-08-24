@@ -1167,7 +1167,7 @@ present measurement remains a contract error and exit 2.
 The report reader caps each serialized input at 256 MiB before UTF-8 or JSON
 parsing. It validates provenance and measurement-independent prediction links,
 then the complete measurements-v15 contract, then measurement-pointer values,
-before `diff` can extract measurements. Output v9 and earlier inputs receive
+before `diff` can extract measurements. Output v10 and earlier inputs receive
 the normal regeneration guidance.
 
 `lint --format json` deliberately rejects `--allow` so machine evidence is

@@ -375,6 +375,29 @@ fn auto_profile_scores_non_overridden_bindings_with_explicit_roles() {
 }
 
 #[test]
+fn auto_with_only_explicit_matches_keeps_the_custom_map_without_a_profile_tie() {
+    let skel = skeleton_of(&["custom_hips", "custom_left", "custom_right"]);
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "rig": {
+            "profile": "auto",
+            "roles": {
+                "hips": "custom_hips",
+                "left_foot": "custom_left",
+                "right_foot": "custom_right"
+            }
+        }
+    }))
+    .unwrap();
+
+    let roles = resolve_configured_roles(&skel, &config.rig);
+    assert_eq!(roles.profile, "custom");
+    assert_eq!(roles.outcome(), ResolutionOutcome::Resolved);
+    assert_eq!(roles.get(Role::Hips), Some(0));
+    assert_eq!(roles.get(Role::LeftFoot), Some(1));
+    assert_eq!(roles.get(Role::RightFoot), Some(2));
+}
+
+#[test]
 fn configured_resolution_labels_unresolved_and_inline_only_rigs() {
     let skel = skeleton_of(&["pelvis_custom"]);
     let unknown = resolve_configured_roles(&skel, &Config::default().rig);

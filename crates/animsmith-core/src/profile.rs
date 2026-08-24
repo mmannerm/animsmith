@@ -435,7 +435,9 @@ fn detect_profile_excluding(
         .collect();
     let candidates: Vec<_> = resolved
         .iter()
-        .filter(|roles| !roles.outcome.is_ambiguous() && roles.len() + score_offset >= 2)
+        .filter(|roles| {
+            !roles.outcome.is_ambiguous() && !roles.is_empty() && roles.len() + score_offset >= 2
+        })
         .cloned()
         .collect();
     let Some(best_score) = candidates.iter().map(ResolvedRoles::len).max() else {
@@ -548,12 +550,14 @@ pub fn resolve_configured_roles(skeleton: &Skeleton, rig: &RigConfig) -> Resolve
         (true, false) => base.profile,
         (true, true) => format!("{}+custom", base.profile),
     };
-    let outcome =
-        if explicit_coverage_gap || base.outcome == ResolutionOutcome::Coverage || map.is_empty() {
-            ResolutionOutcome::Coverage
-        } else {
-            ResolutionOutcome::Resolved
-        };
+    let outcome = if explicit_coverage_gap
+        || (base_contributed && base.outcome == ResolutionOutcome::Coverage)
+        || map.is_empty()
+    {
+        ResolutionOutcome::Coverage
+    } else {
+        ResolutionOutcome::Resolved
+    };
     ResolvedRoles {
         profile,
         map,

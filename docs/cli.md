@@ -636,7 +636,7 @@ See [output.md](output.md) and
 [`output-v11.schema.json`](schemas/output-v11.schema.json). Nested measurement
 evidence has its own
 [`measurements-v15.schema.json`](schemas/measurements-v15.schema.json) contract.
-Output-v9 and earlier reports, including reports carrying measurements v14,
+Output-v10 and earlier reports, including reports carrying measurements v14,
 are historical contracts; regenerate a current output-v11 report from the
 original asset with the current CLI before using `diff`.
 
