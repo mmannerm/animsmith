@@ -2677,6 +2677,91 @@ fn v7_projects_unused_dual_quaternion_clip_geometry_before_scale_preparation() {
 }
 
 #[test]
+fn v7_reused_canonical_base_path_keeps_the_base_rest_bind_projection() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.fbx"),
+        rigged_limb_triangle_fbx(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("./base.fbx")).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    let inputs = evidence["rest_bind_scale"]["inputs"].as_array().unwrap();
+    assert_eq!(inputs.len(), 2);
+    assert_eq!(inputs[0]["application"], "rest-bind");
+    assert_eq!(inputs[1]["application"], "rest-bind");
+    assert_eq!(inputs[0]["sha256"], inputs[1]["sha256"]);
+    assert_eq!(inputs[1]["declared_path"], "./base.fbx");
+    assert!(inputs[1]["resolved_source_skin_index"].is_u64());
+}
+
+#[test]
+fn v7_reused_canonical_clip_path_reuses_the_first_clip_tracks_projection() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    std::fs::write(
+        dir.path().join("inputs/base.fbx"),
+        rigged_limb_triangle_fbx(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("inputs/walk.fbx"), skinless_animation_fbx()).unwrap();
+    std::fs::write(
+        dir.path().join("recipe.toml"),
+        format!(
+            "{}\n[[clips]]\nname = \"run\"\ninput = \"./walk.fbx\"\ntake = \"take\"\n",
+            fbx_recipe_v7("walk.fbx")
+        ),
+    )
+    .unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    let inputs = evidence["rest_bind_scale"]["inputs"].as_array().unwrap();
+    assert_eq!(inputs.len(), 3);
+    assert_eq!(inputs[1]["application"], "skinless-clip-tracks");
+    assert_eq!(inputs[2]["application"], "skinless-clip-tracks");
+    assert_eq!(inputs[1]["sha256"], inputs[2]["sha256"]);
+    assert_eq!(inputs[1]["bytes"], inputs[2]["bytes"]);
+    assert_eq!(
+        inputs[1]["basis_fingerprint"],
+        inputs[2]["basis_fingerprint"]
+    );
+    assert_eq!(
+        inputs[1]["source_projection"],
+        inputs[2]["source_projection"]
+    );
+    assert_eq!(inputs[2]["declared_path"], "./walk.fbx");
+    assert!(inputs[1].get("resolved_source_skin_index").is_none());
+    assert!(inputs[2].get("resolved_source_skin_index").is_none());
+
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(
+        assembled
+            .clips
+            .iter()
+            .map(|clip| clip.name.as_str())
+            .collect::<Vec<_>>(),
+        ["walk", "run"],
+        "reusing one prepared source must retain both declared logical clips"
+    );
+}
+
+#[test]
 fn v7_still_refuses_dual_quaternion_geometry_on_the_base_atomically() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
