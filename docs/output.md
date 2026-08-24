@@ -443,12 +443,14 @@ Full rest/bind rows name
 `urn:animsmith:character-assembly-scale-basis:1`; animation-only clip
 projections name
 `urn:animsmith:character-assembly-skinless-clip-scale-basis:1` and omit the
-inapplicable resolved skin index. A captured FBX source may carry a skin or
-mesh; its `source_projection` inventory remains raw-source evidence while the
+inapplicable resolved skin index. A captured clip source may carry a skin or
+mesh; its `source_projection` record remains raw-source evidence while the
 track-only scale projection excludes geometry, deformation, materials, and
-bind state before serialization. A glTF/GLB row retains the existing full
-rest/bind application unless its strictly preflighted source is already
-meshless and skinless.
+bind state before rebasing. For glTF/GLB, role-specific preflight retains
+framing, dependency, raw-coverage, named-skeleton, and animation
+accessor/layout safety. The stable `skinless-clip-tracks` value names the
+projected operation domain, not the raw source contents. Base and full
+rest/bind rows remain strict.
 `residual_comparison_counts` uses the same twelve stable
 field names as `proof.residuals`, keeping every measured maximum paired with
 the count from the shared proof API without changing immutable scale-evidence

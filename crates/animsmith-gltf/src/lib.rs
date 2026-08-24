@@ -4,7 +4,9 @@
 //! emits a document as
 //! glTF/GLB, and the [`fix`] module provides byte-surgical quaternion
 //! repairs. [`preflight_scale_source`] inventories the original raw source and
-//! fails closed on domains that current scale producers cannot preserve.
+//! fails closed on domains that current scale producers cannot preserve, while
+//! [`preflight_clip_track_source`] captures the narrower role-specific
+//! animation projection used by clip-track consumers.
 //! Malformed inputs report [`LoadError`]; output failures
 //! report [`WriteError`].
 //!
@@ -82,8 +84,8 @@ pub use capability::{
     GltfBufferCapability, GltfBufferSourceKind, GltfBufferViewCapability, GltfCapabilityManifest,
     GltfCapabilityViolation, GltfCapabilityViolationKind, GltfContainerKind,
     GltfInstancingCapability, GltfNodeCapability, GltfNodeRestKind, GltfPrimitiveCapability,
-    GltfScalePreflightError, GltfScaleSource, GltfSkinCapability, preflight_scale_source,
-    preflight_scale_source_bytes,
+    GltfScalePreflightError, GltfScaleSource, GltfSkinCapability, preflight_clip_track_source,
+    preflight_clip_track_source_bytes, preflight_scale_source, preflight_scale_source_bytes,
 };
 pub use scale::{
     GltfRawJsonDifference, GltfRawJsonDifferenceKind, GltfRawJsonDifferenceSummary,

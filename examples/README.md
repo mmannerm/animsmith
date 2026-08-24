@@ -756,11 +756,12 @@ For glTF/GLB or inventory-complete normalized/baked FBX assembly, add
 `[rest_bind_scale]` with the required exact `root_node_name` and
 `expected_factor` fields. The base must resolve that name to one source node
 and exactly one non-empty skin whose every joint is that node or a descendant.
-Every distinct FBX clip is projected to its normalized skeleton and baked
-takes, even when its raw container carries unused geometry or a skin. A
-glTF/GLB clip uses the compatible track-only path only when complete source
-coverage proves it has no skins and the captured document independently has no
-mesh instances. The basis proof covers the selected base skin joints, exact
+Every distinct FBX clip is projected to its normalized skeleton and takes. A
+glTF/GLB clip retains its existing successful full rest/bind or meshless
+track-only path; its clip-track gate additionally admits only failures in
+unused geometry, deformation, material, or bind domains while retaining
+framing, dependency, raw-coverage, named-skeleton, and animation
+accessor/layout safety. The basis proof covers the selected base skin joints, exact
 root, their named ancestry, and actual track targets; unreferenced base-only
 geometry descendants need not appear in the clip. Every input passes basis
 compatibility before remapping.

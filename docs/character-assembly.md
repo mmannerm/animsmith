@@ -152,10 +152,12 @@ The block has no defaults: the exact normalized root-node name and finite
 positive expected factor are both required. In the captured base, the name
 must resolve to exactly one source node and exactly one non-empty source skin
 whose every joint is that node or its descendant. Every distinct FBX
-clip-only input uses the track-only case described below, regardless of
-whether its raw container also carries geometry or a skin that assembly never
-selects. glTF/GLB inputs retain the existing full rest/bind path, or the
-track-only path when the captured source has no skin or mesh instance.
+clip-only input uses the track-only case described below. A glTF/GLB clip
+retains its existing successful full rest/bind or meshless track-only path;
+role-specific admission additionally selects the track-only path when only
+geometry, material, deformation, or bind obligations that assembly never
+consumes would fail. Framing, parser, topology, dependency, raw-coverage,
+named-skeleton, and animation accessor/layout checks remain strict.
 Missing or repeated names and zero or multiple applicable base skins fail
 closed. Leading or trailing
 whitespace is invalid rather than
@@ -385,14 +387,16 @@ participating input before remapping and that proof consumed the exact bytes
 subsequently published.
 
 V7 constructs an explicit animation-only projection for each distinct FBX
-clip-only input. The projection retains complete source-skeleton node coverage
+clip-only input and for each glTF/GLB clip admitted to the track-only path. The
+projection retains complete source-skeleton node coverage
 and every normalized take, while excluding source meshes, mesh instances,
 materials, skins, and inverse-bind state that cannot contribute to assembly.
-The captured input digest and source-projection inventory still describe the
-unmodified source, including unsupported deformation such as dual-quaternion
-skinning. A glTF/GLB clip continues to use this track-only application only
-when strict raw preflight succeeds and the captured source has no skin or mesh
-instance; otherwise it retains the full rest/bind path. The clip projection's
+The captured input digest and source-projection evidence still describe the
+unmodified source, including unsupported FBX deformation or glTF bind payload.
+For glTF/GLB, the role-specific raw gate excludes only obligations wholly owned
+by those projected domains; malformed animation accessors, matrix-target
+animation, unsafe dependencies, and incomplete raw construct coverage still
+refuse. The clip projection's
 exact named root, every joint in the selected base skin, and the named
 ancestors connecting that rig domain must match the accepted skinned base
 basis in normalized topology. Rest translation, rotation, and scale remain
@@ -407,7 +411,9 @@ base plan supplies each named translation/scale target factor; cubic-spline
 in/value/out triplets are rebased together. A skinless base still refuses, as
 does any clip projection with incomplete source coverage, an incompatible
 named basis, or a track outside the base scale domain. Bind matrices are
-neither synthesized nor claimed for the track-only row; the exact final
+neither synthesized nor claimed for the track-only row. The retained
+`skinless-clip-tracks` label names the projected operation domain, not a
+requirement that the captured source was skinless. The exact final
 assembled artifact remains covered by the shared skinned-base rewrite and
 proof. Independently serialized animation-only FBX clip projections are
 compared under that proof's Appendix-D numeric tolerance; full rest/bind inputs

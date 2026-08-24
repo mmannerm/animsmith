@@ -2794,7 +2794,60 @@ fn v7_still_refuses_dual_quaternion_geometry_on_the_base_atomically() {
 }
 
 #[test]
-fn v7_preserves_the_skinless_gltf_geometry_refusal() {
+fn v7_projects_gltf_clip_geometry_and_missing_inverse_binds() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let base = rest_bind_scale_rig_gltf();
+    std::fs::write(dir.path().join("inputs/base.gltf"), &base).unwrap();
+    let mut clip: Value = serde_json::from_slice(&base).unwrap();
+    clip["skins"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("inverseBindMatrices");
+    let clip = serde_json::to_vec(&clip).unwrap();
+    let expected_clip_sha256 = sha256_hex(&clip);
+    std::fs::write(dir.path().join("inputs/walk.gltf"), &clip).unwrap();
+    let recipe = fbx_recipe_v7("walk.gltf")
+        .replace("base_input = \"base.fbx\"", "base_input = \"base.gltf\"")
+        .replace("take = \"take\"", "take = \"clip\"");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&evidence, EVIDENCE_SCHEMA_V7);
+    let clip_input = &evidence["rest_bind_scale"]["inputs"][1];
+    assert_eq!(clip_input["application"], "skinless-clip-tracks");
+    assert_eq!(clip_input["sha256"], expected_clip_sha256);
+    assert_eq!(clip_input["bytes"], clip.len());
+    assert_eq!(clip_input["source_projection"]["kind"], "raw-gltf");
+    assert!(clip_input.get("resolved_source_skin_index").is_none());
+
+    let source_base = animsmith_gltf::load_bytes(Path::new("base.gltf"), &base).unwrap();
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(assembled.clips.len(), 1);
+    assert_eq!(
+        (
+            assembled.assets.instances.len(),
+            assembled.assets.source_skeleton.skins.len(),
+            assembled.assets.materials.len(),
+        ),
+        (
+            source_base.assets.instances.len(),
+            source_base.assets.source_skeleton.skins.len(),
+            source_base.assets.materials.len(),
+        ),
+        "projected clip geometry, skin, bind, and material domains must not reach the output"
+    );
+}
+
+#[test]
+fn v7_projects_skinless_gltf_clip_geometry() {
     let dir = tempfile::tempdir().expect("temporary directory");
     std::fs::create_dir(dir.path().join("inputs")).unwrap();
     std::fs::write(
@@ -2816,6 +2869,102 @@ fn v7_preserves_the_skinless_gltf_geometry_refusal() {
     }
     animsmith_gltf::write::write(&clip, &dir.path().join("inputs/walk.glb")).unwrap();
     std::fs::write(dir.path().join("recipe.toml"), fbx_recipe_v7("walk.glb")).unwrap();
+
+    let output = run(dir.path());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        evidence["rest_bind_scale"]["inputs"][1]["application"],
+        "skinless-clip-tracks"
+    );
+    let assembled = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(
+        (
+            assembled.assets.instances.len(),
+            assembled.assets.source_skeleton.skins.len(),
+            assembled.clips.len(),
+        ),
+        (1, 1, 1),
+        "only the base contributes geometry and skin while the clip contributes tracks"
+    );
+}
+
+#[test]
+fn v7_projects_non_triangle_clip_geometry_but_keeps_the_base_strict() {
+    let valid = rest_bind_scale_rig_gltf();
+    let mut unsupported: Value = serde_json::from_slice(&valid).unwrap();
+    unsupported["meshes"][0]["primitives"][0]["mode"] = serde_json::json!(1);
+    let unsupported = serde_json::to_vec(&unsupported).unwrap();
+
+    let clip_dir = tempfile::tempdir().expect("clip temporary directory");
+    std::fs::create_dir(clip_dir.path().join("inputs")).unwrap();
+    std::fs::write(clip_dir.path().join("inputs/base.gltf"), &valid).unwrap();
+    std::fs::write(clip_dir.path().join("inputs/walk.gltf"), &unsupported).unwrap();
+    let recipe = fbx_recipe_v7("walk.gltf")
+        .replace("base_input = \"base.fbx\"", "base_input = \"base.gltf\"")
+        .replace("take = \"take\"", "take = \"clip\"");
+    std::fs::write(clip_dir.path().join("recipe.toml"), &recipe).unwrap();
+    let clip_output = run(clip_dir.path());
+    assert!(
+        clip_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&clip_output.stdout),
+        String::from_utf8_lossy(&clip_output.stderr)
+    );
+    let evidence: Value = serde_json::from_slice(&clip_output.stdout).unwrap();
+    assert_eq!(
+        evidence["rest_bind_scale"]["inputs"][1]["application"],
+        "skinless-clip-tracks"
+    );
+
+    let base_dir = tempfile::tempdir().expect("base temporary directory");
+    std::fs::create_dir(base_dir.path().join("inputs")).unwrap();
+    std::fs::write(base_dir.path().join("inputs/base.gltf"), unsupported).unwrap();
+    std::fs::write(base_dir.path().join("inputs/walk.gltf"), valid).unwrap();
+    std::fs::write(base_dir.path().join("recipe.toml"), recipe).unwrap();
+    let prior_artifact = b"prior artifact";
+    let prior_evidence = b"prior evidence";
+    std::fs::write(base_dir.path().join("character.glb"), prior_artifact).unwrap();
+    std::fs::write(base_dir.path().join("character.json"), prior_evidence).unwrap();
+
+    let base_output = run(base_dir.path());
+    assert_eq!(base_output.status.code(), Some(1));
+    assert!(refusal_detail(&base_output).contains("preflight rejected input base.gltf"));
+    assert_eq!(
+        std::fs::read(base_dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(base_dir.path().join("character.json")).unwrap(),
+        prior_evidence
+    );
+}
+
+#[test]
+fn v7_keeps_missing_inverse_binds_strict_on_the_base_atomically() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    std::fs::create_dir(dir.path().join("inputs")).unwrap();
+    let valid = rest_bind_scale_rig_gltf();
+    let mut base: Value = serde_json::from_slice(&valid).unwrap();
+    base["skins"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("inverseBindMatrices");
+    std::fs::write(
+        dir.path().join("inputs/base.gltf"),
+        serde_json::to_vec(&base).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("inputs/walk.gltf"), valid).unwrap();
+    let recipe = fbx_recipe_v7("walk.gltf")
+        .replace("base_input = \"base.fbx\"", "base_input = \"base.gltf\"")
+        .replace("take = \"take\"", "take = \"clip\"");
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
     let prior_artifact = b"prior artifact";
     let prior_evidence = b"prior evidence";
     std::fs::write(dir.path().join("character.glb"), prior_artifact).unwrap();
@@ -2823,13 +2972,18 @@ fn v7_preserves_the_skinless_gltf_geometry_refusal() {
 
     let output = run(dir.path());
     assert_eq!(output.status.code(), Some(1));
-    assert!(refusal_detail(&output).contains("skinless-clip-has-mesh-instances"));
+    assert!(
+        refusal_detail(&output).contains("rest_bind_scale preflight rejected input base.gltf"),
+        "{}",
+        refusal_detail(&output)
+    );
     assert_eq!(
-        (
-            std::fs::read(dir.path().join("character.glb")).unwrap(),
-            std::fs::read(dir.path().join("character.json")).unwrap(),
-        ),
-        (prior_artifact.to_vec(), prior_evidence.to_vec())
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        prior_artifact
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.json")).unwrap(),
+        prior_evidence
     );
 }
 
