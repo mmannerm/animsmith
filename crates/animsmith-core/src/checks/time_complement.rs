@@ -3,7 +3,7 @@
 //! member's normalized cycle time.
 
 use crate::check::{Check, CheckCtx};
-use crate::checks::gait_gap;
+use crate::checks::{GaitPhaseGapContext, gait_gap, gait_phase_gap};
 use crate::config::TimeComplementSettings;
 use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
@@ -81,38 +81,14 @@ impl Check for TimeComplement {
                     );
                     continue;
                 };
-                let phase = match metrics.gait_phase_outcome(ctx.roles) {
-                    GaitPhaseOutcome::MissingBilateralFootRoles => {
-                        gaps.push(
-                            CoverageGap::new(
-                                CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                                "gait phase has no bilateral foot-role subject for time-complement comparison",
-                            )
+                let outcome = metrics.gait_phase_outcome(ctx.roles);
+                let GaitPhaseOutcome::Measured(phase) = outcome else {
+                    gaps.push(
+                        gait_phase_gap(outcome, GaitPhaseGapContext::TimeComplement)
+                            .expect("non-measured gait phase outcome has a coverage gap")
                             .scope(measurement_scope),
-                        );
-                        continue;
-                    }
-                    GaitPhaseOutcome::NoFootHeightSwing => {
-                        gaps.push(
-                            CoverageGap::new(
-                                CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                                "gait phase has no left/right foot-height swing for time-complement comparison",
-                            )
-                            .scope(measurement_scope),
-                        );
-                        continue;
-                    }
-                    GaitPhaseOutcome::Measured(phase) => phase,
-                    GaitPhaseOutcome::Unavailable => {
-                        gaps.push(
-                            CoverageGap::new(
-                                CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                                "gait phase could not be fitted for time-complement comparison",
-                            )
-                            .scope(measurement_scope),
-                        );
-                        continue;
-                    }
+                    );
+                    continue;
                 };
                 if metrics.lr_amplitude_m < settings.min_lr_amplitude_m {
                     gaps.push(

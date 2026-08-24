@@ -686,16 +686,37 @@ fn zero_amplitude_group_members_are_not_phase_subjects_at_a_zero_evidence_floor(
             .all(|scope| scope.code != EvaluationScopeCode::PHASE_COHERENCE),
         "zero-swing members must not be consumed as a completed phase comparison: {gait:#?}"
     );
-    let subjects: Vec<_> = gait
+    let phase_gaps: Vec<_> = gait
         .gaps()
         .iter()
         .filter(|gap| {
-            gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE
-                && gap.message == "gait phase has no left/right foot-height swing"
+            gap.scope
+                .as_ref()
+                .is_some_and(|scope| scope.code == EvaluationScopeCode::PHASE_MEASUREMENT)
         })
-        .map(|gap| gap.scope.as_ref().unwrap().subject.as_deref().unwrap())
+        .map(|gap| {
+            (
+                gap.code.as_str(),
+                gap.message.as_str(),
+                gap.scope.as_ref().unwrap().subject.as_deref().unwrap(),
+            )
+        })
         .collect();
-    assert_eq!(subjects, ["walk", "walk_b"]);
+    assert_eq!(
+        phase_gaps,
+        [
+            (
+                "measurement_unavailable",
+                "gait phase has no left/right foot-height swing",
+                "walk",
+            ),
+            (
+                "measurement_unavailable",
+                "gait phase has no left/right foot-height swing",
+                "walk_b",
+            ),
+        ]
+    );
 }
 
 #[test]
@@ -775,18 +796,30 @@ fn one_sided_group_member_without_a_phase_retains_clip_attribution() {
     let records = evaluate_checks(&ctx, &all_checks(), CheckSelection::All).unwrap();
     let gait = check(&records, "gait-group");
 
-    let gap = gait
+    let phase_gaps: Vec<_> = gait
         .gaps()
         .iter()
-        .find(|gap| {
-            gap.code == CoverageGapCode::MEASUREMENT_UNAVAILABLE
-                && gap.scope.as_ref().is_some_and(|scope| {
-                    scope.code.as_str() == "phase_measurement"
-                        && scope.subject.as_deref() == Some("walk")
-                })
+        .filter(|gap| {
+            gap.scope
+                .as_ref()
+                .is_some_and(|scope| scope.code == EvaluationScopeCode::PHASE_MEASUREMENT)
         })
-        .expect("unfittable per-member phase retains clip attribution");
-    assert!(gap.message.contains("no bilateral foot-role subject"));
+        .map(|gap| {
+            (
+                gap.code.as_str(),
+                gap.message.as_str(),
+                gap.scope.as_ref().unwrap().subject.as_deref().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        phase_gaps,
+        [(
+            "roles_unresolved",
+            "gait phase has no bilateral foot-role subject",
+            "walk",
+        )]
+    );
 }
 
 /// Foot-slide reports its own role gap from its `speed_mps` applicability.
