@@ -128,6 +128,7 @@ pub mod contact_fragment;
 pub mod contract;
 pub mod dependency_closure;
 pub mod diff;
+pub mod directional_speed_evaluation;
 pub mod directional_speed_policy;
 pub mod engine_contract;
 pub mod evaluation;
@@ -196,9 +197,18 @@ pub use dependency_closure::{
     DependencyResourceUnavailableReasonV1, ExternalResourceIdentityV1, ResourceClosureBudgetV1,
     ResourceKeySyntaxV1,
 };
+pub use directional_speed_evaluation::{
+    COLLECTION_DIRECTIONAL_SPEED_EVALUATION_V1_ID,
+    COLLECTION_DIRECTIONAL_SPEED_EVALUATION_V1_SCHEMA_VERSION,
+    CollectionDirectionalSpeedEvaluationControlError, CollectionDirectionalSpeedEvaluationV1,
+    CollectionDirectionalSpeedEvidenceMemberV1, CollectionDirectionalSpeedEvidenceV1,
+    CollectionDirectionalSpeedFindingV1, CollectionDirectionalSpeedLifecycleV1,
+    CollectionDirectionalSpeedNotEvaluatedReasonV1, evaluate_collection_directional_speed_v1,
+};
 pub use directional_speed_policy::{
-    COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_ID,
+    COLLECTION_DIRECTIONAL_SPEED_EVIDENCE_V1_MAX_BYTES, COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_ID,
     COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_AXIS_COSINE,
+    COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_BYTES,
     COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_COMPONENT,
     COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_DIRECTION_TOLERANCE_DEG,
     COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_MEMBERS,

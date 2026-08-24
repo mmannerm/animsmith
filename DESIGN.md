@@ -3945,16 +3945,25 @@ or unsupported-version classifications; it then performs the complete
 deny-unknown-fields decode and typed invariant validation. This two-pass
 lifecycle is classification, not a second policy authority.
 
-There is no evaluator inference or fallback. A future evaluator consumes a
-validated policy together with strict raw collection-output V2 evidence,
-compares normalized raw endpoint displacement for heading, and treats zero net
-displacement as typed `complete/not_evaluated`. It uses the published
-`speed_mps` for magnitude rather than travel distance, applies the diagonal
-gain above only to the expected speed target, preserves complete member
-coverage, and binds the raw policy and evidence by their exact
-`InputIdentity` values before emitting a separately versioned evaluation
-result. An unrepresentable ratio comparison is a typed
-`numeric-range/not_evaluated` outcome, not an implicit pass or fail.
-Those evaluator semantics, result schema, `collection
-evaluate-directional-speed` command, controller generation, retiming, stride
-rewriting, and universal speed rules are deferred to later ordered slices.
+There is no evaluator inference or fallback. Slice 2 provides a pure,
+format-neutral `collection-directional-speed-evaluation:1` result and a typed
+adapter from already strictly decoded collection-output V2 evidence; it does
+not revise V2 or add a command. The immutable result binds the raw policy TOML
+and evidence JSON `InputIdentity` values as well as the manifest, and retains
+every member's coordinate, raw root-travel values, projected heading,
+comparison values, pass/violation state, lifecycle, and gaps.
+
+For complete evidence, finite endpoint X/Z displacement is normalized before
+the unit source X/Z axes form its semantic heading. The declared coordinate is
+also normalized; the included angle is `atan2(abs(cross), dot)` in degrees.
+Speed uses published `speed_mps`, never travel. Every tolerance is inclusive,
+so a finding requires strict excess. A zero endpoint, zero ratio reference, or
+unrepresentable derived product/ratio yields a complete typed not-evaluated
+result (`zero_net_displacement`, `zero_reference_speed`, or `numeric_range`)
+without a subset or fabricated finding. Preserve uses `hypot(coordinate)` as
+the expected-speed gain; normalize uses one, and the ratio reference remains
+exactly one. Findings retain manifest order, direction before speed/ratio.
+
+The `collection evaluate-directional-speed` command, filesystem publication,
+controller generation, retiming, stride rewriting, and universal speed rules
+remain deferred to later ordered slices.

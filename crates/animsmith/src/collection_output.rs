@@ -10,10 +10,12 @@ use animsmith_core::metrics::circular_phase_spread;
 use animsmith_core::{
     COLLECTION_MANIFEST_V1_MAX_AGGREGATE_MEMBERS, COLLECTION_MANIFEST_V1_MAX_AGGREGATE_WORK,
     COLLECTION_MANIFEST_V1_MAX_CLIPS, COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS,
-    COLLECTION_MANIFEST_V1_MAX_SOURCES, COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES, CollectionIdV1,
-    CollectionLogicalIdV1, CollectionRuntimeSetKindV1, CollectionSourceKeyV1,
-    DependencyResourceKeyV1, InputIdentity, LintEnvelope, MeasurementReportInput,
-    ResourceKeySyntaxV1, ToolInfo,
+    COLLECTION_MANIFEST_V1_MAX_SOURCES, COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES,
+    CollectionDirectionalSpeedEvaluationControlError, CollectionDirectionalSpeedEvidenceMemberV1,
+    CollectionDirectionalSpeedEvidenceV1, CollectionDirectionalSpeedLifecycleV1,
+    CollectionDirectionalSpeedManifestIdentityV1, CollectionIdV1, CollectionLogicalIdV1,
+    CollectionRuntimeSetKindV1, CollectionSourceKeyV1, DependencyResourceKeyV1, InputIdentity,
+    LintEnvelope, MeasurementReportInput, ResourceKeySyntaxV1, ToolInfo,
 };
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -932,6 +934,78 @@ impl CollectionOutputInput {
         self.wire.clips.len()
     }
 
+    /// Adapt one already strictly decoded V2 runtime set to the pure
+    /// directional-speed evaluator input. This intentionally adds no second
+    /// JSON authority and retains every raw root-travel field and gap.
+    #[allow(
+        dead_code,
+        reason = "slice 2 freezes the typed adapter before the CLI consumer"
+    )]
+    pub(crate) fn directional_speed_evidence(
+        &self,
+        runtime_set_id: &CollectionLogicalIdV1,
+    ) -> Result<
+        CollectionDirectionalSpeedEvidenceV1,
+        CollectionDirectionalSpeedEvaluationControlError,
+    > {
+        let manifest = CollectionDirectionalSpeedManifestIdentityV1::new(
+            CollectionIdV1::new(self.wire.manifest.collection_id.clone()).map_err(|_| {
+                CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence
+            })?,
+            identity_from_wire(&self.wire.manifest.input)?,
+        )
+        .map_err(|_| CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence)?;
+        let set = self
+            .wire
+            .runtime_sets
+            .iter()
+            .find(|set| set.id == runtime_set_id.as_str())
+            .ok_or(CollectionDirectionalSpeedEvaluationControlError::InvalidBinding)?;
+        let root = set
+            .evidence
+            .as_ref()
+            .ok_or(CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence)?
+            .root_travel
+            .lifecycle;
+        let lifecycle = match root {
+            RuntimeSetLifecycle::Complete => CollectionDirectionalSpeedLifecycleV1::Complete,
+            RuntimeSetLifecycle::Incomplete => CollectionDirectionalSpeedLifecycleV1::Incomplete,
+        };
+        let gaps = set
+            .gaps
+            .iter()
+            .map(|gap| {
+                CollectionLogicalIdV1::new(gap.clone()).map_err(|_| {
+                    CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let members = set
+            .members
+            .iter()
+            .map(|member| {
+                Ok(CollectionDirectionalSpeedEvidenceMemberV1::new(
+                    CollectionLogicalIdV1::new(member.id.clone()).map_err(|_| {
+                        CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence
+                    })?,
+                    member.root_travel.duration_s,
+                    member.root_travel.horizontal_displacement_x_m,
+                    member.root_travel.horizontal_displacement_z_m,
+                    member.root_travel.horizontal_travel_m,
+                    member.root_travel.speed_mps,
+                ))
+            })
+            .collect::<Result<Vec<_>, CollectionDirectionalSpeedEvaluationControlError>>()?;
+        CollectionDirectionalSpeedEvidenceV1::new(
+            manifest,
+            runtime_set_id.clone(),
+            set._kind,
+            lifecycle,
+            gaps,
+            members,
+        )
+    }
+
     fn validate(&self, read_bytes: u64) -> Result<(), CollectionOutputError> {
         let wire = &self.wire;
         if wire.schema_version != COLLECTION_OUTPUT_V2_SCHEMA_VERSION
@@ -942,6 +1016,7 @@ impl CollectionOutputInput {
             || wire.manifest.schema_version != animsmith_core::COLLECTION_MANIFEST_V1_SCHEMA_VERSION
             || CollectionIdV1::new(wire.manifest.collection_id.clone()).is_err()
             || !valid_identity(&wire.manifest.input)
+            || wire.manifest.input.bytes > animsmith_core::COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES
             || !valid_budget(&wire.budget)
         {
             return Err(CollectionOutputError::Malformed);
@@ -1043,6 +1118,26 @@ impl CollectionOutputInput {
         }
         Ok(())
     }
+}
+
+#[allow(
+    dead_code,
+    reason = "called by the deferred typed directional-speed adapter"
+)]
+fn identity_from_wire(
+    wire: &IdentityWire,
+) -> Result<InputIdentity, CollectionDirectionalSpeedEvaluationControlError> {
+    let mut digest = [0_u8; 32];
+    if wire.sha256.len() != 64 {
+        return Err(CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence);
+    }
+    for (index, chunk) in wire.sha256.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+        let text = std::str::from_utf8(chunk)
+            .map_err(|_| CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence)?;
+        digest[index] = u8::from_str_radix(text, 16)
+            .map_err(|_| CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence)?;
+    }
+    Ok(InputIdentity::from_sha256_digest(digest, wire.bytes))
 }
 
 fn summarize(
@@ -2295,6 +2390,29 @@ mod tests {
         output.render_json_vec().unwrap()
     }
 
+    fn directional_output_model() -> CollectionOutput {
+        let output = output_model_fixture(true, true, 0);
+        let members = output.runtime_sets[0]
+            .members
+            .iter()
+            .map(|member| RuntimeSetMember::new(member.id.clone(), member.resolution.clone()))
+            .collect();
+        CollectionOutput::new(
+            crate::current_tool(),
+            output.manifest.clone(),
+            output.sources.clone(),
+            output.clips.clone(),
+            vec![CollectionRuntimeSetRecord::new(
+                "com.example/set",
+                CollectionRuntimeSetKindV1::DirectionalBlend,
+                members,
+            )],
+            output.work.primary_source_bytes,
+            0,
+        )
+        .unwrap()
+    }
+
     fn json_fixture(two_sources: bool, with_set: bool) -> JsonValue {
         serde_json::from_slice(&output_fixture(two_sources, with_set)).unwrap()
     }
@@ -2448,15 +2566,19 @@ mod tests {
         .unwrap()
     }
 
-    fn rejects(mut value: JsonValue) {
-        let bytes = (0..3)
+    fn stable_json_bytes(mut value: JsonValue) -> Vec<u8> {
+        (0..3)
             .find_map(|_| {
                 let bytes = serde_json::to_vec(&value).unwrap();
                 let prior = value["work"]["serialized_bytes"].as_u64();
                 value["work"]["serialized_bytes"] = (bytes.len() as u64).into();
                 (prior == Some(bytes.len() as u64)).then_some(bytes)
             })
-            .expect("serialized byte count converges");
+            .expect("serialized byte count converges")
+    }
+
+    fn rejects(value: JsonValue) {
+        let bytes = stable_json_bytes(value);
         assert!(read_collection_output(&bytes[..]).is_err());
     }
 
@@ -2469,6 +2591,10 @@ mod tests {
             16_u64 * 1024 * 1024 * 1024
         );
         assert_eq!(budget["max_serialized_bytes"], 256_u64 * 1024 * 1024);
+        assert_eq!(
+            COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES,
+            animsmith_core::COLLECTION_DIRECTIONAL_SPEED_EVIDENCE_V1_MAX_BYTES
+        );
     }
 
     #[test]
@@ -2477,6 +2603,77 @@ mod tests {
         let output = read_collection_output(&bytes[..]).unwrap();
         assert_eq!(output.source_count(), 2);
         assert_eq!(output.clip_count(), 2);
+    }
+
+    #[test]
+    fn strict_reader_rejects_over_budget_manifest_identity() {
+        let mut value = json_fixture(true, true);
+        value["manifest"]["input"]["bytes"] =
+            (animsmith_core::COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES + 1).into();
+        rejects(value);
+    }
+
+    #[test]
+    fn directional_speed_adapter_uses_strict_root_travel_evidence_without_subsets() {
+        let mut complete = directional_output_model();
+        set_root_travel(
+            &mut complete,
+            &[
+                ("com.example/clip-a", 2.0, 1.0, 0.0, 0.5),
+                ("com.example/clip-b", 4.0, 0.0, -2.0, 0.5),
+            ],
+        );
+        let mut complete_value = serde_json::to_value(&complete).unwrap();
+        for index in 0..2 {
+            let measurement = complete_value["clips"][index]["binding"]["measurements"].clone();
+            complete_value["sources"][index]["result"]["envelope"]["files"][0]["measurements"]["clips"]
+                ["take"] = measurement;
+        }
+        let complete_bytes = stable_json_bytes(complete_value);
+        let complete = read_collection_output(&complete_bytes[..]).unwrap();
+        let runtime_set_id = CollectionLogicalIdV1::new("com.example/set").unwrap();
+        let evidence = complete
+            .directional_speed_evidence(&runtime_set_id)
+            .unwrap();
+        assert_eq!(
+            evidence.manifest().input(),
+            &InputIdentity::from_bytes(b"[manifest]")
+        );
+        assert_eq!(
+            evidence.lifecycle(),
+            CollectionDirectionalSpeedLifecycleV1::Complete
+        );
+        assert!(evidence.gaps().is_empty());
+        assert_eq!(
+            evidence
+                .members()
+                .iter()
+                .map(|member| member.id().as_str())
+                .collect::<Vec<_>>(),
+            vec!["com.example/clip-a", "com.example/clip-b"]
+        );
+        assert_eq!(evidence.members()[0].duration_s, Some(2.0));
+        assert_eq!(
+            evidence.members()[1].horizontal_displacement_z_m,
+            Some(-2.0)
+        );
+
+        let incomplete_bytes = directional_output_model().render_json_vec().unwrap();
+        let incomplete = read_collection_output(&incomplete_bytes[..]).unwrap();
+        let evidence = incomplete
+            .directional_speed_evidence(&runtime_set_id)
+            .unwrap();
+        assert_eq!(
+            evidence.lifecycle(),
+            CollectionDirectionalSpeedLifecycleV1::Incomplete
+        );
+        assert!(evidence.gaps().is_empty());
+        assert_eq!(evidence.members().len(), 2);
+        assert!(evidence.members().iter().all(|member| {
+            member.duration_s == Some(0.0)
+                && member.horizontal_displacement_x_m.is_none()
+                && member.speed_mps.is_none()
+        }));
     }
 
     #[test]

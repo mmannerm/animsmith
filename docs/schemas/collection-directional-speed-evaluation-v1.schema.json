@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:collection-directional-speed-evaluation:1",
+  "title": "AnimSmith collection directional-speed evaluation V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "manifest",
+    "policy_input",
+    "evidence_input",
+    "runtime_set_id",
+    "lifecycle",
+    "gaps",
+    "members",
+    "findings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "urn:animsmith:schema:collection-directional-speed-evaluation:1"
+    },
+    "schema_version": { "const": 1 },
+    "manifest": { "$ref": "#/$defs/manifest" },
+    "policy_input": { "$ref": "#/$defs/identity_8m" },
+    "evidence_input": { "$ref": "#/$defs/identity_256m" },
+    "runtime_set_id": { "$ref": "#/$defs/id" },
+    "lifecycle": { "enum": ["complete", "incomplete"] },
+    "gaps": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "members": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/member" }
+    },
+    "not_evaluated_reason": {
+      "enum": [
+        "incomplete_root_travel",
+        "zero_net_displacement",
+        "zero_reference_speed",
+        "numeric_range"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "allOf": [{ "$ref": "#/$defs/result_state" }],
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "bytes"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "identity_8m": {
+      "allOf": [
+        { "$ref": "#/$defs/identity" },
+        { "properties": { "bytes": { "maximum": 8388608 } } }
+      ]
+    },
+    "identity_256m": {
+      "allOf": [
+        { "$ref": "#/$defs/identity" },
+        { "properties": { "bytes": { "maximum": 268435456 } } }
+      ]
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[a-z0-9][a-z0-9._/-]*$"
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["collection_id", "input"],
+      "properties": {
+        "collection_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "input": { "$ref": "#/$defs/identity_8m" }
+      }
+    },
+    "num": { "type": "number" },
+    "component": { "type": "number", "minimum": -1000000, "maximum": 1000000 },
+    "nonnegative": { "type": "number", "minimum": 0 },
+    "nullable_num": { "type": ["number", "null"] },
+    "nullable_nonnegative": { "type": ["number", "null"], "minimum": 0 },
+    "coord": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/component" }
+    },
+    "raw": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "duration_s",
+        "horizontal_displacement_x_m",
+        "horizontal_displacement_z_m",
+        "horizontal_travel_m",
+        "speed_mps"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "duration_s": { "$ref": "#/$defs/nullable_nonnegative" },
+        "horizontal_displacement_x_m": { "$ref": "#/$defs/nullable_num" },
+        "horizontal_displacement_z_m": { "$ref": "#/$defs/nullable_num" },
+        "horizontal_travel_m": { "$ref": "#/$defs/nullable_nonnegative" },
+        "speed_mps": { "$ref": "#/$defs/nullable_nonnegative" }
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinate", "evidence"],
+      "properties": {
+        "coordinate": { "$ref": "#/$defs/coord" },
+        "evidence": { "$ref": "#/$defs/raw" },
+        "projected_heading": { "$ref": "#/$defs/coord" },
+        "angle_deg": { "type": "number", "minimum": 0, "maximum": 180 },
+        "expected_speed_mps": { "$ref": "#/$defs/nonnegative" },
+        "measured_ratio": { "$ref": "#/$defs/nonnegative" },
+        "expected_ratio": { "$ref": "#/$defs/nonnegative" },
+        "magnitude_tolerance": { "$ref": "#/$defs/nonnegative" },
+        "magnitude_deviation": { "$ref": "#/$defs/nonnegative" },
+        "direction_passed": { "type": "boolean" },
+        "magnitude_passed": { "type": "boolean" }
+      }
+    },
+    "not_eval_member": {
+      "allOf": [
+        { "$ref": "#/$defs/member" },
+        {
+          "not": {
+            "anyOf": [
+              { "required": ["projected_heading"] },
+              { "required": ["angle_deg"] },
+              { "required": ["expected_speed_mps"] },
+              { "required": ["measured_ratio"] },
+              { "required": ["expected_ratio"] },
+              { "required": ["magnitude_tolerance"] },
+              { "required": ["magnitude_deviation"] },
+              { "required": ["direction_passed"] },
+              { "required": ["magnitude_passed"] }
+            ]
+          }
+        }
+      ]
+    },
+    "speed_member": {
+      "allOf": [
+        { "$ref": "#/$defs/member" },
+        {
+          "required": [
+            "projected_heading",
+            "angle_deg",
+            "expected_speed_mps",
+            "magnitude_tolerance",
+            "magnitude_deviation",
+            "direction_passed",
+            "magnitude_passed"
+          ],
+          "not": {
+            "anyOf": [
+              { "required": ["measured_ratio"] },
+              { "required": ["expected_ratio"] }
+            ]
+          }
+        }
+      ]
+    },
+    "ratio_member": {
+      "allOf": [
+        { "$ref": "#/$defs/member" },
+        {
+          "required": [
+            "projected_heading",
+            "angle_deg",
+            "measured_ratio",
+            "expected_ratio",
+            "magnitude_tolerance",
+            "magnitude_deviation",
+            "direction_passed",
+            "magnitude_passed"
+          ],
+          "not": { "required": ["expected_speed_mps"] }
+        }
+      ]
+    },
+    "result_state": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["not_evaluated_reason"],
+          "properties": {
+            "lifecycle": { "const": "incomplete" },
+            "not_evaluated_reason": { "const": "incomplete_root_travel" },
+            "findings": { "maxItems": 0 },
+            "members": { "items": { "$ref": "#/$defs/not_eval_member" } }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["not_evaluated_reason"],
+          "properties": {
+            "lifecycle": { "const": "complete" },
+            "not_evaluated_reason": {
+              "enum": [
+                "zero_net_displacement",
+                "zero_reference_speed",
+                "numeric_range"
+              ]
+            },
+            "findings": { "maxItems": 0 },
+            "members": { "items": { "$ref": "#/$defs/not_eval_member" } }
+          }
+        },
+        {
+          "type": "object",
+          "not": { "required": ["not_evaluated_reason"] },
+          "properties": {
+            "lifecycle": { "const": "complete" },
+            "members": { "items": { "$ref": "#/$defs/speed_member" } },
+            "findings": {
+              "items": {
+                "oneOf": [
+                  { "$ref": "#/$defs/direction_finding" },
+                  { "$ref": "#/$defs/speed_finding" }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "not": { "required": ["not_evaluated_reason"] },
+          "properties": {
+            "lifecycle": { "const": "complete" },
+            "members": { "items": { "$ref": "#/$defs/ratio_member" } },
+            "findings": {
+              "items": {
+                "oneOf": [
+                  { "$ref": "#/$defs/direction_finding" },
+                  { "$ref": "#/$defs/ratio_finding" }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "direction_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "member_id", "angle_deg", "tolerance_deg"],
+      "properties": {
+        "kind": { "const": "direction" },
+        "member_id": { "$ref": "#/$defs/id" },
+        "angle_deg": { "type": "number", "minimum": 0, "maximum": 180 },
+        "tolerance_deg": { "type": "number", "minimum": 0, "maximum": 180 }
+      }
+    },
+    "speed_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "member_id",
+        "measured_speed_mps",
+        "expected_speed_mps",
+        "tolerance_mps"
+      ],
+      "properties": {
+        "kind": { "const": "speed" },
+        "member_id": { "$ref": "#/$defs/id" },
+        "measured_speed_mps": { "$ref": "#/$defs/nonnegative" },
+        "expected_speed_mps": { "$ref": "#/$defs/nonnegative" },
+        "tolerance_mps": { "$ref": "#/$defs/nonnegative" }
+      }
+    },
+    "ratio_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "member_id",
+        "measured_ratio",
+        "expected_ratio",
+        "tolerance"
+      ],
+      "properties": {
+        "kind": { "const": "ratio" },
+        "member_id": { "$ref": "#/$defs/id" },
+        "measured_ratio": { "$ref": "#/$defs/nonnegative" },
+        "expected_ratio": { "$ref": "#/$defs/nonnegative" },
+        "tolerance": { "$ref": "#/$defs/nonnegative" }
+      }
+    },
+    "finding": {
+      "oneOf": [
+        { "$ref": "#/$defs/direction_finding" },
+        { "$ref": "#/$defs/speed_finding" },
+        { "$ref": "#/$defs/ratio_finding" }
+      ]
+    }
+  }
+}
