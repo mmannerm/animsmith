@@ -3,7 +3,7 @@
 This document records versioned schema-only extensions to the file-scoped
 collection decision in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file-scoped-clip-identity-and-collections).
 The contact-fragment V1 is retained in the 0.5.0 contract line; the
-directional-speed policy V1 is an ordered 0.6.0 slice. They are interchange
+directional-speed policy/evaluation V1 is an ordered 0.6.0 slice. They are interchange
 declarations, not new CLI commands or runtime systems.
 
 ## Directional-speed policy V1 (#552, ordered slice)
@@ -13,8 +13,8 @@ manifest-bound declaration for a later directional-speed evaluator. It is a
 separate TOML envelope: it does not add fields to collection-manifest V1,
 revise collection-output V2, infer membership from filenames or paths, or add
 the eventual `collection evaluate-directional-speed` command. This slice only
-freezes the typed reader and binding contract; evaluation and result emission
-remain a follow-up.
+freezes the typed reader, binding contract, pure evaluator, immutable result,
+and strict V2 adapter; command and publication remain a follow-up.
 
 The envelope repeats the exact manifest identity (`collection_id` plus
 `{sha256, bytes}`), one directional-blend `runtime_set_id`, and every existing
@@ -33,12 +33,14 @@ g(c_ref)`, with the reference declaration fixed at `1.0`. Direction comparison
 is unaffected by this gain.
 
 The declaration also carries finite bounded `direction_tolerance_deg` in the
-inclusive range `0..=180` degrees. A future evaluator compares normalized raw
-endpoint displacement for heading, treats zero net displacement as typed
-complete/not_evaluated, and uses the published `speed_mps` for magnitude (not
-travel distance). It binds the raw policy and raw collection-output evidence
-by their exact `InputIdentity` values. An unrepresentable ratio comparison is
-a typed numeric-range/not_evaluated outcome, never an implicit pass or fail.
+inclusive range `0..=180` degrees. The pure evaluator normalizes raw endpoint
+displacement before source-basis projection and uses published `speed_mps` for
+magnitude (not travel). Its immutable result binds raw policy and evidence
+`InputIdentity` values and retains a manifest-ordered row for every member:
+policy coordinate, raw evidence, projected heading, comparison values,
+tolerances, deviations, and pass/violation outcome. Incomplete root travel,
+zero endpoint, zero ratio reference, and numeric range are typed
+not-evaluated outcomes, never implicit passes, failures, or subsets.
 
 `uniform` requires `uniform_speed_mps` and `speed_tolerance_mps`; `authored`
 requires each member's `speed_mps` plus `speed_tolerance_mps`; and `ratios`

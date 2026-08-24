@@ -18,6 +18,10 @@ pub const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_ID: &str =
     "urn:animsmith:schema:collection-directional-speed-policy:1";
 /// Schema version for a directional-speed policy declaration.
 pub const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_SCHEMA_VERSION: u32 = 1;
+/// Maximum raw directional-speed policy TOML byte identity.
+pub const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_BYTES: u64 = 8 * 1024 * 1024;
+/// Maximum raw collection-output V2 JSON byte identity consumed by evaluation.
+pub const COLLECTION_DIRECTIONAL_SPEED_EVIDENCE_V1_MAX_BYTES: u64 = 256 * 1024 * 1024;
 /// Maximum policy members retained by the V1 reader.
 pub const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_MEMBERS: usize = 4_096;
 /// Maximum absolute source-basis or semantic-coordinate component.
@@ -97,11 +101,17 @@ pub struct CollectionDirectionalSpeedManifestIdentityV1 {
 
 impl CollectionDirectionalSpeedManifestIdentityV1 {
     /// Construct an identity from the exact collection id and manifest bytes.
-    pub fn new(collection_id: CollectionIdV1, input: InputIdentity) -> Self {
-        Self {
+    pub fn new(
+        collection_id: CollectionIdV1,
+        input: InputIdentity,
+    ) -> Result<Self, CollectionDirectionalSpeedPolicyError> {
+        if input.bytes() > crate::COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES {
+            return Err(CollectionDirectionalSpeedPolicyError::ManifestTooLarge);
+        }
+        Ok(Self {
             collection_id,
             input,
-        }
+        })
     }
 
     /// Collection namespace token.
@@ -439,6 +449,9 @@ pub enum CollectionDirectionalSpeedPolicyError {
     /// The policy did not carry the exact manifest identity.
     #[error("policy manifest identity does not match evidence manifest")]
     ManifestMismatch,
+    /// The manifest byte identity exceeds the V1 bounded reader limit.
+    #[error("manifest identity exceeds the V1 byte limit")]
+    ManifestTooLarge,
     /// The referenced runtime set was not directional-blend.
     #[error("policy runtime set is not directional-blend")]
     WrongRuntimeSetKind,
@@ -504,7 +517,8 @@ mod tests {
             CollectionDirectionalSpeedManifestIdentityV1::new(
                 collection_id,
                 InputIdentity::from_bytes(b"manifest"),
-            ),
+            )
+            .unwrap(),
             CollectionLogicalIdV1::new("com.example/directional").unwrap(),
             CollectionDirectionalSpeedSourceBasisV1::new([1.0, 0.0], [0.0, 1.0]).unwrap(),
             CollectionDirectionalSpeedDiagonalBehaviorV1::Normalize,
@@ -604,7 +618,8 @@ mod tests {
         let manifest = CollectionDirectionalSpeedManifestIdentityV1::new(
             CollectionIdV1::new("com.example").unwrap(),
             InputIdentity::from_bytes(b"manifest"),
-        );
+        )
+        .unwrap();
         let members = vec![
             CollectionDirectionalSpeedMemberV1::new(
                 CollectionLogicalIdV1::new("com.example/left").unwrap(),
@@ -718,7 +733,8 @@ mod tests {
         let stale_manifest = CollectionDirectionalSpeedManifestIdentityV1::new(
             CollectionIdV1::new("com.other").unwrap(),
             InputIdentity::from_bytes(b"manifest"),
-        );
+        )
+        .unwrap();
         assert!(matches!(
             policy.validate_binding(
                 &stale_manifest,
@@ -747,5 +763,30 @@ mod tests {
             ),
             Err(CollectionDirectionalSpeedPolicyError::MemberOrderMismatch)
         ));
+    }
+
+    #[test]
+    fn manifest_identity_enforces_exact_v1_byte_limit() {
+        let collection = CollectionIdV1::new("com.example.collection").unwrap();
+        assert!(
+            CollectionDirectionalSpeedManifestIdentityV1::new(
+                collection.clone(),
+                InputIdentity::from_sha256_digest(
+                    [0; 32],
+                    crate::COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES
+                )
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            CollectionDirectionalSpeedManifestIdentityV1::new(
+                collection,
+                InputIdentity::from_sha256_digest(
+                    [0; 32],
+                    crate::COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES + 1
+                )
+            ),
+            Err(CollectionDirectionalSpeedPolicyError::ManifestTooLarge)
+        );
     }
 }

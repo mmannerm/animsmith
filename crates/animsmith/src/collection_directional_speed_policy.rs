@@ -18,7 +18,8 @@ use serde::de::{Deserializer, SeqAccess, Visitor};
 use std::fmt;
 
 /// Bounded policy input size for the strict V1 reader.
-pub(crate) const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_BYTES: u64 = 8 * 1024 * 1024;
+pub(crate) const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_BYTES: u64 =
+    animsmith_core::COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CollectionDirectionalSpeedPolicyControlKind {
@@ -158,7 +159,8 @@ fn decode_policy(wire: PolicyWire) -> Result<CollectionDirectionalSpeedPolicyV1,
     {
         return Err(());
     }
-    let manifest = CollectionDirectionalSpeedManifestIdentityV1::new(collection_id, input);
+    let manifest =
+        CollectionDirectionalSpeedManifestIdentityV1::new(collection_id, input).map_err(|_| ())?;
     let runtime_set_id = CollectionLogicalIdV1::new(wire.runtime_set_id).map_err(|_| ())?;
     let basis =
         CollectionDirectionalSpeedSourceBasisV1::new(wire.source_basis.x, wire.source_basis.z)
@@ -355,8 +357,9 @@ where
 mod tests {
     use super::*;
     use animsmith_core::{
-        COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_DIRECTION_TOLERANCE_DEG, CollectionIdV1,
-        CollectionRuntimeSetKindV1, InputIdentity,
+        COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_DIRECTION_TOLERANCE_DEG,
+        COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES, CollectionIdV1, CollectionRuntimeSetKindV1,
+        InputIdentity,
     };
 
     const DIGEST: &str = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -710,6 +713,20 @@ coordinate = [1.0, 0.0]
     }
 
     #[test]
+    fn strict_reader_rejects_an_over_budget_embedded_manifest_identity() {
+        let over = policy("uniform", "uniform_speed_mps = 1.0").replace(
+            "bytes = 7",
+            &format!("bytes = {}", COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES + 1),
+        );
+        assert_eq!(
+            parse_collection_directional_speed_policy_bytes(over.as_bytes())
+                .unwrap_err()
+                .kind(),
+            CollectionDirectionalSpeedPolicyControlKind::InvalidDeclaration
+        );
+    }
+
+    #[test]
     fn binds_exact_manifest_and_directional_members() {
         let parsed = parse_collection_directional_speed_policy_bytes(
             policy("uniform", "uniform_speed_mps = 1.0").as_bytes(),
@@ -734,7 +751,8 @@ coordinate = [1.0, 0.0]
         let stale_manifest = CollectionDirectionalSpeedManifestIdentityV1::new(
             CollectionIdV1::new("com.other").unwrap(),
             InputIdentity::from_bytes(b"manifest"),
-        );
+        )
+        .unwrap();
         let other_set = CollectionLogicalIdV1::new("com.example/other").unwrap();
         let extra = CollectionLogicalIdV1::new("com.example/extra").unwrap();
         for (candidate_manifest, candidate_set, candidate_kind, candidate_members) in [
