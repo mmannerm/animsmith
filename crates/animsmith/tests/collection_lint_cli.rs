@@ -84,6 +84,41 @@ fn retained_spike_emits_exact_deterministic_collection_evidence() {
     );
     assert_eq!(value["clips"][0]["binding"]["state"], "established");
     assert_eq!(value["runtime_sets"][0]["decision"], "not_evaluated");
+    assert_eq!(
+        value["runtime_sets"][0]["members"][0]["gait_phase"]["availability"],
+        "not_applicable"
+    );
+    assert_eq!(
+        value["runtime_sets"][0]["evidence"]["gait_phase"]["lifecycle"],
+        "incomplete"
+    );
+    assert!(
+        value["runtime_sets"][0]["evidence"]["gait_phase"]
+            .get("phase_spread")
+            .is_none()
+    );
+    assert!(value["runtime_sets"][1].get("evidence").is_none());
+    assert!(
+        value["runtime_sets"][1]["members"][0]
+            .get("gait_phase")
+            .is_none()
+    );
+    let mut missing_gait_member_evidence = value.clone();
+    missing_gait_member_evidence["runtime_sets"][0]["members"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("gait_phase");
+    assert!(
+        !collection_validator().is_valid(&missing_gait_member_evidence),
+        "the schema requires a gait-phase row for every gait-group member"
+    );
+    let mut non_gait_member_evidence = value.clone();
+    non_gait_member_evidence["runtime_sets"][1]["members"][0]["gait_phase"] =
+        serde_json::json!({"availability": "unavailable"});
+    assert!(
+        !collection_validator().is_valid(&non_gait_member_evidence),
+        "the schema rejects gait-phase rows on non-gait sets"
+    );
     assert_eq!(value["work"]["serialized_bytes"], first.stdout.len());
 
     let second = collection(&spike_path("collection.toml"));

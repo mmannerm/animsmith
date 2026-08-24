@@ -650,9 +650,12 @@ envelope. Source, clip, and set rows are canonical; member order remains the
 manifest order. Each established clip binds an exact source take index/name
 to a normalized clip index and carries duplicate-safe indexed measurements.
 The nested whole-document lint envelope retains output v10/measurements v15.
-Runtime sets prove membership completeness only and keep
-`decision: not_evaluated`; they make no blend, controller, engine, artistic,
-or gameplay claim. See
+Runtime sets keep `decision: not_evaluated`; they make no blend, controller,
+engine, artistic, or gameplay claim. Gait-group member rows additionally carry
+raw gait-phase availability, and only a fully established, phase-measured set
+emits `evidence.gait_phase.phase_spread` with basis
+`max_circular_deviation_from_mean`; this preserves existing gait lint
+threshold semantics. See
 [`collection-output-v1.schema.json`](schemas/collection-output-v1.schema.json).
 
 `generate addressability` has a separate immutable contract,
