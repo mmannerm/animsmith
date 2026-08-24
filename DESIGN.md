@@ -3576,7 +3576,9 @@ The inline output fragment's `duration_s` is exact: trim and slice use
 `input_duration_s * (b - a)`, resample preserves `input_duration_s`, and
 `time_warp` requires a finite positive `output_duration_s` field in its
 operation object, which the output fragment must equal. These duration rules
-apply even when every event is outside the retained interval.
+apply even when every event is outside the retained interval. If the rounded
+trim/slice duration is not finite and positive, the operation refuses before
+event inventory with `invalid_value` and an empty `event_outcomes` list.
 
 Every V1 time and duration number is a finite IEEE 754 binary64 value.
 Arithmetic uses round-to-nearest, ties-to-even after each operation in the
@@ -3606,7 +3608,8 @@ known operation has an out-of-domain interval, invalid endpoint/order, or
 non-monotonic control points; `invalid_binding` means the supplied fragment,
 primary artifact, or dependency-closure identity does not match current input;
 and `invalid_value` means valid finite inputs produced a non-finite arithmetic
-intermediate. Unsupported extension transformation uses
+intermediate or a rounded trim/slice duration outside the fragment's finite
+positive domain. Unsupported extension transformation uses
 `unsupported_extension` as specified above. A malformed fragment/result or
 duplicate, missing, or unknown event-outcome identity is a strict reader error,
 not another refusal result. The result records the operation, bindings, and

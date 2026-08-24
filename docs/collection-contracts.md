@@ -134,7 +134,9 @@ Global success requires all events to be transformed or outside and requires
 `output`; global refusal requires top-level `refusal` and omits `output`.
 The inline output duration is `input_duration_s * (b - a)` for trim/slice,
 the input duration for resample, and the required `output_duration_s` for
-`time_warp`; the inline fragment and operation must agree exactly.
+`time_warp`; the inline fragment and operation must agree exactly. A rounded
+trim/slice duration that is not finite and positive refuses before event
+inventory with `invalid_value` and an empty `event_outcomes` list.
 All time/duration inputs and results are finite IEEE 754 binary64. The
 normative sequence is `dx = rn(x1 - x0)`,
 `alpha = rn(rn(t - x0) / dx)`, `dy = rn(y1 - y0)`, and
