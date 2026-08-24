@@ -2985,3 +2985,352 @@ compression simulation, artistic thresholds, cross-file collection policy,
 or claims of visual, deformation, artistic, gameplay, or runtime correctness.
 Those require their own evidence and, where they rewrite motion, a separate
 accepted design and proof boundary.
+
+## Appendix F — decision record: file-scoped clip identity and collections
+
+Issue #409 decides the boundary used when logical clips and runtime
+relationships span physical source files. The decision is intentionally a
+protocol decision followed by bounded implementation slices. It does not make
+the existing multi-file spelling of `lint` collection-aware.
+
+### F.1 Separate collection authority
+
+AnimSmith will add two independently versioned contracts:
+
+- `urn:animsmith:schema:collection-manifest:1`, a strict TOML declaration; and
+- `urn:animsmith:schema:collection-output:1`, deterministic JSON evidence.
+
+They are consumed and produced by an explicit future command:
+
+```text
+animsmith collection lint COLLECTION.toml --format json
+```
+
+The command name, input identity, and output identity are distinct from
+ordinary `animsmith lint FILE...`. Existing lint and measure invocations remain
+document-local and continue to emit output v10 with measurements v15. A file
+extension, the presence of multiple inputs, or repeated embedded take names
+never switches commands implicitly.
+
+The collection manifest is the sole AnimSmith authority for:
+
+- durable logical clip identifiers;
+- physical source and take bindings;
+- optional source digest pins; and
+- cross-file runtime-set identity and membership.
+
+It is not a second authority for rig roles, per-clip expectations, check
+severity, or check tolerances. Those remain in an explicitly selected existing
+`animsmith.toml` config basis and retain their ordinary per-document selector
+semantics. The collection manifest may select a complete config basis for a
+source; it cannot override individual config fields.
+
+An assembly recipe is not a collection manifest. Assembly is a mutating
+producer that chooses a base, projects source domains, and publishes one
+artifact. Collection lint preserves each physical source and evaluates
+relationships without renaming, merging, or rewriting it. Likewise, the
+animation-pack evaluation manifest remains a skill-level evidence and taxonomy
+format. It may supply retained validation evidence, but it is not accepted as
+the CLI protocol.
+
+### F.2 Logical and physical clip identity
+
+Every collection clip has one user-declared logical id and one physical
+binding. Neither is sufficient alone.
+
+The logical id is the durable public reference used by runtime sets and future
+sidecar schemas. V1 ids are portable, lowercase ASCII, slash-separated tokens:
+
+```text
+com.example.pack/locomotion/walk-forward-in-place
+```
+
+Each token starts with `[a-z0-9]` and then contains only `[a-z0-9._-]`; empty,
+`.` and `..` tokens are invalid. An id has at least two tokens and at most 255
+bytes. The namespace is a collision-avoidance convention, not an ownership or
+compatibility claim. It is opaque to AnimSmith: filenames, directories, take
+names, vendor metadata, and clip behavior never generate or rewrite it.
+
+The physical binding contains:
+
+- one manifest-local source key;
+- a zero-based source-local take index; and
+- the exact expected embedded take name at that index.
+
+Index and name are both required. Name alone is ambiguous when many files or
+multiple takes use `Take 001`; index alone would silently accept reordered or
+renamed source content. The source record supplies the safe root-relative
+locator, observed `InputIdentity` (SHA-256 and bytes), optional expected
+SHA-256, and config basis. A source rename does not change the logical id, but
+the manifest must be edited explicitly and output records the changed physical
+locator. A digest pin is a binding assertion, not the logical identity.
+
+One physical `(source, take_index)` may have only one logical id. Two ids bound
+to the same physical take are an ambiguous duplicate and invalidate the
+manifest. One source may legitimately bind several distinct take indices.
+Distinct source locators with equal content digests remain distinct physical
+sources; content equality does not create an alias or compatibility claim.
+
+### F.3 Manifest V1 shape and composition
+
+The normative implementation issue freezes the exact JSON Schema and Rust wire
+types, but V1 has this authority shape:
+
+```toml
+schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example.pack"
+input_root = "assets"
+
+[[sources]]
+key = "walk-forward"
+path = "locomotion/walk_forward.fbx"
+config = "configs/locomotion.toml"
+expected_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+[[clips]]
+id = "com.example.pack/locomotion/walk-forward-in-place"
+source = "walk-forward"
+take_index = 0
+take_name = "Take 001"
+
+[[runtime_sets]]
+id = "com.example.pack/sets/walk-ring"
+kind = "directional-blend"
+members = [
+  "com.example.pack/locomotion/walk-forward-in-place",
+  "com.example.pack/locomotion/walk-left-in-place",
+]
+```
+
+The schema/version pair, collection id, nonempty source/clip arrays, and every
+field shown for clips are required. `input_root`, source `config`, and
+`expected_sha256` are optional. An absent config means `Config::default()`;
+there is no ambient config discovery. A selected config path applies to the
+whole loaded source document. The same source cannot select different configs
+for different takes.
+
+The collection id and source keys use one token from the lowercase ASCII
+logical-id grammar (no `/`) and are each limited to 255 bytes. Source keys are
+manifest-local plumbing rather than public clip identity. Every clip and
+runtime-set id must start with the exact collection id followed by `/`; this
+makes the declared collection namespace an enforced prefix without treating it
+as an ownership claim. Unknown fields, duplicate ids/keys, duplicate
+source/take bindings, malformed digests, dangling source references, dangling
+or repeated set members, and sets with fewer than two members are operator
+errors.
+
+Runtime-set ids use the logical-id grammar. V1 set kinds are membership
+vocabulary only:
+
+- `gait-group`;
+- `sync-group`;
+- `directional-blend`;
+- `speed-blend`;
+- `transition-chain`;
+- `mask-composition`;
+- `retarget-group`;
+- `paired-interaction`; and
+- `motion-database`.
+
+The closed list prevents typo-created semantics. A kind does not itself claim
+that its members blend, retarget, synchronize, or play correctly. V1 preserves
+declared member order because some relationship consumers assign coordinates
+or roles by declaration order. Output sorts source, clip, and set records by
+their stable ids, while each set retains its declared member order.
+
+V1 intentionally carries no generic policy map and no untyped TOML payload.
+Check-specific coordinates, tolerances, or controller policies require a typed,
+versioned contract owned by that check. They must not be smuggled into
+collection V1 as open data merely to avoid a schema revision.
+
+The parser and wire reader are bounded before allocation. The implementation
+slice must freeze limits for manifest bytes, source rows, clip rows, runtime
+sets, aggregate memberships, identifier bytes, and output bytes, with exact
+`N`/`N+1` tests and checked arithmetic. Safe path spelling reuses the immutable
+dependency-closure V1 key limits: 4,096 UTF-8 bytes and 128 components.
+
+### F.4 Rooted access and immutable sources
+
+The manifest directory is the control root. `input_root`, when present, is a
+relative directory below it; source paths resolve below that input root. When
+it is absent, source paths resolve below the manifest directory itself, never
+the process working directory or another ambient root. Config paths always
+resolve below the manifest directory. All declared paths use `/` as the
+separator and are retained as UTF-8 evidence labels, never as host absolute
+paths.
+
+The CLI/frontend owns filesystem access. It reuses
+`DependencyResourceKeyV1` with `ParserRelativePath` for lexical validation and
+uses a rooted resolver equivalent to the assembly/material boundaries. It
+rejects, before source execution:
+
+- empty, `.`, `..`, absolute, drive-qualified, UNC, remote, or backslash paths;
+- NUL, control characters, oversized keys, and excessive components;
+- a symbolic-link component or final symbolic link;
+- a non-directory input root, non-regular config target, or existing
+  non-regular source target; and
+- a canonical target outside its declared root.
+
+Case and Unicode are preserved exactly; AnimSmith does not case-fold or Unicode
+normalize a declaration into another identity. Lexical duplicates and aliases
+the host resolver exposes as one canonical target are rejected. V1 does not
+claim portable hard-link identity beyond what the host safely exposes.
+
+The source is opened read-only, measured, and never renamed or rewritten.
+Observed identity is derived from the bytes actually analyzed. An expected
+digest mismatch is evidence about a readable binding, not permission to use the
+bytes as if they matched. Root containment and symlink refusal prevent ordinary
+path escapes; they do not claim to defeat a privileged actor concurrently
+mutating the filesystem between checks and reads. That portable TOCTOU limit is
+retained in the public security notes.
+
+### F.5 Existing config and document-local checks
+
+Collection execution loads each source with exactly one selected existing
+config basis. `[clips."<selector>"]`, `[gait_groups]`, and `[sync_groups]`
+continue to resolve embedded clip names inside that one document. Reaching a
+config through a collection does not make its selectors match logical ids and
+does not reinterpret a previously valid single-document project.
+
+Document-local gait/sync checks may run as part of the nested source analysis.
+Collection runtime sets are separate records keyed by logical ids. A shared
+name does not merge the two domains, and membership is never inferred from a
+document-local group, filename, directory, or evaluation taxonomy.
+
+Core remains format- and filesystem-neutral. It may own validated bounded
+logical/source/take/set values and deterministic evidence types. TOML parsing,
+rooted access, loader dispatch, and command exit routing remain in the CLI
+frontend. Format loaders continue to own their raw-source and dependency
+closure projections.
+
+### F.6 Collection output and completeness
+
+`collection-output:1` is a new strict envelope, not output v11. It contains:
+
+- the manifest schema identity, observed manifest SHA-256/bytes, collection id,
+  tool version, and frozen collection budget identity;
+- one source record with its safe declared locator, observed or unavailable
+  source identity, expected-digest result, config state/path/digest, loader
+  state, and nested ordinary per-document result when available;
+- one clip record with logical id, source reference, take-index/name witness,
+  binding state, and exact nested measurement/check references;
+- one runtime-set record with id, kind, every declared member, each resolution
+  state, an explicit evaluation lifecycle, coverage gaps, findings, and any
+  later check-specific measured payload; and
+- deterministic totals and terminal work counters needed to prove bounds.
+
+Nested ordinary results retain their published schema identities and strict
+readers. They are not copied into a nearly equivalent collection-only shape.
+Host absolute paths and raw host I/O messages are never emitted. A source row
+uses its safe declared locator; stable typed states carry failures.
+
+The manifest digest binds the exact input bytes. Reordering otherwise
+equivalent TOML therefore changes that input identity, while the decoded source,
+clip, and set record arrays remain canonically ordered and byte-identical. The
+contract does not erase source-manifest changes merely to make two different
+inputs share a full output digest.
+
+A set may report a complete conclusion only when every declared member needed
+by that conclusion resolved and supplied the required evidence. Missing,
+rejected, mismatched, quarantined, or unmeasurable members remain visible. The
+evaluator must not shrink a set and report a clean result over the survivors.
+Member ordering in output is deterministic and every group-level measurement
+names its exact member basis.
+
+Logical ids, equal source digests, common skeleton names, or membership in one
+set prove none of retargeting, blend, artistic, deformation, engine, gameplay,
+or cross-pack compatibility. Those claims require their own declared policy and
+evidence.
+
+### F.7 Failure and exit policy
+
+The collection command introduces one explicit aggregate-data exception to the
+ordinary `lint` operator-error rule. The exception is scoped to a manifest that
+has already passed all control-plane validation:
+
+- exit `2` with no collection envelope for an unreadable or malformed manifest,
+  unsupported schema identity, budget violation, duplicate/unsafe declaration,
+  existing non-regular source target, missing/unreadable/malformed selected
+  config, serialization failure, or other control/tool error;
+- exit `1` with a schema-complete collection envelope when a lexically safe declared
+  source is missing or unreadable, when readable bytes are unsupported or
+  malformed, when a digest/take binding mismatches, or when another required
+  collection member cannot be established; and
+- otherwise apply the existing lint severity and required-unavailable rules to
+  available nested/check evidence, with exit `0` only when none requires `1`.
+
+Missing/unreadable bytes and readable-but-rejected bytes have distinct typed
+states even though both make a required collection incomplete. Unsafe paths and
+configs are never downgraded to data availability. This preserves all declared
+members for batch automation without silently changing ordinary `lint FILE...`,
+which retains exit `2` and no output for an unreadable primary file.
+
+An unavailable measurement inside a successfully loaded member follows the
+owning check's existing coverage/required policy; collection membership alone
+does not promote every nonblocking coverage gap to exit `1`. A source that
+cannot be loaded at all is different: the declared physical clip identity was
+not established, so the collection result is incomplete and exits `1`.
+
+### F.8 Retained evidence exercise
+
+The retained, externally generated animation-pack evidence behind #409 contains
+the required marketplace shape: many physical files repeat one embedded take
+name, while meaningful logical motions and runtime sets live outside those
+takes. The public eight-pack rollup reports 895 individual files, 582 logical
+motions, and 90 runtime-set records without publishing licensed source bytes.
+
+The mapping exercise is lossless for the foundation facts:
+
+- retained per-file locator and digest facts map to source rows;
+- retained logical-motion identities map to namespaced clip ids;
+- selected source-local takes map to the index-plus-name witness;
+- retained runtime-set membership maps to logical-id member lists; and
+- evaluator roles, confidence, capability profiles, workflow stages, report
+  prose, and engine observations deliberately remain outside this contract.
+
+This shows why the evaluation manifest must not be reused wholesale. It proves
+the collection identity and membership need while keeping evaluation taxonomy
+and product conclusions at their existing skill/report authority.
+
+The retained license-safe spike fixture is
+[`crates/animsmith/testdata/collection-spike`](crates/animsmith/testdata/collection-spike/README.md).
+Its self-authored, motion-free glTF files cover two distinct sources with the
+same bytes and embedded `Take 001`, one two-take source, cross-file gait and
+sync sets, an explicit config basis, and duplicate-member, missing-member, and
+escaping-source failures. The preservation table pins each locator, byte count,
+digest, logical id, and index-plus-name witness without pretending that the
+future output schema already exists.
+
+Repository tests use only synthetic/self-authored or explicitly
+redistribution-safe multi-file assets. Licensed pack bytes and motion-bearing
+derivatives remain outside source, CI, caches, logs, and public artifacts.
+
+### F.9 Implementation sequence and non-goals
+
+The 0.5.0 order is:
+
+1. this accepted decision record and bounded issue decomposition (#409);
+2. strict collection-manifest V1 types, budgets, logical/physical identity
+   validation, and rooted resolver with license-safe fixtures (#545);
+3. explicit `collection lint`, deterministic collection-output V1, nested
+   per-document execution, aggregate failure routing, and strict reader tests
+   (#546);
+4. contact-sidecar and transition-family schema spikes (#147 and #148) using
+   the logical clip-reference vocabulary without generation code;
+5. truthful gait-phase statistic publication (#504), after separately choosing
+   the existing maximum circular deviation from mean or a deliberate changed
+   threshold statistic; and
+6. root-speed/stride set evidence (#411), split so raw evidence and any typed
+   controller policy do not expand collection V1 into an open policy map.
+
+The parser/resolver and execution/output work are separate PRs because rooted
+I/O review and public output/exit review have different failure surfaces. Both
+must land in 0.5.0; closing the ADR alone does not deliver the milestone's
+collection foundation.
+
+This decision does not add collection report HTML, generated event sidecars,
+generated transitions, engine graph output, archive extraction, filename-based
+intent inference, source renaming/merging, motion rewriting, cross-pack
+compatibility claims, or a generic untyped runtime policy language. Those
+remain later consumers or separately accepted contracts.

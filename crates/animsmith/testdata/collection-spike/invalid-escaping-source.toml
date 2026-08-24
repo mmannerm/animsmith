@@ -1,0 +1,13 @@
+schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example.invalid-escape"
+
+[[sources]]
+key = "escape"
+path = "../outside.gltf"
+
+[[clips]]
+id = "com.example.invalid-escape/locomotion/walk"
+source = "escape"
+take_index = 0
+take_name = "Take 001"

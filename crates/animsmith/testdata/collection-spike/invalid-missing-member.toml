@@ -1,0 +1,21 @@
+schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example.invalid-missing"
+
+[[sources]]
+key = "walk"
+path = "source/walk-a.gltf"
+
+[[clips]]
+id = "com.example.invalid-missing/locomotion/walk"
+source = "walk"
+take_index = 0
+take_name = "Take 001"
+
+[[runtime_sets]]
+id = "com.example.invalid-missing/sets/dangling"
+kind = "gait-group"
+members = [
+  "com.example.invalid-missing/locomotion/walk",
+  "com.example.invalid-missing/locomotion/not-declared",
+]

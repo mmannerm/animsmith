@@ -1,0 +1,62 @@
+schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example.collection-spike"
+input_root = "source"
+
+[[sources]]
+key = "walk-a"
+path = "walk-a.gltf"
+config = "fixture.animsmith.toml"
+expected_sha256 = "277f55812602cc560dbb432dede43bb145b3caa6cb90493675442a8f5499f044"
+
+[[sources]]
+key = "walk-b"
+path = "walk-b.gltf"
+config = "fixture.animsmith.toml"
+expected_sha256 = "277f55812602cc560dbb432dede43bb145b3caa6cb90493675442a8f5499f044"
+
+[[sources]]
+key = "multi"
+path = "multi.gltf"
+config = "fixture.animsmith.toml"
+expected_sha256 = "959226925e607d368ea226ed68780cde249f75e73cfa90866db4afe9b2da2fe7"
+
+[[clips]]
+id = "com.example.collection-spike/locomotion/walk-a"
+source = "walk-a"
+take_index = 0
+take_name = "Take 001"
+
+[[clips]]
+id = "com.example.collection-spike/locomotion/walk-b"
+source = "walk-b"
+take_index = 0
+take_name = "Take 001"
+
+[[clips]]
+id = "com.example.collection-spike/multi/first"
+source = "multi"
+take_index = 0
+take_name = "Take 001"
+
+[[clips]]
+id = "com.example.collection-spike/multi/second"
+source = "multi"
+take_index = 1
+take_name = "Take 002"
+
+[[runtime_sets]]
+id = "com.example.collection-spike/sets/cross-file-gait"
+kind = "gait-group"
+members = [
+  "com.example.collection-spike/locomotion/walk-a",
+  "com.example.collection-spike/locomotion/walk-b",
+]
+
+[[runtime_sets]]
+id = "com.example.collection-spike/sets/cross-file-sync"
+kind = "sync-group"
+members = [
+  "com.example.collection-spike/locomotion/walk-a",
+  "com.example.collection-spike/multi/second",
+]
