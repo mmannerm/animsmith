@@ -53,12 +53,16 @@ A minimal collection-scoped envelope is:
 ```
 
 Seconds and frame values, when shown, are derived display values rather than
-identity or comparison coordinates. Canonical serialization uses UTF-8 JSON,
-stable object/member ordering, and the exact mixed-event sort tuple
+identity or comparison coordinates. Canonical bytes use the complete
+[RFC 8785 JSON Canonicalization Scheme (JCS)](https://www.rfc-editor.org/rfc/rfc8785),
+including its object-key, string, and number rules; every extension payload
+must also be JCS-canonicalizable. Before JCS serialization, events use the exact mixed-event sort tuple
 `(start, kind_rank, end_key, role, phase, event_id)`: points have kind rank `0`
 and a `null` end sentinel that sorts before every numeric window end; windows
 have kind rank `1` and their numeric end. This keeps point/window order stable
-when starts coincide.
+when starts coincide. Tuple strings, including opaque event ids, compare by
+unsigned UTF-16 code units exactly like RFC 8785 property names, without
+Unicode normalization.
 
 Trim, slice, resample, and time-warp use the separate
 `urn:animsmith:schema:contact-transform-result:1` result. It binds input and,
@@ -91,6 +95,10 @@ Global success requires all events to be transformed or outside and requires
 The inline output duration is `input_duration_s * (b - a)` for trim/slice,
 the input duration for resample, and the required `output_duration_s` for
 `time_warp`; the inline fragment and operation must agree exactly.
+All time/duration inputs and results are finite IEEE 754 binary64. The
+normative contract specifies round-to-nearest, ties-to-even after every
+displayed arithmetic step (with no fused or extended-precision intermediate),
+so independent producers feed the same numeric results to JCS.
 Refusal codes are `partial_window`, `invalid_mapping`, `invalid_binding`,
 `event_identity_mismatch`, `invalid_value`, and `unsupported_operation`.
 
@@ -240,6 +248,14 @@ take_name = "Run"
 The collection envelope's manifest digest/bytes binding makes a manifest edit
 or reorder stale even when collection and logical ids are unchanged. No
 runtime check or transition graph is implied by either placement.
+
+Both placements normalize to the exact closed JSON envelopes shown in
+[DESIGN.md §F.11](../DESIGN.md#f11-transition-family-declaration-v1-148): one
+collection form retaining `collection_id` and `manifest_input_identity`, and
+one document form in which each quoted table key becomes `family_id`. Families
+sort by id, member order is retained, and RFC 8785 JCS produces the normalized
+declaration identity. Future evidence separately binds the exact declaration
+source, normalized declaration, and evaluated document or manifest identities.
 
 This milestone does not run transition checks, emit findings or reports,
 infer graph edges, add gameplay metadata, or generate engine state-machine or

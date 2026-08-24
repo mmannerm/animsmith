@@ -3418,15 +3418,21 @@ V1's closed role vocabulary is `left_foot`, `right_foot`, `left_hand`,
 phase must propose a versioned contract extension; it must not smuggle an
 engine enum or arbitrary string into V1.
 
-Canonical serialization is UTF-8 JSON with no insignificant whitespace and
-schema-order object members. A mixed point/window event sort key is exactly
+Canonical bytes use the complete [RFC 8785 JSON Canonicalization Scheme
+(JCS)](https://www.rfc-editor.org/rfc/rfc8785), including its object-member
+sorting, string escaping, and number serialization rules. Every value,
+including an opaque extension payload, must be JCS-canonicalizable or the
+fragment is refused; an extension does not supply a private key-ordering rule.
+Before JCS serialization, a mixed point/window event sort key is exactly
 `(start, kind_rank, end_key, role, phase, event_id)`: a point has
 `kind_rank = 0` and the end sentinel `end_key = null`, which sorts before every
 numeric window end; a window has `kind_rank = 1` and `end_key = end`. Thus a
 point and a window at the same start have a deterministic order, including
-when their numeric endpoints are otherwise equal. Extension arrays retain
-their declared order, while keys inside an explicitly versioned extension
-payload are ordered by that extension's schema. Seconds and frame numbers, if
+when their numeric endpoints are otherwise equal. Every string comparison in
+that tuple, including the opaque `event_id`, is lexicographic by unsigned
+UTF-16 code units exactly as RFC 8785 orders object property names; no Unicode
+normalization is applied. Extension arrays retain
+their declared order. Seconds and frame numbers, if
 present for display, are derived values and never identity or comparison
 coordinates. The future implementation must reject unknown fields in the
 core envelope and events, duplicate event ids, non-finite values, out-of-range
@@ -3514,6 +3520,18 @@ The inline output fragment's `duration_s` is exact: trim and slice use
 `time_warp` requires a finite positive `output_duration_s` field in its
 operation object, which the output fragment must equal. These duration rules
 apply even when every event is outside the retained interval.
+
+Every V1 time and duration number is a finite IEEE 754 binary64 value.
+Arithmetic uses round-to-nearest, ties-to-even after each operation in the
+following order; fused multiply-add and extended-precision intermediates are
+not permitted. Write `rn(x)` for that rounding. Trim/slice first computes
+`span = rn(b - a)`, then `mapped = rn(rn(t - a) / span)` and
+`output_duration_s = rn(input_duration_s * span)`. Between time-warp knots it
+computes `dx = rn(x1 - x0)`, `alpha = rn(rn(t - x0) / dx)`,
+`dy = rn(y1 - y0)`, and `mapped = rn(y0 + rn(alpha * dy))`; an exact knot
+bypasses interpolation and returns its declared `output_time`. Resample returns
+the decoded input value unchanged. Any non-finite intermediate is
+`invalid_value`. These binary64 results are the numbers supplied to JCS.
 
 After input binding and fragment identity validation, `event_outcomes` contains
 exactly one object per input event, in the fragment's canonical input order.
@@ -3671,15 +3689,64 @@ take_index = 1
 take_name = "Run"
 ```
 
+After strict validation, the normalized JSON representation has exactly one of
+the following two closed envelope shapes. The collection form is:
+
+```json
+{
+  "schema": "urn:animsmith:schema:transition-family:1",
+  "schema_version": 1,
+  "scope": "collection",
+  "collection_id": "com.example.pack",
+  "manifest_input_identity": {"sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", "bytes": 9876},
+  "families": [{
+    "family_id": "com.example.pack/transitions/walk-to-run",
+    "boundary": "both",
+    "basis": {"translation": "skeleton-local-metres", "rotation": "skeleton-local-degrees", "time": "normalized-clip"},
+    "tolerances": {"translation_m": 0.05, "rotation_deg": 5.0, "time_normalized": 0.02},
+    "members": [
+      {"logical_id": "com.example.pack/locomotion/walk-forward-in-place", "source": "walk-forward", "take_index": 0, "take_name": "Take 001"},
+      {"logical_id": "com.example.pack/locomotion/run-forward-in-place", "source": "run-forward", "take_index": 0, "take_name": "Take 001"}
+    ]
+  }]
+}
+```
+
+The document form lifts the repeated table contract fields into one envelope;
+the table key becomes `family_id`:
+
+```json
+{
+  "schema": "urn:animsmith:schema:transition-family:1",
+  "schema_version": 1,
+  "scope": "document",
+  "families": [{
+    "family_id": "walk_to_run",
+    "boundary": "entry",
+    "basis": {"translation": "skeleton-local-metres", "rotation": "skeleton-local-degrees", "time": "normalized-clip"},
+    "tolerances": {"translation_m": 0.05, "rotation_deg": 5.0, "time_normalized": 0.02},
+    "members": [{"take_index": 0, "take_name": "Walk"}, {"take_index": 1, "take_name": "Run"}]
+  }]
+}
+```
+
+No owner or source-input identity is injected into the document form. A future
+evaluation record binds three distinct facts: the exact declaration-source
+`InputIdentity` (the whole config for document scope or the declaration TOML
+for collection scope), the normalized declaration `InputIdentity` computed
+over the JCS bytes above, and the evaluated document or collection-manifest
+`InputIdentity`. The collection form additionally retains its embedded exact
+manifest binding. These identities are never interchangeable.
+
 The future strict reader rejects a missing, duplicate, stale, or cross-scope
 member before a declaration becomes available to a consumer. The collection
 envelope's manifest digest/bytes binding makes a manifest reorder or edit
 stale even when its collection id and logical ids are unchanged.
 
-Canonical serialization sorts family declarations by their stable
-`family_id`, preserves declared member order, emits tolerance fields in their
-fixed schema order, and uses the same UTF-8 JSON/no-insignificant-whitespace
-rules as other V1 deterministic contracts. The future strict reader validates
+Canonical serialization first sorts decoded family declarations by their stable
+`family_id` and preserves declared member order, then serializes that typed JSON
+representation with RFC 8785 JCS. The exact source TOML `InputIdentity` remains
+a separate binding and is never replaced by the normalized JSON identity. The future strict reader validates
 owner/scope, member resolution, basis, units, finite tolerances, and
 canonicalization before a declaration is accepted. This is a declaration
 contract only: checks, findings, reports, required gameplay metadata, inferred
