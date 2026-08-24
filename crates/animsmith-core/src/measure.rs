@@ -1988,6 +1988,29 @@ pub fn measure_document(
     roles: &ResolvedRoles,
     config: &Config,
 ) -> BTreeMap<String, ClipMeasurements> {
+    grids
+        .document()
+        .clips
+        .iter()
+        .map(|clip| clip.name.clone())
+        .zip(measure_document_indexed(grids, roles, config))
+        .collect()
+}
+
+/// Measure every normalized clip in document order without using clip names
+/// as identity.
+///
+/// This is the duplicate-safe companion to [`measure_document`]. It returns
+/// exactly one row per [`Document`] clip, and vector index is
+/// the normalized clip index. Collection protocols use this surface only
+/// after independently binding a source-local take to that normalized index.
+/// Directly constructed configuration must pass [`Config::validate`] before
+/// it is supplied here.
+pub fn measure_document_indexed(
+    grids: &MetricGrids<'_>,
+    roles: &ResolvedRoles,
+    config: &Config,
+) -> Vec<ClipMeasurements> {
     let doc = grids.document();
     let min_stride_step_m = config.loop_seam_min_stride_step_m();
     doc.clips
@@ -2225,30 +2248,27 @@ pub fn measure_document(
                 })
                 .collect();
 
-            (
-                clip.name.clone(),
-                ClipMeasurements {
-                    duration_s,
-                    frame_count: frame_count as u32,
-                    animated_bones: animated.into_iter().collect(),
-                    bone_channels,
-                    bone_rotation_range_deg: rotation_range,
-                    loop_continuity,
-                    loop_continuity_availability,
-                    loop_endpoint_mode,
-                    loop_endpoint_mode_availability,
-                    frame_grid,
-                    frame_grid_availability,
-                    loop_seam_ratio,
-                    loop_seam_ratio_availability,
-                    gait,
-                    gait_availability,
-                    root_trajectory,
-                    root_trajectory_availability,
-                    speed_mps,
-                    speed_mps_availability,
-                },
-            )
+            ClipMeasurements {
+                duration_s,
+                frame_count: frame_count as u32,
+                animated_bones: animated.into_iter().collect(),
+                bone_channels,
+                bone_rotation_range_deg: rotation_range,
+                loop_continuity,
+                loop_continuity_availability,
+                loop_endpoint_mode,
+                loop_endpoint_mode_availability,
+                frame_grid,
+                frame_grid_availability,
+                loop_seam_ratio,
+                loop_seam_ratio_availability,
+                gait,
+                gait_availability,
+                root_trajectory,
+                root_trajectory_availability,
+                speed_mps,
+                speed_mps_availability,
+            }
         })
         .collect()
 }
@@ -4457,6 +4477,13 @@ mod tests {
             ..Document::default()
         };
         let grids = MetricGrids::new(&doc);
+        let indexed = measure_document_indexed(&grids, &roles, &Config::default());
+        assert_eq!(indexed.len(), 2);
+        assert_eq!(indexed[0].duration_s, 1.0);
+        assert_eq!(indexed[1].duration_s, 2.0);
+        assert!(indexed[0].gait.is_some());
+        assert!(indexed[1].gait.is_none());
+
         let measurements = measure_document(&grids, &roles, &Config::default());
 
         assert_eq!(

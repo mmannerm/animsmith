@@ -46,7 +46,9 @@ use std::process::ExitCode;
 
 #[cfg(feature = "fbx")]
 mod assembly;
+mod collection_lint;
 mod collection_manifest;
+mod collection_output;
 #[cfg(feature = "fbx")]
 mod material_recipe;
 #[cfg(feature = "fbx")]
@@ -70,7 +72,7 @@ const EXIT_OPERATOR: u8 = 2;
     about = "Inspect, validate, and repair skeletal animation clips"
 )]
 struct Cli {
-    /// Config file (defaults to ./animsmith.toml when present).
+    /// Config for document-local commands (collection lint rejects this option).
     #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[command(subcommand)]
@@ -108,6 +110,11 @@ enum Cmd {
         /// Suppress findings from these checks (comma-separated ids).
         #[arg(long, value_delimiter = ',')]
         allow: Vec<String>,
+    },
+    /// Evaluate one strict multi-file collection manifest.
+    Collection {
+        #[command(subcommand)]
+        operation: CollectionCmd,
     },
     /// Render a self-contained offline HTML report.
     #[command(
@@ -252,6 +259,26 @@ enum Cmd {
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
     },
+}
+
+/// Collection-scoped validation commands.
+#[derive(Subcommand)]
+enum CollectionCmd {
+    /// Lint every declared source and retain logical clip/set completeness.
+    Lint {
+        /// Strict collection-manifest V1 TOML input.
+        #[arg(value_name = "COLLECTION.toml")]
+        manifest: PathBuf,
+        /// Emit the collection-output V1 JSON contract.
+        #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
+        format: CollectionFormat,
+    },
+}
+
+/// Collection output has one machine-readable presentation in V1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum CollectionFormat {
+    Json,
 }
 
 /// Versioned single-document pipeline contracts.
@@ -889,6 +916,66 @@ fn validate_check_selection(known: &[&str], select: &[String]) -> Result<(), Str
     Ok(())
 }
 
+struct LintAnalysis {
+    report: LintFileReport,
+    requires_failure: bool,
+    indexed_measurements: Vec<animsmith_core::measure::ClipMeasurements>,
+}
+
+fn analyze_loaded_lint(
+    loaded: &LoadedInput,
+    config: &LoadedConfig,
+    path_label: impl Into<String>,
+    selection: CheckSelection<'_>,
+    fail_at: Severity,
+    allowed: &BTreeSet<String>,
+) -> Result<LintAnalysis, String> {
+    let input = loaded.input().clone();
+    let prediction_provenance = loaded
+        .engine
+        .as_ref()
+        .map(|profile| animsmith_engine::project_prediction_provenance_v1(profile, &loaded.source))
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let doc = loaded.document();
+    let roles = resolve_configured_roles(&doc.skeleton, &config.config.rig);
+    let grids = MetricGrids::new(doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config.config);
+    let evaluations = {
+        let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
+        checks.push(Box::new(
+            EngineAddressabilityCheck::new(&loaded.source, prediction_provenance.as_ref())
+                .map_err(|error| error.to_string())?,
+        ));
+        evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?
+    };
+    let requires_failure =
+        animsmith_core::evaluation::lint_requires_failure(&evaluations, fail_at, allowed);
+    let indexed_measurements =
+        animsmith_core::measure::measure_document_indexed(&grids, &roles, &config.config);
+    let measurements = doc
+        .clips
+        .iter()
+        .map(|clip| clip.name.clone())
+        .zip(indexed_measurements.iter().cloned())
+        .collect();
+    let report = LintFileReport::new(
+        path_label,
+        input,
+        RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?,
+        prediction_provenance,
+        evaluations,
+        MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(doc))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(LintAnalysis {
+        report,
+        requires_failure,
+        indexed_measurements,
+    })
+}
+
 fn run(cli: Cli) -> Result<ExitCode, String> {
     match cli.cmd {
         Cmd::Inspect { file } => {
@@ -942,7 +1029,6 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             allow,
         } => {
             let loaded_config = load_config(cli.config.as_deref())?;
-            let config = &loaded_config.config;
             require_files(&files)?;
             let known_check_ids = full_check_ids()?;
             validate_check_selection(&known_check_ids, &select)?;
@@ -968,50 +1054,16 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let mut requires_failure = false;
             for file in &files {
                 let loaded = load_with_config(file, &loaded_config)?;
-                let input = loaded.input().clone();
-                let prediction_provenance = loaded
-                    .engine
-                    .as_ref()
-                    .map(|profile| {
-                        animsmith_engine::project_prediction_provenance_v1(profile, &loaded.source)
-                    })
-                    .transpose()
-                    .map_err(|error| error.to_string())?;
-                let doc = loaded.document();
-                let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-                let grids = MetricGrids::new(doc);
-                let ctx = CheckCtx::new(&grids, &roles, config);
-                let evaluations = {
-                    let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
-                    checks.push(Box::new(
-                        EngineAddressabilityCheck::new(
-                            &loaded.source,
-                            prediction_provenance.as_ref(),
-                        )
-                        .map_err(|error| error.to_string())?,
-                    ));
-                    evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?
-                };
-                requires_failure |= animsmith_core::evaluation::lint_requires_failure(
-                    &evaluations,
+                let analysis = analyze_loaded_lint(
+                    &loaded,
+                    &loaded_config,
+                    file.display().to_string(),
+                    selection,
                     fail_at,
                     &allowed,
-                );
-                reports.push(
-                    LintFileReport::new(
-                        file.display().to_string(),
-                        input,
-                        RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?,
-                        prediction_provenance,
-                        evaluations,
-                        MeasurementContract::new(
-                            animsmith_core::measure::measure_document(&grids, &roles, config),
-                            animsmith_core::measure::measure_assets(doc),
-                        )
-                        .map_err(|error| error.to_string())?,
-                    )
-                    .map_err(|error| error.to_string())?,
-                );
+                )?;
+                requires_failure |= analysis.requires_failure;
+                reports.push(analysis.report);
             }
             match format {
                 PresentationFormat::Json => {
@@ -1031,6 +1083,20 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             } else {
                 ExitCode::SUCCESS
             })
+        }
+        Cmd::Collection { operation } => {
+            if cli.config.is_some() {
+                return Err(
+                    "--config is not accepted by collection lint; declare each source config in the collection manifest"
+                        .into(),
+                );
+            }
+            match operation {
+                CollectionCmd::Lint { manifest, format } => {
+                    debug_assert_eq!(format, CollectionFormat::Json);
+                    collection_lint::run_collection_lint(&manifest)
+                }
+            }
         }
         #[cfg(feature = "report")]
         Cmd::Report { file, output, clip } => {
@@ -1596,17 +1662,17 @@ enum InputFormat {
     Fbx,
 }
 
-#[cfg(feature = "fbx")]
 enum InputLoadError {
     Gltf(animsmith_gltf::LoadError),
+    #[cfg(feature = "fbx")]
     Fbx(animsmith_fbx::LoadError),
 }
 
-#[cfg(feature = "fbx")]
 impl std::fmt::Display for InputLoadError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Gltf(error) => error.fmt(formatter),
+            #[cfg(feature = "fbx")]
             Self::Fbx(error) => error.fmt(formatter),
         }
     }
@@ -1716,12 +1782,12 @@ fn load_source_bytes_typed(
     path: &Path,
     format: InputFormat,
     bytes: &[u8],
-) -> Result<animsmith_core::LoadedSource, String> {
+) -> Result<animsmith_core::LoadedSource, InputLoadError> {
     let resource_root = input_resource_root(path);
     match format {
         InputFormat::Gltf => {
             animsmith_gltf::load_source_bytes_with_resource_root(path, bytes, resource_root)
-                .map_err(|error| error.to_string())
+                .map_err(InputLoadError::Gltf)
         }
     }
 }

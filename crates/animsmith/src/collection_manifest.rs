@@ -4,17 +4,13 @@
 //! owns strict TOML input and host filesystem access; canonical host paths and
 //! OS diagnostics never cross its internal boundary.
 
-// #545 freezes this internal boundary before #546 wires it to the public
-// collection subcommand. Remove this allowance when that command lands.
-#![allow(dead_code)]
-
 use animsmith_core::{
     COLLECTION_MANIFEST_V1_ID, COLLECTION_MANIFEST_V1_MAX_CLIPS,
     COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES, COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS,
     COLLECTION_MANIFEST_V1_MAX_SOURCES, CollectionClipV1, CollectionDigestPinV1, CollectionIdV1,
     CollectionLogicalIdV1, CollectionManifestV1, CollectionRuntimeSetKindV1,
     CollectionRuntimeSetV1, CollectionSourceKeyV1, CollectionSourceV1, DependencyResourceKeyV1,
-    ResourceKeySyntaxV1,
+    InputIdentity, ResourceKeySyntaxV1,
 };
 use serde::Deserialize;
 use serde::de::{Deserializer, IgnoredAny, SeqAccess, Visitor};
@@ -76,6 +72,7 @@ impl CollectionControlError {
     fn new(kind: CollectionControlKind) -> Self {
         Self { kind }
     }
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> CollectionControlKind {
         self.kind
     }
@@ -184,12 +181,30 @@ impl fmt::Debug for CollectionPathResolver {
 }
 
 /// Read and strictly validate one collection manifest from bounded bytes.
+#[cfg(test)]
 pub(crate) fn load_collection_manifest(
     manifest_path: &Path,
 ) -> Result<CollectionManifestV1, CollectionControlError> {
+    load_collection_manifest_with_identity(manifest_path).map(|loaded| loaded.manifest)
+}
+
+/// One validated manifest bound to the exact bytes consumed by the parser.
+pub(crate) struct LoadedCollectionManifest {
+    pub(crate) manifest: CollectionManifestV1,
+    pub(crate) input: InputIdentity,
+}
+
+/// Read one collection manifest once and bind its decoded declaration to those bytes.
+pub(crate) fn load_collection_manifest_with_identity(
+    manifest_path: &Path,
+) -> Result<LoadedCollectionManifest, CollectionControlError> {
     let bytes = read_bounded(manifest_path, COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES)
         .map_err(CollectionControlError::new)?;
-    parse_collection_manifest_bytes(&bytes)
+    let manifest = parse_collection_manifest_bytes(&bytes)?;
+    Ok(LoadedCollectionManifest {
+        manifest,
+        input: InputIdentity::from_bytes(&bytes),
+    })
 }
 
 /// Parse one already bounded collection-manifest TOML byte sequence.
@@ -438,8 +453,10 @@ struct CollectionManifestHeaderWire {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CollectionManifestWire {
-    schema: String,
-    schema_version: u32,
+    #[serde(rename = "schema")]
+    _schema: String,
+    #[serde(rename = "schema_version")]
+    _schema_version: u32,
     collection_id: String,
     #[serde(default)]
     input_root: Option<String>,
