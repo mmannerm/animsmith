@@ -1,0 +1,2 @@
+# Intentionally empty: selecting this file exercises an explicit config basis
+# while retaining Config::default() semantics for the synthetic empty takes.
