@@ -981,14 +981,15 @@ mod tests {
 
     #[test]
     fn rejects_namespace_and_digest_violations() {
-        assert!(matches!(
-            manifest(
-                vec![source("a")],
-                vec![clip("other.pack/locomotion/walk", "a", 0)],
-                vec![]
-            ),
-            Err(CollectionManifestError::OutsideCollectionNamespace { .. })
-        ));
+        for outside in [
+            "other.pack/locomotion/walk",
+            "other/com.example.pack/locomotion/walk",
+        ] {
+            assert!(matches!(
+                manifest(vec![source("a")], vec![clip(outside, "a", 0)], vec![]),
+                Err(CollectionManifestError::OutsideCollectionNamespace { .. })
+            ));
+        }
         assert!(CollectionDigestPinV1::new("A".repeat(64)).is_err());
         assert!(CollectionDigestPinV1::new("0".repeat(63)).is_err());
         assert!(CollectionDigestPinV1::new("0".repeat(65)).is_err());

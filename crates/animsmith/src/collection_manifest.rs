@@ -352,11 +352,7 @@ impl CollectionPathResolver {
                             CollectionControlKind::SourceNonRegular,
                         ));
                     }
-                    if !canonical_sources.insert(canonical.clone()) {
-                        return Err(CollectionControlError::new(
-                            CollectionControlKind::CanonicalSourceAlias,
-                        ));
-                    }
+                    retain_unique_canonical_source(&mut canonical_sources, &canonical)?;
                     CollectionSourceResolution::Ready(CollectionResolvedPath {
                         declared,
                         canonical,
@@ -621,9 +617,7 @@ fn inspect_path(root: &Path, declared: &str) -> Result<PathState, PathFailure> {
                 }
                 Err(_) => return Ok(PathState::Unreadable),
             };
-            if !canonical.starts_with(root) {
-                return Err(PathFailure::Unsafe);
-            }
+            require_canonical_containment(root, &canonical)?;
             return Ok(PathState::RegularOrDirectory {
                 canonical,
                 metadata,
@@ -631,6 +625,27 @@ fn inspect_path(root: &Path, declared: &str) -> Result<PathState, PathFailure> {
         }
     }
     Err(PathFailure::Unsafe)
+}
+
+fn require_canonical_containment(root: &Path, canonical: &Path) -> Result<(), PathFailure> {
+    if canonical.starts_with(root) {
+        Ok(())
+    } else {
+        Err(PathFailure::Unsafe)
+    }
+}
+
+fn retain_unique_canonical_source(
+    seen: &mut BTreeSet<PathBuf>,
+    canonical: &Path,
+) -> Result<(), CollectionControlError> {
+    if seen.insert(canonical.to_path_buf()) {
+        Ok(())
+    } else {
+        Err(CollectionControlError::new(
+            CollectionControlKind::CanonicalSourceAlias,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -1236,6 +1251,35 @@ members = ["com.example.full/locomotion/alpha", "com.example.full/locomotion/zeb
             panic!("unicode source should resolve")
         };
         assert_eq!(path.declared(), declared);
+    }
+
+    #[test]
+    fn canonical_containment_and_source_alias_guards_fail_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("root");
+        fs::create_dir(&root).unwrap();
+        let inside = root.join("inside.gltf");
+        let outside = directory.path().join("outside.gltf");
+        fs::write(&inside, b"fixture").unwrap();
+        fs::write(&outside, b"fixture").unwrap();
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        let canonical_inside = fs::canonicalize(&inside).unwrap();
+        let canonical_outside = fs::canonicalize(&outside).unwrap();
+
+        assert!(require_canonical_containment(&canonical_root, &canonical_inside).is_ok());
+        assert!(matches!(
+            require_canonical_containment(&canonical_root, &canonical_outside),
+            Err(PathFailure::Unsafe)
+        ));
+
+        let mut seen = BTreeSet::new();
+        retain_unique_canonical_source(&mut seen, &canonical_inside).unwrap();
+        assert_eq!(
+            retain_unique_canonical_source(&mut seen, &canonical_inside)
+                .unwrap_err()
+                .kind(),
+            CollectionControlKind::CanonicalSourceAlias
+        );
     }
 
     #[cfg(unix)]
