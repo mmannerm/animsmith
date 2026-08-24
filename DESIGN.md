@@ -3424,9 +3424,10 @@ sorting, string escaping, and number serialization rules. Every value,
 including an opaque extension payload, must be JCS-canonicalizable or the
 fragment is refused; an extension does not supply a private key-ordering rule.
 Before JCS serialization, a mixed point/window event sort key is exactly
-`(start, kind_rank, end_key, role, phase, event_id)`: a point has
-`kind_rank = 0` and the end sentinel `end_key = null`, which sorts before every
-numeric window end; a window has `kind_rank = 1` and `end_key = end`. Thus a
+`(start, kind_rank, end_key, role, phase, event_id)`: a point sets
+`start = time`, `kind_rank = 0`, and the end sentinel `end_key = null`, which
+sorts before every numeric window end; a window uses its declared `start`, has
+`kind_rank = 1`, and sets `end_key = end`. Thus a
 point and a window at the same start have a deterministic order, including
 when their numeric endpoints are otherwise equal. Every string comparison in
 that tuple, including the opaque `event_id`, is lexicographic by unsigned

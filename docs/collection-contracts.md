@@ -75,9 +75,10 @@ identity or comparison coordinates. Canonical bytes use the complete
 including its object-key, string, and number rules; every extension payload
 must also be JCS-canonicalizable. Before JCS serialization, events use the exact mixed-event sort tuple
 `(start, kind_rank, end_key, role, phase, event_id)`: points have kind rank `0`
-and a `null` end sentinel that sorts before every numeric window end; windows
-have kind rank `1` and their numeric end. This keeps point/window order stable
-when starts coincide. Tuple strings, including opaque event ids, compare by
+with `start = time` and a `null` end sentinel that sorts before every numeric
+window end; windows use their declared `start`, have kind rank `1`, and use
+their numeric end. This keeps point/window order stable when starts coincide.
+Tuple strings, including opaque event ids, compare by
 unsigned UTF-16 code units exactly like RFC 8785 property names, without
 Unicode normalization.
 
@@ -142,7 +143,7 @@ The success shape is illustrative:
   ],
   "output": {
     "artifact": {"sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210", "bytes": 123456},
-    "fragment": {"sha256": "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd", "bytes": 701},
+    "fragment": {"sha256": "c463776d20d82a9d89fb1369a3d081b214a98b6ba1eb5918546d9ad3b4652f08", "bytes": 609},
     "contact_fragment": {
       "schema": "urn:animsmith:schema:contact-fragment:1",
       "schema_version": 1,
