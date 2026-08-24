@@ -17,11 +17,13 @@ pub(crate) const REFUSAL_SCHEMA_VERSION: u32 = 1;
 pub(crate) const REFUSAL_SCHEMA_ID: &str = "urn:animsmith:schema:producer-refusal:1";
 
 /// A command whose asset-producing boundary can refuse source facts.
+#[cfg_attr(not(feature = "fbx"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Command {
     Convert,
     Assemble,
+    ContactFragment,
 }
 
 impl Command {
@@ -29,22 +31,26 @@ impl Command {
         match self {
             Self::Convert => "convert",
             Self::Assemble => "assemble",
+            Self::ContactFragment => "generate contact-fragment",
         }
     }
 }
 
 /// Pipeline stage at which an asset fact became a refusal.
+#[cfg_attr(not(feature = "fbx"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Stage {
     Load,
     Selection,
+    Analysis,
     Transform,
     Proof,
     Encode,
 }
 
 /// Stable refusal identity.  Prose remains diagnostic only.
+#[cfg_attr(not(feature = "fbx"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Kind {
@@ -55,6 +61,8 @@ pub(crate) enum Kind {
     TransformRefused,
     ProofFailed,
     UnrepresentableArtifact,
+    IncompleteEvidence,
+    SelectionMismatch,
 }
 
 impl Kind {
@@ -67,6 +75,8 @@ impl Kind {
             Self::TransformRefused => "transform-refused",
             Self::ProofFailed => "proof-failed",
             Self::UnrepresentableArtifact => "unrepresentable-artifact",
+            Self::IncompleteEvidence => "incomplete-evidence",
+            Self::SelectionMismatch => "selection-mismatch",
         }
     }
 }
@@ -108,6 +118,7 @@ impl Failure {
 }
 
 /// The common producer result before presentation.
+#[cfg_attr(not(feature = "fbx"), allow(dead_code))]
 pub(crate) enum Outcome<T> {
     Published(T),
     Rejected(Rejection),
@@ -118,6 +129,7 @@ pub(crate) enum Outcome<T> {
 /// There is deliberately no `From<String>` for [`Failure`]: every `?` at a
 /// producer boundary must state which side of the public exit contract owns
 /// it while the call site still knows what was attempted.
+#[cfg_attr(not(feature = "fbx"), allow(dead_code))]
 pub(crate) trait Classify<T> {
     fn operator(self) -> Result<T, Failure>;
     fn refusal(self, stage: Stage, kind: Kind) -> Result<T, Failure>;

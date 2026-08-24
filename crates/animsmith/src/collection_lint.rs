@@ -597,6 +597,7 @@ fn prepare_config(resolution: CollectionConfigResolution) -> Result<PreparedConf
                 config: Config::default(),
                 engine: None,
                 path: None,
+                control_input: None,
                 #[cfg(feature = "fbx")]
                 source: None,
             },
@@ -620,6 +621,7 @@ fn prepare_config(resolution: CollectionConfigResolution) -> Result<PreparedConf
                     config,
                     engine,
                     path: Some(PathBuf::from(path.declared())),
+                    control_input: Some(path.path().to_path_buf()),
                     #[cfg(feature = "fbx")]
                     source: None,
                 },
@@ -630,6 +632,14 @@ fn prepare_config(resolution: CollectionConfigResolution) -> Result<PreparedConf
             })
         }
     }
+}
+
+/// Load a manifest-owned source configuration with the exact same default,
+/// byte bound, and control-plane error mapping as collection lint.
+pub(crate) fn load_collection_config_for_producer(
+    resolution: CollectionConfigResolution,
+) -> Result<LoadedConfig, String> {
+    Ok(prepare_config(resolution)?.loaded)
 }
 
 fn read_control_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, ()> {

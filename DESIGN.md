@@ -3370,17 +3370,22 @@ I/O review and public output/exit review have different failure surfaces. Both
 must land in 0.5.0; closing the ADR alone does not deliver the milestone's
 collection foundation.
 
-This decision does not add collection report HTML, generated event sidecars,
-generated transitions, engine graph output, archive extraction, filename-based
-intent inference, source renaming/merging, motion rewriting, cross-pack
-compatibility claims, or a generic untyped runtime policy language. Those
-remain later consumers or separately accepted contracts.
+This decision does not add collection report HTML, generated transitions,
+engine graph output, archive extraction, filename-based intent inference,
+source renaming/merging, motion rewriting, cross-pack compatibility claims, or
+a generic untyped runtime policy language. The strict contact-fragment sidecar
+producer specified in F.10 is the narrow exception; host-side merge and all
+runtime interpretation remain later consumers or separately accepted contracts.
 
 ### F.10 Contact-fragment V1 (#147)
 
-Issue #147 freezes the interchange contract for contact facts without adding
-a detector, generator, or host-side sidecar writer. Its independently versioned
-identity is:
+Issue #147 freezes the interchange contract for contact facts. Issue #152 now
+delivers its narrow strict producer: `animsmith generate contact-fragment` and
+`animsmith collection generate-contact-fragment` sample stance support and
+atomically publish one source-bound fragment. The collection command reloads
+its selected manifest source rather than consuming `collection-output:2`.
+Neither issue adds host-side sidecar merge or a runtime event system. Its
+independently versioned identity is:
 
 ```text
 urn:animsmith:schema:contact-fragment:1
@@ -3405,10 +3410,14 @@ staleness validate that relationship against the complete captured closure.
 Unknown fields are rejected by the strict core reader implemented in 0.6. A mismatch in either
 identity makes the fragment stale rather than authorizing a consumer to use it.
 
-AnimSmith 0.6 implements this format-neutral strict reader and its bounded
-canonicalization/identity seam in `animsmith-core`. It does not load an asset,
-detect contacts, publish a sidecar, add a CLI command, or implement contact
-transforms; those producer and consumer boundaries remain separately deferred.
+AnimSmith implements the format-neutral strict reader and bounded
+canonicalization/identity seam in `animsmith-core`, plus the strict producer
+above. The producer loads one exact direct take or reloads one exact
+manifest-selected take, requires complete finite bilateral stance evidence,
+and publishes the canonical fragment as a single durable sidecar. It does not
+implement contact transforms, host-side merge, runtime scheduling, engine
+mapping, physical-contact inference, or gameplay semantics; those consumer
+boundaries remain separately deferred.
 
 V1 deliberately requires the complete modeled closure, including declared
 dependencies such as textures that may not affect contact calculations. It can
@@ -3636,12 +3645,12 @@ duplicate, missing, or unknown event-outcome identity is a strict reader error,
 not another refusal result. The result records the operation, bindings, and
 outcomes; detector and operation implementation remain out of scope.
 
-AnimSmith owns contact facts and these identity/time/transform semantics. The
-host owns final file layout and merge, unrelated measurements and provenance,
-runtime scheduling, and engine-native mapping. V1 does not detect contacts,
-generate events, infer gameplay meaning, validate foot placement, or claim
-engine, artistic, or gameplay correctness. Production generation remains
-tracked by #152 in 0.6.0.
+AnimSmith owns the strict sampled stance-support contact facts and these
+identity/time/transform semantics. The host owns final file layout and merge,
+unrelated measurements and provenance, runtime scheduling, and engine-native
+mapping. The delivered producer does not perform contact transforms, infer
+gameplay meaning, validate foot placement, or claim engine, artistic, or
+gameplay correctness. Host-side merge and runtime behavior remain deferred.
 
 ### F.11 Transition-family declaration V1 (#148)
 
