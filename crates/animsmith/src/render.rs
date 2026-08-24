@@ -3120,8 +3120,8 @@ mod tests {
             render_inspect(&doc, &roles).collect::<Vec<_>>(),
             vec![
                 "rig profile: custom (2 roles)",
-                "  root         -> root",
-                "  hips         -> hips",
+                "  root         -> root (explicit)",
+                "  hips         -> hips (explicit)",
                 "skeleton: 3 bones",
                 "  root",
                 "    hips",
