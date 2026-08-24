@@ -252,7 +252,7 @@ $ animsmith measure --format json walking.glb
         "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "bytes": 123456
       },
-      "rig": { "profile": "mixamo", "resolution_outcome": "coverage",
+      "rig": { "profile": "mixamo", "resolution_outcome": "resolved",
         "resolved_roles": { "hips": "mixamorig:Hips", "spine": "mixamorig:Spine",
           "left_foot": "mixamorig:LeftFoot", "right_foot": "mixamorig:RightFoot" },
         "resolved_role_policies": { "hips": "exact", "spine": "exact",
