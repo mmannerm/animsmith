@@ -42,15 +42,17 @@ use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 10;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 11;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
-/// Maximum serialized bytes accepted by the output-v10 report reader.
-pub const OUTPUT_V10_MAX_REPORT_BYTES: u64 = 256 * 1024 * 1024;
-/// Maximum file records carried by one output-v10 envelope.
-pub const OUTPUT_V10_MAX_FILES: usize = 4_096;
-/// Maximum check records carried by one output-v10 lint file.
-pub const OUTPUT_V10_MAX_CHECKS_PER_FILE: usize = 4_096;
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:11";
+/// Immutable output-v10 identity retained by V1 dependent contracts.
+pub const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
+/// Maximum serialized bytes accepted by the output-v11 report reader.
+pub const OUTPUT_V11_MAX_REPORT_BYTES: u64 = 256 * 1024 * 1024;
+/// Maximum file records carried by one output-v11 envelope.
+pub const OUTPUT_V11_MAX_FILES: usize = 4_096;
+/// Maximum check records carried by one output-v11 lint file.
+pub const OUTPUT_V11_MAX_CHECKS_PER_FILE: usize = 4_096;
 /// Current nested measurement-contract version.
 pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 15;
 /// Immutable identity of the current nested measurement contract.
@@ -69,7 +71,7 @@ impl ToolSource {
     /// Packaged or otherwise provenance-free builds use `None` for fields they
     /// cannot establish rather than claiming a clean checkout. Revisions that
     /// are not full 40-character hexadecimal Git object ids are dropped so an
-    /// envelope constructed through this API remains within output v10.
+    /// envelope constructed through this API remains within output v11.
     pub fn new(revision: Option<String>, dirty: Option<bool>) -> Self {
         let revision = revision.filter(|revision| {
             revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -161,7 +163,9 @@ impl InputIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RigInfo {
     profile: String,
+    resolution_outcome: &'static str,
     resolved_roles: BTreeMap<&'static str, String>,
+    resolved_role_policies: BTreeMap<&'static str, &'static str>,
 }
 
 /// Resolved-role evidence did not belong to the supplied document.
@@ -206,9 +210,9 @@ impl RigInfo {
     /// supplied document, such as a resolution produced from another
     /// skeleton.
     pub fn from_resolved(doc: &Document, roles: &ResolvedRoles) -> Result<Self, RigInfoError> {
-        let resolved_roles = roles
-            .iter_with_names()
-            .map(|(role, bone, expected_name)| {
+        let resolved = roles
+            .iter_with_details()
+            .map(|(role, bone, expected_name, policy)| {
                 let name = doc
                     .skeleton
                     .bones
@@ -226,12 +230,20 @@ impl RigInfo {
                         found: name.name.clone(),
                     });
                 }
-                Ok((role.as_str(), name.name.clone()))
+                Ok((role.as_str(), (name.name.clone(), policy.as_str())))
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
         Ok(Self {
             profile: roles.profile.clone(),
-            resolved_roles,
+            resolution_outcome: roles.outcome().as_str(),
+            resolved_roles: resolved
+                .iter()
+                .map(|(&role, (name, _))| (role, name.clone()))
+                .collect(),
+            resolved_role_policies: resolved
+                .into_iter()
+                .map(|(role, (_, policy))| (role, policy))
+                .collect(),
         })
     }
 }
@@ -1744,7 +1756,7 @@ fn color_type_channel_count(color_type: DecodedImageColorType) -> u8 {
 /// current `measure` or `lint` report.
 ///
 /// This intentionally models only the fields needed to recover the nested
-/// measurement contract while retaining every legitimate output-v10 root
+/// measurement contract while retaining every legitimate output-v11 root
 /// field. The frozen schema is closed, while all protocol identities and
 /// command constraints are validated by [`MeasurementReportInput::into_files`].
 #[derive(Debug)]
@@ -2508,24 +2520,24 @@ pub enum MeasurementReportError {
         /// Command found in the input.
         command: String,
     },
-    /// A current output-v10 envelope carried a field outside its closed schema.
+    /// A current output-v11 envelope carried a field outside its closed schema.
     #[error("report envelope has unknown field `{field}`")]
     UnknownOutputField {
         /// Lexically first unknown root field.
         field: String,
     },
-    /// A current output-v10 envelope omitted its producer metadata.
+    /// A current output-v11 envelope omitted its producer metadata.
     #[error("report envelope has no `tool` object")]
     MissingTool,
     /// The outer envelope omitted its file array.
     #[error("report envelope has no `files` array")]
     MissingFiles,
     /// The outer envelope exceeds the immutable file-record bound.
-    #[error("report contains {found} files, exceeding the output-v10 limit of {limit}")]
+    #[error("report contains {found} files, exceeding the output-v11 limit of {limit}")]
     TooManyFiles {
         /// Supplied file count.
         found: usize,
-        /// Immutable output-v10 limit.
+        /// Immutable output-v11 limit.
         limit: usize,
     },
     /// A lint report omitted the derived prediction-facet summary.
@@ -2548,7 +2560,7 @@ pub enum MeasurementReportError {
     },
 }
 
-/// A serialized output-v10 report could not be read within the public bound.
+/// A serialized output-v11 report could not be read within the public bound.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum MeasurementReportReadError {
@@ -2559,13 +2571,13 @@ pub enum MeasurementReportReadError {
         #[source]
         source: std::io::Error,
     },
-    /// The serialized report exceeded the immutable output-v10 byte limit.
-    #[error("report exceeds the output-v10 limit of {limit} bytes")]
+    /// The serialized report exceeded the immutable output-v11 byte limit.
+    #[error("report exceeds the output-v11 limit of {limit} bytes")]
     ReportTooLarge {
         /// Immutable maximum accepted byte count.
         limit: u64,
     },
-    /// The bounded bytes were not valid JSON for the output-v10 read shape.
+    /// The bounded bytes were not valid JSON for the output-v11 read shape.
     #[error("invalid report JSON: {source}")]
     InvalidJson {
         /// JSON syntax or typed-shape failure.
@@ -2578,9 +2590,9 @@ pub enum MeasurementReportReadError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum MeasurementFileError {
-    /// The bounded file record could not be decoded after the outer v10
+    /// The bounded file record could not be decoded after the outer v11
     /// identity was accepted.
-    #[error("has invalid output-v10 file shape: {reason}")]
+    #[error("has invalid output-v11 file shape: {reason}")]
     InvalidFileShape {
         /// Stable serde diagnostic for the malformed nested record.
         reason: String,
@@ -2616,11 +2628,11 @@ pub enum MeasurementFileError {
     #[error("measure file must not carry `checks`")]
     UnexpectedChecks,
     /// A lint file exceeded the immutable per-file check bound.
-    #[error("contains {found} checks, exceeding the output-v10 limit of {limit}")]
+    #[error("contains {found} checks, exceeding the output-v11 limit of {limit}")]
     TooManyChecks {
         /// Supplied check count.
         found: usize,
-        /// Immutable output-v10 limit.
+        /// Immutable output-v11 limit.
         limit: usize,
     },
     /// File and prediction-provenance primary identities differ.
@@ -2822,13 +2834,13 @@ fn decode_prediction_phase_file(
     if wire
         .checks
         .as_ref()
-        .is_some_and(|checks| checks.len() > OUTPUT_V10_MAX_CHECKS_PER_FILE)
+        .is_some_and(|checks| checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE)
     {
         return Err(prediction_file_error(
             file_index,
             MeasurementFileError::TooManyChecks {
                 found: wire.checks.as_ref().map_or(0, Vec::len),
-                limit: OUTPUT_V10_MAX_CHECKS_PER_FILE,
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
             },
         ));
     }
@@ -3083,12 +3095,12 @@ fn validate_prediction_phase_file(
             let checks = file.checks.as_ref().ok_or_else(|| {
                 prediction_file_error(file_index, MeasurementFileError::MissingChecks)
             })?;
-            if checks.len() > OUTPUT_V10_MAX_CHECKS_PER_FILE {
+            if checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE {
                 return Err(prediction_file_error(
                     file_index,
                     MeasurementFileError::TooManyChecks {
                         found: checks.len(),
-                        limit: OUTPUT_V10_MAX_CHECKS_PER_FILE,
+                        limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
                     },
                 ));
             }
@@ -3373,10 +3385,10 @@ impl PredictionCheckInput {
 }
 
 impl MeasurementReportInput {
-    /// Read one report through the immutable output-v10 byte bound before
+    /// Read one report through the immutable output-v11 byte bound before
     /// UTF-8 or JSON parsing.
     ///
-    /// The JSON parser receives at most [`OUTPUT_V10_MAX_REPORT_BYTES`] bytes
+    /// The JSON parser receives at most [`OUTPUT_V11_MAX_REPORT_BYTES`] bytes
     /// and retains its recursion limit. This function never performs an
     /// unbounded `read_to_end` or constructs a generic JSON value.
     ///
@@ -3385,7 +3397,7 @@ impl MeasurementReportInput {
     /// Returns a typed I/O, N+1 size, or JSON-shape error. Semantic contract
     /// validation remains in [`Self::into_files`].
     pub fn read_from(reader: impl Read) -> Result<Self, MeasurementReportReadError> {
-        Self::read_from_with_limit(reader, OUTPUT_V10_MAX_REPORT_BYTES)
+        Self::read_from_with_limit(reader, OUTPUT_V11_MAX_REPORT_BYTES)
     }
 
     fn read_from_with_limit(
@@ -3453,10 +3465,10 @@ impl MeasurementReportInput {
         }
         validate_prediction_summary_presence(command, self.summary.as_ref())?;
         let files = self.files.ok_or(MeasurementReportError::MissingFiles)?;
-        if files.len() > OUTPUT_V10_MAX_FILES {
+        if files.len() > OUTPUT_V11_MAX_FILES {
             return Err(MeasurementReportError::TooManyFiles {
                 found: files.len(),
-                limit: OUTPUT_V10_MAX_FILES,
+                limit: OUTPUT_V11_MAX_FILES,
             });
         }
         let mut available = 0usize;
@@ -4092,7 +4104,7 @@ mod measurement_report_input_tests {
 
     fn reader_error(wire: serde_json::Value) -> MeasurementReportError {
         serde_json::from_value::<MeasurementReportInput>(wire)
-            .expect("outer v10 shape remains valid")
+            .expect("outer v11 shape remains valid")
             .into_files()
             .expect_err("mutated report must fail")
     }
@@ -4579,7 +4591,7 @@ impl LintFileReport {
     ///
     /// # Errors
     ///
-    /// Returns [`OutputContractError`] when the file exceeds an output-v10
+    /// Returns [`OutputContractError`] when the file exceeds an output-v11
     /// bound or prediction evidence does not bind to the same file/provenance.
     pub fn new(
         path: impl Into<String>,
@@ -4624,10 +4636,10 @@ impl LintFileReport {
     }
 
     fn validate(&self) -> Result<(), OutputContractError> {
-        if self.checks.len() > OUTPUT_V10_MAX_CHECKS_PER_FILE {
+        if self.checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE {
             return Err(OutputContractError::TooManyChecks {
                 found: self.checks.len(),
-                limit: OUTPUT_V10_MAX_CHECKS_PER_FILE,
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
             });
         }
         if let Some(provenance) = &self.prediction_provenance {
@@ -4698,7 +4710,7 @@ impl LintFileReport {
     }
 }
 
-/// A producer attempted to construct output outside the immutable v10 contract.
+/// A producer attempted to construct output outside the immutable v11 contract.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum OutputContractError {
@@ -4751,7 +4763,7 @@ pub enum OutputContractError {
         limit: usize,
     },
     /// Checked aggregate accounting overflowed.
-    #[error("checked arithmetic overflow while validating output-v10 bounds")]
+    #[error("checked arithmetic overflow while validating output-v11 bounds")]
     ArithmeticOverflow,
     /// Nested prediction evidence violated its contract.
     #[error("invalid prediction evidence: {0}")]
@@ -4860,10 +4872,10 @@ pub struct MeasureEnvelope {
 impl MeasureEnvelope {
     /// Construct a schema-valid measurement envelope.
     pub fn new(tool: ToolInfo, files: Vec<MeasureFileReport>) -> Result<Self, OutputContractError> {
-        if files.len() > OUTPUT_V10_MAX_FILES {
+        if files.len() > OUTPUT_V11_MAX_FILES {
             return Err(OutputContractError::TooManyFiles {
                 found: files.len(),
-                limit: OUTPUT_V10_MAX_FILES,
+                limit: OUTPUT_V11_MAX_FILES,
             });
         }
         Ok(Self {
@@ -4887,10 +4899,10 @@ impl LintEnvelope {
     /// Construct a schema-valid lint envelope and derive its summary from the
     /// supplied check records.
     pub fn new(tool: ToolInfo, files: Vec<LintFileReport>) -> Result<Self, OutputContractError> {
-        if files.len() > OUTPUT_V10_MAX_FILES {
+        if files.len() > OUTPUT_V11_MAX_FILES {
             return Err(OutputContractError::TooManyFiles {
                 found: files.len(),
-                limit: OUTPUT_V10_MAX_FILES,
+                limit: OUTPUT_V11_MAX_FILES,
             });
         }
         let mut findings = FindingSummary::default();

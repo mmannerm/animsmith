@@ -1206,9 +1206,13 @@ pub(crate) fn render_inspect<'a>(
     });
     let role_lines = roles.iter().map(|(role, bone)| {
         format!(
-            "  {:<12} -> {}",
+            "  {:<12} -> {} ({})",
             role.as_str(),
-            text_atom(&doc.skeleton.bones[bone].name)
+            text_atom(&doc.skeleton.bones[bone].name),
+            roles
+                .policy(role)
+                .expect("resolved roles retain their resolution policy")
+                .as_str()
         )
     });
     let skeleton = std::iter::once(format!("skeleton: {} bones", doc.skeleton.bones.len()));

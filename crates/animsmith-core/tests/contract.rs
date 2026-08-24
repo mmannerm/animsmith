@@ -17,7 +17,7 @@ use animsmith_core::{
     MEASUREMENTS_SCHEMA_VERSION, MaterialResourceCoverage, MaterialTextureSlot, MeasureEnvelope,
     MeasureFileReport, MeasurementContract, MeasurementContractError, MeasurementFileError,
     MeasurementReportError, MeasurementReportFile, MeasurementReportInput, MetricGrids,
-    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, OUTPUT_V10_MAX_CHECKS_PER_FILE, OUTPUT_V10_MAX_FILES,
+    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES,
     OutputContractError, Property, ResolvedRoles, RigInfo, RigInfoError, Role, Severity,
     SourceInverseBindAccessorStatus, SourceSkeletonCoverage, ToolInfo, ToolSource, Transform,
     evaluate_checks, sha256_hex,
@@ -121,30 +121,30 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
 }
 
 #[test]
-fn output_v10_file_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
+fn output_v11_file_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
     let file = MeasureFileReport::new("limit.glb", input(b"limit"), rig(), measurements());
-    let at_limit_files = vec![file; OUTPUT_V10_MAX_FILES];
+    let at_limit_files = vec![file; OUTPUT_V11_MAX_FILES];
     let at_limit =
-        MeasureEnvelope::new(tool(), at_limit_files).expect("exact output-v10 file limit is valid");
+        MeasureEnvelope::new(tool(), at_limit_files).expect("exact output-v11 file limit is valid");
     let at_limit_wire = serde_json::to_value(&at_limit).expect("bounded envelope serializes");
     let at_limit_read: MeasurementReportInput =
         serde_json::from_value(at_limit_wire.clone()).expect("bounded envelope reads");
-    assert_eq!(at_limit_read.file_count(), Some(OUTPUT_V10_MAX_FILES));
+    assert_eq!(at_limit_read.file_count(), Some(OUTPUT_V11_MAX_FILES));
     assert_eq!(
         at_limit_read
             .into_files()
-            .expect("exact output-v10 file limit validates")
+            .expect("exact output-v11 file limit validates")
             .len(),
-        OUTPUT_V10_MAX_FILES
+        OUTPUT_V11_MAX_FILES
     );
 
     let extra = MeasureFileReport::new("extra.glb", input(b"extra"), rig(), measurements());
     assert_eq!(
-        MeasureEnvelope::new(tool(), vec![extra; OUTPUT_V10_MAX_FILES + 1])
+        MeasureEnvelope::new(tool(), vec![extra; OUTPUT_V11_MAX_FILES + 1])
             .expect_err("N+1 output files must fail on write"),
         OutputContractError::TooManyFiles {
-            found: OUTPUT_V10_MAX_FILES + 1,
-            limit: OUTPUT_V10_MAX_FILES,
+            found: OUTPUT_V11_MAX_FILES + 1,
+            limit: OUTPUT_V11_MAX_FILES,
         }
     );
 
@@ -161,14 +161,14 @@ fn output_v10_file_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
             .into_files()
             .expect_err("N+1 output files must fail on read"),
         MeasurementReportError::TooManyFiles {
-            found: OUTPUT_V10_MAX_FILES + 1,
-            limit: OUTPUT_V10_MAX_FILES,
+            found: OUTPUT_V11_MAX_FILES + 1,
+            limit: OUTPUT_V11_MAX_FILES,
         }
     );
 }
 
 #[test]
-fn output_v10_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
+fn output_v11_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
     let check = CheckEvaluation::evaluated(
         "limit",
         CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new()),
@@ -179,18 +179,18 @@ fn output_v10_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         input(b"limit"),
         rig(),
         None,
-        vec![check.clone(); OUTPUT_V10_MAX_CHECKS_PER_FILE],
+        vec![check.clone(); OUTPUT_V11_MAX_CHECKS_PER_FILE],
         measurements(),
     )
-    .expect("exact output-v10 check limit is valid");
+    .expect("exact output-v11 check limit is valid");
     let at_limit = LintEnvelope::new(tool(), vec![at_limit_file])
-        .expect("exact output-v10 check limit forms an envelope");
+        .expect("exact output-v11 check limit forms an envelope");
     let at_limit_wire = serde_json::to_value(&at_limit).expect("bounded envelope serializes");
     let at_limit_read: MeasurementReportInput =
         serde_json::from_value(at_limit_wire.clone()).expect("bounded envelope reads");
     at_limit_read
         .into_files()
-        .expect("exact output-v10 check limit validates");
+        .expect("exact output-v11 check limit validates");
 
     assert_eq!(
         LintFileReport::new(
@@ -198,13 +198,13 @@ fn output_v10_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
             input(b"limit"),
             rig(),
             None,
-            vec![check; OUTPUT_V10_MAX_CHECKS_PER_FILE + 1],
+            vec![check; OUTPUT_V11_MAX_CHECKS_PER_FILE + 1],
             measurements(),
         )
         .expect_err("N+1 output checks must fail on write"),
         OutputContractError::TooManyChecks {
-            found: OUTPUT_V10_MAX_CHECKS_PER_FILE + 1,
-            limit: OUTPUT_V10_MAX_CHECKS_PER_FILE,
+            found: OUTPUT_V11_MAX_CHECKS_PER_FILE + 1,
+            limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
         }
     );
 
@@ -223,8 +223,8 @@ fn output_v10_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         MeasurementReportError::File {
             file_index: 0,
             source: MeasurementFileError::TooManyChecks {
-                found: OUTPUT_V10_MAX_CHECKS_PER_FILE + 1,
-                limit: OUTPUT_V10_MAX_CHECKS_PER_FILE,
+                found: OUTPUT_V11_MAX_CHECKS_PER_FILE + 1,
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
             },
         }
     );

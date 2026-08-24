@@ -157,7 +157,7 @@ them separate when you automate on the output:
 
 There is deliberately no single "pass" state: a run can complete with
 warnings, and it can evaluate some declared work while skipping the
-rest. See [machine-readable output](output.md) for the current v10
+rest. See [machine-readable output](output.md) for the current v11
 representation. It models selection, configuration, applicability, and
 evaluation independently, keeps content findings separate from typed gaps,
 and records completed work scopes. This is evidence about animsmith's checks,

@@ -477,7 +477,7 @@ impl CheckEvaluationValidationError {
 }
 
 /// Validate the sole check-evaluation lifecycle and derive its serialized
-/// coverage state. Both producer construction and output-v10 readback use this
+/// coverage state. Both producer construction and output-v11 readback use this
 /// authority.
 pub(crate) fn validate_and_derive_check_evaluation(
     input: CheckEvaluationValidationInput<'_>,
@@ -579,7 +579,7 @@ pub(crate) fn validate_and_derive_check_evaluation(
     Ok(derived)
 }
 
-/// Final output-v10 record for one catalog check.
+/// Final output-v11 record for one catalog check.
 #[derive(Debug, Clone)]
 pub struct CheckEvaluation {
     check_id: &'static str,

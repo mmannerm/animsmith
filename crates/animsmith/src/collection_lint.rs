@@ -17,7 +17,7 @@ use super::collection_manifest::{
     CollectionSourceUnavailable, load_collection_manifest_with_identity,
 };
 use super::collection_output::{
-    COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES, COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES,
+    COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES, COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES,
     CheckReferenceState, CheckReferenceUnavailableReason, ClipBindingState, ClipUnavailableReason,
     CollectionClipRecord, CollectionManifestIdentity, CollectionOutput, CollectionRuntimeSetRecord,
     CollectionSourceRecord, ConfigState, DigestPinState, DocumentResult, DocumentUnavailableReason,
@@ -167,8 +167,8 @@ pub(crate) fn run_collection_lint(manifest_path: &Path) -> Result<ExitCode, Stri
 
 fn next_source_limit(primary_source_bytes: u64) -> Option<u64> {
     let remaining =
-        COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES.checked_sub(primary_source_bytes)?;
-    Some(COLLECTION_OUTPUT_V1_MAX_SOURCE_BYTES.min(remaining))
+        COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES.checked_sub(primary_source_bytes)?;
+    Some(COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES.min(remaining))
 }
 
 struct SourceExecution {
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn aggregate_reader_stops_after_one_terminal_witness() {
-        let cap = COLLECTION_OUTPUT_V1_MAX_AGGREGATE_SOURCE_BYTES;
+        let cap = COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES;
         assert_eq!(next_source_limit(cap - 1), Some(1));
         assert_eq!(next_source_limit(cap), Some(0));
         assert_eq!(next_source_limit(cap + 1), None);

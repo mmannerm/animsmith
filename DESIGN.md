@@ -129,7 +129,7 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
-animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v10 measure/lint JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v11 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
@@ -586,8 +586,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v10, identified by
-  `urn:animsmith:schema:output:10`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): final output v11, identified by
+  `urn:animsmith:schema:output:11`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -609,9 +609,10 @@ learns an embedder's contract schema.
   and vertical extrema, and fixed-basis net/unwrapped/travel yaw in normalized
   right-handed +Y-up metre space. These are shared uniform-grid regression
   observations, not continuous-curve extrema or transform-correctness proof.
-  Output v10 adds the registry-independent engine-prediction provenance and
-  scoped-facet substrate described in Appendix E. Measurements remain v15;
-  output v9 and earlier remain immutable historical contracts.
+  Output v10 added the registry-independent engine-prediction provenance and
+  scoped-facet substrate described in Appendix E. Output v11 retains it and
+  adds per-role resolution outcome and match-policy provenance. Measurements
+  remain v15; output v10 and earlier remain immutable historical contracts.
   Measurements v14 gives every clip fact that is not applicable to every
   clip (loop continuity, loop endpoint mode, frame grid, loop seam ratio,
   gait and its phase, and root-motion speed) a required sibling
@@ -631,7 +632,7 @@ learns an embedder's contract schema.
   CLI exit status derives from content severity (warnings block only with
   `--deny-warnings`) plus required-unavailable engine-prediction facets;
   ordinary coverage gaps remain nonblocking evidence.
-  The output-v10 envelope types and immutable identities live in
+  The output-v11 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -2712,7 +2713,7 @@ graph wiring, and the index is not stable across source-order edits. Richer
 scene/name/target addressability remains a separate inventory/adapter concern.
 
 The corresponding 0.4.0 standalone producer is
-`generate addressability`. Its V1 root is separate from output-v10 and contains
+`generate addressability`. Its V1 root is separate from output-v11 and contains
 one engine-neutral glTF/GLB animation inventory plus a nullable exact-Bevy
 adapter. `animsmith-engine` owns this format/profile-specific envelope and its
 strict reader; core remains limited to the generic source, closure, prediction,
@@ -3000,6 +3001,11 @@ AnimSmith will add two independently versioned contracts:
 - `urn:animsmith:schema:collection-manifest:1`, a strict TOML declaration; and
 - `urn:animsmith:schema:collection-output:1`, deterministic JSON evidence.
 
+Collection-output V1 remains immutable. The current
+`urn:animsmith:schema:collection-output:2` derives its exact shape, budgets,
+and reader rules from V1, changing only the nested ordinary output envelope
+identity from output v10 to output v11.
+
 They are consumed and produced by an explicit future command:
 
 ```text
@@ -3008,7 +3014,7 @@ animsmith collection lint COLLECTION.toml --format json
 
 The command name, input identity, and output identity are distinct from
 ordinary `animsmith lint FILE...`. Existing lint and measure invocations remain
-document-local and continue to emit output v10 with measurements v15. A file
+document-local and continue to emit output v11 with measurements v15. A file
 extension, the presence of multiple inputs, or repeated embedded take names
 never switches commands implicitly.
 
@@ -3206,7 +3212,7 @@ closure projections.
 
 ### F.6 Collection output and completeness
 
-`collection-output:1` is a new strict envelope, not output v11. It contains:
+`collection-output:1` is a new strict envelope, not ordinary output v11. It contains:
 
 - the manifest schema identity, observed manifest SHA-256/bytes, collection id,
   tool version, and frozen collection budget identity;

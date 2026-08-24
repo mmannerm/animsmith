@@ -270,6 +270,11 @@ min_reflected_time_advantage = 0.25
 min_lr_amplitude_m = 0.03
 ```
 
+Built-in profiles match exact names first, then only one unique ASCII
+case-insensitive candidate; multiple candidates remain a typed ambiguity.
+`[rig.roles]` is authoritative and exact: use it for a deliberately chosen
+bone name, not as a case-insensitive alias.
+
 Duration-pin values must be finite and positive; their tolerances must be
 finite and non-negative. Invalid pins are explicit `duration-sanity` errors,
 not silently ignored contracts.

@@ -161,8 +161,9 @@ pub use contract::{
     MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport, MeasurementContract,
     MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
     MeasurementReportInput, MeasurementReportReadError, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION,
-    OUTPUT_V10_MAX_CHECKS_PER_FILE, OUTPUT_V10_MAX_FILES, OUTPUT_V10_MAX_REPORT_BYTES,
-    OutputContractError, RigInfo, RigInfoError, ToolInfo, ToolSource, sha256_hex,
+    OUTPUT_V10_SCHEMA_ID, OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES,
+    OUTPUT_V11_MAX_REPORT_BYTES, OutputContractError, RigInfo, RigInfoError, ToolInfo, ToolSource,
+    sha256_hex,
 };
 pub use dependency_closure::{
     DEPENDENCY_CLOSURE_BUDGET_V1_ID, DEPENDENCY_CLOSURE_V1_ID,
@@ -231,7 +232,9 @@ pub use prediction::{
     SourceSkeletonRowKindV1,
 };
 pub use profile::{
-    ResolvedRoles, RigProfile, Role, builtin_profiles, detect_profile, resolve_configured_roles,
+    ResolutionOutcome, ResolvedRoles, RigProfile, Role, RoleResolutionPolicy, builtin_profiles,
+    detect_profile, detect_profile_detailed, resolve_configured_roles, resolve_named,
+    resolve_named_detailed,
 };
 pub use sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
 pub use scale::{
