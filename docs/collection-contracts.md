@@ -35,7 +35,24 @@ Confidence, when present, is finite and lies in `[0, 1]`. Core fields are
 closed. Extensions use strict envelopes with exactly `schema`,
 `schema_version`, and `payload`, where the extension's versioned schema owns
 the payload object; an unsupported but well-formed extension may be preserved
-as opaque data, while consumers needing its meaning may refuse it.
+as opaque data. Any transformer must understand and apply every
+extension's operation contract or refuse the whole operation with
+`unsupported_extension`; it may not copy opaque extension-owned times or event
+references unchanged.
+
+The strict V1 reader caps a contact-fragment source at 8,388,608 bytes and 32
+JSON container levels, with at most 4,096 events and 256 extensions. Authored
+strings are at most 4,096 UTF-8 bytes and identifiers at most 255 bytes; each
+extension payload is at most 262,144 canonical bytes and 16 levels deep. A
+complete fragment is at most 8,388,608 canonical bytes. A transform-result
+source and complete canonical result are each at most 16,777,216 bytes, with at
+most 4,096 control points and 4,096 event outcomes; its inline fragment obeys
+the fragment limits. Depth counts every object/array on the root-to-value path,
+including the root envelope as depth 1. A payload object also starts at depth 1
+for its separate 16-level limit. Each exact maximum is accepted; N+1 is
+rejected during bounded decoding before the excess value is retained or an
+unbounded canonical buffer is allocated; canonical-byte limits use a bounded
+JCS sink.
 
 A minimal collection-scoped envelope is:
 
@@ -82,10 +99,13 @@ supplied input fragment. Successful `output` has exactly
 `{artifact:{sha256,bytes}, fragment:{sha256,bytes}, contact_fragment}`, reusing
 the existing InputIdentity wire; its identities must match the inline complete
 `contact-fragment:1` and its artifact binding. No other operation kind, mapping
-token, or operation field is accepted in V1. Fully outside points/windows receive structured
-`outside` outcomes; a boundary-crossing window receives `refused` with code
-`partial_window` and refuses the whole operation. Invalid mappings, bindings,
-or event outcomes produce a typed `refused` result with no `output` field.
+token, or operation field is accepted in V1. For trim/slice `[a,b]`, a point is
+outside exactly when `t < a || t > b`; endpoints are included. A window is
+outside exactly when `end < a || start > b`, contained exactly when
+`a <= start && end <= b`, and otherwise boundary-crossing. A crossing window
+receives `refused` with code `partial_window` and refuses the whole operation.
+Invalid mappings, bindings, extensions, or event outcomes produce a typed
+`refused` result with no `output` field.
 After binding and identity validation, `event_outcomes` has exactly one
 `{event_id, outcome}` object per input event in canonical input order. It adds
 `value` only for transformed exact point/window values and `code` only for
@@ -96,11 +116,16 @@ The inline output duration is `input_duration_s * (b - a)` for trim/slice,
 the input duration for resample, and the required `output_duration_s` for
 `time_warp`; the inline fragment and operation must agree exactly.
 All time/duration inputs and results are finite IEEE 754 binary64. The
-normative contract specifies round-to-nearest, ties-to-even after every
-displayed arithmetic step (with no fused or extended-precision intermediate),
-so independent producers feed the same numeric results to JCS.
+normative sequence is `dx = rn(x1 - x0)`,
+`alpha = rn(rn(t - x0) / dx)`, `dy = rn(y1 - y0)`, and
+`mapped = rn(y0 + rn(alpha * dy))`; an exact knot bypasses interpolation.
+Trim/slice uses `span = rn(b - a)`, `mapped = rn(rn(t - a) / span)`, and
+`output_duration_s = rn(input_duration_s * span)`. Here `rn` is IEEE 754
+binary64 round-to-nearest, ties-to-even, with no fused or extended-precision
+intermediate, so independent producers feed the same numeric results to JCS.
 Refusal codes are `partial_window`, `invalid_mapping`, `invalid_binding`,
-`event_identity_mismatch`, `invalid_value`, and `unsupported_operation`.
+`event_identity_mismatch`, `invalid_value`, `unsupported_operation`, and
+`unsupported_extension`.
 
 The success shape is illustrative:
 
@@ -173,9 +198,11 @@ The declaration distinguishes two ownership scopes:
 
 Members cannot cross scopes, point to paths or animation-array indices, or be
 silently removed when missing or ambiguous. `stale_digest` is collection-only:
-it means the manifest `InputIdentity` or a manifest-bound source
-`InputIdentity` no longer matches. Reusable document-local config has no
-stale-digest state at parse time; the future evaluator binds the exact
+it means the declaration's manifest `InputIdentity` no longer matches. A
+source digest pin in that manifest is enforced by manifest resolution; a
+mismatch makes the member unavailable rather than creating a second identity
+in this declaration. Reusable document-local config has no stale-digest state
+at parse time; the future evaluator binds the exact
 document `InputIdentity` and reports source/take resolution in its output. The
 existing `[clips]`,
 `[gait_groups]`, and `[sync_groups]` sections remain document-local and are
@@ -183,6 +210,16 @@ not replaced by a second collection authority. Both placements share the
 `transition-family:1` family-record semantics; only ownership and placement
 differ. Family declarations are canonicalized by stable family id while
 preserving member order.
+
+Both future placements cap the exact declaration and normalized envelope at
+8,388,608 source or canonical bytes and 16 container levels. They permit at
+most 4,096 families, 4,096 members per family, and 16,384 members in aggregate.
+Authored strings are at most 4,096 UTF-8 bytes, with the 255-byte identifier
+limits applied more strictly. Depth counts each table/array or JSON
+object/array on the root-to-value path, including the root as depth 1. Each
+exact maximum is accepted; N+1 is rejected during bounded decoding before
+retention or unbounded canonical allocation; canonical-byte limits use a
+bounded JCS sink.
 
 A collection-scoped declaration uses the following typed TOML-like shape; each
 logical id is accompanied by the #409 source/take witness and must agree with

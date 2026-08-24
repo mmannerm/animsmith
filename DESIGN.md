@@ -3440,6 +3440,25 @@ times, and ambiguous references before accepting the fragment. These rules
 make a regenerated fragment reviewable without making event detection part of
 this contract.
 
+V1 is bounded before retention or canonicalization. A contact-fragment source
+is at most 8,388,608 bytes of UTF-8 JSON with at most 32 nested arrays/objects,
+4,096 events, and 256 extensions. Every authored string is at most 4,096 UTF-8
+bytes; identifiers (including `event_id`, producer fields, schema ids, source
+keys, and logical ids) are additionally at most 255 bytes, except the exact
+64-lowercase-hex SHA-256 spelling. One extension payload is at most 262,144 JCS
+bytes and 16 levels deep. The complete canonical fragment is also at most
+8,388,608 JCS bytes. A contact-transform-result source and its complete
+canonical result are each at most 16,777,216 bytes; it contains at most 4,096
+control points and 4,096 event outcomes and embeds a contact fragment obeying
+the preceding limits. Container depth is the number of object/array containers
+on the path from the root to a value, inclusive: the top-level envelope object
+has depth 1. An extension payload object participates in that full-envelope
+count and is also depth 1 for its separate 16-level payload limit. A strict
+reader accepts each exact maximum and rejects the first byte, element, string
+byte, or nesting level above it while decoding, before retaining that excess
+value or allocating an unbounded canonical buffer. Canonical byte limits are
+enforced with a bounded JCS sink.
+
 Extensions, when present, are an array of strict envelopes. Each envelope has
 exactly `schema`, `schema_version`, and `payload`; `schema` is the extension's
 versioned identity, `schema_version` is a positive integer, and `payload` is a
@@ -3510,10 +3529,20 @@ interval `[a, b]` with `0 <= a < b <= 1` and map an in-range `t` to
 `(t - a) / (b - a)`; `resample` carries the identity mapping on normalized
 time; and `time_warp` carries the piecewise-linear control points above. A point outside
 a trim/slice interval has outcome `outside` and is omitted only from a
-successful output fragment; a window wholly outside has the same outcome. A
-window that intersects an interval boundary has outcome `refused` with code
-`partial_window` and refuses the entire operation—no partial window is
-silently clamped.
+successful output fragment. For a point, `t < a || t > b` is outside and both
+endpoints are retained. A window is wholly outside exactly when
+`end < a || start > b`, and is fully contained exactly when
+`a <= start && end <= b`; equality at either retained endpoint is contained.
+Every other window crosses a boundary and has outcome `refused` with code
+`partial_window`, refusing the entire operation—no partial window is silently
+clamped.
+
+Preserving an opaque extension through an artifact transform cannot prove
+that extension-owned times or event references remain valid. A transformer may
+succeed only when it recognizes every extension schema/version and implements
+that extension's operation-specific transform contract. Otherwise it refuses
+the whole operation before event inventory with top-level code
+`unsupported_extension`, an empty `event_outcomes`, and no output fragment.
 
 The inline output fragment's `duration_s` is exact: trim and slice use
 `input_duration_s * (b - a)`, resample preserves `input_duration_s`, and
@@ -3546,8 +3575,10 @@ after inventory has at least one refused event outcome; invalid intervals,
 mappings, duplicate/missing event outcomes, non-monotonic warps, or any
 non-finite value use refusal codes from `partial_window`, `invalid_mapping`,
 `invalid_binding`, `event_identity_mismatch`, `invalid_value`, or
-`unsupported_operation`. The result records the operation, bindings, and
-outcomes; detector and operation implementation remain out of scope.
+`unsupported_operation`; unsupported extension transformation uses
+`unsupported_extension` as specified above. The result records the operation,
+bindings, and outcomes; detector and operation implementation remain out of
+scope.
 
 AnimSmith owns contact facts and these identity/time/transform semantics. The
 host owns final file layout and merge, unrelated measurements and provenance,
@@ -3607,9 +3638,11 @@ A declaration cannot mix scopes, use a filesystem path, use an animation-array
 index as identity, or import a member from another document or collection.
 Missing, duplicate, cross-scope, and ambiguous members are strict resolution
 failures. `stale_digest` is a collection-only failure: it means the envelope's
-manifest `InputIdentity` or a manifest-bound source `InputIdentity` no longer
-matches the declaration. A reusable document-local config has no stale-digest
-state at parse time; the future evaluator binds the exact document
+manifest `InputIdentity` no longer matches the declaration. A source digest
+pin, when present in that manifest, is enforced by manifest resolution and a
+mismatch makes the affected member unavailable; it is not a second identity
+carried by this declaration. A reusable document-local config has no
+stale-digest state at parse time; the future evaluator binds the exact document
 `InputIdentity` and reports its source/take resolution in its output. A family
 is not silently reduced to the members that happen to resolve, and a
 collection family is not copied into a document-local config. The existing `[clips]`, `[gait_groups]`, and
@@ -3627,6 +3660,19 @@ finite non-negative value. `boundary` selects whether a future evaluator
 considers entry, exit, or both; it does not itself perform a comparison.
 Additional policy fields require a separately versioned contract, not a
 generic TOML map or untyped extension payload.
+
+Both future declaration placements are bounded before retention or
+canonicalization. The exact declaration source is at most 8,388,608 bytes and
+16 nested tables/arrays, with at most 4,096 families, 4,096 members in one
+family, and 16,384 members across all families. Authored strings are at most
+4,096 UTF-8 bytes, with the 255-byte identifier limits above applied more
+strictly. The normalized JSON envelope is at most 8,388,608 JCS bytes and has
+the same nesting limit. Depth counts each table/array or JSON object/array on
+the root-to-value path, inclusive; the root table or envelope object is depth
+1. The future strict reader accepts each exact maximum and rejects the first
+byte, element, string byte, aggregate member, or nesting level above it while
+decoding, before retaining that excess value or allocating an unbounded
+canonical buffer. Canonical byte limits are enforced with a bounded JCS sink.
 
 For example, a collection-owned declaration can be written as the following
 typed TOML-like value. The logical id and source/take witnesses must agree with
