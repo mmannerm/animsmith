@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/mmannerm/animsmith/compare/v0.4.4...v0.5.0) - 2026-08-24
+
+### Added
+
+- add role-aware rig alias resolution
+- publish collection root-travel evidence
+- publish collection gait phase evidence
+- execute collection lint manifests ([#550](https://github.com/mmannerm/animsmith/pull/550))
+- *(cli)* parse and resolve collection manifests
+- *(core)* define collection manifest values
+
+### Fixed
+
+- bind rig role policy provenance
+- make glTF clip admission role-aware
+- fail closed rig profile resolution
+- keep explicit-only auto rig resolution
+- *(core)* classify unresolved gait roles consistently
+
 ## [0.4.4](https://github.com/mmannerm/animsmith/compare/v0.4.3...v0.4.4) - 2026-08-24
 
 ### Fixed
