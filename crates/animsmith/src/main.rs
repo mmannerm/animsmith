@@ -46,6 +46,7 @@ use std::process::ExitCode;
 
 #[cfg(feature = "fbx")]
 mod assembly;
+mod collection_directional_speed_policy;
 mod collection_lint;
 mod collection_manifest;
 mod collection_output;
