@@ -31,7 +31,17 @@ before source execution and reads sources sequentially.
 Runtime-set V1 concludes only whether every declared membership and required
 indexed measurement was established. Its decision is always `not_evaluated`;
 it does not infer blending, synchronization, retargeting, controller policy,
-engine behavior, or artistic/gameplay readiness. The strict reader applies a
+engine behavior, or artistic/gameplay readiness. A `gait-group` additionally
+projects each member's raw `gait_phase` availability (and phase when measured)
+onto that existing manifest-ordered member row. Its set-level
+`evidence.gait_phase` records `lifecycle` and `members_measured`; only a
+complete group (every declared member established and phase-measured) carries
+`phase_spread` and the explicit basis
+`max_circular_deviation_from_mean`. The scalar is the existing
+`circular_phase_spread` value, not a smallest covering arc, and is calculated
+from logical-ID-sorted phases even though member rows retain manifest order.
+Incomplete groups keep every member visible and omit both scalar fields;
+non-gait sets omit gait-phase evidence. The strict reader applies a
 256 MiB N+1 cap before JSON decoding, validates nested output-v10 through its
 existing reader, recomputes all summaries/work/set lifecycles, and rejects
 unknown fields or contradictory identities and states. Producer and reader

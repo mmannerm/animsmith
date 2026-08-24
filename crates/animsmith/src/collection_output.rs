@@ -5,7 +5,8 @@
 //! envelope, including bounded read-back of an untrusted previously emitted
 //! envelope.
 
-use animsmith_core::measure::ClipMeasurements;
+use animsmith_core::measure::{ClipMeasurements, MeasurementAvailability};
+use animsmith_core::metrics::circular_phase_spread;
 use animsmith_core::{
     COLLECTION_MANIFEST_V1_MAX_AGGREGATE_MEMBERS, COLLECTION_MANIFEST_V1_MAX_AGGREGATE_WORK,
     COLLECTION_MANIFEST_V1_MAX_CLIPS, COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS,
@@ -363,10 +364,12 @@ pub(crate) enum RuntimeSetMemberState {
     Unavailable { reason: ClipUnavailableReason },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct RuntimeSetMember {
     id: String,
     resolution: RuntimeSetMemberState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gait_phase: Option<GaitPhaseMemberEvidence>,
 }
 
 impl RuntimeSetMember {
@@ -374,6 +377,7 @@ impl RuntimeSetMember {
         Self {
             id: id.into(),
             resolution,
+            gait_phase: None,
         }
     }
 }
@@ -399,7 +403,39 @@ pub(crate) struct CollectionRuntimeSetRecord {
     lifecycle: RuntimeSetLifecycle,
     decision: RuntimeSetDecision,
     gaps: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence: Option<RuntimeSetEvidence>,
 }
+
+/// Raw set evidence.  This is intentionally an object so later collection
+/// evidence (for example root-travel facts) can be a sibling of gait phase
+/// without inventing another result-state shape.
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeSetEvidence {
+    gait_phase: GaitPhaseEvidence,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GaitPhaseEvidence {
+    lifecycle: RuntimeSetLifecycle,
+    members_measured: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_spread: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spread_basis: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GaitPhaseMemberEvidence {
+    availability: MeasurementAvailability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase: Option<f64>,
+}
+
+const GAIT_PHASE_SPREAD_BASIS: &str = "max_circular_deviation_from_mean";
 
 impl CollectionRuntimeSetRecord {
     pub(crate) fn new(
@@ -424,7 +460,94 @@ impl CollectionRuntimeSetRecord {
             lifecycle,
             decision: RuntimeSetDecision::NotEvaluated,
             gaps,
+            evidence: None,
         }
+    }
+
+    fn populate_evidence(
+        &mut self,
+        clips: &BTreeMap<&str, &CollectionClipRecord>,
+    ) -> Result<(), CollectionOutputError> {
+        if self.kind != CollectionRuntimeSetKindV1::GaitGroup {
+            return Ok(());
+        }
+        let member_count = self.members.len();
+        let mut phases = Vec::with_capacity(member_count);
+        for member in &mut self.members {
+            let clip =
+                clips
+                    .get(member.id.as_str())
+                    .ok_or(CollectionOutputError::Contradictory(
+                        "runtime-set member has no clip",
+                    ))?;
+            let (availability, phase) = match (&member.resolution, &clip.binding) {
+                (
+                    RuntimeSetMemberState::Established,
+                    ClipBindingState::Established { measurements, .. },
+                ) => gait_phase_from_measurements(measurements),
+                (
+                    RuntimeSetMemberState::Unavailable { reason },
+                    ClipBindingState::Unavailable {
+                        reason: clip_reason,
+                    },
+                ) if reason == clip_reason => (MeasurementAvailability::Unavailable, None),
+                _ => {
+                    return Err(CollectionOutputError::Contradictory(
+                        "runtime-set member resolution mismatch",
+                    ));
+                }
+            };
+            member.gait_phase = Some(GaitPhaseMemberEvidence {
+                availability,
+                phase,
+            });
+            if availability == MeasurementAvailability::Measured {
+                phases.push((
+                    member.id.clone(),
+                    phase.ok_or(CollectionOutputError::Contradictory(
+                        "measured gait phase is missing",
+                    ))?,
+                ));
+            }
+        }
+        let phase_spread = if phases.len() == member_count {
+            phases.sort_by(|left, right| left.0.cmp(&right.0));
+            Some(circular_phase_spread(
+                &phases.iter().map(|(_, phase)| *phase).collect::<Vec<_>>(),
+            ))
+        } else {
+            None
+        };
+        self.evidence = Some(RuntimeSetEvidence {
+            gait_phase: GaitPhaseEvidence {
+                lifecycle: if phase_spread.is_some() {
+                    RuntimeSetLifecycle::Complete
+                } else {
+                    RuntimeSetLifecycle::Incomplete
+                },
+                members_measured: phases.len(),
+                spread_basis: phase_spread.map(|_| GAIT_PHASE_SPREAD_BASIS),
+                phase_spread,
+            },
+        });
+        Ok(())
+    }
+}
+
+fn gait_phase_from_measurements(
+    measurements: &ClipMeasurements,
+) -> (MeasurementAvailability, Option<f64>) {
+    match measurements.gait_availability {
+        MeasurementAvailability::Measured => match measurements.gait.as_ref() {
+            Some(gait) if gait.phase_availability == MeasurementAvailability::Measured => {
+                (MeasurementAvailability::Measured, gait.phase)
+            }
+            Some(gait) => (gait.phase_availability, None),
+            None => (MeasurementAvailability::Unavailable, None),
+        },
+        MeasurementAvailability::NotApplicable => (MeasurementAvailability::NotApplicable, None),
+        MeasurementAvailability::Unavailable => (MeasurementAvailability::Unavailable, None),
+        _ => (MeasurementAvailability::Unavailable, None),
     }
 }
 
@@ -498,10 +621,17 @@ impl CollectionOutput {
         manifest: CollectionManifestIdentity,
         sources: Vec<CollectionSourceRecord>,
         clips: Vec<CollectionClipRecord>,
-        runtime_sets: Vec<CollectionRuntimeSetRecord>,
+        mut runtime_sets: Vec<CollectionRuntimeSetRecord>,
         primary_source_bytes: u64,
         serialized_bytes: u64,
     ) -> Result<Self, CollectionOutputError> {
+        let clip_rows = clips
+            .iter()
+            .map(|clip| (clip.id.as_str(), clip))
+            .collect::<BTreeMap<_, _>>();
+        for set in &mut runtime_sets {
+            set.populate_evidence(&clip_rows)?;
+        }
         let summary = summarize(&sources, &clips, &runtime_sets)?;
         let work = CollectionWork::new(
             sources.len(),
@@ -1186,12 +1316,37 @@ struct RuntimeSetWire {
     lifecycle: RuntimeSetLifecycle,
     decision: RuntimeSetDecision,
     gaps: Vec<String>,
+    evidence: Option<RuntimeSetEvidenceWire>,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeSetEvidenceWire {
+    gait_phase: GaitPhaseEvidenceWire,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GaitPhaseEvidenceWire {
+    lifecycle: RuntimeSetLifecycle,
+    members_measured: usize,
+    phase_spread: Option<f64>,
+    spread_basis: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GaitPhaseMemberEvidenceWire {
+    availability: MeasurementAvailability,
+    phase: Option<f64>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeSetMemberWire {
     id: String,
     resolution: RuntimeSetMemberStateWire,
+    gait_phase: Option<GaitPhaseMemberEvidenceWire>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
@@ -1648,7 +1803,96 @@ fn validate_set(
     if set.gaps != expected_gaps || set.lifecycle != expected_lifecycle {
         return Err(CollectionOutputError::Malformed);
     }
+    validate_set_evidence(set, clips)?;
     Ok(())
+}
+
+fn validate_set_evidence(
+    set: &RuntimeSetWire,
+    clips: &BTreeMap<&str, &ClipBindingStateWire>,
+) -> Result<(), CollectionOutputError> {
+    if set._kind != CollectionRuntimeSetKindV1::GaitGroup {
+        return (set.evidence.is_none()
+            && set.members.iter().all(|member| member.gait_phase.is_none()))
+        .then_some(())
+        .ok_or(CollectionOutputError::Malformed);
+    }
+    let evidence = set
+        .evidence
+        .as_ref()
+        .ok_or(CollectionOutputError::Malformed)?;
+    let mut phases = Vec::with_capacity(set.members.len());
+    for member in &set.members {
+        let binding = clips
+            .get(member.id.as_str())
+            .ok_or(CollectionOutputError::Malformed)?;
+        let (availability, phase) = match (binding, &member.resolution) {
+            (
+                ClipBindingStateWire::Established { measurements, .. },
+                RuntimeSetMemberStateWire::Established,
+            ) => gait_phase_from_measurements(measurements),
+            (
+                ClipBindingStateWire::Unavailable {
+                    reason: clip_reason,
+                },
+                RuntimeSetMemberStateWire::Unavailable { reason },
+            ) if reason == clip_reason => (MeasurementAvailability::Unavailable, None),
+            _ => return Err(CollectionOutputError::Malformed),
+        };
+        let phase_evidence = member
+            .gait_phase
+            .as_ref()
+            .ok_or(CollectionOutputError::Malformed)?;
+        if phase_evidence.availability != availability
+            || phase_evidence.phase != phase
+            || phase_evidence
+                .phase
+                .is_some_and(|value| !value.is_finite() || !(0.0..1.0).contains(&value))
+        {
+            return Err(CollectionOutputError::Malformed);
+        }
+        if availability == MeasurementAvailability::Measured {
+            phases.push((
+                member.id.as_str(),
+                phase.ok_or(CollectionOutputError::Malformed)?,
+            ));
+        }
+    }
+    let expected = if phases.len() == set.members.len() {
+        phases.sort_by(|left, right| left.0.cmp(right.0));
+        Some(circular_phase_spread(
+            &phases.iter().map(|(_, phase)| *phase).collect::<Vec<_>>(),
+        ))
+    } else {
+        None
+    };
+    let members_measured = phases.len();
+    let expected_lifecycle = if expected.is_some() {
+        RuntimeSetLifecycle::Complete
+    } else {
+        RuntimeSetLifecycle::Incomplete
+    };
+    if evidence.gait_phase.lifecycle != expected_lifecycle
+        || evidence.gait_phase.members_measured != members_measured
+    {
+        return Err(CollectionOutputError::Malformed);
+    }
+    match (
+        expected,
+        evidence.gait_phase.phase_spread,
+        evidence.gait_phase.spread_basis.as_deref(),
+    ) {
+        (None, None, None) => Ok(()),
+        (Some(expected), Some(phase_spread), Some(spread_basis))
+            if spread_basis == GAIT_PHASE_SPREAD_BASIS
+                && phase_spread.is_finite()
+                && (0.0..=0.5).contains(&phase_spread)
+                && phase_spread == expected =>
+        {
+            Ok(())
+        }
+        _ => Err(CollectionOutputError::Malformed),
+    }
 }
 fn summarize_wire(
     sources: &[CollectionSourceWire],
@@ -1820,6 +2064,112 @@ mod tests {
         serde_json::from_slice(&output_fixture(two_sources, with_set)).unwrap()
     }
 
+    fn set_gait_phases(output: &mut CollectionOutput, phases: &[(&str, f64)]) {
+        for (id, phase) in phases {
+            let clip = output
+                .clips
+                .iter_mut()
+                .find(|clip| clip.id == *id)
+                .expect("fixture clip exists");
+            let ClipBindingState::Established { measurements, .. } = &mut clip.binding else {
+                panic!("fixture clip is established");
+            };
+            measurements.gait_availability = MeasurementAvailability::Measured;
+            measurements.gait = Some(
+                serde_json::from_value(serde_json::json!({
+                    "phase": phase,
+                    "phase_availability": "measured",
+                    "lr_amplitude_m": 0.1
+                }))
+                .expect("synthetic gait measurement"),
+            );
+        }
+        let clips = output
+            .clips
+            .iter()
+            .map(|clip| (clip.id.as_str(), clip))
+            .collect::<BTreeMap<_, _>>();
+        for set in &mut output.runtime_sets {
+            set.populate_evidence(&clips).unwrap();
+        }
+    }
+
+    /// Source fixtures intentionally have no bilateral-foot signal, so their
+    /// CLI evidence covers the incomplete path.  Build measured rows directly
+    /// here to test the deterministic circular aggregate independently of
+    /// manifest member order.
+    fn three_member_gait_output(member_order: &[&str]) -> CollectionOutput {
+        let (input, envelope, measurements) = source_fixture();
+        let rows = [
+            ("a", "com.example/clip-a"),
+            ("b", "com.example/clip-b"),
+            ("c", "com.example/clip-c"),
+        ];
+        let sources = rows
+            .iter()
+            .map(|(key, _)| {
+                CollectionSourceRecord::new(
+                    *key,
+                    format!("safe/{key}.glb"),
+                    SourceInputState::Available {
+                        input: input.clone(),
+                    },
+                    DigestPinState::Matched {
+                        expected_sha256: input.sha256().to_owned(),
+                    },
+                    ConfigState::Default,
+                    LoaderState::Ready,
+                    TakeInventoryState::Complete,
+                    vec![ObservedTake::new(0, "take", 0, "take")],
+                    DocumentResult::Available {
+                        envelope: Box::new(envelope.clone()),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let clips = rows
+            .iter()
+            .map(|(key, id)| {
+                CollectionClipRecord::new(
+                    *id,
+                    *key,
+                    0,
+                    "take",
+                    ClipBindingState::Established {
+                        observed_source_take_index: 0,
+                        observed_take_name: "take".into(),
+                        normalized_clip_index: 0,
+                        measurements: Box::new(measurements.clone()),
+                        check_reference: CheckReferenceState::Available {
+                            reference: MeasurementReference::new(*key, 0, "take"),
+                        },
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let members = member_order
+            .iter()
+            .map(|id| RuntimeSetMember::new(*id, RuntimeSetMemberState::Established))
+            .collect();
+        CollectionOutput::new(
+            crate::current_tool(),
+            CollectionManifestIdentity::new(
+                "com.example",
+                InputIdentity::from_bytes(b"[manifest]"),
+            ),
+            sources,
+            clips,
+            vec![CollectionRuntimeSetRecord::new(
+                "com.example/set",
+                CollectionRuntimeSetKindV1::GaitGroup,
+                members,
+            )],
+            input.bytes() * 3,
+            0,
+        )
+        .unwrap()
+    }
+
     fn rejects(mut value: JsonValue) {
         let bytes = (0..3)
             .find_map(|_| {
@@ -1849,6 +2199,81 @@ mod tests {
         let output = read_collection_output(&bytes[..]).unwrap();
         assert_eq!(output.source_count(), 2);
         assert_eq!(output.clip_count(), 2);
+    }
+
+    #[test]
+    fn gait_phase_evidence_uses_member_order_but_logical_id_sorted_aggregate() {
+        let mut output = output_model_fixture(true, true, 0);
+        set_gait_phases(
+            &mut output,
+            &[("com.example/clip-a", 0.03), ("com.example/clip-b", 0.97)],
+        );
+        let value: JsonValue = serde_json::from_slice(&output.render_json_vec().unwrap()).unwrap();
+        let set = &value["runtime_sets"][0];
+        assert_eq!(set["members"][0]["id"], "com.example/clip-a");
+        assert_eq!(set["members"][1]["id"], "com.example/clip-b");
+        assert_eq!(set["members"][0]["gait_phase"]["phase"], 0.03);
+        assert_eq!(set["members"][1]["gait_phase"]["phase"], 0.97);
+        assert_eq!(set["evidence"]["gait_phase"]["lifecycle"], "complete");
+        assert_eq!(set["evidence"]["gait_phase"]["members_measured"], 2);
+        assert_eq!(
+            set["evidence"]["gait_phase"]["spread_basis"],
+            GAIT_PHASE_SPREAD_BASIS
+        );
+        assert_eq!(
+            set["evidence"]["gait_phase"]["phase_spread"],
+            circular_phase_spread(&[0.03, 0.97])
+        );
+    }
+
+    #[test]
+    fn gait_phase_aggregate_is_invariant_to_three_member_manifest_order() {
+        let phases = [
+            ("com.example/clip-a", 0.02),
+            ("com.example/clip-b", 0.98),
+            ("com.example/clip-c", 0.05),
+        ];
+        let mut first = three_member_gait_output(&[
+            "com.example/clip-c",
+            "com.example/clip-a",
+            "com.example/clip-b",
+        ]);
+        let mut second = three_member_gait_output(&[
+            "com.example/clip-b",
+            "com.example/clip-c",
+            "com.example/clip-a",
+        ]);
+        set_gait_phases(&mut first, &phases);
+        set_gait_phases(&mut second, &phases);
+        let first: JsonValue = serde_json::from_slice(&first.render_json_vec().unwrap()).unwrap();
+        let second: JsonValue = serde_json::from_slice(&second.render_json_vec().unwrap()).unwrap();
+        assert_eq!(
+            first["runtime_sets"][0]["members"][0]["id"],
+            "com.example/clip-c"
+        );
+        assert_eq!(
+            second["runtime_sets"][0]["members"][0]["id"],
+            "com.example/clip-b"
+        );
+        assert_eq!(
+            first["runtime_sets"][0]["evidence"]["gait_phase"]["phase_spread"],
+            second["runtime_sets"][0]["evidence"]["gait_phase"]["phase_spread"]
+        );
+    }
+
+    #[test]
+    fn incomplete_gait_phase_evidence_keeps_all_members_and_omits_scalar() {
+        let value = json_fixture(true, true);
+        let set = &value["runtime_sets"][0];
+        assert_eq!(set["evidence"]["gait_phase"]["lifecycle"], "incomplete");
+        assert_eq!(set["evidence"]["gait_phase"]["members_measured"], 0);
+        assert!(set["evidence"]["gait_phase"].get("phase_spread").is_none());
+        assert!(set["evidence"]["gait_phase"].get("spread_basis").is_none());
+        assert_eq!(set["members"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            set["members"][0]["gait_phase"]["availability"],
+            "not_applicable"
+        );
     }
 
     #[test]
@@ -2027,6 +2452,28 @@ mod tests {
         let mut work = json_fixture(false, false);
         work["work"]["primary_source_bytes"] = 0.into();
         rejects(work);
+
+        let mut missing_gait_member_evidence = json_fixture(true, true);
+        missing_gait_member_evidence["runtime_sets"][0]["members"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("gait_phase");
+        rejects(missing_gait_member_evidence);
+
+        let mut invented_gait_scalar = json_fixture(true, true);
+        invented_gait_scalar["runtime_sets"][0]["evidence"]["gait_phase"]["lifecycle"] =
+            "complete".into();
+        invented_gait_scalar["runtime_sets"][0]["evidence"]["gait_phase"]["members_measured"] =
+            2.into();
+        invented_gait_scalar["runtime_sets"][0]["evidence"]["gait_phase"]["phase_spread"] =
+            0.1.into();
+        invented_gait_scalar["runtime_sets"][0]["evidence"]["gait_phase"]["spread_basis"] =
+            GAIT_PHASE_SPREAD_BASIS.into();
+        rejects(invented_gait_scalar);
+
+        let mut non_gait_evidence = json_fixture(true, true);
+        non_gait_evidence["runtime_sets"][0]["kind"] = "sync-group".into();
+        rejects(non_gait_evidence);
     }
 
     #[test]
