@@ -117,6 +117,7 @@ pub mod assembly;
 mod bounded_deserialize;
 pub mod check;
 mod checks;
+pub mod collection;
 pub mod config;
 pub mod contract;
 pub mod dependency_closure;
@@ -139,6 +140,17 @@ pub mod static_bake;
 pub mod transform;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
+pub use collection::{
+    COLLECTION_MANIFEST_V1_BUDGET_ID, COLLECTION_MANIFEST_V1_ID,
+    COLLECTION_MANIFEST_V1_MAX_AGGREGATE_MEMBERS, COLLECTION_MANIFEST_V1_MAX_AGGREGATE_WORK,
+    COLLECTION_MANIFEST_V1_MAX_CLIPS, COLLECTION_MANIFEST_V1_MAX_IDENTIFIER_BYTES,
+    COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES, COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS,
+    COLLECTION_MANIFEST_V1_MAX_SOURCES, COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES,
+    COLLECTION_MANIFEST_V1_SCHEMA_VERSION, CollectionClipV1, CollectionDigestPinV1, CollectionIdV1,
+    CollectionLogicalIdV1, CollectionManifestBudgetV1, CollectionManifestError,
+    CollectionManifestV1, CollectionRuntimeSetKindV1, CollectionRuntimeSetV1,
+    CollectionSourceKeyV1, CollectionSourceV1,
+};
 pub use config::{
     ClipExpectations, Config, ConfigValidationError, GaitGroup, MovementOwner, Pinned,
     RuntimeNodeSelectorResolution, RuntimeNodeSelectors, RuntimeNodesConfig, SeveritySetting,
