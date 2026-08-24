@@ -45,6 +45,22 @@ jobs:
       - name: Smoke release binary without default features
         run: cargo run -p animsmith --release --no-default-features -- --version
 
+  animation-pack:
+    name: animation-pack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Install animation-pack validator dependency
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6,<7"
+      - name: Validate animation-pack skill and published reports
+        run: PYTHONDONTWRITEBYTECODE=1 python .agents/skills/evaluate-animation-packs/scripts/test_validators.py
+
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
@@ -84,6 +100,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Install animation-pack validator dependency
+        run: python -m pip install --disable-pip-version-check "PyYAML>=6,<7"
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2

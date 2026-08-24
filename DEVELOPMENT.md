@@ -85,6 +85,15 @@ clean checkout. Coverage and the security scanners (Scorecard, CodeQL)
 run only in CI and are informational, so they are not part of the local
 gate (see below).
 
+Pull requests also receive one separate `checks / animation-pack` result from
+the reusable checks workflow. It runs the same animation-pack validator suite
+once on the exact pull-request head, equivalent to the local
+`just animation-pack-skill` recipe, covering the versioned skill validators and
+every maintained report/appendix pair. Audit agents should retain and reuse
+that exact-head result instead of rerunning the suite independently. The
+check uses only repository-safe fixtures; licensed animation packs remain
+outside the repository and CI.
+
 ## no-default-features
 
 The default CLI build includes FBX support through `ufbx` and the HTML
