@@ -253,7 +253,7 @@ asset with `animsmith measure --format json` before passing it to `diff`.
   "schema": "urn:animsmith:schema:output:11",
   "tool": {
     "name": "animsmith",
-    "version": "0.4.4",
+    "version": "0.5.0",
     "source": {
       "revision": "0123456789abcdef0123456789abcdef01234567",
       "dirty": false
@@ -314,7 +314,7 @@ producer-refusal v1 record:
   "schema": "urn:animsmith:schema:producer-refusal:1",
   "tool": {
     "name": "animsmith",
-    "version": "0.4.4",
+    "version": "0.5.0",
     "source": { "revision": null, "dirty": null }
   },
   "command": "convert",
@@ -334,7 +334,7 @@ producer-refusal v1 record:
   "schema": "urn:animsmith:schema:conversion-evidence:2",
   "tool": {
     "name": "animsmith",
-    "version": "0.4.4",
+    "version": "0.5.0",
     "source": { "revision": null, "dirty": null }
   },
   "command": "convert",
@@ -1210,7 +1210,7 @@ delta count, and structured metric deltas:
   "schema": "urn:animsmith:schema:output:11",
   "tool": {
     "name": "animsmith",
-    "version": "0.4.4",
+    "version": "0.5.0",
     "source": { "revision": null, "dirty": null }
   },
   "command": "diff",
