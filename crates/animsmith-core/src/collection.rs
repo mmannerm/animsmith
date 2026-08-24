@@ -120,18 +120,6 @@ impl CollectionManifestBudgetV1 {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum CollectionManifestError {
-    /// The schema identity was not the immutable V1 identity.
-    #[error("unsupported collection manifest schema {found:?}")]
-    UnsupportedSchema {
-        /// Received schema identity.
-        found: String,
-    },
-    /// The schema version did not match V1.
-    #[error("unsupported collection manifest schema version {found}")]
-    UnsupportedSchemaVersion {
-        /// Received schema version.
-        found: u32,
-    },
     /// A required text field was empty or exceeded its byte bound.
     #[error("invalid {field}: expected nonempty UTF-8 text no longer than {max} bytes")]
     InvalidText {
@@ -141,12 +129,10 @@ pub enum CollectionManifestError {
         max: usize,
     },
     /// An identifier did not satisfy the V1 lowercase ASCII grammar.
-    #[error("invalid {field} {value:?}: expected V1 lowercase ASCII identifier")]
+    #[error("invalid {field}: expected V1 lowercase ASCII identifier")]
     InvalidIdentifier {
         /// Stable field path.
         field: &'static str,
-        /// Rejected value.
-        value: String,
     },
     /// A bounded row collection exceeded its limit.
     #[error("{field} has {found} rows, exceeding V1 limit {max}")]
@@ -295,7 +281,6 @@ impl CollectionLogicalIdV1 {
         {
             return Err(CollectionManifestError::InvalidIdentifier {
                 field: "logical_id",
-                value,
             });
         }
         Ok(Self(value))
@@ -703,10 +688,7 @@ impl CollectionManifestV1 {
 
 fn validate_token(field: &'static str, value: &str) -> Result<(), CollectionManifestError> {
     if value.len() > COLLECTION_MANIFEST_V1_MAX_IDENTIFIER_BYTES || !is_valid_token(value) {
-        return Err(CollectionManifestError::InvalidIdentifier {
-            field,
-            value: value.to_owned(),
-        });
+        return Err(CollectionManifestError::InvalidIdentifier { field });
     }
     Ok(())
 }
@@ -831,6 +813,14 @@ mod tests {
             value.schema_version(),
             COLLECTION_MANIFEST_V1_SCHEMA_VERSION
         );
+
+        let shuffled = manifest(
+            vec![source("alpha"), source("zebra")],
+            vec![clip(forward, "zebra", 1), clip(left, "alpha", 0)],
+            vec![set("com.example.pack/sets/ring", &[left, forward])],
+        )
+        .unwrap();
+        assert_eq!(value, shuffled);
     }
 
     #[test]
@@ -937,6 +927,28 @@ mod tests {
             ),
             Err(CollectionManifestError::TooFewMembers { .. })
         ));
+        assert!(matches!(
+            manifest(
+                vec![source("a")],
+                vec![clip(id, "a", 0), clip(other, "a", 1)],
+                vec![
+                    set("com.example.pack/sets/a", &[id, other]),
+                    set("com.example.pack/sets/a", &[other, id]),
+                ]
+            ),
+            Err(CollectionManifestError::Duplicate {
+                field: "runtime set id",
+                ..
+            })
+        ));
+        assert!(matches!(
+            manifest(
+                vec![source("a")],
+                vec![clip(id, "a", 0)],
+                vec![set("com.example.pack/sets/empty", &[])]
+            ),
+            Err(CollectionManifestError::TooFewMembers { found: 0, .. })
+        ));
     }
 
     #[test]
@@ -951,6 +963,53 @@ mod tests {
         ));
         assert!(CollectionDigestPinV1::new("A".repeat(64)).is_err());
         assert!(CollectionDigestPinV1::new("0".repeat(63)).is_err());
+        assert!(CollectionDigestPinV1::new("g".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn logical_ids_enforce_grammar_and_exact_byte_bound() {
+        let exact = format!(
+            "a/{}",
+            "x".repeat(COLLECTION_MANIFEST_V1_MAX_IDENTIFIER_BYTES - 2)
+        );
+        assert_eq!(exact.len(), COLLECTION_MANIFEST_V1_MAX_IDENTIFIER_BYTES);
+        assert!(CollectionLogicalIdV1::new(exact).is_ok());
+
+        let over = format!(
+            "a/{}",
+            "x".repeat(COLLECTION_MANIFEST_V1_MAX_IDENTIFIER_BYTES - 1)
+        );
+        assert_eq!(over.len(), COLLECTION_MANIFEST_V1_MAX_IDENTIFIER_BYTES + 1);
+        assert!(CollectionLogicalIdV1::new(over).is_err());
+
+        for invalid in ["single", "a/Upper", "a/unicodé", "a//empty", "a/.", "a/.."] {
+            assert!(
+                CollectionLogicalIdV1::new(invalid).is_err(),
+                "{invalid:?} must not satisfy logical-id grammar"
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_set_kind_wire_vocabulary_is_closed() {
+        for kind in [
+            "gait-group",
+            "sync-group",
+            "directional-blend",
+            "speed-blend",
+            "transition-chain",
+            "mask-composition",
+            "retarget-group",
+            "paired-interaction",
+            "motion-database",
+        ] {
+            serde_json::from_value::<CollectionRuntimeSetKindV1>(serde_json::json!(kind))
+                .unwrap_or_else(|error| panic!("closed kind {kind:?} must decode: {error}"));
+        }
+        assert!(
+            serde_json::from_value::<CollectionRuntimeSetKindV1>(serde_json::json!("typo"))
+                .is_err()
+        );
     }
 
     #[test]
@@ -1058,6 +1117,22 @@ mod tests {
         assert_eq!(
             budget.max_path_components(),
             DEPENDENCY_CLOSURE_V1_MAX_PATH_COMPONENTS
+        );
+        assert_eq!(
+            serde_json::to_value(budget).unwrap(),
+            serde_json::json!({
+                "id": COLLECTION_MANIFEST_V1_BUDGET_ID,
+                "max_manifest_bytes": COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES,
+                "max_sources": COLLECTION_MANIFEST_V1_MAX_SOURCES,
+                "max_clips": COLLECTION_MANIFEST_V1_MAX_CLIPS,
+                "max_runtime_sets": COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS,
+                "max_aggregate_members": COLLECTION_MANIFEST_V1_MAX_AGGREGATE_MEMBERS,
+                "max_aggregate_work": COLLECTION_MANIFEST_V1_MAX_AGGREGATE_WORK,
+                "max_identifier_bytes": COLLECTION_MANIFEST_V1_MAX_IDENTIFIER_BYTES,
+                "max_take_name_bytes": COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES,
+                "max_path_bytes": DEPENDENCY_CLOSURE_V1_MAX_KEY_BYTES,
+                "max_path_components": DEPENDENCY_CLOSURE_V1_MAX_PATH_COMPONENTS,
+            })
         );
     }
 

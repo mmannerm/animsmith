@@ -4,15 +4,17 @@
 //! owns strict TOML input and host filesystem access; canonical host paths and
 //! OS diagnostics never cross its internal boundary.
 
+// #545 freezes this internal boundary before #546 wires it to the public
+// collection subcommand. Remove this allowance when that command lands.
 #![allow(dead_code)]
 
 use animsmith_core::{
     COLLECTION_MANIFEST_V1_ID, COLLECTION_MANIFEST_V1_MAX_CLIPS,
     COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES, COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS,
     COLLECTION_MANIFEST_V1_MAX_SOURCES, CollectionClipV1, CollectionDigestPinV1, CollectionIdV1,
-    CollectionLogicalIdV1, CollectionManifestError, CollectionManifestV1,
-    CollectionRuntimeSetKindV1, CollectionRuntimeSetV1, CollectionSourceKeyV1, CollectionSourceV1,
-    DependencyResourceKeyV1, ResourceKeySyntaxV1,
+    CollectionLogicalIdV1, CollectionManifestV1, CollectionRuntimeSetKindV1,
+    CollectionRuntimeSetV1, CollectionSourceKeyV1, CollectionSourceV1, DependencyResourceKeyV1,
+    ResourceKeySyntaxV1,
 };
 use serde::Deserialize;
 use serde::de::{Deserializer, IgnoredAny, SeqAccess, Visitor};
@@ -208,7 +210,11 @@ pub(crate) fn parse_collection_manifest_bytes(
             CollectionControlKind::UnsupportedSchema,
         ));
     }
-    if header.schema_version != animsmith_core::COLLECTION_MANIFEST_V1_SCHEMA_VERSION {
+    if header.schema_version.as_integer()
+        != Some(i64::from(
+            animsmith_core::COLLECTION_MANIFEST_V1_SCHEMA_VERSION,
+        ))
+    {
         return Err(CollectionControlError::new(
             CollectionControlKind::UnsupportedSchemaVersion,
         ));
@@ -264,7 +270,7 @@ pub(crate) fn parse_collection_manifest_bytes(
     }
 
     CollectionManifestV1::new(collection_id, input_root, sources, clips, runtime_sets)
-        .map_err(|error| CollectionControlError::new(classify_manifest_error(&error)))
+        .map_err(|_| CollectionControlError::new(CollectionControlKind::InvalidDeclaration))
 }
 
 fn safe_key(value: &str) -> Result<DependencyResourceKeyV1, CollectionControlError> {
@@ -426,18 +432,6 @@ impl CollectionPathResolver {
     }
 }
 
-fn classify_manifest_error(error: &CollectionManifestError) -> CollectionControlKind {
-    match error {
-        CollectionManifestError::UnsupportedSchema { .. } => {
-            CollectionControlKind::UnsupportedSchema
-        }
-        CollectionManifestError::UnsupportedSchemaVersion { .. } => {
-            CollectionControlKind::UnsupportedSchemaVersion
-        }
-        _ => CollectionControlKind::InvalidDeclaration,
-    }
-}
-
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, CollectionControlKind> {
     let file = fs::File::open(path).map_err(|_| CollectionControlKind::ManifestRead)?;
     let mut bytes = Vec::new();
@@ -454,7 +448,7 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, CollectionControlKin
 #[derive(Debug, Deserialize)]
 struct CollectionManifestHeaderWire {
     schema: String,
-    schema_version: u32,
+    schema_version: toml::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -688,6 +682,17 @@ take_name = "Take 001"
                 .kind(),
             CollectionControlKind::ManifestMalformed
         );
+
+        let nested = VALID.replace(
+            "path = \"walk.gltf\"",
+            "path = \"walk.gltf\"\nunknown = true",
+        );
+        assert_eq!(
+            parse_collection_manifest_bytes(nested.as_bytes())
+                .unwrap_err()
+                .kind(),
+            CollectionControlKind::ManifestMalformed
+        );
     }
 
     #[test]
@@ -708,9 +713,25 @@ take_name = "Take 001"
             CollectionControlKind::UnsupportedSchema
         );
 
+        let unsupported_schema_and_non_numeric_version =
+            unsupported_schema.replace("schema_version = 1", "schema_version = \"future\"");
+        assert_eq!(
+            parse_collection_manifest_bytes(unsupported_schema_and_non_numeric_version.as_bytes())
+                .unwrap_err()
+                .kind(),
+            CollectionControlKind::UnsupportedSchema
+        );
+
         let unsupported_version = VALID.replace("schema_version = 1", "schema_version = 2");
         assert_eq!(
             parse_collection_manifest_bytes(unsupported_version.as_bytes())
+                .unwrap_err()
+                .kind(),
+            CollectionControlKind::UnsupportedSchemaVersion
+        );
+        let non_numeric_version = VALID.replace("schema_version = 1", "schema_version = \"one\"");
+        assert_eq!(
+            parse_collection_manifest_bytes(non_numeric_version.as_bytes())
                 .unwrap_err()
                 .kind(),
             CollectionControlKind::UnsupportedSchemaVersion
@@ -925,6 +946,10 @@ take_name = "Take 001"
         fs::write(directory.path().join("animsmith.toml"), b"# config\n").unwrap();
         fs::write(directory.path().join("assets/walk.gltf"), b"fixture").unwrap();
         let resolver = CollectionPathResolver::new(&manifest, Some(&key("assets"))).unwrap();
+        assert_eq!(
+            resolver.resolve_config(None).unwrap(),
+            CollectionConfigResolution::Default
+        );
         assert!(matches!(
             resolver
                 .resolve_config(Some(&key("animsmith.toml")))
@@ -1011,6 +1036,27 @@ take_name = "Take 001"
     }
 
     #[test]
+    fn retained_spike_resolves_equal_content_sources_and_reused_configs_by_declared_role() {
+        let manifest_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/collection-spike/collection.toml");
+        let manifest = load_collection_manifest(&manifest_path).unwrap();
+        let resolver = CollectionPathResolver::new(&manifest_path, manifest.input_root()).unwrap();
+        let sources = resolver.resolve_sources(manifest.sources()).unwrap();
+        assert_eq!(sources.len(), 3);
+        assert!(
+            sources
+                .values()
+                .all(|source| matches!(source, CollectionSourceResolution::Ready(_)))
+        );
+        for source in manifest.sources() {
+            assert!(matches!(
+                resolver.resolve_config(source.config()).unwrap(),
+                CollectionConfigResolution::Explicit(_)
+            ));
+        }
+    }
+
+    #[test]
     fn resolver_preserves_case_and_unicode_declared_locators() {
         let directory = tempfile::tempdir().unwrap();
         let manifest = directory.path().join("collection.toml");
@@ -1045,6 +1091,13 @@ take_name = "Take 001"
         fs::write(directory.path().join("real/walk.gltf"), b"fixture").unwrap();
         symlink("real/walk.gltf", directory.path().join("final.gltf")).unwrap();
         symlink("real", directory.path().join("linked")).unwrap();
+        symlink("real", directory.path().join("input-linked")).unwrap();
+        fs::write(directory.path().join("real/config.toml"), b"# fixture\n").unwrap();
+        symlink(
+            "real/config.toml",
+            directory.path().join("config-linked.toml"),
+        )
+        .unwrap();
         let resolver = CollectionPathResolver::new(&manifest, None).unwrap();
 
         for (key_name, declared) in [("final", "final.gltf"), ("component", "linked/walk.gltf")] {
@@ -1059,25 +1112,37 @@ take_name = "Take 001"
                 CollectionControlKind::UnsafePath
             );
         }
+        assert_eq!(
+            resolver
+                .resolve_config(Some(&key("config-linked.toml")))
+                .unwrap_err()
+                .kind(),
+            CollectionControlKind::UnsafePath
+        );
+        assert_eq!(
+            CollectionPathResolver::new(&manifest, Some(&key("input-linked")))
+                .unwrap_err()
+                .kind(),
+            CollectionControlKind::UnsafePath
+        );
     }
 
     #[test]
     fn bounded_manifest_read_refuses_n_plus_one_bytes() {
         let directory = tempfile::tempdir().unwrap();
         let exact_manifest = directory.path().join("exact.toml");
+        let mut exact_bytes = VALID.as_bytes().to_vec();
+        exact_bytes.push(b'#');
+        exact_bytes.resize(COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES as usize, b'x');
         let mut exact_file = File::create(&exact_manifest).unwrap();
-        exact_file
-            .write_all(&vec![
-                b'x';
-                COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES as usize
-            ])
-            .unwrap();
+        exact_file.write_all(&exact_bytes).unwrap();
         assert_eq!(
             read_bounded(&exact_manifest, COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES)
                 .unwrap()
                 .len() as u64,
             COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES
         );
+        assert!(load_collection_manifest(&exact_manifest).is_ok());
 
         let oversized_manifest = directory.path().join("oversized.toml");
         let mut oversized_file = File::create(&oversized_manifest).unwrap();
