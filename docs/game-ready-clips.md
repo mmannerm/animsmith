@@ -585,8 +585,9 @@ recorded in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file
 and emitted by the explicit collection command. The 0.5.0
 [contact-fragment](collection-contracts.md#contact-fragments-147) and
 [transition-family](collection-contracts.md#transition-families-148) additions
-are schema-only interchange declarations: they do not make ordinary checks
-cross-file, infer membership, or add runtime policy. Keep per-file evidence
+are interchange declarations; 0.6 implements only the contact fragment's
+strict core reader, not a producer, CLI, transform, or runtime policy. They do
+not make ordinary checks cross-file or infer membership. Keep per-file evidence
 and the collection manifest authoritative; do not merge, rename, or infer set
 membership merely to make a check run.
 
