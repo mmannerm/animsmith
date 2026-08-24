@@ -3566,6 +3566,12 @@ independent identity is:
 urn:animsmith:schema:transition-family:1
 ```
 
+These are accepted design shapes for a future implementation, not fields the
+0.5.0 config parser or collection CLI accepts. Putting the example tables below
+into a current `animsmith.toml` remains an unknown-field error; #153/#164 or
+another separately reviewed implementation must add the reader, evaluation
+evidence, and command behavior.
+
 The declaration has a tagged `scope`, a stable `family_id`, an explicit
 ordered `members` array, a `boundary` (`entry`, `exit`, or `both`), a typed
 `basis`, and typed named `tolerances`. A family has at least two members.
@@ -3583,14 +3589,15 @@ Appendix F's slash-qualified logical-id grammar and collection-id prefix.
 
 The two scopes are intentionally different authorities:
 
-- `document` declarations are placed in the existing `animsmith.toml` config
-  basis under `[transition_families."<family_id>"]`. The table key itself is
+- future `document` declarations will be placed in the existing
+  `animsmith.toml` config basis under `[transition_families."<family_id>"]`.
+  The table key itself is
   the family id; it is a reusable config declaration and carries no artifact
   digest. The future evaluator binds the exact document `InputIdentity` in its
   output, while members use exact embedded take-index/name witnesses. A
   repeated or loader-ambiguous take name is a strict resolution failure.
-- `collection` declarations are a separate declaration envelope, not an
-  extension of collection-manifest V1 and not another path/member authority.
+- future `collection` declarations use a separate declaration envelope, not
+  an extension of collection-manifest V1 and not another path/member authority.
   The envelope binds the exact collection-manifest `InputIdentity` `{sha256,
   bytes}`, collection id, and one or more family records. Each record
   references a declared logical clip id plus its corresponding `source`,
@@ -3743,10 +3750,11 @@ member before a declaration becomes available to a consumer. The collection
 envelope's manifest digest/bytes binding makes a manifest reorder or edit
 stale even when its collection id and logical ids are unchanged.
 
-Canonical serialization first sorts decoded family declarations by their stable
-`family_id` and preserves declared member order, then serializes that typed JSON
-representation with RFC 8785 JCS. The exact source TOML `InputIdentity` remains
-a separate binding and is never replaced by the normalized JSON identity. The future strict reader validates
+Canonical serialization first sorts decoded family declarations by their
+stable `family_id` and preserves declared member order, then serializes that
+typed JSON representation with RFC 8785 JCS. The exact source TOML
+`InputIdentity` remains a separate binding and is never replaced by the
+normalized JSON identity. The future strict reader validates
 owner/scope, member resolution, basis, units, finite tolerances, and
 canonicalization before a declaration is accepted. This is a declaration
 contract only: checks, findings, reports, required gameplay metadata, inferred
