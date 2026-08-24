@@ -2262,6 +2262,55 @@ mod tests {
     }
 
     #[test]
+    fn partial_gait_phase_set_never_aggregates_a_measured_subset() {
+        let mut output = three_member_gait_output(&[
+            "com.example/clip-c",
+            "com.example/clip-a",
+            "com.example/clip-b",
+        ]);
+        set_gait_phases(
+            &mut output,
+            &[("com.example/clip-a", 0.02), ("com.example/clip-b", 0.98)],
+        );
+        let value: JsonValue = serde_json::from_slice(&output.render_json_vec().unwrap()).unwrap();
+        let set = &value["runtime_sets"][0];
+        assert_eq!(set["members"].as_array().unwrap().len(), 3);
+        assert_eq!(set["members"][0]["id"], "com.example/clip-c");
+        assert_eq!(
+            set["members"][0]["gait_phase"]["availability"],
+            "not_applicable"
+        );
+        assert_eq!(set["members"][1]["gait_phase"]["availability"], "measured");
+        assert_eq!(set["members"][2]["gait_phase"]["availability"], "measured");
+        assert_eq!(set["evidence"]["gait_phase"]["lifecycle"], "incomplete");
+        assert_eq!(set["evidence"]["gait_phase"]["members_measured"], 2);
+        assert!(set["evidence"]["gait_phase"].get("phase_spread").is_none());
+        assert!(set["evidence"]["gait_phase"].get("spread_basis").is_none());
+
+        let wire: CollectionOutputWire = serde_json::from_value(value.clone()).unwrap();
+        let clips = wire
+            .clips
+            .iter()
+            .map(|clip| (clip.id.as_str(), &clip.binding))
+            .collect::<BTreeMap<_, _>>();
+        assert!(validate_set_evidence(&wire.runtime_sets[0], &clips).is_ok());
+
+        let mut injected = value;
+        injected["runtime_sets"][0]["evidence"]["gait_phase"]["lifecycle"] = "complete".into();
+        injected["runtime_sets"][0]["evidence"]["gait_phase"]["members_measured"] = 3.into();
+        injected["runtime_sets"][0]["evidence"]["gait_phase"]["phase_spread"] = 0.02.into();
+        injected["runtime_sets"][0]["evidence"]["gait_phase"]["spread_basis"] =
+            GAIT_PHASE_SPREAD_BASIS.into();
+        let injected: CollectionOutputWire = serde_json::from_value(injected).unwrap();
+        let clips = injected
+            .clips
+            .iter()
+            .map(|clip| (clip.id.as_str(), &clip.binding))
+            .collect::<BTreeMap<_, _>>();
+        assert!(validate_set_evidence(&injected.runtime_sets[0], &clips).is_err());
+    }
+
+    #[test]
     fn incomplete_gait_phase_evidence_keeps_all_members_and_omits_scalar() {
         let value = json_fixture(true, true);
         let set = &value["runtime_sets"][0];
