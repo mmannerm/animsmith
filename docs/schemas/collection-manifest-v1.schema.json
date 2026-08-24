@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:collection-manifest:1",
+  "title": "animsmith collection manifest v1 (decoded TOML shape)",
+  "description": "Machine-readable shape of the decoded strict TOML collection manifest. TOML is the only accepted input spelling; byte, aggregate, rooted-path, uniqueness, namespace-prefix, and reference constraints are enforced by the Rust reader.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "collection_id", "sources", "clips"],
+  "properties": {
+    "schema": { "const": "urn:animsmith:schema:collection-manifest:1" },
+    "schema_version": { "const": 1 },
+    "collection_id": { "$ref": "#/$defs/token" },
+    "input_root": { "$ref": "#/$defs/relative_path" },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "clips": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/clip" }
+    },
+    "runtime_sets": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/runtime_set" }
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "logical_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 255,
+      "pattern": "^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)+$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "description": "Exact UTF-8 evidence spelling using slash separators. The reader applies dependency-closure ParserRelativePath policy, including a 4096-byte and 128-component limit."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "path"],
+      "properties": {
+        "key": { "$ref": "#/$defs/token" },
+        "path": { "$ref": "#/$defs/relative_path" },
+        "config": { "$ref": "#/$defs/relative_path" },
+        "expected_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "take_index", "take_name"],
+      "properties": {
+        "id": { "$ref": "#/$defs/logical_id" },
+        "source": { "$ref": "#/$defs/token" },
+        "take_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "take_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Exact expected embedded take name; the reader applies the 4096-byte UTF-8 limit."
+        }
+      }
+    },
+    "runtime_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "members"],
+      "properties": {
+        "id": { "$ref": "#/$defs/logical_id" },
+        "kind": {
+          "enum": [
+            "gait-group",
+            "sync-group",
+            "directional-blend",
+            "speed-blend",
+            "transition-chain",
+            "mask-composition",
+            "retarget-group",
+            "paired-interaction",
+            "motion-database"
+          ]
+        },
+        "members": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4096,
+          "items": { "$ref": "#/$defs/logical_id" }
+        }
+      }
+    }
+  }
+}

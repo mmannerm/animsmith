@@ -46,6 +46,7 @@ use std::process::ExitCode;
 
 #[cfg(feature = "fbx")]
 mod assembly;
+mod collection_manifest;
 #[cfg(feature = "fbx")]
 mod material_recipe;
 #[cfg(feature = "fbx")]
