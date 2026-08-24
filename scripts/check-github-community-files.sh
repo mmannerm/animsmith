@@ -41,6 +41,14 @@ require_literal() {
   grep -Fq -- "$literal" "$path" || fail "$path must include $description"
 }
 
+# Validate the workflow structurally after YAML decoding; this handles quoted
+# keys, aliases, merges, and duplicate mappings that text scans cannot model.
+require_animation_pack_workflow() {
+  require_file .github/workflows/checks.yml
+  python3 scripts/check-animation-pack-workflow.py --workflow .github/workflows/checks.yml
+  python3 scripts/check-animation-pack-workflow.py --self-test
+}
+
 # Dependabot treats a version-shaped action ref as a tag to bump, so
 # `dtolnay/rust-toolchain@1.88` gets silently rewritten to whatever number
 # looks newest -- it once proposed `@1.100`, a nightly number, for the MSRV
@@ -175,6 +183,11 @@ require_literal .github/PULL_REQUEST_TEMPLATE.md "type:docs" "type:docs follow-u
 require_literal .github/PULL_REQUEST_TEMPLATE.md "Published README/doc-link policy" "published README/doc-link policy"
 require_literal .github/PULL_REQUEST_TEMPLATE.md "## Verification" "a Verification section"
 require_literal .github/PULL_REQUEST_TEMPLATE.md "just package-inventory" "package/readiness changes route"
+
+# The animation-pack validator is a separate single-run PR check rather than
+# another leg of the platform test matrix. Keep its invocation anchored in the
+# reusable workflow so removal cannot silently erase exact-head evidence.
+require_animation_pack_workflow
 
 require_literal SUPPORT.md "GitHub Discussions are" "support discussion routing"
 require_literal SUPPORT.md "not enabled" "support discussion routing"
