@@ -224,12 +224,12 @@ tangents.
 The code reports what the run *did*, never how well it could report it. This
 holds for parser-rendered help/version, text, Markdown, and every `--format json`
 path (`measure`, `lint`,
-`evaluate-transition-poses`, `collection lint`, `collection evaluate-directional-speed`,
+`evaluate-transition-poses`, `collection evaluate-transition-poses`, `collection lint`, `collection evaluate-directional-speed`,
 `diff`, `convert`, `assemble`, `scale`, `generate addressability`). If
 stdout cannot accept the result — a closed pipe or full filesystem — the
 checked write never panics, a best-effort checked diagnostic goes to stderr,
 and the stdout-bearing path's already-established code stands **except for
-`evaluate-transition-poses`**. That standalone immutable result has no
+`evaluate-transition-poses` or `collection evaluate-transition-poses`**. These immutable results have no
 sidecar or previously established outcome: a failed stdout write is an
 operator error, produces no usable result, and exits 2. Thus
 `lint … --format text | head` still

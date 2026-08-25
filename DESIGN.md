@@ -3673,8 +3673,9 @@ document transition-pose evaluator/result contract
 `urn:animsmith:schema:transition-pose-evaluation:1`. It admits a mutable
 loaded document's skeleton and selected T/R tracks, plans bounded endpoint
 work before sampling, and returns an
-immutable complete/finding/not-evaluated result. It does not add collection
-source reload or a lint check. The document adapter is the
+immutable complete/finding/not-evaluated result. The collection adapter
+reloads only manifest-witnessed sources; neither adapter adds a lint check.
+The document adapter is the
 JSON-only `animsmith evaluate-transition-poses INPUT --format json` command:
 it loads one document through the normal public loader/config path, binds the
 loaded exact raw document identity, and emits the core result unchanged. It
@@ -3684,8 +3685,8 @@ the same exact and normalized declaration identities. The collection adapter
 preserves every declared family member and makes an unavailable or unusable
 source a whole-family incomplete result rather than evaluating a subset.
 Its scope-neutral `subject_input` binds the exact raw document in this
-document evaluator; a later collection adapter binds its manifest subject
-under the same result schema. The normalized declaration scope determines
+document evaluator; the collection adapter binds its manifest subject under
+the same result schema. The normalized declaration scope determines
 which subject meaning applies. For document scope, the public evaluator accepts
 the loader's same-load `DependencyClosureV1`, takes `subject_input` only from
 its `primary_input`, and retains its complete
@@ -3919,7 +3920,7 @@ manifest binding. These identities are never interchangeable.
 
 The strict reader rejects malformed/duplicate declaration members, and the
 document evaluator rejects missing or ambiguous document witnesses before it
-emits a result. The collection adapter will additionally reject stale or
+emits a result. The collection adapter additionally rejects stale or
 cross-scope members. The collection
 envelope's manifest digest/bytes binding makes a manifest reorder or edit
 stale even when its collection id and logical ids are unchanged.
@@ -3930,10 +3931,9 @@ typed JSON representation with RFC 8785 JCS. The exact source TOML
 `InputIdentity` remains a separate binding and is never replaced by the
 normalized JSON identity. The strict reader validates owner/scope, member
 syntax, basis, units, finite tolerances, and canonicalization before a
-declaration is accepted. The document command produces V1 findings/reports;
-collection evaluation, required gameplay metadata, inferred edges, state
-machines, blend trees, and runtime transition generation remain follow-up work
-tracked by #153/#164 in 0.6.0 or later.
+declaration is accepted. The document and collection commands produce V1
+findings/reports; required gameplay metadata, inferred edges, state machines,
+blend trees, and runtime transition generation remain follow-up work.
 
 ### F.12 Directional-speed policy/evaluation V1 (#552)
 

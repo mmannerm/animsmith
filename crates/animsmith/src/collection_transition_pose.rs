@@ -7,8 +7,9 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use animsmith_core::{
-    CollectionTransitionPoseMemberInputV1, InputIdentity, LoadedSource, TransitionPoseDecisionV1,
-    TransitionPoseStatusV1, evaluate_collection_transition_poses_v1,
+    CollectionTransitionPoseMemberInputV1, InputIdentity, LoadedSource,
+    TransitionFamilyManifestIdentityV1, TransitionPoseDecisionV1, TransitionPoseStatusV1,
+    evaluate_collection_transition_poses_v1,
 };
 
 use super::collection_manifest::{
@@ -194,8 +195,13 @@ pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode
             });
         }
     }
+    let manifest_authority = TransitionFamilyManifestIdentityV1::new(
+        loaded_manifest.manifest.collection_id().clone(),
+        loaded_manifest.input,
+    )
+    .map_err(|error| error.to_string())?;
     let result =
-        evaluate_collection_transition_poses_v1(&declaration, loaded_manifest.input, &prepared)
+        evaluate_collection_transition_poses_v1(&declaration, &manifest_authority, &prepared)
             .map_err(|error| error.to_string())?;
     let pass = result.status() == TransitionPoseStatusV1::Complete
         && result.decision() == TransitionPoseDecisionV1::Pass;

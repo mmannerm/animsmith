@@ -285,9 +285,9 @@ than comparing a survivor subset.
 
 The format-neutral core provides the strict V1 skeleton-basis identity and
 immutable transition-pose evaluation result contract at
-`urn:animsmith:schema:transition-pose-evaluation:1`. The document adapter is
-the JSON-only CLI command above; collection resolution, raw-source reload, and
-collection command publication remain deferred. The schema is checked in as
+`urn:animsmith:schema:transition-pose-evaluation:1`. The document and
+manifest-bound collection adapters publish the JSON-only commands above. The
+schema is checked in as
 [`transition-pose-evaluation-v1.schema.json`](schemas/transition-pose-evaluation-v1.schema.json).
 That docs schema is canonical; the core crate ships an exact checked snapshot
 so packaged integration tests retain the same contract without a repository

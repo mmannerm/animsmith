@@ -15,7 +15,8 @@ use crate::model::validate_track_shape;
 use crate::{
     Bone, Clip, DependencyClosureIdentityV1, DependencyClosureV1, Document, InputIdentity,
     LoadedSource, Property, Skeleton, Track, TrackSample, TransitionFamilyBoundaryV1,
-    TransitionFamilyDeclarationInputV1, TransitionFamilyTolerancesV1,
+    TransitionFamilyDeclarationInputV1, TransitionFamilyManifestIdentityV1,
+    TransitionFamilyTolerancesV1,
 };
 
 /// Schema identity for a transition-pose evaluation result.
@@ -455,7 +456,7 @@ impl TransitionPoseEvaluationV1 {
     }
     /// Exact raw identity of the declaration scope subject.
     ///
-    /// The document evaluator binds the loaded document bytes here; a future
+    /// The document evaluator binds the loaded document bytes here; the
     /// collection adapter binds the manifest bytes under the same V1 schema.
     pub const fn subject_input(&self) -> &InputIdentity {
         &self.subject_input
@@ -504,6 +505,9 @@ pub enum TransitionPoseEvaluationControlError {
     /// declaration witness.
     #[error("collection transition-pose declaration member witness is structurally contradictory")]
     InvalidCollectionMemberWitness,
+    /// The supplied collection authority does not exactly match the declaration.
+    #[error("collection transition-pose manifest authority is structurally contradictory")]
+    InvalidCollectionManifestBinding,
 }
 
 /// One already resolved collection member supplied to the format-neutral
@@ -671,9 +675,16 @@ pub fn evaluate_document_transition_poses_v1(
 /// witness, invalid skeleton authority, or an unrepresentable bounded result.
 pub fn evaluate_collection_transition_poses_v1(
     declaration: &TransitionFamilyDeclarationInputV1,
-    manifest_input: InputIdentity,
+    manifest: &TransitionFamilyManifestIdentityV1,
     members: &[CollectionTransitionPoseMemberInputV1<'_>],
 ) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
+    let declared_manifest = match declaration.declaration() {
+        crate::TransitionFamilyDeclarationV1::Collection { manifest, .. } => manifest,
+        _ => return Err(TransitionPoseEvaluationControlError::WrongDeclarationScope),
+    };
+    if declared_manifest != manifest {
+        return Err(TransitionPoseEvaluationControlError::InvalidCollectionManifestBinding);
+    }
     let families = declaration
         .declaration()
         .collection_families()
@@ -693,7 +704,7 @@ pub fn evaluate_collection_transition_poses_v1(
         reason: None,
         declaration_input: declaration.source_identity().clone(),
         declaration_normalized: declaration.normalized_identity().clone(),
-        subject_input: manifest_input,
+        subject_input: manifest.input().clone(),
         subject_dependency_closure_identity: None,
         families: Vec::with_capacity(families.len()),
     };
@@ -713,16 +724,6 @@ pub fn evaluate_collection_transition_poses_v1(
                 || declared.take_name() != prepared.take_name
             {
                 return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
-            }
-            if let Some(document) = prepared.document() {
-                let index = usize::try_from(declared.take_index()).map_err(|_| {
-                    TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness
-                })?;
-                document
-                    .clips
-                    .get(index)
-                    .filter(|clip| clip.name == declared.take_name())
-                    .ok_or(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)?;
             }
         }
         let mut selected = Vec::with_capacity(family_members.len());
@@ -749,8 +750,17 @@ pub fn evaluate_collection_transition_poses_v1(
                 );
                 continue;
             }
-            let index = usize::try_from(declared.take_index()).expect("preflighted take index");
-            let clip = &document.clips[index];
+            let Some(clip) = usize::try_from(declared.take_index())
+                .ok()
+                .and_then(|index| document.clips.get(index))
+                .filter(|clip| clip.name == declared.take_name())
+            else {
+                retain_collection_runtime_reason(
+                    &mut row.reason,
+                    TransitionPoseReasonV1::MemberUnavailable,
+                );
+                continue;
+            };
             if !skeleton_input_is_within_limits(&document.skeleton) {
                 retain_collection_runtime_reason(
                     &mut row.reason,
@@ -2271,8 +2281,9 @@ mod tests {
         CollectionTransitionFamilyMemberV1, CollectionTransitionFamilyV1,
         DependencyClosureBuilderV1, DependencyResourceKeyV1, Document,
         DocumentTransitionFamilyMemberV1, DocumentTransitionFamilyV1, Interpolation,
-        ResourceKeySyntaxV1, Skeleton, SourceResourceKindV1, SourceSetCoverageV1, Track,
-        TrackValues, Transform, TransitionFamilyDeclarationV1, TransitionFamilyManifestIdentityV1,
+        RawSourceFactsBuilderV1, ResourceKeySyntaxV1, Skeleton, SourceFactDomainV1, SourceFormatV1,
+        SourceResourceKindV1, SourceSetCoverageV1, Track, TrackValues, Transform,
+        TransitionFamilyDeclarationV1, TransitionFamilyManifestIdentityV1,
     };
 
     fn document(second_translation: Option<f32>) -> Document {
@@ -2342,6 +2353,45 @@ mod tests {
             .unwrap()
     }
 
+    fn loaded_source(document: Document, bytes: &[u8]) -> LoadedSource {
+        let primary = InputIdentity::from_bytes(bytes);
+        let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::Glb, primary.clone());
+        for domain in [
+            SourceFactDomainV1::Clips,
+            SourceFactDomainV1::Constructs,
+            SourceFactDomainV1::Resources,
+        ] {
+            facts.mark_complete(domain);
+        }
+        facts
+            .finish_with_dependency_closure(document, complete_closure(primary))
+            .unwrap()
+    }
+
+    fn collection_declaration(
+        families: Vec<CollectionTransitionFamilyV1>,
+        manifest: TransitionFamilyManifestIdentityV1,
+    ) -> TransitionFamilyDeclarationInputV1 {
+        TransitionFamilyDeclarationInputV1::new(
+            TransitionFamilyDeclarationV1::collection(manifest, families).unwrap(),
+            b"collection",
+        )
+        .unwrap()
+    }
+
+    fn collection_family(
+        id: &str,
+        members: Vec<CollectionTransitionFamilyMemberV1>,
+    ) -> CollectionTransitionFamilyV1 {
+        CollectionTransitionFamilyV1::new(
+            CollectionLogicalIdV1::new(id).unwrap(),
+            TransitionFamilyBoundaryV1::Entry,
+            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.0).unwrap(),
+            members,
+        )
+        .unwrap()
+    }
+
     fn closure_with_external_buffer(
         primary_input: InputIdentity,
         buffer_bytes: &[u8],
@@ -2375,6 +2425,89 @@ mod tests {
     ) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
         let closure = complete_closure(subject_input);
         super::evaluate_document_transition_poses_v1(declaration, &closure, document)
+    }
+
+    #[test]
+    fn collection_adapter_binds_manifest_and_routes_runtime_take_drift() {
+        let collection_id = CollectionIdV1::new("collection").unwrap();
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            collection_id,
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let logical_a = CollectionLogicalIdV1::new("collection/walk").unwrap();
+        let logical_b = CollectionLogicalIdV1::new("collection/run").unwrap();
+        let source_a = CollectionSourceKeyV1::new("walk").unwrap();
+        let source_b = CollectionSourceKeyV1::new("run").unwrap();
+        let family = collection_family(
+            "collection/family",
+            vec![
+                CollectionTransitionFamilyMemberV1::new(
+                    logical_a.clone(),
+                    source_a.clone(),
+                    0,
+                    "Walk".into(),
+                )
+                .unwrap(),
+                CollectionTransitionFamilyMemberV1::new(
+                    logical_b.clone(),
+                    source_b.clone(),
+                    1,
+                    "Run".into(),
+                )
+                .unwrap(),
+            ],
+        );
+        let declaration = collection_declaration(vec![family], manifest.clone());
+        let left = loaded_source(document(None), b"left");
+        let right = loaded_source(document(None), b"right");
+        let members = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical_a, &source_a, 0, "Walk", &left,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical_b, &source_b, 1, "Run", &right,
+            ),
+        ];
+        assert_eq!(
+            evaluate_collection_transition_poses_v1(
+                &declaration,
+                &TransitionFamilyManifestIdentityV1::new(
+                    CollectionIdV1::new("other").unwrap(),
+                    InputIdentity::from_bytes(b"manifest"),
+                )
+                .unwrap(),
+                &members,
+            ),
+            Err(TransitionPoseEvaluationControlError::InvalidCollectionManifestBinding)
+        );
+        assert_eq!(
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &members)
+                .unwrap()
+                .decision(),
+            TransitionPoseDecisionV1::Pass
+        );
+        let mut drift = document(None);
+        drift.clips[1].name = "Renamed".into();
+        let drift = loaded_source(drift, b"drift");
+        let drift_members = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical_a, &source_a, 0, "Walk", &left,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical_b, &source_b, 1, "Run", &drift,
+            ),
+        ];
+        let result =
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &drift_members)
+                .unwrap();
+        assert_eq!(result.status(), TransitionPoseStatusV1::Incomplete);
+        assert_eq!(
+            result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::MemberUnavailable)
+        );
+        assert!(result.families()[0].members()[1].source_input().is_some());
+        assert!(result.families()[0].pairs().is_empty());
     }
 
     #[test]
