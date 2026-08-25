@@ -3664,19 +3664,24 @@ urn:animsmith:schema:transition-family:1
 
 The document-local tables are admitted by the CLI's normal strict config
 loader, which retains the whole-config exact input identity alongside the
-normalized declaration. This admission does not add a transition evaluator,
-result schema, or command; those remain #153 follow-up work. The separate
-collection envelope remains outside the collection CLI until its own reviewed
-evaluation slice.
+normalized declaration. The JSON-only document command now evaluates that
+authority; the separate collection envelope remains outside the collection CLI
+until its own reviewed evaluation slice.
 
 The format-neutral core now owns the strict `SkeletonBasisV1` identity and
 document transition-pose evaluator/result contract
 `urn:animsmith:schema:transition-pose-evaluation:1`. It admits a mutable
 loaded document's skeleton and selected T/R tracks, plans bounded endpoint
 work before sampling, and returns an
-immutable complete/finding/not-evaluated result. It does not add either #153
-command, config-to-document resolution, collection source reload, or a lint
-check; those adapters remain separately reviewed work.
+immutable complete/finding/not-evaluated result. It does not add collection
+source reload or a lint check. The document adapter is the
+JSON-only `animsmith evaluate-transition-poses INPUT --format json` command:
+it loads one document through the normal public loader/config path, binds the
+loaded exact raw document identity, and emits the core result unchanged. It
+uses the exact zero-byte TOML sequence as the defined omitted-config
+declaration source, so an omitted config and an explicitly empty config have
+the same exact and normalized declaration identities. Collection source
+reload remains separately reviewed work.
 Its scope-neutral `subject_input` binds the exact raw document in this
 document evaluator; a later collection adapter binds its manifest subject
 under the same result schema. The normalized declaration scope determines
@@ -3738,8 +3743,8 @@ Appendix F's slash-qualified logical-id grammar and collection-id prefix.
 
 The two scopes are intentionally different authorities:
 
-- future `document` declarations will be placed in the existing
-  `animsmith.toml` config basis under `[transition_families."<family_id>"]`.
+- `document` declarations are placed in the existing `animsmith.toml` config
+  basis under `[transition_families."<family_id>"]`.
   The table key itself is
   the family id; it is a reusable config declaration and carries no artifact
   digest. The document evaluator binds the exact primary document
@@ -3761,9 +3766,9 @@ manifest `InputIdentity` no longer matches the declaration. A source digest
 pin, when present in that manifest, is enforced by manifest resolution and a
 mismatch makes the affected member unavailable; it is not a second identity
 carried by this declaration. A reusable document-local config has no
-stale-digest state at parse time; the future evaluator binds the exact document
-`InputIdentity` plus its complete dependency-closure identity and reports its
-source/take resolution in its output. A family
+stale-digest state at parse time; the document evaluator binds the exact primary
+document `InputIdentity` plus its complete dependency-closure identity and
+reports its source/take resolution in its output. A family
 is not silently reduced to the members that happen to resolve, and a
 collection family is not copied into a document-local config. The existing `[clips]`, `[gait_groups]`, and
 `[sync_groups]` sections retain their document-local embedded-name semantics;
@@ -3776,7 +3781,7 @@ V1's basis is explicit and engine-neutral: translation is metres in the
 declared skeleton-local basis, rotation is degrees in the same basis, and time
 is normalized clip time in `[0, 1]`. The named tolerance record is closed and
 unit-bearing: `translation_m`, `rotation_deg`, and `time_normalized`, each a
-finite non-negative value. `boundary` selects whether a future evaluator
+finite non-negative value. `boundary` selects whether the evaluator
 considers entry, exit, or both; it does not itself perform a comparison.
 Additional policy fields require a separately versioned contract, not a
 generic TOML map or untyped extension payload.
@@ -3903,7 +3908,7 @@ the table key becomes `family_id`:
 }
 ```
 
-No owner or source-input identity is injected into the document form. A future
+No owner or source-input identity is injected into the document form. A V1
 evaluation record binds three distinct facts: the exact declaration-source
 `InputIdentity` (the whole config for document scope or the declaration TOML
 for collection scope), the normalized declaration `InputIdentity` computed
@@ -3911,8 +3916,10 @@ over the JCS bytes above, and the evaluated document or collection-manifest
 `InputIdentity`. The collection form additionally retains its embedded exact
 manifest binding. These identities are never interchangeable.
 
-The future strict reader rejects a missing, duplicate, stale, or cross-scope
-member before a declaration becomes available to a consumer. The collection
+The strict reader rejects malformed/duplicate declaration members, and the
+document evaluator rejects missing or ambiguous document witnesses before it
+emits a result. The collection adapter will additionally reject stale or
+cross-scope members. The collection
 envelope's manifest digest/bytes binding makes a manifest reorder or edit
 stale even when its collection id and logical ids are unchanged.
 
@@ -3920,12 +3927,12 @@ Canonical serialization first sorts decoded family declarations by their
 stable `family_id` and preserves declared member order, then serializes that
 typed JSON representation with RFC 8785 JCS. The exact source TOML
 `InputIdentity` remains a separate binding and is never replaced by the
-normalized JSON identity. The future strict reader validates
-owner/scope, member resolution, basis, units, finite tolerances, and
-canonicalization before a declaration is accepted. This is a declaration
-contract only: checks, findings, reports, required gameplay metadata, inferred
-edges, state machines, blend trees, and runtime transition generation remain
-follow-up work tracked by #153/#164 in 0.6.0 or later.
+normalized JSON identity. The strict reader validates owner/scope, member
+syntax, basis, units, finite tolerances, and canonicalization before a
+declaration is accepted. The document command produces V1 findings/reports;
+collection evaluation, required gameplay metadata, inferred edges, state
+machines, blend trees, and runtime transition generation remain follow-up work
+tracked by #153/#164 in 0.6.0 or later.
 
 ### F.12 Directional-speed policy/evaluation V1 (#552)
 

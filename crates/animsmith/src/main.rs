@@ -26,7 +26,8 @@ use animsmith_core::{
     MeasureEnvelope, MeasureFileReport, MeasurementContract, MeasurementFileError,
     MeasurementReportError, MeasurementReportInput, MeasurementReportReadError, MetricGrids,
     RigInfo, Severity, TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES, ToolInfo, ToolSource,
-    TransitionFamilyDeclarationInputV1, all_checks, evaluate_checks, resolve_configured_roles,
+    TransitionFamilyDeclarationInputV1, TransitionPoseDecisionV1, TransitionPoseStatusV1,
+    all_checks, evaluate_checks, evaluate_document_transition_poses_v1, resolve_configured_roles,
 };
 use animsmith_core::{Document, InputIdentity};
 use animsmith_engine::{
@@ -117,6 +118,15 @@ enum Cmd {
         /// Suppress findings from these checks (comma-separated ids).
         #[arg(long, value_delimiter = ',')]
         allow: Vec<String>,
+    },
+    /// Compare declared entry and exit poses for one document's transition families.
+    EvaluateTransitionPoses {
+        /// Input .glb, .gltf, or .fbx file.
+        #[arg(value_name = "INPUT")]
+        input: PathBuf,
+        /// Emit the immutable transition-pose evaluation V1 JSON contract.
+        #[arg(long, value_enum)]
+        format: JsonOnlyFormat,
     },
     /// Evaluate one strict multi-file collection manifest.
     Collection {
@@ -420,6 +430,13 @@ enum ScaleCmd {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {
     Text,
+    Json,
+}
+
+/// The transition-pose evaluator has no presentation view: its one result is
+/// the stable machine-readable V1 contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum JsonOnlyFormat {
     Json,
 }
 
@@ -966,6 +983,20 @@ impl LoadedConfig {
         }
     }
 
+    /// Return the transition-family declaration for one document invocation.
+    ///
+    /// Omitted `--config` has one defined V1 declaration source: the exact
+    /// zero-byte TOML sequence. Passing it through the same strict reader as
+    /// a file makes omitted configuration and an explicitly empty file bind
+    /// the same factual source and normalized declaration identities.
+    fn transition_pose_declaration(&self) -> Result<TransitionFamilyDeclarationInputV1, String> {
+        match &self.transition_families {
+            Some(declaration) => Ok(declaration.clone()),
+            None => transition_family::parse_document_transition_families_bytes(b"")
+                .map_err(|error| error.to_string()),
+        }
+    }
+
     /// The configuration file consumed for this invocation, when one was
     /// explicitly selected or found at the default location.
     ///
@@ -1197,6 +1228,31 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 ExitCode::from(EXIT_FINDINGS)
             } else {
                 ExitCode::SUCCESS
+            })
+        }
+        Cmd::EvaluateTransitionPoses { input, format } => {
+            debug_assert_eq!(format, JsonOnlyFormat::Json);
+            let loaded_config = load_config(cli.config.as_deref())?;
+            let declaration = loaded_config.transition_pose_declaration()?;
+            let loaded = load_with_config(&input, &loaded_config)?;
+            let result = evaluate_document_transition_poses_v1(
+                &declaration,
+                loaded.dependency_closure(),
+                loaded.document(),
+            )
+            .map_err(|error| error.to_string())?;
+            let complete_pass = result.status() == TransitionPoseStatusV1::Complete
+                && result.decision() == TransitionPoseDecisionV1::Pass;
+            // This command's immutable result is its only publication. Unlike
+            // ordinary check/producer streams, a failed delivery is therefore
+            // an operator error rather than a completed outcome with a
+            // best-effort diagnostic.
+            let bytes = publish::serialize_record(&result)?;
+            publish::emit_required_json(&bytes)?;
+            Ok(if complete_pass {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(EXIT_FINDINGS)
             })
         }
         Cmd::Collection { operation } => {

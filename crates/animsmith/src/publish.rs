@@ -114,6 +114,21 @@ pub(crate) fn emit(bytes: &[u8]) {
     }
 }
 
+/// Write one complete, already-rendered standalone JSON result to stdout.
+///
+/// Unlike [`emit`], this returns delivery failures to its caller. It is only
+/// for commands whose sole durable outcome is this one immutable stdout
+/// result: when delivery fails, no usable result was published and the CLI
+/// must report an operator error. Callers serialize the complete record before
+/// calling this function, so no partial serialization can reach stdout.
+///
+/// Ordinary check, lint, and producer streams intentionally continue to use
+/// [`emit`]. Their outcome has already been determined (and producers may
+/// already have published their sidecar evidence) before stdout is attempted.
+pub(crate) fn emit_required_json(bytes: &[u8]) -> Result<(), String> {
+    emit_required_json_to(&mut std::io::stdout().lock(), bytes)
+}
+
 /// Write one already-rendered human-readable result to stdout, diagnosing a
 /// write failure on stderr without changing the command's outcome.
 ///
@@ -220,6 +235,12 @@ fn diagnose_write_failure_to(sink: &mut impl std::io::Write, error: &str) {
 /// Returns an operator error naming the underlying I/O failure.
 fn emit_to(sink: &mut impl std::io::Write, bytes: &[u8]) -> Result<(), String> {
     sink.write_all(bytes)
+        .map_err(|error| format!("cannot write JSON output to stdout: {error}"))
+}
+
+fn emit_required_json_to(sink: &mut impl std::io::Write, bytes: &[u8]) -> Result<(), String> {
+    emit_to(sink, bytes)?;
+    sink.flush()
         .map_err(|error| format!("cannot write JSON output to stdout: {error}"))
 }
 
@@ -804,6 +825,26 @@ mod tests {
         }
     }
 
+    /// A buffered destination that accepts bytes but fails only when asked to
+    /// commit them, matching the stdout buffering boundary.
+    struct FlushFailure {
+        accepted: Vec<u8>,
+    }
+
+    impl std::io::Write for FlushFailure {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.accepted.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "destination rejected the flush",
+            ))
+        }
+    }
+
     /// A sink that takes a prefix and then stops accepting bytes, which is
     /// how a filesystem that has just filled up presents itself to `write`.
     struct ShortWriter {
@@ -837,6 +878,24 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("the reader is gone"), "{error}");
+    }
+
+    #[test]
+    fn standalone_result_delivery_is_a_typed_operator_error() {
+        let error = emit_required_json_to(&mut BrokenPipe, b"{}\n")
+            .expect_err("a standalone result must report a failed delivery");
+        assert!(
+            error.starts_with("cannot write JSON output to stdout"),
+            "{error}"
+        );
+
+        let mut buffered = FlushFailure {
+            accepted: Vec::new(),
+        };
+        let error = emit_required_json_to(&mut buffered, b"{}\n")
+            .expect_err("a buffered standalone result must flush before success");
+        assert_eq!(buffered.accepted, b"{}\n");
+        assert!(error.contains("destination rejected the flush"), "{error}");
     }
 
     #[test]
