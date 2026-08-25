@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use animsmith_core::{
     CheckSelection, CollectionClipV1, CollectionDigestPinV1, CollectionManifestV1,
-    CollectionSourceV1, Config, InputIdentity, LintEnvelope, Severity, SourceObservationStateV1,
+    CollectionSourceV1, InputIdentity, LintEnvelope, Severity, SourceObservationStateV1,
     SourceSetCoverageStateV1,
 };
 
@@ -593,23 +593,25 @@ fn digest_state(
 fn prepare_config(resolution: CollectionConfigResolution) -> Result<PreparedConfig, String> {
     match resolution {
         CollectionConfigResolution::Default => Ok(PreparedConfig {
-            loaded: LoadedConfig {
-                config: Config::default(),
-                engine: None,
-                path: None,
-                control_input: None,
-                #[cfg(feature = "fbx")]
-                source: None,
-            },
+            loaded: LoadedConfig::without_file(),
             evidence: ConfigState::Default,
         }),
         CollectionConfigResolution::Explicit(path) => {
             let bytes = read_control_bounded(path.path(), COLLECTION_CONFIG_MAX_BYTES)
                 .map_err(|_| "collection control error (config-read)".to_owned())?;
-            let text = std::str::from_utf8(&bytes)
-                .map_err(|_| "collection control error (config-encoding)".to_owned())?;
-            let (config, declaration) = parse_config(text)
-                .map_err(|_| "collection control error (config-malformed)".to_owned())?;
+            let (config, declaration, transition_families) =
+                parse_config(&bytes).map_err(|error| {
+                    // Preserve collection lint's established encoding class,
+                    // while still letting the shared strict reader inspect the
+                    // raw bounded bytes before generic TOML decoding.
+                    if error.starts_with(
+                        "transition-family declaration control error (transition-family-encoding)",
+                    ) {
+                        "collection control error (config-encoding)".to_owned()
+                    } else {
+                        "collection control error (config-malformed)".to_owned()
+                    }
+                })?;
             config
                 .validate()
                 .map_err(|_| "collection control error (config-invalid)".to_owned())?;
@@ -620,6 +622,7 @@ fn prepare_config(resolution: CollectionConfigResolution) -> Result<PreparedConf
                 loaded: LoadedConfig {
                     config,
                     engine,
+                    transition_families: Some(transition_families),
                     path: Some(PathBuf::from(path.declared())),
                     control_input: Some(path.path().to_path_buf()),
                     #[cfg(feature = "fbx")]

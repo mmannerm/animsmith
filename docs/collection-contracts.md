@@ -271,11 +271,12 @@ The transition-family V1 identity is
 id, an explicit ordered member list, a boundary selection (`entry`, `exit`, or
 `both`), and closed typed tolerances with explicit units and basis.
 
-This page freezes the future wire/config proposal. AnimSmith 0.5.0 does not
-parse `transition_families` in `animsmith.toml` and exposes no collection
-declaration reader or evaluator; using the examples with the current CLI is an
-unknown-field error. Later implementation remains #153/#164 or separately
-reviewed follow-up work.
+The document-local `transition_families` tables are admitted by AnimSmith's
+strict config loader, which retains the exact whole-config input identity with
+the normalized declaration. That admission does not expose an evaluator,
+result schema, or command. The collection declaration envelope remains outside
+the collection CLI; evaluation and command behavior remain #153/#164 or
+separately reviewed follow-up work.
 
 Document-local family ids are one lowercase-ASCII token, 1–255 bytes, starting
 with `[a-z0-9]` and continuing with `[a-z0-9._-]`. The table key itself is the
@@ -287,8 +288,8 @@ Appendix F's slash-qualified logical-id grammar and collection-id prefix.
 
 The declaration distinguishes two ownership scopes:
 
-- future `document` families will be placed in the existing `animsmith.toml`
-  under `[transition_families."<family_id>"]` and resolve exact embedded clip/take
+- `document` families are placed in the existing `animsmith.toml` under
+  `[transition_families."<family_id>"]` and will resolve exact embedded clip/take
   identities. The reusable config carries no artifact digest; the future
   evaluator binds the document `InputIdentity` in its output.
 - future `collection` families use a separate declaration envelope, not the

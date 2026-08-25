@@ -82,7 +82,6 @@ impl std::error::Error for TransitionFamilyControlError {}
 /// The source identity covers all `bytes`, while the normalized identity covers
 /// only the closed transition-family declaration. An absent table is a valid,
 /// empty document declaration.
-#[allow(dead_code, reason = "declaration slice precedes Config and CLI wiring")]
 pub(crate) fn parse_document_transition_families_bytes(
     bytes: &[u8],
 ) -> Result<TransitionFamilyDeclarationInputV1, TransitionFamilyControlError> {

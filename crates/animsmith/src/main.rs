@@ -25,7 +25,8 @@ use animsmith_core::{
     Check, CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport,
     MeasureEnvelope, MeasureFileReport, MeasurementContract, MeasurementFileError,
     MeasurementReportError, MeasurementReportInput, MeasurementReportReadError, MetricGrids,
-    RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks, resolve_configured_roles,
+    RigInfo, Severity, TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES, ToolInfo, ToolSource,
+    TransitionFamilyDeclarationInputV1, all_checks, evaluate_checks, resolve_configured_roles,
 };
 use animsmith_core::{Document, InputIdentity};
 use animsmith_engine::{
@@ -41,6 +42,7 @@ use serde::Deserialize;
 #[cfg(feature = "fbx")]
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -735,6 +737,14 @@ fn finish_run_with(result: Result<ExitCode, String>, emit_error: impl FnOnce(&st
 struct LoadedConfig {
     config: Config,
     engine: Option<StaticResolution>,
+    /// Strictly decoded document declaration bound to the exact complete
+    /// config source. It is retained for the later transition-pose command,
+    /// but this admission slice does not evaluate it.
+    #[allow(
+        dead_code,
+        reason = "transition-pose evaluation and commands are intentionally deferred"
+    )]
+    transition_families: Option<TransitionFamilyDeclarationInputV1>,
     path: Option<PathBuf>,
     /// Canonical control-file input used only for publication alias guards.
     /// Unlike `path`, this must never cross a collection's public boundary.
@@ -815,8 +825,30 @@ fn engine_selection(config: &EngineToml) -> Result<Option<ProfileSelection>, Str
     )))
 }
 
-fn parse_config(text: &str) -> Result<(Config, EngineDeclaration), String> {
+fn parse_config(
+    bytes: &[u8],
+) -> Result<
+    (
+        Config,
+        EngineDeclaration,
+        TransitionFamilyDeclarationInputV1,
+    ),
+    String,
+> {
+    // This reader sees the exact, unmodified config bytes so its source
+    // identity covers engine and unrelated config fields as well as the
+    // declaration itself. Remove the subtree only after strict decoding so
+    // the generic Config serde contract continues to own every other field.
+    let transition_families = transition_family::parse_document_transition_families_bytes(bytes)
+        .map_err(|error| error.to_string())?;
+    // The strict reader above has already checked UTF-8 on these exact bytes.
+    // Keep the generic TOML parser after it, so a source cap or encoding
+    // refusal cannot be preempted by generic config decoding.
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        "transition-family declaration control error (transition-family-encoding)".to_owned()
+    })?;
     let mut root: toml::Table = toml::from_str(text).map_err(|error| error.to_string())?;
+    root.remove("transition_families");
     let engine_value = root.remove("engine");
     let engine_declared = engine_value.is_some();
     let engine = engine_value
@@ -871,6 +903,7 @@ fn parse_config(text: &str) -> Result<(Config, EngineDeclaration), String> {
             document_settings,
             clip_settings,
         },
+        transition_families,
     ))
 }
 
@@ -887,21 +920,12 @@ fn config_source_path(explicit: Option<&Path>) -> Option<PathBuf> {
 
 fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, String> {
     let Some(path) = config_source_path(explicit) else {
-        return Ok(LoadedConfig {
-            config: Config::default(),
-            engine: None,
-            path: None,
-            control_input: None,
-            #[cfg(feature = "fbx")]
-            source: None,
-        });
+        return Ok(LoadedConfig::without_file());
     };
-    let bytes =
-        std::fs::read(&path).map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|e| format!("bad config {}: config is not UTF-8: {e}", path.display()))?;
-    let (config, declaration) =
-        parse_config(text).map_err(|error| format!("bad config {}: {error}", path.display()))?;
+    let bytes = read_document_config_bounded(&path)
+        .map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
+    let (config, declaration, transition_families) =
+        parse_config(&bytes).map_err(|error| format!("bad config {}: {error}", path.display()))?;
     config
         .validate()
         .map_err(|e| format!("bad config {}: {e}", path.display()))?;
@@ -910,6 +934,7 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
     Ok(LoadedConfig {
         config,
         engine,
+        transition_families: Some(transition_families),
         path: Some(path.clone()),
         control_input: Some(path.clone()),
         #[cfg(feature = "fbx")]
@@ -917,7 +942,30 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
     })
 }
 
+/// Read only the strict transition-family source budget plus its first excess
+/// byte. The declaration reader classifies the excess against the same exact
+/// bytes before generic TOML retains any config value.
+fn read_document_config_bounded(path: &Path) -> std::io::Result<Vec<u8>> {
+    let file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 impl LoadedConfig {
+    fn without_file() -> Self {
+        Self {
+            config: Config::default(),
+            engine: None,
+            transition_families: None,
+            path: None,
+            control_input: None,
+            #[cfg(feature = "fbx")]
+            source: None,
+        }
+    }
+
     /// The configuration file consumed for this invocation, when one was
     /// explicitly selected or found at the default location.
     ///
@@ -1976,6 +2024,160 @@ fn contact_producer_load_failure(error: InputLoadError) -> producer::Failure {
 mod tests {
     use super::*;
 
+    fn document_transition_family() -> &'static str {
+        r#"
+[transition_families."walk_to_run"]
+schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "document"
+boundary = "both"
+
+[transition_families."walk_to_run".basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+
+[transition_families."walk_to_run".tolerances]
+translation_m = 0.05
+rotation_deg = 5.0
+time_normalized = 0.0
+
+[[transition_families."walk_to_run".members]]
+take_index = 0
+take_name = "Walk"
+
+[[transition_families."walk_to_run".members]]
+take_index = 1
+take_name = "Run"
+"#
+    }
+
+    #[test]
+    fn config_admits_transition_families_with_engine_clips_and_other_fields() {
+        let source = format!(
+            r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 1
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[clips.walk]
+loop = true
+
+[runtime_nodes]
+selectors = ["root"]
+{}
+"#,
+            document_transition_family()
+        );
+        let (config, engine, transition_families) = parse_config(source.as_bytes()).unwrap();
+        assert!(config.clips.contains_key("walk"));
+        assert!(config.runtime_node_selectors().is_some());
+        assert!(engine.selection.is_some());
+        assert_eq!(
+            transition_families.source_identity(),
+            &InputIdentity::from_bytes(source.as_bytes())
+        );
+        assert_eq!(
+            transition_families
+                .declaration()
+                .document_families()
+                .expect("document declaration")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn config_retains_empty_document_declarations_but_no_file_has_none() {
+        assert!(LoadedConfig::without_file().transition_families.is_none());
+        let directory = tempfile::tempdir().unwrap();
+        for (index, source) in ["[rig]\nprofile = \"auto\"\n", "[transition_families]\n"]
+            .into_iter()
+            .enumerate()
+        {
+            let path = directory.path().join(format!("config-{index}.toml"));
+            std::fs::write(&path, source).unwrap();
+            let loaded = load_config_with_source(Some(&path)).unwrap();
+            let transition_families = loaded.transition_families.expect("config input retained");
+            assert_eq!(
+                transition_families.source_identity(),
+                &InputIdentity::from_bytes(source.as_bytes())
+            );
+            assert!(
+                transition_families
+                    .declaration()
+                    .document_families()
+                    .expect("document declaration")
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn config_loader_applies_the_exact_raw_source_bound_before_utf8_or_toml() {
+        let directory = tempfile::tempdir().unwrap();
+        let exact_path = directory.path().join("exact.toml");
+        let exact = vec![b' '; TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES as usize];
+        std::fs::write(&exact_path, &exact).unwrap();
+        let exact_loaded = load_config_with_source(Some(&exact_path)).unwrap();
+        assert_eq!(
+            exact_loaded
+                .transition_families
+                .expect("config input retained")
+                .source_identity(),
+            &InputIdentity::from_bytes(&exact)
+        );
+
+        let over_path = directory.path().join("over.toml");
+        let over = vec![0xff; TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES as usize + 1];
+        std::fs::write(&over_path, over).unwrap();
+        let over_error = match load_config_with_source(Some(&over_path)) {
+            Ok(_) => panic!("N+1 config source must be refused"),
+            Err(error) => error,
+        };
+        assert!(over_error.contains("transition-family-too-large"));
+        assert!(!over_error.contains("transition-family-encoding"));
+
+        let invalid_utf8_path = directory.path().join("invalid-utf8.toml");
+        std::fs::write(&invalid_utf8_path, b"[rig]\nprofile = \"auto\"\n\xff").unwrap();
+        let invalid_utf8_error = match load_config_with_source(Some(&invalid_utf8_path)) {
+            Ok(_) => panic!("invalid UTF-8 config source must be refused"),
+            Err(error) => error,
+        };
+        assert!(invalid_utf8_error.contains("transition-family-encoding"));
+        assert!(!invalid_utf8_error.contains("config is not UTF-8"));
+    }
+
+    #[test]
+    fn config_refuses_invalid_transition_family_tables_before_generic_config_decode() {
+        let unknown = document_transition_family().replace("boundary = \"both\"", "extra = true");
+        assert!(
+            parse_config(unknown.as_bytes())
+                .unwrap_err()
+                .starts_with("transition-family declaration control error")
+        );
+        let duplicate = format!("{}\nboundary = \"both\"\n", document_transition_family());
+        assert!(
+            parse_config(duplicate.as_bytes())
+                .unwrap_err()
+                .starts_with("transition-family declaration control error")
+        );
+        let malformed =
+            document_transition_family().replace("scope = \"document\"", "scope = \"collection\"");
+        assert!(
+            parse_config(malformed.as_bytes())
+                .unwrap_err()
+                .starts_with("transition-family declaration control error")
+        );
+    }
+
+    #[test]
+    fn generic_config_deserialization_still_rejects_transition_family_tables() {
+        assert!(toml::from_str::<Config>(document_transition_family()).is_err());
+    }
+
     #[test]
     fn cli_engine_toml_maps_to_the_public_resolver_without_new_core_authority() {
         let text = r#"
@@ -2007,7 +2209,7 @@ root_rotation = "extract"
 [clips.walk_forward.engine_settings]
 root_position_y = "extract"
 "#;
-        let (core, declaration) = parse_config(text).unwrap();
+        let (core, declaration, _) = parse_config(text.as_bytes()).unwrap();
         assert_eq!(
             core.clips.keys().map(String::as_str).collect::<Vec<_>>(),
             vec!["*", "walk*", "walk_forward"]
@@ -2087,23 +2289,25 @@ root_position_y = "extract"
             r#"
 [engine]
 profile = "bevy"
-"#,
+"#
+            .as_bytes(),
         )
         .unwrap_err();
         assert!(incomplete.contains("requires profile, profile_revision"));
 
-        let source_unit = parse_config("source_unit = \"metre\"").unwrap_err();
+        let source_unit = parse_config(b"source_unit = \"metre\"").unwrap_err();
         assert!(source_unit.contains("unknown field `source_unit`"));
     }
 
     #[test]
     fn cli_clip_engine_settings_without_selection_reach_the_typed_error() {
-        let (_, declaration) = parse_config(
+        let (_, declaration, _) = parse_config(
             r#"
 [clips.walk]
 [clips.walk.engine_settings]
 root_rotation = "bake"
-"#,
+"#
+            .as_bytes(),
         )
         .unwrap();
         assert_eq!(

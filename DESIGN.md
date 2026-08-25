@@ -3662,11 +3662,12 @@ independent identity is:
 urn:animsmith:schema:transition-family:1
 ```
 
-These are accepted design shapes for a future implementation, not fields the
-0.5.0 config parser or collection CLI accepts. Putting the example tables below
-into a current `animsmith.toml` remains an unknown-field error; #153/#164 or
-another separately reviewed implementation must add the reader, evaluation
-evidence, and command behavior.
+The document-local tables are admitted by the CLI's normal strict config
+loader, which retains the whole-config exact input identity alongside the
+normalized declaration. This admission does not add a transition evaluator,
+result schema, or command; those remain #153 follow-up work. The separate
+collection envelope remains outside the collection CLI until its own reviewed
+evaluation slice.
 
 The declaration has a tagged `scope`, a stable `family_id`, an explicit
 ordered `members` array, a `boundary` (`entry`, `exit`, or `both`), a typed
