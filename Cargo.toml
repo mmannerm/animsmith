@@ -21,6 +21,7 @@ include = [
     "src/**",
     "assets/**",
     "examples/**",
+    "schemas/**",
     "tests/**",
     "testdata/**",
     "build.rs",

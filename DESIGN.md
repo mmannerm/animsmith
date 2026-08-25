@@ -3669,6 +3669,58 @@ result schema, or command; those remain #153 follow-up work. The separate
 collection envelope remains outside the collection CLI until its own reviewed
 evaluation slice.
 
+The format-neutral core now owns the strict `SkeletonBasisV1` identity and
+document transition-pose evaluator/result contract
+`urn:animsmith:schema:transition-pose-evaluation:1`. It admits a mutable
+loaded document's skeleton and selected T/R tracks, plans bounded endpoint
+work before sampling, and returns an
+immutable complete/finding/not-evaluated result. It does not add either #153
+command, config-to-document resolution, collection source reload, or a lint
+check; those adapters remain separately reviewed work.
+Its scope-neutral `subject_input` binds the exact raw document in this
+document evaluator; a later collection adapter binds its manifest subject
+under the same result schema. The normalized declaration scope determines
+which subject meaning applies. For document scope, the public evaluator accepts
+the loader's same-load `DependencyClosureV1`, takes `subject_input` only from
+its `primary_input`, and retains its complete
+`subject_dependency_closure_identity`. Every document member retains the same
+primary identity as `source_input` and the same complete closure identity as
+`source_dependency_closure_identity`. Complete coverage and a present
+`DependencyClosureIdentityV1` are both required before any configured family
+can be complete; partial, unavailable, or identity-less coverage makes every
+configured family `incomplete/not_evaluated` with
+`dependency_closure_incomplete`. The `no_configured_families` result is the
+deliberate exception because it performs no source evaluation and remains a
+complete pass even when closure capture is unavailable.
+
+Collection scope does not fabricate a dependency closure for its manifest:
+`subject_input` is the manifest's primary identity, while each available
+member independently retains its raw `source_input` and complete
+`source_dependency_closure_identity`. An unavailable source may retain a null
+`source_input` when no primary bytes were obtained. One missing or incomplete
+member closure makes the entire family `dependency_closure_incomplete`, but
+other available members keep their closure identities as positive evidence;
+the family is never evaluated as a survivor subset. Thus unchanged primary
+text glTF bytes cannot mask changed external animation-buffer bytes.
+Before sampling, the evaluator directly verifies every declared index/name
+witness, admits at most 4,096 document clips for its one-pass global
+duplicate-name proof, 4,096 bones, and 8 MiB of basis-name text. A document
+above the clip cap with no direct witness contradiction yields normal
+`input_limit` family rows without scanning its full name domain. Each selected
+clip first admits at most three raw flat track rows per bone (12,288 maximum),
+then bounds the consumed translation/rotation domain to two channels per bone.
+Scale values, shape, and duplicates remain semantically ignored, but raw scale
+rows count toward that first resource admission because the loader stores all
+properties in one vector. Across the invocation it inspects at most the V1
+aggregate-comparison bound of 16,777,216 selected time/value elements. A
+valid-witness input exceeding one of these admission limits retains every
+family as `incomplete/not_evaluated` with `input_limit`;
+unrelated assets and unselected clips are outside this evaluator boundary.
+Before sampling it serializes the full pair-free authority, including subject
+and per-member dependency-closure identities, and subtracts that from a
+conservative detailed JCS reservation, producing `result_limit` rather than
+cloning a representation that must later be discarded as over-cap.
+
 The declaration has a tagged `scope`, a stable `family_id`, an explicit
 ordered `members` array, a `boundary` (`entry`, `exit`, or `both`), a typed
 `basis`, and typed named `tolerances`. A family has at least two members.
@@ -3690,8 +3742,9 @@ The two scopes are intentionally different authorities:
   `animsmith.toml` config basis under `[transition_families."<family_id>"]`.
   The table key itself is
   the family id; it is a reusable config declaration and carries no artifact
-  digest. The future evaluator binds the exact document `InputIdentity` in its
-  output, while members use exact embedded take-index/name witnesses. A
+  digest. The document evaluator binds the exact primary document
+  `InputIdentity` and complete dependency-closure identity in its output, while
+  members use exact embedded take-index/name witnesses. A
   repeated or loader-ambiguous take name is a strict resolution failure.
 - future `collection` declarations use a separate declaration envelope, not
   an extension of collection-manifest V1 and not another path/member authority.
@@ -3709,7 +3762,8 @@ pin, when present in that manifest, is enforced by manifest resolution and a
 mismatch makes the affected member unavailable; it is not a second identity
 carried by this declaration. A reusable document-local config has no
 stale-digest state at parse time; the future evaluator binds the exact document
-`InputIdentity` and reports its source/take resolution in its output. A family
+`InputIdentity` plus its complete dependency-closure identity and reports its
+source/take resolution in its output. A family
 is not silently reduced to the members that happen to resolve, and a
 collection family is not copied into a document-local config. The existing `[clips]`, `[gait_groups]`, and
 `[sync_groups]` sections retain their document-local embedded-name semantics;

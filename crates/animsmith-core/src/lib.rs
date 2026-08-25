@@ -148,6 +148,8 @@ pub mod stance_support;
 pub mod static_bake;
 pub mod transform;
 pub mod transition_family;
+/// Strict core-only transition-pose evaluation and skeleton-basis identity.
+pub mod transition_pose_evaluation;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use collection::{
@@ -323,4 +325,24 @@ pub use transition_family::{
     TRANSITION_FAMILY_V1_SCHEMA_VERSION, TransitionFamilyBasisV1, TransitionFamilyBoundaryV1,
     TransitionFamilyDeclarationInputV1, TransitionFamilyDeclarationV1, TransitionFamilyError,
     TransitionFamilyManifestIdentityV1, TransitionFamilyTolerancesV1,
+};
+pub use transition_pose_evaluation::{
+    SkeletonBasisBoneV1, SkeletonBasisError, SkeletonBasisV1, TRANSITION_POSE_EVALUATION_V1_ID,
+    TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_COMPARISONS,
+    TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_OFFENDERS,
+    TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_PAIR_BOUNDARIES,
+    TRANSITION_POSE_EVALUATION_V1_MAX_BASIS_TEXT_BYTES, TRANSITION_POSE_EVALUATION_V1_MAX_BONES,
+    TRANSITION_POSE_EVALUATION_V1_MAX_DOCUMENT_CLIPS,
+    TRANSITION_POSE_EVALUATION_V1_MAX_FAMILY_PAIR_BOUNDARIES,
+    TRANSITION_POSE_EVALUATION_V1_MAX_RAW_TRACK_ROWS_PER_CLIP,
+    TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES,
+    TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS,
+    TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACK_ELEMENTS,
+    TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACKS_PER_CLIP,
+    TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS,
+    TRANSITION_POSE_EVALUATION_V1_SCHEMA_VERSION, TransitionPoseDecisionV1,
+    TransitionPoseEvaluationControlError, TransitionPoseEvaluationV1,
+    TransitionPoseFamilyEvaluationV1, TransitionPoseMemberV1, TransitionPosePairEvaluationV1,
+    TransitionPoseReasonV1, TransitionPoseRotationOffenderV1, TransitionPoseStatusV1,
+    TransitionPoseTranslationOffenderV1, evaluate_document_transition_poses_v1,
 };

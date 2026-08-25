@@ -34,4 +34,5 @@ thiserror = { workspace = true }
 # Self-dependency so this crate's own tests (e.g. tests/semantic.rs) build
 # with the `fixtures` feature enabled.
 animsmith-core = { path = ".", features = ["fixtures"] }
+jsonschema = { workspace = true }
 toml = { workspace = true }

@@ -64,6 +64,7 @@ version = "0.5.0"
 dependencies = [
  "animsmith-core",
  "glam",
+ "jsonschema",
  "serde",
  "serde_jcs",
  "serde_json",
