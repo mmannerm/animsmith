@@ -50,9 +50,9 @@ mod collection_directional_speed_policy;
 mod collection_lint;
 mod collection_manifest;
 mod collection_output;
+mod contact_producer;
 #[cfg(feature = "fbx")]
 mod material_recipe;
-#[cfg(feature = "fbx")]
 mod producer;
 mod publish;
 mod render;
@@ -276,6 +276,21 @@ enum CollectionCmd {
         #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
         format: CollectionFormat,
     },
+    /// Generate one strict contact fragment from an exactly declared collection clip.
+    GenerateContactFragment {
+        /// Strict collection-manifest V1 TOML input.
+        #[arg(value_name = "MANIFEST.toml")]
+        manifest: PathBuf,
+        /// Exact logical clip id declared by the manifest.
+        #[arg(long, value_name = "LOGICAL_ID")]
+        clip: String,
+        /// Destination contact-fragment JSON path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Render canonical JSON or a stable text summary/refusal.
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
 }
 
 /// Collection output has one machine-readable presentation in V2.
@@ -287,6 +302,24 @@ enum CollectionFormat {
 /// Versioned single-document pipeline contracts.
 #[derive(Subcommand)]
 enum GenerateCmd {
+    /// Generate one strict contact-fragment V1 sidecar from sampled stance support.
+    #[command(
+        long_about = "Generate a source-bound contact-fragment V1 for one exactly named clip. The fragment reports sampled model-space stance support only; it does not infer physical contact, gameplay, footfalls, IK, or engine behavior. Both sides require complete finite evidence, and a refusal never changes the output path."
+    )]
+    ContactFragment {
+        /// Input .glb, .gltf, or .fbx file.
+        #[arg(value_name = "INPUT")]
+        input: PathBuf,
+        /// Exact unique embedded clip name.
+        #[arg(long, value_name = "TAKE_NAME")]
+        clip: String,
+        /// Destination contact-fragment JSON path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Render canonical JSON or a stable text summary/refusal.
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
     /// Inventory glTF animation addressability with an optional exact Bevy adapter.
     #[command(
         long_about = "Generate one bounded glTF animation-addressability document from the immutable source facts and dependency closure. With the exact supported Bevy profile selected, the same document embeds the existing engine-addressability evaluation; without it, the neutral inventory remains available and the Bevy adapter is null. This command does not claim runtime loading, graph wiring, target survival, or named-map behavior."
@@ -686,6 +719,9 @@ struct LoadedConfig {
     config: Config,
     engine: Option<StaticResolution>,
     path: Option<PathBuf>,
+    /// Canonical control-file input used only for publication alias guards.
+    /// Unlike `path`, this must never cross a collection's public boundary.
+    control_input: Option<PathBuf>,
     #[cfg(feature = "fbx")]
     source: Option<LoadedConfigSource>,
 }
@@ -838,6 +874,7 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
             config: Config::default(),
             engine: None,
             path: None,
+            control_input: None,
             #[cfg(feature = "fbx")]
             source: None,
         });
@@ -857,12 +894,22 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
         config,
         engine,
         path: Some(path.clone()),
+        control_input: Some(path.clone()),
         #[cfg(feature = "fbx")]
         source: Some(LoadedConfigSource { path, bytes }),
     })
 }
 
 impl LoadedConfig {
+    /// The configuration file consumed for this invocation, when one was
+    /// explicitly selected or found at the default location.
+    ///
+    /// Strict producers use this only to ensure a publication destination
+    /// cannot replace a control input they have already consumed.
+    pub(crate) fn control_input(&self) -> Option<&Path> {
+        self.control_input.as_deref()
+    }
+
     fn resolve_engine_input(
         &self,
         source_format: animsmith_core::SourceFormatV1,
@@ -1090,7 +1137,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         Cmd::Collection { operation } => {
             if cli.config.is_some() {
                 return Err(
-                    "--config is not accepted by collection lint; declare each source config in the collection manifest"
+                    "--config is not accepted by collection commands; declare each source config in the collection manifest"
                         .into(),
                 );
             }
@@ -1099,6 +1146,18 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     debug_assert_eq!(format, CollectionFormat::Json);
                     collection_lint::run_collection_lint(&manifest)
                 }
+                CollectionCmd::GenerateContactFragment {
+                    manifest,
+                    clip,
+                    output,
+                    format,
+                } => contact_producer::run_collection(
+                    &manifest,
+                    &clip,
+                    &output,
+                    format,
+                    current_tool(),
+                ),
             }
         }
         #[cfg(feature = "report")]
@@ -1416,6 +1475,22 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             scale::run(&request, current_tool())
         }
         Cmd::Generate { operation } => match operation {
+            GenerateCmd::ContactFragment {
+                input,
+                clip,
+                output,
+                format,
+            } => {
+                let loaded_config = load_config(cli.config.as_deref())?;
+                contact_producer::run_direct(
+                    &input,
+                    &clip,
+                    &output,
+                    format,
+                    current_tool(),
+                    &loaded_config,
+                )
+            }
             GenerateCmd::Addressability { input, format } => {
                 // Static profile/configuration validation deliberately precedes
                 // input I/O, matching lint and preserving #464's typed error
@@ -1681,7 +1756,6 @@ impl std::fmt::Display for InputLoadError {
     }
 }
 
-#[cfg(feature = "fbx")]
 fn producer_load_failure(error: InputLoadError) -> producer::Failure {
     use producer::{Failure, Kind, Stage};
 
@@ -1692,6 +1766,7 @@ fn producer_load_failure(error: InputLoadError) -> producer::Failure {
         InputLoadError::Gltf(error @ animsmith_gltf::LoadError::ExternalResource(_)) => {
             Failure::operator(error)
         }
+        #[cfg(feature = "fbx")]
         InputLoadError::Fbx(error @ animsmith_fbx::LoadError::Path(_)) => Failure::operator(error),
         // These are the only operator exceptions. Every other current or
         // future typed loader variant is a fact about bytes the producer was
@@ -1809,6 +1884,14 @@ impl LoadedInput {
         self.source.source_facts().primary_identity()
     }
 
+    fn dependency_closure(&self) -> &animsmith_core::DependencyClosureV1 {
+        self.source.dependency_closure()
+    }
+
+    fn source_facts(&self) -> animsmith_core::SourceFactsViewV1<'_> {
+        self.source.source_facts()
+    }
+
     fn into_document(self) -> Document {
         self.source.into_document()
     }
@@ -1832,6 +1915,36 @@ fn load_with_config(path: &Path, config: &LoadedConfig) -> Result<LoadedInput, S
     let facts = loaded.source.source_facts();
     loaded.engine = config.resolve_engine_input(facts.format(), loaded.source.document())?;
     Ok(loaded)
+}
+
+/// Load an input for a strict producer while preserving its typed refusal
+/// boundary. Ordinary inspection commands surface loader diagnostics as
+/// operator errors; a sidecar producer has already committed to a result
+/// contract, so malformed source facts are instead a refusal.
+fn load_with_config_for_producer(
+    path: &Path,
+    config: &LoadedConfig,
+) -> Result<LoadedInput, producer::Failure> {
+    let (format, bytes) = capture_input(path).map_err(producer::Failure::operator)?;
+    let source =
+        load_source_bytes_typed(path, format, &bytes).map_err(contact_producer_load_failure)?;
+    let engine = config
+        .resolve_engine_input(source.source_facts().format(), source.document())
+        .map_err(producer::Failure::operator)?;
+    Ok(LoadedInput { source, engine })
+}
+
+fn contact_producer_load_failure(error: InputLoadError) -> producer::Failure {
+    match error {
+        InputLoadError::Gltf(error @ animsmith_gltf::LoadError::ExternalResource(_)) => {
+            producer::Failure::refusal(
+                producer::Stage::Load,
+                producer::Kind::IncompleteEvidence,
+                error,
+            )
+        }
+        error => producer_load_failure(error),
+    }
 }
 
 #[cfg(test)]

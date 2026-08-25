@@ -251,14 +251,12 @@ asset with `animsmith measure --format json` before passing it to `diff`.
 [`contact-fragment-v1.schema.json`](schemas/contact-fragment-v1.schema.json)
 (`urn:animsmith:schema:contact-fragment:1`) is the strict, portable envelope
 for one selected clip's normalized contact facts. Its reader and RFC 8785
-canonical serializer live in `animsmith-core`; the 0.6.0 core contract
-validates the envelope but does not load assets, infer contacts, write
-sidecars, or implement trim/slice/resample/time-warp transforms. Those
-operations need their own complete output/refusal boundary and are deliberately
-deferred rather than exposing a partial transform API. Any future producer
-uses this reader and the existing `InputIdentity` and complete
-`DependencyClosureIdentityV1` bindings; it does not create another identity
-authority.
+canonical serializer live in `animsmith-core`. `animsmith generate
+contact-fragment` is the strict V1 producer: it publishes a source-bound
+sidecar only after finite bilateral stance-support preflight and a complete
+dependency closure; typed refusals publish nothing. It reports sampled support,
+not physical contact or gameplay meaning. Trim/slice/resample/time-warp remain
+deferred rather than exposing a partial transform API.
 
 ## Common envelope
 

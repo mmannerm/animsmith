@@ -1,10 +1,11 @@
 # Collection contract extensions
 
-This document records versioned schema-only extensions to the file-scoped
-collection decision in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file-scoped-clip-identity-and-collections).
-The contact-fragment V1 is retained in the 0.5.0 contract line; the
-directional-speed policy/evaluation V1 is an ordered 0.6.0 slice. They are interchange
-declarations, not new CLI commands or runtime systems.
+This document records versioned extensions to the file-scoped collection
+decision in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file-scoped-clip-identity-and-collections).
+Contact-fragment V1 now includes its strict standalone and manifest-selected
+producer/CLI/publication boundary. The directional-speed policy/evaluation V1
+is a separate ordered slice. Neither contact transforms nor runtime systems
+are delivered here.
 
 ## Directional-speed policy V1 (#552, ordered slice)
 
@@ -58,9 +59,11 @@ declaration or its tests.
 
 The contact-fragment V1 identity is
 `urn:animsmith:schema:contact-fragment:1`.
-AnimSmith 0.6 now validates through a format-neutral strict core reader and
-bounded canonicalization seam. It still adds no asset loading/detection,
-sidecar publication, CLI command, transform, or runtime system.
+AnimSmith 0.6 validates through a format-neutral strict core reader and
+bounded canonicalization seam. `generate contact-fragment` now supplies the
+strict one-clip producer, including a manifest-selected collection form that
+reloads the declared source rather than reading `collection-output:2`.
+Transforms and runtime systems remain out of scope.
 
 It is an importable envelope that
 can be merged into a host's one authoritative measured sidecar. It binds
@@ -85,6 +88,12 @@ plus its `source`, take-index, and exact take-name witness. Standalone
 documents use an exact embedded clip/take name scoped by both input identities;
 ambiguous or duplicate names are refused. No animation-array index, filename,
 or engine asset handle is an identity.
+
+Collection-manifest V1 rejects duplicate logical clip ids while parsing as a
+collection control error, before `collection generate-contact-fragment` can
+select a clip. A valid collection take-index addresses the raw source take row;
+the producer resolves that row's complete normalized-index witness before
+sampling its internal document clip.
 
 Points and windows use normalized clip time `[0, 1]`, with the measured
 positive duration recorded for validation. Events have stable opaque ids,
@@ -248,10 +257,10 @@ The success shape is illustrative:
 }
 ```
 
-This milestone does not detect contacts, generate events, validate foot
-placement, map engine-native event types, or write a host's final sidecar.
-Production generation remains [#152](https://github.com/mmannerm/animsmith/issues/152)
-in 0.6.0.
+The delivered producer samples strict stance-support contacts and writes its
+own canonical fragment sidecar. It does not transform contacts, validate foot
+placement, map engine-native event types, merge into a host's final sidecar,
+or establish runtime behavior, gameplay meaning, or engine correctness.
 
 ## Transition families (#148)
 

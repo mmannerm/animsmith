@@ -37,6 +37,7 @@ animsmith --help
 animsmith lint --help
 animsmith fix --help
 animsmith generate addressability --help
+animsmith generate contact-fragment --help
 ```
 
 There are no man pages yet, so `--help` is the canonical installed CLI
@@ -51,6 +52,7 @@ animsmith inspect <file>
 animsmith measure <file...> [--format text|json]
 animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
 animsmith collection lint <collection.toml> [--format json]
+animsmith collection generate-contact-fragment <manifest.toml> --clip <logical-id> -o <out.json> [--format text|json]
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
@@ -59,6 +61,7 @@ animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json> [--format te
 animsmith scale whole-document <in.glb|in.gltf> -o <out.glb|out.gltf> --factor N --evidence <out.json> [--format text|json]
 animsmith scale rest-bind <in.glb|in.gltf> -o <out.glb|out.gltf> --source-skin-index N --source-root-node-index N --expected-factor N --evidence <out.json> [--format text|json]
 animsmith generate addressability <in.glb|in.gltf> [--format json|text|markdown]
+animsmith generate contact-fragment <in.glb|in.gltf|in.fbx> --clip <take-name> -o <out.json> [--format text|json]
 animsmith diff <before> <after> [--format text|json]
 ```
 
@@ -69,7 +72,7 @@ when authoring `assemble` or material texture recipes.
 
 `--config animsmith.toml` is global for document-local commands. Without it, the CLI auto-loads
 `./animsmith.toml` when present and otherwise uses built-in defaults.
-`collection lint` deliberately rejects the global spelling: each source uses
+Collection commands deliberately reject the global spelling: each source uses
 the config declared in the collection manifest, or exact built-in defaults
 when none is declared. It never discovers an ambient `./animsmith.toml`.
 
@@ -603,6 +606,19 @@ named-map winners, or extension support, and it does not certify a runtime
 load. Consumers using the strict staged reader must also keep each report at or
 below 256 MiB; the reader enforces this byte cap before UTF-8 or JSON decoding.
 
+`generate contact-fragment` publishes canonical `contact-fragment:1` bytes to
+`--output`. It selects one exact unique clip, samples the existing
+longest-authored-channel metric grid, and records only finite bilateral
+model-space stance support. Each retained two-or-more-sample run emits one
+normalized support window and one earliest-minimum marker. The source primary
+identity and complete dependency closure are bound into the fragment; an
+incomplete role, grid, closure, or other prerequisite is a typed exit-1
+refusal and leaves any existing output unchanged. `--format json` writes the
+same canonical bytes to stdout; text is a presentation summary. The collection
+form selects one exact manifest logical id and reloads its declared
+source/config rather than consuming `collection-output:2`. Neither form
+infers physical contact, footsteps, gameplay, IK, or engine behavior.
+
 An output-v11 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.
 When its operands are JSON reports, `diff` validates the complete v11 records
@@ -670,6 +686,11 @@ threshold semantics. See
 [output.md](output.md#gltf-animation-addressability) and
 [`gltf-animation-addressability-v1.schema.json`](schemas/gltf-animation-addressability-v1.schema.json).
 It is not output-v11 and cannot be used as a `diff` measurement operand.
+
+`generate contact-fragment` is also outside output-v11: it writes the strict
+`urn:animsmith:schema:contact-fragment:1` sidecar. Its exit-1 JSON refusal
+uses `producer-refusal:1`; exit 2 is reserved for CLI, config, path, or
+publication control failures.
 
 `generate import-advice` requires an exact `[engine]` selection and all
 required settings, then binds that resolved profile to one input and the

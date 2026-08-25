@@ -582,12 +582,13 @@ health:
 AnimSmith's gait and sync groups still resolve clips inside one loaded
 document. The file-scoped collection identity and cross-file set contract are
 recorded in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file-scoped-clip-identity-and-collections)
-and emitted by the explicit collection command. The 0.5.0
+and emitted by the explicit collection command. The
 [contact-fragment](collection-contracts.md#contact-fragments-147) and
 [transition-family](collection-contracts.md#transition-families-148) additions
-are interchange declarations; 0.6 implements only the contact fragment's
-strict core reader, not a producer, CLI, transform, or runtime policy. They do
-not make ordinary checks cross-file or infer membership. Keep per-file evidence
+are interchange declarations. The strict contact-fragment producer now emits
+one manifest-witnessed sidecar after reloading that source; it does not make
+ordinary checks cross-file or infer membership, and it adds no transform or
+runtime policy. Keep per-file evidence
 and the collection manifest authoritative; do not merge, rename, or infer set
 membership merely to make a check run.
 

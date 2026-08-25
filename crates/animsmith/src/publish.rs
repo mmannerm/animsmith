@@ -53,7 +53,6 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "fbx")]
 use animsmith_core::{
     DependencyClosureCoverageReasonV1, DependencyClosureV1, DependencyReferenceTargetV1,
     DependencyResourceRefusalReasonV1,
@@ -379,7 +378,6 @@ fn destination_identity_below(path: &Path, parent: PathBuf) -> Result<PathBuf, S
 /// turning every unrelated invocation into an operator error. When only the
 /// final entry is missing, the existing parent plus declared name still lets
 /// the ordinary comparison reject publication to that exact key.
-#[cfg(feature = "fbx")]
 fn retained_dependency_identity(path: &Path) -> Result<Option<PathBuf>, String> {
     let parent = parent_or_current(path);
     let parent = match fs::canonicalize(parent) {
@@ -467,7 +465,6 @@ impl<'a> PublicationDestination<'a> {
         Ok(false)
     }
 
-    #[cfg(feature = "fbx")]
     fn aliases(&self, dependency: &Path) -> Result<bool, String> {
         if self.identity == dependency {
             return Ok(true);
@@ -562,7 +559,6 @@ pub(crate) fn input_identity(path: &Path) -> Result<PathBuf, String> {
 /// Returns an operator error when the closure stopped at its resource budget,
 /// a dependency path cannot be inspected, or a key names one of the supplied
 /// destinations.
-#[cfg(feature = "fbx")]
 pub(crate) fn require_external_dependencies_safe_for_publication(
     command: &str,
     resource_root: &Path,
@@ -771,6 +767,20 @@ pub(crate) fn publish_pair(
     }
     flush_directory(parent_or_current(artifact));
     flush_directory(parent_or_current(evidence));
+    Ok(())
+}
+
+/// Publish one already-staged sidecar with the same durable single-file path
+/// used by producer pairs: fsync the temporary file, rename it into place,
+/// then best-effort fsync its directory.
+///
+/// The caller creates the temporary beside `destination`; therefore rename is
+/// atomic and a pre-publication refusal has never touched an existing output.
+pub(crate) fn publish_single(temp: &Path, destination: &Path) -> Result<(), String> {
+    flush_file(temp)?;
+    fs::rename(temp, destination)
+        .map_err(|error| format!("cannot publish {}: {error}", destination.display()))?;
+    flush_directory(parent_or_current(destination));
     Ok(())
 }
 
@@ -1380,7 +1390,7 @@ mod tests {
         // its own documentation.
         let printer = concat!("print", "_json");
         let sources = crate_sources();
-        for producer in ["assembly.rs", "scale.rs"] {
+        for producer in ["assembly.rs", "scale.rs", "contact_producer.rs"] {
             let (_, text) = sources
                 .iter()
                 .find(|(name, _)| name == producer)
@@ -1410,6 +1420,19 @@ mod tests {
         assert!(error.contains("injected evidence publication failure"));
         assert_eq!(fs::read(&artifact).unwrap(), b"old artifact");
         assert_eq!(fs::read(&evidence).unwrap(), b"old evidence");
+    }
+
+    #[test]
+    fn single_publication_replaces_only_after_a_complete_temp_is_staged() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("fragment.json");
+        let temp = dir.path().join("fragment.tmp");
+        fs::write(&destination, b"old fragment").unwrap();
+        fs::write(&temp, b"new fragment").unwrap();
+
+        publish_single(&temp, &destination).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"new fragment");
+        assert!(!temp.exists(), "rename consumed the staged temporary file");
     }
 
     #[test]

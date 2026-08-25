@@ -1634,7 +1634,6 @@ pub(crate) fn render_scale_rejected(
 ///
 /// Both the stable kind and untrusted detail pass through the terminal-safe
 /// atom renderer, so an asset cannot forge an additional diagnostic line.
-#[cfg(feature = "fbx")]
 pub(crate) fn render_producer_rejected(command: &str, kind: &str, detail: &str) -> String {
     format!(
         "animsmith: {} refused: [{}] {}\n",
