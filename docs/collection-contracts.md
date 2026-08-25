@@ -278,6 +278,13 @@ result schema, or command. The collection declaration envelope remains outside
 the collection CLI; evaluation and command behavior remain #153/#164 or
 separately reviewed follow-up work.
 
+The format-neutral core provides the strict V1 skeleton-basis identity and
+immutable transition-pose evaluation result contract at
+`urn:animsmith:schema:transition-pose-evaluation:1`. It is not a CLI command
+or collection adapter: document/collection resolution, raw-source loading, and
+JSON-only command publication remain deferred. The schema is checked in as
+[`transition-pose-evaluation-v1.schema.json`](schemas/transition-pose-evaluation-v1.schema.json).
+
 Document-local family ids are one lowercase-ASCII token, 1–255 bytes, starting
 with `[a-z0-9]` and continuing with `[a-z0-9._-]`. The table key itself is the
 id, with no duplicate `family_id` field; quote the key whenever punctuation or

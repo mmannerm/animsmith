@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:transition-pose-evaluation:1",
+  "title": "AnimSmith transition-pose evaluation V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "status", "decision", "declaration_input", "declaration_normalized", "document_input", "families"],
+  "properties": {
+    "schema": { "const": "urn:animsmith:schema:transition-pose-evaluation:1" },
+    "schema_version": { "const": 1 },
+    "status": { "enum": ["complete", "incomplete"] },
+    "decision": { "enum": ["pass", "finding", "not_evaluated"] },
+    "reason": { "$ref": "#/$defs/reason" },
+    "declaration_input": { "$ref": "#/$defs/identity_8m" },
+    "declaration_normalized": { "$ref": "#/$defs/identity_8m" },
+    "document_input": { "$ref": "#/$defs/identity" },
+    "families": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/family" } }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object", "additionalProperties": false, "required": ["sha256", "bytes"],
+      "properties": { "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "bytes": { "type": "integer", "minimum": 0 } }
+    },
+    "identity_8m": {
+      "allOf": [{ "$ref": "#/$defs/identity" }, { "properties": { "bytes": { "maximum": 8388608 } } }]
+    },
+    "reason": { "enum": ["no_configured_families", "member_unavailable", "zero_duration", "skeleton_basis_mismatch", "time_tolerance_unsupported", "unsupported_sampling", "input_limit", "family_work_limit", "aggregate_work_limit", "retention_limit", "result_limit"] },
+    "member": {
+      "type": "object", "additionalProperties": false, "required": ["take_index", "take_name", "source_input"],
+      "properties": { "take_index": { "type": "integer", "minimum": 0 }, "take_name": { "type": "string", "minLength": 1, "maxLength": 4096 }, "source_input": { "$ref": "#/$defs/identity" } }
+    },
+    "translation_offender": {
+      "type": "object", "additionalProperties": false, "required": ["bone_ordinal", "bone_name", "delta_m"],
+      "properties": { "bone_ordinal": { "type": "integer", "minimum": 0, "maximum": 4095 }, "bone_name": { "type": "string" }, "delta_m": { "type": "number", "minimum": 0 } }
+    },
+    "rotation_offender": {
+      "type": "object", "additionalProperties": false, "required": ["bone_ordinal", "bone_name", "delta_deg"],
+      "properties": { "bone_ordinal": { "type": "integer", "minimum": 0, "maximum": 4095 }, "bone_name": { "type": "string" }, "delta_deg": { "type": "number", "minimum": 0 } }
+    },
+    "pair": {
+      "type": "object", "additionalProperties": false,
+      "required": ["member_indices", "boundary", "max_translation_delta_m", "max_rotation_delta_deg", "translation_tolerance_m", "rotation_tolerance_deg", "translation_offenders", "rotation_offenders"],
+      "properties": {
+        "member_indices": { "type": "array", "prefixItems": [{ "type": "integer", "minimum": 0 }, { "type": "integer", "minimum": 0 }], "items": false },
+        "boundary": { "enum": ["entry", "exit"] },
+        "max_translation_delta_m": { "type": "number", "minimum": 0 }, "max_rotation_delta_deg": { "type": "number", "minimum": 0 },
+        "translation_tolerance_m": { "type": "number", "minimum": 0 }, "rotation_tolerance_deg": { "type": "number", "minimum": 0 },
+        "translation_offenders": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/translation_offender" } },
+        "rotation_offenders": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/rotation_offender" } }
+      }
+    },
+    "family": {
+      "type": "object", "additionalProperties": false,
+      "required": ["family_id", "status", "decision", "members", "pairs"],
+      "properties": {
+        "family_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "status": { "enum": ["complete", "incomplete"] }, "decision": { "enum": ["pass", "finding", "not_evaluated"] },
+        "reason": { "$ref": "#/$defs/reason" }, "members": { "type": "array", "minItems": 2, "maxItems": 4096, "items": { "$ref": "#/$defs/member" } },
+        "skeleton_basis_input": { "$ref": "#/$defs/identity" }, "pairs": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/pair" } }
+      },
+      "allOf": [{ "$ref": "#/$defs/result_state" }]
+    },
+    "result_state": {
+      "oneOf": [
+        { "properties": { "status": { "const": "complete" }, "decision": { "const": "pass" } }, "not": { "required": ["reason"] } },
+        { "properties": { "status": { "const": "complete" }, "decision": { "const": "pass" }, "reason": { "const": "no_configured_families" } }, "required": ["reason"] },
+        { "properties": { "status": { "const": "complete" }, "decision": { "const": "finding" } }, "not": { "required": ["reason"] } },
+        { "properties": { "status": { "const": "incomplete" }, "decision": { "const": "not_evaluated" } }, "required": ["reason"] }
+      ]
+    }
+  }
+}

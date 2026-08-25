@@ -3669,6 +3669,14 @@ result schema, or command; those remain #153 follow-up work. The separate
 collection envelope remains outside the collection CLI until its own reviewed
 evaluation slice.
 
+The format-neutral core now owns the strict `SkeletonBasisV1` identity and
+document transition-pose evaluator/result contract
+`urn:animsmith:schema:transition-pose-evaluation:1`. It revalidates a mutable
+loaded document, plans bounded endpoint work before sampling, and returns an
+immutable complete/finding/not-evaluated result. It does not add either #153
+command, config-to-document resolution, collection source reload, or a lint
+check; those adapters remain separately reviewed work.
+
 The declaration has a tagged `scope`, a stable `family_id`, an explicit
 ordered `members` array, a `boundary` (`entry`, `exit`, or `both`), a typed
 `basis`, and typed named `tolerances`. A family has at least two members.
