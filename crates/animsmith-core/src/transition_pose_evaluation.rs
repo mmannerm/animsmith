@@ -2903,6 +2903,92 @@ mod tests {
     }
 
     #[test]
+    fn collection_available_partial_closure_normalizes_to_whole_family_gap() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let logical = [
+            CollectionLogicalIdV1::new("collection/a").unwrap(),
+            CollectionLogicalIdV1::new("collection/b").unwrap(),
+        ];
+        let source = CollectionSourceKeyV1::new("shared").unwrap();
+        let declaration = collection_declaration(
+            vec![collection_family(
+                "collection/family",
+                vec![
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical[0].clone(),
+                        source.clone(),
+                        0,
+                        "Walk".into(),
+                    )
+                    .unwrap(),
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical[1].clone(),
+                        source.clone(),
+                        1,
+                        "Run".into(),
+                    )
+                    .unwrap(),
+                ],
+            )],
+            manifest.clone(),
+        );
+        let primary = InputIdentity::from_bytes(b"partial");
+        let closure = DependencyClosureBuilderV1::new(
+            primary.clone(),
+            SourceSetCoverageV1::partial(SourceUnavailableReasonV1::ProjectionBudgetExceeded),
+            0,
+        )
+        .finish()
+        .unwrap();
+        let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::Glb, primary.clone());
+        facts.mark_complete(SourceFactDomainV1::Clips);
+        facts.mark_complete(SourceFactDomainV1::Constructs);
+        facts.mark_partial(
+            SourceFactDomainV1::Resources,
+            SourceUnavailableReasonV1::ProjectionBudgetExceeded,
+        );
+        let partial = facts
+            .finish_with_dependency_closure(document(None), closure)
+            .unwrap();
+        let members = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[0],
+                &source,
+                0,
+                "Walk",
+                &partial,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[1],
+                &source,
+                1,
+                "Run",
+                &partial,
+            ),
+        ];
+
+        let result =
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &members).unwrap();
+        let family = &result.families()[0];
+        assert_eq!(result.status(), TransitionPoseStatusV1::Incomplete);
+        assert_eq!(result.decision(), TransitionPoseDecisionV1::NotEvaluated);
+        assert_eq!(
+            family.reason(),
+            Some(TransitionPoseReasonV1::DependencyClosureIncomplete)
+        );
+        assert!(family.skeleton_basis_input().is_none());
+        assert!(family.pairs().is_empty());
+        assert!(family.members().iter().all(|member| {
+            member.source_input() == Some(&primary)
+                && member.source_dependency_closure_identity().is_none()
+        }));
+    }
+
+    #[test]
     fn collection_runtime_gaps_preserve_priority_evidence_and_never_form_a_subset() {
         let manifest = TransitionFamilyManifestIdentityV1::new(
             CollectionIdV1::new("collection").unwrap(),

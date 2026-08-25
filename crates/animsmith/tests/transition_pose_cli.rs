@@ -942,6 +942,7 @@ take_name = "run"
         .unwrap();
     assert!(output.status.success());
     let value = json(&output);
+    assert_schema(&value);
     assert_eq!(value["decision"], "pass");
     assert_eq!(
         value["families"][0]["members"][0]["source_input"],

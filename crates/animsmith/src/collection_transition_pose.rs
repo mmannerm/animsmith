@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use animsmith_core::{
-    CollectionTransitionPoseMemberInputV1, InputIdentity, LoadedSource,
+    CollectionDigestPinV1, CollectionTransitionPoseMemberInputV1, InputIdentity, LoadedSource,
     TransitionFamilyManifestIdentityV1, TransitionPoseDecisionV1, TransitionPoseStatusV1,
     evaluate_collection_transition_poses_v1,
 };
@@ -23,6 +23,25 @@ use super::{EXIT_FINDINGS, input_format, load_source_bytes_typed};
 
 /// Run the strict collection transition-pose command.
 pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode, String> {
+    let (exit, bytes) = run_with_source_loader(
+        manifest_path,
+        families_path,
+        |_key, resolution, expected, limit| load_resolved_source(resolution, expected, limit),
+    )?;
+    super::publish::emit_required_json(&bytes)?;
+    Ok(exit)
+}
+
+fn run_with_source_loader(
+    manifest_path: &Path,
+    families_path: &Path,
+    mut load_selected_source: impl FnMut(
+        &str,
+        &CollectionSourceResolution,
+        Option<&CollectionDigestPinV1>,
+        u64,
+    ) -> (SourceState, u64),
+) -> Result<(ExitCode, Vec<u8>), String> {
     let loaded_manifest =
         load_collection_manifest_with_identity(manifest_path).map_err(|error| error.to_string())?;
     let family_bytes = read_bounded(
@@ -117,24 +136,17 @@ pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode
                 input: None,
                 cause: SourceUnavailableCause::SourceUnavailable,
             },
-            Some(limit) => match resolutions
-                .get(key)
-                .ok_or_else(|| "collection control error (missing-source-resolution)".to_owned())?
-            {
-                CollectionSourceResolution::Unavailable { .. } => SourceState::Unavailable {
-                    input: None,
-                    cause: SourceUnavailableCause::SourceUnavailable,
-                },
-                CollectionSourceResolution::Ready(path) => {
-                    let (state, inspected) =
-                        load_source(path.path(), source.expected_sha256(), limit);
-                    primary_source_bytes =
-                        primary_source_bytes.checked_add(inspected).ok_or_else(|| {
-                            "collection control error (source-work-overflow)".to_owned()
-                        })?;
-                    state
-                }
-            },
+            Some(limit) => {
+                let resolution = resolutions.get(key).ok_or_else(|| {
+                    "collection control error (missing-source-resolution)".to_owned()
+                })?;
+                let (state, inspected) =
+                    load_selected_source(key, resolution, source.expected_sha256(), limit);
+                primary_source_bytes = primary_source_bytes
+                    .checked_add(inspected)
+                    .ok_or_else(|| "collection control error (source-work-overflow)".to_owned())?;
+                state
+            }
         };
         Ok::<SourceState, String>(state)
     })?;
@@ -202,12 +214,12 @@ pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode
     let pass = result.status() == TransitionPoseStatusV1::Complete
         && result.decision() == TransitionPoseDecisionV1::Pass;
     let bytes = super::publish::serialize_record(&result)?;
-    super::publish::emit_required_json(&bytes)?;
-    Ok(if pass {
+    let exit = if pass {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(EXIT_FINDINGS)
-    })
+    };
+    Ok((exit, bytes))
 }
 
 enum SourceState {
@@ -289,6 +301,23 @@ fn load_source(
     (SourceState::Available { loaded }, inspected)
 }
 
+fn load_resolved_source(
+    resolution: &CollectionSourceResolution,
+    expected: Option<&CollectionDigestPinV1>,
+    limit: u64,
+) -> (SourceState, u64) {
+    match resolution {
+        CollectionSourceResolution::Unavailable { .. } => (
+            SourceState::Unavailable {
+                input: None,
+                cause: SourceUnavailableCause::SourceUnavailable,
+            },
+            0,
+        ),
+        CollectionSourceResolution::Ready(path) => load_source(path.path(), expected, limit),
+    }
+}
+
 fn next_source_limit(primary_source_bytes: u64) -> Option<u64> {
     COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES
         .checked_sub(primary_source_bytes)
@@ -338,14 +367,105 @@ mod tests {
     }
 
     #[test]
-    fn repeated_selected_source_keys_invoke_the_real_load_boundary_once() {
-        let mut loads = 0usize;
-        let loaded = load_unique_selected_sources(["shared", "shared", "shared"], |key| {
-            loads += 1;
-            Ok::<_, ()>(key.len())
-        })
-        .unwrap();
-        assert_eq!(loads, 1);
-        assert_eq!(loaded.get("shared"), Some(&6));
+    fn run_requests_only_unique_selected_source_keys() {
+        let temp = tempfile::tempdir().expect("creates collection control root");
+        let manifest = temp.path().join("collection.toml");
+        let families = temp.path().join("families.toml");
+        let manifest_bytes = br#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "test"
+sources = [
+  { key = "selected", path = "selected.glb" },
+  { key = "unrelated", path = "unrelated.glb" },
+]
+clips = [
+  { id = "test/walk", source = "selected", take_index = 0, take_name = "walk" },
+  { id = "test/run", source = "selected", take_index = 1, take_name = "run" },
+  { id = "test/unrelated", source = "unrelated", take_index = 0, take_name = "unused" },
+]
+"#;
+        std::fs::write(&manifest, manifest_bytes).expect("writes collection manifest");
+        let manifest_input = InputIdentity::from_bytes(manifest_bytes);
+        std::fs::write(
+            &families,
+            format!(
+                r#"schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "collection"
+collection_id = "test"
+manifest_input_identity = {{ sha256 = "{}", bytes = {} }}
+
+[[families]]
+family_id = "test/first"
+boundary = "entry"
+[families.basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+[families.tolerances]
+translation_m = 0.0
+rotation_deg = 0.0
+time_normalized = 0.0
+[[families.members]]
+logical_id = "test/walk"
+source = "selected"
+take_index = 0
+take_name = "walk"
+[[families.members]]
+logical_id = "test/run"
+source = "selected"
+take_index = 1
+take_name = "run"
+
+[[families]]
+family_id = "test/second"
+boundary = "exit"
+[families.basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+[families.tolerances]
+translation_m = 0.0
+rotation_deg = 0.0
+time_normalized = 0.0
+[[families.members]]
+logical_id = "test/run"
+source = "selected"
+take_index = 1
+take_name = "run"
+[[families.members]]
+logical_id = "test/walk"
+source = "selected"
+take_index = 0
+take_name = "walk"
+"#,
+                manifest_input.sha256(),
+                manifest_input.bytes()
+            ),
+        )
+        .expect("writes family declaration");
+        let mut requested = Vec::new();
+
+        let (_, bytes) = run_with_source_loader(
+            &manifest,
+            &families,
+            |key, _resolution, _expected, _limit| {
+                requested.push(key.to_owned());
+                (
+                    SourceState::Unavailable {
+                        input: None,
+                        cause: SourceUnavailableCause::SourceUnavailable,
+                    },
+                    0,
+                )
+            },
+        )
+        .expect("real run preflight accepts the declaration");
+
+        assert_eq!(requested, ["selected"]);
+        assert!(
+            !bytes.is_empty(),
+            "the run produced its shared result contract"
+        );
     }
 }
