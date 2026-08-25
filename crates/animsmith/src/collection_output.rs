@@ -1,4 +1,5 @@
-//! Internal producer and strict reader types for collection-output V5.
+//! Internal producer and strict reader types for current collection-output V6
+//! and immutable historical V5.
 //!
 //! This is deliberately a CLI-local contract.  Core owns the validated
 //! collection declaration vocabulary; this module owns the command's evidence
@@ -16,8 +17,9 @@ use animsmith_core::{
     CollectionDirectionalSpeedManifestIdentityV1, CollectionIdV1, CollectionLogicalIdV1,
     CollectionRuntimeSetKindV1, CollectionSourceKeyV1, DependencyClosureCoverageReasonV1,
     DependencyClosureCoverageV1, DependencyClosureIdentityV1, DependencyClosureV1,
-    DependencyResourceKeyV1, InputIdentity, LintEnvelope, MeasurementReportInput,
-    ResourceKeySyntaxV1, ToolInfo,
+    DependencyResourceKeyV1, InputIdentity, LintEnvelope, MeasurementReportInput, OUTPUT_SCHEMA_ID,
+    OUTPUT_SCHEMA_VERSION, OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION, ResourceKeySyntaxV1,
+    ToolInfo,
 };
 use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -33,6 +35,8 @@ pub(crate) const COLLECTION_OUTPUT_V4_ID: &str = "urn:animsmith:schema:collectio
 pub(crate) const COLLECTION_OUTPUT_V4_SCHEMA_VERSION: u32 = 4;
 pub(crate) const COLLECTION_OUTPUT_V5_ID: &str = "urn:animsmith:schema:collection-output:5";
 pub(crate) const COLLECTION_OUTPUT_V5_SCHEMA_VERSION: u32 = 5;
+pub(crate) const COLLECTION_OUTPUT_V6_ID: &str = "urn:animsmith:schema:collection-output:6";
+pub(crate) const COLLECTION_OUTPUT_V6_SCHEMA_VERSION: u32 = 6;
 pub(crate) const COLLECTION_OUTPUT_BUDGET_V1_ID: &str = "urn:animsmith:collection-output-budget:1";
 pub(crate) const COLLECTION_OUTPUT_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) const COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -845,8 +849,8 @@ impl CollectionOutput {
             serialized_bytes,
         )?;
         let output = Self {
-            schema_version: COLLECTION_OUTPUT_V5_SCHEMA_VERSION,
-            schema: COLLECTION_OUTPUT_V5_ID,
+            schema_version: COLLECTION_OUTPUT_V6_SCHEMA_VERSION,
+            schema: COLLECTION_OUTPUT_V6_ID,
             tool,
             command: "collection lint",
             manifest,
@@ -1083,9 +1087,16 @@ impl CollectionOutputInput {
 
     fn validate(&self, read_bytes: u64) -> Result<(), CollectionOutputError> {
         let wire = &self.wire;
-        if wire.schema_version != COLLECTION_OUTPUT_V5_SCHEMA_VERSION
-            || wire.schema != COLLECTION_OUTPUT_V5_ID
-            || wire.command != "collection lint"
+        let revision = match (wire.schema_version, wire.schema.as_str()) {
+            (COLLECTION_OUTPUT_V5_SCHEMA_VERSION, COLLECTION_OUTPUT_V5_ID) => {
+                CollectionOutputRevision::V5
+            }
+            (COLLECTION_OUTPUT_V6_SCHEMA_VERSION, COLLECTION_OUTPUT_V6_ID) => {
+                CollectionOutputRevision::V6
+            }
+            _ => return Err(CollectionOutputError::Malformed),
+        };
+        if wire.command != "collection lint"
             || !valid_tool(&wire.tool)
             || wire.manifest.schema != animsmith_core::COLLECTION_MANIFEST_V1_ID
             || wire.manifest.schema_version != animsmith_core::COLLECTION_MANIFEST_V1_SCHEMA_VERSION
@@ -1111,7 +1122,7 @@ impl CollectionOutputInput {
             {
                 return Err(CollectionOutputError::Malformed);
             }
-            validate_source(source)?;
+            validate_source(source, revision)?;
             sources.insert(source.key.as_str(), source);
         }
         if !strictly_sorted(wire.sources.iter().map(|source| source.key.as_str())) {
@@ -1466,6 +1477,21 @@ struct CollectionOutputWire {
     clips: Vec<CollectionClipWire>,
     runtime_sets: Vec<RuntimeSetWire>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectionOutputRevision {
+    V5,
+    V6,
+}
+
+impl CollectionOutputRevision {
+    const fn nested_output(self) -> (&'static str, u32) {
+        match self {
+            Self::V5 => (OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION),
+            Self::V6 => (OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION),
+        }
+    }
+}
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ToolWire {
@@ -1507,6 +1533,8 @@ struct IdentityWire {
 }
 #[derive(Debug, Deserialize)]
 struct NestedEnvelopeCommandWire {
+    schema: String,
+    schema_version: u32,
     command: String,
 }
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -1873,7 +1901,10 @@ fn valid_digest(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte <= b'f'))
 }
 
-fn validate_source(source: &CollectionSourceWire) -> Result<(), CollectionOutputError> {
+fn validate_source(
+    source: &CollectionSourceWire,
+    revision: CollectionOutputRevision,
+) -> Result<(), CollectionOutputError> {
     validate_dependency_closure_state(source)?;
     if let SourceInputStateWire::Unavailable {
         reason,
@@ -1904,14 +1935,14 @@ fn validate_source(source: &CollectionSourceWire) -> Result<(), CollectionOutput
             && valid_digest(expected_sha256)
             && expected_sha256 == &input.sha256 =>
         {
-            validate_envelope(envelope, input)?;
+            validate_envelope(envelope, input, revision)?;
         }
         (
             SourceInputStateWire::Available { input },
             DigestPinStateWire::Unpinned,
             LoaderStateWire::Ready,
             DocumentResultWire::Available { envelope },
-        ) if valid_identity(input) => validate_envelope(envelope, input)?,
+        ) if valid_identity(input) => validate_envelope(envelope, input, revision)?,
         (
             SourceInputStateWire::Available { input },
             DigestPinStateWire::Mismatched {
@@ -1924,7 +1955,7 @@ fn validate_source(source: &CollectionSourceWire) -> Result<(), CollectionOutput
             && valid_digest(expected_sha256)
             && observed_sha256.as_deref() == Some(input.sha256.as_str()) =>
         {
-            validate_envelope(envelope, input)?
+            validate_envelope(envelope, input, revision)?
         }
         (
             SourceInputStateWire::Available { input },
@@ -2117,10 +2148,18 @@ fn validate_dependency_closure_state(
         _ => Err(CollectionOutputError::Malformed),
     }
 }
-fn validate_envelope(raw: &RawValue, source: &IdentityWire) -> Result<(), CollectionOutputError> {
+fn validate_envelope(
+    raw: &RawValue,
+    source: &IdentityWire,
+    revision: CollectionOutputRevision,
+) -> Result<(), CollectionOutputError> {
     let command: NestedEnvelopeCommandWire =
         serde_json::from_str(raw.get()).map_err(|_| CollectionOutputError::Malformed)?;
-    if command.command != "lint" {
+    let (expected_schema, expected_version) = revision.nested_output();
+    if command.command != "lint"
+        || command.schema != expected_schema
+        || command.schema_version != expected_version
+    {
         return Err(CollectionOutputError::Malformed);
     }
     let report: MeasurementReportInput =
@@ -2909,6 +2948,32 @@ mod tests {
     }
 
     #[test]
+    fn strict_reader_preserves_v5_output_v13_and_rejects_crossed_revisions() {
+        let mut historical = json_fixture(false, false);
+        historical["schema_version"] = COLLECTION_OUTPUT_V5_SCHEMA_VERSION.into();
+        historical["schema"] = COLLECTION_OUTPUT_V5_ID.into();
+        historical["sources"][0]["result"]["envelope"]["schema_version"] =
+            OUTPUT_V13_SCHEMA_VERSION.into();
+        historical["sources"][0]["result"]["envelope"]["schema"] = OUTPUT_V13_SCHEMA_ID.into();
+        let historical_bytes = stable_json_bytes(historical.clone());
+        assert!(read_collection_output(&historical_bytes[..]).is_ok());
+
+        let mut v5_with_current_nested = historical.clone();
+        v5_with_current_nested["sources"][0]["result"]["envelope"]["schema_version"] =
+            OUTPUT_SCHEMA_VERSION.into();
+        v5_with_current_nested["sources"][0]["result"]["envelope"]["schema"] =
+            OUTPUT_SCHEMA_ID.into();
+        rejects(v5_with_current_nested);
+
+        let mut v6_with_historical_nested = json_fixture(false, false);
+        v6_with_historical_nested["sources"][0]["result"]["envelope"]["schema_version"] =
+            OUTPUT_V13_SCHEMA_VERSION.into();
+        v6_with_historical_nested["sources"][0]["result"]["envelope"]["schema"] =
+            OUTPUT_V13_SCHEMA_ID.into();
+        rejects(v6_with_historical_nested);
+    }
+
+    #[test]
     fn strict_reader_rejects_over_budget_manifest_identity() {
         let mut value = json_fixture(true, true);
         value["manifest"]["input"]["bytes"] =
@@ -3343,7 +3408,13 @@ mod tests {
         });
         let unavailable_with_inventory: CollectionOutputWire =
             serde_json::from_value(unavailable_with_inventory).unwrap();
-        assert!(validate_source(&unavailable_with_inventory.sources[0]).is_err());
+        assert!(
+            validate_source(
+                &unavailable_with_inventory.sources[0],
+                CollectionOutputRevision::V6,
+            )
+            .is_err()
+        );
 
         let mut fabricated_nested_unavailability = json_fixture(false, false);
         fabricated_nested_unavailability["sources"][0]["result"] = serde_json::json!({
@@ -3352,7 +3423,11 @@ mod tests {
         let fabricated_nested_unavailability: CollectionOutputWire =
             serde_json::from_value(fabricated_nested_unavailability).unwrap();
         assert!(
-            validate_source(&fabricated_nested_unavailability.sources[0]).is_err(),
+            validate_source(
+                &fabricated_nested_unavailability.sources[0],
+                CollectionOutputRevision::V6,
+            )
+            .is_err(),
             "ordinary normalized names cannot justify nested-output refusal"
         );
     }

@@ -18,7 +18,7 @@ use animsmith_core::model::Clip;
 use animsmith_core::{
     Applicability, ConfigurationState, CoverageGap, CoverageGapCode,
     DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, Document,
-    EnginePredictionFacetStateV1, EnginePredictionFacetV2, EvaluationState, Finding,
+    EnginePredictionFacetStateV1, EnginePredictionFacetV3, EvaluationState, Finding,
     LintFileReport, MeasureFileReport, ResolvedRoles, SelectionState, Severity, SourceFormatV1,
 };
 use animsmith_engine::{
@@ -1809,13 +1809,13 @@ pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> 
     out
 }
 
-fn prediction_facets(report: &LintFileReport) -> Vec<(&str, &EnginePredictionFacetV2)> {
+fn prediction_facets(report: &LintFileReport) -> Vec<(&str, &EnginePredictionFacetV3)> {
     report
         .checks()
         .iter()
         .filter_map(|check| {
             check
-                .engine_prediction_v2()
+                .engine_prediction_v3()
                 .map(|prediction| (check.check_id(), prediction))
         })
         .flat_map(|(check_id, prediction)| {
@@ -2306,11 +2306,11 @@ mod tests {
     use animsmith_core::measure::{AssetMeasurements, measure_assets};
     use animsmith_core::{
         Bone, CheckEvaluation, CheckOutput, Clip, CoverageGap, CoverageGapCode, Document,
-        EnginePredictionBasisV1, EnginePredictionFacetV2, EnginePredictionV2, EvaluationScope,
+        EnginePredictionBasisV2, EnginePredictionFacetV3, EnginePredictionV3, EvaluationScope,
         EvaluationScopeCode, Finding, InputIdentity, LintFileReport, MeasureFileReport,
-        MeasurementContract, PredictionBasisReferenceV1, PredictionProvenanceV2,
-        PredictionUnavailableReasonV2, ResolvedRoles, RigInfo, Role, SourceInfo, Track,
-        TrackValues, Transform,
+        MeasurementContract, PredictionBasisReferenceV1, PredictionBasisReferenceV2,
+        PredictionProvenanceV3, PredictionUnavailableReasonV2, ResolvedRoles, RigInfo, Role,
+        SourceInfo, Track, TrackValues, Transform,
     };
     use animsmith_core::{Interpolation, Property};
     use animsmith_core::{
@@ -2372,7 +2372,7 @@ mod tests {
         .expect("test lint file satisfies output bounds")
     }
 
-    fn prediction_provenance() -> PredictionProvenanceV2 {
+    fn prediction_provenance() -> PredictionProvenanceV3 {
         let fixture =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rig.gltf");
         let source = animsmith_gltf::load_source(&fixture).expect("fixture source loads");
@@ -2398,13 +2398,13 @@ mod tests {
             clip_names.iter().map(String::as_str),
         )
         .expect("fixture format is accepted");
-        animsmith_engine::project_prediction_provenance_v2(&resolved, &source)
+        animsmith_engine::project_prediction_provenance_v3(&resolved, &source)
             .expect("same-load provenance projects")
     }
 
     fn prediction_report(
         path: &str,
-        provenance: &PredictionProvenanceV2,
+        provenance: &PredictionProvenanceV3,
         available: bool,
         unavailable: bool,
     ) -> LintFileReport {
@@ -2416,12 +2416,12 @@ mod tests {
         let mut findings = Vec::new();
         if available {
             facets.push(
-                EnginePredictionFacetV2::available(
+                EnginePredictionFacetV3::available(
                     available_scope.clone(),
-                    EnginePredictionBasisV1::new(vec![
+                    EnginePredictionBasisV2::new(vec![PredictionBasisReferenceV2::v1(
                         PredictionBasisReferenceV1::profile_fact("accepted_inputs")
                             .expect("known profile fact reference"),
-                    ])
+                    )])
                     .expect("nonempty basis"),
                 )
                 .expect("available facet"),
@@ -2434,21 +2434,21 @@ mod tests {
         }
         if unavailable {
             facets.push(
-                EnginePredictionFacetV2::required_unavailable(
+                EnginePredictionFacetV3::required_unavailable(
                     unavailable_scope,
-                    EnginePredictionBasisV1::new(Vec::new())
+                    EnginePredictionBasisV2::new(Vec::new())
                         .expect("empty unavailable basis prefix"),
                     vec![PredictionUnavailableReasonV2::ProjectIntentUnavailable],
                 )
                 .expect("required-unavailable facet"),
             );
         }
-        let prediction = EnginePredictionV2::new(provenance.identity().clone(), facets)
+        let prediction = EnginePredictionV3::new(provenance.identity().clone(), facets)
             .expect("canonical prediction");
         let check = CheckEvaluation::evaluated(
             "test:engine",
             CheckOutput::from_coverage(findings, evaluated, Vec::new())
-                .with_engine_prediction_v2(prediction),
+                .with_engine_prediction_v3(prediction),
         )
         .expect("prediction lifecycle is valid");
         LintFileReport::new(

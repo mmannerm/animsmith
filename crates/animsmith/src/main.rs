@@ -36,10 +36,11 @@ use animsmith_core::{Document, InputIdentity};
 #[cfg(feature = "report")]
 use animsmith_engine::EngineAddressabilityCheck;
 use animsmith_engine::{
-    BakeOrExtract, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheckV2, EngineDeclaration,
-    EngineImportAdviceStateV1, EngineImportAdviceV1, GltfAnimationAddressabilityInventoryV1,
-    GltfAnimationAddressabilityV1, ProfileSelection, ResolvedProfile, ResolvedProfileV2,
-    SettingMap, SettingValue, StaticResolution, build_bevy_animation_addressability_adapter_v1,
+    BakeOrExtract, ENGINE_CHECK_IDS_V2, EngineAddressabilityCheckV3, EngineClipBoundaryCheck,
+    EngineDeclaration, EngineImportAdviceStateV1, EngineImportAdviceV1,
+    GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityV1, ProfileSelection,
+    ResolvedProfile, ResolvedProfileV2, SettingMap, SettingValue, StaticResolution,
+    build_bevy_animation_addressability_adapter_v1,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -272,12 +273,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file current output-v14 or historical output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v13 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v14/output-v13 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v13 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v14/output-v13 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -1070,7 +1071,7 @@ fn full_check_ids() -> Result<Vec<&'static str>, String> {
         .into_iter()
         .map(|check| check.id())
         .collect::<Vec<_>>();
-    known.extend_from_slice(ENGINE_CHECK_IDS_V1);
+    known.extend_from_slice(ENGINE_CHECK_IDS_V2);
 
     let mut unique = BTreeSet::new();
     for id in &known {
@@ -1118,7 +1119,7 @@ fn analyze_loaded_lint(
     let prediction_provenance = loaded
         .engine_v2
         .as_ref()
-        .map(|profile| animsmith_engine::project_prediction_provenance_v2(profile, &loaded.source))
+        .map(|profile| animsmith_engine::project_prediction_provenance_v3(profile, &loaded.source))
         .transpose()
         .map_err(|error| error.to_string())?;
     let doc = loaded.document();
@@ -1128,7 +1129,11 @@ fn analyze_loaded_lint(
     let evaluations = {
         let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
         checks.push(Box::new(
-            EngineAddressabilityCheckV2::new(&loaded.source, prediction_provenance.as_ref())
+            EngineAddressabilityCheckV3::new(&loaded.source, prediction_provenance.as_ref())
+                .map_err(|error| error.to_string())?,
+        ));
+        checks.push(Box::new(
+            EngineClipBoundaryCheck::new(&loaded.source, prediction_provenance.as_ref())
                 .map_err(|error| error.to_string())?,
         ));
         evaluate_checks_v2(&ctx, &checks, selection).map_err(|error| error.to_string())?
@@ -1791,7 +1796,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// output-v13 `measure`/`lint` JSON report carrying measurements-v16.
+/// current output-v14 or historical output-v13 `measure`/`lint` JSON report
+/// carrying measurements-v16.
 fn load_measurements(
     path: &Path,
     loaded_config: &LoadedConfig,
@@ -1811,10 +1817,10 @@ fn load_measurements(
             }
             _ => format!("{} {error}", path.display()),
         })?;
-        // Current output-v13 and historical output-v12/output-v11 envelopes
+        // Current output-v14 and historical output-v13/output-v12/output-v11 envelopes
         // are accepted only with their version-matched measurements contract.
         // The V11 route retains its original V1 evidence validation; producers
-        // emit V13.
+        // emit V14.
         let file_count = report.file_count();
         let files = report.into_files().map_err(|error| {
             format!(
