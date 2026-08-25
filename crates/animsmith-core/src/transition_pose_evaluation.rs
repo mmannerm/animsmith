@@ -766,10 +766,16 @@ fn evaluate_collection_transition_poses_v1_with_probes(
             let source_input = loaded_source.source_facts().primary_identity();
             let dependency_closure = loaded_source.dependency_closure();
             let document = loaded_source.document();
-            if dependency_closure.primary_input() != source_input
-                || !dependency_closure.coverage().is_complete()
-                || dependency_closure.identity().is_none()
+            let closure_is_complete = dependency_closure.primary_input() == source_input
+                && dependency_closure.coverage().is_complete()
+                && dependency_closure.identity().is_some();
+            if prepared.unavailable_reason
+                == Some(TransitionPoseReasonV1::DependencyClosureIncomplete)
+                && closure_is_complete
             {
+                return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
+            }
+            if !closure_is_complete {
                 retain_collection_runtime_reason(
                     &mut row.reason,
                     TransitionPoseReasonV1::DependencyClosureIncomplete,
@@ -786,11 +792,7 @@ fn evaluate_collection_transition_poses_v1_with_probes(
                 );
                 continue;
             };
-            if prepared.unavailable_reason.is_none()
-                && dependency_closure.coverage().is_complete()
-                && dependency_closure.identity().is_some()
-                && dependency_closure.primary_input() == source_input
-            {
+            if prepared.unavailable_reason.is_none() && closure_is_complete {
                 selected.push(CollectionResolvedMember {
                     source: declared.source(),
                     take_index: declared.take_index(),
@@ -2838,6 +2840,64 @@ mod tests {
                 &manifest,
                 &split_unavailable_identity,
             ),
+            Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)
+        );
+    }
+
+    #[test]
+    fn collection_control_rejects_false_incomplete_closure_state() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let logical = [
+            CollectionLogicalIdV1::new("collection/a").unwrap(),
+            CollectionLogicalIdV1::new("collection/b").unwrap(),
+        ];
+        let sources = [
+            CollectionSourceKeyV1::new("a").unwrap(),
+            CollectionSourceKeyV1::new("b").unwrap(),
+        ];
+        let declaration = collection_declaration(
+            vec![collection_family(
+                "collection/family",
+                logical
+                    .iter()
+                    .zip(&sources)
+                    .map(|(logical, source)| {
+                        CollectionTransitionFamilyMemberV1::new(
+                            logical.clone(),
+                            source.clone(),
+                            0,
+                            "Walk".into(),
+                        )
+                        .unwrap()
+                    })
+                    .collect(),
+            )],
+            manifest.clone(),
+        );
+        let complete = loaded_source(document(None), b"complete");
+        let members = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[0],
+                &sources[0],
+                0,
+                "Walk",
+                &complete,
+            ),
+            CollectionTransitionPoseMemberInputV1::dependency_closure_incomplete(
+                &logical[1],
+                &sources[1],
+                0,
+                "Walk",
+                &complete,
+            ),
+        ];
+
+        assert_eq!(
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &members),
             Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)
         );
     }
