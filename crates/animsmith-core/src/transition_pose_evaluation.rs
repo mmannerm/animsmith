@@ -14,7 +14,7 @@ use std::io::{self, Write};
 use crate::model::validate_track_shape;
 use crate::{
     Bone, Clip, DependencyClosureIdentityV1, DependencyClosureV1, Document, InputIdentity,
-    Property, Skeleton, Track, TrackSample, TransitionFamilyBoundaryV1,
+    LoadedSource, Property, Skeleton, Track, TrackSample, TransitionFamilyBoundaryV1,
     TransitionFamilyDeclarationInputV1, TransitionFamilyTolerancesV1,
 };
 
@@ -520,6 +520,8 @@ pub struct CollectionTransitionPoseMemberInputV1<'a> {
     take_index: u64,
     take_name: &'a str,
     source_input: Option<&'a InputIdentity>,
+    loaded_source: Option<&'a LoadedSource>,
+    unavailable_reason: Option<TransitionPoseReasonV1>,
     document: Option<&'a Document>,
 }
 
@@ -532,16 +534,17 @@ impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
         source: &'a crate::CollectionSourceKeyV1,
         take_index: u64,
         take_name: &'a str,
-        source_input: &'a InputIdentity,
-        document: &'a Document,
+        loaded_source: &'a LoadedSource,
     ) -> Self {
         Self {
             logical_id,
             source,
             take_index,
             take_name,
-            source_input: Some(source_input),
-            document: Some(document),
+            source_input: None,
+            loaded_source: Some(loaded_source),
+            unavailable_reason: None,
+            document: None,
         }
     }
 
@@ -560,6 +563,8 @@ impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
             take_index,
             take_name,
             source_input: None,
+            loaded_source: None,
+            unavailable_reason: Some(TransitionPoseReasonV1::MemberUnavailable),
             document: None,
         }
     }
@@ -580,8 +585,49 @@ impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
             take_index,
             take_name,
             source_input: Some(source_input),
+            loaded_source: None,
+            unavailable_reason: Some(TransitionPoseReasonV1::MemberUnavailable),
             document: None,
         }
+    }
+
+    /// Construct a member with readable primary bytes but an incomplete
+    /// dependency closure. The primary identity is retained while the family
+    /// receives the distinct closure-incomplete outcome.
+    #[must_use]
+    pub const fn dependency_closure_incomplete(
+        logical_id: &'a crate::CollectionLogicalIdV1,
+        source: &'a crate::CollectionSourceKeyV1,
+        take_index: u64,
+        take_name: &'a str,
+        loaded_source: &'a LoadedSource,
+    ) -> Self {
+        Self {
+            logical_id,
+            source,
+            take_index,
+            take_name,
+            source_input: None,
+            loaded_source: Some(loaded_source),
+            unavailable_reason: Some(TransitionPoseReasonV1::DependencyClosureIncomplete),
+            document: None,
+        }
+    }
+
+    fn primary_input(self) -> Option<&'a InputIdentity> {
+        self.loaded_source
+            .map(|source| source.source_facts().primary_identity())
+            .or(self.source_input)
+    }
+
+    fn dependency_closure(self) -> Option<&'a DependencyClosureV1> {
+        self.loaded_source.map(LoadedSource::dependency_closure)
+    }
+
+    fn document(self) -> Option<&'a Document> {
+        self.loaded_source
+            .map(LoadedSource::document)
+            .or(self.document)
     }
 }
 
@@ -648,6 +694,7 @@ pub fn evaluate_collection_transition_poses_v1(
         declaration_input: declaration.source_identity().clone(),
         declaration_normalized: declaration.normalized_identity().clone(),
         subject_input: manifest_input,
+        subject_dependency_closure_identity: None,
         families: Vec::with_capacity(families.len()),
     };
     let mut cursor = 0usize;
@@ -667,7 +714,7 @@ pub fn evaluate_collection_transition_poses_v1(
             {
                 return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
             }
-            if let Some(document) = prepared.document {
+            if let Some(document) = prepared.document() {
                 let index = usize::try_from(declared.take_index()).map_err(|_| {
                     TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness
                 })?;
@@ -681,47 +728,68 @@ pub fn evaluate_collection_transition_poses_v1(
         let mut selected = Vec::with_capacity(family_members.len());
         let mut basis: Option<SkeletonBasisV1> = None;
         for (declared, prepared) in family.members().iter().zip(family_members) {
-            let (Some(source_input), Some(document)) = (prepared.source_input, prepared.document)
-            else {
-                row.reason = Some(TransitionPoseReasonV1::MemberUnavailable);
-                selected.clear();
-                break;
+            if let Some(reason) = prepared.unavailable_reason {
+                retain_collection_runtime_reason(&mut row.reason, reason);
+                continue;
+            }
+            let (Some(source_input), Some(dependency_closure), Some(document)) = (
+                prepared.primary_input(),
+                prepared.dependency_closure(),
+                prepared.document(),
+            ) else {
+                return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
             };
+            if dependency_closure.primary_input() != source_input
+                || !dependency_closure.coverage().is_complete()
+                || dependency_closure.identity().is_none()
+            {
+                retain_collection_runtime_reason(
+                    &mut row.reason,
+                    TransitionPoseReasonV1::DependencyClosureIncomplete,
+                );
+                continue;
+            }
             let index = usize::try_from(declared.take_index()).expect("preflighted take index");
             let clip = &document.clips[index];
             if !skeleton_input_is_within_limits(&document.skeleton) {
-                row.reason = Some(TransitionPoseReasonV1::MemberUnavailable);
-                selected.clear();
-                break;
+                retain_collection_runtime_reason(
+                    &mut row.reason,
+                    TransitionPoseReasonV1::MemberUnavailable,
+                );
+                continue;
             }
             let current = match validate_transition_pose_skeleton(&document.skeleton)
                 .and_then(|()| SkeletonBasisV1::from_skeleton(&document.skeleton))
             {
                 Ok(value) => value,
                 Err(_) => {
-                    row.reason = Some(TransitionPoseReasonV1::MemberUnavailable);
-                    selected.clear();
-                    break;
+                    retain_collection_runtime_reason(
+                        &mut row.reason,
+                        TransitionPoseReasonV1::MemberUnavailable,
+                    );
+                    continue;
                 }
             };
             if let Some(existing) = &basis {
                 if existing.identity() != current.identity() {
-                    row.reason = Some(TransitionPoseReasonV1::SkeletonBasisMismatch);
-                    selected.clear();
-                    break;
+                    retain_collection_runtime_reason(
+                        &mut row.reason,
+                        TransitionPoseReasonV1::SkeletonBasisMismatch,
+                    );
+                    continue;
                 }
             } else {
                 basis = Some(current);
             }
             selected.push((document, clip, source_input));
         }
-        if !selected.is_empty() {
+        if selected.len() == family_members.len() {
             let basis = basis.as_ref().expect("selected family has basis");
             row.skeleton_basis_input = Some(basis.identity().clone());
         }
         let row_index = result.families.len();
         result.families.push(row);
-        if !selected.is_empty() {
+        if selected.len() == family_members.len() {
             ready.push(CollectionFamilyReady {
                 family_index,
                 row_index,
@@ -787,6 +855,28 @@ pub fn evaluate_collection_transition_poses_v1(
     Ok(result)
 }
 
+/// Collection source gaps are scanned in declared member order but their
+/// family outcome is deliberately not order-dependent. Closure incompleteness
+/// has the highest runtime-authority priority because it means sampled bytes
+/// may differ despite an unchanged primary; a missing/unusable source follows,
+/// then a cross-member skeleton disagreement.
+fn retain_collection_runtime_reason(
+    current: &mut Option<TransitionPoseReasonV1>,
+    candidate: TransitionPoseReasonV1,
+) {
+    fn priority(reason: TransitionPoseReasonV1) -> u8 {
+        match reason {
+            TransitionPoseReasonV1::DependencyClosureIncomplete => 3,
+            TransitionPoseReasonV1::MemberUnavailable => 2,
+            TransitionPoseReasonV1::SkeletonBasisMismatch => 1,
+            _ => 0,
+        }
+    }
+    if current.is_none_or(|previous| priority(candidate) > priority(previous)) {
+        *current = Some(candidate);
+    }
+}
+
 struct CollectionFamilyReady<'a> {
     family_index: usize,
     row_index: usize,
@@ -813,7 +903,10 @@ fn collection_family_result_row(
             .map(|(declared, prepared)| TransitionPoseMemberV1 {
                 take_index: declared.take_index(),
                 take_name: declared.take_name().to_owned(),
-                source_input: prepared.source_input.cloned(),
+                source_input: prepared.primary_input().cloned(),
+                source_dependency_closure_identity: prepared
+                    .dependency_closure()
+                    .and_then(complete_dependency_closure_identity),
             })
             .collect(),
         skeleton_basis_input: None,
@@ -837,9 +930,7 @@ fn plan_collection_families(
         .iter()
         .enumerate()
         .map(|(index, family)| {
-            let Some(ready) = by_family[index].map(|ready_index| &ready[ready_index]) else {
-                return None;
-            };
+            let ready = by_family[index].map(|ready_index| &ready[ready_index])?;
             if policy_rejected[index] {
                 return None;
             }
@@ -980,9 +1071,18 @@ fn collection_detailed_budget_after_base(
         .count()
         .checked_mul(max_member_input_identity_replacement_bytes()?)
         .ok_or(TransitionPoseEvaluationControlError::ResultTooLarge)?;
+    let absent_closure_reserve = base
+        .families
+        .iter()
+        .flat_map(|family| family.members.iter())
+        .filter(|member| member.source_dependency_closure_identity.is_none())
+        .count()
+        .checked_mul(max_member_closure_identity_addition_bytes()?)
+        .ok_or(TransitionPoseEvaluationControlError::ResultTooLarge)?;
     TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES
         .checked_sub(bytes)
         .and_then(|remaining| remaining.checked_sub(absent_source_reserve))
+        .and_then(|remaining| remaining.checked_sub(absent_closure_reserve))
         .ok_or(TransitionPoseEvaluationControlError::ResultTooLarge)
 }
 
@@ -999,6 +1099,22 @@ fn max_member_input_identity_replacement_bytes()
         .len();
     identity_bytes
         .checked_sub(b"null".len())
+        .ok_or(TransitionPoseEvaluationControlError::ResultTooLarge)
+}
+
+/// Reserve the omitted member closure field itself plus the largest possible
+/// transparent closure identity. `DependencyClosureIdentityV1` serializes as
+/// its `InputIdentity`, so this is a measured upper bound rather than a
+/// guessed record size.
+fn max_member_closure_identity_addition_bytes()
+-> Result<usize, TransitionPoseEvaluationControlError> {
+    let identity = InputIdentity::from_sha256_digest([0xff; 32], u64::MAX);
+    let value = canonical_bytes(&identity, 256)
+        .map_err(|_| TransitionPoseEvaluationControlError::ResultTooLarge)?
+        .len();
+    b",\"source_dependency_closure_identity\":"
+        .len()
+        .checked_add(value)
         .ok_or(TransitionPoseEvaluationControlError::ResultTooLarge)
 }
 

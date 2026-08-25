@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use animsmith_core::{
-    CollectionTransitionPoseMemberInputV1, Document, InputIdentity, TransitionPoseDecisionV1,
+    CollectionTransitionPoseMemberInputV1, InputIdentity, LoadedSource, TransitionPoseDecisionV1,
     TransitionPoseStatusV1, evaluate_collection_transition_poses_v1,
 };
 
@@ -98,31 +98,35 @@ pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode
                 "transition-family collection control error (missing-source-state)".to_owned()
             })?;
             prepared.push(match state {
-                SourceState::Available { input, document } => {
+                SourceState::Available { loaded } => {
                     CollectionTransitionPoseMemberInputV1::available(
                         member.logical_id(),
                         member.source(),
                         member.take_index(),
                         member.take_name(),
-                        &input,
-                        &document,
+                        loaded,
+                    )
+                }
+                SourceState::DependencyClosureIncomplete { loaded } => {
+                    CollectionTransitionPoseMemberInputV1::dependency_closure_incomplete(
+                        member.logical_id(),
+                        member.source(),
+                        member.take_index(),
+                        member.take_name(),
+                        loaded,
                     )
                 }
                 SourceState::Unavailable {
                     input: Some(input),
                     cause,
                 } => {
-                    // #573's collection member API will map
-                    // DependencyClosureIncomplete to its typed family reason.
-                    // Until then this state deliberately remains a normal
-                    // unavailable member rather than a false complete result.
                     let _ = cause;
                     CollectionTransitionPoseMemberInputV1::unavailable_with_source_input(
                         member.logical_id(),
                         member.source(),
                         member.take_index(),
                         member.take_name(),
-                        &input,
+                        input,
                     )
                 }
                 SourceState::Unavailable { input: None, .. } => {
@@ -152,8 +156,10 @@ pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode
 
 enum SourceState {
     Available {
-        input: InputIdentity,
-        document: Document,
+        loaded: LoadedSource,
+    },
+    DependencyClosureIncomplete {
+        loaded: LoadedSource,
     },
     Unavailable {
         input: Option<InputIdentity>,
@@ -164,7 +170,6 @@ enum SourceState {
 #[derive(Clone, Copy)]
 enum SourceUnavailableCause {
     SourceUnavailable,
-    DependencyClosureIncomplete,
 }
 
 fn load_source(
@@ -193,27 +198,19 @@ fn load_source(
     let Ok(loaded) = load_source_bytes_typed(path, format, &bytes) else {
         return SourceState::Unavailable {
             input: Some(input),
-            cause: SourceUnavailableCause::DependencyClosureIncomplete,
+            cause: SourceUnavailableCause::SourceUnavailable,
         };
     };
-    // Endpoint samples can depend on external resources. The primary identity
-    // alone is therefore insufficient: until the core V1 result carries the
-    // complete closure identity, reject a partial/unidentified closure rather
-    // than blessing a primary-only comparison. The follow-up core amendment
-    // will retain this already validated identity in each available member.
+    // Endpoint samples can depend on external resources, so preserve the
+    // same loaded source for the core adapter rather than splitting document,
+    // primary identity, and closure into independently pairable values.
     if loaded.dependency_closure().primary_input() != &input
         || !loaded.dependency_closure().coverage().is_complete()
         || loaded.dependency_closure().identity().is_none()
     {
-        return SourceState::Unavailable {
-            input: Some(input),
-            cause: SourceUnavailableCause::SourceUnavailable,
-        };
+        return SourceState::DependencyClosureIncomplete { loaded };
     }
-    SourceState::Available {
-        input,
-        document: loaded.into_document(),
-    }
+    SourceState::Available { loaded }
 }
 
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, ()> {

@@ -560,4 +560,10 @@ take_name = "run"
         value["families"][0]["members"][0]["source_input"],
         value["families"][0]["members"][1]["source_input"]
     );
+    assert!(
+        value["families"][0]["members"][0]
+            .get("source_dependency_closure_identity")
+            .is_some(),
+        "available collection members bind same-load closure identity"
+    );
 }
