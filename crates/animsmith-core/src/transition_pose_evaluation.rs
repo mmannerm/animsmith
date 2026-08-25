@@ -1,9 +1,11 @@
 //! Strict, format-neutral transition-pose evaluation V1.
 //!
 //! This module consumes the validated transition-family declaration and a
-//! mutable loader-facing [`Document`]. It deliberately owns strict endpoint
-//! sampling rather than changing the tolerant general-purpose sampler, and it
-//! deliberately has no filesystem, config, collection, or command authority.
+//! mutable loader-facing [`Document`] plus the same-load [`DependencyClosureV1`]
+//! that binds every byte on which that document depends. It deliberately owns
+//! strict endpoint sampling rather than changing the tolerant general-purpose
+//! sampler, and it deliberately has no filesystem, config, collection, or
+//! command authority.
 
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -11,8 +13,9 @@ use std::io::{self, Write};
 
 use crate::model::validate_track_shape;
 use crate::{
-    Bone, Clip, Document, InputIdentity, Property, Skeleton, Track, TrackSample,
-    TransitionFamilyBoundaryV1, TransitionFamilyDeclarationInputV1, TransitionFamilyTolerancesV1,
+    Bone, Clip, DependencyClosureIdentityV1, DependencyClosureV1, Document, InputIdentity,
+    Property, Skeleton, Track, TrackSample, TransitionFamilyBoundaryV1,
+    TransitionFamilyDeclarationInputV1, TransitionFamilyTolerancesV1,
 };
 
 /// Schema identity for a transition-pose evaluation result.
@@ -229,6 +232,7 @@ pub enum TransitionPoseDecisionV1 {
 #[allow(missing_docs)]
 pub enum TransitionPoseReasonV1 {
     NoConfiguredFamilies,
+    DependencyClosureIncomplete,
     MemberUnavailable,
     ZeroDuration,
     SkeletonBasisMismatch,
@@ -246,7 +250,9 @@ pub enum TransitionPoseReasonV1 {
 pub struct TransitionPoseMemberV1 {
     take_index: u64,
     take_name: String,
-    source_input: InputIdentity,
+    source_input: Option<InputIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_dependency_closure_identity: Option<DependencyClosureIdentityV1>,
 }
 impl TransitionPoseMemberV1 {
     /// Witnessed embedded take index.
@@ -257,9 +263,13 @@ impl TransitionPoseMemberV1 {
     pub fn take_name(&self) -> &str {
         &self.take_name
     }
-    /// Exact raw source identity for this selected member.
-    pub const fn source_input(&self) -> &InputIdentity {
-        &self.source_input
+    /// Exact raw source identity when the selected source was available.
+    pub const fn source_input(&self) -> Option<&InputIdentity> {
+        self.source_input.as_ref()
+    }
+    /// Exact complete dependency-closure identity for this selected source.
+    pub const fn source_dependency_closure_identity(&self) -> Option<&DependencyClosureIdentityV1> {
+        self.source_dependency_closure_identity.as_ref()
     }
 }
 
@@ -397,7 +407,7 @@ impl TransitionPoseFamilyEvaluationV1 {
     }
 }
 
-/// Immutable document-bound V1 result contract.
+/// Immutable scope-neutral V1 result contract.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TransitionPoseEvaluationV1 {
     schema: &'static str,
@@ -409,6 +419,8 @@ pub struct TransitionPoseEvaluationV1 {
     declaration_input: InputIdentity,
     declaration_normalized: InputIdentity,
     subject_input: InputIdentity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject_dependency_closure_identity: Option<DependencyClosureIdentityV1>,
     families: Vec<TransitionPoseFamilyEvaluationV1>,
 }
 
@@ -448,6 +460,18 @@ impl TransitionPoseEvaluationV1 {
     pub const fn subject_input(&self) -> &InputIdentity {
         &self.subject_input
     }
+    /// Exact complete dependency-closure identity for the declaration subject.
+    ///
+    /// A document result omits this only for `no_configured_families` (which
+    /// evaluates no source data) or `incomplete/not_evaluated` with
+    /// `dependency_closure_incomplete`. A collection result omits it because
+    /// its manifest subject has no asset dependency closure; member closure
+    /// identities are the collection evaluation authority.
+    pub const fn subject_dependency_closure_identity(
+        &self,
+    ) -> Option<&DependencyClosureIdentityV1> {
+        self.subject_dependency_closure_identity.as_ref()
+    }
     /// Family results in canonical declaration-family order.
     pub fn families(&self) -> &[TransitionPoseFamilyEvaluationV1] {
         &self.families
@@ -480,18 +504,25 @@ pub enum TransitionPoseEvaluationControlError {
 
 /// Evaluate document-local transition families without I/O.
 ///
+/// `dependency_closure.primary_input()` is the sole primary-byte authority.
+/// Configured-family evaluation requires both complete closure coverage and
+/// its exact [`DependencyClosureIdentityV1`]; otherwise every family is
+/// retained as `dependency_closure_incomplete`. An empty declaration evaluates
+/// no source data and preserves `no_configured_families` without requiring a
+/// closure identity.
+///
 /// The mutable document's admitted skeleton and selected T/R tracks are
 /// revalidated at this public boundary. All work planning happens before
 /// endpoint sampling; an unavailable family is retained as
 /// `incomplete/not_evaluated`, never evaluated as a survivor subset.
 pub fn evaluate_document_transition_poses_v1(
     declaration: &TransitionFamilyDeclarationInputV1,
-    subject_input: InputIdentity,
+    dependency_closure: &DependencyClosureV1,
     document: &Document,
 ) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
     evaluate_document_transition_poses_v1_with_result_limit(
         declaration,
-        subject_input,
+        dependency_closure,
         document,
         TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES,
     )
@@ -499,7 +530,7 @@ pub fn evaluate_document_transition_poses_v1(
 
 fn evaluate_document_transition_poses_v1_with_result_limit(
     declaration: &TransitionFamilyDeclarationInputV1,
-    subject_input: InputIdentity,
+    dependency_closure: &DependencyClosureV1,
     document: &Document,
     result_limit: usize,
 ) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
@@ -515,7 +546,10 @@ fn evaluate_document_transition_poses_v1_with_result_limit(
         reason: None,
         declaration_input: declaration.source_identity().clone(),
         declaration_normalized: declaration.normalized_identity().clone(),
-        subject_input: subject_input.clone(),
+        subject_input: dependency_closure.primary_input().clone(),
+        subject_dependency_closure_identity: complete_dependency_closure_identity(
+            dependency_closure,
+        ),
         families: Vec::with_capacity(families.len()),
     };
     if families.is_empty() {
@@ -525,10 +559,22 @@ fn evaluate_document_transition_poses_v1_with_result_limit(
     // A declaration witness is a structural authority, not an evaluation
     // policy. Resolve every family before any tolerance or work-cap outcome
     // can produce a retained incomplete row.
-    let resolved_clips = match resolve_document_family_clips(document, families)? {
+    let clip_admission = resolve_document_family_clips(document, families)?;
+    if result.subject_dependency_closure_identity.is_none() {
+        for family in families {
+            let mut row = family_result_row(family, dependency_closure, None);
+            row.reason = Some(TransitionPoseReasonV1::DependencyClosureIncomplete);
+            result.families.push(row);
+        }
+        derive_result_state(&mut result);
+        canonical_bytes(&result, result_limit)
+            .map_err(|_| TransitionPoseEvaluationControlError::ResultTooLarge)?;
+        return Ok(result);
+    }
+    let resolved_clips = match clip_admission {
         DocumentClipAdmission::InputLimit => {
             for family in families {
-                let mut row = family_result_row(family, &subject_input, None);
+                let mut row = family_result_row(family, dependency_closure, None);
                 row.reason = Some(TransitionPoseReasonV1::InputLimit);
                 result.families.push(row);
             }
@@ -539,7 +585,7 @@ fn evaluate_document_transition_poses_v1_with_result_limit(
     };
     if !skeleton_input_is_within_limits(&document.skeleton) {
         for family in families {
-            let mut row = family_result_row(family, &subject_input, None);
+            let mut row = family_result_row(family, dependency_closure, None);
             row.reason = Some(TransitionPoseReasonV1::InputLimit);
             result.families.push(row);
         }
@@ -560,7 +606,7 @@ fn evaluate_document_transition_poses_v1_with_result_limit(
     let mut detailed_name_budget = detailed_result_budget_after_base(
         &result,
         families,
-        &subject_input,
+        dependency_closure,
         basis.identity(),
         result_limit,
     )?;
@@ -570,7 +616,7 @@ fn evaluate_document_transition_poses_v1_with_result_limit(
         .zip(resolved_clips)
         .zip(track_limits)
     {
-        let mut row = family_result_row(family, &subject_input, Some(basis.identity()));
+        let mut row = family_result_row(family, dependency_closure, Some(basis.identity()));
         if family.tolerances().time_normalized() != 0.0 {
             row.reason = Some(TransitionPoseReasonV1::TimeToleranceUnsupported);
         } else if let Some(reason) = plan.reason {
@@ -621,7 +667,7 @@ fn evaluate_document_transition_poses_v1_with_result_limit(
 
 fn family_result_row(
     family: &crate::DocumentTransitionFamilyV1,
-    subject_input: &InputIdentity,
+    dependency_closure: &DependencyClosureV1,
     skeleton_basis_input: Option<&InputIdentity>,
 ) -> TransitionPoseFamilyEvaluationV1 {
     TransitionPoseFamilyEvaluationV1 {
@@ -635,12 +681,24 @@ fn family_result_row(
             .map(|member| TransitionPoseMemberV1 {
                 take_index: member.take_index(),
                 take_name: member.take_name().to_owned(),
-                source_input: subject_input.clone(),
+                source_input: Some(dependency_closure.primary_input().clone()),
+                source_dependency_closure_identity: complete_dependency_closure_identity(
+                    dependency_closure,
+                ),
             })
             .collect(),
         skeleton_basis_input: skeleton_basis_input.cloned(),
         pairs: Vec::new(),
     }
+}
+
+fn complete_dependency_closure_identity(
+    dependency_closure: &DependencyClosureV1,
+) -> Option<DependencyClosureIdentityV1> {
+    if !dependency_closure.coverage().is_complete() {
+        return None;
+    }
+    dependency_closure.identity().cloned()
 }
 
 /// Keep the immutable binding/member rows when detailed comparisons exceed a
@@ -931,7 +989,7 @@ fn plan_selected_track_input_limits_with(
 fn detailed_result_budget_after_base(
     result: &TransitionPoseEvaluationV1,
     families: &[crate::DocumentTransitionFamilyV1],
-    subject_input: &InputIdentity,
+    dependency_closure: &DependencyClosureV1,
     basis_input: &InputIdentity,
     limit: usize,
 ) -> Result<usize, TransitionPoseEvaluationControlError> {
@@ -942,7 +1000,7 @@ fn detailed_result_budget_after_base(
     base.families = families
         .iter()
         .map(|family| {
-            let mut row = family_result_row(family, subject_input, Some(basis_input));
+            let mut row = family_result_row(family, dependency_closure, Some(basis_input));
             row.reason = Some(TransitionPoseReasonV1::TimeToleranceUnsupported);
             row
         })
@@ -1521,10 +1579,11 @@ mod tests {
     use super::*;
     use crate::{
         Bone, Clip, CollectionIdV1, CollectionLogicalIdV1, CollectionSourceKeyV1,
-        CollectionTransitionFamilyMemberV1, CollectionTransitionFamilyV1, Document,
-        DocumentTransitionFamilyMemberV1, DocumentTransitionFamilyV1, Interpolation, Skeleton,
-        Track, TrackValues, Transform, TransitionFamilyDeclarationV1,
-        TransitionFamilyManifestIdentityV1,
+        CollectionTransitionFamilyMemberV1, CollectionTransitionFamilyV1,
+        DependencyClosureBuilderV1, DependencyResourceKeyV1, Document,
+        DocumentTransitionFamilyMemberV1, DocumentTransitionFamilyV1, Interpolation,
+        ResourceKeySyntaxV1, Skeleton, SourceResourceKindV1, SourceSetCoverageV1, Track,
+        TrackValues, Transform, TransitionFamilyDeclarationV1, TransitionFamilyManifestIdentityV1,
     };
 
     fn document(second_translation: Option<f32>) -> Document {
@@ -1586,6 +1645,47 @@ mod tests {
             b"declaration",
         )
         .unwrap()
+    }
+
+    fn complete_closure(primary_input: InputIdentity) -> DependencyClosureV1 {
+        DependencyClosureBuilderV1::new(primary_input, SourceSetCoverageV1::complete(), 0)
+            .finish()
+            .unwrap()
+    }
+
+    fn closure_with_external_buffer(
+        primary_input: InputIdentity,
+        buffer_bytes: &[u8],
+    ) -> DependencyClosureV1 {
+        let key =
+            DependencyResourceKeyV1::from_source_str("animation.bin", ResourceKeySyntaxV1::GltfUri)
+                .unwrap();
+        let mut builder =
+            DependencyClosureBuilderV1::new(primary_input, SourceSetCoverageV1::complete(), 1);
+        assert!(builder.begin_reference("animation.bin".len(), 1));
+        assert_eq!(builder.prepare_external_key(&key).unwrap(), Some(true));
+        builder.record_external_open_attempt(&key).unwrap();
+        assert!(
+            builder
+                .push_captured_external(
+                    0,
+                    SourceResourceKindV1::Buffer,
+                    0,
+                    key,
+                    InputIdentity::from_bytes(buffer_bytes),
+                )
+                .unwrap()
+        );
+        builder.finish().unwrap()
+    }
+
+    fn evaluate_document_transition_poses_v1(
+        declaration: &TransitionFamilyDeclarationInputV1,
+        subject_input: InputIdentity,
+        document: &Document,
+    ) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
+        let closure = complete_closure(subject_input);
+        super::evaluate_document_transition_poses_v1(declaration, &closure, document)
     }
 
     #[test]
@@ -1662,6 +1762,117 @@ mod tests {
             finding.families()[0].pairs[0].translation_offenders.len(),
             1
         );
+    }
+
+    #[test]
+    fn complete_results_bind_external_dependency_changes_beyond_primary_bytes() {
+        let declared = declaration(TransitionFamilyBoundaryV1::Entry, 100.0, 0.0);
+        let primary = InputIdentity::from_bytes(br#"{"buffers":[{"uri":"animation.bin"}]}"#);
+        let first_closure = closure_with_external_buffer(primary.clone(), b"first animation");
+        let second_closure = closure_with_external_buffer(primary.clone(), b"second animation");
+
+        let first = super::evaluate_document_transition_poses_v1(
+            &declared,
+            &first_closure,
+            &document(Some(1.0)),
+        )
+        .unwrap();
+        let second = super::evaluate_document_transition_poses_v1(
+            &declared,
+            &second_closure,
+            &document(Some(2.0)),
+        )
+        .unwrap();
+
+        assert_eq!(first.subject_input(), second.subject_input());
+        assert_eq!(first.subject_input(), &primary);
+        assert_ne!(
+            first.subject_dependency_closure_identity(),
+            second.subject_dependency_closure_identity()
+        );
+        assert_eq!(first.status(), TransitionPoseStatusV1::Complete);
+        assert_eq!(second.status(), TransitionPoseStatusV1::Complete);
+        assert_ne!(
+            first.families()[0].pairs()[0].max_translation_delta_m(),
+            second.families()[0].pairs()[0].max_translation_delta_m()
+        );
+        for result in [&first, &second] {
+            let subject_closure = result
+                .subject_dependency_closure_identity()
+                .expect("complete result closure identity");
+            assert!(result.families()[0].members().iter().all(|member| {
+                member.source_input() == Some(result.subject_input())
+                    && member.source_dependency_closure_identity() == Some(subject_closure)
+            }));
+        }
+        assert_ne!(
+            first.normalized_jcs().unwrap(),
+            second.normalized_jcs().unwrap()
+        );
+    }
+
+    #[test]
+    fn incomplete_dependency_closure_cannot_produce_a_complete_outcome() {
+        let primary = InputIdentity::from_bytes(b"document");
+        let closure = DependencyClosureV1::unavailable(primary.clone());
+        assert!(!closure.coverage().is_complete());
+        assert!(closure.identity().is_none());
+
+        let result = super::evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Entry, 100.0, 0.0),
+            &closure,
+            &document(Some(1.0)),
+        )
+        .unwrap();
+        assert_eq!(result.subject_input(), &primary);
+        assert_eq!(result.status(), TransitionPoseStatusV1::Incomplete);
+        assert_eq!(result.decision(), TransitionPoseDecisionV1::NotEvaluated);
+        assert!(result.subject_dependency_closure_identity().is_none());
+        assert_eq!(
+            result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::DependencyClosureIncomplete)
+        );
+        assert!(result.families()[0].members().iter().all(|member| {
+            member.source_input() == Some(&primary)
+                && member.source_dependency_closure_identity().is_none()
+        }));
+        let serialized_len = result.normalized_jcs().unwrap().len();
+        let exact = evaluate_document_transition_poses_v1_with_result_limit(
+            &declaration(TransitionFamilyBoundaryV1::Entry, 100.0, 0.0),
+            &closure,
+            &document(Some(1.0)),
+            serialized_len,
+        )
+        .unwrap();
+        assert_eq!(
+            exact.families()[0].reason(),
+            Some(TransitionPoseReasonV1::DependencyClosureIncomplete)
+        );
+        assert_eq!(
+            evaluate_document_transition_poses_v1_with_result_limit(
+                &declaration(TransitionFamilyBoundaryV1::Entry, 100.0, 0.0),
+                &closure,
+                &document(Some(1.0)),
+                serialized_len - 1,
+            ),
+            Err(TransitionPoseEvaluationControlError::ResultTooLarge)
+        );
+
+        let empty = TransitionFamilyDeclarationInputV1::new(
+            TransitionFamilyDeclarationV1::document(Vec::new()).unwrap(),
+            b"empty",
+        )
+        .unwrap();
+        let no_config =
+            super::evaluate_document_transition_poses_v1(&empty, &closure, &document(None))
+                .unwrap();
+        assert_eq!(no_config.status(), TransitionPoseStatusV1::Complete);
+        assert_eq!(no_config.decision(), TransitionPoseDecisionV1::Pass);
+        assert_eq!(
+            no_config.reason(),
+            Some(TransitionPoseReasonV1::NoConfiguredFamilies)
+        );
+        assert!(no_config.subject_dependency_closure_identity().is_none());
     }
 
     #[test]
@@ -2695,13 +2906,14 @@ mod tests {
         let mut document = document(Some(1.0));
         document.skeleton.bones[0].name = "n".repeat(128);
         let subject = InputIdentity::from_bytes(b"document");
+        let closure = complete_closure(subject.clone());
         let result =
             evaluate_document_transition_poses_v1(&declared, subject.clone(), &document).unwrap();
         let basis = SkeletonBasisV1::from_skeleton(&document.skeleton).unwrap();
         let remaining = detailed_result_budget_after_base(
             &result,
             families,
-            &subject,
+            &closure,
             basis.identity(),
             TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES,
         )
@@ -2716,7 +2928,7 @@ mod tests {
         let detailed_bytes = remaining - reservation;
         let cap = base_bytes + detailed_bytes - 1;
         let result = evaluate_document_transition_poses_v1_with_result_limit(
-            &declared, subject, &document, cap,
+            &declared, &closure, &document, cap,
         )
         .unwrap();
         assert_eq!(
@@ -2740,6 +2952,12 @@ mod tests {
         let before_declaration = result.declaration_input().clone();
         let before_normalized = result.declaration_normalized().clone();
         let before_subject = result.subject_input().clone();
+        let before_subject_closure = result.subject_dependency_closure_identity().cloned();
+        let before_member_closures = result.families()[0]
+            .members()
+            .iter()
+            .map(|member| member.source_dependency_closure_identity().cloned())
+            .collect::<Vec<_>>();
         let detailed_bytes =
             canonical_bytes(&result, TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES)
                 .unwrap()
@@ -2765,7 +2983,19 @@ mod tests {
         assert_eq!(result.declaration_input(), &before_declaration);
         assert_eq!(result.declaration_normalized(), &before_normalized);
         assert_eq!(result.subject_input(), &before_subject);
+        assert_eq!(
+            result.subject_dependency_closure_identity(),
+            before_subject_closure.as_ref()
+        );
         assert_eq!(result.families()[0].members(), before_members);
+        assert_eq!(
+            result.families()[0]
+                .members()
+                .iter()
+                .map(|member| member.source_dependency_closure_identity().cloned())
+                .collect::<Vec<_>>(),
+            before_member_closures
+        );
         assert_eq!(
             result.families()[0].skeleton_basis_input(),
             before_basis.as_ref()

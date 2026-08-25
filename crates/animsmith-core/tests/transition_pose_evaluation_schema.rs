@@ -1,8 +1,11 @@
 use animsmith_core::{
-    Bone, Clip, Document, DocumentTransitionFamilyMemberV1, DocumentTransitionFamilyV1,
-    InputIdentity, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    Bone, Clip, DependencyClosureBuilderV1, DependencyClosureV1, Document,
+    DocumentTransitionFamilyMemberV1, DocumentTransitionFamilyV1, InputIdentity, Interpolation,
+    Property, Skeleton, SourceSetCoverageV1, Track, TrackValues, Transform,
     TransitionFamilyBoundaryV1, TransitionFamilyDeclarationInputV1, TransitionFamilyDeclarationV1,
-    TransitionFamilyTolerancesV1, evaluate_document_transition_poses_v1, glam,
+    TransitionFamilyTolerancesV1, TransitionPoseEvaluationControlError, TransitionPoseEvaluationV1,
+    evaluate_document_transition_poses_v1 as evaluate_document_transition_poses_with_closure_v1,
+    glam,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -71,6 +74,18 @@ fn wire(value: &impl serde::Serialize) -> Value {
     serde_json::to_value(value).unwrap()
 }
 
+fn evaluate_document_transition_poses_v1(
+    declaration: &TransitionFamilyDeclarationInputV1,
+    subject_input: InputIdentity,
+    document: &Document,
+) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
+    let closure =
+        DependencyClosureBuilderV1::new(subject_input, SourceSetCoverageV1::complete(), 0)
+            .finish()
+            .unwrap();
+    evaluate_document_transition_poses_with_closure_v1(declaration, &closure, document)
+}
+
 #[test]
 fn schema_accepts_all_producer_lifecycle_rows() {
     let source = InputIdentity::from_bytes(b"document");
@@ -102,8 +117,21 @@ fn schema_accepts_all_producer_lifecycle_rows() {
         &document(None),
     )
     .unwrap();
+    let unavailable = DependencyClosureV1::unavailable(InputIdentity::from_bytes(b"document"));
+    let dependency_incomplete = evaluate_document_transition_poses_with_closure_v1(
+        &declaration(0.0, 0.0),
+        &unavailable,
+        &document(Some(1.0)),
+    )
+    .unwrap();
     let validator = validator();
-    for output in [&pass, &finding, &incomplete, &no_config] {
+    for output in [
+        &pass,
+        &finding,
+        &incomplete,
+        &no_config,
+        &dependency_incomplete,
+    ] {
         assert!(validator.is_valid(&wire(output)));
     }
 }
@@ -136,6 +164,17 @@ fn schema_rejects_impossible_top_level_and_family_lifecycle_mutations() {
     let mut normal_pass_with_reason = pass.clone();
     normal_pass_with_reason["reason"] = Value::String("no_configured_families".into());
     assert!(!validator.is_valid(&normal_pass_with_reason));
+
+    let mut pass_without_member_closure = pass.clone();
+    pass_without_member_closure["families"][0]["members"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_dependency_closure_identity");
+    assert!(!validator.is_valid(&pass_without_member_closure));
+
+    let mut pass_with_null_source = pass.clone();
+    pass_with_null_source["families"][0]["members"][0]["source_input"] = Value::Null;
+    assert!(!validator.is_valid(&pass_with_null_source));
 
     let mut incomplete_top_reason = incomplete.clone();
     incomplete_top_reason["reason"] = Value::String("unsupported_sampling".into());
@@ -183,6 +222,13 @@ fn schema_rejects_impossible_top_level_and_family_lifecycle_mutations() {
     incomplete_with_pairs["families"][0]["pairs"] = pass["families"][0]["pairs"].clone();
     assert!(!validator.is_valid(&incomplete_with_pairs));
 
+    let mut incomplete_without_member_closure = incomplete.clone();
+    incomplete_without_member_closure["families"][0]["members"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_dependency_closure_identity");
+    assert!(!validator.is_valid(&incomplete_without_member_closure));
+
     let mut pass_with_offender = pass.clone();
     pass_with_offender["families"][0]["pairs"][0]["translation_offenders"] =
         finding["families"][0]["pairs"][0]["translation_offenders"].clone();
@@ -221,6 +267,86 @@ fn schema_requires_exactly_two_pair_member_indices() {
         mutated["families"][0]["pairs"][0]["member_indices"] = indices;
         assert!(!validator.is_valid(&mutated));
     }
+}
+
+#[test]
+fn schema_conditions_closure_authority_for_document_and_collection_rows() {
+    let validator = validator();
+    let unavailable = DependencyClosureV1::unavailable(InputIdentity::from_bytes(b"document"));
+    let dependency_incomplete = wire(
+        &evaluate_document_transition_poses_with_closure_v1(
+            &declaration(0.0, 0.0),
+            &unavailable,
+            &document(Some(1.0)),
+        )
+        .unwrap(),
+    );
+    assert!(validator.is_valid(&dependency_incomplete));
+
+    // A collection family may retain closure identities for members that did
+    // load while another member makes the whole family incomplete.
+    let complete = wire(
+        &evaluate_document_transition_poses_v1(
+            &declaration(2.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &document(Some(1.0)),
+        )
+        .unwrap(),
+    );
+    assert!(
+        complete
+            .get("subject_dependency_closure_identity")
+            .is_some()
+    );
+    let mut collection_shaped_complete = complete.clone();
+    collection_shaped_complete
+        .as_object_mut()
+        .unwrap()
+        .remove("subject_dependency_closure_identity");
+    assert!(validator.is_valid(&collection_shaped_complete));
+
+    let closure_identity =
+        complete["families"][0]["members"][0]["source_dependency_closure_identity"].clone();
+    let mut mixed = dependency_incomplete.clone();
+    mixed["families"][0]["members"][0]["source_dependency_closure_identity"] =
+        closure_identity.clone();
+    mixed["families"][0]["members"][1]["source_input"] = Value::Null;
+    assert!(validator.is_valid(&mixed));
+
+    let mut no_missing_closure = mixed;
+    no_missing_closure["families"][0]["members"][1]["source_dependency_closure_identity"] =
+        closure_identity;
+    assert!(!validator.is_valid(&no_missing_closure));
+
+    let mut unavailable_member = complete.clone();
+    unavailable_member["status"] = Value::String("incomplete".into());
+    unavailable_member["decision"] = Value::String("not_evaluated".into());
+    unavailable_member["families"][0]["status"] = Value::String("incomplete".into());
+    unavailable_member["families"][0]["decision"] = Value::String("not_evaluated".into());
+    unavailable_member["families"][0]["reason"] = Value::String("member_unavailable".into());
+    unavailable_member["families"][0]["pairs"] = Value::Array(Vec::new());
+    unavailable_member["families"][0]["members"][1]["source_input"] = Value::Null;
+    unavailable_member["families"][0]["members"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_dependency_closure_identity");
+    assert!(validator.is_valid(&unavailable_member));
+
+    let empty = TransitionFamilyDeclarationInputV1::new(
+        TransitionFamilyDeclarationV1::document(Vec::new()).unwrap(),
+        b"empty",
+    )
+    .unwrap();
+    let no_config = wire(
+        &evaluate_document_transition_poses_with_closure_v1(&empty, &unavailable, &document(None))
+            .unwrap(),
+    );
+    assert!(
+        no_config
+            .get("subject_dependency_closure_identity")
+            .is_none()
+    );
+    assert!(validator.is_valid(&no_config));
 }
 
 #[test]

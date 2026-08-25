@@ -14,6 +14,7 @@
     "declaration_input": { "$ref": "#/$defs/identity_8m" },
     "declaration_normalized": { "$ref": "#/$defs/identity_8m" },
     "subject_input": { "$ref": "#/$defs/identity" },
+    "subject_dependency_closure_identity": { "description": "Complete dependency closure for a document subject; absent for a collection manifest subject.", "$ref": "#/$defs/identity" },
     "families": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/family" } }
   },
   "allOf": [{ "$ref": "#/$defs/top_level_state" }],
@@ -25,10 +26,10 @@
     "identity_8m": {
       "allOf": [{ "$ref": "#/$defs/identity" }, { "properties": { "bytes": { "maximum": 8388608 } } }]
     },
-    "reason": { "enum": ["no_configured_families", "member_unavailable", "zero_duration", "skeleton_basis_mismatch", "time_tolerance_unsupported", "unsupported_sampling", "input_limit", "family_work_limit", "aggregate_work_limit", "retention_limit", "result_limit"] },
+    "reason": { "enum": ["no_configured_families", "dependency_closure_incomplete", "member_unavailable", "zero_duration", "skeleton_basis_mismatch", "time_tolerance_unsupported", "unsupported_sampling", "input_limit", "family_work_limit", "aggregate_work_limit", "retention_limit", "result_limit"] },
     "member": {
       "type": "object", "additionalProperties": false, "required": ["take_index", "take_name", "source_input"],
-      "properties": { "take_index": { "type": "integer", "minimum": 0 }, "take_name": { "type": "string", "minLength": 1, "maxLength": 4096 }, "source_input": { "$ref": "#/$defs/identity" } }
+      "properties": { "take_index": { "type": "integer", "minimum": 0 }, "take_name": { "type": "string", "minLength": 1, "maxLength": 4096 }, "source_input": { "oneOf": [{ "$ref": "#/$defs/identity" }, { "type": "null" }] }, "source_dependency_closure_identity": { "description": "Complete dependency closure for this available member source.", "$ref": "#/$defs/identity" } }
     },
     "translation_offender": {
       "type": "object", "additionalProperties": false, "required": ["bone_ordinal", "bone_name", "delta_m"],
@@ -66,16 +67,19 @@
         { "properties": { "status": { "const": "complete" }, "decision": { "const": "pass" }, "reason": { "const": "no_configured_families" }, "families": { "maxItems": 0 } }, "required": ["reason"] },
         { "properties": { "status": { "const": "complete" }, "decision": { "const": "pass" }, "families": { "minItems": 1, "items": { "properties": { "status": { "const": "complete" }, "decision": { "const": "pass" } }, "required": ["status", "decision"] } } }, "not": { "required": ["reason"] } },
         { "properties": { "status": { "const": "complete" }, "decision": { "const": "finding" }, "families": { "minItems": 1, "contains": { "properties": { "status": { "const": "complete" }, "decision": { "const": "finding" } }, "required": ["status", "decision"] }, "items": { "not": { "properties": { "status": { "const": "incomplete" } }, "required": ["status"] } } } }, "not": { "required": ["reason"] } },
-        { "properties": { "status": { "const": "incomplete" }, "decision": { "const": "not_evaluated" }, "families": { "minItems": 1, "contains": { "properties": { "status": { "const": "incomplete" } }, "required": ["status"] } } }, "not": { "required": ["reason"] } }
+        { "properties": { "status": { "const": "incomplete" }, "decision": { "const": "not_evaluated" }, "families": { "minItems": 1, "contains": { "properties": { "status": { "const": "incomplete" } }, "required": ["status"] }, "not": { "contains": { "properties": { "reason": { "const": "dependency_closure_incomplete" } }, "required": ["reason"] } } } }, "not": { "required": ["reason"] } },
+        { "properties": { "status": { "const": "incomplete" }, "decision": { "const": "not_evaluated" }, "families": { "minItems": 1, "contains": { "properties": { "reason": { "const": "dependency_closure_incomplete" } }, "required": ["reason"] } } }, "not": { "required": ["reason"] } }
       ]
     },
     "family_state": {
       "oneOf": [
-        { "properties": { "status": { "const": "complete" }, "decision": { "const": "pass" }, "skeleton_basis_input": { "$ref": "#/$defs/identity" }, "pairs": { "minItems": 1, "items": { "properties": { "translation_offenders": { "maxItems": 0 }, "rotation_offenders": { "maxItems": 0 } } } } }, "required": ["skeleton_basis_input"], "not": { "required": ["reason"] } },
-        { "properties": { "status": { "const": "complete" }, "decision": { "const": "finding" }, "skeleton_basis_input": { "$ref": "#/$defs/identity" }, "pairs": { "minItems": 1, "contains": { "anyOf": [{ "properties": { "translation_offenders": { "minItems": 1 } }, "required": ["translation_offenders"] }, { "properties": { "rotation_offenders": { "minItems": 1 } }, "required": ["rotation_offenders"] }] } } }, "required": ["skeleton_basis_input"], "not": { "required": ["reason"] } },
-        { "properties": { "status": { "const": "incomplete" }, "decision": { "const": "not_evaluated" }, "reason": { "$ref": "#/$defs/incomplete_reason" }, "pairs": { "maxItems": 0 } }, "required": ["reason"] }
+        { "properties": { "status": { "const": "complete" }, "decision": { "const": "pass" }, "members": { "items": { "properties": { "source_input": { "$ref": "#/$defs/identity" } }, "required": ["source_dependency_closure_identity"] } }, "skeleton_basis_input": { "$ref": "#/$defs/identity" }, "pairs": { "minItems": 1, "items": { "properties": { "translation_offenders": { "maxItems": 0 }, "rotation_offenders": { "maxItems": 0 } } } } }, "required": ["skeleton_basis_input"], "not": { "required": ["reason"] } },
+        { "properties": { "status": { "const": "complete" }, "decision": { "const": "finding" }, "members": { "items": { "properties": { "source_input": { "$ref": "#/$defs/identity" } }, "required": ["source_dependency_closure_identity"] } }, "skeleton_basis_input": { "$ref": "#/$defs/identity" }, "pairs": { "minItems": 1, "contains": { "anyOf": [{ "properties": { "translation_offenders": { "minItems": 1 } }, "required": ["translation_offenders"] }, { "properties": { "rotation_offenders": { "minItems": 1 } }, "required": ["rotation_offenders"] }] } } }, "required": ["skeleton_basis_input"], "not": { "required": ["reason"] } },
+        { "properties": { "status": { "const": "incomplete" }, "decision": { "const": "not_evaluated" }, "reason": { "const": "dependency_closure_incomplete" }, "members": { "contains": { "not": { "required": ["source_dependency_closure_identity"] } } }, "pairs": { "maxItems": 0 } }, "required": ["reason"] },
+        { "properties": { "status": { "const": "incomplete" }, "decision": { "const": "not_evaluated" }, "reason": { "const": "member_unavailable" }, "pairs": { "maxItems": 0 } }, "required": ["reason"] },
+        { "properties": { "status": { "const": "incomplete" }, "decision": { "const": "not_evaluated" }, "reason": { "$ref": "#/$defs/incomplete_reason_with_available_members" }, "members": { "items": { "properties": { "source_input": { "$ref": "#/$defs/identity" } }, "required": ["source_dependency_closure_identity"] } }, "pairs": { "maxItems": 0 } }, "required": ["reason"] }
       ]
     },
-    "incomplete_reason": { "enum": ["member_unavailable", "zero_duration", "skeleton_basis_mismatch", "time_tolerance_unsupported", "unsupported_sampling", "input_limit", "family_work_limit", "aggregate_work_limit", "retention_limit", "result_limit"] }
+    "incomplete_reason_with_available_members": { "enum": ["zero_duration", "skeleton_basis_mismatch", "time_tolerance_unsupported", "unsupported_sampling", "input_limit", "family_work_limit", "aggregate_work_limit", "retention_limit", "result_limit"] }
   }
 }

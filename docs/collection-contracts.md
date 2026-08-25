@@ -290,7 +290,24 @@ path dependency.
 Its `subject_input` field binds the exact raw subject selected by the
 declaration scope: the current document evaluator supplies document bytes,
 while a future collection adapter will supply manifest bytes without forking
-the V1 result wire.
+the V1 result wire. The document evaluator accepts the loader's same-load
+`DependencyClosureV1`, derives `subject_input` only from its `primary_input`,
+and retains the complete `subject_dependency_closure_identity` both at the
+subject and as each member's `source_dependency_closure_identity`. A configured
+family cannot be complete unless closure coverage is complete and that identity
+is present; otherwise it is `incomplete/not_evaluated` with
+`dependency_closure_incomplete`. Empty document declarations still produce
+`no_configured_families` without requiring a closure because no source data is
+evaluated.
+
+For collection scope, `subject_input` is the manifest identity and no manifest
+dependency closure is invented. Each available member instead binds its own
+raw `source_input` and complete `source_dependency_closure_identity`. A source
+that could not be opened may retain a null `source_input`; an incomplete member
+closure leaves its closure identity absent, makes the whole family
+`dependency_closure_incomplete`, and does not erase closure identities retained
+for other available members. This closure binding covers external glTF buffers
+that can change sampled animation while the primary JSON identity stays equal.
 
 Document-local family ids are one lowercase-ASCII token, 1–255 bytes, starting
 with `[a-z0-9]` and continuing with `[a-z0-9._-]`. The table key itself is the
@@ -305,7 +322,8 @@ The declaration distinguishes two ownership scopes:
 - `document` families are placed in the existing `animsmith.toml` under
   `[transition_families."<family_id>"]` and will resolve exact embedded clip/take
   identities. The reusable config carries no artifact digest; the future
-  evaluator binds the document `InputIdentity` in its output.
+  evaluator binds the document's primary `InputIdentity` and complete
+  dependency-closure identity in its output.
 - future `collection` families use a separate declaration envelope, not the
   collection-manifest V1 itself. The envelope binds the exact manifest
   `InputIdentity` `{sha256, bytes}`, then resolves declared logical clip ids
@@ -317,9 +335,9 @@ it means the declaration's manifest `InputIdentity` no longer matches. A
 source digest pin in that manifest is enforced by manifest resolution; a
 mismatch makes the member unavailable rather than creating a second identity
 in this declaration. Reusable document-local config has no stale-digest state
-at parse time; the future evaluator binds the exact
-document `InputIdentity` and reports source/take resolution in its output. The
-existing `[clips]`,
+at parse time; the document evaluator binds the exact primary document
+`InputIdentity` plus its complete dependency-closure identity and reports
+source/take resolution in its output. The existing `[clips]`,
 `[gait_groups]`, and `[sync_groups]` sections remain document-local and are
 not replaced by a second collection authority. Both placements share the
 `transition-family:1` family-record semantics; only ownership and placement
