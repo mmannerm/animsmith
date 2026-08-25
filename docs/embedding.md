@@ -23,12 +23,12 @@ The `animsmith` crate is the CLI binary, not a library facade.
 
 ```toml
 [dependencies]
-animsmith-core = "0.5"
-animsmith-gltf = "0.5"
+animsmith-core = "0.6"
+animsmith-gltf = "0.6"
 # Optional:
-animsmith-fbx = "0.5"
-animsmith-engine = "0.5"
-animsmith-report = "0.5"
+animsmith-fbx = "0.6"
+animsmith-engine = "0.6"
+animsmith-report = "0.6"
 ```
 
 docs.rs is the canonical reference for published APIs. The stable package

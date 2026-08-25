@@ -24,8 +24,8 @@ The envelope repeats the exact manifest identity (`collection_id` plus
 logical member exactly once in manifest order. Each member has one nonzero,
 unique semantic `[x, z]` coordinate. `source_basis.x` and `source_basis.z`
 are orientation witnesses for raw collection-output V2 +X/+Z endpoint
-displacement in that semantic plane; their magnitudes are nonsemantic, and a
-future evaluator uses unit axes for heading. They must be finite, bounded,
+displacement in that semantic plane; their magnitudes are nonsemantic, and the
+evaluator uses unit axes for heading. They must be finite, bounded,
 nonzero, and perpendicular. `diagonal_behavior` is closed and applies to
 unit-input/base targets: for coordinate `c`, `preserve` uses gain
 `g(c) = hypot(c)` while `normalize` uses `g(c) = 1`. Thus uniform expected
@@ -61,10 +61,10 @@ declaration or its tests.
 
 The contact-fragment V1 identity is
 `urn:animsmith:schema:contact-fragment:1`.
-AnimSmith 0.6 validates through a format-neutral strict core reader and
-bounded canonicalization seam. `generate contact-fragment` now supplies the
-strict one-clip producer, including a manifest-selected collection form that
-reloads the declared source rather than reading `collection-output:2`.
+AnimSmith 0.6.0 ships #152's format-neutral strict core reader, bounded
+canonicalization seam, and strict one-clip producer. `generate
+contact-fragment` includes a manifest-selected collection form that reloads
+the declared source rather than reading `collection-output:2`.
 Transforms and runtime systems remain out of scope.
 
 It is an importable envelope that
@@ -225,7 +225,7 @@ Refusal codes are `partial_window`, `invalid_mapping`, `invalid_binding`,
 duplicate, missing, or unknown event-outcome identities are strict reader
 errors, not refusal results.
 
-The success shape is illustrative:
+The success shape is an illustrative frozen 0.5.0 transform-contract snapshot:
 
 ```json
 {
@@ -329,7 +329,7 @@ The declaration distinguishes two ownership scopes:
   identities. The reusable config carries no artifact digest; the document
   evaluator binds the primary document `InputIdentity` and complete
   dependency-closure identity in its output.
-- future `collection` families use a separate declaration envelope, not the
+- `collection` families use a separate declaration envelope, not the
   collection-manifest V1 itself. The envelope binds the exact manifest
   `InputIdentity` `{sha256, bytes}`, then resolves declared logical clip ids
   plus their `source`, take-index, and take-name witnesses.
@@ -349,7 +349,7 @@ not replaced by a second collection authority. Both placements share the
 differ. Family declarations are canonicalized by stable family id while
 preserving member order.
 
-Both future placements cap the exact declaration and normalized envelope at
+Both placements cap the exact declaration and normalized envelope at
 8,388,608 source or canonical bytes and 16 container levels. They permit at
 most 4,096 families, 4,096 members per family, and 16,384 members in aggregate.
 Authored strings are at most 4,096 UTF-8 bytes, with the 255-byte identifier
@@ -438,11 +438,11 @@ sort by id, member order is retained, and RFC 8785 JCS produces the normalized
 declaration identity. V1 evidence separately binds the exact declaration
 source, normalized declaration, and evaluated document or manifest identities.
 
-The document command runs transition-pose checks and emits its V1 result. It
-does not infer graph edges, add gameplay metadata, or generate engine
-state-machine or blend-tree data. Collection evaluation and those consumers
-remain follow-up work under [#153](https://github.com/mmannerm/animsmith/issues/153),
-[#164](https://github.com/mmannerm/animsmith/issues/164), and later milestones.
+AnimSmith 0.6.0 ships both the document and manifest-bound collection
+transition-pose commands from #153. They emit the V1 result but do not infer
+graph edges, add gameplay metadata, or generate engine state-machine or
+blend-tree data. Those runtime and gameplay consumers remain follow-up work,
+including [#164](https://github.com/mmannerm/animsmith/issues/164).
 
 The complete normative contract, including ownership, strict resolution, and
 canonical serialization rules, is in [DESIGN.md §F.10](../DESIGN.md#f10-contact-fragment-v1-147)

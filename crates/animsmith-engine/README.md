@@ -50,8 +50,8 @@ root-motion behavior.
 
 ```toml
 [dependencies]
-animsmith-core = "0.5"
-animsmith-engine = "0.5"
+animsmith-core = "0.6"
+animsmith-engine = "0.6"
 ```
 
 The compiling example and the full registry API are in the crate-level API
