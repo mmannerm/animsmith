@@ -253,6 +253,17 @@ fn load_reports_source_order_bindings_and_bounded_image_inspection() {
             "image {image} preserves its explicit reason"
         );
     }
+    assert_eq!(
+        resources.images[6].leading_magic_hex.as_deref(),
+        Some("474946383961"),
+        "unsupported payload retains bounded lowercase leading magic"
+    );
+    for image in [0, 1, 2, 3, 4, 5, 7] {
+        assert_eq!(
+            resources.images[image].leading_magic_hex, None,
+            "supported, missing, invalid, and decode-failed images omit magic evidence"
+        );
+    }
 
     // Writer-facing slots still retain resolvable raw source bytes even when
     // source-image inspection rejected their corrupt payload.

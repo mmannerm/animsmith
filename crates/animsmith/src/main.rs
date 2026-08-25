@@ -272,12 +272,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file output-v12 `measure` or `lint` JSON carrying measurements-v15) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v12 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v13 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v12 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v13 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -1791,7 +1791,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// output-v12 `measure`/`lint` JSON report carrying measurements-v15.
+/// output-v13 `measure`/`lint` JSON report carrying measurements-v16.
 fn load_measurements(
     path: &Path,
     loaded_config: &LoadedConfig,
@@ -1811,10 +1811,10 @@ fn load_measurements(
             }
             _ => format!("{} {error}", path.display()),
         })?;
-        // Current output-v12 and released output-v11 envelopes are accepted
-        // when they carry the supported measurements-v15 contract. The V11
-        // route retains its original V1 evidence validation; producers emit
-        // V12.
+        // Current output-v13 and historical output-v12/output-v11 envelopes
+        // are accepted only with their version-matched measurements contract.
+        // The V11 route retains its original V1 evidence validation; producers
+        // emit V13.
         let file_count = report.file_count();
         let files = report.into_files().map_err(|error| {
             format!(

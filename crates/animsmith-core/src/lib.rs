@@ -180,13 +180,14 @@ pub use contact_fragment::{
 };
 pub use contract::{
     DiffEnvelope, InputIdentity, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
-    MEASUREMENTS_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport, MeasurementContract,
-    MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
-    MeasurementReportInput, MeasurementReportReadError, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION,
-    OUTPUT_V10_SCHEMA_ID, OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES,
-    OUTPUT_V11_MAX_REPORT_BYTES, OUTPUT_V11_SCHEMA_ID, OUTPUT_V11_SCHEMA_VERSION,
-    OUTPUT_V12_SCHEMA_ID, OUTPUT_V12_SCHEMA_VERSION, OutputContractError, RigInfo, RigInfoError,
-    ToolInfo, ToolSource, sha256_hex,
+    MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_V15_SCHEMA_ID, MEASUREMENTS_V15_SCHEMA_VERSION,
+    MeasureEnvelope, MeasureFileReport, MeasurementContract, MeasurementContractError,
+    MeasurementFileError, MeasurementReportError, MeasurementReportFile, MeasurementReportInput,
+    MeasurementReportReadError, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, OUTPUT_V10_SCHEMA_ID,
+    OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES, OUTPUT_V11_MAX_REPORT_BYTES,
+    OUTPUT_V11_SCHEMA_ID, OUTPUT_V11_SCHEMA_VERSION, OUTPUT_V12_SCHEMA_ID,
+    OUTPUT_V12_SCHEMA_VERSION, OutputContractError, RigInfo, RigInfoError, ToolInfo, ToolSource,
+    sha256_hex,
 };
 pub use dependency_closure::{
     DEPENDENCY_CLOSURE_BUDGET_V1_ID, DEPENDENCY_CLOSURE_V1_ID,

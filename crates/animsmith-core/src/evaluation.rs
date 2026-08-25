@@ -457,7 +457,7 @@ impl CheckOutput {
         }
     }
 
-    /// V2 prediction attachment used by the current output-v12 lint path.
+    /// V2 prediction attachment used by the current output-v13 lint path.
     pub const fn engine_prediction_v2(&self) -> Option<&EnginePredictionV2> {
         match self.engine_prediction.as_ref() {
             Some(EnginePredictionEvidence::V2(prediction)) => Some(prediction),
@@ -633,7 +633,7 @@ pub(crate) fn validate_and_derive_check_evaluation(
     Ok(derived)
 }
 
-/// Final output-v12 record for one catalog check.
+/// Final output-v13 record for one catalog check.
 #[derive(Debug, Clone)]
 pub struct CheckEvaluation {
     check_id: &'static str,
@@ -843,7 +843,7 @@ impl CheckEvaluation {
         self.output.engine_prediction()
     }
 
-    /// V2 engine-prediction attachment used by output-v12 lint reports.
+    /// V2 engine-prediction attachment used by output-v13 lint reports.
     pub const fn engine_prediction_v2(&self) -> Option<&EnginePredictionV2> {
         self.output.engine_prediction_v2()
     }

@@ -640,10 +640,11 @@ form selects one exact manifest logical id and reloads its declared
 source/config rather than consuming collection-output evidence. Neither form
 infers physical contact, footsteps, gameplay, IK, or engine behavior.
 
-An output-v12 measure report deliberately has no engine provenance or
+An output-v13 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.
-When its operands are JSON reports, `diff` validates the complete v12 records
-and compares only measurements-v15; a selected engine profile does not change
+When its operands are JSON reports, `diff` validates the complete
+version-matched records and compares their decoded version-matched measurements
+(historical v15 or current v16); a selected engine profile does not change
 that report meaning. When its operands are source assets, the profile is still
 resolved against each loader-owned source format before measurement.
 
@@ -671,15 +672,19 @@ absent selector field or explicit empty list means no runtime-node policy.
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
 See [output.md](output.md) and the current
-`urn:animsmith:schema:output:12` [`output-v12.schema.json`](schemas/output-v12.schema.json). Nested measurement
+`urn:animsmith:schema:output:13` [`output-v13.schema.json`](schemas/output-v13.schema.json). Nested measurement
 evidence has its own
-[`measurements-v15.schema.json`](schemas/measurements-v15.schema.json) contract.
-Output-v10 and earlier reports, including reports carrying measurements v14,
-and output-v11 are historical contracts; regenerate a current output-v12 report from the
-original asset with the current CLI before using `diff`.
+`urn:animsmith:schema:measurements:16`
+[`measurements-v16.schema.json`](schemas/measurements-v16.schema.json) contract.
+`urn:animsmith:schema:measurements:15`, `urn:animsmith:schema:output:12`, and
+`urn:animsmith:schema:output:11` remain historical immutable contracts. `diff`
+retains strict version-matched readers for output-v11/v12 with
+measurements-v15 and output-v13 with measurements-v16; output-v10 and earlier
+reports require regeneration from the original asset.
 
 `collection lint COLLECTION.toml --format json` emits the separate immutable
-`urn:animsmith:schema:collection-output:4` contract. The manifest directory is
+`urn:animsmith:schema:collection-output:5` contract. The historical
+`urn:animsmith:schema:collection-output:4` contract remains immutable; the manifest directory is
 the control root; safe missing/unreadable sources, rejected readable bytes,
 digest/take mismatches, and incomplete runtime-set members remain typed rows
 and exit 1 while later safe sources continue. Invalid manifests, unsafe or
@@ -691,8 +696,10 @@ closure identity can establish that source, one of its clips, or a runtime-set
 member; partial/unavailable reasons remain typed and make the result incomplete
 with exit 1. Each established clip binds an exact source take index/name
 to a normalized clip index and carries duplicate-safe indexed measurements.
-The nested whole-document lint envelope advances to output v12 while retaining
-measurements v15.
+The nested whole-document lint envelope advances to output v13 and measurements
+v16. Historical collection-output-v4/output-v12/measurements-v15 documents
+remain immutable and are not retargeted; regenerate current collection evidence
+before passing it to collection evaluators.
 Runtime sets keep `decision: not_evaluated`; they make no blend, controller,
 engine, artistic, or gameplay claim. Every declared member carries raw
 `root_travel`: its existing `duration_s`, root-trajectory translation
@@ -705,12 +712,12 @@ carry raw gait-phase availability, and only a fully established, phase-measured
 set emits `evidence.gait_phase.phase_spread` with basis
 `max_circular_deviation_from_mean`; this preserves existing gait lint
 threshold semantics. See
-[`collection-output-v4.schema.json`](schemas/collection-output-v4.schema.json).
+[`collection-output-v5.schema.json`](schemas/collection-output-v5.schema.json).
 
 `collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` strictly reads a bounded
 `collection-directional-speed-policy:1` declaration and a bounded
-`collection-output:4` document, then writes the separate immutable
+`collection-output:5` document, then writes the separate immutable
 `urn:animsmith:schema:collection-directional-speed-evaluation:1` result. The
 result binds the exact raw TOML and JSON byte identities and preserves every
 declared member in manifest order. Invalid, stale, wrong-kind, unreadable,
@@ -756,7 +763,9 @@ config, unsupported-profile/input-format, I/O, and serialization errors exit
 conversion, or root-motion behavior. Text and Markdown are presentation-only
 views of the same validated value.
 
-Measurements v15 adds canonical per-bone local TRS channel coverage and
+Measurements v16 retains the v15 clip evidence and adds source-order primitive
+geometry plus bounded leading-magic evidence for unsupported nonempty images.
+Measurements v15 added canonical per-bone local TRS channel coverage and
 sampled Root/Hips trajectory evidence. Root is preferred whenever that role
 resolves; Hips is only a typed fallback when Root is unresolved. The
 trajectory groups signed endpoint displacement, sampled horizontal travel and

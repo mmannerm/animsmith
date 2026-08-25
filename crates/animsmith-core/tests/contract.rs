@@ -653,6 +653,7 @@ fn measurement_report_input_rejects_finite_value_that_overflows_mesh_f32() {
     report["files"][0]["measurements"]["mesh_definitions"] = serde_json::json!([{
         "mesh_index": 0,
         "name": "overflow",
+        "primitives": [],
         "vertex_count": 1,
         "geometry_aabb": {
             "min": [1e39, 0.0, 0.0],
@@ -698,11 +699,23 @@ fn measurement_report_input_rejects_inconsistent_static_node_and_scene_evidence(
         "mesh_definitions": [{
             "mesh_index": 0,
             "name": "mesh",
+            "primitives": [{
+                "primitive_index": 0,
+                "material_index": null,
+                "vertex_count": 3,
+                "finite_vertex_count": 3,
+                "geometry_aabb": {
+                    "min": [0.0, 0.0, 0.0],
+                    "max": [1.0, 1.0, 1.0]
+                },
+                "geometry_centroid": [0.5, 0.5, 0.5]
+            }],
             "vertex_count": 3,
             "geometry_aabb": {
                 "min": [0.0, 0.0, 0.0],
                 "max": [1.0, 1.0, 1.0]
             },
+            "geometry_centroid": [0.5, 0.5, 0.5],
             "max_joints_per_vertex": 0,
             "additional_influence_sets": []
         }],
@@ -1218,6 +1231,14 @@ fn valid_mesh_measurements() -> MeshDefinitionMeasurements {
     serde_json::from_value(serde_json::json!({
         "mesh_index": 0,
         "name": "mesh",
+        "primitives": [{
+            "primitive_index": 0,
+            "material_index": null,
+            "vertex_count": 3,
+            "finite_vertex_count": 3,
+            "geometry_aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0] },
+            "geometry_centroid": [0.5, 0.5, 0.5]
+        }],
         "vertex_count": 3,
         "geometry_aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0] },
         "geometry_centroid": [0.5, 0.5, 0.5],

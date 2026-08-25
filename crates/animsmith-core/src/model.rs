@@ -723,6 +723,11 @@ pub enum MeshInstanceShapeViolation {
 /// policy without the core assuming how additional influences are evaluated.
 #[derive(Debug, Clone, Default)]
 pub struct Primitive {
+    /// Stable index in the source mesh's primitive array, when the loader can
+    /// preserve it. Consumers fall back to retained primitive order when this
+    /// source identity is unavailable on a normalized or manually built
+    /// document.
+    pub source_primitive_index: Option<usize>,
     /// Index into [`SceneAssets::materials`].
     pub material: Option<usize>,
     /// Triangle indices into the attribute arrays; empty = unindexed.
@@ -1221,6 +1226,9 @@ pub struct SourceImageAsset {
     pub declared_mime_type: Option<String>,
     /// Detected container format, when recognisable.
     pub detected_container: Option<ImageContainerFormat>,
+    /// Lowercase hex for the first at most 16 bytes of an unsupported,
+    /// nonempty payload inspected without a supported container signature.
+    pub leading_magic_hex: Option<String>,
     /// Bounded image-inspection result.
     pub inspection: SourceImageInspection,
 }

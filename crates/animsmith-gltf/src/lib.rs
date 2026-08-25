@@ -3131,6 +3131,7 @@ fn extract_assets(
                 Vec::new()
             };
             primitives.push(Primitive {
+                source_primitive_index: Some(prim.index()),
                 material: prim.material().index(),
                 indices,
                 positions,
@@ -3294,7 +3295,7 @@ fn extract_source_images(
                                 None,
                             )
                         } else {
-                            let (detected_container, inspection) = {
+                            let (detected_container, leading_magic_hex, inspection) = {
                                 let (bytes, reason) = resources.external_image_payload(image_index);
                                 inspect_source_image(bytes, reason)
                             };
@@ -3326,23 +3327,25 @@ fn extract_source_images(
                                 Some(if materialization_limited {
                                     (
                                         None,
+                                        None,
                                         SourceImageInspection::Unavailable {
                                             reason: ImageUnavailableReason::ResourceLimit,
                                         },
                                     )
                                 } else {
-                                    (detected_container, inspection)
+                                    (detected_container, leading_magic_hex, inspection)
                                 }),
                             )
                         }
                     }
                 };
-            let (detected_container, inspection) = inspected.unwrap_or_else(|| {
-                inspect_source_image(
-                    raw.as_ref().map(|texture| texture.bytes.as_slice()),
-                    unavailable_reason,
-                )
-            });
+            let (detected_container, leading_magic_hex, inspection) =
+                inspected.unwrap_or_else(|| {
+                    inspect_source_image(
+                        raw.as_ref().map(|texture| texture.bytes.as_slice()),
+                        unavailable_reason,
+                    )
+                });
             LoadedSourceImage {
                 record: SourceImageAsset {
                     image_index,
@@ -3350,6 +3353,7 @@ fn extract_source_images(
                     source_kind,
                     declared_mime_type,
                     detected_container,
+                    leading_magic_hex,
                     inspection,
                 },
                 texture: if retain_raw { raw } else { None },
@@ -3478,9 +3482,14 @@ fn extract_source_textures(doc: &gltf::Document) -> Vec<SourceTextureAsset> {
 fn inspect_source_image(
     bytes: Option<&[u8]>,
     unavailable_reason: ImageUnavailableReason,
-) -> (Option<ImageContainerFormat>, SourceImageInspection) {
+) -> (
+    Option<ImageContainerFormat>,
+    Option<String>,
+    SourceImageInspection,
+) {
     let Some(bytes) = bytes else {
         return (
+            None,
             None,
             SourceImageInspection::Unavailable {
                 reason: unavailable_reason,
@@ -3490,6 +3499,7 @@ fn inspect_source_image(
     if bytes.len() > MAX_IMAGE_ENCODED_BYTES {
         return (
             detect_container(bytes),
+            None,
             SourceImageInspection::Unavailable {
                 reason: ImageUnavailableReason::ResourceLimit,
             },
@@ -3498,6 +3508,7 @@ fn inspect_source_image(
     let Some((format, detected_container)) = image_format(bytes) else {
         return (
             None,
+            leading_magic_hex(bytes),
             SourceImageInspection::Unavailable {
                 reason: ImageUnavailableReason::UnsupportedContainer,
             },
@@ -3525,6 +3536,7 @@ fn inspect_source_image(
             match color_type {
                 Some(color_type) => (
                     Some(detected_container),
+                    None,
                     SourceImageInspection::Available {
                         width,
                         height,
@@ -3534,6 +3546,7 @@ fn inspect_source_image(
                 ),
                 None => (
                     Some(detected_container),
+                    None,
                     SourceImageInspection::Unavailable {
                         reason: ImageUnavailableReason::DecodeFailed,
                     },
@@ -3542,17 +3555,34 @@ fn inspect_source_image(
         }
         Err(ImageError::Limits(_)) => (
             Some(detected_container),
+            None,
             SourceImageInspection::Unavailable {
                 reason: ImageUnavailableReason::ResourceLimit,
             },
         ),
         Err(_) => (
             Some(detected_container),
+            None,
             SourceImageInspection::Unavailable {
                 reason: ImageUnavailableReason::DecodeFailed,
             },
         ),
     }
+}
+
+/// Capture at most the first 16 bytes of an unsupported nonempty payload as
+/// lowercase even-length hexadecimal evidence.
+fn leading_magic_hex(bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(
+        bytes
+            .iter()
+            .take(16)
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
 }
 
 /// Return the supported container format and its core vocabulary variant.

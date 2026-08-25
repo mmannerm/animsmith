@@ -20,11 +20,14 @@ use crate::evaluation::{
     ConfigurationState, EvaluationState, SelectionState, validate_and_derive_check_evaluation,
 };
 use crate::measure::{
-    Aabb, AssetMeasurements, ClipMeasurements, ImageMeasurements, LinearTransformClassification,
-    LinearTransformMeasurements, MaterialDefinitionMeasurements, MeasurementAvailability,
+    Aabb, AdditionalInfluenceSetMeasurements, AssetMeasurements, ClipMeasurements,
+    ImageMeasurements, LinearTransformClassification, LinearTransformMeasurements,
+    MaterialDefinitionMeasurements, MeasurementAvailability, MeshDefinitionMeasurements,
+    NodeInstanceMeasurements, PrimitiveMeasurements, SceneMeasurements,
     SkeletonNodeLocalRestMeasurements, SkeletonRestWorldMatrixUnavailableReason,
-    SkinDerivedMatrixMeasurements, SkinDerivedMatrixUnavailableReason, TextureMeasurements,
-    assess_inverse_bind, measure_linear_transform, summarize_skin_bind_linear,
+    SkinDerivedMatrixMeasurements, SkinDerivedMatrixUnavailableReason,
+    StaticNodeAabbUnavailableReason, TextureMeasurements, assess_inverse_bind,
+    measure_linear_transform, summarize_skin_bind_linear,
 };
 use crate::metrics::canonical_net_yaw_deg;
 use crate::model::{
@@ -34,9 +37,12 @@ use crate::model::{
 use crate::prediction::{
     EnginePredictionFacetStateV1, EnginePredictionV1, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
     PREDICTION_V1_MAX_FACETS_PER_FILE, PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
-    PredictionContractError, PredictionDecodeError, decode_engine_prediction_v1,
-    decode_engine_prediction_v2, decode_prediction_provenance_v1, decode_prediction_provenance_v2,
-    validate_measurement_references_batch, validate_measurement_references_batch_v2,
+    PredictionContractError, PredictionDecodeError,
+    decode_engine_prediction_v1_with_measurement_schema, decode_engine_prediction_v2,
+    decode_engine_prediction_v2_with_measurement_schema,
+    decode_prediction_provenance_v1_with_measurement_schema, decode_prediction_provenance_v2,
+    decode_prediction_provenance_v2_with_measurement_schema, validate_measurement_references_batch,
+    validate_measurement_references_batch_v2,
 };
 use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
@@ -47,9 +53,9 @@ use crate::{
 };
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 12;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 13;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:12";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 /// Immutable output-v10 identity retained by V1 dependent contracts.
 pub const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 /// Immutable output-v11 identity retained as historical schema evidence.
@@ -57,9 +63,9 @@ pub const OUTPUT_V11_SCHEMA_ID: &str = "urn:animsmith:schema:output:11";
 /// Immutable output-v11 version retained as historical schema evidence.
 pub const OUTPUT_V11_SCHEMA_VERSION: u32 = 11;
 /// Immutable identity of the bounded-overflow outer result envelope.
-pub const OUTPUT_V12_SCHEMA_ID: &str = OUTPUT_SCHEMA_ID;
+pub const OUTPUT_V12_SCHEMA_ID: &str = "urn:animsmith:schema:output:12";
 /// Schema version of output-v12.
-pub const OUTPUT_V12_SCHEMA_VERSION: u32 = OUTPUT_SCHEMA_VERSION;
+pub const OUTPUT_V12_SCHEMA_VERSION: u32 = 12;
 /// Maximum serialized bytes accepted by the output-v11 report reader.
 pub const OUTPUT_V11_MAX_REPORT_BYTES: u64 = 256 * 1024 * 1024;
 /// Maximum file records carried by one output-v11 envelope.
@@ -67,9 +73,13 @@ pub const OUTPUT_V11_MAX_FILES: usize = 4_096;
 /// Maximum check records carried by one output-v11 lint file.
 pub const OUTPUT_V11_MAX_CHECKS_PER_FILE: usize = 4_096;
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 15;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 16;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
+/// Immutable measurements-v15 identity retained for output-v11 and output-v12 readers.
+pub const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
+/// Immutable measurements-v15 version retained for historical report readers.
+pub const MEASUREMENTS_V15_SCHEMA_VERSION: u32 = 15;
 
 /// Source checkout identity for the producing animsmith build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -303,10 +313,23 @@ impl MeasurementContract {
         clips: BTreeMap<String, ClipMeasurements>,
         assets: AssetMeasurements,
     ) -> Result<Self, MeasurementContractError> {
-        validate_measurements(&clips, &assets)?;
+        validate_measurements(&clips, &assets, MeasurementRevision::V16)?;
         Ok(Self {
             schema_version: MEASUREMENTS_SCHEMA_VERSION,
             schema: MEASUREMENTS_SCHEMA_ID,
+            clips,
+            assets,
+        })
+    }
+
+    fn historical_v15(
+        clips: BTreeMap<String, ClipMeasurements>,
+        assets: AssetMeasurements,
+    ) -> Result<Self, MeasurementContractError> {
+        validate_measurements(&clips, &assets, MeasurementRevision::V15)?;
+        Ok(Self {
+            schema_version: MEASUREMENTS_V15_SCHEMA_VERSION,
+            schema: MEASUREMENTS_V15_SCHEMA_ID,
             clips,
             assets,
         })
@@ -328,9 +351,16 @@ impl MeasurementContract {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MeasurementRevision {
+    V15,
+    V16,
+}
+
 fn validate_measurements(
     clips: &BTreeMap<String, ClipMeasurements>,
     assets: &AssetMeasurements,
+    revision: MeasurementRevision,
 ) -> Result<(), MeasurementContractError> {
     let finite = |value: f64, path: String| {
         value
@@ -684,6 +714,162 @@ fn validate_measurements(
         if let Some(value) = mesh.weight_sum_max {
             finite(value, format!("mesh_definitions[{index}].weight_sum_max"))?;
         }
+        if revision == MeasurementRevision::V15 && mesh.vertex_count > u64::from(u32::MAX) {
+            return Err(invalid(
+                format!("mesh_definitions[{index}].vertex_count"),
+                "measurements-v15 vertex_count cannot exceed its historical u32 maximum",
+            ));
+        }
+        match (&mesh.primitives, revision) {
+            (None, MeasurementRevision::V16) => {
+                return Err(invalid(
+                    format!("mesh_definitions[{index}].primitives"),
+                    "measurements-v16 requires per-primitive evidence",
+                ));
+            }
+            (Some(_), MeasurementRevision::V15) => {
+                return Err(invalid(
+                    format!("mesh_definitions[{index}].primitives"),
+                    "measurements-v15 cannot carry per-primitive evidence",
+                ));
+            }
+            (Some(primitives), MeasurementRevision::V16) => {
+                let mut summed_vertex_count = 0u64;
+                let mut summed_finite_vertex_count = 0u64;
+                let mut aggregate_min = [f32::INFINITY; 3];
+                let mut aggregate_max = [f32::NEG_INFINITY; 3];
+                let mut weighted_centroid_sum = [0.0f64; 3];
+                let mut previous_primitive_index = None;
+                for (primitive_offset, primitive) in primitives.iter().enumerate() {
+                    let path = format!("mesh_definitions[{index}].primitives[{primitive_offset}]");
+                    if previous_primitive_index
+                        .is_some_and(|previous| previous >= primitive.primitive_index)
+                    {
+                        return Err(invalid(
+                            format!("{path}.primitive_index"),
+                            "primitive_index must be unique and strictly increasing in source order",
+                        ));
+                    }
+                    previous_primitive_index = Some(primitive.primitive_index);
+                    if primitive.finite_vertex_count > primitive.vertex_count {
+                        return Err(invalid(
+                            format!("{path}.finite_vertex_count"),
+                            "finite_vertex_count cannot exceed vertex_count",
+                        ));
+                    }
+                    match (
+                        primitive.finite_vertex_count,
+                        primitive.geometry_aabb.as_ref(),
+                        primitive.geometry_centroid,
+                    ) {
+                        (0, None, None) => {}
+                        (1.., Some(aabb), Some(centroid)) => {
+                            finite_aabb(aabb, &format!("{path}.geometry_aabb"))?;
+                            for (axis, value) in centroid.into_iter().enumerate() {
+                                finite(
+                                    f64::from(value),
+                                    format!("{path}.geometry_centroid[{axis}]"),
+                                )?;
+                                if value < aabb.min[axis] || value > aabb.max[axis] {
+                                    return Err(invalid(
+                                        format!("{path}.geometry_centroid[{axis}]"),
+                                        "primitive centroid must lie inside its geometry AABB",
+                                    ));
+                                }
+                                aggregate_min[axis] = aggregate_min[axis].min(aabb.min[axis]);
+                                aggregate_max[axis] = aggregate_max[axis].max(aabb.max[axis]);
+                                weighted_centroid_sum[axis] +=
+                                    f64::from(value) * primitive.finite_vertex_count as f64;
+                            }
+                        }
+                        (0, _, _) => {
+                            return Err(invalid(
+                                path,
+                                "a primitive with no finite vertices cannot carry geometry facts",
+                            ));
+                        }
+                        (1.., _, _) => {
+                            return Err(invalid(
+                                path,
+                                "a primitive with finite vertices requires both geometry facts",
+                            ));
+                        }
+                    }
+                    if assets.material_resource_coverage == MaterialResourceCoverage::Complete
+                        && primitive.material_index.is_some_and(|material_index| {
+                            material_index >= assets.material_definitions.len()
+                        })
+                    {
+                        return Err(invalid(
+                            format!("{path}.material_index"),
+                            "material_index must reference a source material when material resource coverage is complete",
+                        ));
+                    }
+                    summed_vertex_count = summed_vertex_count
+                        .checked_add(primitive.vertex_count)
+                        .ok_or_else(|| {
+                        invalid(
+                            format!("mesh_definitions[{index}].vertex_count"),
+                            "primitive vertex-count sum overflows u64",
+                        )
+                    })?;
+                    summed_finite_vertex_count = summed_finite_vertex_count
+                        .checked_add(primitive.finite_vertex_count)
+                        .ok_or_else(|| {
+                            invalid(
+                                format!("mesh_definitions[{index}].primitives"),
+                                "primitive finite-vertex-count sum overflows u64",
+                            )
+                        })?;
+                }
+                if summed_vertex_count != mesh.vertex_count {
+                    return Err(invalid(
+                        format!("mesh_definitions[{index}].vertex_count"),
+                        "vertex_count must equal the checked sum of primitive vertex counts",
+                    ));
+                }
+                let expected_aabb = (summed_finite_vertex_count != 0).then_some(Aabb {
+                    min: aggregate_min,
+                    max: aggregate_max,
+                });
+                let expected_centroid = (summed_finite_vertex_count != 0).then(|| {
+                    let count = summed_finite_vertex_count as f64;
+                    weighted_centroid_sum.map(|sum| (sum / count) as f32)
+                });
+                match (
+                    summed_finite_vertex_count,
+                    mesh.geometry_aabb.as_ref(),
+                    mesh.geometry_centroid,
+                ) {
+                    (0, None, None) | (1.., Some(_), Some(_)) => {}
+                    (0, _, _) => {
+                        return Err(invalid(
+                            format!("mesh_definitions[{index}]"),
+                            "a mesh with no finite primitive vertices cannot carry geometry facts",
+                        ));
+                    }
+                    (1.., _, _) => {
+                        return Err(invalid(
+                            format!("mesh_definitions[{index}]"),
+                            "a mesh with finite primitive vertices requires both geometry facts",
+                        ));
+                    }
+                }
+                if mesh.geometry_aabb != expected_aabb {
+                    return Err(invalid(
+                        format!("mesh_definitions[{index}].geometry_aabb"),
+                        "mesh AABB must equal the exact union of primitive AABBs",
+                    ));
+                }
+                if mesh.geometry_centroid != expected_centroid {
+                    return Err(invalid(
+                        format!("mesh_definitions[{index}].geometry_centroid"),
+                        "mesh centroid must equal the finite-count-weighted primitive centroids",
+                    ));
+                }
+            }
+            (None, MeasurementRevision::V15) => {}
+        }
         let mut previous_set_index = None;
         for (set_offset, set) in mesh.additional_influence_sets.iter().enumerate() {
             let path = format!(
@@ -821,7 +1007,7 @@ fn validate_measurements(
         ));
     }
     validate_skeleton_measurements(assets, &invalid)?;
-    validate_material_resources(assets, &invalid)?;
+    validate_material_resources(assets, revision, &invalid)?;
     Ok(())
 }
 
@@ -1600,6 +1786,7 @@ fn validate_derived_matrix(
 
 fn validate_material_resources(
     assets: &AssetMeasurements,
+    revision: MeasurementRevision,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
     let absent = assets.material_definitions.is_empty()
@@ -1655,7 +1842,7 @@ fn validate_material_resources(
         }
     }
     for (offset, image) in assets.images.iter().enumerate() {
-        validate_image_measurement(image, offset, invalid)?;
+        validate_image_measurement(image, offset, revision, invalid)?;
     }
     Ok(())
 }
@@ -1663,6 +1850,7 @@ fn validate_material_resources(
 fn validate_image_measurement(
     image: &ImageMeasurements,
     offset: usize,
+    revision: MeasurementRevision,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
     if image.image_index != offset {
@@ -1752,6 +1940,45 @@ fn validate_image_measurement(
             ));
         }
         _ => {}
+    }
+    match (revision, image.unavailable_reason, &image.leading_magic_hex) {
+        (MeasurementRevision::V15, _, Some(_)) => {
+            return Err(invalid(
+                format!("images[{offset}].leading_magic_hex"),
+                "measurements-v15 cannot carry leading-magic evidence",
+            ));
+        }
+        (
+            MeasurementRevision::V16,
+            Some(crate::model::ImageUnavailableReason::UnsupportedContainer),
+            Some(magic),
+        ) => {
+            if magic.is_empty()
+                || magic.len() > 32
+                || !magic.len().is_multiple_of(2)
+                || !magic
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+            {
+                return Err(invalid(
+                    format!("images[{offset}].leading_magic_hex"),
+                    "leading_magic_hex must be nonempty lowercase even-length hex for at most 16 bytes",
+                ));
+            }
+        }
+        (
+            MeasurementRevision::V16,
+            Some(crate::model::ImageUnavailableReason::UnsupportedContainer),
+            None,
+        )
+        | (MeasurementRevision::V15, _, None) => {}
+        (MeasurementRevision::V16, _, Some(_)) => {
+            return Err(invalid(
+                format!("images[{offset}].leading_magic_hex"),
+                "leading_magic_hex is permitted only for unsupported_container",
+            ));
+        }
+        (MeasurementRevision::V16, _, None) => {}
     }
     Ok(())
 }
@@ -2506,13 +2733,234 @@ struct MeasurementPayloadInput {
     default_scene_index: Option<usize>,
 }
 
+/// Current measurement payload readback is closed at the root and at every
+/// domain introduced or extended by measurements-v16. Historical readers use
+/// [`MeasurementPayloadInput`] directly so their accepted JSON shape does not
+/// change retroactively.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MeasurementPayloadV16Input {
+    schema_version: Option<u32>,
+    schema: Option<String>,
+    clips: Option<BTreeMap<String, ClipMeasurements>>,
+    material_resource_coverage: Option<MaterialResourceCoverage>,
+    material_definitions: Option<Vec<MaterialDefinitionMeasurements>>,
+    textures: Option<Vec<TextureMeasurements>>,
+    images: Option<Vec<ImageMeasurementsV16Input>>,
+    skeleton_source_coverage: Option<SourceSkeletonCoverage>,
+    skeleton_nodes: Option<Vec<SkeletonNodeMeasurementInput>>,
+    skins: Option<Vec<SkinMeasurementInput>>,
+    mesh_definitions: Option<Vec<MeshDefinitionMeasurementsV16Input>>,
+    node_instances: Option<Vec<NodeInstanceMeasurementsV16Input>>,
+    scenes: Option<Vec<SceneMeasurementsV16Input>>,
+    default_scene_index: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AabbV16Input {
+    min: [f32; 3],
+    max: [f32; 3],
+}
+
+impl From<AabbV16Input> for Aabb {
+    fn from(value: AabbV16Input) -> Self {
+        Self {
+            min: value.min,
+            max: value.max,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrimitiveMeasurementsV16Input {
+    primitive_index: usize,
+    #[serde(deserialize_with = "deserialize_required_optional_usize")]
+    material_index: Option<usize>,
+    vertex_count: u64,
+    finite_vertex_count: u64,
+    geometry_aabb: Option<AabbV16Input>,
+    geometry_centroid: Option<[f32; 3]>,
+}
+
+fn deserialize_required_optional_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<usize>::deserialize(deserializer)
+}
+
+impl From<PrimitiveMeasurementsV16Input> for PrimitiveMeasurements {
+    fn from(value: PrimitiveMeasurementsV16Input) -> Self {
+        Self {
+            primitive_index: value.primitive_index,
+            material_index: value.material_index,
+            vertex_count: value.vertex_count,
+            finite_vertex_count: value.finite_vertex_count,
+            geometry_aabb: value.geometry_aabb.map(Into::into),
+            geometry_centroid: value.geometry_centroid,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MeshDefinitionMeasurementsV16Input {
+    mesh_index: usize,
+    name: String,
+    primitives: Option<Vec<PrimitiveMeasurementsV16Input>>,
+    vertex_count: u64,
+    geometry_aabb: Option<AabbV16Input>,
+    geometry_centroid: Option<[f32; 3]>,
+    max_joints_per_vertex: u32,
+    weight_sum_min: Option<f64>,
+    weight_sum_max: Option<f64>,
+    additional_influence_sets: Vec<AdditionalInfluenceSetMeasurements>,
+}
+
+impl From<MeshDefinitionMeasurementsV16Input> for MeshDefinitionMeasurements {
+    fn from(value: MeshDefinitionMeasurementsV16Input) -> Self {
+        Self {
+            mesh_index: value.mesh_index,
+            name: value.name,
+            primitives: value
+                .primitives
+                .map(|primitives| primitives.into_iter().map(Into::into).collect()),
+            vertex_count: value.vertex_count,
+            geometry_aabb: value.geometry_aabb.map(Into::into),
+            geometry_centroid: value.geometry_centroid,
+            max_joints_per_vertex: value.max_joints_per_vertex,
+            weight_sum_min: value.weight_sum_min,
+            weight_sum_max: value.weight_sum_max,
+            additional_influence_sets: value.additional_influence_sets,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImageMeasurementsV16Input {
+    image_index: usize,
+    name: Option<String>,
+    source_kind: crate::model::ImageSourceKind,
+    declared_mime_type: Option<String>,
+    detected_container: Option<crate::model::ImageContainerFormat>,
+    leading_magic_hex: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    channel_count: Option<u8>,
+    decoded_color_type: Option<DecodedImageColorType>,
+    unavailable_reason: Option<crate::model::ImageUnavailableReason>,
+}
+
+impl From<ImageMeasurementsV16Input> for ImageMeasurements {
+    fn from(value: ImageMeasurementsV16Input) -> Self {
+        Self {
+            image_index: value.image_index,
+            name: value.name,
+            source_kind: value.source_kind,
+            declared_mime_type: value.declared_mime_type,
+            detected_container: value.detected_container,
+            leading_magic_hex: value.leading_magic_hex,
+            width: value.width,
+            height: value.height,
+            channel_count: value.channel_count,
+            decoded_color_type: value.decoded_color_type,
+            unavailable_reason: value.unavailable_reason,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NodeInstanceMeasurementsV16Input {
+    node_index: usize,
+    node_name: String,
+    mesh_index: usize,
+    static_node_world_aabb: Option<AabbV16Input>,
+    static_node_world_aabb_unavailable_reason: Option<StaticNodeAabbUnavailableReason>,
+}
+
+impl From<NodeInstanceMeasurementsV16Input> for NodeInstanceMeasurements {
+    fn from(value: NodeInstanceMeasurementsV16Input) -> Self {
+        Self {
+            node_index: value.node_index,
+            node_name: value.node_name,
+            mesh_index: value.mesh_index,
+            static_node_world_aabb: value.static_node_world_aabb.map(Into::into),
+            static_node_world_aabb_unavailable_reason: value
+                .static_node_world_aabb_unavailable_reason,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SceneMeasurementsV16Input {
+    scene_index: usize,
+    name: Option<String>,
+    instance_count: usize,
+    static_scene_world_aabb: Option<AabbV16Input>,
+    excluded_instance_count: usize,
+}
+
+impl From<SceneMeasurementsV16Input> for SceneMeasurements {
+    fn from(value: SceneMeasurementsV16Input) -> Self {
+        Self {
+            scene_index: value.scene_index,
+            name: value.name,
+            instance_count: value.instance_count,
+            static_scene_world_aabb: value.static_scene_world_aabb.map(Into::into),
+            excluded_instance_count: value.excluded_instance_count,
+        }
+    }
+}
+
+impl From<MeasurementPayloadV16Input> for MeasurementPayloadInput {
+    fn from(value: MeasurementPayloadV16Input) -> Self {
+        Self {
+            schema_version: value.schema_version,
+            schema: value.schema,
+            clips: value.clips,
+            material_resource_coverage: value.material_resource_coverage,
+            material_definitions: value.material_definitions,
+            textures: value.textures,
+            images: value
+                .images
+                .map(|images| images.into_iter().map(Into::into).collect()),
+            skeleton_source_coverage: value.skeleton_source_coverage,
+            skeleton_nodes: value.skeleton_nodes,
+            skins: value.skins,
+            mesh_definitions: value
+                .mesh_definitions
+                .map(|meshes| meshes.into_iter().map(Into::into).collect()),
+            node_instances: value
+                .node_instances
+                .map(|instances| instances.into_iter().map(Into::into).collect()),
+            scenes: value
+                .scenes
+                .map(|scenes| scenes.into_iter().map(Into::into).collect()),
+            default_scene_index: value.default_scene_index,
+        }
+    }
+}
+
 fn decode_measurement_payload(
     raw: &RawValue,
+    strict_v16: bool,
 ) -> Result<MeasurementPayloadInput, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_str(raw.get());
-    let payload = MeasurementPayloadInput::deserialize(MeasurementF32NarrowingDeserializer(
-        &mut deserializer,
-    ))?;
+    let payload = if strict_v16 {
+        MeasurementPayloadV16Input::deserialize(MeasurementF32NarrowingDeserializer(
+            &mut deserializer,
+        ))?
+        .into()
+    } else {
+        MeasurementPayloadInput::deserialize(MeasurementF32NarrowingDeserializer(
+            &mut deserializer,
+        ))?
+    };
     deserializer.end()?;
     Ok(payload)
 }
@@ -2864,6 +3312,7 @@ fn decode_prediction_phase_file(
     command: &str,
     file_index: usize,
     raw: &RawValue,
+    expected_measurement_schema: &'static str,
 ) -> Result<MeasurementFileInput, MeasurementReportError> {
     let wire: MeasurementFileWireInput = serde_json::from_str(raw.get()).map_err(|source| {
         prediction_file_error(
@@ -2923,7 +3372,15 @@ fn decode_prediction_phase_file(
         RequiredNullable::Missing => unreachable!("missing provenance was rejected above"),
         RequiredNullable::Present(None) => RequiredNullable::Present(None),
         RequiredNullable::Present(Some(raw)) => {
-            let provenance = decode_prediction_provenance_v2(raw.get()).map_err(|error| {
+            let provenance = if expected_measurement_schema == MEASUREMENTS_SCHEMA_ID {
+                decode_prediction_provenance_v2(raw.get())
+            } else {
+                decode_prediction_provenance_v2_with_measurement_schema(
+                    raw.get(),
+                    expected_measurement_schema,
+                )
+            }
+            .map_err(|error| {
                 let source = match error {
                     PredictionDecodeError::Shape(source) => {
                         MeasurementFileError::InvalidPredictionProvenanceShape {
@@ -3002,12 +3459,20 @@ fn decode_prediction_phase_file(
                 let prediction = wire
                     .prediction
                     .map(|raw| {
-                        decode_engine_prediction_v2(
-                            raw.get(),
-                            PREDICTION_V1_MAX_FACETS_PER_FILE.saturating_sub(decoded_facets),
-                            PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE
-                                .saturating_sub(decoded_references),
-                        )
+                        let facet_limit =
+                            PREDICTION_V1_MAX_FACETS_PER_FILE.saturating_sub(decoded_facets);
+                        let reference_limit = PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE
+                            .saturating_sub(decoded_references);
+                        if expected_measurement_schema == MEASUREMENTS_SCHEMA_ID {
+                            decode_engine_prediction_v2(raw.get(), facet_limit, reference_limit)
+                        } else {
+                            decode_engine_prediction_v2_with_measurement_schema(
+                                raw.get(),
+                                facet_limit,
+                                reference_limit,
+                                expected_measurement_schema,
+                            )
+                        }
                         .map_err(|error| {
                             let source = match error {
                                 PredictionDecodeError::Shape(source) => {
@@ -3051,7 +3516,11 @@ fn decode_prediction_phase_file(
                     prediction,
                 };
                 check
-                    .validate(check_index, provenance_for_checks)
+                    .validate(
+                        check_index,
+                        provenance_for_checks,
+                        expected_measurement_schema,
+                    )
                     .map_err(|source| prediction_file_error(file_index, source))?;
                 if let Some(prediction) = &check.prediction {
                     has_facet_budget_summary |= prediction.has_facet_budget_summary();
@@ -3203,7 +3672,11 @@ fn decode_legacy_v11_file(
         RequiredNullable::Missing => unreachable!("missing provenance was rejected above"),
         RequiredNullable::Present(None) => RequiredNullable::Present(None),
         RequiredNullable::Present(Some(raw)) => RequiredNullable::Present(Some(
-            decode_prediction_provenance_v1(raw.get()).map_err(|error| {
+            decode_prediction_provenance_v1_with_measurement_schema(
+                raw.get(),
+                MEASUREMENTS_V15_SCHEMA_ID,
+            )
+            .map_err(|error| {
                 prediction_file_error(
                     file_index,
                     match error {
@@ -3278,11 +3751,12 @@ fn decode_legacy_v11_file(
                 let prediction = wire
                     .prediction
                     .map(|raw| {
-                        decode_engine_prediction_v1(
+                        decode_engine_prediction_v1_with_measurement_schema(
                             raw.get(),
                             PREDICTION_V1_MAX_FACETS_PER_FILE.saturating_sub(decoded_facets),
                             PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE
                                 .saturating_sub(decoded_references),
+                            MEASUREMENTS_V15_SCHEMA_ID,
                         )
                         .map_err(|error| {
                             prediction_file_error(
@@ -3329,7 +3803,11 @@ fn decode_legacy_v11_file(
                     prediction,
                 };
                 check
-                    .validate(check_index, provenance_for_checks)
+                    .validate(
+                        check_index,
+                        provenance_for_checks,
+                        MEASUREMENTS_V15_SCHEMA_ID,
+                    )
                     .map_err(|source| prediction_file_error(file_index, source))?;
                 if let Some(prediction) = &check.prediction {
                     decoded_facets = decoded_facets
@@ -3441,12 +3919,14 @@ fn validate_legacy_v11_prediction_phase_file(
         ));
     }
     if let Some(provenance) = provenance {
-        provenance.validate().map_err(|source| {
-            prediction_file_error(
-                file_index,
-                MeasurementFileError::InvalidPredictionProvenance { source },
-            )
-        })?;
+        provenance
+            .validate_with_measurement_schema(MEASUREMENTS_V15_SCHEMA_ID)
+            .map_err(|source| {
+                prediction_file_error(
+                    file_index,
+                    MeasurementFileError::InvalidPredictionProvenance { source },
+                )
+            })?;
         let input = file
             .input
             .as_ref()
@@ -3559,6 +4039,7 @@ impl LegacyPredictionCheckInput {
         &self,
         check_index: usize,
         provenance: Option<&PredictionProvenanceV1>,
+        expected_measurement_schema: &'static str,
     ) -> Result<(), MeasurementFileError> {
         let gap_refs = self
             .gaps
@@ -3621,7 +4102,10 @@ impl LegacyPredictionCheckInput {
         let provenance =
             provenance.ok_or(MeasurementFileError::PredictionWithoutProvenance { check_index })?;
         prediction
-            .validate_against_provenance(provenance)
+            .validate_against_provenance_with_measurement_schema(
+                provenance,
+                expected_measurement_schema,
+            )
             .map_err(|source| MeasurementFileError::InvalidPrediction {
                 check_index,
                 source,
@@ -3685,6 +4169,7 @@ fn validate_prediction_phase_file(
     command: &str,
     file_index: usize,
     file: &MeasurementFileInput,
+    expected_measurement_schema: &'static str,
 ) -> Result<(usize, usize), MeasurementReportError> {
     let mut available = 0usize;
     let mut unavailable = 0usize;
@@ -3726,12 +4211,14 @@ fn validate_prediction_phase_file(
                 ));
             }
             if let Some(provenance) = provenance {
-                provenance.validate().map_err(|source| {
-                    prediction_file_error(
-                        file_index,
-                        MeasurementFileError::InvalidPredictionProvenance { source },
-                    )
-                })?;
+                provenance
+                    .validate_with_measurement_schema(expected_measurement_schema)
+                    .map_err(|source| {
+                        prediction_file_error(
+                            file_index,
+                            MeasurementFileError::InvalidPredictionProvenance { source },
+                        )
+                    })?;
                 let input = file.input.as_ref().ok_or_else(|| {
                     prediction_file_error(file_index, MeasurementFileError::MissingInput)
                 })?;
@@ -3882,6 +4369,7 @@ impl PredictionCheckInput {
         &self,
         check_index: usize,
         provenance: Option<&PredictionProvenanceV2>,
+        expected_measurement_schema: &'static str,
     ) -> Result<(), MeasurementFileError> {
         let gap_refs = self
             .gaps
@@ -3945,7 +4433,10 @@ impl PredictionCheckInput {
         let provenance =
             provenance.ok_or(MeasurementFileError::PredictionWithoutProvenance { check_index })?;
         prediction
-            .validate_against_provenance(provenance)
+            .validate_against_provenance_with_measurement_schema(
+                provenance,
+                expected_measurement_schema,
+            )
             .map_err(|source| MeasurementFileError::InvalidPrediction {
                 check_index,
                 source,
@@ -4179,18 +4670,26 @@ impl MeasurementReportInput {
     /// Returns a typed error for a missing or unsupported identity, command,
     /// file shape, nested measurement contract, or measurement payload.
     pub fn into_files(self) -> Result<Vec<MeasurementReportFile>, MeasurementReportError> {
-        let legacy_v11 = match self.schema_version {
-            Some(OUTPUT_SCHEMA_VERSION) => false,
-            Some(OUTPUT_V11_SCHEMA_VERSION) => true,
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum ReaderRevision {
+            V11,
+            V12,
+            V13,
+        }
+
+        let revision = match self.schema_version {
+            Some(OUTPUT_V11_SCHEMA_VERSION) => ReaderRevision::V11,
+            Some(OUTPUT_V12_SCHEMA_VERSION) => ReaderRevision::V12,
+            Some(OUTPUT_SCHEMA_VERSION) => ReaderRevision::V13,
             Some(found) => {
                 return Err(MeasurementReportError::UnsupportedOutputVersion { found });
             }
             None => return Err(MeasurementReportError::MissingOutputVersion),
         };
-        let expected_schema = if legacy_v11 {
-            OUTPUT_V11_SCHEMA_ID
-        } else {
-            OUTPUT_SCHEMA_ID
+        let expected_schema = match revision {
+            ReaderRevision::V11 => OUTPUT_V11_SCHEMA_ID,
+            ReaderRevision::V12 => OUTPUT_V12_SCHEMA_ID,
+            ReaderRevision::V13 => OUTPUT_SCHEMA_ID,
         };
         if self.schema.as_deref() != Some(expected_schema) {
             return Err(MeasurementReportError::WrongOutputIdentity);
@@ -4226,7 +4725,7 @@ impl MeasurementReportInput {
         let mut unavailable = 0usize;
         let mut decoded_files = Vec::with_capacity(files.len());
         for (file_index, raw) in files.into_iter().enumerate() {
-            let file = if legacy_v11 {
+            let file = if revision == ReaderRevision::V11 {
                 let file = decode_legacy_v11_file(command, file_index, &raw)?;
                 let (file_available, file_unavailable) =
                     validate_legacy_v11_prediction_phase_file(command, file_index, &file)?;
@@ -4238,9 +4737,23 @@ impl MeasurementReportInput {
                     .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
                 file
             } else {
-                let file = decode_prediction_phase_file(command, file_index, &raw)?;
-                let (file_available, file_unavailable) =
-                    validate_prediction_phase_file(command, file_index, &file)?;
+                let expected_measurement_schema = if revision == ReaderRevision::V12 {
+                    MEASUREMENTS_V15_SCHEMA_ID
+                } else {
+                    MEASUREMENTS_SCHEMA_ID
+                };
+                let file = decode_prediction_phase_file(
+                    command,
+                    file_index,
+                    &raw,
+                    expected_measurement_schema,
+                )?;
+                let (file_available, file_unavailable) = validate_prediction_phase_file(
+                    command,
+                    file_index,
+                    &file,
+                    expected_measurement_schema,
+                )?;
                 available = available
                     .checked_add(file_available)
                     .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
@@ -4284,16 +4797,24 @@ impl MeasurementReportInput {
                         MeasurementFileError::MissingMeasurements,
                     )
                 })?;
-                let measurements = decode_measurement_payload(&measurements).map_err(|source| {
-                    MeasurementReportError::file(
-                        file_index,
-                        MeasurementFileError::InvalidMeasurementsShape {
-                            reason: source.to_string(),
-                        },
-                    )
-                })?;
+                let measurements =
+                    decode_measurement_payload(&measurements, revision == ReaderRevision::V13)
+                        .map_err(|source| {
+                            MeasurementReportError::file(
+                                file_index,
+                                MeasurementFileError::InvalidMeasurementsShape {
+                                    reason: source.to_string(),
+                                },
+                            )
+                        })?;
+                let (expected_measurement_version, expected_measurement_schema) = match revision {
+                    ReaderRevision::V11 | ReaderRevision::V12 => {
+                        (MEASUREMENTS_V15_SCHEMA_VERSION, MEASUREMENTS_V15_SCHEMA_ID)
+                    }
+                    ReaderRevision::V13 => (MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_SCHEMA_ID),
+                };
                 match measurements.schema_version {
-                    Some(MEASUREMENTS_SCHEMA_VERSION) => {}
+                    Some(found) if found == expected_measurement_version => {}
                     Some(found) => {
                         return Err(MeasurementReportError::file(
                             file_index,
@@ -4307,7 +4828,7 @@ impl MeasurementReportInput {
                         ));
                     }
                 }
-                if measurements.schema.as_deref() != Some(MEASUREMENTS_SCHEMA_ID) {
+                if measurements.schema.as_deref() != Some(expected_measurement_schema) {
                     return Err(MeasurementReportError::file(
                         file_index,
                         MeasurementFileError::WrongMeasurementIdentity,
@@ -4415,7 +4936,13 @@ impl MeasurementReportInput {
                     scenes,
                     default_scene_index: measurements.default_scene_index,
                 };
-                let measurements = MeasurementContract::new(clips, assets).map_err(|source| {
+                let measurements = match revision {
+                    ReaderRevision::V11 | ReaderRevision::V12 => {
+                        MeasurementContract::historical_v15(clips, assets)
+                    }
+                    ReaderRevision::V13 => MeasurementContract::new(clips, assets),
+                }
+                .map_err(|source| {
                     MeasurementReportError::file(
                         file_index,
                         MeasurementFileError::InvalidMeasurements { source },
@@ -4436,7 +4963,7 @@ impl MeasurementReportInput {
             .collect::<Result<Vec<_>, _>>()?;
 
         // Measurement-dependent basis pointers are deliberately resolved only
-        // after every file's complete measurements-v15 contract has passed.
+        // after every file's complete, version-routed measurements contract has passed.
         for (file_index, (file, (checks, legacy_checks))) in parsed.iter().enumerate() {
             validate_measurement_references_batch_v2(
                 &file.measurements,
@@ -4497,14 +5024,19 @@ mod measurement_report_input_tests {
         ResolvedEngineSettingsV2, ResolvedEngineSettingsWorkV2,
     };
     use crate::evaluation::{CheckOutput, EvaluationScope, EvaluationScopeCode};
-    use crate::measure::AssetMeasurements;
+    use crate::measure::{
+        AssetMeasurements, ImageMeasurements, MeshDefinitionMeasurements, PrimitiveMeasurements,
+    };
     use crate::prediction::{
         EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionFacetV2,
         EnginePredictionV1, EnginePredictionV2, PredictionBasisReferenceV1, PredictionScalarV1,
         PredictionUnavailableReasonV1, PredictionUnavailableReasonV2, RawSourceBindingV1,
     };
     use crate::source_facts::SourceFormatV1;
-    use crate::{DependencyClosureV1, Document, ResolvedRoles};
+    use crate::{
+        DependencyClosureV1, Document, ImageSourceKind, ImageUnavailableReason,
+        MaterialResourceCoverage, ResolvedRoles,
+    };
 
     fn prediction_test_profile() -> ResolvedEngineProfileV1 {
         let all_fact_ids = [
@@ -4628,6 +5160,67 @@ mod measurement_report_input_tests {
 
     fn prediction_test_measurements() -> MeasurementContract {
         MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default()).unwrap()
+    }
+
+    fn measure_wire(measurements: MeasurementContract) -> serde_json::Value {
+        let file = MeasureFileReport::new(
+            "test.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            measurements,
+        );
+        let envelope =
+            MeasureEnvelope::new(ToolInfo::animsmith(ToolSource::new(None, None)), vec![file])
+                .unwrap();
+        let wire = serde_json::to_value(envelope).unwrap();
+        serde_json::from_value::<MeasurementReportInput>(wire.clone())
+            .unwrap()
+            .into_files()
+            .expect("current measurement fixture reads back");
+        wire
+    }
+
+    fn primitive_measurement_contract() -> MeasurementContract {
+        let mut assets = AssetMeasurements::default();
+        assets.mesh_definitions.push(MeshDefinitionMeasurements {
+            mesh_index: 0,
+            name: "mesh".into(),
+            primitives: Some(vec![
+                PrimitiveMeasurements {
+                    primitive_index: 1,
+                    material_index: Some(7),
+                    vertex_count: 2,
+                    finite_vertex_count: 1,
+                    geometry_aabb: Some(Aabb {
+                        min: [-2.0, 1.0, 0.0],
+                        max: [-2.0, 1.0, 0.0],
+                    }),
+                    geometry_centroid: Some([-2.0, 1.0, 0.0]),
+                },
+                PrimitiveMeasurements {
+                    primitive_index: 3,
+                    material_index: None,
+                    vertex_count: 2,
+                    finite_vertex_count: 2,
+                    geometry_aabb: Some(Aabb {
+                        min: [4.0, 3.0, 0.0],
+                        max: [6.0, 3.0, 0.0],
+                    }),
+                    geometry_centroid: Some([5.0, 3.0, 0.0]),
+                },
+            ]),
+            vertex_count: 4,
+            geometry_aabb: Some(Aabb {
+                min: [-2.0, 1.0, 0.0],
+                max: [6.0, 3.0, 0.0],
+            }),
+            geometry_centroid: Some([8.0 / 3.0, 7.0 / 3.0, 0.0]),
+            max_joints_per_vertex: 0,
+            weight_sum_min: None,
+            weight_sum_max: None,
+            additional_influence_sets: Vec::new(),
+        });
+        MeasurementContract::new(BTreeMap::new(), assets).unwrap()
     }
 
     fn prediction_test_rig() -> RigInfo {
@@ -5514,6 +6107,433 @@ mod measurement_report_input_tests {
     }
 
     #[test]
+    fn current_v16_primitive_mutations_fail_closed_on_readback() {
+        let wire = measure_wire(primitive_measurement_contract());
+        let primitive = &wire["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][0];
+        assert_eq!(primitive["primitive_index"], serde_json::json!(1));
+        assert_eq!(primitive["material_index"], serde_json::json!(7));
+        assert_eq!(
+            wire["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][1]["material_index"],
+            serde_json::Value::Null
+        );
+
+        let mut missing_material = wire.clone();
+        missing_material["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("material_index");
+        assert!(matches!(
+            reader_error(missing_material),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidMeasurementsShape { .. },
+                ..
+            }
+        ));
+
+        let mut mutations = Vec::new();
+        let mut missing = wire.clone();
+        missing["files"][0]["measurements"]["mesh_definitions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("primitives");
+        mutations.push(missing);
+
+        let mut duplicate_index = wire.clone();
+        duplicate_index["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][1]["primitive_index"] =
+            serde_json::json!(1);
+        mutations.push(duplicate_index);
+
+        let mut decreasing_index = wire.clone();
+        decreasing_index["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][1]["primitive_index"] =
+            serde_json::json!(0);
+        mutations.push(decreasing_index);
+
+        let mut finite_over = wire.clone();
+        finite_over["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][0]["finite_vertex_count"] =
+            serde_json::json!(3);
+        mutations.push(finite_over);
+
+        let mut zero_with_facts = wire.clone();
+        zero_with_facts["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][0]["finite_vertex_count"] =
+            serde_json::json!(0);
+        mutations.push(zero_with_facts);
+
+        let mut positive_without_centroid = wire.clone();
+        positive_without_centroid["files"][0]["measurements"]["mesh_definitions"][0]["primitives"]
+            [0]
+        .as_object_mut()
+        .unwrap()
+        .remove("geometry_centroid");
+        mutations.push(positive_without_centroid);
+
+        let mut centroid_outside_aabb = wire.clone();
+        centroid_outside_aabb["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][0]
+            ["geometry_centroid"] = serde_json::json!([-3.0, 1.0, 0.0]);
+        mutations.push(centroid_outside_aabb);
+
+        let mut missing_mesh_geometry = wire.clone();
+        missing_mesh_geometry["files"][0]["measurements"]["mesh_definitions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("geometry_centroid");
+        mutations.push(missing_mesh_geometry);
+
+        let mut wrong_mesh_aabb = wire.clone();
+        wrong_mesh_aabb["files"][0]["measurements"]["mesh_definitions"][0]["geometry_aabb"]["max"]
+            [0] = serde_json::json!(7.0);
+        mutations.push(wrong_mesh_aabb);
+
+        let mut wrong_mesh_centroid = wire.clone();
+        wrong_mesh_centroid["files"][0]["measurements"]["mesh_definitions"][0]["geometry_centroid"] =
+            serde_json::json!([3.0, 7.0 / 3.0, 0.0]);
+        mutations.push(wrong_mesh_centroid);
+
+        let mut wrong_sum = wire.clone();
+        wrong_sum["files"][0]["measurements"]["mesh_definitions"][0]["vertex_count"] =
+            serde_json::json!(3);
+        mutations.push(wrong_sum);
+
+        let mut finite_sum_overflow = wire.clone();
+        for primitive in
+            finite_sum_overflow["files"][0]["measurements"]["mesh_definitions"][0]["primitives"]
+                .as_array_mut()
+                .unwrap()
+        {
+            primitive["vertex_count"] = serde_json::json!(u64::MAX);
+            primitive["finite_vertex_count"] = serde_json::json!(u64::MAX);
+        }
+        finite_sum_overflow["files"][0]["measurements"]["mesh_definitions"][0]["vertex_count"] =
+            serde_json::json!(u64::MAX);
+        mutations.push(finite_sum_overflow);
+
+        for mutation in mutations {
+            assert!(matches!(
+                reader_error(mutation),
+                MeasurementReportError::File {
+                    source: MeasurementFileError::InvalidMeasurements { .. },
+                    ..
+                }
+            ));
+        }
+
+        let mut unknown_root = wire.clone();
+        unknown_root["files"][0]["measurements"]
+            .as_object_mut()
+            .unwrap()
+            .insert("bogus".into(), serde_json::json!(true));
+        let mut unknown_mesh = wire.clone();
+        unknown_mesh["files"][0]["measurements"]["mesh_definitions"][0]
+            .as_object_mut()
+            .unwrap()
+            .insert("bogus".into(), serde_json::json!(true));
+        let mut unknown_primitive = wire.clone();
+        unknown_primitive["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][0]
+            .as_object_mut()
+            .unwrap()
+            .insert("bogus".into(), serde_json::json!(true));
+        let mut unknown_aabb = wire;
+        unknown_aabb["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][0]
+            ["geometry_aabb"]
+            .as_object_mut()
+            .unwrap()
+            .insert("bogus".into(), serde_json::json!(true));
+        for mutation in [unknown_root, unknown_mesh, unknown_primitive, unknown_aabb] {
+            assert!(matches!(
+                reader_error(mutation),
+                MeasurementReportError::File {
+                    source: MeasurementFileError::InvalidMeasurementsShape { reason },
+                    ..
+                } if reason.contains("unknown field `bogus`")
+            ));
+        }
+    }
+
+    #[test]
+    fn current_v16_material_indices_follow_resource_coverage() {
+        let unavailable = measure_wire(primitive_measurement_contract());
+        serde_json::from_value::<MeasurementReportInput>(unavailable.clone())
+            .unwrap()
+            .into_files()
+            .expect("unavailable inventory may retain a source material index");
+
+        let mut complete_out_of_range = unavailable.clone();
+        complete_out_of_range["files"][0]["measurements"]["material_resource_coverage"] =
+            serde_json::json!("complete");
+        assert!(matches!(
+            reader_error(complete_out_of_range),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidMeasurements { .. },
+                ..
+            }
+        ));
+
+        let mut complete_in_range = unavailable;
+        complete_in_range["files"][0]["measurements"]["material_resource_coverage"] =
+            serde_json::json!("complete");
+        complete_in_range["files"][0]["measurements"]["material_definitions"] = serde_json::json!([{
+            "material_index": 0,
+            "name": null,
+            "texture_bindings": []
+        }]);
+        complete_in_range["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][0]["material_index"] =
+            serde_json::json!(0);
+        serde_json::from_value::<MeasurementReportInput>(complete_in_range)
+            .unwrap()
+            .into_files()
+            .expect("complete inventory accepts an in-range primitive material index");
+    }
+
+    #[test]
+    fn current_v16_leading_magic_is_bounded_reason_specific_hex() {
+        let mut assets = AssetMeasurements {
+            material_resource_coverage: MaterialResourceCoverage::Complete,
+            ..AssetMeasurements::default()
+        };
+        assets.images.push(ImageMeasurements {
+            image_index: 0,
+            name: None,
+            source_kind: ImageSourceKind::Embedded,
+            declared_mime_type: None,
+            detected_container: None,
+            leading_magic_hex: Some("00ff10".into()),
+            width: None,
+            height: None,
+            channel_count: None,
+            decoded_color_type: None,
+            unavailable_reason: Some(ImageUnavailableReason::UnsupportedContainer),
+        });
+        let wire = measure_wire(MeasurementContract::new(BTreeMap::new(), assets).unwrap());
+
+        let mut unknown_image = wire.clone();
+        unknown_image["files"][0]["measurements"]["images"][0]
+            .as_object_mut()
+            .unwrap()
+            .insert("bogus".into(), serde_json::json!(true));
+        assert!(matches!(
+            reader_error(unknown_image),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidMeasurementsShape { reason },
+                ..
+            } if reason.contains("unknown field `bogus`")
+        ));
+
+        for magic in ["", "0", "0F", "00ff00112233445566778899aabbccdde"] {
+            let mut mutation = wire.clone();
+            mutation["files"][0]["measurements"]["images"][0]["leading_magic_hex"] =
+                serde_json::json!(magic);
+            assert!(matches!(
+                reader_error(mutation),
+                MeasurementReportError::File {
+                    source: MeasurementFileError::InvalidMeasurements { .. },
+                    ..
+                }
+            ));
+        }
+
+        let mut wrong_reason = wire;
+        wrong_reason["files"][0]["measurements"]["images"][0]["unavailable_reason"] =
+            serde_json::json!("resource_limit");
+        assert!(matches!(
+            reader_error(wrong_reason),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidMeasurements { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn v12_v15_round_trips_without_inventing_primitive_rows() {
+        let current_provenance = prediction_test_provenance();
+        let historical_provenance = current_provenance.clone().historical_v15_for_test();
+        let basis =
+            EnginePredictionBasisV1::new_v16(vec![PredictionBasisReferenceV1::measurement_v16(
+                crate::MeasurementPointerV1::new("/measurements/schema_version").unwrap(),
+                PredictionScalarV1::UnsignedInteger { value: 15 },
+            )])
+            .unwrap();
+        let facet = EnginePredictionFacetV2::required_unavailable(
+            EvaluationScope::new(EvaluationScopeCode::custom("test:v12")),
+            basis,
+            vec![PredictionUnavailableReasonV2::MeasurementUnavailable],
+        )
+        .unwrap();
+        let current_check = unavailable_check("test:v12", &current_provenance, vec![facet.clone()]);
+        let prediction =
+            EnginePredictionV2::new(current_provenance.identity().clone(), vec![facet])
+                .unwrap()
+                .historical_v15_for_test(historical_provenance.identity().clone());
+        let mut check_wire = serde_json::to_value(current_check).unwrap();
+        check_wire["prediction"] = serde_json::to_value(prediction).unwrap();
+        let mut historical_assets = AssetMeasurements::default();
+        historical_assets
+            .mesh_definitions
+            .push(MeshDefinitionMeasurements {
+                mesh_index: 0,
+                name: "legacy-mesh".into(),
+                primitives: None,
+                vertex_count: 0,
+                geometry_aabb: None,
+                geometry_centroid: None,
+                max_joints_per_vertex: 0,
+                weight_sum_min: None,
+                weight_sum_max: None,
+                additional_influence_sets: Vec::new(),
+            });
+        let historical_measurements =
+            MeasurementContract::historical_v15(BTreeMap::new(), historical_assets).unwrap();
+        let wire = serde_json::json!({
+            "schema_version": OUTPUT_V12_SCHEMA_VERSION,
+            "schema": OUTPUT_V12_SCHEMA_ID,
+            "tool": {},
+            "command": "lint",
+            "summary": {"prediction_facets": {
+                "available": 0,
+                "required_prediction_unavailable": 1
+            }},
+            "files": [{
+                "path": "historical-v12.glb",
+                "input": {"sha256": "00".repeat(32), "bytes": 0},
+                "rig": serde_json::to_value(prediction_test_rig()).unwrap(),
+                "measurements": serde_json::to_value(historical_measurements).unwrap(),
+                "prediction_provenance": serde_json::to_value(historical_provenance).unwrap(),
+                "checks": [check_wire]
+            }]
+        });
+
+        let mut historical_with_unknowns = wire.clone();
+        historical_with_unknowns["files"][0]["measurements"]
+            .as_object_mut()
+            .unwrap()
+            .insert("future_root_field".into(), serde_json::json!(true));
+        historical_with_unknowns["files"][0]["measurements"]["mesh_definitions"][0]
+            .as_object_mut()
+            .unwrap()
+            .insert("future_mesh_field".into(), serde_json::json!(true));
+        serde_json::from_value::<MeasurementReportInput>(historical_with_unknowns)
+            .unwrap()
+            .into_files()
+            .expect("historical measurements-v15 retains permissive unknown-field readback");
+
+        let mut smuggled_primitives = wire.clone();
+        smuggled_primitives["files"][0]["measurements"]["mesh_definitions"][0]["primitives"] =
+            serde_json::json!([]);
+        assert!(matches!(
+            serde_json::from_value::<MeasurementReportInput>(smuggled_primitives)
+                .unwrap()
+                .into_files(),
+            Err(MeasurementReportError::File {
+                source: MeasurementFileError::InvalidMeasurements { source },
+                ..
+            }) if source.to_string().contains("measurements-v15 cannot carry per-primitive evidence")
+        ));
+
+        let mut smuggled_magic = wire.clone();
+        smuggled_magic["files"][0]["measurements"]["material_resource_coverage"] =
+            serde_json::json!("complete");
+        smuggled_magic["files"][0]["measurements"]["images"] = serde_json::json!([{
+            "image_index": 0,
+            "name": null,
+            "source_kind": "embedded",
+            "declared_mime_type": null,
+            "detected_container": null,
+            "leading_magic_hex": "00",
+            "width": null,
+            "height": null,
+            "channel_count": null,
+            "decoded_color_type": null,
+            "unavailable_reason": "unsupported_container"
+        }]);
+        assert!(matches!(
+            serde_json::from_value::<MeasurementReportInput>(smuggled_magic)
+                .unwrap()
+                .into_files(),
+            Err(MeasurementReportError::File {
+                source: MeasurementFileError::InvalidMeasurements { source },
+                ..
+            }) if source.to_string().contains("measurements-v15 cannot carry leading-magic evidence")
+        ));
+
+        let files = serde_json::from_value::<MeasurementReportInput>(wire.clone())
+            .unwrap()
+            .into_files()
+            .unwrap();
+        let readback = serde_json::to_value(files[0].measurements()).unwrap();
+        assert_eq!(readback["schema_version"], serde_json::json!(15));
+        assert_eq!(
+            readback["schema"],
+            serde_json::json!(MEASUREMENTS_V15_SCHEMA_ID)
+        );
+        assert_eq!(readback["mesh_definitions"].as_array().unwrap().len(), 1);
+        assert!(readback["mesh_definitions"][0].get("primitives").is_none());
+
+        let mut historical_max = wire.clone();
+        historical_max["files"][0]["measurements"]["mesh_definitions"][0]["vertex_count"] =
+            serde_json::json!(u32::MAX);
+        serde_json::from_value::<MeasurementReportInput>(historical_max)
+            .unwrap()
+            .into_files()
+            .expect("measurements-v15 retains its historical inclusive u32 maximum");
+
+        let mut historical_overflow = wire.clone();
+        historical_overflow["files"][0]["measurements"]["mesh_definitions"][0]["vertex_count"] =
+            serde_json::json!(u64::from(u32::MAX) + 1);
+        assert!(matches!(
+            lint_read_error(historical_overflow),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidMeasurements { .. },
+                ..
+            }
+        ));
+
+        let mut v16_basis = wire;
+        v16_basis["files"][0]["checks"][0]["prediction"]["facets"][0]["basis"]["references"][0]["schema"] =
+            serde_json::json!(MEASUREMENTS_SCHEMA_ID);
+        assert!(matches!(
+            lint_read_error(v16_basis),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidPrediction {
+                    source: PredictionContractError::InvalidSchema {
+                        field: "basis.measurement.schema",
+                        expected: MEASUREMENTS_V15_SCHEMA_ID,
+                        ..
+                    },
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn adjacent_output_revisions_reject_each_others_nested_measurements() {
+        let current = measure_wire(prediction_test_measurements());
+        let mut v12_with_v16 = current.clone();
+        v12_with_v16["schema_version"] = serde_json::json!(OUTPUT_V12_SCHEMA_VERSION);
+        v12_with_v16["schema"] = serde_json::json!(OUTPUT_V12_SCHEMA_ID);
+        assert!(matches!(
+            reader_error(v12_with_v16),
+            MeasurementReportError::File {
+                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 16 },
+                ..
+            }
+        ));
+
+        let historical =
+            MeasurementContract::historical_v15(BTreeMap::new(), AssetMeasurements::default())
+                .unwrap();
+        let mut v13_with_v15 = current;
+        v13_with_v15["files"][0]["measurements"] = serde_json::to_value(historical).unwrap();
+        assert!(matches!(
+            reader_error(v13_with_v15),
+            MeasurementReportError::File {
+                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 15 },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn legacy_output_v11_reader_dispatch_preserves_measurement_recovery() {
         let provenance = prediction_test_provenance();
         let legacy = PredictionProvenanceV1::new(
@@ -5523,7 +6543,8 @@ mod measurement_report_input_tests {
             provenance.raw_source().clone(),
             provenance.dependency_closure().clone(),
         )
-        .unwrap();
+        .unwrap()
+        .historical_v15_for_test();
         let legacy_prediction = EnginePredictionV1::new(
             legacy.identity().clone(),
             vec![
@@ -5535,7 +6556,11 @@ mod measurement_report_input_tests {
                 .unwrap(),
             ],
         )
-        .unwrap();
+        .unwrap()
+        .historical_v15_for_test(legacy.identity().clone());
+        let legacy_measurements =
+            MeasurementContract::historical_v15(BTreeMap::new(), AssetMeasurements::default())
+                .unwrap();
         // This is an actual V11/V1 wire shape, deliberately constructed
         // without producing a V12 envelope and swapping only its header.
         let wire = serde_json::json!({
@@ -5553,7 +6578,7 @@ mod measurement_report_input_tests {
                 "path": "legacy-v11.glb",
                 "input": { "sha256": "00".repeat(32), "bytes": 0 },
                 "rig": serde_json::to_value(prediction_test_rig()).unwrap(),
-                "measurements": serde_json::to_value(prediction_test_measurements()).unwrap(),
+                "measurements": serde_json::to_value(legacy_measurements).unwrap(),
                 "prediction_provenance": serde_json::to_value(legacy.clone()).unwrap(),
                 "checks": [{
                     "check_id": "test:legacy-v11",
@@ -5743,9 +6768,9 @@ pub enum OutputContractError {
     /// A check carried prediction evidence without its file-scoped authority.
     #[error("engine prediction requires non-null file prediction_provenance")]
     PredictionWithoutProvenance,
-    /// A current output-v12 lint record attempted to attach historical V1
+    /// A current output-v13 lint record attempted to attach historical V1
     /// prediction evidence.
-    #[error("output-v12 lint cannot carry engine-prediction-v1 evidence")]
+    #[error("output-v13 lint cannot carry engine-prediction-v1 evidence")]
     HistoricalPredictionInV2Output,
     /// File and provenance primary-input identities differed.
     #[error("prediction provenance primary input does not match the lint file input")]
@@ -5909,7 +6934,7 @@ impl MeasureEnvelope {
     }
 }
 
-/// Current output-v12 lint file evidence with V2 prediction provenance.
+/// Current output-v13 lint file evidence with V2 prediction provenance.
 #[derive(Debug, Clone, Serialize)]
 pub struct LintFileReport {
     #[serde(flatten)]
@@ -6067,7 +7092,7 @@ struct EnvelopeHeaderV2 {
     command: &'static str,
 }
 
-/// Current output-v12 lint envelope.
+/// Current output-v13 lint envelope.
 #[derive(Debug, Clone, Serialize)]
 pub struct LintEnvelope {
     #[serde(flatten)]
@@ -6129,8 +7154,8 @@ impl LintEnvelope {
         }
         Ok(Self {
             header: EnvelopeHeaderV2 {
-                schema_version: OUTPUT_V12_SCHEMA_VERSION,
-                schema: OUTPUT_V12_SCHEMA_ID,
+                schema_version: OUTPUT_SCHEMA_VERSION,
+                schema: OUTPUT_SCHEMA_ID,
                 tool,
                 command: "lint",
             },

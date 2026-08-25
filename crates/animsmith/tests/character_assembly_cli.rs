@@ -1010,6 +1010,7 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
         .map(|joint| base_worlds[joint].inverse() * geometry_world)
         .collect();
     let body_primitive = Primitive {
+        source_primitive_index: None,
         material: Some(0),
         indices: vec![0, 1, 2],
         positions: vec![
