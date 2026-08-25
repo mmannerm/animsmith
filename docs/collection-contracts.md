@@ -2,20 +2,22 @@
 
 This document records versioned extensions to the file-scoped collection
 decision in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file-scoped-clip-identity-and-collections).
-Contact-fragment V1 now includes its strict standalone and manifest-selected
+Contact-fragment V1 includes its strict standalone and manifest-selected
 producer/CLI/publication boundary. The directional-speed policy/evaluation V1
-is a separate ordered slice. Neither contact transforms nor runtime systems
-are delivered here.
+is a separate ordered 0.6.0 slice with one JSON-only evaluator command.
+Neither contact transforms nor runtime systems are delivered here.
 
 ## Directional-speed policy V1 (#552, ordered slice)
 
 The strict `collection-directional-speed-policy:1` reader is an ordered,
-manifest-bound declaration for a later directional-speed evaluator. It is a
+manifest-bound declaration for the directional-speed evaluator. It is a
 separate TOML envelope: it does not add fields to collection-manifest V1,
-revise collection-output V2, infer membership from filenames or paths, or add
-the eventual `collection evaluate-directional-speed` command. This slice only
-freezes the typed reader, binding contract, pure evaluator, immutable result,
-and strict V2 adapter; command and publication remain a follow-up.
+revise collection-output V2, or infer membership from filenames or paths.
+`animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence
+COLLECTION-OUTPUT.json --format json` binds its raw bounded inputs to the
+typed reader, strict V2 adapter, pure evaluator, and immutable result. There
+is no output file, text/Markdown, subset, or inference mode; publication
+remains a consumer responsibility.
 
 The envelope repeats the exact manifest identity (`collection_id` plus
 `{sha256, bytes}`), one directional-blend `runtime_set_id`, and every existing

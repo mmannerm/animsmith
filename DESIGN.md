@@ -3872,14 +3872,14 @@ contract only: checks, findings, reports, required gameplay metadata, inferred
 edges, state machines, blend trees, and runtime transition generation remain
 follow-up work tracked by #153/#164 in 0.6.0 or later.
 
-### F.12 Directional-speed policy V1 (#552, ordered slice 1)
+### F.12 Directional-speed policy/evaluation V1 (#552)
 
 The directional-speed policy is a separate, manifest-bound declaration for
 directional-blend runtime sets. It is not a field in collection-manifest V1,
 does not revise collection-output V2, and does not infer membership from
-filenames, paths, engine controller types, or other host metadata. Slice 1
-freezes only the typed contract and strict TOML reader. The evaluator,
-evaluation result, and CLI command remain later consumers of this contract.
+filenames, paths, engine controller types, or other host metadata. The typed
+contract and strict TOML reader feed the evaluator and its JSON-only CLI
+consumer; no new manifest or collection-output authority is introduced.
 
 The schema identity is
 `urn:animsmith:schema:collection-directional-speed-policy:1`, with
@@ -3954,10 +3954,10 @@ or unsupported-version classifications; it then performs the complete
 deny-unknown-fields decode and typed invariant validation. This two-pass
 lifecycle is classification, not a second policy authority.
 
-There is no evaluator inference or fallback. Slice 2 provides a pure,
-format-neutral `collection-directional-speed-evaluation:1` result and a typed
-adapter from already strictly decoded collection-output V2 evidence; it does
-not revise V2 or add a command. The immutable result binds the raw policy TOML
+There is no evaluator inference or fallback. The pure, format-neutral
+`collection-directional-speed-evaluation:1` result and typed adapter consume
+already strictly decoded collection-output V2 evidence; they do not revise V2.
+The immutable result binds the raw policy TOML
 and evidence JSON `InputIdentity` values as well as the manifest, and retains
 every member's coordinate, raw root-travel values, projected heading,
 comparison values, pass/violation state, lifecycle, and gaps.
@@ -3973,6 +3973,12 @@ without a subset or fabricated finding. Preserve uses `hypot(coordinate)` as
 the expected-speed gain; normalize uses one, and the ratio reference remains
 exactly one. Findings retain manifest order, direction before speed/ratio.
 
-The `collection evaluate-directional-speed` command, filesystem publication,
-controller generation, retiming, stride rewriting, and universal speed rules
-remain deferred to later ordered slices.
+`animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence
+COLLECTION-OUTPUT.json --format json` captures policy bytes under the 8 MiB
+cap and evidence bytes under the 256 MiB cap before retaining them, invokes
+the strict readers/adapter/evaluator, and serializes the result once to stdout.
+Invalid, stale, wrong-kind, unreadable, malformed, or over-budget control
+inputs exit 2 with no result. Incomplete/not-evaluable evidence and policy
+findings emit the result and exit 1; only a complete passing policy exits 0.
+There is no filesystem publication, controller generation, retiming, stride
+rewriting, or universal speed rule.

@@ -99,6 +99,7 @@ clip.glb:
 
 $ animsmith lint export.fbx
 $ animsmith collection lint collection.toml --format json
+$ animsmith collection evaluate-directional-speed --policy directional-speed.toml --evidence collection-output.json --format json
 $ animsmith measure clip.glb
 $ animsmith inspect clip.glb
 $ animsmith generate addressability clip.glb

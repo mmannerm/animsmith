@@ -53,6 +53,7 @@ animsmith measure <file...> [--format text|json]
 animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
 animsmith collection lint <collection.toml> [--format json]
 animsmith collection generate-contact-fragment <manifest.toml> --clip <logical-id> -o <out.json> [--format text|json]
+animsmith collection evaluate-directional-speed --policy <policy.toml> --evidence <collection-output.json> [--format json]
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
@@ -72,9 +73,11 @@ when authoring `assemble` or material texture recipes.
 
 `--config animsmith.toml` is global for document-local commands. Without it, the CLI auto-loads
 `./animsmith.toml` when present and otherwise uses built-in defaults.
-Collection commands deliberately reject the global spelling: each source uses
-the config declared in the collection manifest, or exact built-in defaults
-when none is declared. It never discovers an ambient `./animsmith.toml`.
+Collection commands deliberately reject the global spelling. `collection lint`
+uses each source config declared in the collection manifest, or exact built-in
+defaults when none is declared; it never discovers an ambient
+`./animsmith.toml`. `collection evaluate-directional-speed` has no config or
+output-path option: its policy and evidence inputs fully declare its boundary.
 
 `transform --gait-anchor` is an explicit declaration that each selected clip
 is an in-place cyclic gait. Before rewriting, it samples the configured Root
@@ -201,13 +204,14 @@ tangents.
 | Code | Meaning |
 |---:|---|
 | 0 | No failing findings and no required-unavailable engine prediction facets; warnings, notes, or ordinary coverage gaps may remain. |
-| 1 | At least one failing finding, any `required_prediction_unavailable` facet (including an embedded Bevy addressability evaluation), an incomplete `collection lint` result, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
+| 1 | At least one failing finding, any `required_prediction_unavailable` facet (including an embedded Bevy addressability evaluation), an incomplete `collection lint` result, an incomplete or not-evaluable directional-speed evaluation, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 The code reports what the run *did*, never how well it could report it. This
 holds for **every stdout presentation**: parser-rendered help/version, text,
 Markdown, and every `--format json` path (`measure`, `lint`, `collection lint`,
-`diff`, `convert`, `assemble`, `scale`, `generate addressability`). If
+`collection evaluate-directional-speed`, `diff`, `convert`, `assemble`, `scale`,
+`generate addressability`). If
 stdout cannot accept the result — a closed pipe or full filesystem — the
 checked write never panics, a best-effort checked diagnostic goes to stderr,
 and the stdout-bearing path's already-established code stands. Thus
@@ -644,7 +648,8 @@ absent selector field or explicit empty list means no runtime-node policy.
 
 ## Machine Output
 
-`measure`, `lint`, `collection lint`, `diff`, `generate addressability`, and
+`measure`, `lint`, `collection lint`, `collection evaluate-directional-speed`,
+`diff`, `generate addressability`, and
 `generate import-advice` support
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
@@ -680,6 +685,20 @@ set emits `evidence.gait_phase.phase_spread` with basis
 `max_circular_deviation_from_mean`; this preserves existing gait lint
 threshold semantics. See
 [`collection-output-v2.schema.json`](schemas/collection-output-v2.schema.json).
+
+`collection evaluate-directional-speed --policy POLICY.toml --evidence
+COLLECTION-OUTPUT.json --format json` strictly reads a bounded
+`collection-directional-speed-policy:1` declaration and a bounded
+`collection-output:2` document, then writes the separate immutable
+`urn:animsmith:schema:collection-directional-speed-evaluation:1` result. The
+result binds the exact raw TOML and JSON byte identities and preserves every
+declared member in manifest order. Invalid, stale, wrong-kind, unreadable,
+malformed, or over-budget inputs exit 2 with no stdout. Incomplete root travel,
+zero endpoint displacement, zero ratio reference, numeric-range outcomes, and
+declared-policy findings write the result and exit 1; only a complete passing
+policy exits 0. It has no text/Markdown presentation, `--output`, subset, or
+inference mode. See
+[`collection-directional-speed-evaluation-v1.schema.json`](schemas/collection-directional-speed-evaluation-v1.schema.json).
 
 `generate addressability` has a separate immutable contract,
 `urn:animsmith:schema:gltf-animation-addressability:1`; see

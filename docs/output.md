@@ -28,6 +28,21 @@ exit 1; manifest, rooted-path, selected-config, serialization, and tool errors
 exit 2 with no envelope. The frontend preflights the complete control plane
 before source execution and reads sources sequentially.
 
+## Collection directional-speed evaluation
+
+`animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence
+COLLECTION-OUTPUT.json --format json` consumes only strict bounded
+`collection-directional-speed-policy:1` TOML and `collection-output:2` JSON.
+It emits the JSON-only immutable
+`urn:animsmith:schema:collection-directional-speed-evaluation:1` result
+described by
+[`collection-directional-speed-evaluation-v1.schema.json`](schemas/collection-directional-speed-evaluation-v1.schema.json).
+The result identifies the raw policy and evidence bytes, retains all declared
+members in manifest order, and records incomplete/not-evaluated outcomes or
+declared-policy findings without evaluating a subset. Control-plane failures
+write no result and exit 2; result-bearing incomplete, not-evaluable, and
+finding outcomes exit 1; a complete passing policy exits 0.
+
 Runtime-set evidence concludes only whether every declared membership and required
 indexed measurement was established. Its decision is always `not_evaluated`;
 it does not infer blending, synchronization, retargeting, controller policy,
