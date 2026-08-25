@@ -1045,11 +1045,12 @@ fn load_survives_zero_count_optional_accessor() {
     );
 }
 
-/// Only triangle lists are ingested: a non-TRIANGLES primitive (here
-/// POINTS, `mode: 0`) is skipped rather than misread as a triangle list,
-/// so it never silently round-trips as corrupted TRIANGLES.
+/// Only triangle lists are ingested: a non-TRIANGLES primitive (here POINTS,
+/// `mode: 0`) is skipped rather than misread as a triangle list. The retained
+/// triangle still identifies its original source slot rather than being
+/// renumbered after filtering.
 #[test]
-fn load_skips_non_triangle_primitive() {
+fn load_skips_non_triangle_primitive_and_preserves_retained_source_slot() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("points-primitive.gltf");
     std::fs::write(
@@ -1059,7 +1060,10 @@ fn load_skips_non_triangle_primitive() {
             "buffers": [{ "byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA" }],
             "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }],
             "accessors": [{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] }],
-            "meshes": [{ "primitives": [{ "mode": 0, "attributes": { "POSITION": 0 } }] }],
+            "meshes": [{ "primitives": [
+                { "mode": 0, "attributes": { "POSITION": 0 } },
+                { "attributes": { "POSITION": 0 } }
+            ] }],
             "nodes": [{ "mesh": 0 }],
             "scenes": [{ "nodes": [0] }],
             "scene": 0
@@ -1068,10 +1072,9 @@ fn load_skips_non_triangle_primitive() {
     .unwrap();
 
     let doc = animsmith_gltf::load(&path).expect("loads");
-    assert!(
-        doc.assets.meshes.is_empty(),
-        "POINTS primitive skipped, not ingested as triangles"
-    );
+    let primitives = &doc.assets.meshes[0].primitives;
+    assert_eq!(primitives.len(), 1, "POINTS primitive is skipped");
+    assert_eq!(primitives[0].source_primitive_index, Some(1));
 }
 
 /// A count-0 `inverseBindMatrices` accessor must not crash the loader.

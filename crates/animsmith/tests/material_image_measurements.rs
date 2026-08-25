@@ -8,15 +8,15 @@ use std::path::Path;
 use std::process::Command;
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v15.schema.json");
+    include_str!("../../../docs/schemas/measurements-v16.schema.json");
 
 fn assert_valid_measurements(value: &Value) {
-    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v15 schema JSON");
+    let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid v16 schema JSON");
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     let errors = validator.iter_errors(value).collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "v15 measurement schema errors: {errors:#?}"
+        "v16 measurement schema errors: {errors:#?}"
     );
 }
 
@@ -25,7 +25,7 @@ fn assert_invalid_measurements(value: &Value) {
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     assert!(
         !validator.is_valid(value),
-        "measurement schema must keep the material-slot vocabulary closed: {value:#}"
+        "measurement schema must reject the mutated contract: {value:#}"
     );
 }
 
@@ -263,6 +263,26 @@ fn cli_measure_reports_deterministic_material_image_inventory_without_paths() {
     assert!(images[5].get("width").is_none());
     assert_eq!(images[6]["source_kind"], "external");
     assert_eq!(images[6]["unavailable_reason"], "unsupported_container");
+    assert_eq!(
+        images[6]["leading_magic_hex"],
+        "424d6e6f742d612d7265616c2d626974"
+    );
+    for (index, image) in images.iter().enumerate() {
+        if index != 6 {
+            assert!(
+                image.get("leading_magic_hex").is_none(),
+                "only unsupported nonempty payloads retain magic evidence"
+            );
+        }
+    }
+    for invalid_magic in ["424D", "424", "424d6e6f742d612d7265616c2d62697400", "zz"] {
+        let mut invalid = measurements.clone();
+        invalid["images"][6]["leading_magic_hex"] = json!(invalid_magic);
+        assert_invalid_measurements(&invalid);
+    }
+    let mut wrong_state = measurements.clone();
+    wrong_state["images"][5]["leading_magic_hex"] = json!("8950");
+    assert_invalid_measurements(&wrong_state);
     assert_eq!(images[7]["source_kind"], "data_uri");
     assert_eq!(images[7]["declared_mime_type"], "image/png");
     assert_eq!(images[7]["detected_container"], "png");

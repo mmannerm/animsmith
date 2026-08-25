@@ -21,7 +21,7 @@ use crate::profile::{ResolvedRoles, Role};
 use crate::sample::PoseGrid;
 use crate::transform::analyze_duplicate_loop_endpoint;
 use glam::{Mat3, Mat4, Vec3};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Rotation ranges below this are not recorded (matches the incubating
@@ -53,6 +53,40 @@ pub struct Aabb {
     pub max: [f32; 3],
 }
 
+/// Static base-geometry measurements of one source mesh primitive.
+///
+/// Position rows are measured exactly as decoded by the loader. Indexed
+/// primitives therefore count each stored position once, rather than counting
+/// index references.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct PrimitiveMeasurements {
+    /// Zero-based position in the owning mesh's source primitive array, or
+    /// retained primitive order when the normalized document has no source
+    /// primitive identity.
+    pub primitive_index: usize,
+    /// Stable source material index, when the primitive declares one.
+    #[serde(deserialize_with = "deserialize_required_material_index")]
+    pub material_index: Option<usize>,
+    /// Number of decoded base `POSITION` rows, including non-finite rows.
+    pub vertex_count: u64,
+    /// Number of decoded base `POSITION` rows whose coordinates are finite.
+    pub finite_vertex_count: u64,
+    /// Bounding box over finite base `POSITION` rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_aabb: Option<Aabb>,
+    /// Arithmetic mean of finite base `POSITION` rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_centroid: Option<[f32; 3]>,
+}
+
+fn deserialize_required_material_index<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<usize>::deserialize(deserializer)
+}
+
 /// Static base-geometry measurements of one source mesh definition.
 ///
 /// Vertex data is measured from loader-decoded base geometry: indexed meshes
@@ -67,8 +101,13 @@ pub struct MeshDefinitionMeasurements {
     pub mesh_index: usize,
     /// Mesh name.
     pub name: String,
+    /// Per-primitive measurements in source order. Current measurements-v16
+    /// producers always emit this field; `None` is retained only while reading
+    /// historical measurements-v15 payloads that predate primitive evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primitives: Option<Vec<PrimitiveMeasurements>>,
     /// Total position count across the mesh's primitives.
-    pub vertex_count: u32,
+    pub vertex_count: u64,
     /// Bounding box over every finite base `POSITION`; `None` when none exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry_aabb: Option<Aabb>,
@@ -224,6 +263,10 @@ pub struct ImageMeasurements {
     /// Container recognized during inspection, when any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detected_container: Option<ImageContainerFormat>,
+    /// Lowercase hex for at most the first 16 bytes of a nonempty unsupported
+    /// payload. This is evidence only and never a guessed container type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leading_magic_hex: Option<String>,
     /// Pixel width when decoded metadata is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
@@ -693,6 +736,13 @@ impl Centroid {
         self.count += 1;
     }
 
+    fn include_published_mean(&mut self, mean: [f32; 3], count: u64) {
+        for (sum, value) in self.sum.iter_mut().zip(mean) {
+            *sum += f64::from(value) * count as f64;
+        }
+        self.count += count;
+    }
+
     fn finish(self) -> Option<[f32; 3]> {
         (self.count != 0).then(|| {
             let count = self.count as f64;
@@ -702,25 +752,39 @@ impl Centroid {
 }
 
 fn measure_mesh_definition(mesh: &MeshAsset) -> MeshDefinitionMeasurements {
-    let mut vertex_count = 0u32;
-    let mut bounds = Bounds::default();
-    let mut centroid = Centroid::default();
+    let mut vertex_count = 0u64;
     let mut max_joints_per_vertex = 0u32;
     let mut weight_sum_min = f64::INFINITY;
     let mut weight_sum_max = f64::NEG_INFINITY;
     let mut any_finite_weight = false;
     let mut additional_influence_sets: BTreeMap<u32, AdditionalInfluenceSetMeasurements> =
         BTreeMap::new();
+    let mut primitives = Vec::with_capacity(mesh.primitives.len());
 
-    for primitive in &mesh.primitives {
-        vertex_count = vertex_count.saturating_add(primitive.positions.len() as u32);
+    for (retained_primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+        let primitive_vertex_count = primitive.positions.len() as u64;
+        vertex_count = vertex_count.saturating_add(primitive_vertex_count);
+        let mut primitive_bounds = Bounds::default();
+        let mut primitive_centroid = Centroid::default();
+        let mut finite_vertex_count = 0u64;
         for &position in &primitive.positions {
             // Non-finite geometry remains visible to the `nan` check but must
             // never leak a JSON-invalid bound.
-            if bounds.include(position) {
-                centroid.include(position);
+            if primitive_bounds.include(position) {
+                finite_vertex_count = finite_vertex_count.saturating_add(1);
+                primitive_centroid.include(position);
             }
         }
+        primitives.push(PrimitiveMeasurements {
+            primitive_index: primitive
+                .source_primitive_index
+                .unwrap_or(retained_primitive_index),
+            material_index: primitive.material,
+            vertex_count: primitive_vertex_count,
+            finite_vertex_count,
+            geometry_aabb: primitive_bounds.finish(),
+            geometry_centroid: primitive_centroid.finish(),
+        });
         for weights in &primitive.weights {
             let influences = weights.iter().filter(|&&weight| weight > 0.0).count() as u32;
             max_joints_per_vertex = max_joints_per_vertex.max(influences);
@@ -752,9 +816,24 @@ fn measure_mesh_definition(mesh: &MeshAsset) -> MeshDefinitionMeasurements {
         }
     }
 
+    // Mesh aggregates are composed from the exact primitive facts published
+    // on the wire. This gives strict readers one deterministic equality to
+    // verify instead of requiring a tolerance for independently rounded means.
+    let mut bounds = Bounds::default();
+    let mut centroid = Centroid::default();
+    for primitive in &primitives {
+        if let Some(aabb) = primitive.geometry_aabb {
+            bounds.include_aabb(aabb);
+        }
+        if let Some(mean) = primitive.geometry_centroid {
+            centroid.include_published_mean(mean, primitive.finite_vertex_count);
+        }
+    }
+
     MeshDefinitionMeasurements {
         mesh_index: mesh.source_mesh_index,
         name: mesh.name.clone(),
+        primitives: Some(primitives),
         vertex_count,
         geometry_aabb: bounds.finish(),
         geometry_centroid: centroid.finish(),
@@ -1579,6 +1658,7 @@ pub fn measure_assets(doc: &Document) -> AssetMeasurements {
                 source_kind: image.source_kind,
                 declared_mime_type: image.declared_mime_type.clone(),
                 detected_container: image.detected_container,
+                leading_magic_hex: image.leading_magic_hex.clone(),
                 width,
                 height,
                 channel_count,
@@ -4200,6 +4280,79 @@ mod tests {
             Some([1.5, 1.5, 0.0]),
             "four finite position rows, independent of six index references"
         );
+    }
+
+    #[test]
+    fn mesh_centroid_is_composed_from_published_primitive_centroids() {
+        let first = Primitive {
+            positions: vec![Vec3::new(-10.0, 0.0, 0.0); 3],
+            ..Primitive::default()
+        };
+        let second = Primitive {
+            positions: vec![Vec3::new(-10.0, 0.0, 0.0), Vec3::new(-9.7, 0.0, 0.0)],
+            ..Primitive::default()
+        };
+        let measurements = mesh("rounded-centroids", vec![first, second]);
+        let primitives = measurements.primitives.as_ref().unwrap();
+        let first_mean = primitives[0].geometry_centroid.unwrap()[0];
+        let second_mean = primitives[1].geometry_centroid.unwrap()[0];
+        let expected = ((f64::from(first_mean) * 3.0 + f64::from(second_mean) * 2.0) / 5.0) as f32;
+
+        assert_eq!(measurements.geometry_centroid.unwrap()[0], expected);
+        assert_ne!(
+            expected,
+            ((-10.0f64 * 4.0 + f64::from(-9.7f32)) / 5.0) as f32,
+            "fixture must exercise the primitive-centroid rounding boundary"
+        );
+    }
+
+    #[test]
+    fn primitive_measurements_preserve_source_slots_and_finite_geometry_domain() {
+        let first = Primitive {
+            source_primitive_index: Some(2),
+            material: Some(7),
+            positions: vec![Vec3::new(-2.0, 1.0, 0.0), Vec3::splat(f32::NAN)],
+            indices: vec![0, 0, 0],
+            ..Primitive::default()
+        };
+        let second = Primitive {
+            source_primitive_index: Some(5),
+            material: None,
+            positions: vec![Vec3::new(4.0, 3.0, 0.0), Vec3::new(6.0, 3.0, 0.0)],
+            indices: vec![0, 1, 1],
+            ..Primitive::default()
+        };
+        let measurements = mesh("primitive-order", vec![first, second]);
+
+        assert_eq!(measurements.vertex_count, 4);
+        let primitives = measurements.primitives.as_ref().unwrap();
+        assert_eq!(primitives.len(), 2);
+        assert_eq!(primitives[0].primitive_index, 2);
+        assert_eq!(primitives[0].material_index, Some(7));
+        assert_eq!(primitives[0].vertex_count, 2);
+        assert_eq!(primitives[0].finite_vertex_count, 1);
+        assert_eq!(primitives[0].geometry_aabb.unwrap().min, [-2.0, 1.0, 0.0]);
+        assert_eq!(primitives[0].geometry_centroid, Some([-2.0, 1.0, 0.0]));
+        assert_eq!(primitives[1].primitive_index, 5);
+        assert_eq!(primitives[1].material_index, None);
+        assert_eq!(primitives[1].vertex_count, 2);
+        assert_eq!(primitives[1].finite_vertex_count, 2);
+        assert_eq!(primitives[1].geometry_centroid, Some([5.0, 3.0, 0.0]));
+        let mesh_aabb = measurements.geometry_aabb.as_ref().unwrap();
+        assert_eq!(mesh_aabb.min, [-2.0, 1.0, 0.0]);
+        assert_eq!(mesh_aabb.max, [6.0, 3.0, 0.0]);
+        assert_eq!(
+            measurements.geometry_centroid,
+            Some([8.0 / 3.0, 7.0 / 3.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn primitive_measurements_fall_back_to_retained_order_without_source_slots() {
+        let measurements = mesh("manual", vec![Primitive::default(), Primitive::default()]);
+        let primitives = measurements.primitives.unwrap();
+        assert_eq!(primitives[0].primitive_index, 0);
+        assert_eq!(primitives[1].primitive_index, 1);
     }
 
     #[test]

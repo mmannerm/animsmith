@@ -93,7 +93,7 @@ should fail on warnings too:
 $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
-For machine consumption, `--format json` emits the v11 result envelope
+For machine consumption, `--format json` emits the v13 result envelope
 (see [output.md](../docs/output.md)). This `jq` projection keeps the example
 short while showing where retained/promotion evidence, content findings, and
 independently versioned measurement evidence live:
@@ -108,8 +108,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
         {check_id, selection, configuration, applicability, evaluation, findings}),
       measurements: (.files[0].measurements | {schema_version, schema})}'
 {
-  "schema_version": 11,
-  "schema": "urn:animsmith:schema:output:11",
+  "schema_version": 13,
+  "schema": "urn:animsmith:schema:output:13",
   "command": "lint",
   "prediction_facets": {
     "available": 0,
@@ -133,8 +133,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 15,
-    "schema": "urn:animsmith:schema:measurements:15"
+    "schema_version": 16,
+    "schema": "urn:animsmith:schema:measurements:16"
   }
 }
 ```
@@ -356,8 +356,8 @@ all trajectory values are zero while the selected source remains explicit:
 ```console
 $ animsmith measure --format json examples/assets/walk.glb
 {
-  "schema_version": 11,
-  "schema": "urn:animsmith:schema:output:11",
+  "schema_version": 13,
+  "schema": "urn:animsmith:schema:output:13",
   "tool": { "name": "animsmith", "version": "0.6.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -373,8 +373,8 @@ $ animsmith measure --format json examples/assets/walk.glb
         "resolved_roles": { "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" },
         "resolved_role_policies": { "hips": "exact", "left_foot": "exact", "right_foot": "exact" } },
       "measurements": {
-        "schema_version": 15,
-        "schema": "urn:animsmith:schema:measurements:15",
+        "schema_version": 16,
+        "schema": "urn:animsmith:schema:measurements:16",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],

@@ -89,9 +89,9 @@ fn ordinary_explicit_config_and_lint_output_contract_are_unchanged() {
         String::from_utf8_lossy(&output.stderr)
     );
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("lint JSON");
-    assert_eq!(value["schema"], "urn:animsmith:schema:output:12");
+    assert_eq!(value["schema"], "urn:animsmith:schema:output:13");
     assert_eq!(
         value["files"][0]["measurements"]["schema"],
-        "urn:animsmith:schema:measurements:15"
+        "urn:animsmith:schema:measurements:16"
     );
 }

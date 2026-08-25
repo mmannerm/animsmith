@@ -129,7 +129,7 @@ animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hol
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
 animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
-animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v12 measure/lint JSON
+animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v13 measure/lint JSON
 ```
 
 - `lint` = measure + judge against config. `measure` is lint minus
@@ -588,8 +588,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v12, identified by
-  `urn:animsmith:schema:output:12`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): final output v13, identified by
+  `urn:animsmith:schema:output:13`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -597,7 +597,13 @@ learns an embedder's contract schema.
   `base_color`, `normal`, `metallic_roughness`, `occlusion`, and `emissive`
   texture slots, texture-to-image identity, and decoded image metadata in
   source order. Complete coverage is scoped to that documented core domain;
-  extension-defined texture slots are not implied. The contract makes absent
+  extension-defined texture slots are not implied. Measurements-v16 also
+  inventories each mesh's primitives in source order: nullable source material,
+  total and finite decoded `POSITION` rows, and finite-only primitive AABB and
+  centroid. Indexed geometry counts each stored position once rather than index
+  references. Unsupported nonempty images may carry at most 16 bytes of
+  lowercase `leading_magic_hex`; it is evidence only and never a guessed
+  container format. The contract makes absent
   loader support explicit as unavailable coverage and separates a
   source-declared MIME type from byte-detected container and decoded image
   facts. This remains measurement evidence, not an image acceptance, repair,
@@ -614,9 +620,10 @@ learns an embedder's contract schema.
   Output v10 added the registry-independent engine-prediction provenance and
   scoped-facet substrate described in Appendix E. Output v11 retained it and
   added per-role resolution outcome and match-policy provenance. Output v12
-  uses bounded V2 provenance/settings/prediction evidence and catalog-allocated
-  facet summaries. Measurements remain v15; output v10/v11 remain immutable
-  historical contracts.
+  introduced bounded V2 provenance/settings/prediction evidence and
+  catalog-allocated facet summaries; output v13 retains that evidence while
+  advancing its nested measurements to v16. Measurements-v15, output-v12, and
+  collection-output-v4 remain immutable historical contracts.
   Measurements v14 gives every clip fact that is not applicable to every
   clip (loop continuity, loop endpoint mode, frame grid, loop seam ratio,
   gait and its phase, and root-motion speed) a required sibling
@@ -636,7 +643,7 @@ learns an embedder's contract schema.
   CLI exit status derives from content severity (warnings block only with
   `--deny-warnings`) plus required-unavailable engine-prediction facets;
   ordinary coverage gaps remain nonblocking evidence.
-  The current output-v12 envelope types and immutable identities live in
+  The current output-v13 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -3003,7 +3010,7 @@ the existing multi-file spelling of `lint` collection-aware.
 AnimSmith provides two independently versioned contracts:
 
 - `urn:animsmith:schema:collection-manifest:1`, a strict TOML declaration; and
-- `urn:animsmith:schema:collection-output:4`, deterministic JSON evidence.
+- `urn:animsmith:schema:collection-output:5`, deterministic JSON evidence.
 
 The historical `urn:animsmith:schema:collection-output:1` and
 `urn:animsmith:schema:collection-output:2` contracts remain immutable. V2
@@ -3013,9 +3020,10 @@ historical `urn:animsmith:schema:collection-output:3` derives from V2 and adds o
 bounded `dependency_closure` state to every source. A complete state retains the
 loader's exact `DependencyClosureIdentityV1`; partial and unavailable states
 retain a nonempty, sorted, unique sequence from the seven closed
-`DependencyClosureCoverageReasonV1` values. The current `collection-output:4`
-embeds the current output-v12/V2 lint envelope while preserving V3 as immutable
-historical evidence. Only complete closure coverage can
+`DependencyClosureCoverageReasonV1` values. The current `collection-output:5`
+embeds the current output-v13 lint envelope with measurements-v16 while
+preserving collection-output-v4 and its nested output-v12/measurements-v15 as
+immutable historical evidence. Only complete closure coverage can
 establish a source, logical clip, or runtime-set member. This keeps primary
 input identity, optional manifest digest pin, and complete loader-input
 identity separate.
@@ -3028,7 +3036,7 @@ animsmith collection lint COLLECTION.toml --format json
 
 The command name, input identity, and output identity are distinct from
 ordinary `animsmith lint FILE...`. Existing lint and measure invocations remain
-document-local and continue to emit output v12 with measurements v15. A file
+document-local and continue to emit output-v13 with measurements-v16. A file
 extension, the presence of multiple inputs, or repeated embedded take names
 never switches commands implicitly.
 

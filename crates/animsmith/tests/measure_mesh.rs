@@ -6,7 +6,7 @@ use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v15.schema.json");
+    include_str!("../../../docs/schemas/measurements-v16.schema.json");
 
 fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
     let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
@@ -85,6 +85,121 @@ fn vec3_accessor(
     accessors[accessor]["min"] = serde_json::json!([0.0, 0.0, 0.0]);
     accessors[accessor]["max"] = serde_json::json!([1.0, 1.0, 0.0]);
     accessor
+}
+
+fn source_slot_position_accessor(
+    bytes: &mut Vec<u8>,
+    buffer_views: &mut Vec<serde_json::Value>,
+    accessors: &mut Vec<serde_json::Value>,
+    positions: &[[f32; 3]],
+) -> usize {
+    let mut data = Vec::new();
+    for value in positions.iter().flatten() {
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+    let accessor = append_accessor(bytes, buffer_views, accessors, &data, 5126);
+    accessors[accessor]["count"] = serde_json::json!(positions.len());
+    accessors[accessor]["type"] = serde_json::json!("VEC3");
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for position in positions {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(position[axis]);
+            max[axis] = max[axis].max(position[axis]);
+        }
+    }
+    accessors[accessor]["min"] = serde_json::json!(min);
+    accessors[accessor]["max"] = serde_json::json!(max);
+    accessor
+}
+
+fn source_slot_index_accessor(
+    bytes: &mut Vec<u8>,
+    buffer_views: &mut Vec<serde_json::Value>,
+    accessors: &mut Vec<serde_json::Value>,
+    indices: &[u16],
+) -> usize {
+    let mut data = Vec::new();
+    for value in indices {
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+    let accessor = append_accessor(bytes, buffer_views, accessors, &data, 5123);
+    accessors[accessor]["count"] = serde_json::json!(indices.len());
+    accessors[accessor]["type"] = serde_json::json!("SCALAR");
+    accessor
+}
+
+fn write_source_primitive_slot_gltf(path: &std::path::Path) {
+    let mut bytes = Vec::new();
+    let mut buffer_views = Vec::new();
+    let mut accessors = Vec::new();
+    let skipped_positions = source_slot_position_accessor(
+        &mut bytes,
+        &mut buffer_views,
+        &mut accessors,
+        &[[9.0, 9.0, 9.0]],
+    );
+    let first_positions = source_slot_position_accessor(
+        &mut bytes,
+        &mut buffer_views,
+        &mut accessors,
+        &[[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]],
+    );
+    let first_indices = source_slot_index_accessor(
+        &mut bytes,
+        &mut buffer_views,
+        &mut accessors,
+        &[0, 1, 2, 2, 1, 0],
+    );
+    let second_positions = source_slot_position_accessor(
+        &mut bytes,
+        &mut buffer_views,
+        &mut accessors,
+        &[
+            [4.0, 0.0, 0.0],
+            [6.0, 0.0, 0.0],
+            [4.0, 2.0, 0.0],
+            [6.0, 2.0, 0.0],
+        ],
+    );
+    let second_indices =
+        source_slot_index_accessor(&mut bytes, &mut buffer_views, &mut accessors, &[0, 1, 2]);
+    let third_positions = source_slot_position_accessor(
+        &mut bytes,
+        &mut buffer_views,
+        &mut accessors,
+        &[[8.0, 0.0, 0.0], [10.0, 0.0, 0.0], [8.0, 2.0, 0.0]],
+    );
+    let third_indices = source_slot_index_accessor(
+        &mut bytes,
+        &mut buffer_views,
+        &mut accessors,
+        &[0, 1, 2, 0, 2, 1, 1, 2, 0],
+    );
+
+    let buffer = path.with_file_name("source-primitive-slots.bin");
+    std::fs::write(&buffer, &bytes).expect("writes primitive-slot buffer");
+    let document = serde_json::json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "uri": "source-primitive-slots.bin", "byteLength": bytes.len() }],
+        "bufferViews": buffer_views,
+        "accessors": accessors,
+        "materials": [{ "name": "first" }, { "name": "second" }],
+        "meshes": [{
+            "name": "source-slots",
+            "primitives": [
+                { "attributes": { "POSITION": skipped_positions }, "mode": 0, "material": 0 },
+                { "attributes": { "POSITION": first_positions }, "indices": first_indices, "material": 1 },
+                { "attributes": { "POSITION": second_positions }, "indices": second_indices },
+                { "attributes": { "POSITION": third_positions }, "indices": third_indices, "material": 0 }
+            ]
+        }]
+    });
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&document).expect("serializes primitive-slot glTF"),
+    )
+    .expect("writes primitive-slot glTF");
 }
 
 fn joints_accessor(
@@ -386,6 +501,22 @@ fn write_skinned_glb(path: &std::path::Path) {
 fn assert_body_mesh(mesh: &serde_json::Value) {
     assert_eq!(mesh["mesh_index"], 0);
     assert_eq!(mesh["name"], "body");
+    assert_eq!(mesh["primitives"].as_array().unwrap().len(), 1);
+    assert_eq!(mesh["primitives"][0]["primitive_index"], 0);
+    assert_eq!(
+        mesh["primitives"][0]["material_index"],
+        serde_json::Value::Null
+    );
+    assert_eq!(mesh["primitives"][0]["vertex_count"], 3);
+    assert_eq!(mesh["primitives"][0]["finite_vertex_count"], 3);
+    assert_eq!(
+        mesh["primitives"][0]["geometry_aabb"],
+        mesh["geometry_aabb"]
+    );
+    assert_eq!(
+        mesh["primitives"][0]["geometry_centroid"],
+        mesh["geometry_centroid"]
+    );
     assert_eq!(mesh["vertex_count"], 3);
     assert_eq!(
         mesh["geometry_aabb"]["min"],
@@ -446,6 +577,85 @@ fn cli_measure_emits_mesh_measurements() {
         text.contains("geometry centroid (0.667, 1.333, 0.000)"),
         "text output exposes the same centroid shape:\n{text}"
     );
+}
+
+#[test]
+fn cli_measure_preserves_retained_gltf_primitive_source_slots() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source-primitive-slots.gltf");
+    write_source_primitive_slot_gltf(&input);
+
+    let loaded = animsmith_gltf::load(&input).expect("source-slot fixture loads");
+    let retained = &loaded.assets.meshes[0].primitives;
+    assert_eq!(retained.len(), 3, "the leading points primitive is skipped");
+    assert_eq!(
+        retained
+            .iter()
+            .map(|primitive| primitive.source_primitive_index)
+            .collect::<Vec<_>>(),
+        [Some(1), Some(2), Some(3)]
+    );
+    assert_eq!(
+        retained
+            .iter()
+            .map(|primitive| primitive.indices.len())
+            .collect::<Vec<_>>(),
+        [6, 3, 9],
+        "fixture exercises independently indexed primitives"
+    );
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .args([
+            "measure",
+            input.to_str().expect("UTF-8 fixture path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert!(
+        out.status.success(),
+        "measure stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
+    let measurements = &report["files"][0]["measurements"];
+    assert_measurements_schema_valid(measurements);
+    let primitives = measurements["mesh_definitions"][0]["primitives"]
+        .as_array()
+        .expect("primitive measurements");
+    assert_eq!(
+        primitives
+            .iter()
+            .map(|primitive| primitive["primitive_index"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [1, 2, 3],
+        "measurement identity remains the original glTF primitive slot"
+    );
+    assert_eq!(
+        primitives
+            .iter()
+            .map(|primitive| primitive["material_index"].clone())
+            .collect::<Vec<_>>(),
+        [
+            serde_json::json!(1),
+            serde_json::Value::Null,
+            serde_json::json!(0)
+        ]
+    );
+    assert_eq!(
+        primitives
+            .iter()
+            .map(|primitive| primitive["vertex_count"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [3, 4, 3],
+        "position rows, not index references, define vertex counts"
+    );
+    assert!(primitives.iter().all(|primitive| {
+        primitive["finite_vertex_count"] == primitive["vertex_count"]
+            && primitive["geometry_aabb"].is_object()
+            && primitive["geometry_centroid"].is_array()
+    }));
 }
 
 #[test]
@@ -918,8 +1128,8 @@ fn cli_measure_omits_aabb_for_non_finite_geometry() {
     assert!(out.status.success());
     let raw = String::from_utf8(out.stdout).expect("utf8");
     assert!(
-        !raw.contains("null"),
-        "no null must appear in measure JSON:\n{raw}"
+        !raw.contains("\"geometry_aabb\": null") && !raw.contains("\"geometry_centroid\": null"),
+        "non-finite geometry must omit numeric summaries rather than emit null:\n{raw}"
     );
     let report: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
     let measurements = &report["files"][0]["measurements"];

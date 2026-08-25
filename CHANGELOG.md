@@ -9,12 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add measurements-v16 per-primitive geometry and unsupported-image evidence
+- add output-v13 and collection-output-v5 contracts for measurements-v16
 - add output-v12 bounded engine prediction provenance and partial settings evidence
-- add collection-output-v4 embedding the current output-v12 lint envelope
+- preserve collection-output-v4 embedding the historical output-v12 lint envelope
 
 ### Changed
 
-- make output-v12 the current measure, lint, and diff envelope
+- make measurements-v16/output-v13/collection-output-v5 the current contracts
+- keep output-v12 immutable as the historical measure, lint, and diff envelope
 
 ## [0.6.0](https://github.com/mmannerm/animsmith/compare/v0.5.0...v0.6.0) - 2026-08-25
 

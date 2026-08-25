@@ -49,16 +49,19 @@ members may span documents but must have one exact normalized skeleton basis.
 ## Collection lint
 
 `animsmith collection lint COLLECTION.toml --format json` emits the separate
-immutable `urn:animsmith:schema:collection-output:4` envelope described by
-[`collection-output-v4.schema.json`](schemas/collection-output-v4.schema.json).
+current `urn:animsmith:schema:collection-output:5` envelope described by
+[`collection-output-v5.schema.json`](schemas/collection-output-v5.schema.json).
+The historical `urn:animsmith:schema:collection-output:4` envelope remains
+immutable.
 It binds the exact manifest bytes to canonically ordered source, logical clip,
 and runtime-set records while preserving each set's declared member order.
-Every available source embeds its ordinary one-file output-v12 lint result;
+Every available source embeds its ordinary one-file output-v13 lint result;
 each established logical clip separately carries the existing
 `ClipMeasurements` value selected by raw source take index and exact authored
 take name, then mapped through the loader's observed normalized clip index.
-This duplicate-safe indexed projection does not revise the immutable
-measurements-v15 name-keyed wire contract.
+This duplicate-safe indexed projection does not revise the historical,
+immutable measurements-v15 name-keyed wire contract; collection-output-v5
+embeds measurements-v16 in its nested output-v13 documents.
 
 Source input, digest pin, config, loader, take inventory, and document-result
 states stay orthogonal. A readable digest mismatch can therefore retain its
@@ -73,7 +76,7 @@ before source execution and reads sources sequentially.
 
 `animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` consumes only strict bounded
-`collection-directional-speed-policy:1` TOML and `collection-output:4` JSON.
+`collection-directional-speed-policy:1` TOML and `collection-output:5` JSON.
 It emits the JSON-only immutable
 `urn:animsmith:schema:collection-directional-speed-evaluation:1` result
 described by
@@ -104,7 +107,7 @@ Set-level `evidence.root_travel` counts only members with every required raw
 fact and is complete only when all declared members are fully measured; it
 never reduces the set or adds direction, ratios, thresholds, or policy.
 The strict reader applies a 256 MiB N+1 cap before JSON decoding, validates
-nested output-v12 through its
+nested output-v13 through its
 existing reader, recomputes all summaries/work/set lifecycles, and rejects
 unknown fields or contradictory identities and states. Producer and reader
 also freeze 1 GiB per primary source, 16 GiB aggregate primary reads, and the
@@ -112,9 +115,9 @@ collection-manifest V1 row/member/work limits.
 Derived normalized clip names allow at most 4,101 bytes: the 4,096-byte
 authored-name bound plus `#` and the largest duplicate ordinal permitted by the
 4,096-clip manifest bound. Available nested measurement keys retain
-output-v12's 4,096-byte bound.
+output-v13's 4,096-byte bound.
 If such a derived name cannot fit the immutable 4,096-byte text bound of the
-nested output-v12 contract, indexed clip measurements and physical binding are
+nested output-v13 contract, indexed clip measurements and physical binding are
 retained, but the nested document and its name-addressed check reference are
 `nested_output_unavailable`; the collection exits 1 instead of publishing
 schema-invalid nested JSON.
@@ -196,14 +199,16 @@ presentation views; JSON remains the contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v12 with the
-immutable protocol identity `urn:animsmith:schema:output:12`. The retrievable
-schema is [`output-v12.schema.json`](schemas/output-v12.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v13 with the
+current protocol identity `urn:animsmith:schema:output:13`. The retrievable
+schema is [`output-v13.schema.json`](schemas/output-v13.schema.json); its repository URL
 is a retrieval location, not the protocol identity. Output-v11 remains immutable
-historical schema evidence; the measurement reader retains its V1 validation
-path for existing reports, while CLI producers emit output-v12.
+historical schema evidence; the measurement reader retains its validation path
+for existing reports, while CLI producers emit output-v13.
+`urn:animsmith:schema:output:12` remains an immutable historical contract and
+is never retargeted.
 
-Output-v12 uses `prediction-provenance:2`, `resolved-engine-settings:2`, and
+Output-v13 uses `prediction-provenance:2`, `resolved-engine-settings:2`, and
 `engine-prediction:2` for current lint results. Settings retain at most 4,096
 canonical clip rows. A 4,097th clip records partial coverage and bounded work;
 the identity commits to that state, and lint emits required-unavailable evidence
@@ -211,9 +216,19 @@ the identity commits to that state, and lint emits required-unavailable evidence
 complete V1 inventory.
 
 Measurement evidence is nested and independently versioned as
-`urn:animsmith:schema:measurements:15`. Its retrievable schema is
-[`measurements-v15.schema.json`](schemas/measurements-v15.schema.json). Version
-15 adds canonical per-bone TRS channel coverage and root-trajectory evidence.
+`urn:animsmith:schema:measurements:16`. Its retrievable schema is
+[`measurements-v16.schema.json`](schemas/measurements-v16.schema.json). Version
+16 adds per-primitive measurements in source primitive order. Each primitive
+records its nullable source material index, total decoded `POSITION` row
+count, and finite row count. Indexed primitives count each stored position
+once, not once per index reference. Primitive AABBs and centroids are
+finite-only and omitted when the finite count is zero. Version 16 also records
+`leading_magic_hex` only for unsupported, nonempty image payloads: at most the
+first 16 bytes as lowercase hex. It is bounded evidence, not a guessed format
+classification. `urn:animsmith:schema:measurements:15` remains immutable
+historical evidence and
+has no primitive measurements or leading magic field.
+Version 15 added canonical per-bone TRS channel coverage and root-trajectory evidence.
 Version 14 introduced a sibling
 `_availability` status (`measured`, `not_applicable`, or `unavailable`)
 alongside its optional value field, so a consumer can distinguish "this clip
@@ -308,7 +323,7 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 [`output-v9`](schemas/output-v9.schema.json), and
 [`output-v10`](schemas/output-v10.schema.json) remain historical immutable
 contracts, as does `urn:animsmith:schema:output:11`. The current CLI emits and
-`diff` reads output-v12; regenerate a current output-v12 report from the original
+`diff` reads output-v13; regenerate a current output-v13 report from the original
 asset with `animsmith measure --format json` before passing it to `diff`.
 
 ## Contact fragments
@@ -327,8 +342,8 @@ deferred rather than exposing a partial transform API.
 
 ```json
 {
-  "schema_version": 12,
-  "schema": "urn:animsmith:schema:output:12",
+  "schema_version": 13,
+  "schema": "urn:animsmith:schema:output:13",
   "tool": {
     "name": "animsmith",
     "version": "0.6.0",
@@ -704,8 +719,8 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 15,
-  "schema": "urn:animsmith:schema:measurements:15",
+  "schema_version": 16,
+  "schema": "urn:animsmith:schema:measurements:16",
   "clips": {},
   "mesh_definitions": [],
   "node_instances": [],
@@ -746,6 +761,21 @@ projection for compatibility. Empty or structurally malformed channels do not
 contribute to `bone_channels`, `animated_bones`, or
 `bone_rotation_range_deg`; every rotation-range key is therefore also present
 in `animated_bones`.
+
+`mesh_definitions[].primitives` is a source-order array. Each row retains the
+nullable source `material_index`, counts decoded base `POSITION` rows in
+`vertex_count`, and counts finite rows separately in `finite_vertex_count`.
+`primitive_index` retains the original zero-based source slot, so gaps are
+valid when a loader omits unsupported source primitives; normalized documents
+without source identity use contiguous retained-order fallback values.
+Indexed primitives count each stored position once; index references are not
+expanded or counted repeatedly. Primitive `geometry_aabb` and
+`geometry_centroid` use finite positions only and are absent when there are no
+finite positions. Mesh-level totals use the same finite-only geometry domain.
+For unsupported nonempty images, `leading_magic_hex` records at most the first
+16 payload bytes as lowercase hex. It is evidence of the unsupported bytes,
+not an inferred or guessed image format; it is absent for supported images and
+other unavailable cases.
 
 Each optional clip fact — `loop_continuity`, `loop_endpoint_mode`,
 `frame_grid`, `loop_seam_ratio`, `gait` (and its own `gait.phase`),
@@ -881,10 +911,12 @@ judge them only where `[clips.<name>] loop = true`.
 `geometry_aabb` reduces finite primitive `POSITION` values in the mesh's own
 coordinates; it is independent of every node and scene. When finite positions
 exist, optional `geometry_centroid` is their arithmetic mean in that same
-mesh-local coordinate domain. It is not the AABB midpoint and does not weight
-vertices by triangle area, volume, or skin influence. Both fields omit
-non-finite positions and are absent when no finite positions remain. Vertex
-and skin influence statistics are properties of that same definition.
+mesh-local coordinate domain. Equivalently, it is the finite-count-weighted
+mean of the available primitive centroids; primitives with zero finite rows
+contribute neither weight nor position. It is not the AABB midpoint and does
+not weight vertices by triangle area, volume, or skin influence. Both fields
+omit non-finite positions and are absent when no finite positions remain.
+Vertex and skin influence statistics are properties of that same definition.
 
 Indexed primitives contribute each base `POSITION` accessor element once,
 regardless of how many times the index stream references it. Unindexed
@@ -1183,7 +1215,7 @@ same total. `summary.checks.gaps` counts typed gaps, while
 
 ### Engine-prediction provenance and scoped facets
 
-Every output-v12 lint file has required nullable `prediction_provenance`. It is
+Every output-v13 lint file has required nullable `prediction_provenance`. It is
 `null` when no exact engine profile was resolved. Otherwise it carries immutable
 prediction-provenance v2 (`urn:animsmith:prediction-provenance:2`): the typed
 profile facts and sources, authoritative input format, bounded resolved
@@ -1238,7 +1270,7 @@ content finding but never suppress required-unavailable prediction work.
 lint exit 1.
 
 Basis rows are closed typed references to embedded profile facts, resolved
-settings, project/config fields, raw-source facts, measurements-v15 scalars, or
+settings, project/config fields, raw-source facts, measurements-v16 scalars, or
 primary sources. Measurement references use bounded canonical JSON pointers
 and exact scalar values. A schema-valid measurement availability of
 `unavailable` may make prediction work unavailable. A malformed or non-finite
@@ -1246,8 +1278,9 @@ present measurement remains a contract error and exit 2.
 
 The report reader caps each serialized input at 256 MiB before UTF-8 or JSON
 parsing. It validates provenance and measurement-independent prediction links,
-then the complete measurements-v15 contract, then measurement-pointer values,
-before `diff` can extract measurements. Output v10 and earlier inputs receive
+then the complete version-matched measurements contract, then
+measurement-pointer values, before `diff` can extract measurements. Output v10
+and earlier inputs receive
 the normal regeneration guidance.
 
 `lint --format json` deliberately rejects `--allow` so machine evidence is
@@ -1281,13 +1314,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v12 header and emits `inputs`, a
+`diff --format json` uses the same output v13 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 12,
-  "schema": "urn:animsmith:schema:output:12",
+  "schema_version": 13,
+  "schema": "urn:animsmith:schema:output:13",
   "tool": {
     "name": "animsmith",
     "version": "0.6.0",
@@ -1302,10 +1335,11 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files or one-file v11 `measure`/`lint` reports carrying
-measurement contract v15. v14 and earlier reports are historical and are rejected with
-guidance to regenerate them from the original asset. Multi-file reports and
-other unsupported contract versions are also rejected as operator errors.
+`diff` accepts asset files, one-file output-v13 `measure`/`lint` reports with
+measurements-v16, and version-matched historical output-v11/v12 reports with
+measurements-v15. Output-v10 and earlier reports are rejected with guidance to
+regenerate them from the original asset. Multi-file reports and other
+unsupported contract versions are also rejected as operator errors.
 Before extracting the clip metrics it uses,
 `diff` validates the complete measurement record, including mesh evidence, and
 rejects malformed or non-finite payload values.

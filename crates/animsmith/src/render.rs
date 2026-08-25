@@ -2592,9 +2592,17 @@ mod tests {
             "mesh_definitions": [{
                 "mesh_index": 7,
                 "name": "body\nmesh",
+                "primitives": [{
+                    "primitive_index": 0,
+                    "material_index": 0,
+                    "vertex_count": 3,
+                    "finite_vertex_count": 3,
+                    "geometry_aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 2.0, 3.0] },
+                    "geometry_centroid": [0.25, 1.0, 0.5]
+                }],
                 "vertex_count": 3,
                 "geometry_aabb": { "min": [0.0, 0.0, 0.0], "max": [1.0, 2.0, 3.0] },
-                "geometry_centroid": [0.25, 1.0, -0.5],
+                "geometry_centroid": [0.25, 1.0, 0.5],
                 "max_joints_per_vertex": 4,
                 "weight_sum_min": 0.9,
                 "weight_sum_max": 1.1,
@@ -2634,7 +2642,7 @@ mod tests {
                 "asset\\npath.glb:",
                 "  walk\\nclip: 1.000s, 2 frames, 1 animated bones, 1 bone channels loop Δp=1.20cm Δr=3.50° Δv=0.346m/s Δω=67.89°/s seam×0.25 gait φ=0.50 (10.0cm) root hips_fallback#0:\"hips\" Δxz=(0.250,-1.000)m xzΣ=1.500m Δy=0.100m y=[-0.050,0.300]m yaw[+Z]=90.00° unwrap=450.00° travel=540.00°",
                 "  material resources: 1 materials, 1 textures, 1 images (complete)",
-                "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000 geometry centroid (0.250, 1.000, -0.500), ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
+                "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000 geometry centroid (0.250, 1.000, 0.500), ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
                 "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",
                 "  scene #2 main\\nscene [default]: 1 instances static scene-world bbox 1.000×2.000×3.000",
             ]
@@ -2762,6 +2770,7 @@ mod tests {
             "mesh_definitions": [{
                 "mesh_index": 0,
                 "name": "plain",
+                "primitives": [],
                 "vertex_count": 0,
                 "max_joints_per_vertex": 0,
                 "additional_influence_sets": []
