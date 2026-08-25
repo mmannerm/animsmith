@@ -66,7 +66,6 @@ pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode
     // selected source. In particular, a stale later witness has control
     // precedence over an earlier member whose bytes cannot be read.
     let mut selected_source_keys = Vec::new();
-    let mut selected_source_seen = BTreeSet::new();
     let mut prepared = Vec::new();
     for family in declaration
         .declaration()
@@ -90,9 +89,7 @@ pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode
                     "transition-family collection control error (stale-member-binding)".to_owned(),
                 );
             }
-            if selected_source_seen.insert(member.source().as_str()) {
-                selected_source_keys.push(member.source().as_str());
-            }
+            selected_source_keys.push(member.source().as_str());
         }
     }
 
@@ -110,9 +107,8 @@ pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode
     // Only a source that an already-validated declaration member selects is
     // runtime input. Unrelated manifest sources remain part of the path/config
     // control plane above but cannot consume bytes or influence this result.
-    let mut sources = BTreeMap::new();
     let mut primary_source_bytes = 0u64;
-    for key in selected_source_keys {
+    let sources = load_unique_selected_sources(selected_source_keys, |key| {
         let source = manifest_sources
             .get(key)
             .ok_or_else(|| "collection control error (missing-source)".to_owned())?;
@@ -140,8 +136,8 @@ pub(crate) fn run(manifest_path: &Path, families_path: &Path) -> Result<ExitCode
                 }
             },
         };
-        sources.insert(key.to_owned(), state);
-    }
+        Ok::<SourceState, String>(state)
+    })?;
 
     for family in declaration
         .declaration()
@@ -311,6 +307,20 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, u64> {
     Ok(bytes)
 }
 
+fn load_unique_selected_sources<'a, T, E>(
+    keys: impl IntoIterator<Item = &'a str>,
+    mut load: impl FnMut(&'a str) -> Result<T, E>,
+) -> Result<BTreeMap<String, T>, E> {
+    let mut seen = BTreeSet::new();
+    let mut loaded = BTreeMap::new();
+    for key in keys {
+        if seen.insert(key) {
+            loaded.insert(key.to_owned(), load(key)?);
+        }
+    }
+    Ok(loaded)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,5 +335,17 @@ mod tests {
         let cap = COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES;
         assert_eq!(next_source_limit(cap - 1), Some(1));
         assert_eq!(next_source_limit(cap + 1), None);
+    }
+
+    #[test]
+    fn repeated_selected_source_keys_invoke_the_real_load_boundary_once() {
+        let mut loads = 0usize;
+        let loaded = load_unique_selected_sources(["shared", "shared", "shared"], |key| {
+            loads += 1;
+            Ok::<_, ()>(key.len())
+        })
+        .unwrap();
+        assert_eq!(loads, 1);
+        assert_eq!(loaded.get("shared"), Some(&6));
     }
 }

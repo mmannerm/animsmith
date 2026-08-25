@@ -870,3 +870,153 @@ take_name = "run"
     assert!(value["families"][0].get("skeleton_basis_input").is_none());
     assert!(value["families"][0]["pairs"].as_array().unwrap().is_empty());
 }
+
+#[test]
+fn collection_unrelated_malformed_source_is_never_loaded() {
+    let dir = tempdir("collection-unrelated-poison");
+    write_document(&dir.path().join("selected.glb"), false);
+    std::fs::write(dir.path().join("poison.glb"), b"not an asset").unwrap();
+    let manifest_bytes = r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "test"
+sources = [
+  { key = "selected", path = "selected.glb" },
+  { key = "poison", path = "poison.glb" },
+]
+clips = [
+  { id = "test/walk", source = "selected", take_index = 0, take_name = "walk" },
+  { id = "test/run", source = "selected", take_index = 1, take_name = "run" },
+  { id = "test/poison", source = "poison", take_index = 0, take_name = "poison" },
+]
+"#;
+    std::fs::write(dir.path().join("collection.toml"), manifest_bytes).unwrap();
+    let identity = InputIdentity::from_bytes(manifest_bytes.as_bytes());
+    std::fs::write(
+        dir.path().join("families.toml"),
+        format!(
+            r#"schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "collection"
+collection_id = "test"
+manifest_input_identity = {{ sha256 = "{}", bytes = {} }}
+[[families]]
+family_id = "test/shared"
+boundary = "entry"
+[families.basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+[families.tolerances]
+translation_m = 0.0
+rotation_deg = 0.0
+time_normalized = 0.0
+[[families.members]]
+logical_id = "test/walk"
+source = "selected"
+take_index = 0
+take_name = "walk"
+[[families.members]]
+logical_id = "test/run"
+source = "selected"
+take_index = 1
+take_name = "run"
+"#,
+            identity.sha256(),
+            identity.bytes()
+        ),
+    )
+    .unwrap();
+
+    let output = animsmith()
+        .current_dir(dir.path())
+        .args([
+            "collection",
+            "evaluate-transition-poses",
+            "collection.toml",
+            "--families",
+            "families.toml",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value = json(&output);
+    assert_eq!(value["decision"], "pass");
+    assert_eq!(
+        value["families"][0]["members"][0]["source_input"],
+        value["families"][0]["members"][1]["source_input"]
+    );
+}
+
+#[test]
+fn collection_invalid_explicit_source_config_fails_before_asset_runtime() {
+    let dir = tempdir("collection-invalid-source-config");
+    std::fs::write(dir.path().join("bad.toml"), b"not valid = = toml [[[").unwrap();
+    let manifest_bytes = r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "test"
+sources = [
+  { key = "selected", path = "missing.glb", config = "bad.toml" },
+]
+clips = [
+  { id = "test/walk", source = "selected", take_index = 0, take_name = "walk" },
+  { id = "test/run", source = "selected", take_index = 1, take_name = "run" },
+]
+"#;
+    std::fs::write(dir.path().join("collection.toml"), manifest_bytes).unwrap();
+    let identity = InputIdentity::from_bytes(manifest_bytes.as_bytes());
+    std::fs::write(
+        dir.path().join("families.toml"),
+        format!(
+            r#"schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "collection"
+collection_id = "test"
+manifest_input_identity = {{ sha256 = "{}", bytes = {} }}
+[[families]]
+family_id = "test/shared"
+boundary = "entry"
+[families.basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+[families.tolerances]
+translation_m = 0.0
+rotation_deg = 0.0
+time_normalized = 0.0
+[[families.members]]
+logical_id = "test/walk"
+source = "selected"
+take_index = 0
+take_name = "walk"
+[[families.members]]
+logical_id = "test/run"
+source = "selected"
+take_index = 1
+take_name = "run"
+"#,
+            identity.sha256(),
+            identity.bytes()
+        ),
+    )
+    .unwrap();
+
+    let output = animsmith()
+        .current_dir(dir.path())
+        .args([
+            "collection",
+            "evaluate-transition-poses",
+            "collection.toml",
+            "--families",
+            "families.toml",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("config-malformed"), "{stderr}");
+}

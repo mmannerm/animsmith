@@ -526,7 +526,6 @@ pub struct CollectionTransitionPoseMemberInputV1<'a> {
     source_input: Option<&'a InputIdentity>,
     loaded_source: Option<&'a LoadedSource>,
     unavailable_reason: Option<TransitionPoseReasonV1>,
-    document: Option<&'a Document>,
 }
 
 impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
@@ -548,7 +547,6 @@ impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
             source_input: None,
             loaded_source: Some(loaded_source),
             unavailable_reason: None,
-            document: None,
         }
     }
 
@@ -569,7 +567,6 @@ impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
             source_input: None,
             loaded_source: None,
             unavailable_reason: Some(TransitionPoseReasonV1::MemberUnavailable),
-            document: None,
         }
     }
 
@@ -591,7 +588,6 @@ impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
             source_input: Some(source_input),
             loaded_source: None,
             unavailable_reason: Some(TransitionPoseReasonV1::MemberUnavailable),
-            document: None,
         }
     }
 
@@ -614,7 +610,6 @@ impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
             source_input: None,
             loaded_source: Some(loaded_source),
             unavailable_reason: Some(TransitionPoseReasonV1::DependencyClosureIncomplete),
-            document: None,
         }
     }
 
@@ -626,12 +621,6 @@ impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
 
     fn dependency_closure(self) -> Option<&'a DependencyClosureV1> {
         self.loaded_source.map(LoadedSource::dependency_closure)
-    }
-
-    fn document(self) -> Option<&'a Document> {
-        self.loaded_source
-            .map(LoadedSource::document)
-            .or(self.document)
     }
 }
 
@@ -678,6 +667,22 @@ pub fn evaluate_collection_transition_poses_v1(
     manifest: &TransitionFamilyManifestIdentityV1,
     members: &[CollectionTransitionPoseMemberInputV1<'_>],
 ) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
+    evaluate_collection_transition_poses_v1_with_probes(
+        declaration,
+        manifest,
+        members,
+        |_| {},
+        |_| {},
+    )
+}
+
+fn evaluate_collection_transition_poses_v1_with_probes(
+    declaration: &TransitionFamilyDeclarationInputV1,
+    manifest: &TransitionFamilyManifestIdentityV1,
+    members: &[CollectionTransitionPoseMemberInputV1<'_>],
+    mut observe_basis_build: impl FnMut(&LoadedSource),
+    mut observe_track_visit: impl FnMut(&Track),
+) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
     let declared_manifest = match declaration.declaration() {
         crate::TransitionFamilyDeclarationV1::Collection { manifest, .. } => manifest,
         _ => return Err(TransitionPoseEvaluationControlError::WrongDeclarationScope),
@@ -689,10 +694,12 @@ pub fn evaluate_collection_transition_poses_v1(
         .declaration()
         .collection_families()
         .ok_or(TransitionPoseEvaluationControlError::WrongDeclarationScope)?;
-    let expected_members = families
-        .iter()
-        .map(|family| family.members().len())
-        .sum::<usize>();
+    let expected_members = families.iter().try_fold(0usize, |total, family| {
+        total.checked_add(family.members().len())
+    });
+    let Some(expected_members) = expected_members else {
+        return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
+    };
     if expected_members != members.len() {
         return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
     }
@@ -708,15 +715,19 @@ pub fn evaluate_collection_transition_poses_v1(
         subject_dependency_closure_identity: None,
         families: Vec::with_capacity(families.len()),
     };
+    // Phase one is deliberately only O(total declared members): bind every
+    // witness, establish one coherent authority per source key, resolve the
+    // selected take by index/name, and classify closure/runtime availability.
+    // No skeleton bone or track is visited until every structural witness has
+    // survived this pass.
+    let mut source_authorities = BTreeMap::<&str, CollectionSourceAuthority<'_>>::new();
     let mut cursor = 0usize;
-    let mut ready = Vec::<CollectionFamilyReady<'_>>::new();
+    let mut structurally_ready = Vec::<Option<CollectionFamilyReady<'_>>>::new();
     for (family_index, family) in families.iter().enumerate() {
         let family_members = &members[cursor..cursor + family.members().len()];
         cursor += family_members.len();
         let mut row = collection_family_result_row(family, family_members)?;
-        // Resolve every structural witness before accepting a normal
-        // unavailable/basis result. A stale later member must never be hidden
-        // behind an earlier unavailable source.
+        let mut selected = Vec::with_capacity(family_members.len());
         for (declared, prepared) in family.members().iter().zip(family_members) {
             if declared.logical_id() != prepared.logical_id
                 || declared.source() != prepared.source
@@ -725,21 +736,34 @@ pub fn evaluate_collection_transition_poses_v1(
             {
                 return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
             }
-        }
-        let mut selected = Vec::with_capacity(family_members.len());
-        let mut basis: Option<SkeletonBasisV1> = None;
-        for (declared, prepared) in family.members().iter().zip(family_members) {
+            let authority = CollectionSourceAuthority::from_member(*prepared);
+            match source_authorities.entry(declared.source().as_str()) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(authority);
+                }
+                std::collections::btree_map::Entry::Occupied(entry)
+                    if !entry.get().same_authority(authority) =>
+                {
+                    return Err(
+                        TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness,
+                    );
+                }
+                std::collections::btree_map::Entry::Occupied(_) => {}
+            }
             if let Some(reason) = prepared.unavailable_reason {
                 retain_collection_runtime_reason(&mut row.reason, reason);
-                continue;
             }
-            let (Some(source_input), Some(dependency_closure), Some(document)) = (
-                prepared.primary_input(),
-                prepared.dependency_closure(),
-                prepared.document(),
-            ) else {
-                return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
+            let Some(loaded_source) = prepared.loaded_source else {
+                if prepared.unavailable_reason.is_none() {
+                    return Err(
+                        TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness,
+                    );
+                }
+                continue;
             };
+            let source_input = loaded_source.source_facts().primary_identity();
+            let dependency_closure = loaded_source.dependency_closure();
+            let document = loaded_source.document();
             if dependency_closure.primary_input() != source_input
                 || !dependency_closure.coverage().is_complete()
                 || dependency_closure.identity().is_none()
@@ -748,7 +772,6 @@ pub fn evaluate_collection_transition_poses_v1(
                     &mut row.reason,
                     TransitionPoseReasonV1::DependencyClosureIncomplete,
                 );
-                continue;
             }
             let Some(clip) = usize::try_from(declared.take_index())
                 .ok()
@@ -761,75 +784,172 @@ pub fn evaluate_collection_transition_poses_v1(
                 );
                 continue;
             };
-            if !skeleton_input_is_within_limits(&document.skeleton) {
-                retain_collection_runtime_reason(
-                    &mut row.reason,
-                    TransitionPoseReasonV1::MemberUnavailable,
-                );
-                continue;
-            }
-            let current = match validate_transition_pose_skeleton(&document.skeleton)
-                .and_then(|()| SkeletonBasisV1::from_skeleton(&document.skeleton))
+            if prepared.unavailable_reason.is_none()
+                && dependency_closure.coverage().is_complete()
+                && dependency_closure.identity().is_some()
+                && dependency_closure.primary_input() == source_input
             {
-                Ok(value) => value,
-                Err(_) => {
-                    retain_collection_runtime_reason(
-                        &mut row.reason,
-                        TransitionPoseReasonV1::MemberUnavailable,
-                    );
-                    continue;
-                }
-            };
-            if let Some(existing) = &basis {
-                if existing.identity() != current.identity() {
-                    retain_collection_runtime_reason(
-                        &mut row.reason,
-                        TransitionPoseReasonV1::SkeletonBasisMismatch,
-                    );
-                    continue;
-                }
-            } else {
-                basis = Some(current);
+                selected.push(CollectionResolvedMember {
+                    source: declared.source(),
+                    take_index: declared.take_index(),
+                    loaded_source,
+                    document,
+                    clip,
+                });
             }
-            selected.push((document, clip, source_input));
-        }
-        if selected.len() == family_members.len() {
-            let basis = basis.as_ref().expect("selected family has basis");
-            row.skeleton_basis_input = Some(basis.identity().clone());
         }
         let row_index = result.families.len();
         result.families.push(row);
         if selected.len() == family_members.len() {
-            ready.push(CollectionFamilyReady {
+            structurally_ready.push(Some(CollectionFamilyReady {
                 family_index,
                 row_index,
                 family,
                 members: selected,
-            });
+                basis_cache_index: None,
+            }));
+        } else {
+            structurally_ready.push(None);
         }
     }
+
+    // Phase two uses only O(1) family/member counts and skeleton lengths.
+    // Policy and comparison-work refusals therefore cannot trigger an O(S)
+    // basis build or an O(T) selected-track scan.
     let policy_rejected = families
         .iter()
         .map(|family| family.tolerances().time_normalized() != 0.0)
         .collect::<Vec<_>>();
-    let plans = plan_collection_families(families, &ready, &policy_rejected);
-    let track_limits = plan_collection_track_limits(families, &ready, &policy_rejected);
-    let mut detailed_name_budget = collection_detailed_budget_after_base(&result)?;
-    for ready_family in ready {
-        let row = &mut result.families[ready_family.row_index];
-        if policy_rejected[ready_family.family_index] {
+    let plans = plan_collection_families(families, &structurally_ready, &policy_rejected);
+    for ready in structurally_ready.iter().flatten() {
+        let row = &mut result.families[ready.row_index];
+        if policy_rejected[ready.family_index] {
             row.reason = Some(TransitionPoseReasonV1::TimeToleranceUnsupported);
-        } else if let Some(reason) = plans[ready_family.family_index] {
+        } else if let Some(reason) = plans[ready.family_index] {
             row.reason = Some(reason);
-        } else if track_limits[ready_family.family_index] {
-            row.reason = Some(TransitionPoseReasonV1::InputLimit);
-        } else if !reserve_collection_detailed_name_budget(
+        }
+    }
+
+    // Phase three builds each admitted source-key basis at most once. The
+    // authority pass above has already proved that a key cannot alias distinct
+    // LoadedSource owners or disagree about its runtime state.
+    let mut basis_by_source = BTreeMap::<&str, usize>::new();
+    let mut basis_cache = Vec::<CollectionCachedBasis>::new();
+    for ready in structurally_ready.iter_mut().flatten() {
+        if result.families[ready.row_index].reason.is_some() {
+            continue;
+        }
+        let mut family_basis_index: Option<usize> = None;
+        for member in &ready.members {
+            let source_key = member.source.as_str();
+            let cache_index = if let Some(&index) = basis_by_source.get(&source_key) {
+                index
+            } else {
+                observe_basis_build(member.loaded_source);
+                let cached = CollectionCachedBasis::build(&member.document.skeleton);
+                let index = basis_cache.len();
+                basis_cache.push(cached);
+                basis_by_source.insert(source_key, index);
+                index
+            };
+            let Some(current) = basis_cache[cache_index].basis.as_ref() else {
+                retain_collection_runtime_reason(
+                    &mut result.families[ready.row_index].reason,
+                    TransitionPoseReasonV1::MemberUnavailable,
+                );
+                continue;
+            };
+            if let Some(existing_index) = family_basis_index {
+                let existing = basis_cache[existing_index]
+                    .basis
+                    .as_ref()
+                    .expect("validated cached collection basis");
+                if existing.identity() != current.identity() {
+                    retain_collection_runtime_reason(
+                        &mut result.families[ready.row_index].reason,
+                        TransitionPoseReasonV1::SkeletonBasisMismatch,
+                    );
+                }
+            } else {
+                family_basis_index = Some(cache_index);
+            }
+        }
+        if result.families[ready.row_index].reason.is_none() {
+            let basis_index = family_basis_index.expect("collection families have members");
+            ready.basis_cache_index = Some(basis_index);
+            result.families[ready.row_index].skeleton_basis_input = Some(
+                basis_cache[basis_index]
+                    .basis
+                    .as_ref()
+                    .expect("validated cached collection basis")
+                    .identity()
+                    .clone(),
+            );
+        }
+    }
+
+    // Result-detail reservation still precedes all selected-track traversal.
+    // Its skeleton-name statistic is retained beside the cached basis, so a
+    // repeated family does not rescan the source skeleton merely to budget.
+    let mut detailed_name_budget = collection_detailed_budget_after_base(&result)?;
+    for ready_family in structurally_ready.iter().flatten() {
+        let row = &mut result.families[ready_family.row_index];
+        let Some(basis_index) = ready_family.basis_cache_index else {
+            continue;
+        };
+        if !reserve_collection_detailed_name_budget(
             &mut detailed_name_budget,
             ready_family.family,
-            &ready_family.members[0].0.skeleton,
+            &basis_cache[basis_index],
         ) {
             row.reason = Some(TransitionPoseReasonV1::ResultLimit);
-        } else {
+        }
+    }
+
+    // Phase four admits each unique selected source/take once. Families
+    // rejected by structure, policy, comparison work, basis, or result budget
+    // never visit a track. Cached admission is sound because a LoadedSource is
+    // immutable and the take index/name was already bound in phase one.
+    let mut track_cache = BTreeMap::<(&str, u64), CollectionTrackAdmission>::new();
+    let mut aggregate_track_elements = 0usize;
+    for ready_family in structurally_ready.iter().flatten() {
+        let row = &mut result.families[ready_family.row_index];
+        if row.reason.is_some() {
+            continue;
+        }
+        for member in &ready_family.members {
+            let key = (member.source.as_str(), member.take_index);
+            let admission = if let Some(cached) = track_cache.get(&key) {
+                *cached
+            } else {
+                let inspected = inspect_collection_track_admission(
+                    member.clip,
+                    member.document.skeleton.bones.len(),
+                    &mut observe_track_visit,
+                );
+                let admission = match inspected {
+                    Ok(elements) => {
+                        let total = aggregate_track_elements.checked_add(elements);
+                        if total.is_some_and(|total| {
+                            total <= TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACK_ELEMENTS
+                        }) {
+                            aggregate_track_elements = total.expect("checked aggregate");
+                            CollectionTrackAdmission::Accepted
+                        } else {
+                            CollectionTrackAdmission::Rejected(TransitionPoseReasonV1::InputLimit)
+                        }
+                    }
+                    Err(reason) => CollectionTrackAdmission::Rejected(reason),
+                };
+                track_cache.insert(key, admission);
+                admission
+            };
+            if let CollectionTrackAdmission::Rejected(reason) = admission {
+                row.reason = Some(reason);
+                break;
+            }
+        }
+        if row.reason.is_none() {
             let endpoints = match strict_collection_endpoints(
                 &ready_family.members,
                 ready_family.family.boundary(),
@@ -844,7 +964,7 @@ pub fn evaluate_collection_transition_poses_v1(
                 &endpoints,
                 ready_family.family.boundary(),
                 ready_family.family.tolerances(),
-                &ready_family.members[0].0.skeleton,
+                &ready_family.members[0].document.skeleton,
             ) {
                 Ok(pairs) => pairs,
                 Err(reason) => {
@@ -891,7 +1011,105 @@ struct CollectionFamilyReady<'a> {
     family_index: usize,
     row_index: usize,
     family: &'a crate::CollectionTransitionFamilyV1,
-    members: Vec<(&'a Document, &'a Clip, &'a InputIdentity)>,
+    members: Vec<CollectionResolvedMember<'a>>,
+    basis_cache_index: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct CollectionResolvedMember<'a> {
+    source: &'a crate::CollectionSourceKeyV1,
+    take_index: u64,
+    loaded_source: &'a LoadedSource,
+    document: &'a Document,
+    clip: &'a Clip,
+}
+
+#[derive(Clone, Copy)]
+enum CollectionSourceAuthority<'a> {
+    Unavailable {
+        primary: Option<&'a InputIdentity>,
+        reason: TransitionPoseReasonV1,
+    },
+    Loaded {
+        source: &'a LoadedSource,
+        reason: Option<TransitionPoseReasonV1>,
+    },
+}
+
+impl<'a> CollectionSourceAuthority<'a> {
+    fn from_member(member: CollectionTransitionPoseMemberInputV1<'a>) -> Self {
+        if let Some(loaded) = member.loaded_source {
+            Self::Loaded {
+                source: loaded,
+                reason: member.unavailable_reason,
+            }
+        } else {
+            Self::Unavailable {
+                primary: member.source_input,
+                reason: member
+                    .unavailable_reason
+                    .expect("collection input without a loaded source is unavailable"),
+            }
+        }
+    }
+
+    fn same_authority(self, other: Self) -> bool {
+        match (self, other) {
+            (
+                Self::Unavailable {
+                    primary: left_primary,
+                    reason: left_reason,
+                },
+                Self::Unavailable {
+                    primary: right_primary,
+                    reason: right_reason,
+                },
+            ) => left_primary == right_primary && left_reason == right_reason,
+            (
+                Self::Loaded {
+                    source: left_source,
+                    reason: left_reason,
+                },
+                Self::Loaded {
+                    source: right_source,
+                    reason: right_reason,
+                },
+            ) => std::ptr::eq(left_source, right_source) && left_reason == right_reason,
+            _ => false,
+        }
+    }
+}
+
+struct CollectionCachedBasis {
+    basis: Option<SkeletonBasisV1>,
+    max_escaped_name_bytes: usize,
+}
+
+impl CollectionCachedBasis {
+    fn build(skeleton: &Skeleton) -> Self {
+        let Ok(basis) = SkeletonBasisV1::from_skeleton(skeleton) else {
+            return Self {
+                basis: None,
+                max_escaped_name_bytes: 0,
+            };
+        };
+        let max_escaped_name_bytes = basis
+            .bones()
+            .iter()
+            .map(|bone| bone.name().len().saturating_mul(6))
+            .max()
+            .unwrap_or(0);
+        Self {
+            basis: Some(basis),
+            max_escaped_name_bytes,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CollectionTrackAdmission {
+    Accepted,
+    Rejected(TransitionPoseReasonV1),
 }
 
 fn collection_family_result_row(
@@ -926,13 +1144,9 @@ fn collection_family_result_row(
 
 fn plan_collection_families(
     families: &[crate::CollectionTransitionFamilyV1],
-    ready: &[CollectionFamilyReady<'_>],
+    ready: &[Option<CollectionFamilyReady<'_>>],
     policy_rejected: &[bool],
 ) -> Vec<Option<TransitionPoseReasonV1>> {
-    let mut by_family = vec![None; families.len()];
-    for (ready_index, family) in ready.iter().enumerate() {
-        by_family[family.family_index] = Some(ready_index);
-    }
     let mut aggregate_pairs = 0usize;
     let mut aggregate_comparisons = 0usize;
     let mut aggregate_retention = 0usize;
@@ -940,7 +1154,7 @@ fn plan_collection_families(
         .iter()
         .enumerate()
         .map(|(index, family)| {
-            let ready = by_family[index].map(|ready_index| &ready[ready_index])?;
+            let ready = ready[index].as_ref()?;
             if policy_rejected[index] {
                 return None;
             }
@@ -950,7 +1164,7 @@ fn plan_collection_families(
             };
             let pair_boundaries = checked_pair_count(family.members().len())
                 .and_then(|pairs| pairs.checked_mul(boundaries));
-            let bones = ready.members[0].0.skeleton.bones.len();
+            let bones = ready.members[0].document.skeleton.bones.len();
             let comparisons = pair_boundaries.and_then(|pairs| pairs.checked_mul(bones));
             let retention = pair_boundaries.and_then(|pairs| {
                 bones
@@ -990,69 +1204,6 @@ fn plan_collection_families(
                 }
                 _ => Some(TransitionPoseReasonV1::AggregateWorkLimit),
             }
-        })
-        .collect()
-}
-
-fn plan_collection_track_limits(
-    families: &[crate::CollectionTransitionFamilyV1],
-    ready: &[CollectionFamilyReady<'_>],
-    policy_rejected: &[bool],
-) -> Vec<bool> {
-    let mut by_family = vec![None; families.len()];
-    for (ready_index, family) in ready.iter().enumerate() {
-        by_family[family.family_index] = Some(ready_index);
-    }
-    let mut aggregate = 0usize;
-    families
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            let Some(ready) = by_family[index].map(|ready_index| &ready[ready_index]) else {
-                return false;
-            };
-            if policy_rejected[index] {
-                return false;
-            }
-            let bones = ready.members[0].0.skeleton.bones.len();
-            let (Some(raw), Some(selected)) = (bones.checked_mul(3), bones.checked_mul(2)) else {
-                return true;
-            };
-            let mut family_elements = 0usize;
-            for (_, clip, _) in &ready.members {
-                if clip.tracks.len() > raw {
-                    return true;
-                }
-                let mut selected_tracks = 0usize;
-                for track in clip
-                    .tracks
-                    .iter()
-                    .filter(|track| is_transition_pose_property(track.property))
-                {
-                    selected_tracks += 1;
-                    if selected_tracks > selected {
-                        return true;
-                    }
-                    let Some(elements) = track.times.len().checked_add(track.values.len()) else {
-                        return true;
-                    };
-                    let Some(total) = family_elements.checked_add(elements) else {
-                        return true;
-                    };
-                    if total > TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACK_ELEMENTS {
-                        return true;
-                    }
-                    family_elements = total;
-                }
-            }
-            let Some(total) = aggregate.checked_add(family_elements) else {
-                return true;
-            };
-            if total > TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACK_ELEMENTS {
-                return true;
-            }
-            aggregate = total;
-            false
         })
         .collect()
 }
@@ -1137,8 +1288,11 @@ fn max_member_closure_identity_addition_bytes()
 fn reserve_collection_detailed_name_budget(
     remaining: &mut usize,
     family: &crate::CollectionTransitionFamilyV1,
-    skeleton: &Skeleton,
+    cached: &CollectionCachedBasis,
 ) -> bool {
+    let Some(basis) = cached.basis.as_ref() else {
+        return false;
+    };
     let boundaries = match family.boundary() {
         TransitionFamilyBoundaryV1::Entry | TransitionFamilyBoundaryV1::Exit => 1usize,
         TransitionFamilyBoundaryV1::Both => 2usize,
@@ -1148,25 +1302,16 @@ fn reserve_collection_detailed_name_budget(
     else {
         return false;
     };
-    let Some(rows) = skeleton
-        .bones
+    let Some(rows) = basis
+        .bones()
         .len()
         .min(TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS)
         .checked_add(
-            skeleton
-                .bones
+            basis
+                .bones()
                 .len()
                 .min(TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS),
         )
-    else {
-        return false;
-    };
-    let Some(max_name) = skeleton
-        .bones
-        .iter()
-        .map(|bone| bone.name.len().checked_mul(6))
-        .max()
-        .unwrap_or(Some(0))
     else {
         return false;
     };
@@ -1175,7 +1320,7 @@ fn reserve_collection_detailed_name_budget(
         .and_then(|fixed| {
             pair_boundaries
                 .checked_mul(rows)?
-                .checked_mul(max_name)
+                .checked_mul(cached.max_escaped_name_bytes)
                 .and_then(|names| fixed.checked_add(names))
         })
     else {
@@ -1189,15 +1334,14 @@ fn reserve_collection_detailed_name_budget(
 }
 
 fn strict_collection_endpoints(
-    members: &[(&Document, &Clip, &InputIdentity)],
+    members: &[CollectionResolvedMember<'_>],
     boundary: TransitionFamilyBoundaryV1,
 ) -> Result<Vec<Endpoints>, TransitionPoseReasonV1> {
     members
         .iter()
-        .map(|(document, clip, _)| {
-            if !selected_tracks_are_strict(clip, document.skeleton.bones.len()) {
-                return Err(TransitionPoseReasonV1::UnsupportedSampling);
-            }
+        .map(|member| {
+            let document = member.document;
+            let clip = member.clip;
             if clip.duration_s == 0.0 {
                 return Err(TransitionPoseReasonV1::ZeroDuration);
             }
@@ -1225,6 +1369,67 @@ fn strict_collection_endpoints(
             Ok(Endpoints { entry, exit })
         })
         .collect()
+}
+
+fn inspect_collection_track_admission(
+    clip: &Clip,
+    bone_count: usize,
+    observe_track_visit: &mut impl FnMut(&Track),
+) -> Result<usize, TransitionPoseReasonV1> {
+    let (Some(raw_track_limit), Some(selected_track_limit)) =
+        (bone_count.checked_mul(3), bone_count.checked_mul(2))
+    else {
+        return Err(TransitionPoseReasonV1::InputLimit);
+    };
+    if clip.tracks.len() > raw_track_limit {
+        return Err(TransitionPoseReasonV1::InputLimit);
+    }
+    let mut selected_tracks = 0usize;
+    let mut selected_elements = 0usize;
+    let mut seen = vec![false; selected_track_limit];
+    let mut unsupported = false;
+    for track in &clip.tracks {
+        observe_track_visit(track);
+        let Some(channel) = transition_pose_channel(track.property) else {
+            continue;
+        };
+        selected_tracks = selected_tracks
+            .checked_add(1)
+            .ok_or(TransitionPoseReasonV1::InputLimit)?;
+        if selected_tracks > selected_track_limit {
+            return Err(TransitionPoseReasonV1::InputLimit);
+        }
+        let elements = track
+            .times
+            .len()
+            .checked_add(track.values.len())
+            .ok_or(TransitionPoseReasonV1::InputLimit)?;
+        selected_elements = selected_elements
+            .checked_add(elements)
+            .ok_or(TransitionPoseReasonV1::InputLimit)?;
+        if selected_elements > TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACK_ELEMENTS {
+            return Err(TransitionPoseReasonV1::InputLimit);
+        }
+        let target = track
+            .bone
+            .checked_mul(2)
+            .and_then(|base| base.checked_add(channel));
+        match target {
+            Some(target)
+                if target < seen.len()
+                    && !seen[target]
+                    && validate_track_shape(0, track).is_ok() =>
+            {
+                seen[target] = true;
+            }
+            _ => unsupported = true,
+        }
+    }
+    if unsupported {
+        Err(TransitionPoseReasonV1::UnsupportedSampling)
+    } else {
+        Ok(selected_elements)
+    }
 }
 
 fn evaluate_document_transition_poses_v1_with_result_limit(
@@ -2282,8 +2487,8 @@ mod tests {
         DependencyClosureBuilderV1, DependencyResourceKeyV1, Document,
         DocumentTransitionFamilyMemberV1, DocumentTransitionFamilyV1, Interpolation,
         RawSourceFactsBuilderV1, ResourceKeySyntaxV1, Skeleton, SourceFactDomainV1, SourceFormatV1,
-        SourceResourceKindV1, SourceSetCoverageV1, Track, TrackValues, Transform,
-        TransitionFamilyDeclarationV1, TransitionFamilyManifestIdentityV1,
+        SourceResourceKindV1, SourceSetCoverageV1, SourceUnavailableReasonV1, Track, TrackValues,
+        Transform, TransitionFamilyDeclarationV1, TransitionFamilyManifestIdentityV1,
     };
 
     fn document(second_translation: Option<f32>) -> Document {
@@ -2355,6 +2560,14 @@ mod tests {
 
     fn loaded_source(document: Document, bytes: &[u8]) -> LoadedSource {
         let primary = InputIdentity::from_bytes(bytes);
+        loaded_source_with_closure(document, primary.clone(), complete_closure(primary))
+    }
+
+    fn loaded_source_with_closure(
+        document: Document,
+        primary: InputIdentity,
+        closure: DependencyClosureV1,
+    ) -> LoadedSource {
         let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::Glb, primary.clone());
         for domain in [
             SourceFactDomainV1::Clips,
@@ -2364,7 +2577,7 @@ mod tests {
             facts.mark_complete(domain);
         }
         facts
-            .finish_with_dependency_closure(document, complete_closure(primary))
+            .finish_with_dependency_closure(document, closure)
             .unwrap()
     }
 
@@ -2383,10 +2596,19 @@ mod tests {
         id: &str,
         members: Vec<CollectionTransitionFamilyMemberV1>,
     ) -> CollectionTransitionFamilyV1 {
+        collection_family_with(id, TransitionFamilyBoundaryV1::Entry, 0.0, members)
+    }
+
+    fn collection_family_with(
+        id: &str,
+        boundary: TransitionFamilyBoundaryV1,
+        time_normalized: f64,
+        members: Vec<CollectionTransitionFamilyMemberV1>,
+    ) -> CollectionTransitionFamilyV1 {
         CollectionTransitionFamilyV1::new(
             CollectionLogicalIdV1::new(id).unwrap(),
-            TransitionFamilyBoundaryV1::Entry,
-            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.0).unwrap(),
+            boundary,
+            TransitionFamilyTolerancesV1::new(0.0, 0.0, time_normalized).unwrap(),
             members,
         )
         .unwrap()
@@ -2508,6 +2730,893 @@ mod tests {
         );
         assert!(result.families()[0].members()[1].source_input().is_some());
         assert!(result.families()[0].pairs().is_empty());
+    }
+
+    #[test]
+    fn collection_control_rejects_length_order_staleness_and_split_source_authority() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let logical_a = CollectionLogicalIdV1::new("collection/a").unwrap();
+        let logical_b = CollectionLogicalIdV1::new("collection/b").unwrap();
+        let source = CollectionSourceKeyV1::new("shared").unwrap();
+        let declaration = collection_declaration(
+            vec![collection_family(
+                "collection/family",
+                vec![
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical_a.clone(),
+                        source.clone(),
+                        0,
+                        "Walk".into(),
+                    )
+                    .unwrap(),
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical_b.clone(),
+                        source.clone(),
+                        1,
+                        "Run".into(),
+                    )
+                    .unwrap(),
+                ],
+            )],
+            manifest.clone(),
+        );
+        let first = loaded_source(document(None), b"same");
+        let second = loaded_source(document(None), b"same");
+        let valid = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical_a, &source, 0, "Walk", &first,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(&logical_b, &source, 1, "Run", &first),
+        ];
+        assert_eq!(
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &valid[..1]),
+            Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)
+        );
+        assert_eq!(
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &[valid[1], valid[0]],),
+            Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)
+        );
+        let stale = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical_a, &source, 0, "Walk", &first,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(&logical_b, &source, 0, "Run", &first),
+        ];
+        assert_eq!(
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &stale),
+            Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)
+        );
+        let split_loaded = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical_a, &source, 0, "Walk", &first,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical_b, &source, 1, "Run", &second,
+            ),
+        ];
+        assert_eq!(
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &split_loaded),
+            Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)
+        );
+        let split_state = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical_a, &source, 0, "Walk", &first,
+            ),
+            CollectionTransitionPoseMemberInputV1::unavailable(&logical_b, &source, 1, "Run"),
+        ];
+        assert_eq!(
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &split_state),
+            Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)
+        );
+        let unavailable_left = InputIdentity::from_bytes(b"missing-left");
+        let unavailable_right = InputIdentity::from_bytes(b"missing-right");
+        let split_unavailable_identity = [
+            CollectionTransitionPoseMemberInputV1::unavailable_with_source_input(
+                &logical_a,
+                &source,
+                0,
+                "Walk",
+                &unavailable_left,
+            ),
+            CollectionTransitionPoseMemberInputV1::unavailable_with_source_input(
+                &logical_b,
+                &source,
+                1,
+                "Run",
+                &unavailable_right,
+            ),
+        ];
+        assert_eq!(
+            evaluate_collection_transition_poses_v1(
+                &declaration,
+                &manifest,
+                &split_unavailable_identity,
+            ),
+            Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)
+        );
+    }
+
+    #[test]
+    fn collection_runtime_gaps_preserve_priority_evidence_and_never_form_a_subset() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let logical = [
+            CollectionLogicalIdV1::new("collection/a").unwrap(),
+            CollectionLogicalIdV1::new("collection/b").unwrap(),
+            CollectionLogicalIdV1::new("collection/c").unwrap(),
+        ];
+        let sources = [
+            CollectionSourceKeyV1::new("a").unwrap(),
+            CollectionSourceKeyV1::new("b").unwrap(),
+            CollectionSourceKeyV1::new("c").unwrap(),
+        ];
+        let family = collection_family(
+            "collection/family",
+            logical
+                .iter()
+                .zip(&sources)
+                .map(|(logical, source)| {
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical.clone(),
+                        source.clone(),
+                        0,
+                        "Walk".into(),
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        );
+        let declaration = collection_declaration(vec![family], manifest.clone());
+        let available = loaded_source(document(None), b"available");
+        let partial_primary = InputIdentity::from_bytes(b"partial");
+        let partial_closure = DependencyClosureBuilderV1::new(
+            partial_primary.clone(),
+            SourceSetCoverageV1::partial(SourceUnavailableReasonV1::ProjectionBudgetExceeded),
+            0,
+        )
+        .finish()
+        .unwrap();
+        let mut partial_facts =
+            RawSourceFactsBuilderV1::new(SourceFormatV1::Glb, partial_primary.clone());
+        partial_facts.mark_complete(SourceFactDomainV1::Clips);
+        partial_facts.mark_complete(SourceFactDomainV1::Constructs);
+        partial_facts.mark_partial(
+            SourceFactDomainV1::Resources,
+            SourceUnavailableReasonV1::ProjectionBudgetExceeded,
+        );
+        let partial = partial_facts
+            .finish_with_dependency_closure(document(None), partial_closure)
+            .unwrap();
+        let missing_primary = InputIdentity::from_bytes(b"missing");
+        let members = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[0],
+                &sources[0],
+                0,
+                "Walk",
+                &available,
+            ),
+            CollectionTransitionPoseMemberInputV1::dependency_closure_incomplete(
+                &logical[1],
+                &sources[1],
+                0,
+                "Walk",
+                &partial,
+            ),
+            CollectionTransitionPoseMemberInputV1::unavailable_with_source_input(
+                &logical[2],
+                &sources[2],
+                0,
+                "Walk",
+                &missing_primary,
+            ),
+        ];
+        let result =
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &members).unwrap();
+        let row = &result.families()[0];
+        assert_eq!(
+            row.reason(),
+            Some(TransitionPoseReasonV1::DependencyClosureIncomplete)
+        );
+        assert!(row.pairs().is_empty());
+        assert!(row.skeleton_basis_input().is_none());
+        assert_eq!(row.members()[1].source_input(), Some(&partial_primary));
+        assert!(
+            row.members()[1]
+                .source_dependency_closure_identity()
+                .is_none()
+        );
+        assert_eq!(row.members()[2].source_input(), Some(&missing_primary));
+    }
+
+    #[test]
+    fn collection_invalid_and_mismatched_skeletons_are_whole_family_gaps() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let logical = [
+            CollectionLogicalIdV1::new("collection/a").unwrap(),
+            CollectionLogicalIdV1::new("collection/b").unwrap(),
+            CollectionLogicalIdV1::new("collection/c").unwrap(),
+        ];
+        let sources = [
+            CollectionSourceKeyV1::new("a").unwrap(),
+            CollectionSourceKeyV1::new("b").unwrap(),
+            CollectionSourceKeyV1::new("c").unwrap(),
+        ];
+        let declaration = collection_declaration(
+            vec![collection_family(
+                "collection/family",
+                logical
+                    .iter()
+                    .zip(&sources)
+                    .map(|(logical, source)| {
+                        CollectionTransitionFamilyMemberV1::new(
+                            logical.clone(),
+                            source.clone(),
+                            0,
+                            "Walk".into(),
+                        )
+                        .unwrap()
+                    })
+                    .collect(),
+            )],
+            manifest.clone(),
+        );
+        let same = loaded_source(document(None), b"same");
+        let mut different_document = document(None);
+        different_document.skeleton.bones[0].name = "different".into();
+        let different = loaded_source(different_document, b"different");
+        let mismatch = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[0],
+                &sources[0],
+                0,
+                "Walk",
+                &same,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[1],
+                &sources[1],
+                0,
+                "Walk",
+                &same,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[2],
+                &sources[2],
+                0,
+                "Walk",
+                &different,
+            ),
+        ];
+        let result =
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &mismatch).unwrap();
+        assert_eq!(
+            result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::SkeletonBasisMismatch)
+        );
+        assert!(result.families()[0].pairs().is_empty());
+
+        let mut invalid_document = document(None);
+        invalid_document.skeleton.bones[0].rest.rotation =
+            crate::glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        let invalid = loaded_source(invalid_document, b"invalid");
+        let invalid_members = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[0],
+                &sources[0],
+                0,
+                "Walk",
+                &invalid,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[1],
+                &sources[1],
+                0,
+                "Walk",
+                &same,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[2],
+                &sources[2],
+                0,
+                "Walk",
+                &different,
+            ),
+        ];
+        let invalid_result =
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &invalid_members)
+                .unwrap();
+        assert_eq!(
+            invalid_result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::MemberUnavailable)
+        );
+        assert!(
+            invalid_result.families()[0]
+                .skeleton_basis_input()
+                .is_none()
+        );
+        assert!(invalid_result.families()[0].pairs().is_empty());
+    }
+
+    #[test]
+    fn collection_repeated_families_cache_basis_and_track_admission_by_source_take() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let source = CollectionSourceKeyV1::new("shared").unwrap();
+        let logical = [
+            CollectionLogicalIdV1::new("collection/walk").unwrap(),
+            CollectionLogicalIdV1::new("collection/run").unwrap(),
+        ];
+        let family_members = || {
+            vec![
+                CollectionTransitionFamilyMemberV1::new(
+                    logical[0].clone(),
+                    source.clone(),
+                    0,
+                    "Walk".into(),
+                )
+                .unwrap(),
+                CollectionTransitionFamilyMemberV1::new(
+                    logical[1].clone(),
+                    source.clone(),
+                    1,
+                    "Run".into(),
+                )
+                .unwrap(),
+            ]
+        };
+        let declaration = collection_declaration(
+            vec![
+                collection_family("collection/first", family_members()),
+                collection_family("collection/second", family_members()),
+            ],
+            manifest.clone(),
+        );
+        let shared = loaded_source(document(Some(0.0)), b"shared");
+        let members = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[0],
+                &source,
+                0,
+                "Walk",
+                &shared,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[1],
+                &source,
+                1,
+                "Run",
+                &shared,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[0],
+                &source,
+                0,
+                "Walk",
+                &shared,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[1],
+                &source,
+                1,
+                "Run",
+                &shared,
+            ),
+        ];
+        let mut basis_builds = 0usize;
+        let mut track_visits = 0usize;
+        let result = evaluate_collection_transition_poses_v1_with_probes(
+            &declaration,
+            &manifest,
+            &members,
+            |_| basis_builds += 1,
+            |_| track_visits += 1,
+        )
+        .unwrap();
+        assert_eq!(basis_builds, 1, "one source key builds one basis");
+        assert_eq!(track_visits, 1, "one authored track is admitted once");
+        assert!(
+            result
+                .families()
+                .iter()
+                .all(|family| family.status() == TransitionPoseStatusV1::Complete)
+        );
+    }
+
+    #[test]
+    fn collection_distinct_family_bases_remain_independently_valid() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let logical = (0..4)
+            .map(|index| CollectionLogicalIdV1::new(format!("collection/m{index}")).unwrap())
+            .collect::<Vec<_>>();
+        let sources = (0..4)
+            .map(|index| CollectionSourceKeyV1::new(format!("s{index}")).unwrap())
+            .collect::<Vec<_>>();
+        let family = |id: &str, range: std::ops::Range<usize>| {
+            collection_family(
+                id,
+                range
+                    .map(|index| {
+                        CollectionTransitionFamilyMemberV1::new(
+                            logical[index].clone(),
+                            sources[index].clone(),
+                            0,
+                            "Walk".into(),
+                        )
+                        .unwrap()
+                    })
+                    .collect(),
+            )
+        };
+        let declaration = collection_declaration(
+            vec![
+                family("collection/first", 0..2),
+                family("collection/second", 2..4),
+            ],
+            manifest.clone(),
+        );
+        let first = loaded_source(document(None), b"first");
+        let mut second_document = document(None);
+        second_document.skeleton.bones[0].name = "second-root".into();
+        let second = loaded_source(second_document, b"second");
+        let members = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[0],
+                &sources[0],
+                0,
+                "Walk",
+                &first,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[1],
+                &sources[1],
+                0,
+                "Walk",
+                &first,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[2],
+                &sources[2],
+                0,
+                "Walk",
+                &second,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[3],
+                &sources[3],
+                0,
+                "Walk",
+                &second,
+            ),
+        ];
+        let result =
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &members).unwrap();
+        assert_eq!(result.status(), TransitionPoseStatusV1::Complete);
+        assert_ne!(
+            result.families()[0].skeleton_basis_input(),
+            result.families()[1].skeleton_basis_input()
+        );
+    }
+
+    #[test]
+    fn collection_policy_and_pair_work_refusals_do_not_visit_skeletons_or_tracks() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let source = CollectionSourceKeyV1::new("shared").unwrap();
+        let policy_logical = [
+            CollectionLogicalIdV1::new("collection/policy-a").unwrap(),
+            CollectionLogicalIdV1::new("collection/policy-b").unwrap(),
+        ];
+        let policy_family = collection_family_with(
+            "collection/policy",
+            TransitionFamilyBoundaryV1::Entry,
+            0.1,
+            policy_logical
+                .iter()
+                .map(|logical| {
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical.clone(),
+                        source.clone(),
+                        0,
+                        "Walk".into(),
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        );
+        let work_logical = (0..92)
+            .map(|index| CollectionLogicalIdV1::new(format!("collection/work-{index}")).unwrap())
+            .collect::<Vec<_>>();
+        let work_family = collection_family(
+            "collection/work",
+            work_logical
+                .iter()
+                .map(|logical| {
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical.clone(),
+                        source.clone(),
+                        0,
+                        "Walk".into(),
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        );
+        let declaration =
+            collection_declaration(vec![policy_family, work_family], manifest.clone());
+        let mut poisoned = document(None);
+        poisoned.skeleton.bones[0].rest.rotation = crate::glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        poisoned.clips[0].tracks.push(Track {
+            bone: usize::MAX,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![],
+            values: TrackValues::Vec3s(vec![]),
+        });
+        let shared = loaded_source(poisoned, b"shared");
+        let mut members = policy_logical
+            .iter()
+            .map(|logical| {
+                CollectionTransitionPoseMemberInputV1::available(
+                    logical, &source, 0, "Walk", &shared,
+                )
+            })
+            .collect::<Vec<_>>();
+        members.extend(work_logical.iter().map(|logical| {
+            CollectionTransitionPoseMemberInputV1::available(logical, &source, 0, "Walk", &shared)
+        }));
+        let mut basis_builds = 0usize;
+        let mut track_visits = 0usize;
+        let result = evaluate_collection_transition_poses_v1_with_probes(
+            &declaration,
+            &manifest,
+            &members,
+            |_| basis_builds += 1,
+            |_| track_visits += 1,
+        )
+        .unwrap();
+        assert_eq!(basis_builds, 0);
+        assert_eq!(track_visits, 0);
+        assert_eq!(
+            result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::TimeToleranceUnsupported)
+        );
+        assert_eq!(
+            result.families()[1].reason(),
+            Some(TransitionPoseReasonV1::FamilyWorkLimit)
+        );
+    }
+
+    #[test]
+    fn collection_raw_and_selected_track_caps_precede_endpoint_sampling() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let logical = [
+            CollectionLogicalIdV1::new("collection/walk").unwrap(),
+            CollectionLogicalIdV1::new("collection/run").unwrap(),
+        ];
+        let source = CollectionSourceKeyV1::new("shared").unwrap();
+        let declaration = collection_declaration(
+            vec![collection_family(
+                "collection/family",
+                vec![
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical[0].clone(),
+                        source.clone(),
+                        0,
+                        "Walk".into(),
+                    )
+                    .unwrap(),
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical[1].clone(),
+                        source.clone(),
+                        1,
+                        "Run".into(),
+                    )
+                    .unwrap(),
+                ],
+            )],
+            manifest.clone(),
+        );
+        let scale = Track {
+            bone: 0,
+            property: Property::Scale,
+            interpolation: Interpolation::Linear,
+            times: vec![],
+            values: TrackValues::Vec3s(vec![]),
+        };
+        let mut raw_document = document(None);
+        raw_document.clips[1].tracks = vec![scale; 4];
+        let raw = loaded_source(raw_document, b"raw");
+        let raw_members = [
+            CollectionTransitionPoseMemberInputV1::available(&logical[0], &source, 0, "Walk", &raw),
+            CollectionTransitionPoseMemberInputV1::available(&logical[1], &source, 1, "Run", &raw),
+        ];
+        let mut raw_visits = 0usize;
+        let raw_result = evaluate_collection_transition_poses_v1_with_probes(
+            &declaration,
+            &manifest,
+            &raw_members,
+            |_| {},
+            |_| raw_visits += 1,
+        )
+        .unwrap();
+        assert_eq!(raw_visits, 0, "raw length rejects without a track walk");
+        assert_eq!(
+            raw_result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::InputLimit)
+        );
+
+        let selected_track = Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0],
+            values: TrackValues::Vec3s(vec![crate::glam::Vec3::ZERO]),
+        };
+        let mut selected_document = document(None);
+        selected_document.clips[1].tracks = vec![selected_track; 3];
+        let selected = loaded_source(selected_document, b"selected");
+        let selected_members = [
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[0],
+                &source,
+                0,
+                "Walk",
+                &selected,
+            ),
+            CollectionTransitionPoseMemberInputV1::available(
+                &logical[1],
+                &source,
+                1,
+                "Run",
+                &selected,
+            ),
+        ];
+        let mut selected_visits = 0usize;
+        let selected_result = evaluate_collection_transition_poses_v1_with_probes(
+            &declaration,
+            &manifest,
+            &selected_members,
+            |_| {},
+            |_| selected_visits += 1,
+        )
+        .unwrap();
+        assert_eq!(selected_visits, 3);
+        assert_eq!(
+            selected_result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::InputLimit)
+        );
+    }
+
+    #[test]
+    fn collection_aggregate_work_and_retention_plans_precede_rejected_family_traversal() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let source = CollectionSourceKeyV1::new("shared").unwrap();
+        let logical = (0..64)
+            .map(|index| CollectionLogicalIdV1::new(format!("collection/m{index}")).unwrap())
+            .collect::<Vec<_>>();
+        let family_members = || {
+            logical
+                .iter()
+                .map(|logical| {
+                    CollectionTransitionFamilyMemberV1::new(
+                        logical.clone(),
+                        source.clone(),
+                        0,
+                        "Walk".into(),
+                    )
+                    .unwrap()
+                })
+                .collect()
+        };
+
+        let aggregate_declaration = collection_declaration(
+            (0..17)
+                .map(|index| {
+                    collection_family_with(
+                        &format!("collection/a{index}"),
+                        TransitionFamilyBoundaryV1::Both,
+                        0.0,
+                        family_members(),
+                    )
+                })
+                .collect(),
+            manifest.clone(),
+        );
+        let mut aggregate_document = document(None);
+        aggregate_document.skeleton.bones.clear();
+        let aggregate_source = loaded_source(aggregate_document, b"aggregate");
+        let aggregate_members = (0..17)
+            .flat_map(|_| {
+                logical.iter().map(|logical| {
+                    CollectionTransitionPoseMemberInputV1::available(
+                        logical,
+                        &source,
+                        0,
+                        "Walk",
+                        &aggregate_source,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut basis_builds = 0usize;
+        let aggregate = evaluate_collection_transition_poses_v1_with_probes(
+            &aggregate_declaration,
+            &manifest,
+            &aggregate_members,
+            |_| basis_builds += 1,
+            |_| panic!("aggregate-rejected families must not visit tracks"),
+        )
+        .unwrap();
+        assert_eq!(
+            basis_builds, 1,
+            "only eligible source authority is built once"
+        );
+        assert_eq!(
+            aggregate.families()[16].reason(),
+            Some(TransitionPoseReasonV1::AggregateWorkLimit)
+        );
+
+        let retention_declaration = collection_declaration(
+            vec![
+                collection_family("collection/r1", family_members()),
+                collection_family("collection/r2", family_members()),
+            ],
+            manifest.clone(),
+        );
+        let mut retention_document = document(None);
+        retention_document.skeleton.bones = (0..16)
+            .map(|index| Bone {
+                name: format!("b{index}"),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            })
+            .collect();
+        let retention_source = loaded_source(retention_document, b"retention");
+        let retention_members = (0..2)
+            .flat_map(|_| {
+                logical.iter().map(|logical| {
+                    CollectionTransitionPoseMemberInputV1::available(
+                        logical,
+                        &source,
+                        0,
+                        "Walk",
+                        &retention_source,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let retention = evaluate_collection_transition_poses_v1(
+            &retention_declaration,
+            &manifest,
+            &retention_members,
+        )
+        .unwrap();
+        assert_eq!(
+            retention.families()[1].reason(),
+            Some(TransitionPoseReasonV1::RetentionLimit)
+        );
+    }
+
+    #[test]
+    fn collection_result_budget_refusal_retains_basis_and_nullable_member_authority() {
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            CollectionIdV1::new("collection").unwrap(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let source = CollectionSourceKeyV1::new("large").unwrap();
+        let large_logical = (0..16)
+            .map(|index| CollectionLogicalIdV1::new(format!("collection/large-{index}")).unwrap())
+            .collect::<Vec<_>>();
+        let missing_logical = [
+            CollectionLogicalIdV1::new("collection/missing-a").unwrap(),
+            CollectionLogicalIdV1::new("collection/missing-b").unwrap(),
+        ];
+        let missing_sources = [
+            CollectionSourceKeyV1::new("missing-a").unwrap(),
+            CollectionSourceKeyV1::new("missing-b").unwrap(),
+        ];
+        let declaration = collection_declaration(
+            vec![
+                collection_family(
+                    "collection/large",
+                    large_logical
+                        .iter()
+                        .map(|logical| {
+                            CollectionTransitionFamilyMemberV1::new(
+                                logical.clone(),
+                                source.clone(),
+                                0,
+                                "Walk".into(),
+                            )
+                            .unwrap()
+                        })
+                        .collect(),
+                ),
+                collection_family(
+                    "collection/missing",
+                    missing_logical
+                        .iter()
+                        .zip(&missing_sources)
+                        .map(|(logical, source)| {
+                            CollectionTransitionFamilyMemberV1::new(
+                                logical.clone(),
+                                source.clone(),
+                                0,
+                                "Walk".into(),
+                            )
+                            .unwrap()
+                        })
+                        .collect(),
+                ),
+            ],
+            manifest.clone(),
+        );
+        let mut large_document = document(None);
+        large_document.skeleton.bones[0].name =
+            "x".repeat(TRANSITION_POSE_EVALUATION_V1_MAX_BASIS_TEXT_BYTES);
+        let large = loaded_source(large_document, b"large");
+        let mut members = large_logical
+            .iter()
+            .map(|logical| {
+                CollectionTransitionPoseMemberInputV1::available(
+                    logical, &source, 0, "Walk", &large,
+                )
+            })
+            .collect::<Vec<_>>();
+        members.extend(
+            missing_logical
+                .iter()
+                .zip(&missing_sources)
+                .map(|(logical, source)| {
+                    CollectionTransitionPoseMemberInputV1::unavailable(logical, source, 0, "Walk")
+                }),
+        );
+        let result =
+            evaluate_collection_transition_poses_v1(&declaration, &manifest, &members).unwrap();
+        assert_eq!(
+            result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::ResultLimit)
+        );
+        assert!(result.families()[0].skeleton_basis_input().is_some());
+        assert_eq!(
+            result.families()[1].reason(),
+            Some(TransitionPoseReasonV1::MemberUnavailable)
+        );
+        assert!(result.families()[1].skeleton_basis_input().is_none());
+        assert!(result.families()[1].members()[0].source_input().is_none());
+        result.normalized_jcs().unwrap();
     }
 
     #[test]
