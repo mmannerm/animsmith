@@ -63,7 +63,7 @@ pub(crate) fn run_direct(
 }
 
 /// Produce a collection-scoped contact fragment by reloading the witnessed
-/// source; `collection-output:2` is intentionally not an input to this path.
+/// source; collection-output evidence is intentionally not an input to this path.
 pub(crate) fn run_collection(
     manifest_path: &Path,
     requested_clip: &str,

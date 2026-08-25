@@ -16,7 +16,7 @@ use super::collection_manifest::{
     CollectionPathResolver, CollectionSourceResolution, load_collection_manifest_with_identity,
 };
 use super::collection_output::{
-    COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES, COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES,
+    COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES, COLLECTION_OUTPUT_MAX_SOURCE_BYTES,
 };
 use super::transition_family::parse_collection_transition_families_bytes;
 use super::{EXIT_FINDINGS, input_format, load_source_bytes_typed};
@@ -319,9 +319,9 @@ fn load_resolved_source(
 }
 
 fn next_source_limit(primary_source_bytes: u64) -> Option<u64> {
-    COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES
+    COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES
         .checked_sub(primary_source_bytes)
-        .map(|remaining| COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES.min(remaining))
+        .map(|remaining| COLLECTION_OUTPUT_MAX_SOURCE_BYTES.min(remaining))
 }
 
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, u64> {
@@ -361,7 +361,7 @@ mod tests {
         std::fs::write(&source, b"12").expect("writes synthetic source");
 
         assert_eq!(read_bounded(&source, 1), Err(2));
-        let cap = COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES;
+        let cap = COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES;
         assert_eq!(next_source_limit(cap - 1), Some(1));
         assert_eq!(next_source_limit(cap + 1), None);
     }

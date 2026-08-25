@@ -287,7 +287,7 @@ enum CollectionCmd {
         /// Strict collection-manifest V1 TOML input.
         #[arg(value_name = "COLLECTION.toml")]
         manifest: PathBuf,
-        /// Emit the collection-output V2 JSON contract.
+        /// Emit the collection-output V3 JSON contract.
         #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
         format: CollectionFormat,
     },
@@ -306,15 +306,15 @@ enum CollectionCmd {
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
     },
-    /// Evaluate one declared directional-speed policy against collection-output V2 evidence.
+    /// Evaluate one declared directional-speed policy against collection-output V3 evidence.
     #[command(
-        long_about = "Evaluate one strict manifest-bound directional-speed policy against one strict collection-output V2 document. The policy must declare every member of one directional-blend runtime set in manifest order; this command never infers members, filenames, controller behavior, or diagonal normalization. It writes only the immutable collection-directional-speed-evaluation V1 JSON result to stdout. Invalid, stale, wrong-kind, unreadable, malformed, or over-budget control inputs write no result and exit 2. Incomplete or not-evaluable evidence and declared-policy findings write a result and exit 1; only a complete passing policy exits 0."
+        long_about = "Evaluate one strict manifest-bound directional-speed policy against one strict collection-output V3 document. The policy must declare every member of one directional-blend runtime set in manifest order; this command never infers members, filenames, controller behavior, or diagonal normalization. It writes only the immutable collection-directional-speed-evaluation V1 JSON result to stdout. Invalid, stale, wrong-kind, unreadable, malformed, or over-budget control inputs write no result and exit 2. Incomplete or not-evaluable evidence and declared-policy findings write a result and exit 1; only a complete passing policy exits 0."
     )]
     EvaluateDirectionalSpeed {
         /// Strict collection-directional-speed-policy V1 TOML input.
         #[arg(long, value_name = "POLICY.toml")]
         policy: PathBuf,
-        /// Strict collection-output V2 JSON input.
+        /// Strict collection-output V3 JSON input.
         #[arg(long, value_name = "COLLECTION-OUTPUT.json")]
         evidence: PathBuf,
         /// Emit the immutable directional-speed evaluation JSON contract.

@@ -49,8 +49,8 @@ members may span documents but must have one exact normalized skeleton basis.
 ## Collection lint
 
 `animsmith collection lint COLLECTION.toml --format json` emits the separate
-immutable `urn:animsmith:schema:collection-output:2` envelope described by
-[`collection-output-v2.schema.json`](schemas/collection-output-v2.schema.json).
+immutable `urn:animsmith:schema:collection-output:3` envelope described by
+[`collection-output-v3.schema.json`](schemas/collection-output-v3.schema.json).
 It binds the exact manifest bytes to canonically ordered source, logical clip,
 and runtime-set records while preserving each set's declared member order.
 Every available source embeds its ordinary one-file output-v11 lint result;
@@ -73,7 +73,7 @@ before source execution and reads sources sequentially.
 
 `animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` consumes only strict bounded
-`collection-directional-speed-policy:1` TOML and `collection-output:2` JSON.
+`collection-directional-speed-policy:1` TOML and `collection-output:3` JSON.
 It emits the JSON-only immutable
 `urn:animsmith:schema:collection-directional-speed-evaluation:1` result
 described by

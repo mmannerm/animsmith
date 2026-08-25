@@ -3001,12 +3001,20 @@ the existing multi-file spelling of `lint` collection-aware.
 AnimSmith provides two independently versioned contracts:
 
 - `urn:animsmith:schema:collection-manifest:1`, a strict TOML declaration; and
-- `urn:animsmith:schema:collection-output:1`, deterministic JSON evidence.
+- `urn:animsmith:schema:collection-output:3`, deterministic JSON evidence.
 
-Collection-output V1 remains immutable. The current
-`urn:animsmith:schema:collection-output:2` derives its exact shape, budgets,
-and reader rules from V1, changing only the nested ordinary output envelope
-identity from output v10 to output v11.
+The historical `urn:animsmith:schema:collection-output:1` and
+`urn:animsmith:schema:collection-output:2` contracts remain immutable. V2
+derives its exact shape, budgets, and reader rules from V1, changing only the
+nested ordinary output envelope identity from output v10 to output v11. The
+current `urn:animsmith:schema:collection-output:3` derives from V2 and adds one
+bounded `dependency_closure` state to every source. A complete state retains the
+loader's exact `DependencyClosureIdentityV1`; partial and unavailable states
+retain a nonempty, sorted, unique sequence from the seven closed
+`DependencyClosureCoverageReasonV1` values. Only complete closure coverage can
+establish a source, logical clip, or runtime-set member. This keeps primary
+input identity, optional manifest digest pin, and complete loader-input
+identity separate.
 
 They are consumed and produced by an explicit command:
 
@@ -3068,8 +3076,9 @@ The physical binding contains:
 Index and name are both required. Name alone is ambiguous when many files or
 multiple takes use `Take 001`; index alone would silently accept reordered or
 renamed source content. The source record supplies the safe root-relative
-locator, observed `InputIdentity` (SHA-256 and bytes), optional expected
-SHA-256, and config basis. A source rename does not change the logical id, but
+locator, observed primary `InputIdentity` (SHA-256 and bytes), optional
+expected SHA-256, complete or typed-incomplete dependency-closure state, and
+config basis. A source rename does not change the logical id, but
 the manifest must be edited explicitly and output records the changed physical
 locator. A digest pin is a binding assertion, not the logical identity.
 
@@ -3383,7 +3392,7 @@ Issue #147 freezes the interchange contract for contact facts. In 0.6.0,
 issue #152 delivers its narrow strict producer: `animsmith generate contact-fragment` and
 `animsmith collection generate-contact-fragment` sample stance support and
 atomically publish one source-bound fragment. The collection command reloads
-its selected manifest source rather than consuming `collection-output:2`.
+its selected manifest source rather than consuming collection-output evidence.
 Neither issue adds host-side sidecar merge or a runtime event system. Its
 independently versioned identity is:
 
@@ -3956,7 +3965,7 @@ identity is the exact manifest identity, not a digest of normalized values.
 kind `directional-blend`.
 
 The explicit `source_basis` contains `x` and `z`, each a semantic 2-D
-orientation witness for the raw collection-output V2 +X/+Z endpoint
+orientation witness for the raw collection-output V3 +X/+Z endpoint
 displacement. Their magnitudes are nonsemantic; the evaluator uses unit axes
 for heading comparison. Every component is finite and has absolute value
 at most `1,000,000`. Each axis is nonzero. Perpendicularity is judged by the
@@ -4019,7 +4028,7 @@ lifecycle is classification, not a second policy authority.
 
 There is no evaluator inference or fallback. The pure, format-neutral
 `collection-directional-speed-evaluation:1` result and typed adapter consume
-already strictly decoded collection-output V2 evidence; they do not revise V2.
+already strictly decoded collection-output V3 evidence; they do not revise V3.
 The immutable result binds the raw policy TOML
 and evidence JSON `InputIdentity` values as well as the manifest, and retains
 every member's coordinate, raw root-travel values, projected heading,

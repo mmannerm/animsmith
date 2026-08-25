@@ -1,6 +1,6 @@
 //! Pure, manifest-bound directional-speed policy evaluation V1.
 //!
-//! The format/CLI layer decodes `collection-output:2` strictly, then adapts
+//! The format/CLI layer decodes current collection-output evidence strictly, then adapts
 //! its retained root-travel evidence into [`CollectionDirectionalSpeedEvidenceV1`].
 //! This module deliberately has no filesystem or JSON-reader authority.
 
@@ -19,7 +19,7 @@ pub const COLLECTION_DIRECTIONAL_SPEED_EVALUATION_V1_ID: &str =
 /// Schema version for a directional-speed evaluation result.
 pub const COLLECTION_DIRECTIONAL_SPEED_EVALUATION_V1_SCHEMA_VERSION: u32 = 1;
 
-/// The retained root-travel lifecycle from collection-output V2.
+/// The retained root-travel lifecycle from collection-output evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[allow(missing_docs)]
 #[serde(rename_all = "snake_case")]
@@ -28,7 +28,7 @@ pub enum CollectionDirectionalSpeedLifecycleV1 {
     Incomplete,
 }
 
-/// Raw root-travel values for one manifest member. `None` values retain a V2
+/// Raw root-travel values for one manifest member. `None` values retain an
 /// unavailable/not-applicable prerequisite without creating a subset result.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CollectionDirectionalSpeedEvidenceMemberV1 {
@@ -41,7 +41,7 @@ pub struct CollectionDirectionalSpeedEvidenceMemberV1 {
     pub horizontal_displacement_z_m: Option<f64>,
     /// Raw sampled horizontal travel, retained but never used as speed.
     pub horizontal_travel_m: Option<f64>,
-    /// Published V2 speed measurement.
+    /// Published collection speed measurement.
     pub speed_mps: Option<f64>,
 }
 
@@ -84,7 +84,7 @@ impl CollectionDirectionalSpeedEvidenceMemberV1 {
     }
 }
 
-/// Strict V2 evidence as consumed by the evaluator.
+/// Strict collection evidence as consumed by the evaluator.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CollectionDirectionalSpeedEvidenceV1 {
     manifest: CollectionDirectionalSpeedManifestIdentityV1,
@@ -96,7 +96,7 @@ pub struct CollectionDirectionalSpeedEvidenceV1 {
 }
 
 impl CollectionDirectionalSpeedEvidenceV1 {
-    /// Construct evidence after strict V2 decoding. The constructor rejects
+    /// Construct evidence after strict collection-output decoding. The constructor rejects
     /// contradictory lifecycle/member representations; incomplete evidence is
     /// nevertheless a normal evaluator input and result.
     pub fn new(
@@ -158,11 +158,11 @@ impl CollectionDirectionalSpeedEvidenceV1 {
     pub const fn lifecycle(&self) -> CollectionDirectionalSpeedLifecycleV1 {
         self.lifecycle
     }
-    /// Retained gaps in V2 order.
+    /// Retained gaps in source order.
     pub fn gaps(&self) -> &[CollectionLogicalIdV1] {
         &self.gaps
     }
-    /// Retained member evidence in V2 manifest order.
+    /// Retained member evidence in manifest order.
     pub fn members(&self) -> &[CollectionDirectionalSpeedEvidenceMemberV1] {
         &self.members
     }
@@ -191,14 +191,14 @@ pub enum CollectionDirectionalSpeedFindingV1 {
         angle_deg: f64,
         tolerance_deg: f64,
     },
-    /// Published V2 speed exceeded the inclusive absolute tolerance.
+    /// Published collection speed exceeded the inclusive absolute tolerance.
     Speed {
         member_id: CollectionLogicalIdV1,
         measured_speed_mps: f64,
         expected_speed_mps: f64,
         tolerance_mps: f64,
     },
-    /// Published V2 speed ratio exceeded the inclusive ratio tolerance.
+    /// Published collection speed ratio exceeded the inclusive ratio tolerance.
     Ratio {
         member_id: CollectionLogicalIdV1,
         measured_ratio: f64,
@@ -207,14 +207,14 @@ pub enum CollectionDirectionalSpeedFindingV1 {
     },
 }
 
-/// One immutable per-member comparison row. It always retains its raw V2
+/// One immutable per-member comparison row. It always retains its raw
 /// evidence and policy coordinate; comparison fields are absent only when the
 /// set's typed lifecycle/reason makes comparison unavailable.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CollectionDirectionalSpeedMemberEvaluationV1 {
     /// Semantic policy coordinate.
     pub coordinate: [f64; 2],
-    /// Retained raw V2 row.
+    /// Retained raw collection-evidence row.
     pub evidence: CollectionDirectionalSpeedEvidenceMemberV1,
     /// Normalized projected semantic heading.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -292,7 +292,7 @@ impl CollectionDirectionalSpeedEvaluationV1 {
     pub const fn lifecycle(&self) -> CollectionDirectionalSpeedLifecycleV1 {
         self.lifecycle
     }
-    /// Retained V2 gaps in source order.
+    /// Retained collection-evidence gaps in source order.
     pub fn gaps(&self) -> &[CollectionLogicalIdV1] {
         &self.gaps
     }

@@ -123,7 +123,8 @@ check_schema docs/schemas/gltf-animation-addressability-v1.schema.json urn:anims
 check_schema docs/schemas/engine-import-advice-v1.schema.json urn:animsmith:schema:engine-import-advice:1 crates/animsmith-engine/src/import_advice.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-manifest-v1.schema.json urn:animsmith:schema:collection-manifest:1 crates/animsmith-core/src/collection.rs crates/animsmith/src/collection_manifest.rs DESIGN.md
 check_schema docs/schemas/collection-output-v1.schema.json urn:animsmith:schema:collection-output:1 DESIGN.md
-check_schema docs/schemas/collection-output-v2.schema.json urn:animsmith:schema:collection-output:2 crates/animsmith/src/collection_output.rs DESIGN.md docs/output.md docs/cli.md
+check_schema docs/schemas/collection-output-v2.schema.json urn:animsmith:schema:collection-output:2 DESIGN.md
+check_schema docs/schemas/collection-output-v3.schema.json urn:animsmith:schema:collection-output:3 crates/animsmith/src/collection_output.rs DESIGN.md docs/output.md docs/cli.md
 check_schema docs/schemas/contact-fragment-v1.schema.json urn:animsmith:schema:contact-fragment:1 crates/animsmith-core/src/contact_fragment.rs docs/output.md DESIGN.md
 check_schema docs/schemas/transition-pose-evaluation-v1.schema.json urn:animsmith:schema:transition-pose-evaluation:1 crates/animsmith-core/src/transition_pose_evaluation.rs DESIGN.md docs/collection-contracts.md
 check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2

@@ -4,12 +4,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:2";
+const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:3";
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:11";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const COLLECTION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-output-v2.schema.json");
+    include_str!("../../../docs/schemas/collection-output-v3.schema.json");
 const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v11.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
@@ -79,6 +79,15 @@ fn retained_spike_emits_exact_deterministic_collection_evidence() {
     assert_eq!(value["summary"]["complete_runtime_sets"], 2);
     assert_eq!(value["summary"]["incomplete"], false);
     assert_eq!(value["sources"][0]["key"], "multi");
+    assert_eq!(
+        value["sources"][0]["dependency_closure"]["state"],
+        "complete"
+    );
+    assert!(
+        value["sources"][0]["dependency_closure"]["identity"]["sha256"]
+            .as_str()
+            .is_some_and(|digest| digest.len() == 64)
+    );
     assert_eq!(
         value["sources"][0]["config"]["input"]["sha256"],
         "385b7a67171994d8099fb7d4623721fc7b84fcdbe8cba1b7883f72fbba75182e"
@@ -304,6 +313,204 @@ take_name = "Take 001"
         value["sources"][0]["loader"]["reason"],
         "dependency_unavailable"
     );
+    assert_eq!(
+        value["sources"][0]["dependency_closure"],
+        json!({"state": "unavailable", "reasons": ["capture_unavailable"]})
+    );
+}
+
+#[test]
+fn optional_missing_dependency_makes_source_and_clip_incomplete() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut source: Value =
+        serde_json::from_slice(&fs::read(spike_path("source/walk-a.gltf")).unwrap()).unwrap();
+    source["images"] = json!([{"uri": "missing.png"}]);
+    source["animations"].as_array_mut().unwrap().push(json!({
+        "name": "Take 002",
+        "samplers": [],
+        "channels": []
+    }));
+    fs::write(
+        temp.path().join("source.gltf"),
+        serde_json::to_vec(&source).unwrap(),
+    )
+    .unwrap();
+    let manifest = temp.path().join("collection.toml");
+    fs::write(
+        &manifest,
+        r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example.partial-dependency"
+[[sources]]
+key = "source"
+path = "source.gltf"
+[[clips]]
+id = "com.example.partial-dependency/take"
+source = "source"
+take_index = 0
+take_name = "Take 001"
+[[clips]]
+id = "com.example.partial-dependency/take-2"
+source = "source"
+take_index = 1
+take_name = "Take 002"
+[[runtime_sets]]
+id = "com.example.partial-dependency/set"
+kind = "sync-group"
+members = [
+  "com.example.partial-dependency/take",
+  "com.example.partial-dependency/take-2",
+]
+"#,
+    )
+    .unwrap();
+
+    let output = collection(&manifest);
+    assert_eq!(output.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&value);
+    assert_eq!(value["sources"][0]["loader"]["state"], "ready");
+    assert_eq!(value["sources"][0]["result"]["state"], "available");
+    assert_eq!(
+        value["sources"][0]["dependency_closure"],
+        json!({"state": "partial", "reasons": ["unavailable_resource"]})
+    );
+    assert_eq!(value["summary"]["sources"], 1);
+    assert_eq!(value["summary"]["established_sources"], 0);
+    assert_eq!(value["summary"]["established_clips"], 0);
+    assert_eq!(value["summary"]["complete_runtime_sets"], 0);
+    assert_eq!(value["summary"]["incomplete"], true);
+    let clips = value["clips"].as_array().unwrap();
+    assert_eq!(clips.len(), 2);
+    for clip in clips {
+        assert_eq!(
+            clip["binding"],
+            json!({"state": "unavailable", "reason": "dependency_closure_incomplete"})
+        );
+    }
+    let set = &value["runtime_sets"][0];
+    assert_eq!(set["kind"], "sync-group");
+    assert_eq!(set["members"].as_array().unwrap().len(), 2);
+    assert_eq!(set["lifecycle"], "incomplete");
+    assert_eq!(
+        set["gaps"],
+        json!([
+            "com.example.partial-dependency/take",
+            "com.example.partial-dependency/take-2"
+        ])
+    );
+    assert_eq!(set["evidence"]["root_travel"]["members_measured"], 0);
+    for member in set["members"].as_array().unwrap() {
+        assert_eq!(
+            member["resolution"],
+            json!({"state": "unavailable", "reason": "dependency_closure_incomplete"})
+        );
+    }
+}
+
+#[test]
+fn external_animation_bytes_change_closure_identity_and_measurement_not_primary_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let source_path = temp.path().join("source.gltf");
+    let buffer_path = temp.path().join("animation.bin");
+    let source = json!({
+        "asset": {"version": "2.0"},
+        "buffers": [{"uri": "animation.bin", "byteLength": 48}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 12},
+            {"buffer": 0, "byteOffset": 12, "byteLength": 36}
+        ],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0.0], "max": [1.0]},
+            {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"}
+        ],
+        "nodes": [{"name": "root", "skin": 0}],
+        "skins": [{"joints": [0]}],
+        "animations": [{
+            "name": "Take 001",
+            "samplers": [{"input": 0, "output": 1, "interpolation": "LINEAR"}],
+            "channels": [{"sampler": 0, "target": {"node": 0, "path": "translation"}}]
+        }],
+        "scenes": [{"nodes": [0]}],
+        "scene": 0
+    });
+    let source_bytes = serde_json::to_vec(&source).unwrap();
+    let source_identity = animsmith_core::InputIdentity::from_bytes(&source_bytes);
+    fs::write(&source_path, &source_bytes).unwrap();
+    let manifest = temp.path().join("collection.toml");
+    fs::write(
+        &manifest,
+        format!(
+            r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example.external-animation"
+[[sources]]
+key = "source"
+path = "source.gltf"
+expected_sha256 = "{}"
+[[clips]]
+id = "com.example.external-animation/take"
+source = "source"
+take_index = 0
+take_name = "Take 001"
+"#,
+            source_identity.sha256()
+        ),
+    )
+    .unwrap();
+
+    let write_buffer = |endpoint_x: f32| {
+        let values = [
+            0.0_f32,
+            0.5,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            endpoint_x / 2.0,
+            0.0,
+            0.0,
+            endpoint_x,
+            0.0,
+            0.0,
+        ];
+        let bytes = values
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
+        fs::write(&buffer_path, bytes).unwrap();
+    };
+    write_buffer(1.0);
+    let first_output = collection(&manifest);
+    assert_eq!(first_output.status.code(), Some(0));
+    let first: Value = serde_json::from_slice(&first_output.stdout).unwrap();
+    assert_schema(&first);
+
+    write_buffer(2.0);
+    let second_output = collection(&manifest);
+    assert_eq!(second_output.status.code(), Some(0));
+    let second: Value = serde_json::from_slice(&second_output.stdout).unwrap();
+    assert_schema(&second);
+
+    assert_eq!(
+        first["sources"][0]["input"], second["sources"][0]["input"],
+        "only the external buffer changed"
+    );
+    assert_eq!(first["sources"][0]["digest"]["state"], "matched");
+    assert_eq!(second["sources"][0]["digest"]["state"], "matched");
+    assert_ne!(
+        first["sources"][0]["dependency_closure"]["identity"],
+        second["sources"][0]["dependency_closure"]["identity"],
+        "the complete dependency closure binds external animation bytes"
+    );
+    let position_delta = |value: &Value| {
+        value["clips"][0]["binding"]["measurements"]["loop_continuity"]["bones"][0]
+            ["position_delta_m"]
+            .as_f64()
+            .unwrap()
+    };
+    assert_eq!(position_delta(&first), 1.0);
+    assert_eq!(position_delta(&second), 2.0);
 }
 
 #[test]
