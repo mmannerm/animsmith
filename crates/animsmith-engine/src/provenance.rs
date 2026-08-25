@@ -1,9 +1,9 @@
-use crate::ResolvedProfile;
-use crate::canonical::project_resolved_profile;
+use crate::canonical::{project_resolved_profile, project_resolved_profile_v2};
+use crate::{ResolvedProfile, ResolvedProfileV2};
 use animsmith_core::LoadedSource;
 use animsmith_core::engine_contract::EngineContractError;
 use animsmith_core::prediction::{
-    PredictionContractError, PredictionProvenanceV1, RawSourceBindingV1,
+    PredictionContractError, PredictionProvenanceV1, PredictionProvenanceV2, RawSourceBindingV1,
 };
 
 /// Failure to project already-resolved engine and same-load source evidence.
@@ -41,6 +41,25 @@ pub fn project_prediction_provenance_v1(
     let (profile_contract, settings_contract) = project_resolved_profile(profile)?;
     let raw_source = RawSourceBindingV1::from_source(source.source_facts());
     Ok(PredictionProvenanceV1::new(
+        profile_contract,
+        profile.source_format(),
+        settings_contract,
+        raw_source,
+        source.dependency_closure().clone(),
+    )?)
+}
+
+/// Project one bounded V2 engine resolution into V2 prediction provenance.
+///
+/// This adapter consumes only the canonical retained prefix plus its explicit
+/// N+1 coverage/work evidence. It does not revisit the tail inventory.
+pub fn project_prediction_provenance_v2(
+    profile: &ResolvedProfileV2,
+    source: &LoadedSource,
+) -> Result<PredictionProvenanceV2, PredictionProvenanceProjectionError> {
+    let (profile_contract, settings_contract) = project_resolved_profile_v2(profile)?;
+    let raw_source = RawSourceBindingV1::from_source(source.source_facts());
+    Ok(PredictionProvenanceV2::new(
         profile_contract,
         profile.source_format(),
         settings_contract,

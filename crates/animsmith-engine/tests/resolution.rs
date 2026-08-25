@@ -1,8 +1,8 @@
 use animsmith_core::{ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS, EngineContractError, SourceFormatV1};
 use animsmith_engine::{
     BakeOrExtract, EngineDeclaration, InvalidSettingReason, ProfileSelection, ResolutionError,
-    SettingDomain, SettingId, SettingLocation, SettingScope, SettingValue, SettingValueKind,
-    resolve_static,
+    ResolvedClipCoverageReasonV2, ResolvedClipCoverageV2, SettingDomain, SettingId,
+    SettingLocation, SettingScope, SettingValue, SettingValueKind, resolve_static,
 };
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -919,4 +919,193 @@ fn oversized_exact_iterator_is_rejected_before_consuming_or_cloning_a_name() {
         ))
     );
     assert_eq!(next_calls.get(), 0);
+}
+
+#[test]
+fn v2_resolution_retains_only_the_prefix_and_records_n_plus_one_overflow() {
+    struct NPlusOne<'a> {
+        next_calls: &'a Cell<usize>,
+    }
+
+    impl Iterator for NPlusOne<'_> {
+        type Item = &'static str;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let index = self.next_calls.get();
+            self.next_calls.set(index + 1);
+            if index < ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS {
+                Some("prefix")
+            } else if index == ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS {
+                Some("tail-must-not-be-retained")
+            } else {
+                None
+            }
+        }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let rows = ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1;
+            (rows, Some(rows))
+        }
+    }
+
+    impl ExactSizeIterator for NPlusOne<'_> {
+        fn len(&self) -> usize {
+            ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1
+        }
+    }
+
+    let bevy = resolve_static(EngineDeclaration {
+        selection: Some(selection("bevy", "0.19.0", "gltf-asset-loader")),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap();
+    let next_calls = Cell::new(0);
+    let resolved = bevy
+        .resolve_input_v2_iter(
+            SourceFormatV1::GltfJson,
+            NPlusOne {
+                next_calls: &next_calls,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(next_calls.get(), ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS);
+    assert_eq!(
+        resolved.clip_settings().len(),
+        ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+    );
+    assert!(
+        resolved
+            .clip_settings()
+            .iter()
+            .all(|clip| clip.clip_name() == "prefix")
+    );
+    assert_eq!(
+        resolved.clip_coverage(),
+        ResolvedClipCoverageV2::Partial {
+            reason: ResolvedClipCoverageReasonV2::ActualClipRowsExceeded
+        }
+    );
+    assert_eq!(
+        resolved.work().actual_clip_rows_inspected(),
+        ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1
+    );
+    assert_eq!(
+        resolved.work().materialized_clip_rows(),
+        ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+    );
+    assert_eq!(
+        resolved.work().retained_clip_rows(),
+        ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+    );
+}
+
+#[test]
+fn v2_resolution_marks_exact_limit_complete() {
+    let bevy = resolve_static(EngineDeclaration {
+        selection: Some(selection("bevy", "0.19.0", "gltf-asset-loader")),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap();
+    let names = vec!["exact".to_owned(); ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS];
+    let resolved = bevy
+        .resolve_input_v2_iter(SourceFormatV1::GltfJson, names.iter().map(String::as_str))
+        .unwrap();
+
+    assert_eq!(resolved.clip_coverage(), ResolvedClipCoverageV2::Complete);
+    assert_eq!(
+        resolved.work().actual_clip_rows_inspected(),
+        ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+    );
+    assert_eq!(
+        resolved.clip_settings().len(),
+        ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+    );
+}
+
+#[test]
+fn v2_resolution_validates_only_the_retained_prefix_before_bounded_overflow() {
+    struct ExactInventory<'a> {
+        rows: usize,
+        next_calls: &'a Cell<usize>,
+        malformed_at: Option<usize>,
+        malformed: &'a str,
+    }
+
+    impl<'a> Iterator for ExactInventory<'a> {
+        type Item = &'a str;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let index = self.next_calls.get();
+            if index >= self.rows {
+                return None;
+            }
+            self.next_calls.set(index + 1);
+            Some(if self.malformed_at == Some(index) {
+                self.malformed
+            } else {
+                "valid"
+            })
+        }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let remaining = self.rows.saturating_sub(self.next_calls.get());
+            (remaining, Some(remaining))
+        }
+    }
+
+    impl ExactSizeIterator for ExactInventory<'_> {
+        fn len(&self) -> usize {
+            self.rows.saturating_sub(self.next_calls.get())
+        }
+    }
+
+    let bevy = resolve_static(EngineDeclaration {
+        selection: Some(selection("bevy", "0.19.0", "gltf-asset-loader")),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap();
+    let malformed = "x".repeat(ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1);
+
+    let prefix_calls = Cell::new(0);
+    assert!(matches!(
+        bevy.resolve_input_v2_iter(
+            SourceFormatV1::GltfJson,
+            ExactInventory {
+                rows: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 8,
+                next_calls: &prefix_calls,
+                malformed_at: Some(0),
+                malformed: &malformed,
+            },
+        ),
+        Err(ResolutionError::ResolvedSettingsContract(_))
+    ));
+    assert_eq!(prefix_calls.get(), 1);
+
+    let tail_calls = Cell::new(0);
+    let resolved = bevy
+        .resolve_input_v2_iter(
+            SourceFormatV1::GltfJson,
+            ExactInventory {
+                rows: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 8,
+                next_calls: &tail_calls,
+                malformed_at: Some(ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS),
+                malformed: &malformed,
+            },
+        )
+        .unwrap();
+    assert_eq!(tail_calls.get(), ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS);
+    assert_eq!(
+        resolved.clip_coverage(),
+        ResolvedClipCoverageV2::Partial {
+            reason: ResolvedClipCoverageReasonV2::ActualClipRowsExceeded
+        }
+    );
+    assert_eq!(
+        resolved.work().actual_clip_rows_inspected(),
+        ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1
+    );
 }

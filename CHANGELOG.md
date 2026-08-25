@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- add output-v12 bounded engine prediction provenance and partial settings evidence
+- add collection-output-v4 embedding the current output-v12 lint envelope
+
+### Changed
+
+- make output-v12 the current measure, lint, and diff envelope
+
 ## [0.6.0](https://github.com/mmannerm/animsmith/compare/v0.5.0...v0.6.0) - 2026-08-25
 
 ### Added

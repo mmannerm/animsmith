@@ -184,8 +184,9 @@ pub use contract::{
     MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
     MeasurementReportInput, MeasurementReportReadError, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION,
     OUTPUT_V10_SCHEMA_ID, OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES,
-    OUTPUT_V11_MAX_REPORT_BYTES, OutputContractError, RigInfo, RigInfoError, ToolInfo, ToolSource,
-    sha256_hex,
+    OUTPUT_V11_MAX_REPORT_BYTES, OUTPUT_V11_SCHEMA_ID, OUTPUT_V11_SCHEMA_VERSION,
+    OUTPUT_V12_SCHEMA_ID, OUTPUT_V12_SCHEMA_VERSION, OutputContractError, RigInfo, RigInfoError,
+    ToolInfo, ToolSource, sha256_hex,
 };
 pub use dependency_closure::{
     DEPENDENCY_CLOSURE_BUDGET_V1_ID, DEPENDENCY_CLOSURE_V1_ID,
@@ -233,13 +234,16 @@ pub use engine_contract::{
     EngineRootMotionAddressabilityV1, EngineSettingApplicabilityV1, EngineSettingDescriptorV1,
     EngineSettingDomainV1, EngineSettingIdV1, EngineSettingRowV1, EngineSettingScopeV1,
     EngineSettingValueV1, EngineTargetAddressabilityV1, EngineUpAxisV1,
-    RESOLVED_ENGINE_SETTINGS_V1_ID, ResolvedEngineProfileV1, ResolvedEngineSettingsV1,
+    RESOLVED_ENGINE_SETTINGS_V1_ID, RESOLVED_ENGINE_SETTINGS_V2_ID, ResolvedEngineProfileV1,
+    ResolvedEngineSettingsCoverageReasonV2, ResolvedEngineSettingsCoverageStateV2,
+    ResolvedEngineSettingsCoverageV2, ResolvedEngineSettingsV1, ResolvedEngineSettingsV2,
+    ResolvedEngineSettingsWorkV2,
 };
 pub use evaluation::{
     Applicability, BUILTIN_COVERAGE_GAP_CODES, BUILTIN_EVALUATION_SCOPE_CODES, CheckEvaluation,
     CheckOutput, CheckSelection, ConfigurationState, CoverageGap, CoverageGapCode, EvaluationError,
     EvaluationScope, EvaluationScopeCode, EvaluationState, SelectionState, evaluate_checks,
-    lint_requires_failure,
+    evaluate_checks_v2, lint_requires_failure,
 };
 pub use finding::{Finding, MemberMeasurement, Severity, Value};
 /// Re-export of the exact `glam` version used by animsmith's public math
@@ -259,21 +263,25 @@ pub use model::{
     validate_document_shape,
 };
 pub use prediction::{
-    ENGINE_PREDICTION_V1_ID, EnginePredictionBasisV1, EnginePredictionFacetStateV1,
-    EnginePredictionFacetV1, EnginePredictionV1, FinitePredictionNumberV1, MeasurementPointerV1,
-    PREDICTION_PROVENANCE_V1_ID, PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
-    PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
-    PREDICTION_V1_MAX_FACETS_PER_FILE, PREDICTION_V1_MAX_MEASUREMENT_POINTER_COMPONENTS,
-    PREDICTION_V1_MAX_REASONS_PER_FACET, PREDICTION_V1_MAX_TEXT_BYTES,
-    PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE, PredictionBasisIdentityV1,
-    PredictionBasisReferenceV1, PredictionContractError, PredictionProvenanceIdentityV1,
-    PredictionProvenanceV1, PredictionScalarV1, PredictionUnavailableReasonV1, RawSourceAxisV1,
+    ENGINE_PREDICTION_V1_ID, ENGINE_PREDICTION_V2_ID, EnginePredictionBasisV1,
+    EnginePredictionFacetStateV1, EnginePredictionFacetV1, EnginePredictionFacetV2,
+    EnginePredictionV1, EnginePredictionV2, FinitePredictionNumberV1, MeasurementPointerV1,
+    PREDICTION_PROVENANCE_V1_ID, PREDICTION_PROVENANCE_V2_ID,
+    PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+    PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE, PREDICTION_V1_MAX_FACETS_PER_FILE,
+    PREDICTION_V1_MAX_MEASUREMENT_POINTER_COMPONENTS, PREDICTION_V1_MAX_REASONS_PER_FACET,
+    PREDICTION_V1_MAX_TEXT_BYTES, PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+    PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE, PredictionBasisIdentityV1,
+    PredictionBasisReferenceV1, PredictionContractError, PredictionFacetDemandV2,
+    PredictionProvenanceIdentityV1, PredictionProvenanceIdentityV2, PredictionProvenanceV1,
+    PredictionProvenanceV2, PredictionRuleAllocationV2, PredictionRuleDemandV2, PredictionScalarV1,
+    PredictionUnavailableReasonV1, PredictionUnavailableReasonV2, RawSourceAxisV1,
     RawSourceBasisReferenceV1, RawSourceBindingV1, RawSourceCoordinateBasisV1,
     RawSourceDispositionV1, RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1,
     RawSourceObservationStateWireV1, RawSourceObservationWireV1, RawSourceProjectionWorkWireV1,
     RawSourceProvenanceKindV1, RawSourceProvenanceV1, RawSourceSetCoverageStateV1,
     RawSourceSetCoverageV1, RawSourceUnavailableReasonV1, ResolvedSettingLocationV1,
-    SourceSkeletonRowKindV1,
+    SourceSkeletonRowKindV1, allocate_prediction_facets_v2,
 };
 pub use profile::{
     ResolutionOutcome, ResolvedRoles, RigProfile, Role, RoleResolutionPolicy, builtin_profiles,

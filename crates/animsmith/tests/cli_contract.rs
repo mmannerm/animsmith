@@ -7,13 +7,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:11";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:12";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
 const IMPORT_ADVICE_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:1";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v11.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v12.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v15.schema.json");
@@ -80,7 +80,7 @@ fn assert_output_schema_valid(instance: &Value) {
         .collect();
     assert!(
         errors.is_empty(),
-        "output must satisfy the published v11 schemas:\n{}\ninstance: {instance:#}",
+        "output must satisfy the published v12 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -615,7 +615,7 @@ fn write_humanoid_profile_gltf(path: &std::path::Path, prefix: &str) {
 
 fn measurement_report(duration_s: f64) -> Value {
     json!({
-        "schema_version": 11,
+        "schema_version": 12,
         "schema": OUTPUT_SCHEMA_ID,
         "tool": {
             "name": "animsmith",
@@ -899,14 +899,24 @@ importer = "resource-importer-scene"
     assert_eq!(lint.status.code(), Some(0), "{}", stderr(&lint));
     let lint_json: Value = serde_json::from_slice(&lint.stdout).expect("lint JSON");
     let lint_addressability = lint_check(&lint_json, "engine-addressability");
+    // Standalone Bevy remains V1 while current lint is the V2
+    // bounded-overflow contract; lifecycle evidence stays comparable but the
+    // prediction/provenance payloads intentionally do not share bytes.
     assert_eq!(
-        serde_json::to_vec(&bevy_json["bevy"]["check"]).unwrap(),
-        serde_json::to_vec(lint_addressability).unwrap(),
-        "the adapter must embed the existing #154 CheckEvaluation byte-for-byte"
+        bevy_json["bevy"]["check"]["check_id"],
+        lint_addressability["check_id"]
     );
     assert_eq!(
-        bevy_json["bevy"]["prediction_provenance"],
-        lint_json["files"][0]["prediction_provenance"]
+        bevy_json["bevy"]["check"]["evaluation"],
+        lint_addressability["evaluation"]
+    );
+    assert_eq!(
+        lint_addressability["prediction"]["schema"],
+        "urn:animsmith:engine-prediction:2"
+    );
+    assert_eq!(
+        lint_json["files"][0]["prediction_provenance"]["schema"],
+        "urn:animsmith:prediction-provenance:2"
     );
 
     let disabled_config = write_config(
@@ -1757,7 +1767,7 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_eq!(lint_json.status.code(), Some(0));
     let lint_json: Value = serde_json::from_slice(&lint_json.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&lint_json);
-    assert_eq!(lint_json["schema_version"], 11);
+    assert_eq!(lint_json["schema_version"], 12);
     assert_eq!(lint_json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 15);
     assert_eq!(
@@ -2440,7 +2450,7 @@ fn help_matches_compiled_feature_set() {
         .expect("runs diff help");
     assert!(diff.status.success(), "stderr:\n{}", stderr(&diff));
     let out = stdout(&diff);
-    assert!(out.contains("output-v11"), "{out}");
+    assert!(out.contains("output-v12"), "{out}");
     assert!(out.contains("measurements-v15"), "{out}");
     assert!(!out.contains("v5"), "{out}");
 
@@ -2644,7 +2654,7 @@ fn measure_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 11);
+    assert_eq!(json["schema_version"], 12);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -3083,7 +3093,7 @@ fn report_text_escapes_its_output_path() {
 }
 
 #[test]
-fn embedded_contract_types_emit_the_published_v11_envelope() {
+fn embedded_contract_types_emit_the_published_v12_envelope() {
     let doc = Document::default();
     let config = animsmith_core::Config::default();
     let roles = animsmith_core::ResolvedRoles::default();
@@ -3125,7 +3135,7 @@ fn embedded_contract_types_emit_the_published_v11_envelope() {
 }
 
 #[test]
-fn published_v11_schema_requires_matching_role_policy_provenance() {
+fn published_v12_schema_requires_matching_role_policy_provenance() {
     let output = animsmith()
         .args([
             "measure",
@@ -3165,13 +3175,13 @@ fn published_v11_schema_requires_matching_role_policy_provenance() {
     ] {
         assert!(
             !validator.is_valid(&invalid),
-            "output-v11 accepted {name}: {invalid:#}"
+            "output-v12 accepted {name}: {invalid:#}"
         );
     }
 }
 
 #[test]
-fn published_v11_schema_accepts_and_distinguishes_every_prediction_facet_lifecycle() {
+fn published_v12_schema_accepts_and_distinguishes_every_prediction_facet_lifecycle() {
     let dir = unique_temp_dir("prediction-schema-lifecycle");
     let input = dir.path().join("sway.glb");
     write_clean_glb(&input);
@@ -3193,9 +3203,12 @@ fn published_v11_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
     })
     .expect("profile declaration is valid")
     .expect("profile selected")
-    .resolve_input(source.source_facts().format(), &clip_names)
+    .resolve_input_v2_iter(
+        source.source_facts().format(),
+        clip_names.iter().map(String::as_str),
+    )
     .expect("fixture format is accepted");
-    let provenance = animsmith_engine::project_prediction_provenance_v1(&resolved, &source)
+    let provenance = animsmith_engine::project_prediction_provenance_v2(&resolved, &source)
         .expect("same-load provenance projects");
 
     let prediction_check = |check_id: &'static str, available: bool, unavailable: bool| {
@@ -3210,7 +3223,7 @@ fn published_v11_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
         let mut findings = Vec::new();
         if available {
             facets.push(
-                animsmith_core::EnginePredictionFacetV1::available(
+                animsmith_core::EnginePredictionFacetV2::available(
                     available_scope.clone(),
                     animsmith_core::EnginePredictionBasisV1::new(vec![
                         animsmith_core::PredictionBasisReferenceV1::profile_fact("accepted_inputs")
@@ -3232,32 +3245,32 @@ fn published_v11_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
         }
         if unavailable {
             facets.push(
-                animsmith_core::EnginePredictionFacetV1::required_unavailable(
+                animsmith_core::EnginePredictionFacetV2::required_unavailable(
                     unavailable_scope,
                     animsmith_core::EnginePredictionBasisV1::new(Vec::new())
                         .expect("empty unavailable basis prefix"),
-                    vec![animsmith_core::PredictionUnavailableReasonV1::ProjectIntentUnavailable],
+                    vec![animsmith_core::PredictionUnavailableReasonV2::ProjectIntentUnavailable],
                 )
                 .expect("required-unavailable facet"),
             );
         }
         let prediction =
-            animsmith_core::EnginePredictionV1::new(provenance.identity().clone(), facets)
+            animsmith_core::EnginePredictionV2::new(provenance.identity().clone(), facets)
                 .expect("canonical prediction");
         animsmith_core::CheckEvaluation::evaluated(
             check_id,
             animsmith_core::CheckOutput::from_coverage(findings, evaluated, Vec::new())
-                .with_engine_prediction(prediction),
+                .with_engine_prediction_v2(prediction),
         )
         .expect("prediction lifecycle is valid")
     };
     let measurement_scope = animsmith_core::EvaluationScope::new(
         animsmith_core::EvaluationScopeCode::custom("test:measurement"),
     );
-    let measurement_prediction = animsmith_core::EnginePredictionV1::new(
+    let measurement_prediction = animsmith_core::EnginePredictionV2::new(
         provenance.identity().clone(),
         vec![
-            animsmith_core::EnginePredictionFacetV1::available(
+            animsmith_core::EnginePredictionFacetV2::available(
                 measurement_scope.clone(),
                 animsmith_core::EnginePredictionBasisV1::new(vec![
                     animsmith_core::PredictionBasisReferenceV1::measurement(
@@ -3278,7 +3291,7 @@ fn published_v11_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
     let measurement_check = animsmith_core::CheckEvaluation::evaluated(
         "test:measurement",
         animsmith_core::CheckOutput::from_coverage(Vec::new(), vec![measurement_scope], Vec::new())
-            .with_engine_prediction(measurement_prediction),
+            .with_engine_prediction_v2(measurement_prediction),
     )
     .expect("measurement prediction lifecycle is valid");
     let checks = vec![
@@ -3295,10 +3308,10 @@ fn published_v11_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
     let wrong_scope = animsmith_core::EvaluationScope::new(
         animsmith_core::EvaluationScopeCode::custom("test:measurement"),
     );
-    let wrong_prediction = animsmith_core::EnginePredictionV1::new(
+    let wrong_prediction = animsmith_core::EnginePredictionV2::new(
         provenance.identity().clone(),
         vec![
-            animsmith_core::EnginePredictionFacetV1::available(
+            animsmith_core::EnginePredictionFacetV2::available(
                 wrong_scope.clone(),
                 animsmith_core::EnginePredictionBasisV1::new(vec![
                     animsmith_core::PredictionBasisReferenceV1::measurement(
@@ -3316,7 +3329,7 @@ fn published_v11_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
     let wrong_check = animsmith_core::CheckEvaluation::evaluated(
         "test:measurement",
         animsmith_core::CheckOutput::from_coverage(Vec::new(), vec![wrong_scope], Vec::new())
-            .with_engine_prediction(wrong_prediction),
+            .with_engine_prediction_v2(wrong_prediction),
     )
     .expect("prediction lifecycle is valid before file measurement binding");
     let wrong = animsmith_core::LintFileReport::new(
@@ -3502,7 +3515,7 @@ fn lint_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 11);
+    assert_eq!(json["schema_version"], 12);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -3769,7 +3782,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 11);
+    assert_eq!(json["schema_version"], 12);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
@@ -4225,7 +4238,7 @@ fn diff_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 11);
+    assert_eq!(json["schema_version"], 12);
     assert_eq!(json["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -4620,7 +4633,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported output version",
             unsupported_output_version,
-            format!("has schema_version 2; this build reads schema_version 11; {remediation}"),
+            format!("has schema_version 2; this build reads schema_version 12; {remediation}"),
         ),
         (
             "missing command",
@@ -5031,7 +5044,7 @@ fn diff_rejects_historical_output_v5_with_v11_measurements() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has schema_version 5; this build reads schema_version 11; regenerate it from the original asset with `animsmith measure --format json <asset>`"
+            "has schema_version 5; this build reads schema_version 12; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)
@@ -5189,7 +5202,7 @@ fn diff_rejects_envelope_without_files() {
     write_json(
         &report,
         &json!({
-            "schema_version": 11,
+            "schema_version": 12,
             "schema": OUTPUT_SCHEMA_ID,
             "tool": {
                 "name": "animsmith",
@@ -7170,7 +7183,7 @@ fn bevy_complete_empty_and_absent_profile_records_are_not_applicable() {
 }
 
 #[test]
-fn bevy_actual_clip_inventory_above_v1_provenance_bound_is_an_operator_error() {
+fn bevy_actual_clip_inventory_above_v1_provenance_bound_is_structured_v2_evidence() {
     let dir = unique_temp_dir("bevy-over-limit-animation-labels");
     let input = dir.path().join("over-limit.gltf");
     let names = vec![None; animsmith_core::RAW_SOURCE_V1_MAX_CLIPS + 1];
@@ -7190,14 +7203,22 @@ fn bevy_actual_clip_inventory_above_v1_provenance_bound_is_an_operator_error() {
         .arg(&input)
         .output()
         .expect("runs over-limit Bevy addressability lint");
-    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
-    assert!(output.stdout.is_empty());
-    assert!(
-        stderr(&output).contains("settings.clips")
-            && stderr(&output).contains("4097")
-            && stderr(&output).contains("4096"),
-        "{}",
-        stderr(&output)
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("structured lint JSON");
+    let provenance = &json["files"][0]["prediction_provenance"];
+    assert_eq!(provenance["settings"]["clip_coverage"]["state"], "partial");
+    assert_eq!(
+        provenance["settings"]["clip_coverage"]["reason"],
+        "actual_clip_rows_exceeded"
+    );
+    let check = lint_check(&json, "engine-addressability");
+    assert_eq!(
+        check["prediction"]["schema"],
+        "urn:animsmith:engine-prediction:2"
+    );
+    assert_eq!(
+        check["prediction"]["facets"][0]["reasons"],
+        json!(["raw_source_incomplete", "resolved_settings_overflow"])
     );
 }
 
@@ -7637,7 +7658,7 @@ importer = "gltf-asset-loader"
     assert!(error.contains("invalid prediction provenance"), "{error}");
     assert!(!error.contains("provenance shape"), "{error}");
     assert!(
-        error.contains("urn:animsmith:prediction-provenance:1"),
+        error.contains("urn:animsmith:prediction-provenance:2"),
         "{error}"
     );
     assert!(error.contains("identity"), "{error}");

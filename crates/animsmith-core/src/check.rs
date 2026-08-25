@@ -5,6 +5,7 @@ use crate::config::{ClipExpectations, Config};
 use crate::evaluation::{Applicability, CheckOutput};
 use crate::metrics::MetricGrids;
 use crate::model::Document;
+use crate::prediction::{PredictionFacetDemandV2, PredictionRuleAllocationV2};
 use crate::profile::ResolvedRoles;
 use crate::sample::PoseGrid;
 use std::rc::Rc;
@@ -113,6 +114,20 @@ pub trait Check {
     /// Evaluate every modelled work unit, returning content findings and
     /// explicit coverage. Missing prerequisites are gaps, never findings.
     fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput;
+
+    /// Bounded V2 facet demand, collected before current-output evaluation.
+    fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx) -> PredictionFacetDemandV2 {
+        PredictionFacetDemandV2::Exact(0)
+    }
+
+    /// Evaluate after the catalog allocator has reserved this check's slots.
+    fn evaluate_with_prediction_allocation_v2(
+        &self,
+        ctx: &CheckCtx,
+        _allocation: PredictionRuleAllocationV2<'_>,
+    ) -> CheckOutput {
+        self.evaluate(ctx)
+    }
 }
 
 /// The mechanical P0 catalog: no rig roles or clip expectations required.

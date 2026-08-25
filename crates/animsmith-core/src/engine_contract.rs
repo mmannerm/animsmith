@@ -20,6 +20,8 @@ use std::marker::PhantomData;
 pub const ENGINE_PROFILE_FACTS_V1_ID: &str = "urn:animsmith:engine-profile-facts:1";
 /// Semantic contract for fully materialized V1 engine settings.
 pub const RESOLVED_ENGINE_SETTINGS_V1_ID: &str = "urn:animsmith:resolved-engine-settings:1";
+/// Semantic contract for bounded, explicitly partial V2 engine settings.
+pub const RESOLVED_ENGINE_SETTINGS_V2_ID: &str = "urn:animsmith:resolved-engine-settings:2";
 /// Maximum rows in any individual V1 profile or resolved-settings collection.
 pub const ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS: usize = 4_096;
 /// Maximum aggregate profile and materialized-setting rows retained by one lint file.
@@ -2709,6 +2711,518 @@ impl<'de> Deserialize<'de> for ResolvedEngineSettingsV1 {
     }
 }
 
+/// Complete or bounded-partial coverage of actual clip settings in V2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolvedEngineSettingsCoverageStateV2 {
+    /// Every actual clip has a retained materialized settings row.
+    Complete,
+    /// Only the bounded canonical prefix was retained.
+    Partial,
+}
+
+/// Stable reason for bounded-partial V2 settings coverage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolvedEngineSettingsCoverageReasonV2 {
+    /// The actual source inventory exceeded the 4,096 retained-row limit.
+    ActualClipRowsExceeded,
+}
+
+/// Explicit actual-clip coverage carried by resolved-engine-settings V2.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedEngineSettingsCoverageV2 {
+    state: ResolvedEngineSettingsCoverageStateV2,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<ResolvedEngineSettingsCoverageReasonV2>,
+}
+
+impl ResolvedEngineSettingsCoverageV2 {
+    /// Construct complete coverage.
+    pub const fn complete() -> Self {
+        Self {
+            state: ResolvedEngineSettingsCoverageStateV2::Complete,
+            reason: None,
+        }
+    }
+
+    /// Construct N+1 bounded partial coverage.
+    pub const fn actual_clip_rows_exceeded() -> Self {
+        Self {
+            state: ResolvedEngineSettingsCoverageStateV2::Partial,
+            reason: Some(ResolvedEngineSettingsCoverageReasonV2::ActualClipRowsExceeded),
+        }
+    }
+
+    /// Coverage state.
+    pub const fn state(&self) -> ResolvedEngineSettingsCoverageStateV2 {
+        self.state
+    }
+
+    /// Partial-coverage reason, when applicable.
+    pub const fn reason(&self) -> Option<ResolvedEngineSettingsCoverageReasonV2> {
+        self.reason
+    }
+}
+
+/// Bounded work accounting carried by resolved-engine-settings V2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedEngineSettingsWorkV2 {
+    actual_clip_rows_inspected: usize,
+    materialized_clip_rows: usize,
+    retained_clip_rows: usize,
+}
+
+impl ResolvedEngineSettingsWorkV2 {
+    /// Construct bounded work counters.
+    pub const fn new(
+        actual_clip_rows_inspected: usize,
+        materialized_clip_rows: usize,
+        retained_clip_rows: usize,
+    ) -> Self {
+        Self {
+            actual_clip_rows_inspected,
+            materialized_clip_rows,
+            retained_clip_rows,
+        }
+    }
+
+    /// Actual source rows inspected, capped at 4,097.
+    pub const fn actual_clip_rows_inspected(&self) -> usize {
+        self.actual_clip_rows_inspected
+    }
+
+    /// Rows whose settings were materialized.
+    pub const fn materialized_clip_rows(&self) -> usize {
+        self.materialized_clip_rows
+    }
+
+    /// Rows retained after canonicalization.
+    pub const fn retained_clip_rows(&self) -> usize {
+        self.retained_clip_rows
+    }
+}
+
+/// Fully materialized bounded-prefix V2 engine settings.
+///
+/// V2 preserves the ordinary V1 row spelling while committing to coverage and
+/// bounded work in a separate canonical identity. Thus an exact 4,096-row
+/// input cannot collide with a larger input sharing that prefix.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResolvedEngineSettingsV2 {
+    schema: String,
+    identity: InputIdentity,
+    document_settings: Vec<EngineSettingRowV1>,
+    clips: Vec<EngineClipSettingsV1>,
+    clip_coverage: ResolvedEngineSettingsCoverageV2,
+    work: ResolvedEngineSettingsWorkV2,
+}
+
+struct ResolvedEngineSettingsWireV2 {
+    schema: String,
+    identity: InputIdentity,
+    document_settings: CappedSequence<EngineSettingRowV1>,
+    clips: CappedSequence<EngineClipSettingsWireV1>,
+    clip_coverage: ResolvedEngineSettingsCoverageV2,
+    work: ResolvedEngineSettingsWorkV2,
+    aggregate_rows: RowBudget,
+    provenance_rows_overflowed: bool,
+}
+
+struct ResolvedEngineSettingsWireSeedV2 {
+    provenance_limit: Option<usize>,
+}
+
+impl<'de> DeserializeSeed<'de> for ResolvedEngineSettingsWireSeedV2 {
+    type Value = ResolvedEngineSettingsWireV2;
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Schema,
+            Identity,
+            DocumentSettings,
+            Clips,
+            ClipCoverage,
+            Work,
+        }
+        struct VisitorV2 {
+            provenance_limit: Option<usize>,
+        }
+        impl<'de> Visitor<'de> for VisitorV2 {
+            type Value = ResolvedEngineSettingsWireV2;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("resolved engine settings V2")
+            }
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut rows = SettingsRows::new(self.provenance_limit);
+                let mut schema = None;
+                let mut identity = None;
+                let mut document_settings = None;
+                let mut clips = None;
+                let mut clip_coverage = None;
+                let mut work = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Schema => set_once(&mut schema, map.next_value()?, "schema")?,
+                        Field::Identity => set_once(&mut identity, map.next_value()?, "identity")?,
+                        Field::DocumentSettings => {
+                            if document_settings.is_some() {
+                                return Err(A::Error::duplicate_field("document_settings"));
+                            }
+                            document_settings =
+                                Some(map.next_value_seed(SettingsSequenceSeed {
+                                    rows: &mut rows,
+                                    element: PhantomData,
+                                })?);
+                        }
+                        Field::Clips => {
+                            if clips.is_some() {
+                                return Err(A::Error::duplicate_field("clips"));
+                            }
+                            clips =
+                                Some(map.next_value_seed(ClipSettingsSequenceSeed {
+                                    rows: &mut rows,
+                                })?);
+                        }
+                        Field::ClipCoverage => {
+                            set_once(&mut clip_coverage, map.next_value()?, "clip_coverage")?
+                        }
+                        Field::Work => set_once(&mut work, map.next_value()?, "work")?,
+                    }
+                }
+                Ok(ResolvedEngineSettingsWireV2 {
+                    schema: required(schema, "schema")?,
+                    identity: required(identity, "identity")?,
+                    document_settings: required(document_settings, "document_settings")?,
+                    clips: required(clips, "clips")?,
+                    clip_coverage: required(clip_coverage, "clip_coverage")?,
+                    work: required(work, "work")?,
+                    provenance_rows_overflowed: rows.provenance_overflowed(),
+                    aggregate_rows: rows.local,
+                })
+            }
+        }
+        deserializer.deserialize_struct(
+            "ResolvedEngineSettingsV2",
+            &[
+                "schema",
+                "identity",
+                "document_settings",
+                "clips",
+                "clip_coverage",
+                "work",
+            ],
+            VisitorV2 {
+                provenance_limit: self.provenance_limit,
+            },
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for ResolvedEngineSettingsWireV2 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        ResolvedEngineSettingsWireSeedV2 {
+            provenance_limit: None,
+        }
+        .deserialize(deserializer)
+    }
+}
+
+impl ResolvedEngineSettingsV2 {
+    /// Construct V2 settings from a fully materialized retained prefix.
+    pub fn new(
+        profile: &ResolvedEngineProfileV1,
+        document_settings: Vec<EngineSettingRowV1>,
+        clips: Vec<EngineClipSettingsV1>,
+        clip_coverage: ResolvedEngineSettingsCoverageV2,
+        work: ResolvedEngineSettingsWorkV2,
+    ) -> Result<Self, EngineContractError> {
+        let prefix = ResolvedEngineSettingsV1::new(profile, document_settings, clips)?;
+        let mut settings = Self {
+            schema: RESOLVED_ENGINE_SETTINGS_V2_ID.to_owned(),
+            identity: InputIdentity::from_bytes(&[]),
+            document_settings: prefix.document_settings,
+            clips: prefix.clips,
+            clip_coverage,
+            work,
+        };
+        settings.validate_prefix_against(profile)?;
+        settings.validate_coverage_work()?;
+        settings.identity = settings.computed_identity(profile);
+        Ok(settings)
+    }
+
+    /// Contract id carried in `schema`.
+    pub fn contract_id(&self) -> &str {
+        &self.schema
+    }
+
+    /// Identity committing to prefix, coverage, and work.
+    pub const fn settings_identity(&self) -> &InputIdentity {
+        &self.identity
+    }
+
+    /// Stable-id-ordered document settings.
+    pub fn document_settings(&self) -> &[EngineSettingRowV1] {
+        &self.document_settings
+    }
+
+    /// Canonically ordered retained clip rows.
+    pub fn clips(&self) -> &[EngineClipSettingsV1] {
+        &self.clips
+    }
+
+    /// Look up one retained document setting.
+    pub fn document_setting(&self, id: EngineSettingIdV1) -> Option<&EngineSettingValueV1> {
+        self.document_settings
+            .iter()
+            .find(|row| row.id == id)
+            .map(|row| &row.value)
+    }
+
+    /// Look up one retained clip row by source ordinal and exact name.
+    pub fn clip_row(&self, ordinal: usize, clip_name: &str) -> Option<&EngineClipSettingsV1> {
+        self.clips
+            .get(ordinal)
+            .filter(|row| row.clip_name == clip_name)
+    }
+
+    /// Aggregate retained text in the shared settings prefix.
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, EngineContractError> {
+        self.v1_prefix().retained_text_bytes()
+    }
+
+    /// Explicit actual-clip coverage.
+    pub const fn clip_coverage(&self) -> &ResolvedEngineSettingsCoverageV2 {
+        &self.clip_coverage
+    }
+
+    /// Bounded resolution work.
+    pub const fn work(&self) -> &ResolvedEngineSettingsWorkV2 {
+        &self.work
+    }
+
+    /// Validate settings, coverage/work, and the V2 identity against profile facts.
+    pub fn validate_against(
+        &self,
+        profile: &ResolvedEngineProfileV1,
+    ) -> Result<(), EngineContractError> {
+        self.validate_prefix_against(profile)?;
+        self.validate_coverage_work()?;
+        if self.identity != self.computed_identity(profile) {
+            return Err(EngineContractError::IdentityMismatch {
+                contract: RESOLVED_ENGINE_SETTINGS_V2_ID,
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_prefix_against(
+        &self,
+        profile: &ResolvedEngineProfileV1,
+    ) -> Result<(), EngineContractError> {
+        if self.schema != RESOLVED_ENGINE_SETTINGS_V2_ID {
+            return Err(EngineContractError::InvalidSchema {
+                field: "settings.schema",
+                expected: RESOLVED_ENGINE_SETTINGS_V2_ID,
+                found: self.schema.clone(),
+            });
+        }
+        let prefix = self.v1_prefix();
+        prefix.validate_structure(true)?;
+        prefix.validate_materialization(profile, false)
+    }
+
+    fn validate_coverage_work(&self) -> Result<(), EngineContractError> {
+        let retained = self.clips.len();
+        let complete = matches!(
+            (self.clip_coverage.state, self.clip_coverage.reason),
+            (ResolvedEngineSettingsCoverageStateV2::Complete, None)
+        );
+        let partial = matches!(
+            (self.clip_coverage.state, self.clip_coverage.reason),
+            (
+                ResolvedEngineSettingsCoverageStateV2::Partial,
+                Some(ResolvedEngineSettingsCoverageReasonV2::ActualClipRowsExceeded)
+            )
+        );
+        let expected_inspected = if partial {
+            ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1
+        } else {
+            retained
+        };
+        if !(complete || partial)
+            || self.work.actual_clip_rows_inspected != expected_inspected
+            || self.work.materialized_clip_rows != retained
+            || self.work.retained_clip_rows != retained
+            || (partial && retained != ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS)
+        {
+            return Err(EngineContractError::InvalidV2CoverageWork);
+        }
+        Ok(())
+    }
+
+    fn v1_prefix(&self) -> ResolvedEngineSettingsV1 {
+        ResolvedEngineSettingsV1 {
+            schema: RESOLVED_ENGINE_SETTINGS_V1_ID.to_owned(),
+            identity: InputIdentity::from_bytes(&[]),
+            document_settings: self.document_settings.clone(),
+            clips: self.clips.clone(),
+        }
+    }
+
+    /// Construct an internal V1-shaped prefix solely to reuse established
+    /// profile/raw-source cross-link validation. It is never serialized or
+    /// returned from a V2 public API.
+    pub(crate) fn validation_only_prefix(
+        &self,
+        profile: &ResolvedEngineProfileV1,
+    ) -> Result<ResolvedEngineSettingsV1, EngineContractError> {
+        ResolvedEngineSettingsV1::new(profile, self.document_settings.clone(), self.clips.clone())
+    }
+
+    fn computed_identity(&self, profile: &ResolvedEngineProfileV1) -> InputIdentity {
+        let mut encoder = CanonicalEncoder::new("animsmith-engine-settings-v2");
+        self.v1_prefix().encode_preimage(profile, &mut encoder);
+        encoder.field("clip_coverage.state");
+        encoder.token(match self.clip_coverage.state {
+            ResolvedEngineSettingsCoverageStateV2::Complete => "complete",
+            ResolvedEngineSettingsCoverageStateV2::Partial => "partial",
+        });
+        encoder.field("clip_coverage.reason");
+        encoder.token(match self.clip_coverage.reason {
+            None => "none",
+            Some(ResolvedEngineSettingsCoverageReasonV2::ActualClipRowsExceeded) => {
+                "actual_clip_rows_exceeded"
+            }
+        });
+        for (field, value) in [
+            (
+                "actual_clip_rows_inspected",
+                self.work.actual_clip_rows_inspected,
+            ),
+            ("materialized_clip_rows", self.work.materialized_clip_rows),
+            ("retained_clip_rows", self.work.retained_clip_rows),
+        ] {
+            encoder.field(field);
+            encoder.count(value);
+        }
+        encoder.identity()
+    }
+}
+
+impl<'de> Deserialize<'de> for ResolvedEngineSettingsV2 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ResolvedEngineSettingsWireV2::deserialize(deserializer)?;
+        if wire.document_settings.overflowed || wire.clips.overflowed {
+            return Err(D::Error::custom(
+                "resolved-engine-settings V2 collection exceeds 4096 rows",
+            ));
+        }
+        if wire.aggregate_rows.overflowed() {
+            return Err(D::Error::custom(
+                EngineContractError::TooManyAggregateRows {
+                    found: wire.aggregate_rows.found(),
+                    max: ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS,
+                },
+            ));
+        }
+        let settings = Self {
+            schema: wire.schema,
+            identity: wire.identity,
+            document_settings: wire.document_settings.values,
+            clips: wire
+                .clips
+                .values
+                .into_iter()
+                .map(EngineClipSettingsV1::from_wire)
+                .collect::<Result<_, _>>()
+                .map_err(D::Error::custom)?,
+            clip_coverage: wire.clip_coverage,
+            work: wire.work,
+        };
+        if settings.schema != RESOLVED_ENGINE_SETTINGS_V2_ID {
+            return Err(D::Error::custom(
+                "invalid resolved-engine-settings V2 schema",
+            ));
+        }
+        settings
+            .v1_prefix()
+            .validate_structure(true)
+            .map_err(D::Error::custom)?;
+        settings
+            .validate_coverage_work()
+            .map_err(D::Error::custom)?;
+        Ok(settings)
+    }
+}
+
+/// Decode V2 settings under the caller-owned remaining provenance-row budget.
+/// The seed admits only rows that fit the shared budget and consumes the first
+/// excess row as a sentinel, so no partial settings prefix is returned.
+pub(crate) fn decode_resolved_engine_settings_v2_with_provenance_limit(
+    raw: &str,
+    provenance_limit: usize,
+) -> Result<ResolvedEngineSettingsV2, EngineSettingsLimitedDecodeError> {
+    let mut deserializer = serde_json::Deserializer::from_str(raw);
+    let wire = ResolvedEngineSettingsWireSeedV2 {
+        provenance_limit: Some(provenance_limit),
+    }
+    .deserialize(&mut deserializer)
+    .map_err(|source| {
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source))
+    })?;
+    deserializer.end().map_err(|source| {
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source))
+    })?;
+    if wire.provenance_rows_overflowed {
+        return Err(EngineSettingsLimitedDecodeError::ProvenanceRowsOverflow);
+    }
+    let settings = ResolvedEngineSettingsV2 {
+        schema: wire.schema,
+        identity: wire.identity,
+        document_settings: wire.document_settings.values,
+        clips: wire
+            .clips
+            .values
+            .into_iter()
+            .map(EngineClipSettingsV1::from_wire)
+            .collect::<Result<_, _>>()
+            .map_err(|source| {
+                EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(
+                    source,
+                ))
+            })?,
+        clip_coverage: wire.clip_coverage,
+        work: wire.work,
+    };
+    settings
+        .v1_prefix()
+        .validate_structure(true)
+        .map_err(|source| {
+            EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source))
+        })?;
+    settings.validate_coverage_work().map_err(|source| {
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source))
+    })?;
+    Ok(settings)
+}
+
 /// Typed violation of the core-owned profile/settings contract.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -2723,6 +3237,9 @@ pub enum EngineContractError {
         /// Supplied schema id.
         found: String,
     },
+    /// V2 clip coverage and bounded work counters disagreed with retained rows.
+    #[error("resolved-engine-settings V2 coverage and work counters are inconsistent")]
+    InvalidV2CoverageWork,
     /// A required retained string was empty.
     #[error("{field} must not be empty")]
     EmptyText {
@@ -3713,6 +4230,69 @@ mod tests {
                 field: "settings.document_settings",
             })
         );
+    }
+
+    #[test]
+    fn v2_settings_identity_commits_to_complete_or_n_plus_one_coverage_and_work() {
+        let profile = settings_profile("v2-settings");
+        let clips: Vec<_> = (0..ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS)
+            .map(|_| EngineClipSettingsV1::new("same", Vec::new()).unwrap())
+            .collect();
+        let complete = ResolvedEngineSettingsV2::new(
+            &profile,
+            document_settings(),
+            clips.clone(),
+            ResolvedEngineSettingsCoverageV2::complete(),
+            ResolvedEngineSettingsWorkV2::new(
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            ),
+        )
+        .unwrap();
+        let partial = ResolvedEngineSettingsV2::new(
+            &profile,
+            document_settings(),
+            clips,
+            ResolvedEngineSettingsCoverageV2::actual_clip_rows_exceeded(),
+            ResolvedEngineSettingsWorkV2::new(
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            ),
+        )
+        .unwrap();
+
+        assert_ne!(complete.settings_identity(), partial.settings_identity());
+        for changed_work in [
+            ResolvedEngineSettingsWorkV2::new(
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS - 1,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            ),
+            ResolvedEngineSettingsWorkV2::new(
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS - 1,
+            ),
+        ] {
+            let mut changed = complete.clone();
+            changed.work = changed_work;
+            assert_ne!(
+                complete.settings_identity(),
+                &changed.computed_identity(&profile),
+                "every bounded work counter must change the V2 identity preimage"
+            );
+        }
+        complete.validate_against(&profile).unwrap();
+        partial.validate_against(&profile).unwrap();
+
+        let mut forged = serde_json::to_value(&complete).unwrap();
+        forged["clip_coverage"] = serde_json::json!({
+            "state": "partial",
+            "reason": "actual_clip_rows_exceeded"
+        });
+        assert!(serde_json::from_value::<ResolvedEngineSettingsV2>(forged).is_err());
     }
 
     #[test]
