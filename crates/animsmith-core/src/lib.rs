@@ -46,8 +46,8 @@
 //! A [runnable example] exercises the complete library flow.
 //!
 //! The directional-speed policy V1 API freezes source-basis vectors as
-//! orientation witnesses for raw collection-output V2 +X/+Z endpoint
-//! displacement. Basis magnitudes are nonsemantic; future evaluation uses
+//! orientation witnesses for raw collection-output V3 +X/+Z endpoint
+//! displacement. Basis magnitudes are nonsemantic; evaluation uses
 //! unit axes for heading and the raw evidence identity for binding.
 //!
 //! [embedding guide]: https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md

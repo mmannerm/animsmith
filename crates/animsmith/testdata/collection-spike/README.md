@@ -26,7 +26,7 @@ The proposal's one-batch preservation witness is:
 The decoded source and clip arrays sort by their stable keys/ids; the two set
 records sort by id while retaining their declared member order. The equal walk
 digests do not collapse their locators or logical ids. A future
-`collection-output:2` result must preserve all four rows, the selected config
+`collection-output:3` result must preserve all four rows, the selected config
 basis/digest, both runtime sets, and the exact manifest digest.
 
 The three `invalid-*.toml` files pin distinct control-plane failures: a repeated

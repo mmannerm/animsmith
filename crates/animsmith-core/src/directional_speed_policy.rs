@@ -2,7 +2,7 @@
 //!
 //! The CLI owns bounded TOML decoding. This module owns the immutable policy
 //! vocabulary and its finite, mode-specific, manifest-binding invariants.
-//! A future evaluator compares normalized raw collection-output V2 endpoint
+//! The evaluator compares normalized raw collection-output V3 endpoint
 //! displacement for heading, uses the published `speed_mps` field for speed
 //! magnitude (not travel distance), and binds both policy and evidence by
 //! their raw [`InputIdentity`] values. A zero net displacement is typed
@@ -20,7 +20,7 @@ pub const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_ID: &str =
 pub const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_SCHEMA_VERSION: u32 = 1;
 /// Maximum raw directional-speed policy TOML byte identity.
 pub const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_BYTES: u64 = 8 * 1024 * 1024;
-/// Maximum raw collection-output V2 JSON byte identity consumed by evaluation.
+/// Maximum raw collection-output JSON byte identity consumed by evaluation.
 pub const COLLECTION_DIRECTIONAL_SPEED_EVIDENCE_V1_MAX_BYTES: u64 = 256 * 1024 * 1024;
 /// Maximum policy members retained by the V1 reader.
 pub const COLLECTION_DIRECTIONAL_SPEED_POLICY_V1_MAX_MEMBERS: usize = 4_096;
@@ -49,8 +49,8 @@ pub enum CollectionDirectionalSpeedDiagonalBehaviorV1 {
 /// Explicit source X/Z orientation witnesses in semantic 2-D policy
 /// coordinates.
 ///
-/// `x` and `z` witness the raw collection-output V2 +X/+Z endpoint
-/// displacement directions. Their magnitudes are nonsemantic; a future
+/// `x` and `z` witness the raw collection-output V3 +X/+Z endpoint
+/// displacement directions. Their magnitudes are nonsemantic; the
 /// evaluator uses unit axes for heading comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct CollectionDirectionalSpeedSourceBasisV1 {
@@ -60,7 +60,7 @@ pub struct CollectionDirectionalSpeedSourceBasisV1 {
 
 impl CollectionDirectionalSpeedSourceBasisV1 {
     /// Construct a finite, bounded, nonzero, perpendicular X/Z orientation
-    /// witness for raw collection-output V2 endpoint displacement.
+    /// witness for raw collection-output V3 endpoint displacement.
     pub fn new(x: [f64; 2], z: [f64; 2]) -> Result<Self, CollectionDirectionalSpeedPolicyError> {
         for component in x.into_iter().chain(z) {
             if !bounded_component(component) {

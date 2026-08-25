@@ -637,7 +637,7 @@ incomplete role, grid, closure, or other prerequisite is a typed exit-1
 refusal and leaves any existing output unchanged. `--format json` writes the
 same canonical bytes to stdout; text is a presentation summary. The collection
 form selects one exact manifest logical id and reloads its declared
-source/config rather than consuming `collection-output:2`. Neither form
+source/config rather than consuming collection-output evidence. Neither form
 infers physical contact, footsteps, gameplay, IK, or engine behavior.
 
 An output-v11 measure report deliberately has no engine provenance or
@@ -679,13 +679,17 @@ are historical contracts; regenerate a current output-v11 report from the
 original asset with the current CLI before using `diff`.
 
 `collection lint COLLECTION.toml --format json` emits the separate immutable
-`urn:animsmith:schema:collection-output:2` contract. The manifest directory is
+`urn:animsmith:schema:collection-output:3` contract. The manifest directory is
 the control root; safe missing/unreadable sources, rejected readable bytes,
 digest/take mismatches, and incomplete runtime-set members remain typed rows
 and exit 1 while later safe sources continue. Invalid manifests, unsafe or
 nonregular paths, and missing/malformed selected configs exit 2 without an
 envelope. Source, clip, and set rows are canonical; member order remains the
-manifest order. Each established clip binds an exact source take index/name
+manifest order. Each source separately retains its primary input identity and
+a complete, partial, or unavailable dependency-closure state. Only a complete
+closure identity can establish that source, one of its clips, or a runtime-set
+member; partial/unavailable reasons remain typed and make the result incomplete
+with exit 1. Each established clip binds an exact source take index/name
 to a normalized clip index and carries duplicate-safe indexed measurements.
 The nested whole-document lint envelope advances to output v11 while retaining
 measurements v15.
@@ -701,12 +705,12 @@ carry raw gait-phase availability, and only a fully established, phase-measured
 set emits `evidence.gait_phase.phase_spread` with basis
 `max_circular_deviation_from_mean`; this preserves existing gait lint
 threshold semantics. See
-[`collection-output-v2.schema.json`](schemas/collection-output-v2.schema.json).
+[`collection-output-v3.schema.json`](schemas/collection-output-v3.schema.json).
 
 `collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` strictly reads a bounded
 `collection-directional-speed-policy:1` declaration and a bounded
-`collection-output:2` document, then writes the separate immutable
+`collection-output:3` document, then writes the separate immutable
 `urn:animsmith:schema:collection-directional-speed-evaluation:1` result. The
 result binds the exact raw TOML and JSON byte identities and preserves every
 declared member in manifest order. Invalid, stale, wrong-kind, unreadable,

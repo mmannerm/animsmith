@@ -15,15 +15,15 @@ separate TOML envelope: it does not add fields to collection-manifest V1,
 revise collection-output V2, or infer membership from filenames or paths.
 `animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` binds its raw bounded inputs to the
-typed reader, strict V2 adapter, pure evaluator, and immutable result. There
-is no output file, text/Markdown, subset, or inference mode; publication
-remains a consumer responsibility.
+typed reader, strict current collection-output V3 adapter, pure evaluator, and
+immutable result. There is no output file, text/Markdown, subset, or inference
+mode; publication remains a consumer responsibility.
 
 The envelope repeats the exact manifest identity (`collection_id` plus
 `{sha256, bytes}`), one directional-blend `runtime_set_id`, and every existing
 logical member exactly once in manifest order. Each member has one nonzero,
 unique semantic `[x, z]` coordinate. `source_basis.x` and `source_basis.z`
-are orientation witnesses for raw collection-output V2 +X/+Z endpoint
+are orientation witnesses for raw collection-output V3 +X/+Z endpoint
 displacement in that semantic plane; their magnitudes are nonsemantic, and the
 evaluator uses unit axes for heading. They must be finite, bounded,
 nonzero, and perpendicular. `diagonal_behavior` is closed and applies to
@@ -64,7 +64,7 @@ The contact-fragment V1 identity is
 AnimSmith 0.6.0 ships #152's format-neutral strict core reader, bounded
 canonicalization seam, and strict one-clip producer. `generate
 contact-fragment` includes a manifest-selected collection form that reloads
-the declared source rather than reading `collection-output:2`.
+the declared source rather than reading collection-output evidence.
 Transforms and runtime systems remain out of scope.
 
 It is an importable envelope that

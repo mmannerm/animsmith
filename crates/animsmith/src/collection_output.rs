@@ -1,4 +1,4 @@
-//! Internal producer and strict reader types for collection-output V2.
+//! Internal producer and strict reader types for collection-output V3.
 //!
 //! This is deliberately a CLI-local contract.  Core owns the validated
 //! collection declaration vocabulary; this module owns the command's evidence
@@ -14,22 +14,24 @@ use animsmith_core::{
     CollectionDirectionalSpeedEvaluationControlError, CollectionDirectionalSpeedEvidenceMemberV1,
     CollectionDirectionalSpeedEvidenceV1, CollectionDirectionalSpeedLifecycleV1,
     CollectionDirectionalSpeedManifestIdentityV1, CollectionIdV1, CollectionLogicalIdV1,
-    CollectionRuntimeSetKindV1, CollectionSourceKeyV1, DependencyResourceKeyV1, InputIdentity,
-    LintEnvelope, MeasurementReportInput, ResourceKeySyntaxV1, ToolInfo,
+    CollectionRuntimeSetKindV1, CollectionSourceKeyV1, DependencyClosureCoverageReasonV1,
+    DependencyClosureCoverageV1, DependencyClosureIdentityV1, DependencyClosureV1,
+    DependencyResourceKeyV1, InputIdentity, LintEnvelope, MeasurementReportInput,
+    ResourceKeySyntaxV1, ToolInfo,
 };
-use serde::de::{MapAccess, Visitor};
+use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read, Write};
 
-pub(crate) const COLLECTION_OUTPUT_V2_ID: &str = "urn:animsmith:schema:collection-output:2";
-pub(crate) const COLLECTION_OUTPUT_V2_SCHEMA_VERSION: u32 = 2;
-pub(crate) const COLLECTION_OUTPUT_V2_BUDGET_ID: &str = "urn:animsmith:collection-output-budget:1";
-pub(crate) const COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
-pub(crate) const COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
-pub(crate) const COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES: u64 = 256 * 1024 * 1024;
-const COLLECTION_OUTPUT_V2_MAX_NORMALIZED_CLIP_NAME_BYTES: usize =
+pub(crate) const COLLECTION_OUTPUT_V3_ID: &str = "urn:animsmith:schema:collection-output:3";
+pub(crate) const COLLECTION_OUTPUT_V3_SCHEMA_VERSION: u32 = 3;
+pub(crate) const COLLECTION_OUTPUT_BUDGET_V1_ID: &str = "urn:animsmith:collection-output-budget:1";
+pub(crate) const COLLECTION_OUTPUT_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
+pub(crate) const COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+pub(crate) const COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES: u64 = 256 * 1024 * 1024;
+const COLLECTION_OUTPUT_MAX_NORMALIZED_CLIP_NAME_BYTES: usize =
     COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES
         + 1
         + decimal_digits(COLLECTION_MANIFEST_V1_MAX_CLIPS.saturating_sub(1) as u64);
@@ -50,10 +52,10 @@ pub(crate) struct CollectionOutputBudgetV1 {
 impl CollectionOutputBudgetV1 {
     pub(crate) const fn v1() -> Self {
         Self {
-            id: COLLECTION_OUTPUT_V2_BUDGET_ID,
-            max_source_bytes: COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES,
-            max_aggregate_source_bytes: COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES,
-            max_serialized_bytes: COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES,
+            id: COLLECTION_OUTPUT_BUDGET_V1_ID,
+            max_source_bytes: COLLECTION_OUTPUT_MAX_SOURCE_BYTES,
+            max_aggregate_source_bytes: COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES,
+            max_serialized_bytes: COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES,
             max_sources: COLLECTION_MANIFEST_V1_MAX_SOURCES,
             max_clips: COLLECTION_MANIFEST_V1_MAX_CLIPS,
             max_runtime_sets: COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS,
@@ -144,6 +146,69 @@ pub(crate) enum LoaderUnavailableReason {
     DependencyUnavailable,
 }
 
+/// Whether a source row identifies every loader dependency that contributed
+/// to its embedded evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub(crate) enum SourceDependencyClosureState {
+    Complete {
+        identity: DependencyClosureIdentityV1,
+    },
+    Partial {
+        reasons: Vec<DependencyClosureCoverageReasonV1>,
+    },
+    Unavailable {
+        reasons: Vec<DependencyClosureCoverageReasonV1>,
+    },
+}
+
+impl SourceDependencyClosureState {
+    pub(crate) fn from_closure(
+        closure: &DependencyClosureV1,
+        input: &InputIdentity,
+    ) -> Result<Self, CollectionOutputError> {
+        if closure.primary_input() != input {
+            return Err(CollectionOutputError::Contradictory(
+                "dependency closure primary input mismatch",
+            ));
+        }
+        match closure.coverage() {
+            DependencyClosureCoverageV1::Complete => closure
+                .identity()
+                .cloned()
+                .map(|identity| Self::Complete { identity })
+                .ok_or(CollectionOutputError::Contradictory(
+                    "complete dependency closure has no identity",
+                )),
+            DependencyClosureCoverageV1::Partial { reasons } => Ok(Self::Partial {
+                reasons: reasons.clone(),
+            }),
+            DependencyClosureCoverageV1::Unavailable { reasons } => Ok(Self::Unavailable {
+                reasons: reasons.clone(),
+            }),
+        }
+    }
+
+    pub(crate) fn source_unavailable() -> Self {
+        Self::Unavailable {
+            reasons: vec![
+                DependencyClosureCoverageReasonV1::SourceDeclarationsUnavailable,
+                DependencyClosureCoverageReasonV1::CaptureUnavailable,
+            ],
+        }
+    }
+
+    pub(crate) fn capture_unavailable() -> Self {
+        Self::Unavailable {
+            reasons: vec![DependencyClosureCoverageReasonV1::CaptureUnavailable],
+        }
+    }
+
+    pub(crate) const fn is_complete(&self) -> bool {
+        matches!(self, Self::Complete { .. })
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub(crate) enum DocumentResult {
@@ -228,6 +293,7 @@ pub(crate) struct CollectionSourceRecord {
     digest: DigestPinState,
     config: ConfigState,
     loader: LoaderState,
+    dependency_closure: SourceDependencyClosureState,
     take_inventory: TakeInventoryState,
     observed_takes: Vec<ObservedTake>,
     result: DocumentResult,
@@ -242,6 +308,7 @@ impl CollectionSourceRecord {
         digest: DigestPinState,
         config: ConfigState,
         loader: LoaderState,
+        dependency_closure: SourceDependencyClosureState,
         take_inventory: TakeInventoryState,
         observed_takes: Vec<ObservedTake>,
         result: DocumentResult,
@@ -253,6 +320,7 @@ impl CollectionSourceRecord {
             digest,
             config,
             loader,
+            dependency_closure,
             take_inventory,
             observed_takes,
             result,
@@ -324,6 +392,7 @@ pub(crate) enum ClipUnavailableReason {
     SourceUnavailable,
     DigestMismatched,
     LoaderUnavailable,
+    DependencyClosureIncomplete,
     DocumentUnavailable,
     TakeInventoryUnavailable,
     TakeIndexMissing,
@@ -770,8 +839,8 @@ impl CollectionOutput {
             serialized_bytes,
         )?;
         let output = Self {
-            schema_version: COLLECTION_OUTPUT_V2_SCHEMA_VERSION,
-            schema: COLLECTION_OUTPUT_V2_ID,
+            schema_version: COLLECTION_OUTPUT_V3_SCHEMA_VERSION,
+            schema: COLLECTION_OUTPUT_V3_ID,
             tool,
             command: "collection lint",
             manifest,
@@ -792,8 +861,8 @@ impl CollectionOutput {
         // Only the decimal width of `serialized_bytes` can change the next
         // length. Starting at zero, there are at most as many transitions as
         // the decimal digits in the immutable output cap, plus one stable pass.
-        for _ in 0..=decimal_digits(COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES) {
-            let bytes = serialize_json_bounded(self, COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES)?;
+        for _ in 0..=decimal_digits(COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES) {
+            let bytes = serialize_json_bounded(self, COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES)?;
             if self.work.serialized_bytes == bytes.len() as u64 {
                 return Ok(bytes);
             }
@@ -905,11 +974,11 @@ pub(crate) fn read_collection_output(
     let mut bytes = Vec::new();
     let mut limited = reader
         .by_ref()
-        .take(COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES + 1);
+        .take(COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES + 1);
     limited
         .read_to_end(&mut bytes)
         .map_err(|_| CollectionOutputError::Read)?;
-    if bytes.len() as u64 > COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES {
+    if bytes.len() as u64 > COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES {
         return Err(CollectionOutputError::TooLarge);
     }
     let wire = serde_json::from_slice::<CollectionOutputWire>(&bytes)
@@ -934,7 +1003,7 @@ impl CollectionOutputInput {
         self.wire.clips.len()
     }
 
-    /// Adapt one already strictly decoded V2 runtime set to the pure
+    /// Adapt one already strictly decoded V3 runtime set to the pure
     /// directional-speed evaluator input. This intentionally adds no second
     /// JSON authority and retains every raw root-travel field and gap.
     #[allow(
@@ -1008,8 +1077,8 @@ impl CollectionOutputInput {
 
     fn validate(&self, read_bytes: u64) -> Result<(), CollectionOutputError> {
         let wire = &self.wire;
-        if wire.schema_version != COLLECTION_OUTPUT_V2_SCHEMA_VERSION
-            || wire.schema != COLLECTION_OUTPUT_V2_ID
+        if wire.schema_version != COLLECTION_OUTPUT_V3_SCHEMA_VERSION
+            || wire.schema != COLLECTION_OUTPUT_V3_ID
             || wire.command != "collection lint"
             || !valid_tool(&wire.tool)
             || wire.manifest.schema != animsmith_core::COLLECTION_MANIFEST_V1_ID
@@ -1104,14 +1173,14 @@ impl CollectionOutputInput {
             read_bytes,
         )?;
         if wire.work != expected_work
-            || primary_bytes > COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1
+            || primary_bytes > COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES + 1
             || wire.sources.iter().any(|source| {
                 matches!(&source.input,
                 SourceInputStateWire::Available { input }
-                    if input.bytes > COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES)
+                    if input.bytes > COLLECTION_OUTPUT_MAX_SOURCE_BYTES)
                     || matches!(&source.input,
                     SourceInputStateWire::Unavailable { inspected_bytes, .. }
-                    if *inspected_bytes > COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES + 1)
+                    if *inspected_bytes > COLLECTION_OUTPUT_MAX_SOURCE_BYTES + 1)
             })
         {
             return Err(CollectionOutputError::Malformed);
@@ -1158,6 +1227,7 @@ fn summarize(
                     DigestPinState::Unpinned | DigestPinState::Matched { .. }
                 )
                 && matches!(source.loader, LoaderState::Ready)
+                && source.dependency_closure.is_complete()
                 && matches!(source.result, DocumentResult::Available { .. })
         })
         .count();
@@ -1198,15 +1268,16 @@ fn validate_producer(output: &CollectionOutput) -> Result<(), CollectionOutputEr
             "rows must be unique and canonical",
         ));
     }
-    if output.work.primary_source_bytes > COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1
-        || output.work.serialized_bytes > COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES
+    if output.work.primary_source_bytes > COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES + 1
+        || output.work.serialized_bytes > COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES
         || output.work.aggregate_work > COLLECTION_MANIFEST_V1_MAX_AGGREGATE_WORK
     {
         return Err(CollectionOutputError::Contradictory("budget exceeded"));
     }
     for source in &output.sources {
-        if matches!(&source.input, SourceInputState::Available { input } if input.bytes() > COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES)
-            || matches!(&source.input, SourceInputState::Unavailable { inspected_bytes, .. } if *inspected_bytes > COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES + 1)
+        validate_producer_dependency_closure_state(source)?;
+        if matches!(&source.input, SourceInputState::Available { input } if input.bytes() > COLLECTION_OUTPUT_MAX_SOURCE_BYTES)
+            || matches!(&source.input, SourceInputState::Unavailable { inspected_bytes, .. } if *inspected_bytes > COLLECTION_OUTPUT_MAX_SOURCE_BYTES + 1)
         {
             return Err(CollectionOutputError::Contradictory(
                 "source budget exceeded",
@@ -1229,6 +1300,31 @@ fn validate_producer(output: &CollectionOutput) -> Result<(), CollectionOutputEr
             return Err(CollectionOutputError::Contradictory(
                 "nested-output availability mismatch",
             ));
+        }
+    }
+    let sources_by_key = output
+        .sources
+        .iter()
+        .map(|source| (source.key.as_str(), source))
+        .collect::<BTreeMap<_, _>>();
+    for clip in &output.clips {
+        let source = sources_by_key.get(clip.source.as_str()).ok_or(
+            CollectionOutputError::Contradictory("clip source is missing"),
+        )?;
+        match &clip.binding {
+            ClipBindingState::Established { .. } if !source.dependency_closure.is_complete() => {
+                return Err(CollectionOutputError::Contradictory(
+                    "established clip lacks complete dependency closure",
+                ));
+            }
+            ClipBindingState::Unavailable {
+                reason: ClipUnavailableReason::DependencyClosureIncomplete,
+            } if source.dependency_closure.is_complete() => {
+                return Err(CollectionOutputError::Contradictory(
+                    "clip reports incomplete dependency closure for complete source",
+                ));
+            }
+            _ => {}
         }
     }
     let observed_primary_bytes =
@@ -1257,13 +1353,69 @@ fn validate_producer(output: &CollectionOutput) -> Result<(), CollectionOutputEr
     Ok(())
 }
 
+fn valid_dependency_closure_reasons(reasons: &[DependencyClosureCoverageReasonV1]) -> bool {
+    !reasons.is_empty()
+        && reasons.len() <= DEPENDENCY_CLOSURE_REASON_VARIANTS
+        && reasons.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+fn validate_producer_dependency_closure_state(
+    source: &CollectionSourceRecord,
+) -> Result<(), CollectionOutputError> {
+    let captured_state_valid = match &source.dependency_closure {
+        SourceDependencyClosureState::Complete { identity } => {
+            let identity = identity.input_identity();
+            identity.bytes() > 0 && identity.bytes() <= COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES
+        }
+        SourceDependencyClosureState::Partial { reasons }
+        | SourceDependencyClosureState::Unavailable { reasons } => {
+            valid_dependency_closure_reasons(reasons)
+        }
+    };
+    if !captured_state_valid {
+        return Err(CollectionOutputError::Contradictory(
+            "invalid dependency-closure state",
+        ));
+    }
+    match (&source.input, &source.loader, &source.dependency_closure) {
+        (
+            SourceInputState::Available { .. },
+            LoaderState::Ready,
+            SourceDependencyClosureState::Complete { .. }
+            | SourceDependencyClosureState::Partial { .. }
+            | SourceDependencyClosureState::Unavailable { .. },
+        ) => Ok(()),
+        (
+            SourceInputState::Available { .. },
+            LoaderState::Unavailable { .. },
+            SourceDependencyClosureState::Unavailable { reasons },
+        ) if reasons == &[DependencyClosureCoverageReasonV1::CaptureUnavailable] => Ok(()),
+        (
+            SourceInputState::Unavailable { .. },
+            LoaderState::Unavailable {
+                reason: LoaderUnavailableReason::SourceUnavailable,
+            },
+            SourceDependencyClosureState::Unavailable { reasons },
+        ) if reasons
+            == &[
+                DependencyClosureCoverageReasonV1::SourceDeclarationsUnavailable,
+                DependencyClosureCoverageReasonV1::CaptureUnavailable,
+            ] =>
+        {
+            Ok(())
+        }
+        _ => Err(CollectionOutputError::Contradictory(
+            "dependency-closure state does not match source lifecycle",
+        )),
+    }
+}
+
 fn validate_primary_source_sequence(sources: impl Iterator<Item = (bool, u64)>) -> Option<u64> {
     let mut total = 0u64;
     let mut exhausted = false;
     for (aggregate_exhausted, inspected_bytes) in sources {
         if aggregate_exhausted {
-            if inspected_bytes != 0 || total != COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1
-            {
+            if inspected_bytes != 0 || total != COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES + 1 {
                 return None;
             }
             exhausted = true;
@@ -1272,7 +1424,7 @@ fn validate_primary_source_sequence(sources: impl Iterator<Item = (bool, u64)>) 
                 return None;
             }
             total = total.checked_add(inspected_bytes)?;
-            if total > COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1 {
+            if total > COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES + 1 {
                 return None;
             }
         }
@@ -1374,6 +1526,7 @@ struct CollectionSourceWire {
     digest: DigestPinStateWire,
     config: ConfigStateWire,
     loader: LoaderStateWire,
+    dependency_closure: SourceDependencyClosureStateWire,
     take_inventory: TakeInventoryState,
     observed_takes: Vec<ObservedTakeWire>,
     result: DocumentResultWire,
@@ -1388,6 +1541,59 @@ enum SourceInputStateWire {
         reason: SourceUnavailableReason,
         inspected_bytes: u64,
     },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum SourceDependencyClosureStateWire {
+    Complete {
+        identity: IdentityWire,
+    },
+    Partial {
+        #[serde(deserialize_with = "deserialize_dependency_closure_reasons")]
+        reasons: Vec<DependencyClosureCoverageReasonV1>,
+    },
+    Unavailable {
+        #[serde(deserialize_with = "deserialize_dependency_closure_reasons")]
+        reasons: Vec<DependencyClosureCoverageReasonV1>,
+    },
+}
+
+const DEPENDENCY_CLOSURE_REASON_VARIANTS: usize = 7;
+
+fn deserialize_dependency_closure_reasons<'de, D>(
+    deserializer: D,
+) -> Result<Vec<DependencyClosureCoverageReasonV1>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct ReasonsVisitor;
+
+    impl<'de> Visitor<'de> for ReasonsVisitor {
+        type Value = Vec<DependencyClosureCoverageReasonV1>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a bounded dependency-closure reason sequence")
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut reasons = Vec::with_capacity(DEPENDENCY_CLOSURE_REASON_VARIANTS);
+            while let Some(reason) = sequence.next_element()? {
+                if reasons.len() == DEPENDENCY_CLOSURE_REASON_VARIANTS {
+                    return Err(serde::de::Error::custom(
+                        "too many dependency-closure reasons",
+                    ));
+                }
+                reasons.push(reason);
+            }
+            Ok(reasons)
+        }
+    }
+
+    deserializer.deserialize_seq(ReasonsVisitor)
 }
 #[derive(Debug, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
@@ -1598,10 +1804,10 @@ enum RuntimeSetMemberStateWire {
 }
 
 fn valid_budget(budget: &BudgetWire) -> bool {
-    budget.id == COLLECTION_OUTPUT_V2_BUDGET_ID
-        && budget.max_source_bytes == COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES
-        && budget.max_aggregate_source_bytes == COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES
-        && budget.max_serialized_bytes == COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES
+    budget.id == COLLECTION_OUTPUT_BUDGET_V1_ID
+        && budget.max_source_bytes == COLLECTION_OUTPUT_MAX_SOURCE_BYTES
+        && budget.max_aggregate_source_bytes == COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES
+        && budget.max_serialized_bytes == COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES
         && budget.max_sources == COLLECTION_MANIFEST_V1_MAX_SOURCES
         && budget.max_clips == COLLECTION_MANIFEST_V1_MAX_CLIPS
         && budget.max_runtime_sets == COLLECTION_MANIFEST_V1_MAX_RUNTIME_SETS
@@ -1662,6 +1868,7 @@ fn valid_digest(value: &str) -> bool {
 }
 
 fn validate_source(source: &CollectionSourceWire) -> Result<(), CollectionOutputError> {
+    validate_dependency_closure_state(source)?;
     if let SourceInputStateWire::Unavailable {
         reason,
         inspected_bytes,
@@ -1670,7 +1877,7 @@ fn validate_source(source: &CollectionSourceWire) -> Result<(), CollectionOutput
         match reason {
             SourceUnavailableReason::Missing if *inspected_bytes == 0 => {}
             SourceUnavailableReason::Unreadable
-                if *inspected_bytes <= COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES => {}
+                if *inspected_bytes <= COLLECTION_OUTPUT_MAX_SOURCE_BYTES => {}
             SourceUnavailableReason::TooLarge if *inspected_bytes > 0 => {}
             SourceUnavailableReason::AggregateExhausted if *inspected_bytes == 0 => {}
             _ => return Err(CollectionOutputError::Malformed),
@@ -1830,7 +2037,7 @@ fn validate_source(source: &CollectionSourceWire) -> Result<(), CollectionOutput
         match &take.normalized {
             NormalizedClipState::Available { index, name }
                 if name.is_empty()
-                    || name.len() > COLLECTION_OUTPUT_V2_MAX_NORMALIZED_CLIP_NAME_BYTES
+                    || name.len() > COLLECTION_OUTPUT_MAX_NORMALIZED_CLIP_NAME_BYTES
                     || !normalized_indices.insert(*index) =>
             {
                 return Err(CollectionOutputError::Malformed);
@@ -1855,6 +2062,54 @@ fn validate_source(source: &CollectionSourceWire) -> Result<(), CollectionOutput
         return Err(CollectionOutputError::Malformed);
     }
     Ok(())
+}
+
+fn validate_dependency_closure_state(
+    source: &CollectionSourceWire,
+) -> Result<(), CollectionOutputError> {
+    let captured_state_valid = match &source.dependency_closure {
+        SourceDependencyClosureStateWire::Complete { identity } => {
+            valid_identity(identity)
+                && identity.bytes > 0
+                && identity.bytes <= COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES
+        }
+        SourceDependencyClosureStateWire::Partial { reasons }
+        | SourceDependencyClosureStateWire::Unavailable { reasons } => {
+            valid_dependency_closure_reasons(reasons)
+        }
+    };
+    if !captured_state_valid {
+        return Err(CollectionOutputError::Malformed);
+    }
+    match (&source.input, &source.loader, &source.dependency_closure) {
+        (
+            SourceInputStateWire::Available { .. },
+            LoaderStateWire::Ready,
+            SourceDependencyClosureStateWire::Complete { .. }
+            | SourceDependencyClosureStateWire::Partial { .. }
+            | SourceDependencyClosureStateWire::Unavailable { .. },
+        ) => Ok(()),
+        (
+            SourceInputStateWire::Available { .. },
+            LoaderStateWire::Unavailable { .. },
+            SourceDependencyClosureStateWire::Unavailable { reasons },
+        ) if reasons == &[DependencyClosureCoverageReasonV1::CaptureUnavailable] => Ok(()),
+        (
+            SourceInputStateWire::Unavailable { .. },
+            LoaderStateWire::Unavailable {
+                reason: LoaderUnavailableReason::SourceUnavailable,
+            },
+            SourceDependencyClosureStateWire::Unavailable { reasons },
+        ) if reasons
+            == &[
+                DependencyClosureCoverageReasonV1::SourceDeclarationsUnavailable,
+                DependencyClosureCoverageReasonV1::CaptureUnavailable,
+            ] =>
+        {
+            Ok(())
+        }
+        _ => Err(CollectionOutputError::Malformed),
+    }
 }
 fn validate_envelope(raw: &RawValue, source: &IdentityWire) -> Result<(), CollectionOutputError> {
     let command: NestedEnvelopeCommandWire =
@@ -1887,6 +2142,12 @@ fn validate_clip(
             measurements,
             check_reference,
         } => {
+            if !matches!(
+                source.dependency_closure,
+                SourceDependencyClosureStateWire::Complete { .. }
+            ) {
+                return Err(CollectionOutputError::Malformed);
+            }
             let observed = source
                 .observed_takes
                 .iter()
@@ -1990,6 +2251,28 @@ fn validate_clip(
             }
             ClipUnavailableReason::LoaderUnavailable | ClipUnavailableReason::DocumentUnavailable => {
                 if !matches!(source.loader, LoaderStateWire::Unavailable { .. }) && !matches!(source.result, DocumentResultWire::Unavailable { .. }) { return Err(CollectionOutputError::Malformed); }
+            }
+            ClipUnavailableReason::DependencyClosureIncomplete => {
+                if !matches!(source.loader, LoaderStateWire::Ready)
+                    || !matches!(
+                        source.digest,
+                        DigestPinStateWire::Unpinned | DigestPinStateWire::Matched { .. }
+                    )
+                    || matches!(
+                        source.dependency_closure,
+                        SourceDependencyClosureStateWire::Complete { .. }
+                    )
+                    || !source.observed_takes.iter().any(|take| {
+                        take.source_take_index == clip.take_index
+                            && matches!(
+                                &take.name,
+                                TakeNameState::Available { value } if value == &clip.take_name
+                            )
+                            && matches!(take.normalized, NormalizedClipState::Available { .. })
+                    })
+                {
+                    return Err(CollectionOutputError::Malformed);
+                }
             }
             ClipUnavailableReason::TakeInventoryUnavailable => {
                 if source.take_inventory != TakeInventoryState::Unavailable { return Err(CollectionOutputError::Malformed); }
@@ -2242,6 +2525,10 @@ fn summarize_wire(
                     DigestPinStateWire::Unpinned | DigestPinStateWire::Matched { .. }
                 )
                 && matches!(source.loader, LoaderStateWire::Ready)
+                && matches!(
+                    source.dependency_closure,
+                    SourceDependencyClosureStateWire::Complete { .. }
+                )
                 && matches!(source.result, DocumentResultWire::Available { .. })
         })
         .count();
@@ -2271,8 +2558,8 @@ fn summarize_wire(
 mod tests {
     use super::*;
     use animsmith_core::{
-        Clip, Config, Document, LintFileReport, MeasurementContract, MetricGrids, ResolvedRoles,
-        RigInfo,
+        Clip, Config, DependencyClosureBuilderV1, Document, LintFileReport, MeasurementContract,
+        MetricGrids, ResolvedRoles, RigInfo, SourceSetCoverageV1,
     };
     type JsonValue = serde_json::value::Value;
 
@@ -2309,6 +2596,14 @@ mod tests {
         )
     }
 
+    fn complete_dependency_closure(input: &InputIdentity) -> SourceDependencyClosureState {
+        let closure =
+            DependencyClosureBuilderV1::new(input.clone(), SourceSetCoverageV1::complete(), 0)
+                .finish()
+                .unwrap();
+        SourceDependencyClosureState::from_closure(&closure, input).unwrap()
+    }
+
     fn output_model_fixture(
         two_sources: bool,
         with_set: bool,
@@ -2336,6 +2631,7 @@ mod tests {
                 },
                 ConfigState::Default,
                 LoaderState::Ready,
+                complete_dependency_closure(&input),
                 TakeInventoryState::Complete,
                 vec![ObservedTake::new(0, "take", 0, "take")],
                 DocumentResult::Available {
@@ -2515,6 +2811,7 @@ mod tests {
                     },
                     ConfigState::Default,
                     LoaderState::Ready,
+                    complete_dependency_closure(&input),
                     TakeInventoryState::Complete,
                     vec![ObservedTake::new(0, "take", 0, "take")],
                     DocumentResult::Available {
@@ -2592,7 +2889,7 @@ mod tests {
         );
         assert_eq!(budget["max_serialized_bytes"], 256_u64 * 1024 * 1024);
         assert_eq!(
-            COLLECTION_OUTPUT_V2_MAX_SERIALIZED_BYTES,
+            COLLECTION_OUTPUT_MAX_SERIALIZED_BYTES,
             animsmith_core::COLLECTION_DIRECTIONAL_SPEED_EVIDENCE_V1_MAX_BYTES
         );
     }
@@ -2877,14 +3174,14 @@ mod tests {
 
     #[test]
     fn aggregate_exhaustion_requires_a_prior_n_plus_one_witness() {
-        let full_source = (false, COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES);
+        let full_source = (false, COLLECTION_OUTPUT_MAX_SOURCE_BYTES);
         let mut valid = vec![full_source; 16];
         valid.push((false, 1));
         valid.push((true, 0));
         valid.push((true, 0));
         assert_eq!(
             validate_primary_source_sequence(valid.into_iter()),
-            Some(COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES + 1)
+            Some(COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES + 1)
         );
         assert_eq!(
             validate_primary_source_sequence([(true, 0)].into_iter()),
@@ -2940,6 +3237,82 @@ mod tests {
         });
         rejects(loader);
 
+        let mut incomplete_closure_with_established_clip = json_fixture(false, false);
+        incomplete_closure_with_established_clip["sources"][0]["dependency_closure"] = serde_json::json!({
+            "state": "partial",
+            "reasons": ["unavailable_resource"]
+        });
+        rejects(incomplete_closure_with_established_clip);
+
+        let mut valid_incomplete_closure = json_fixture(false, false);
+        valid_incomplete_closure["sources"][0]["dependency_closure"] = serde_json::json!({
+            "state": "partial",
+            "reasons": ["unavailable_resource"]
+        });
+        valid_incomplete_closure["clips"][0]["binding"] = serde_json::json!({
+            "state": "unavailable",
+            "reason": "dependency_closure_incomplete"
+        });
+        valid_incomplete_closure["summary"]["established_sources"] = 0.into();
+        valid_incomplete_closure["summary"]["established_clips"] = 0.into();
+        valid_incomplete_closure["summary"]["incomplete"] = true.into();
+        assert!(
+            read_collection_output(&stable_json_bytes(valid_incomplete_closure.clone())[..])
+                .is_ok()
+        );
+
+        let mut competing_digest = valid_incomplete_closure.clone();
+        competing_digest["sources"][0]["digest"] = serde_json::json!({
+            "state": "mismatched",
+            "expected_sha256": "0".repeat(64),
+            "observed_sha256": competing_digest["sources"][0]["input"]["input"]["sha256"]
+        });
+        rejects(competing_digest);
+
+        let mut competing_take = valid_incomplete_closure;
+        competing_take["clips"][0]["take_index"] = 1.into();
+        rejects(competing_take);
+
+        let mut empty_closure_reasons = json_fixture(false, false);
+        empty_closure_reasons["sources"][0]["dependency_closure"] =
+            serde_json::json!({"state": "partial", "reasons": []});
+        rejects(empty_closure_reasons);
+
+        let mut duplicate_closure_reasons = json_fixture(false, false);
+        duplicate_closure_reasons["sources"][0]["dependency_closure"] = serde_json::json!({
+            "state": "partial",
+            "reasons": ["unavailable_resource", "unavailable_resource"]
+        });
+        rejects(duplicate_closure_reasons);
+
+        let mut reversed_closure_reasons = json_fixture(false, false);
+        reversed_closure_reasons["sources"][0]["dependency_closure"] = serde_json::json!({
+            "state": "partial",
+            "reasons": ["unavailable_resource", "refused_resource"]
+        });
+        rejects(reversed_closure_reasons);
+
+        let mut too_many_closure_reasons = json_fixture(false, false);
+        too_many_closure_reasons["sources"][0]["dependency_closure"] = serde_json::json!({
+            "state": "partial",
+            "reasons": [
+                "source_declarations_partial",
+                "source_declarations_unavailable",
+                "capture_unavailable",
+                "refused_resource",
+                "unavailable_resource",
+                "resource_budget_exceeded",
+                "unmodeled_resource_domain",
+                "unmodeled_resource_domain"
+            ]
+        });
+        rejects(too_many_closure_reasons);
+
+        let mut zero_length_closure_identity = json_fixture(false, false);
+        zero_length_closure_identity["sources"][0]["dependency_closure"]["identity"]["bytes"] =
+            0.into();
+        rejects(zero_length_closure_identity);
+
         let mut result = json_fixture(false, false);
         result["sources"][0]["result"] = serde_json::json!({
             "state": "unavailable", "reason": "loader_unavailable"
@@ -2954,6 +3327,10 @@ mod tests {
             serde_json::json!({"state": "unpinned"});
         unavailable_with_inventory["sources"][0]["loader"] = serde_json::json!({
             "state": "unavailable", "reason": "source_unavailable"
+        });
+        unavailable_with_inventory["sources"][0]["dependency_closure"] = serde_json::json!({
+            "state": "unavailable",
+            "reasons": ["source_declarations_unavailable", "capture_unavailable"]
         });
         unavailable_with_inventory["sources"][0]["result"] = serde_json::json!({
             "state": "unavailable", "reason": "source_unavailable"

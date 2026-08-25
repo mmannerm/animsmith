@@ -174,6 +174,17 @@ fn evaluate(temp: &tempfile::TempDir, policy: &str, evidence: &Value) -> Output 
     evaluate_paths(&policy_path, &evidence_path)
 }
 
+fn stabilize_serialized_bytes(evidence: &mut Value) {
+    for _ in 0..8 {
+        let bytes = serde_json::to_vec(evidence).unwrap().len() as u64;
+        if evidence["work"]["serialized_bytes"].as_u64() == Some(bytes) {
+            return;
+        }
+        evidence["work"]["serialized_bytes"] = bytes.into();
+    }
+    panic!("serialized byte count did not converge");
+}
+
 fn assert_result(output: &Output, code: i32, reason: Option<&str>, findings: usize) -> Value {
     assert_eq!(
         output.status.code(),
@@ -282,6 +293,44 @@ fn subprocess_incomplete_and_zero_net_not_evaluated_emit_result_and_exit_one() {
     );
     let output = evaluate(&temp, &uniform_policy(&incomplete, 1.0), &incomplete);
     assert_result(&output, 1, Some("incomplete_root_travel"), 0);
+
+    let complete = collection_output(
+        &temp,
+        "directional-blend",
+        [Some(Vec3::X), Some(Vec3::Z)],
+        false,
+    );
+    let mut partial_closure = incomplete.clone();
+    partial_closure["sources"][0] = complete["sources"][0].clone();
+    partial_closure["sources"][0]["dependency_closure"] = serde_json::json!({
+        "state": "partial",
+        "reasons": ["unavailable_resource"]
+    });
+    partial_closure["clips"][0]["binding"] = serde_json::json!({
+        "state": "unavailable",
+        "reason": "dependency_closure_incomplete"
+    });
+    partial_closure["runtime_sets"][0]["members"][0]["resolution"] = serde_json::json!({
+        "state": "unavailable",
+        "reason": "dependency_closure_incomplete"
+    });
+    partial_closure["summary"]["readable_sources"] = 2.into();
+    partial_closure["work"] = complete["work"].clone();
+    stabilize_serialized_bytes(&mut partial_closure);
+    let output = evaluate(
+        &temp,
+        &uniform_policy(&partial_closure, 1.0),
+        &partial_closure,
+    );
+    let result = assert_result(&output, 1, Some("incomplete_root_travel"), 0);
+    assert_eq!(
+        result["gaps"],
+        serde_json::json!(["com.example.directional/x"])
+    );
+    let members = result["members"].as_array().unwrap();
+    assert_eq!(members.len(), 2);
+    assert_eq!(members[0]["evidence"]["id"], "com.example.directional/x");
+    assert_eq!(members[1]["evidence"]["id"], "com.example.directional/z");
 
     let zero_net = collection_output(
         &temp,

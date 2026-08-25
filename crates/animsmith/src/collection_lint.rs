@@ -17,13 +17,13 @@ use super::collection_manifest::{
     CollectionSourceUnavailable, load_collection_manifest_with_identity,
 };
 use super::collection_output::{
-    COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES, COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES,
+    COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES, COLLECTION_OUTPUT_MAX_SOURCE_BYTES,
     CheckReferenceState, CheckReferenceUnavailableReason, ClipBindingState, ClipUnavailableReason,
     CollectionClipRecord, CollectionManifestIdentity, CollectionOutput, CollectionRuntimeSetRecord,
     CollectionSourceRecord, ConfigState, DigestPinState, DocumentResult, DocumentUnavailableReason,
     LoaderState, LoaderUnavailableReason, MeasurementReference, NormalizedClipState, ObservedTake,
-    RuntimeSetMember, RuntimeSetMemberState, SourceInputState, SourceUnavailableReason,
-    TakeInventoryState, TakeNameState,
+    RuntimeSetMember, RuntimeSetMemberState, SourceDependencyClosureState, SourceInputState,
+    SourceUnavailableReason, TakeInventoryState, TakeNameState,
 };
 use super::{
     EXIT_FINDINGS, InputFormat, LintAnalysis, LoadedConfig, LoadedInput, analyze_loaded_lint,
@@ -43,6 +43,7 @@ struct ReadySource {
     digest_mismatched: bool,
     nested_output_available: bool,
     duplicate_normalized_names: BTreeSet<String>,
+    dependency_closure_complete: bool,
 }
 
 enum ExecutedSource {
@@ -167,8 +168,8 @@ pub(crate) fn run_collection_lint(manifest_path: &Path) -> Result<ExitCode, Stri
 
 fn next_source_limit(primary_source_bytes: u64) -> Option<u64> {
     let remaining =
-        COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES.checked_sub(primary_source_bytes)?;
-    Some(COLLECTION_OUTPUT_V2_MAX_SOURCE_BYTES.min(remaining))
+        COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES.checked_sub(primary_source_bytes)?;
+    Some(COLLECTION_OUTPUT_MAX_SOURCE_BYTES.min(remaining))
 }
 
 struct SourceExecution {
@@ -267,6 +268,10 @@ fn execute_source(
         source: loaded_source,
         engine,
     };
+    let dependency_closure =
+        SourceDependencyClosureState::from_closure(loaded.dependency_closure(), &input)
+            .map_err(|error| error.to_string())?;
+    let dependency_closure_complete = dependency_closure.is_complete();
     let analysis = analyze_loaded_lint(
         &loaded,
         &config.loaded,
@@ -297,6 +302,7 @@ fn execute_source(
         digest,
         config.evidence,
         LoaderState::Ready,
+        dependency_closure,
         take_inventory,
         observed_takes,
         if nested_output_available {
@@ -317,8 +323,12 @@ fn execute_source(
             digest_mismatched,
             nested_output_available,
             duplicate_normalized_names,
+            dependency_closure_complete,
         })),
-        requires_failure: requires_failure || digest_mismatched || !nested_output_available,
+        requires_failure: requires_failure
+            || digest_mismatched
+            || !nested_output_available
+            || !dependency_closure_complete,
     })
 }
 
@@ -340,6 +350,7 @@ fn unavailable_source_record(
             LoaderState::Unavailable {
                 reason: loader_reason,
             },
+            SourceDependencyClosureState::source_unavailable(),
             TakeInventoryState::Unavailable,
             Vec::new(),
             DocumentResult::Unavailable {
@@ -366,6 +377,7 @@ fn loader_unavailable_source_record(
             digest,
             config,
             LoaderState::Unavailable { reason },
+            SourceDependencyClosureState::capture_unavailable(),
             TakeInventoryState::Unavailable,
             Vec::new(),
             DocumentResult::Unavailable {
@@ -455,6 +467,11 @@ fn bind_clip(clip: &CollectionClipV1, execution: &ExecutedSource) -> ClipBinding
     if source.digest_mismatched {
         return ClipBindingState::Unavailable {
             reason: ClipUnavailableReason::DigestMismatched,
+        };
+    }
+    if !source.dependency_closure_complete {
+        return ClipBindingState::Unavailable {
+            reason: ClipUnavailableReason::DependencyClosureIncomplete,
         };
     }
     let Some(normalized_name) = source
@@ -718,7 +735,7 @@ mod tests {
 
     #[test]
     fn aggregate_reader_stops_after_one_terminal_witness() {
-        let cap = COLLECTION_OUTPUT_V2_MAX_AGGREGATE_SOURCE_BYTES;
+        let cap = COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES;
         assert_eq!(next_source_limit(cap - 1), Some(1));
         assert_eq!(next_source_limit(cap), Some(0));
         assert_eq!(next_source_limit(cap + 1), None);
