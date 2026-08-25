@@ -1350,12 +1350,16 @@ pub struct SceneAssets {
 /// validation order: skeleton rest/topology, source identity/projection,
 /// tracks, instances, then bone-level inverse binds.
 pub fn validate_document_shape(document: &Document) -> Result<(), DocumentShapeError> {
-    validate_skeleton_rest(&document.skeleton)?;
-    validate_source_skeleton_identity(&document.assets.source_skeleton)?;
-    validate_source_projection(document)?;
+    validate_document_structure_prefix(document)?;
     validate_clip_tracks(document)?;
     validate_mesh_instances(document)?;
     validate_bone_inverse_binds(&document.skeleton)
+}
+
+fn validate_document_structure_prefix(document: &Document) -> Result<(), DocumentShapeError> {
+    validate_skeleton_rest(&document.skeleton)?;
+    validate_source_skeleton_identity(&document.assets.source_skeleton)?;
+    validate_source_projection(document)
 }
 
 fn validate_skeleton_rest(skeleton: &Skeleton) -> Result<(), DocumentShapeError> {

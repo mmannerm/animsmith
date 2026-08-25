@@ -284,6 +284,13 @@ immutable transition-pose evaluation result contract at
 or collection adapter: document/collection resolution, raw-source loading, and
 JSON-only command publication remain deferred. The schema is checked in as
 [`transition-pose-evaluation-v1.schema.json`](schemas/transition-pose-evaluation-v1.schema.json).
+That docs schema is canonical; the core crate ships an exact checked snapshot
+so packaged integration tests retain the same contract without a repository
+path dependency.
+Its `subject_input` field binds the exact raw subject selected by the
+declaration scope: the current document evaluator supplies document bytes,
+while a future collection adapter will supply manifest bytes without forking
+the V1 result wire.
 
 Document-local family ids are one lowercase-ASCII token, 1–255 bytes, starting
 with `[a-z0-9]` and continuing with `[a-z0-9._-]`. The table key itself is the

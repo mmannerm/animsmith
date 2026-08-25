@@ -6,12 +6,13 @@
 //! deliberately has no filesystem, config, collection, or command authority.
 
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 
+use crate::model::validate_track_shape;
 use crate::{
-    Bone, Clip, Document, DocumentShapeError, InputIdentity, Property, Skeleton, TrackSample,
+    Bone, Clip, Document, InputIdentity, Property, Skeleton, Track, TrackSample,
     TransitionFamilyBoundaryV1, TransitionFamilyDeclarationInputV1, TransitionFamilyTolerancesV1,
-    validate_document_shape,
 };
 
 /// Schema identity for a transition-pose evaluation result.
@@ -21,6 +22,34 @@ pub const TRANSITION_POSE_EVALUATION_V1_ID: &str =
 pub const TRANSITION_POSE_EVALUATION_V1_SCHEMA_VERSION: u32 = 1;
 /// Maximum skeleton bones admitted by one V1 basis.
 pub const TRANSITION_POSE_EVALUATION_V1_MAX_BONES: usize = 4_096;
+/// Maximum total authored UTF-8 bone-name bytes admitted to one V1 basis.
+///
+/// This shares the declaration V1 normalized-byte budget so basis identity
+/// construction never clones unbounded skeleton text.
+pub const TRANSITION_POSE_EVALUATION_V1_MAX_BASIS_TEXT_BYTES: usize =
+    crate::TRANSITION_FAMILY_V1_MAX_NORMALIZED_BYTES as usize;
+/// Maximum clips admitted to document transition-pose witness resolution.
+///
+/// This aligns with the V1 collection/source clip domain. Above it, direct
+/// declaration index/name contradictions still fail structurally, while an
+/// otherwise valid declaration receives normal `input_limit` result rows
+/// without a global duplicate-name scan.
+pub const TRANSITION_POSE_EVALUATION_V1_MAX_DOCUMENT_CLIPS: usize = 4_096;
+/// Maximum raw flat track rows admitted for one selected clip.
+///
+/// The loader-facing document stores every property in one vector, so V1 must
+/// bound that vector before it can discover the T/R rows it consumes. Scale
+/// remains semantically ignored after this resource admission.
+pub const TRANSITION_POSE_EVALUATION_V1_MAX_RAW_TRACK_ROWS_PER_CLIP: usize =
+    TRANSITION_POSE_EVALUATION_V1_MAX_BONES * 3;
+/// Maximum selected tracks in one clip: translation and rotation per admitted
+/// V1 skeleton bone. Scale is outside the V1 endpoint domain and is ignored.
+pub const TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACKS_PER_CLIP: usize =
+    TRANSITION_POSE_EVALUATION_V1_MAX_BONES * 2;
+/// Maximum aggregate selected time/value elements inspected by one evaluator
+/// call. This reuses the immutable aggregate comparison-work bound.
+pub const TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACK_ELEMENTS: usize =
+    TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_COMPARISONS;
 /// Maximum pair/boundary comparisons in one family.
 pub const TRANSITION_POSE_EVALUATION_V1_MAX_FAMILY_PAIR_BOUNDARIES: usize = 4_096;
 /// Maximum pair/boundary comparisons across one result.
@@ -35,6 +64,10 @@ pub const TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS: usize = 16;
 pub const TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_OFFENDERS: usize = 65_536;
 /// Maximum serialized V1 result bytes.
 pub const TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES: usize = 256 * 1024 * 1024;
+/// Conservative fixed JCS bytes reserved for every detailed pair/boundary
+/// before endpoint sampling. It covers a complete pair row and its two
+/// bounded offender arrays excluding escaped bone-name text.
+const MAX_DETAILED_PAIR_FIXED_BYTES: usize = 4_096;
 
 /// A normalized local-rest bone record contributing to [`SkeletonBasisV1`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -85,6 +118,12 @@ impl SkeletonBasisV1 {
     pub fn from_skeleton(skeleton: &Skeleton) -> Result<Self, SkeletonBasisError> {
         if skeleton.bones.len() > TRANSITION_POSE_EVALUATION_V1_MAX_BONES {
             return Err(SkeletonBasisError::TooManyBones);
+        }
+        if !skeleton_text_is_within_limit(
+            skeleton,
+            TRANSITION_POSE_EVALUATION_V1_MAX_BASIS_TEXT_BYTES,
+        ) {
+            return Err(SkeletonBasisError::TooMuchText);
         }
         let mut bones = Vec::with_capacity(skeleton.bones.len());
         for (ordinal, bone) in skeleton.bones.iter().enumerate() {
@@ -147,6 +186,9 @@ pub enum SkeletonBasisError {
     /// A basis exceeded its fixed bone limit.
     #[error("transition-pose skeleton basis exceeds the bone cap")]
     TooManyBones,
+    /// Authored bone names exceeded the basis text cap before normalization.
+    #[error("transition-pose skeleton basis exceeds the bone-name text cap")]
+    TooMuchText,
     /// A parent was absent from the required parent-before-child prefix.
     #[error("transition-pose skeleton basis has an invalid parent at bone {ordinal}")]
     InvalidParent {
@@ -366,7 +408,7 @@ pub struct TransitionPoseEvaluationV1 {
     reason: Option<TransitionPoseReasonV1>,
     declaration_input: InputIdentity,
     declaration_normalized: InputIdentity,
-    document_input: InputIdentity,
+    subject_input: InputIdentity,
     families: Vec<TransitionPoseFamilyEvaluationV1>,
 }
 
@@ -399,9 +441,12 @@ impl TransitionPoseEvaluationV1 {
     pub const fn declaration_normalized(&self) -> &InputIdentity {
         &self.declaration_normalized
     }
-    /// Exact raw document input identity.
-    pub const fn document_input(&self) -> &InputIdentity {
-        &self.document_input
+    /// Exact raw identity of the declaration scope subject.
+    ///
+    /// The document evaluator binds the loaded document bytes here; a future
+    /// collection adapter binds the manifest bytes under the same V1 schema.
+    pub const fn subject_input(&self) -> &InputIdentity {
+        &self.subject_input
     }
     /// Family results in canonical declaration-family order.
     pub fn families(&self) -> &[TransitionPoseFamilyEvaluationV1] {
@@ -422,9 +467,6 @@ pub enum TransitionPoseEvaluationControlError {
     /// The declaration is collection-owned and needs the deferred collection adapter.
     #[error("document transition-pose evaluation requires a document declaration")]
     WrongDeclarationScope,
-    /// The mutable loader-facing document failed strict revalidation.
-    #[error("transition-pose document shape is invalid: {0}")]
-    InvalidDocumentShape(DocumentShapeError),
     /// The strict normalized skeleton identity could not be constructed.
     #[error("transition-pose skeleton basis is invalid: {0}")]
     InvalidSkeletonBasis(SkeletonBasisError),
@@ -438,17 +480,29 @@ pub enum TransitionPoseEvaluationControlError {
 
 /// Evaluate document-local transition families without I/O.
 ///
-/// The document is revalidated at this public boundary because its public
-/// fields are mutable. All work planning happens before endpoint sampling; an
-/// unavailable family is retained as `incomplete/not_evaluated`, never
-/// evaluated as a survivor subset.
+/// The mutable document's admitted skeleton and selected T/R tracks are
+/// revalidated at this public boundary. All work planning happens before
+/// endpoint sampling; an unavailable family is retained as
+/// `incomplete/not_evaluated`, never evaluated as a survivor subset.
 pub fn evaluate_document_transition_poses_v1(
     declaration: &TransitionFamilyDeclarationInputV1,
-    document_input: InputIdentity,
+    subject_input: InputIdentity,
     document: &Document,
 ) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
-    validate_document_shape(document)
-        .map_err(TransitionPoseEvaluationControlError::InvalidDocumentShape)?;
+    evaluate_document_transition_poses_v1_with_result_limit(
+        declaration,
+        subject_input,
+        document,
+        TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES,
+    )
+}
+
+fn evaluate_document_transition_poses_v1_with_result_limit(
+    declaration: &TransitionFamilyDeclarationInputV1,
+    subject_input: InputIdentity,
+    document: &Document,
+    result_limit: usize,
+) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
     let families = declaration
         .declaration()
         .document_families()
@@ -461,42 +515,76 @@ pub fn evaluate_document_transition_poses_v1(
         reason: None,
         declaration_input: declaration.source_identity().clone(),
         declaration_normalized: declaration.normalized_identity().clone(),
-        document_input: document_input.clone(),
+        subject_input: subject_input.clone(),
         families: Vec::with_capacity(families.len()),
     };
     if families.is_empty() {
         result.reason = Some(TransitionPoseReasonV1::NoConfiguredFamilies);
         return Ok(result);
     }
+    // A declaration witness is a structural authority, not an evaluation
+    // policy. Resolve every family before any tolerance or work-cap outcome
+    // can produce a retained incomplete row.
+    let resolved_clips = match resolve_document_family_clips(document, families)? {
+        DocumentClipAdmission::InputLimit => {
+            for family in families {
+                let mut row = family_result_row(family, &subject_input, None);
+                row.reason = Some(TransitionPoseReasonV1::InputLimit);
+                result.families.push(row);
+            }
+            derive_result_state(&mut result);
+            return Ok(result);
+        }
+        DocumentClipAdmission::Resolved(clips) => clips,
+    };
+    if !skeleton_input_is_within_limits(&document.skeleton) {
+        for family in families {
+            let mut row = family_result_row(family, &subject_input, None);
+            row.reason = Some(TransitionPoseReasonV1::InputLimit);
+            result.families.push(row);
+        }
+        derive_result_state(&mut result);
+        return Ok(result);
+    }
+    validate_transition_pose_skeleton(&document.skeleton)
+        .map_err(TransitionPoseEvaluationControlError::InvalidSkeletonBasis)?;
     let basis = SkeletonBasisV1::from_skeleton(&document.skeleton)
         .map_err(TransitionPoseEvaluationControlError::InvalidSkeletonBasis)?;
-    let plans = plan_families(families, basis.bones().len());
-    for (family, plan) in families.iter().zip(plans) {
-        let members = family
-            .members()
-            .iter()
-            .map(|member| TransitionPoseMemberV1 {
-                take_index: member.take_index(),
-                take_name: member.take_name().to_owned(),
-                source_input: document_input.clone(),
-            })
-            .collect::<Vec<_>>();
-        let mut row = TransitionPoseFamilyEvaluationV1 {
-            family_id: family.family_id().to_owned(),
-            status: TransitionPoseStatusV1::Incomplete,
-            decision: TransitionPoseDecisionV1::NotEvaluated,
-            reason: None,
-            members,
-            skeleton_basis_input: Some(basis.identity().clone()),
-            pairs: Vec::new(),
-        };
+    let policy_rejected = families
+        .iter()
+        .map(|family| family.tolerances().time_normalized() != 0.0)
+        .collect::<Vec<_>>();
+    let track_limits =
+        plan_selected_track_input_limits(&resolved_clips, basis.bones().len(), &policy_rejected);
+    let plans = plan_families(families, basis.bones().len(), &track_limits);
+    let mut detailed_name_budget = detailed_result_budget_after_base(
+        &result,
+        families,
+        &subject_input,
+        basis.identity(),
+        result_limit,
+    )?;
+    for (((family, plan), clips), track_limit) in families
+        .iter()
+        .zip(plans)
+        .zip(resolved_clips)
+        .zip(track_limits)
+    {
+        let mut row = family_result_row(family, &subject_input, Some(basis.identity()));
         if family.tolerances().time_normalized() != 0.0 {
             row.reason = Some(TransitionPoseReasonV1::TimeToleranceUnsupported);
         } else if let Some(reason) = plan.reason {
             row.reason = Some(reason);
+        } else if track_limit {
+            row.reason = Some(TransitionPoseReasonV1::InputLimit);
+        } else if !reserve_detailed_name_budget(
+            &mut detailed_name_budget,
+            family,
+            &document.skeleton,
+        ) {
+            row.reason = Some(TransitionPoseReasonV1::ResultLimit);
         } else {
-            let clips = resolve_family_clips(document, family.members())?;
-            let endpoints = match strict_endpoints(document, &clips) {
+            let endpoints = match strict_endpoints(document, &clips, family.boundary()) {
                 Ok(value) => value,
                 Err(reason) => {
                     row.reason = Some(reason);
@@ -504,12 +592,19 @@ pub fn evaluate_document_transition_poses_v1(
                     continue;
                 }
             };
-            row.pairs = compare_pairs(
+            row.pairs = match compare_pairs(
                 &endpoints,
                 family.boundary(),
                 family.tolerances(),
                 &document.skeleton,
-            );
+            ) {
+                Ok(pairs) => pairs,
+                Err(reason) => {
+                    row.reason = Some(reason);
+                    result.families.push(row);
+                    continue;
+                }
+            };
             row.status = TransitionPoseStatusV1::Complete;
             row.decision = if row.pairs.iter().any(pair_has_finding) {
                 TransitionPoseDecisionV1::Finding
@@ -520,17 +615,54 @@ pub fn evaluate_document_transition_poses_v1(
         result.families.push(row);
     }
     derive_result_state(&mut result);
-    if result.normalized_jcs().is_err() {
-        for family in &mut result.families {
-            family.status = TransitionPoseStatusV1::Incomplete;
-            family.decision = TransitionPoseDecisionV1::NotEvaluated;
-            family.reason = Some(TransitionPoseReasonV1::ResultLimit);
-            family.pairs.clear();
-        }
-        derive_result_state(&mut result);
-        result.normalized_jcs()?;
-    }
+    enforce_result_limit(&mut result, result_limit)?;
     Ok(result)
+}
+
+fn family_result_row(
+    family: &crate::DocumentTransitionFamilyV1,
+    subject_input: &InputIdentity,
+    skeleton_basis_input: Option<&InputIdentity>,
+) -> TransitionPoseFamilyEvaluationV1 {
+    TransitionPoseFamilyEvaluationV1 {
+        family_id: family.family_id().to_owned(),
+        status: TransitionPoseStatusV1::Incomplete,
+        decision: TransitionPoseDecisionV1::NotEvaluated,
+        reason: None,
+        members: family
+            .members()
+            .iter()
+            .map(|member| TransitionPoseMemberV1 {
+                take_index: member.take_index(),
+                take_name: member.take_name().to_owned(),
+                source_input: subject_input.clone(),
+            })
+            .collect(),
+        skeleton_basis_input: skeleton_basis_input.cloned(),
+        pairs: Vec::new(),
+    }
+}
+
+/// Keep the immutable binding/member rows when detailed comparisons exceed a
+/// bounded result envelope. The retry has one strictly smaller representation,
+/// so it cannot oscillate.
+fn enforce_result_limit(
+    result: &mut TransitionPoseEvaluationV1,
+    limit: usize,
+) -> Result<(), TransitionPoseEvaluationControlError> {
+    if canonical_bytes(result, limit).is_ok() {
+        return Ok(());
+    }
+    for family in &mut result.families {
+        family.status = TransitionPoseStatusV1::Incomplete;
+        family.decision = TransitionPoseDecisionV1::NotEvaluated;
+        family.reason = Some(TransitionPoseReasonV1::ResultLimit);
+        family.pairs.clear();
+    }
+    derive_result_state(result);
+    canonical_bytes(result, limit)
+        .map(|_| ())
+        .map_err(|_| TransitionPoseEvaluationControlError::ResultTooLarge)
 }
 
 #[derive(Clone, Copy)]
@@ -541,13 +673,18 @@ struct FamilyPlan {
 fn plan_families(
     families: &[crate::DocumentTransitionFamilyV1],
     bone_count: usize,
+    input_limited: &[bool],
 ) -> Vec<FamilyPlan> {
     let mut aggregate_pairs = 0usize;
     let mut aggregate_comparisons = 0usize;
     let mut aggregate_retention = 0usize;
     families
         .iter()
-        .map(|family| {
+        .zip(input_limited.iter().copied())
+        .map(|(family, input_limited)| {
+            if input_limited || family.tolerances().time_normalized() != 0.0 {
+                return FamilyPlan { reason: None };
+            }
             let boundaries = match family.boundary() {
                 TransitionFamilyBoundaryV1::Entry | TransitionFamilyBoundaryV1::Exit => 1usize,
                 TransitionFamilyBoundaryV1::Both => 2usize,
@@ -555,11 +692,11 @@ fn plan_families(
             let pairs = checked_pair_count(family.members().len());
             let pair_boundaries = pairs.and_then(|value| value.checked_mul(boundaries));
             let comparisons = pair_boundaries.and_then(|value| value.checked_mul(bone_count));
+            let retained_per_pair_boundary = bone_count
+                .min(TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS)
+                .checked_add(bone_count.min(TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS));
             let retention = pair_boundaries.and_then(|value| {
-                value.checked_mul(
-                    TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS
-                        + TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS,
-                )
+                retained_per_pair_boundary.and_then(|cap| value.checked_mul(cap))
             });
             let reason = match (pair_boundaries, comparisons, retention) {
                 (Some(pair_boundaries), _, _)
@@ -610,38 +747,275 @@ fn checked_pair_count(member_count: usize) -> Option<usize> {
         .and_then(|value| value.checked_div(2))
 }
 
-fn resolve_family_clips<'a>(
+enum DocumentClipAdmission<'a> {
+    InputLimit,
+    Resolved(Vec<Vec<&'a Clip>>),
+}
+
+/// Resolve all declaration witnesses with one bounded document-name pass.
+/// Direct index/name contradictions are checked before the document clip cap;
+/// global duplicate-name proof is intentionally only attempted in the
+/// admitted domain.
+fn resolve_document_family_clips<'a>(
     document: &'a Document,
-    members: &[crate::DocumentTransitionFamilyMemberV1],
-) -> Result<Vec<&'a Clip>, TransitionPoseEvaluationControlError> {
-    members
-        .iter()
-        .map(|member| {
+    families: &[crate::DocumentTransitionFamilyV1],
+) -> Result<DocumentClipAdmission<'a>, TransitionPoseEvaluationControlError> {
+    let mut names = BTreeMap::<&str, usize>::new();
+    for family in families {
+        for member in family.members() {
             let index = usize::try_from(member.take_index())
                 .map_err(|_| TransitionPoseEvaluationControlError::InvalidMemberWitness)?;
-            let clip = document
+            document
                 .clips
                 .get(index)
                 .filter(|clip| clip.name == member.take_name())
                 .ok_or(TransitionPoseEvaluationControlError::InvalidMemberWitness)?;
-            if document
-                .clips
+            names.entry(member.take_name()).or_insert(0);
+        }
+    }
+    if document.clips.len() > TRANSITION_POSE_EVALUATION_V1_MAX_DOCUMENT_CLIPS {
+        return Ok(DocumentClipAdmission::InputLimit);
+    }
+    for clip in &document.clips {
+        if let Some(count) = names.get_mut(clip.name.as_str()) {
+            *count = count.saturating_add(1);
+        }
+    }
+    if names.values().any(|&count| count != 1) {
+        return Err(TransitionPoseEvaluationControlError::InvalidMemberWitness);
+    }
+    families
+        .iter()
+        .map(|family| {
+            family
+                .members()
                 .iter()
-                .filter(|candidate| candidate.name == member.take_name())
-                .count()
-                != 1
-            {
-                return Err(TransitionPoseEvaluationControlError::InvalidMemberWitness);
+                .map(|member| {
+                    let index = usize::try_from(member.take_index())
+                        .map_err(|_| TransitionPoseEvaluationControlError::InvalidMemberWitness)?;
+                    document
+                        .clips
+                        .get(index)
+                        .ok_or(TransitionPoseEvaluationControlError::InvalidMemberWitness)
+                })
+                .collect()
+        })
+        .collect::<Result<Vec<Vec<_>>, _>>()
+        .map(DocumentClipAdmission::Resolved)
+}
+
+/// Bound skeleton text before `SkeletonBasisV1` clones a single bone name.
+fn skeleton_input_is_within_limits(skeleton: &Skeleton) -> bool {
+    skeleton_input_is_within_limits_with(
+        skeleton,
+        TRANSITION_POSE_EVALUATION_V1_MAX_BASIS_TEXT_BYTES,
+    )
+}
+
+fn skeleton_input_is_within_limits_with(skeleton: &Skeleton, text_limit: usize) -> bool {
+    if skeleton.bones.len() > TRANSITION_POSE_EVALUATION_V1_MAX_BONES {
+        return false;
+    }
+    skeleton_text_is_within_limit(skeleton, text_limit)
+}
+
+fn skeleton_text_is_within_limit(skeleton: &Skeleton, text_limit: usize) -> bool {
+    skeleton
+        .bones
+        .iter()
+        .try_fold(0usize, |total, bone| total.checked_add(bone.name.len()))
+        .is_some_and(|total| total <= text_limit)
+}
+
+/// Validate only transition-pose's skeleton authority. Source projections,
+/// mesh assets, inverse binds, and unselected clips are deliberately not an
+/// evaluator input domain.
+fn validate_transition_pose_skeleton(skeleton: &Skeleton) -> Result<(), SkeletonBasisError> {
+    for (ordinal, bone) in skeleton.bones.iter().enumerate() {
+        if matches!(bone.parent, Some(parent) if parent >= ordinal) {
+            return Err(SkeletonBasisError::InvalidParent { ordinal });
+        }
+        if finite_translation(bone, ordinal).is_err()
+            || canonical_quaternion(bone.rest.rotation, ordinal).is_err()
+        {
+            return Err(SkeletonBasisError::InvalidRest { ordinal });
+        }
+    }
+    Ok(())
+}
+
+/// Bound selected-track shape work before allocating duplicate-target state or
+/// sampling. Only translation/rotation tracks are selected: scale is outside
+/// V1 and is never counted, validated, or sampled. Each selected clip can
+/// therefore target two channels per admitted bone.
+fn plan_selected_track_input_limits(
+    resolved_clips: &[Vec<&Clip>],
+    bone_count: usize,
+    policy_rejected: &[bool],
+) -> Vec<bool> {
+    let (Some(raw_track_limit), Some(track_limit)) =
+        (bone_count.checked_mul(3), bone_count.checked_mul(2))
+    else {
+        return vec![true; resolved_clips.len()];
+    };
+    plan_selected_track_input_limits_with(
+        resolved_clips,
+        raw_track_limit,
+        track_limit,
+        TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACK_ELEMENTS,
+        policy_rejected,
+    )
+}
+
+fn plan_selected_track_input_limits_with(
+    resolved_clips: &[Vec<&Clip>],
+    raw_track_limit: usize,
+    track_limit: usize,
+    element_limit: usize,
+    policy_rejected: &[bool],
+) -> Vec<bool> {
+    let mut aggregate_elements = 0usize;
+    resolved_clips
+        .iter()
+        .zip(policy_rejected.iter().copied())
+        .map(|(clips, policy_rejected)| {
+            if policy_rejected {
+                return false;
             }
-            Ok(clip)
+            let mut family_elements = 0usize;
+            for clip in clips {
+                if clip.tracks.len() > raw_track_limit {
+                    return true;
+                }
+                let mut selected_tracks = 0usize;
+                for track in clip
+                    .tracks
+                    .iter()
+                    .filter(|track| is_transition_pose_property(track.property))
+                {
+                    let Some(count) = selected_tracks.checked_add(1) else {
+                        return true;
+                    };
+                    if count > track_limit {
+                        return true;
+                    }
+                    selected_tracks = count;
+                    let elements = track.times.len().checked_add(track.values.len());
+                    let Some(total) =
+                        elements.and_then(|elements| family_elements.checked_add(elements))
+                    else {
+                        return true;
+                    };
+                    if total > element_limit {
+                        return true;
+                    }
+                    family_elements = total;
+                }
+            }
+            let Some(total) = aggregate_elements.checked_add(family_elements) else {
+                return true;
+            };
+            if total > element_limit {
+                return true;
+            }
+            aggregate_elements = total;
+            false
         })
         .collect()
 }
 
+/// Serialize a conservative pair-free authority before retaining any detailed
+/// row. Every family is represented with the longest V1 incomplete reason,
+/// so this is an upper bound for all final no-pair rows while preserving the
+/// exact declaration, subject, member, and basis bindings.
+fn detailed_result_budget_after_base(
+    result: &TransitionPoseEvaluationV1,
+    families: &[crate::DocumentTransitionFamilyV1],
+    subject_input: &InputIdentity,
+    basis_input: &InputIdentity,
+    limit: usize,
+) -> Result<usize, TransitionPoseEvaluationControlError> {
+    let mut base = result.clone();
+    base.status = TransitionPoseStatusV1::Incomplete;
+    base.decision = TransitionPoseDecisionV1::NotEvaluated;
+    base.reason = None;
+    base.families = families
+        .iter()
+        .map(|family| {
+            let mut row = family_result_row(family, subject_input, Some(basis_input));
+            row.reason = Some(TransitionPoseReasonV1::TimeToleranceUnsupported);
+            row
+        })
+        .collect();
+    let base_bytes = canonical_bytes(&base, limit)
+        .map_err(|_| TransitionPoseEvaluationControlError::ResultTooLarge)?
+        .len();
+    limit
+        .checked_sub(base_bytes)
+        .ok_or(TransitionPoseEvaluationControlError::ResultTooLarge)
+}
+
+/// Reserve a conservative complete detailed-pair envelope before sampling.
+/// The fixed component covers every pair field and the two 16-row offender
+/// arrays. Names are escaped by JSON/JCS, so six bytes per source byte is a
+/// safe extra bound for every retained name. A row's ordinal is unique,
+/// permitting this bound without cloning names just to decide whether they
+/// would be retained.
+fn reserve_detailed_name_budget(
+    remaining: &mut usize,
+    family: &crate::DocumentTransitionFamilyV1,
+    skeleton: &Skeleton,
+) -> bool {
+    let boundaries = match family.boundary() {
+        TransitionFamilyBoundaryV1::Entry | TransitionFamilyBoundaryV1::Exit => 1usize,
+        TransitionFamilyBoundaryV1::Both => 2usize,
+    };
+    let Some(pair_boundaries) =
+        checked_pair_count(family.members().len()).and_then(|pairs| pairs.checked_mul(boundaries))
+    else {
+        return false;
+    };
+    let Some(rows_per_pair_boundary) = skeleton
+        .bones
+        .len()
+        .min(TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS)
+        .checked_add(
+            skeleton
+                .bones
+                .len()
+                .min(TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS),
+        )
+    else {
+        return false;
+    };
+    let fixed_bytes = pair_boundaries.checked_mul(MAX_DETAILED_PAIR_FIXED_BYTES);
+    let max_escaped_name_bytes = skeleton
+        .bones
+        .iter()
+        .map(|bone| bone.name.len().checked_mul(6))
+        .max()
+        .unwrap_or(Some(0));
+    let Some(bytes) = fixed_bytes.and_then(|fixed| {
+        max_escaped_name_bytes.and_then(|name| {
+            pair_boundaries
+                .checked_mul(rows_per_pair_boundary)?
+                .checked_mul(name)
+                .and_then(|names| fixed.checked_add(names))
+        })
+    }) else {
+        return false;
+    };
+    if bytes > *remaining {
+        return false;
+    }
+    *remaining -= bytes;
+    true
+}
+
 #[derive(Clone)]
 struct Endpoints {
-    entry: Vec<EndpointPose>,
-    exit: Vec<EndpointPose>,
+    entry: Option<Vec<EndpointPose>>,
+    exit: Option<Vec<EndpointPose>>,
 }
 
 #[derive(Clone, Copy)]
@@ -653,23 +1027,102 @@ struct EndpointPose {
 fn strict_endpoints(
     document: &Document,
     clips: &[&Clip],
+    boundary: TransitionFamilyBoundaryV1,
 ) -> Result<Vec<Endpoints>, TransitionPoseReasonV1> {
     clips
         .iter()
         .map(|clip| {
-            if !clip.duration_s.is_finite() || clip.duration_s <= 0.0 {
-                return Err(TransitionPoseReasonV1::ZeroDuration);
-            }
-            let exit_time = clip.duration_s as f32;
-            if !exit_time.is_finite() || f64::from(exit_time) != clip.duration_s {
+            if !selected_tracks_are_strict(clip, document.skeleton.bones.len()) {
                 return Err(TransitionPoseReasonV1::UnsupportedSampling);
             }
+            if clip.duration_s == 0.0 {
+                return Err(TransitionPoseReasonV1::ZeroDuration);
+            }
+            if !clip.duration_s.is_finite() || clip.duration_s < 0.0 {
+                return Err(TransitionPoseReasonV1::UnsupportedSampling);
+            }
+            let needs_exit = matches!(
+                boundary,
+                TransitionFamilyBoundaryV1::Exit | TransitionFamilyBoundaryV1::Both
+            );
+            let exit_time = needs_exit.then(|| {
+                let time = clip.duration_s as f32;
+                if !time.is_finite() || f64::from(time) != clip.duration_s {
+                    Err(TransitionPoseReasonV1::UnsupportedSampling)
+                } else {
+                    Ok(time)
+                }
+            });
             Ok(Endpoints {
-                entry: strict_endpoint(&document.skeleton, clip, 0.0)?,
-                exit: strict_endpoint(&document.skeleton, clip, exit_time)?,
+                entry: matches!(
+                    boundary,
+                    TransitionFamilyBoundaryV1::Entry | TransitionFamilyBoundaryV1::Both
+                )
+                .then(|| strict_endpoint(&document.skeleton, clip, 0.0))
+                .transpose()?,
+                exit: exit_time
+                    .transpose()?
+                    .map(|time| strict_endpoint(&document.skeleton, clip, time))
+                    .transpose()?,
             })
         })
         .collect()
+}
+
+fn selected_tracks_are_strict(clip: &Clip, bone_count: usize) -> bool {
+    selected_tracks_are_strict_with(clip, bone_count, |_| {})
+}
+
+/// Validate each selected T/R track exactly once. The two-channel seen table
+/// is bounded by the already-admitted skeleton and avoids quadratic duplicate
+/// checks at the V1 track cap.
+fn selected_tracks_are_strict_with(
+    clip: &Clip,
+    bone_count: usize,
+    mut observe_selected: impl FnMut(&Track),
+) -> bool {
+    let (Some(raw_track_limit), Some(seen_len)) =
+        (bone_count.checked_mul(3), bone_count.checked_mul(2))
+    else {
+        return false;
+    };
+    if clip.tracks.len() > raw_track_limit {
+        return false;
+    }
+    let mut seen = vec![false; seen_len];
+    for track in &clip.tracks {
+        let Some(channel) = transition_pose_channel(track.property) else {
+            continue;
+        };
+        observe_selected(track);
+        if track.bone >= bone_count {
+            return false;
+        }
+        let Some(index) = track
+            .bone
+            .checked_mul(2)
+            .and_then(|base| base.checked_add(channel))
+        else {
+            return false;
+        };
+        if seen[index] || validate_track_shape(0, track).is_err() {
+            return false;
+        }
+        seen[index] = true;
+    }
+    true
+}
+
+fn is_transition_pose_property(property: Property) -> bool {
+    transition_pose_channel(property).is_some()
+}
+
+fn transition_pose_channel(property: Property) -> Option<usize> {
+    match property {
+        Property::Translation => Some(0),
+        Property::Rotation => Some(1),
+        Property::Scale => None,
+    }
 }
 
 fn strict_endpoint(
@@ -694,20 +1147,28 @@ fn strict_endpoint(
         })
         .collect::<Result<Vec<_>, _>>()?;
     for track in &clip.tracks {
-        let target = poses
-            .get_mut(track.bone)
-            .ok_or(TransitionPoseReasonV1::UnsupportedSampling)?;
-        match (track.property, crate::sample_track(track, time)) {
-            (Property::Translation, TrackSample::Vec3(value)) => {
-                target.translation =
-                    finite_vec3(value).ok_or(TransitionPoseReasonV1::UnsupportedSampling)?;
-            }
-            (Property::Rotation, TrackSample::Quat(value)) => {
-                target.rotation = canonical_quaternion(value, track.bone)
-                    .map_err(|_| TransitionPoseReasonV1::UnsupportedSampling)?;
-            }
-            (Property::Scale, TrackSample::Vec3(_)) => {}
-            _ => return Err(TransitionPoseReasonV1::UnsupportedSampling),
+        match track.property {
+            Property::Scale => continue,
+            Property::Translation => match crate::sample_track(track, time) {
+                TrackSample::Vec3(value) => {
+                    let target = poses
+                        .get_mut(track.bone)
+                        .ok_or(TransitionPoseReasonV1::UnsupportedSampling)?;
+                    target.translation =
+                        finite_vec3(value).ok_or(TransitionPoseReasonV1::UnsupportedSampling)?;
+                }
+                _ => return Err(TransitionPoseReasonV1::UnsupportedSampling),
+            },
+            Property::Rotation => match crate::sample_track(track, time) {
+                TrackSample::Quat(value) => {
+                    let target = poses
+                        .get_mut(track.bone)
+                        .ok_or(TransitionPoseReasonV1::UnsupportedSampling)?;
+                    target.rotation = canonical_quaternion(value, track.bone)
+                        .map_err(|_| TransitionPoseReasonV1::UnsupportedSampling)?;
+                }
+                _ => return Err(TransitionPoseReasonV1::UnsupportedSampling),
+            },
         }
     }
     Ok(poses)
@@ -718,7 +1179,7 @@ fn compare_pairs(
     boundary: TransitionFamilyBoundaryV1,
     tolerances: TransitionFamilyTolerancesV1,
     skeleton: &Skeleton,
-) -> Vec<TransitionPosePairEvaluationV1> {
+) -> Result<Vec<TransitionPosePairEvaluationV1>, TransitionPoseReasonV1> {
     let boundaries: &[TransitionFamilyBoundaryV1] = match boundary {
         TransitionFamilyBoundaryV1::Entry => &[TransitionFamilyBoundaryV1::Entry],
         TransitionFamilyBoundaryV1::Exit => &[TransitionFamilyBoundaryV1::Exit],
@@ -731,14 +1192,20 @@ fn compare_pairs(
     for left in 0..endpoints.len() {
         for right in left + 1..endpoints.len() {
             for &boundary in boundaries {
-                let (left_pose, right_pose) = match boundary {
-                    TransitionFamilyBoundaryV1::Entry => {
-                        (&endpoints[left].entry, &endpoints[right].entry)
-                    }
-                    TransitionFamilyBoundaryV1::Exit => {
-                        (&endpoints[left].exit, &endpoints[right].exit)
-                    }
-                    TransitionFamilyBoundaryV1::Both => unreachable!("expanded above"),
+                let (left_pose, right_pose) = if boundary == TransitionFamilyBoundaryV1::Entry {
+                    (
+                        endpoints[left].entry.as_deref(),
+                        endpoints[right].entry.as_deref(),
+                    )
+                } else {
+                    (
+                        endpoints[left].exit.as_deref(),
+                        endpoints[right].exit.as_deref(),
+                    )
+                };
+                let (left_pose, right_pose) = match (left_pose, right_pose) {
+                    (Some(left_pose), Some(right_pose)) => (left_pose, right_pose),
+                    _ => return Err(TransitionPoseReasonV1::UnsupportedSampling),
                 };
                 output.push(compare_one_pair(
                     [left, right],
@@ -751,7 +1218,7 @@ fn compare_pairs(
             }
         }
     }
-    output
+    Ok(output)
 }
 
 fn compare_one_pair(
@@ -764,45 +1231,54 @@ fn compare_one_pair(
 ) -> TransitionPosePairEvaluationV1 {
     let mut max_translation_delta_m = 0.0f64;
     let mut max_rotation_delta_deg = 0.0f64;
-    let mut translation_offenders = Vec::new();
-    let mut rotation_offenders = Vec::new();
-    for (ordinal, ((left, right), bone)) in left.iter().zip(right).zip(&skeleton.bones).enumerate()
-    {
+    let mut translation_candidates =
+        Vec::with_capacity(TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS);
+    let mut rotation_candidates =
+        Vec::with_capacity(TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS);
+    for (ordinal, (left, right)) in left.iter().zip(right).enumerate() {
         let translation = translation_delta(left.translation, right.translation);
         let rotation = rotation_delta_deg(left.rotation, right.rotation);
         max_translation_delta_m = max_translation_delta_m.max(translation);
         max_rotation_delta_deg = max_rotation_delta_deg.max(rotation);
         if translation > tolerances.translation_m() {
-            translation_offenders.push(TransitionPoseTranslationOffenderV1 {
-                bone_ordinal: ordinal,
-                bone_name: bone.name.clone(),
-                delta_m: translation,
-            });
+            retain_top_candidate(
+                &mut translation_candidates,
+                ordinal,
+                translation,
+                TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS,
+            );
         }
         if rotation > tolerances.rotation_deg() {
-            rotation_offenders.push(TransitionPoseRotationOffenderV1 {
-                bone_ordinal: ordinal,
-                bone_name: bone.name.clone(),
-                delta_deg: rotation,
-            });
+            retain_top_candidate(
+                &mut rotation_candidates,
+                ordinal,
+                rotation,
+                TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS,
+            );
         }
     }
-    translation_offenders.sort_by(|left, right| {
-        right
-            .delta_m
-            .total_cmp(&left.delta_m)
-            .then_with(|| left.bone_ordinal.cmp(&right.bone_ordinal))
-            .then_with(|| left.bone_name.cmp(&right.bone_name))
-    });
-    rotation_offenders.sort_by(|left, right| {
-        right
-            .delta_deg
-            .total_cmp(&left.delta_deg)
-            .then_with(|| left.bone_ordinal.cmp(&right.bone_ordinal))
-            .then_with(|| left.bone_name.cmp(&right.bone_name))
-    });
-    translation_offenders.truncate(TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS);
-    rotation_offenders.truncate(TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS);
+    sort_top_candidates(&mut translation_candidates);
+    sort_top_candidates(&mut rotation_candidates);
+    let translation_offenders = translation_candidates
+        .into_iter()
+        .map(
+            |(bone_ordinal, delta_m)| TransitionPoseTranslationOffenderV1 {
+                bone_ordinal,
+                bone_name: skeleton.bones[bone_ordinal].name.clone(),
+                delta_m,
+            },
+        )
+        .collect();
+    let rotation_offenders = rotation_candidates
+        .into_iter()
+        .map(
+            |(bone_ordinal, delta_deg)| TransitionPoseRotationOffenderV1 {
+                bone_ordinal,
+                bone_name: skeleton.bones[bone_ordinal].name.clone(),
+                delta_deg,
+            },
+        )
+        .collect();
     TransitionPosePairEvaluationV1 {
         member_indices,
         boundary,
@@ -813,6 +1289,54 @@ fn compare_one_pair(
         translation_offenders,
         rotation_offenders,
     }
+}
+
+/// Retain a candidate only when it belongs in the bounded final ordering.
+/// Ordinals are unique within one skeleton, so the public tertiary bone-name
+/// tie-break is unreachable after the ordinal tie-break and no name is needed
+/// while selecting.
+fn retain_top_candidate(
+    candidates: &mut Vec<(usize, f64)>,
+    ordinal: usize,
+    delta: f64,
+    cap: usize,
+) {
+    let candidate = (ordinal, delta);
+    if candidates.len() < cap {
+        candidates.push(candidate);
+        return;
+    }
+    let worst = candidates
+        .iter()
+        .enumerate()
+        .reduce(|worst, current| {
+            if candidate_precedes(worst.1, current.1) {
+                current
+            } else {
+                worst
+            }
+        })
+        .map(|(index, _)| index);
+    if let Some(worst) = worst
+        && candidate_precedes(&candidate, &candidates[worst])
+    {
+        candidates[worst] = candidate;
+    }
+}
+
+fn sort_top_candidates(candidates: &mut [(usize, f64)]) {
+    candidates.sort_by(candidate_order);
+}
+
+fn candidate_precedes(left: &(usize, f64), right: &(usize, f64)) -> bool {
+    candidate_order(left, right).is_lt()
+}
+
+fn candidate_order(left: &(usize, f64), right: &(usize, f64)) -> std::cmp::Ordering {
+    right
+        .1
+        .total_cmp(&left.1)
+        .then_with(|| left.0.cmp(&right.0))
 }
 
 fn pair_has_finding(pair: &TransitionPosePairEvaluationV1) -> bool {
@@ -920,12 +1444,39 @@ fn translation_delta(left: [f64; 3], right: [f64; 3]) -> f64 {
 }
 
 fn rotation_delta_deg(left: [f64; 4], right: [f64; 4]) -> f64 {
+    if left == right
+        || left
+            .into_iter()
+            .zip(right)
+            .all(|(left, right)| left == -right)
+    {
+        return 0.0;
+    }
     let dot = left
         .into_iter()
         .zip(right)
         .map(|(left, right)| left * right)
         .sum::<f64>();
-    (2.0 * dot.abs().clamp(0.0, 1.0).acos()).to_degrees()
+    let right = if dot < 0.0 {
+        right.map(|value| -value)
+    } else {
+        right
+    };
+    // `conjugate(left) * right`: atan2 is stable at identity, unlike acos of
+    // a dot product rounded a hair below one after f32-to-f64 normalization.
+    let vector = [
+        left[3] * right[0] - left[0] * right[3] - left[1] * right[2] + left[2] * right[1],
+        left[3] * right[1] + left[0] * right[2] - left[1] * right[3] - left[2] * right[0],
+        left[3] * right[2] - left[0] * right[1] + left[1] * right[0] - left[2] * right[3],
+    ];
+    let vector_norm = vector
+        .into_iter()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt();
+    let scalar =
+        (left[3] * right[3] + left[0] * right[0] + left[1] * right[1] + left[2] * right[2]).abs();
+    (2.0 * vector_norm.atan2(scalar)).to_degrees()
 }
 
 fn canonical_bytes(value: &impl Serialize, limit: usize) -> io::Result<Vec<u8>> {
@@ -969,8 +1520,11 @@ impl Write for BoundedWriter {
 mod tests {
     use super::*;
     use crate::{
-        Bone, Clip, Document, DocumentTransitionFamilyMemberV1, DocumentTransitionFamilyV1,
-        Interpolation, Skeleton, Track, TrackValues, Transform, TransitionFamilyDeclarationV1,
+        Bone, Clip, CollectionIdV1, CollectionLogicalIdV1, CollectionSourceKeyV1,
+        CollectionTransitionFamilyMemberV1, CollectionTransitionFamilyV1, Document,
+        DocumentTransitionFamilyMemberV1, DocumentTransitionFamilyV1, Interpolation, Skeleton,
+        Track, TrackValues, Transform, TransitionFamilyDeclarationV1,
+        TransitionFamilyManifestIdentityV1,
     };
 
     fn document(second_translation: Option<f32>) -> Document {
@@ -1052,6 +1606,26 @@ mod tests {
                 .unwrap()
                 .identity()
         );
+        let parent_after_child = Skeleton {
+            bones: vec![
+                Bone {
+                    name: "child".into(),
+                    parent: Some(1),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "parent".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        };
+        assert_eq!(
+            SkeletonBasisV1::from_skeleton(&parent_after_child),
+            Err(SkeletonBasisError::InvalidParent { ordinal: 0 })
+        );
     }
 
     #[test]
@@ -1063,7 +1637,7 @@ mod tests {
             evaluate_document_transition_poses_v1(&declared, raw.clone(), &document).unwrap();
         assert_eq!(result.status(), TransitionPoseStatusV1::Complete);
         assert_eq!(result.decision(), TransitionPoseDecisionV1::Pass);
-        assert_eq!(result.document_input(), &raw);
+        assert_eq!(result.subject_input(), &raw);
         assert_eq!(result.declaration_input(), declared.source_identity());
         assert_eq!(
             result.declaration_normalized(),
@@ -1088,6 +1662,147 @@ mod tests {
             finding.families()[0].pairs[0].translation_offenders.len(),
             1
         );
+    }
+
+    #[test]
+    fn rotation_delta_is_reflexive_sign_invariant_and_has_the_right_angle() {
+        let axis = crate::glam::Vec3::new(1.0, 2.0, 3.0).normalize();
+        for angle in [0.1, 0.9, 1.7] {
+            let rotation =
+                canonical_quaternion(crate::glam::Quat::from_axis_angle(axis, angle), 0).unwrap();
+            assert_eq!(rotation_delta_deg(rotation, rotation), 0.0);
+            assert_eq!(
+                rotation_delta_deg(rotation, rotation.map(|value| -value)),
+                0.0
+            );
+        }
+        let left = canonical_quaternion(
+            crate::glam::Quat::from_axis_angle(axis, 40f32.to_radians()),
+            0,
+        )
+        .unwrap();
+        let right = canonical_quaternion(
+            crate::glam::Quat::from_axis_angle(axis, 130f32.to_radians()),
+            0,
+        )
+        .unwrap();
+        assert!((rotation_delta_deg(left, right) - 90.0).abs() < 1e-5);
+
+        let mut document = document(None);
+        let rotation = crate::glam::Quat::from_axis_angle(axis, 0.9);
+        for clip in &mut document.clips {
+            clip.tracks.push(Track {
+                bone: 0,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Quats(vec![rotation]),
+            });
+        }
+        let result = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &document,
+        )
+        .unwrap();
+        assert_eq!(result.decision(), TransitionPoseDecisionV1::Pass);
+        assert_eq!(
+            result.families()[0].pairs()[0].max_rotation_delta_deg(),
+            0.0
+        );
+        document.clips[1].tracks[0].values = TrackValues::Quats(vec![-rotation]);
+        let sign_equivalent = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &document,
+        )
+        .unwrap();
+        assert_eq!(sign_equivalent.decision(), TransitionPoseDecisionV1::Pass);
+        assert_eq!(
+            sign_equivalent.families()[0].pairs()[0].max_rotation_delta_deg(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn scale_tracks_are_wholly_ignored_by_v1_admission_validation_and_sampling() {
+        let declared = declaration(TransitionFamilyBoundaryV1::Both, 0.0, 0.0);
+        let raw = InputIdentity::from_bytes(b"document");
+        let baseline =
+            evaluate_document_transition_poses_v1(&declared, raw.clone(), &document(Some(1.0)))
+                .unwrap();
+        let mut with_scale_noise = document(Some(1.0));
+        let malformed_scale = Track {
+            bone: usize::MAX,
+            property: Property::Scale,
+            interpolation: Interpolation::Linear,
+            times: vec![f32::NAN],
+            values: TrackValues::Vec3s(Vec::new()),
+        };
+        // One selected translation plus two malformed scale rows is exactly
+        // the raw 3*bones admission cap. The scale rows remain semantically
+        // invisible once that resource boundary is admitted.
+        with_scale_noise.clips[1]
+            .tracks
+            .extend(std::iter::repeat_n(malformed_scale.clone(), 2));
+        let with_scale_noise =
+            evaluate_document_transition_poses_v1(&declared, raw.clone(), &with_scale_noise)
+                .unwrap();
+        assert_eq!(with_scale_noise, baseline);
+
+        let mut one_too_many = document(Some(1.0));
+        one_too_many.clips[1]
+            .tracks
+            .extend(std::iter::repeat_n(malformed_scale, 3));
+        let one_too_many =
+            evaluate_document_transition_poses_v1(&declared, raw, &one_too_many).unwrap();
+        assert_eq!(
+            one_too_many.families()[0].reason(),
+            Some(TransitionPoseReasonV1::InputLimit)
+        );
+    }
+
+    #[test]
+    fn selected_track_validation_is_linear_and_rejects_duplicate_tr_channels() {
+        let mut tracks =
+            Vec::with_capacity(TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACKS_PER_CLIP);
+        for bone in 0..TRANSITION_POSE_EVALUATION_V1_MAX_BONES {
+            tracks.push(Track {
+                bone,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![crate::glam::Vec3::ZERO]),
+            });
+            tracks.push(Track {
+                bone,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Quats(vec![crate::glam::Quat::IDENTITY]),
+            });
+        }
+        let mut clip = Clip {
+            name: "all-tr".into(),
+            duration_s: 1.0,
+            tracks,
+        };
+        let mut visits = 0usize;
+        assert!(selected_tracks_are_strict_with(
+            &clip,
+            TRANSITION_POSE_EVALUATION_V1_MAX_BONES,
+            |_| visits += 1,
+        ));
+        assert_eq!(
+            visits,
+            TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACKS_PER_CLIP
+        );
+
+        clip.tracks.push(clip.tracks[0].clone());
+        assert!(!selected_tracks_are_strict(
+            &clip,
+            TRANSITION_POSE_EVALUATION_V1_MAX_BONES
+        ));
     }
 
     #[test]
@@ -1120,7 +1835,7 @@ mod tests {
     }
 
     #[test]
-    fn mutable_document_shape_is_refused_before_no_family_shortcut() {
+    fn no_configured_families_does_not_traverse_mutable_document_payloads() {
         let mut document = document(None);
         document.skeleton.bones[0].parent = Some(0);
         let empty = TransitionFamilyDeclarationInputV1::new(
@@ -1128,31 +1843,776 @@ mod tests {
             b"empty",
         )
         .unwrap();
-        assert!(matches!(
+        let result = evaluate_document_transition_poses_v1(
+            &empty,
+            InputIdentity::from_bytes(b"document"),
+            &document,
+        )
+        .unwrap();
+        assert_eq!(
+            result.reason(),
+            Some(TransitionPoseReasonV1::NoConfiguredFamilies)
+        );
+    }
+
+    #[test]
+    fn admission_limits_precede_selected_allocation_but_not_witness_control() {
+        let mut oversized = document(None);
+        oversized.skeleton.bones = (0..TRANSITION_POSE_EVALUATION_V1_MAX_BONES + 1)
+            .map(|ordinal| Bone {
+                name: format!("bone-{ordinal}"),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            })
+            .collect();
+        let invalid = DocumentTransitionFamilyV1::new(
+            "invalid".into(),
+            TransitionFamilyBoundaryV1::Entry,
+            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.0).unwrap(),
+            vec![
+                DocumentTransitionFamilyMemberV1::new(2, "missing-a".into()).unwrap(),
+                DocumentTransitionFamilyMemberV1::new(3, "missing-b".into()).unwrap(),
+            ],
+        )
+        .unwrap();
+        let invalid = TransitionFamilyDeclarationInputV1::new(
+            TransitionFamilyDeclarationV1::document(vec![invalid]).unwrap(),
+            b"declaration",
+        )
+        .unwrap();
+        assert_eq!(
             evaluate_document_transition_poses_v1(
-                &empty,
+                &invalid,
                 InputIdentity::from_bytes(b"document"),
-                &document
+                &oversized,
             ),
-            Err(TransitionPoseEvaluationControlError::InvalidDocumentShape(
-                _
-            ))
-        ));
+            Err(TransitionPoseEvaluationControlError::InvalidMemberWitness)
+        );
+
+        let mut selected = document(None);
+        let track = Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0],
+            values: TrackValues::Vec3s(vec![crate::glam::Vec3::ZERO]),
+        };
+        selected.clips[1].tracks =
+            vec![track.clone(); TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACKS_PER_CLIP + 1];
+        let limited = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &selected,
+        )
+        .unwrap();
+        assert_eq!(
+            limited.families()[0].reason(),
+            Some(TransitionPoseReasonV1::InputLimit)
+        );
+
+        let small_selected = document(Some(1.0));
+        let selected_clip = &small_selected.clips[1];
+        assert_eq!(
+            plan_selected_track_input_limits_with(&[vec![selected_clip]], 1, 1, 1, &[false]),
+            vec![true]
+        );
+        let oversized_tracks = Clip {
+            name: "many".into(),
+            duration_s: 1.0,
+            tracks: vec![track.clone(); 2],
+        };
+        let small = Clip {
+            name: "small".into(),
+            duration_s: 1.0,
+            tracks: vec![track.clone()],
+        };
+        assert_eq!(
+            plan_selected_track_input_limits_with(
+                &[vec![&oversized_tracks], vec![&small]],
+                1,
+                1,
+                8,
+                &[false, false],
+            ),
+            vec![true, false]
+        );
+        assert_eq!(
+            plan_selected_track_input_limits_with(
+                &[vec![&small], vec![&oversized_tracks], vec![&small]],
+                3,
+                3,
+                5,
+                &[false, false, false],
+            ),
+            vec![false, true, false]
+        );
+        let huge_unsupported = Clip {
+            name: "policy-only".into(),
+            duration_s: 1.0,
+            tracks: vec![track.clone(); 4],
+        };
+        assert_eq!(
+            plan_selected_track_input_limits_with(
+                &[vec![&huge_unsupported], vec![&small]],
+                3,
+                3,
+                5,
+                &[true, false],
+            ),
+            vec![false, false]
+        );
+        let named = Skeleton {
+            bones: vec![Bone {
+                name: "x".repeat(16),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        };
+        assert!(!skeleton_input_is_within_limits_with(&named, 15));
+        assert_eq!(
+            TRANSITION_POSE_EVALUATION_V1_MAX_RAW_TRACK_ROWS_PER_CLIP,
+            TRANSITION_POSE_EVALUATION_V1_MAX_BONES * 3
+        );
+        let oversized_name = Skeleton {
+            bones: vec![Bone {
+                name: "x".repeat(TRANSITION_POSE_EVALUATION_V1_MAX_BASIS_TEXT_BYTES + 1),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        };
+        assert_eq!(
+            SkeletonBasisV1::from_skeleton(&oversized_name),
+            Err(SkeletonBasisError::TooMuchText)
+        );
+
+        let four_tracks = Clip {
+            name: "four".into(),
+            duration_s: 1.0,
+            tracks: vec![track.clone(); 4],
+        };
+        assert_eq!(
+            plan_selected_track_input_limits(&[vec![&four_tracks]], 1, &[false]),
+            vec![true]
+        );
+
+        let mut scaled = document(None);
+        scaled.skeleton.bones[0].rest.scale = crate::glam::Vec3::NAN;
+        assert_eq!(
+            evaluate_document_transition_poses_v1(
+                &declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0),
+                InputIdentity::from_bytes(b"document"),
+                &scaled,
+            )
+            .unwrap()
+            .status(),
+            TransitionPoseStatusV1::Complete
+        );
+    }
+
+    #[test]
+    fn clip_admission_bounds_global_witness_lookup_after_direct_witness_checks() {
+        let declared = declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0);
+        let mut over_cap = document(None);
+        for ordinal in over_cap.clips.len()..TRANSITION_POSE_EVALUATION_V1_MAX_DOCUMENT_CLIPS {
+            over_cap.clips.push(Clip {
+                name: format!("extra-{ordinal}"),
+                duration_s: 1.0,
+                tracks: Vec::new(),
+            });
+        }
+        // The first excess row duplicates a declared name. It deliberately is
+        // not globally scanned once the document leaves the admitted domain.
+        over_cap.clips.push(Clip {
+            name: "Walk".into(),
+            duration_s: 1.0,
+            tracks: Vec::new(),
+        });
+        let limited = evaluate_document_transition_poses_v1(
+            &declared,
+            InputIdentity::from_bytes(b"document"),
+            &over_cap,
+        )
+        .unwrap();
+        assert_eq!(
+            limited.families()[0].reason(),
+            Some(TransitionPoseReasonV1::InputLimit)
+        );
+
+        over_cap.clips[0].name = "stale".into();
+        assert_eq!(
+            evaluate_document_transition_poses_v1(
+                &declared,
+                InputIdentity::from_bytes(b"document"),
+                &over_cap,
+            ),
+            Err(TransitionPoseEvaluationControlError::InvalidMemberWitness)
+        );
+    }
+
+    #[test]
+    fn unrelated_assets_and_clips_do_not_block_transition_pose() {
+        let mut document = document(None);
+        document.assets.instances.push(crate::model::MeshInstance {
+            node: 99,
+            ..crate::model::MeshInstance::default()
+        });
+        let track = Track {
+            bone: 99,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: Vec::new(),
+            values: TrackValues::Vec3s(Vec::new()),
+        };
+        document.clips.push(Clip {
+            name: "Unselected".into(),
+            duration_s: 1.0,
+            tracks: vec![track; TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACKS_PER_CLIP + 1],
+        });
+        assert_eq!(
+            evaluate_document_transition_poses_v1(
+                &declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0),
+                InputIdentity::from_bytes(b"document"),
+                &document,
+            )
+            .unwrap()
+            .status(),
+            TransitionPoseStatusV1::Complete
+        );
+    }
+
+    #[test]
+    fn public_evaluator_rejects_wrong_scope_and_oversized_basis() {
+        let collection_id = CollectionIdV1::new("collection").unwrap();
+        let manifest = TransitionFamilyManifestIdentityV1::new(
+            collection_id.clone(),
+            InputIdentity::from_bytes(b"manifest"),
+        )
+        .unwrap();
+        let members = ["one", "two"]
+            .into_iter()
+            .map(|suffix| {
+                CollectionTransitionFamilyMemberV1::new(
+                    CollectionLogicalIdV1::new(format!("collection/{suffix}")).unwrap(),
+                    CollectionSourceKeyV1::new("source").unwrap(),
+                    0,
+                    suffix.into(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let collection = TransitionFamilyDeclarationV1::collection(
+            manifest,
+            vec![
+                CollectionTransitionFamilyV1::new(
+                    CollectionLogicalIdV1::new("collection/family").unwrap(),
+                    TransitionFamilyBoundaryV1::Entry,
+                    TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.0).unwrap(),
+                    members,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let collection =
+            TransitionFamilyDeclarationInputV1::new(collection, b"collection").unwrap();
+        assert_eq!(
+            evaluate_document_transition_poses_v1(
+                &collection,
+                InputIdentity::from_bytes(b"document"),
+                &Document::default(),
+            ),
+            Err(TransitionPoseEvaluationControlError::WrongDeclarationScope)
+        );
+
+        let mut oversized = document(None);
+        oversized.skeleton.bones = (0..TRANSITION_POSE_EVALUATION_V1_MAX_BONES + 1)
+            .map(|ordinal| Bone {
+                name: format!("bone-{ordinal}"),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            })
+            .collect();
+        let limited = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &oversized,
+        )
+        .unwrap();
+        assert_eq!(limited.status(), TransitionPoseStatusV1::Incomplete);
+        assert_eq!(
+            limited.families()[0].reason(),
+            Some(TransitionPoseReasonV1::InputLimit)
+        );
+        assert_eq!(limited.families()[0].skeleton_basis_input(), None);
+    }
+
+    #[test]
+    fn selected_track_shape_gaps_are_incomplete_but_unselected_tracks_are_ignored() {
+        let declaration = declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0);
+        let mut variants = Vec::new();
+
+        let mut empty = document(Some(1.0));
+        empty.clips[1].tracks[0].times.clear();
+        variants.push(empty);
+
+        let mut nonfinite_time = document(Some(1.0));
+        nonfinite_time.clips[1].tracks[0].times[0] = f32::NAN;
+        variants.push(nonfinite_time);
+
+        let mut non_increasing = document(Some(1.0));
+        non_increasing.clips[1].tracks[0].times[1] = 0.0;
+        variants.push(non_increasing);
+
+        let mut wrong_cardinality = document(Some(1.0));
+        wrong_cardinality.clips[1].tracks[0].values = TrackValues::Vec3s(Vec::new());
+        variants.push(wrong_cardinality);
+
+        let mut wrong_type = document(Some(1.0));
+        wrong_type.clips[1].tracks[0].values = TrackValues::Quats(vec![
+            crate::glam::Quat::IDENTITY,
+            crate::glam::Quat::IDENTITY,
+        ]);
+        variants.push(wrong_type);
+
+        let mut nonfinite_value = document(Some(1.0));
+        nonfinite_value.clips[1].tracks[0].values =
+            TrackValues::Vec3s(vec![crate::glam::Vec3::NAN, crate::glam::Vec3::ZERO]);
+        variants.push(nonfinite_value);
+
+        let mut duplicate = document(Some(1.0));
+        let duplicate_track = duplicate.clips[1].tracks[0].clone();
+        duplicate.clips[1].tracks.push(duplicate_track);
+        variants.push(duplicate);
+
+        let mut out_of_range = document(Some(1.0));
+        out_of_range.clips[1].tracks[0].bone = 1;
+        variants.push(out_of_range);
+
+        for document in variants {
+            let result = evaluate_document_transition_poses_v1(
+                &declaration,
+                InputIdentity::from_bytes(b"document"),
+                &document,
+            )
+            .expect("selected track gaps are result data, not control errors");
+            assert_eq!(result.status(), TransitionPoseStatusV1::Incomplete);
+            assert_eq!(
+                result.families()[0].reason,
+                Some(TransitionPoseReasonV1::UnsupportedSampling)
+            );
+        }
+
+        let mut unrelated = document(None);
+        unrelated.clips.push(Clip {
+            name: "Unselected".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 99,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: Vec::new(),
+                values: TrackValues::Vec3s(Vec::new()),
+            }],
+        });
+        let result = evaluate_document_transition_poses_v1(
+            &declaration,
+            InputIdentity::from_bytes(b"document"),
+            &unrelated,
+        )
+        .unwrap();
+        assert_eq!(result.status(), TransitionPoseStatusV1::Complete);
+    }
+
+    #[test]
+    fn endpoint_sampling_does_not_consume_the_unconfigured_boundary() {
+        let mut exit_only_gap = document(Some(0.0));
+        exit_only_gap.clips[1].tracks.push(Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![
+                crate::glam::Quat::IDENTITY,
+                crate::glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+            ]),
+        });
+        let entry = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &exit_only_gap,
+        )
+        .unwrap();
+        assert_eq!(entry.status(), TransitionPoseStatusV1::Complete);
+        let exit = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Exit, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &exit_only_gap,
+        )
+        .unwrap();
+        assert_eq!(exit.status(), TransitionPoseStatusV1::Incomplete);
+        assert_eq!(
+            exit.families()[0].reason,
+            Some(TransitionPoseReasonV1::UnsupportedSampling)
+        );
+
+        let mut entry_only_gap = document(Some(0.0));
+        entry_only_gap.clips[1].tracks.push(Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![
+                crate::glam::Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                crate::glam::Quat::IDENTITY,
+            ]),
+        });
+        let entry = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &entry_only_gap,
+        )
+        .unwrap();
+        assert_eq!(entry.status(), TransitionPoseStatusV1::Incomplete);
+        let exit = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Exit, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &entry_only_gap,
+        )
+        .unwrap();
+        assert_eq!(exit.status(), TransitionPoseStatusV1::Complete);
+
+        let mut nonrepresentable_duration = document(None);
+        nonrepresentable_duration.clips[1].duration_s = 0.1;
+        let entry = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &nonrepresentable_duration,
+        )
+        .unwrap();
+        assert_eq!(entry.status(), TransitionPoseStatusV1::Complete);
+        let exit = evaluate_document_transition_poses_v1(
+            &declaration(TransitionFamilyBoundaryV1::Exit, 0.0, 0.0),
+            InputIdentity::from_bytes(b"document"),
+            &nonrepresentable_duration,
+        )
+        .unwrap();
+        assert_eq!(exit.status(), TransitionPoseStatusV1::Incomplete);
+        assert_eq!(
+            exit.families()[0].reason,
+            Some(TransitionPoseReasonV1::UnsupportedSampling)
+        );
+    }
+
+    #[test]
+    fn multi_bone_pairs_and_independent_offender_caps_are_canonical() {
+        let bones = (0..17)
+            .map(|ordinal| Bone {
+                name: format!("bone-{ordinal:02}"),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            })
+            .collect::<Vec<_>>();
+        let animated = |name: &str, translation_multiplier: f32| Clip {
+            name: name.into(),
+            duration_s: 1.0,
+            tracks: (0..17)
+                .flat_map(|ordinal| {
+                    [
+                        Track {
+                            bone: ordinal,
+                            property: Property::Translation,
+                            interpolation: Interpolation::Linear,
+                            times: vec![0.0, 1.0],
+                            values: TrackValues::Vec3s(vec![
+                                crate::glam::Vec3::X
+                                    * ((ordinal + 1) as f32
+                                        * translation_multiplier);
+                                2
+                            ]),
+                        },
+                        Track {
+                            bone: ordinal,
+                            property: Property::Rotation,
+                            interpolation: Interpolation::Linear,
+                            times: vec![0.0, 1.0],
+                            values: TrackValues::Quats(vec![
+                                crate::glam::Quat::from_rotation_x(
+                                    std::f32::consts::FRAC_PI_2
+                                );
+                                2
+                            ]),
+                        },
+                    ]
+                })
+                .collect(),
+        };
+        let document = Document {
+            skeleton: Skeleton { bones },
+            clips: vec![
+                Clip {
+                    name: "A".into(),
+                    duration_s: 1.0,
+                    tracks: Vec::new(),
+                },
+                animated("B", 1.0),
+                animated("C", 2.0),
+            ],
+            ..Document::default()
+        };
+        let family = DocumentTransitionFamilyV1::new(
+            "three_way".into(),
+            TransitionFamilyBoundaryV1::Entry,
+            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.0).unwrap(),
+            ["A", "B", "C"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    DocumentTransitionFamilyMemberV1::new(index as u64, name.into())
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+        )
+        .unwrap();
+        let declaration = TransitionFamilyDeclarationInputV1::new(
+            TransitionFamilyDeclarationV1::document(vec![family]).unwrap(),
+            b"declaration",
+        )
+        .unwrap();
+        let result = evaluate_document_transition_poses_v1(
+            &declaration,
+            InputIdentity::from_bytes(b"document"),
+            &document,
+        )
+        .unwrap();
+        let pairs = result.families()[0].pairs();
+        assert_eq!(
+            pairs
+                .iter()
+                .map(TransitionPosePairEvaluationV1::member_indices)
+                .collect::<Vec<_>>(),
+            vec![[0, 1], [0, 2], [1, 2]]
+        );
+        let first = &pairs[0];
+        assert_eq!(first.translation_offenders().len(), 16);
+        assert_eq!(first.rotation_offenders().len(), 16);
+        assert_eq!(
+            first
+                .translation_offenders()
+                .iter()
+                .map(TransitionPoseTranslationOffenderV1::bone_ordinal)
+                .collect::<Vec<_>>(),
+            (1..17).rev().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            first
+                .rotation_offenders()
+                .iter()
+                .map(TransitionPoseRotationOffenderV1::bone_ordinal)
+                .collect::<Vec<_>>(),
+            (0..16).collect::<Vec<_>>()
+        );
+        assert!(
+            first
+                .translation_offenders()
+                .iter()
+                .any(|offender| offender.bone_ordinal() == 1)
+        );
+        assert!(
+            first
+                .rotation_offenders()
+                .iter()
+                .any(|offender| offender.bone_ordinal() == 1)
+        );
+    }
+
+    #[test]
+    fn offender_selection_never_retains_more_than_its_final_cap() {
+        let mut descending = Vec::new();
+        for ordinal in 0..TRANSITION_POSE_EVALUATION_V1_MAX_BONES {
+            retain_top_candidate(
+                &mut descending,
+                ordinal,
+                ordinal as f64,
+                TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS,
+            );
+            assert!(descending.len() <= TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS);
+        }
+        sort_top_candidates(&mut descending);
+        assert_eq!(
+            descending
+                .iter()
+                .map(|(ordinal, _)| *ordinal)
+                .collect::<Vec<_>>(),
+            (TRANSITION_POSE_EVALUATION_V1_MAX_BONES
+                - TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS
+                ..TRANSITION_POSE_EVALUATION_V1_MAX_BONES)
+                .rev()
+                .collect::<Vec<_>>()
+        );
+
+        let mut tied = Vec::new();
+        for ordinal in (0..TRANSITION_POSE_EVALUATION_V1_MAX_BONES).rev() {
+            retain_top_candidate(
+                &mut tied,
+                ordinal,
+                1.0,
+                TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS,
+            );
+            assert!(tied.len() <= TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS);
+        }
+        sort_top_candidates(&mut tied);
+        assert_eq!(
+            tied.iter().map(|(ordinal, _)| *ordinal).collect::<Vec<_>>(),
+            (0..TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS).collect::<Vec<_>>()
+        );
+    }
+
+    fn numbered_members(count: u64) -> Vec<DocumentTransitionFamilyMemberV1> {
+        (0..count)
+            .map(|index| DocumentTransitionFamilyMemberV1::new(index, format!("clip-{index}")))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn numbered_family(
+        family_id: String,
+        count: u64,
+        boundary: TransitionFamilyBoundaryV1,
+    ) -> DocumentTransitionFamilyV1 {
+        DocumentTransitionFamilyV1::new(
+            family_id,
+            boundary,
+            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.0).unwrap(),
+            numbered_members(count),
+        )
+        .unwrap()
+    }
+
+    fn numbered_document(clips: u64, bones: usize) -> Document {
+        Document {
+            skeleton: Skeleton {
+                bones: (0..bones)
+                    .map(|ordinal| Bone {
+                        name: format!("bone-{ordinal}"),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    })
+                    .collect(),
+            },
+            clips: (0..clips)
+                .map(|index| Clip {
+                    name: format!("clip-{index}"),
+                    duration_s: 1.0,
+                    tracks: Vec::new(),
+                })
+                .collect(),
+            ..Document::default()
+        }
+    }
+
+    #[test]
+    fn member_witnesses_are_control_preflight_before_all_unavailability_reasons() {
+        let input = |families| {
+            TransitionFamilyDeclarationInputV1::new(
+                TransitionFamilyDeclarationV1::document(families).unwrap(),
+                b"declaration",
+            )
+            .unwrap()
+        };
+        let assert_invalid_witness = |input: &TransitionFamilyDeclarationInputV1,
+                                      document: &Document| {
+            assert_eq!(
+                evaluate_document_transition_poses_v1(
+                    input,
+                    InputIdentity::from_bytes(b"document"),
+                    document,
+                ),
+                Err(TransitionPoseEvaluationControlError::InvalidMemberWitness)
+            );
+        };
+
+        let time_family = DocumentTransitionFamilyV1::new(
+            "time".into(),
+            TransitionFamilyBoundaryV1::Entry,
+            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.1).unwrap(),
+            vec![
+                DocumentTransitionFamilyMemberV1::new(2, "missing-a".into()).unwrap(),
+                DocumentTransitionFamilyMemberV1::new(3, "missing-b".into()).unwrap(),
+            ],
+        )
+        .unwrap();
+        assert_invalid_witness(&input(vec![time_family]), &document(None));
+
+        let family_work =
+            numbered_family("family_work".into(), 65, TransitionFamilyBoundaryV1::Both);
+        assert_eq!(
+            plan_families(std::slice::from_ref(&family_work), 1, &[false])[0].reason,
+            Some(TransitionPoseReasonV1::FamilyWorkLimit)
+        );
+        assert_invalid_witness(&input(vec![family_work]), &Document::default());
+
+        let aggregate = (0..33)
+            .map(|ordinal| {
+                numbered_family(
+                    format!("aggregate-{ordinal}"),
+                    65,
+                    TransitionFamilyBoundaryV1::Entry,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            plan_families(&aggregate, 0, &vec![false; aggregate.len()])
+                .iter()
+                .any(|plan| plan.reason == Some(TransitionPoseReasonV1::AggregateWorkLimit))
+        );
+        assert_invalid_witness(&input(aggregate), &Document::default());
+
+        let retention = vec![
+            numbered_family("retention-a".into(), 64, TransitionFamilyBoundaryV1::Entry),
+            numbered_family("retention-b".into(), 64, TransitionFamilyBoundaryV1::Entry),
+        ];
+        assert_eq!(
+            plan_families(&retention, 16, &[false, false])[1].reason,
+            Some(TransitionPoseReasonV1::RetentionLimit)
+        );
+        assert_invalid_witness(&input(retention), &numbered_document(0, 16));
+
+        let earlier_time = DocumentTransitionFamilyV1::new(
+            "a-time".into(),
+            TransitionFamilyBoundaryV1::Entry,
+            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.1).unwrap(),
+            vec![
+                DocumentTransitionFamilyMemberV1::new(0, "Walk".into()).unwrap(),
+                DocumentTransitionFamilyMemberV1::new(1, "Run".into()).unwrap(),
+            ],
+        )
+        .unwrap();
+        let later_invalid = DocumentTransitionFamilyV1::new(
+            "z-invalid".into(),
+            TransitionFamilyBoundaryV1::Entry,
+            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.0).unwrap(),
+            vec![
+                DocumentTransitionFamilyMemberV1::new(2, "missing-a".into()).unwrap(),
+                DocumentTransitionFamilyMemberV1::new(3, "missing-b".into()).unwrap(),
+            ],
+        )
+        .unwrap();
+        assert_invalid_witness(&input(vec![earlier_time, later_invalid]), &document(None));
     }
 
     #[test]
     fn pair_work_math_is_checked_before_sampling() {
-        let members = (0..65)
-            .map(|index| DocumentTransitionFamilyMemberV1::new(index, format!("clip-{index}")))
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        let family = DocumentTransitionFamilyV1::new(
+        let family = numbered_family(
             "too_many_pairs".into(),
+            65,
             TransitionFamilyBoundaryV1::Both,
-            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.0).unwrap(),
-            members,
-        )
-        .unwrap();
+        );
         let input = TransitionFamilyDeclarationInputV1::new(
             TransitionFamilyDeclarationV1::document(vec![family]).unwrap(),
             b"declaration",
@@ -1161,7 +2621,7 @@ mod tests {
         let result = evaluate_document_transition_poses_v1(
             &input,
             InputIdentity::from_bytes(b"document"),
-            &document(None),
+            &numbered_document(65, 1),
         )
         .unwrap();
         assert_eq!(
@@ -1170,6 +2630,152 @@ mod tests {
         );
         assert_eq!(checked_pair_count(64), Some(2_016));
         assert_eq!(checked_pair_count(usize::MAX), None);
+    }
+
+    #[test]
+    fn retention_preflight_uses_the_actual_bone_bounded_offender_capacity() {
+        let members = (0..64)
+            .map(|index| DocumentTransitionFamilyMemberV1::new(index, format!("clip-{index}")))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let family = DocumentTransitionFamilyV1::new(
+            "near_retention_limit".into(),
+            TransitionFamilyBoundaryV1::Entry,
+            TransitionFamilyTolerancesV1::new(0.0, 0.0, 0.0).unwrap(),
+            members,
+        )
+        .unwrap();
+
+        // 16 * C(64, 2) * (1 translation + 1 rotation) = 64,512, so a
+        // one-bone document remains below the aggregate 65,536 record cap.
+        let low_bone_families = vec![family.clone(); 16];
+        assert!(
+            plan_families(&low_bone_families, 1, &vec![false; low_bone_families.len()])
+                .iter()
+                .all(|plan| plan.reason.is_none())
+        );
+
+        // With at least 16 bones each pair/boundary can retain 16 records per
+        // channel. The second family crosses the same aggregate cap.
+        let high_bone_plans = plan_families(&[family.clone(), family], 16, &[false, false]);
+        assert_eq!(high_bone_plans[0].reason, None);
+        assert_eq!(
+            high_bone_plans[1].reason,
+            Some(TransitionPoseReasonV1::RetentionLimit)
+        );
+    }
+
+    #[test]
+    fn long_bone_names_hit_result_limit_before_offender_name_cloning() {
+        let family = numbered_family("long_names".into(), 64, TransitionFamilyBoundaryV1::Entry);
+        let input = TransitionFamilyDeclarationInputV1::new(
+            TransitionFamilyDeclarationV1::document(vec![family]).unwrap(),
+            b"declaration",
+        )
+        .unwrap();
+        let mut document = numbered_document(64, 1);
+        document.skeleton.bones[0].name = "x".repeat(200_000);
+        let result = evaluate_document_transition_poses_v1(
+            &input,
+            InputIdentity::from_bytes(b"document"),
+            &document,
+        )
+        .unwrap();
+        assert_eq!(
+            result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::ResultLimit)
+        );
+        assert!(result.families()[0].pairs().is_empty());
+    }
+
+    #[test]
+    fn detailed_reservation_subtracts_pair_free_authority_before_name_rows() {
+        let declared = declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0);
+        let families = declared.declaration().document_families().unwrap();
+        let mut document = document(Some(1.0));
+        document.skeleton.bones[0].name = "n".repeat(128);
+        let subject = InputIdentity::from_bytes(b"document");
+        let result =
+            evaluate_document_transition_poses_v1(&declared, subject.clone(), &document).unwrap();
+        let basis = SkeletonBasisV1::from_skeleton(&document.skeleton).unwrap();
+        let remaining = detailed_result_budget_after_base(
+            &result,
+            families,
+            &subject,
+            basis.identity(),
+            TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES,
+        )
+        .unwrap();
+        let base_bytes = TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES - remaining;
+        let mut reservation = remaining;
+        assert!(reserve_detailed_name_budget(
+            &mut reservation,
+            &families[0],
+            &document.skeleton,
+        ));
+        let detailed_bytes = remaining - reservation;
+        let cap = base_bytes + detailed_bytes - 1;
+        let result = evaluate_document_transition_poses_v1_with_result_limit(
+            &declared, subject, &document, cap,
+        )
+        .unwrap();
+        assert_eq!(
+            result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::ResultLimit)
+        );
+        assert!(result.families()[0].pairs().is_empty());
+    }
+
+    #[test]
+    fn result_limit_retry_retains_bindings_and_terminates_at_a_tiny_seam() {
+        let declaration = declaration(TransitionFamilyBoundaryV1::Entry, 0.0, 0.0);
+        let mut result = evaluate_document_transition_poses_v1(
+            &declaration,
+            InputIdentity::from_bytes(b"document"),
+            &document(Some(1.0)),
+        )
+        .unwrap();
+        let before_members = result.families()[0].members().to_vec();
+        let before_basis = result.families()[0].skeleton_basis_input().cloned();
+        let before_declaration = result.declaration_input().clone();
+        let before_normalized = result.declaration_normalized().clone();
+        let before_subject = result.subject_input().clone();
+        let detailed_bytes =
+            canonical_bytes(&result, TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES)
+                .unwrap()
+                .len();
+
+        let mut degraded = result.clone();
+        for family in &mut degraded.families {
+            family.status = TransitionPoseStatusV1::Incomplete;
+            family.decision = TransitionPoseDecisionV1::NotEvaluated;
+            family.reason = Some(TransitionPoseReasonV1::ResultLimit);
+            family.pairs.clear();
+        }
+        derive_result_state(&mut degraded);
+        let degraded_bytes =
+            canonical_bytes(&degraded, TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES)
+                .unwrap()
+                .len();
+        assert!(degraded_bytes < detailed_bytes);
+
+        enforce_result_limit(&mut result, degraded_bytes).unwrap();
+        assert_eq!(result.status(), TransitionPoseStatusV1::Incomplete);
+        assert_eq!(result.decision(), TransitionPoseDecisionV1::NotEvaluated);
+        assert_eq!(result.declaration_input(), &before_declaration);
+        assert_eq!(result.declaration_normalized(), &before_normalized);
+        assert_eq!(result.subject_input(), &before_subject);
+        assert_eq!(result.families()[0].members(), before_members);
+        assert_eq!(
+            result.families()[0].skeleton_basis_input(),
+            before_basis.as_ref()
+        );
+        assert_eq!(result.families()[0].pairs(), &[]);
+        assert_eq!(
+            result.families()[0].reason(),
+            Some(TransitionPoseReasonV1::ResultLimit)
+        );
+        assert!(canonical_bytes(&result, degraded_bytes).is_ok());
     }
 
     #[test]

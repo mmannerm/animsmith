@@ -3671,11 +3671,33 @@ evaluation slice.
 
 The format-neutral core now owns the strict `SkeletonBasisV1` identity and
 document transition-pose evaluator/result contract
-`urn:animsmith:schema:transition-pose-evaluation:1`. It revalidates a mutable
-loaded document, plans bounded endpoint work before sampling, and returns an
+`urn:animsmith:schema:transition-pose-evaluation:1`. It admits a mutable
+loaded document's skeleton and selected T/R tracks, plans bounded endpoint
+work before sampling, and returns an
 immutable complete/finding/not-evaluated result. It does not add either #153
 command, config-to-document resolution, collection source reload, or a lint
 check; those adapters remain separately reviewed work.
+Its scope-neutral `subject_input` binds the exact raw document in this
+document evaluator; a later collection adapter binds its manifest subject
+under the same result schema. The normalized declaration scope determines
+which subject meaning applies.
+Before sampling, the evaluator directly verifies every declared index/name
+witness, admits at most 4,096 document clips for its one-pass global
+duplicate-name proof, 4,096 bones, and 8 MiB of basis-name text. A document
+above the clip cap with no direct witness contradiction yields normal
+`input_limit` family rows without scanning its full name domain. Each selected
+clip first admits at most three raw flat track rows per bone (12,288 maximum),
+then bounds the consumed translation/rotation domain to two channels per bone.
+Scale values, shape, and duplicates remain semantically ignored, but raw scale
+rows count toward that first resource admission because the loader stores all
+properties in one vector. Across the invocation it inspects at most the V1
+aggregate-comparison bound of 16,777,216 selected time/value elements. A
+valid-witness input exceeding one of these admission limits retains every
+family as `incomplete/not_evaluated` with `input_limit`;
+unrelated assets and unselected clips are outside this evaluator boundary.
+Before sampling it serializes the full pair-free authority and subtracts that
+from a conservative detailed JCS reservation, producing `result_limit` rather
+than cloning a representation that must later be discarded as over-cap.
 
 The declaration has a tagged `scope`, a stable `family_id`, an explicit
 ordered `members` array, a `boundary` (`entry`, `exit`, or `both`), a typed
