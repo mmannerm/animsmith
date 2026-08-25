@@ -1054,7 +1054,13 @@ fn collection_detailed_budget_after_base(
     base.status = TransitionPoseStatusV1::Incomplete;
     base.decision = TransitionPoseDecisionV1::NotEvaluated;
     for family in &mut base.families {
-        family.reason = Some(TransitionPoseReasonV1::TimeToleranceUnsupported);
+        // Keep an already-real incomplete reason: replacing
+        // dependency_closure_incomplete with a shorter spelling would make
+        // detail admission optimistic. Ready rows have no reason yet, so use
+        // the longest closed V1 incomplete spelling as their pair-free bound.
+        if family.reason.is_none() {
+            family.reason = Some(TransitionPoseReasonV1::DependencyClosureIncomplete);
+        }
         family.pairs.clear();
     }
     let bytes = canonical_bytes(&base, TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES)

@@ -567,3 +567,306 @@ take_name = "run"
         "available collection members bind same-load closure identity"
     );
 }
+
+#[test]
+fn collection_stale_late_member_has_control_precedence_over_source_loading() {
+    let dir = tempdir("collection-stale-late-member");
+    let manifest = dir.path().join("collection.toml");
+    let families = dir.path().join("families.toml");
+    let manifest_bytes = r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "test"
+sources = [
+  { key = "missing", path = "does-not-exist.glb" },
+  { key = "run", path = "also-does-not-exist.glb" },
+]
+clips = [
+  { id = "test/walk", source = "missing", take_index = 0, take_name = "walk" },
+  { id = "test/run", source = "run", take_index = 1, take_name = "run" },
+]
+"#;
+    std::fs::write(&manifest, manifest_bytes).unwrap();
+    let identity = InputIdentity::from_bytes(manifest_bytes.as_bytes());
+    std::fs::write(
+        &families,
+        format!(
+            r#"schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "collection"
+collection_id = "test"
+manifest_input_identity = {{ sha256 = "{}", bytes = {} }}
+[[families]]
+family_id = "test/walk_to_run"
+boundary = "entry"
+[families.basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+[families.tolerances]
+translation_m = 0.0
+rotation_deg = 0.0
+time_normalized = 0.0
+[[families.members]]
+logical_id = "test/walk"
+source = "missing"
+take_index = 0
+take_name = "walk"
+[[families.members]]
+logical_id = "test/run"
+source = "run"
+take_index = 1
+take_name = "stale"
+"#,
+            identity.sha256(),
+            identity.bytes()
+        ),
+    )
+    .unwrap();
+
+    let output = animsmith()
+        .current_dir(dir.path())
+        .args([
+            "collection",
+            "evaluate-transition-poses",
+            "collection.toml",
+            "--families",
+            "families.toml",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("stale-member-binding"));
+}
+
+#[test]
+fn collection_external_animation_closure_changes_when_primary_gltf_does_not() {
+    let dir = tempdir("collection-external-closure");
+    let walk_dir = dir.path().join("walk");
+    let run_dir = dir.path().join("run");
+    std::fs::create_dir_all(&walk_dir).unwrap();
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let walk = walk_dir.join("walk.gltf");
+    let run = run_dir.join("run.gltf");
+    let manifest = dir.path().join("collection.toml");
+    let families = dir.path().join("families.toml");
+    write_external_document(&walk, false, false);
+    let run_external = write_external_document(&run, false, false);
+    let run_primary = std::fs::read(&run).unwrap();
+    let run_pin = InputIdentity::from_bytes(&run_primary);
+    let manifest_bytes = format!(
+        r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "test"
+sources = [
+  {{ key = "walk", path = "walk/walk.gltf" }},
+  {{ key = "run", path = "run/run.gltf", expected_sha256 = "{}" }},
+]
+clips = [
+  {{ id = "test/walk", source = "walk", take_index = 0, take_name = "walk" }},
+  {{ id = "test/run", source = "run", take_index = 1, take_name = "run" }},
+]
+"#,
+        run_pin.sha256()
+    );
+    std::fs::write(&manifest, &manifest_bytes).unwrap();
+    let identity = InputIdentity::from_bytes(manifest_bytes.as_bytes());
+    std::fs::write(
+        &families,
+        format!(
+            r#"schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "collection"
+collection_id = "test"
+manifest_input_identity = {{ sha256 = "{}", bytes = {} }}
+[[families]]
+family_id = "test/walk_to_run"
+boundary = "entry"
+[families.basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+[families.tolerances]
+translation_m = 0.0
+rotation_deg = 0.0
+time_normalized = 0.0
+[[families.members]]
+logical_id = "test/walk"
+source = "walk"
+take_index = 0
+take_name = "walk"
+[[families.members]]
+logical_id = "test/run"
+source = "run"
+take_index = 1
+take_name = "run"
+"#,
+            identity.sha256(),
+            identity.bytes()
+        ),
+    )
+    .unwrap();
+    let command = [
+        "collection",
+        "evaluate-transition-poses",
+        "collection.toml",
+        "--families",
+        "families.toml",
+        "--format",
+        "json",
+    ];
+
+    let first = animsmith()
+        .current_dir(dir.path())
+        .args(command)
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let first = json(&first);
+    assert_schema(&first);
+    assert_eq!(first["status"], "complete");
+    assert_eq!(first["decision"], "pass");
+    let first_closure =
+        first["families"][0]["members"][1]["source_dependency_closure_identity"].clone();
+    assert!(first_closure.is_object());
+
+    let mut changed = std::fs::read(&run_external.bin).unwrap();
+    let offset = run_external.run_rotation_entry_offset;
+    changed[offset..offset + 4].copy_from_slice(&0.24740396f32.to_le_bytes());
+    changed[offset + 12..offset + 16].copy_from_slice(&0.9689124f32.to_le_bytes());
+    std::fs::write(&run_external.bin, changed).unwrap();
+    assert_eq!(std::fs::read(&run).unwrap(), run_primary);
+    assert_eq!(
+        InputIdentity::from_bytes(&std::fs::read(&run).unwrap()).sha256(),
+        run_pin.sha256(),
+        "the manifest primary digest pin remains valid"
+    );
+
+    let second = animsmith()
+        .current_dir(dir.path())
+        .args(command)
+        .output()
+        .unwrap();
+    assert_eq!(second.status.code(), Some(1));
+    let second = json(&second);
+    assert_schema(&second);
+    assert_eq!(second["status"], "complete");
+    assert_eq!(second["decision"], "finding");
+    assert_eq!(second["subject_input"], first["subject_input"]);
+    assert_eq!(
+        second["families"][0]["members"][1]["source_input"],
+        first["families"][0]["members"][1]["source_input"],
+        "the source pin covers only the unchanged primary glTF"
+    );
+    assert_ne!(
+        second["families"][0]["members"][1]["source_dependency_closure_identity"],
+        first_closure
+    );
+    assert_ne!(
+        second["families"][0]["pairs"],
+        first["families"][0]["pairs"]
+    );
+    assert!(
+        !second["families"][0]["pairs"][0]["rotation_offenders"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn collection_partial_closure_never_evaluates_the_available_member_subset() {
+    let dir = tempdir("collection-partial-closure");
+    let walk_dir = dir.path().join("walk");
+    let run_dir = dir.path().join("run");
+    std::fs::create_dir_all(&walk_dir).unwrap();
+    std::fs::create_dir_all(&run_dir).unwrap();
+    write_external_document(&walk_dir.join("walk.gltf"), false, false);
+    write_external_document(&run_dir.join("run.gltf"), false, true);
+    let manifest = dir.path().join("collection.toml");
+    let families = dir.path().join("families.toml");
+    let manifest_bytes = r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "test"
+sources = [
+  { key = "walk", path = "walk/walk.gltf" },
+  { key = "run", path = "run/run.gltf" },
+]
+clips = [
+  { id = "test/walk", source = "walk", take_index = 0, take_name = "walk" },
+  { id = "test/run", source = "run", take_index = 1, take_name = "run" },
+]
+"#;
+    std::fs::write(&manifest, manifest_bytes).unwrap();
+    let identity = InputIdentity::from_bytes(manifest_bytes.as_bytes());
+    std::fs::write(
+        &families,
+        format!(
+            r#"schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "collection"
+collection_id = "test"
+manifest_input_identity = {{ sha256 = "{}", bytes = {} }}
+[[families]]
+family_id = "test/walk_to_run"
+boundary = "both"
+[families.basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+[families.tolerances]
+translation_m = 0.0
+rotation_deg = 0.0
+time_normalized = 0.0
+[[families.members]]
+logical_id = "test/walk"
+source = "walk"
+take_index = 0
+take_name = "walk"
+[[families.members]]
+logical_id = "test/run"
+source = "run"
+take_index = 1
+take_name = "run"
+"#,
+            identity.sha256(),
+            identity.bytes()
+        ),
+    )
+    .unwrap();
+
+    let output = animsmith()
+        .current_dir(dir.path())
+        .args([
+            "collection",
+            "evaluate-transition-poses",
+            "collection.toml",
+            "--families",
+            "families.toml",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let value = json(&output);
+    assert_schema(&value);
+    assert_eq!(value["status"], "incomplete");
+    assert_eq!(value["decision"], "not_evaluated");
+    assert_eq!(
+        value["families"][0]["reason"],
+        "dependency_closure_incomplete"
+    );
+    assert!(value["families"][0]["members"][0]["source_input"].is_object());
+    assert!(value["families"][0]["members"][0]["source_dependency_closure_identity"].is_object());
+    assert!(value["families"][0]["members"][1]["source_input"].is_object());
+    assert!(
+        value["families"][0]["members"][1]
+            .get("source_dependency_closure_identity")
+            .is_none()
+    );
+    assert!(value["families"][0].get("skeleton_basis_input").is_none());
+    assert!(value["families"][0]["pairs"].as_array().unwrap().is_empty());
+}

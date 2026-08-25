@@ -274,9 +274,14 @@ id, an explicit ordered member list, a boundary selection (`entry`, `exit`, or
 The document-local `transition_families` tables are admitted by AnimSmith's
 strict config loader, which retains the exact whole-config input identity with
 the normalized declaration. `animsmith evaluate-transition-poses INPUT
---format json` evaluates one document against that authority. The collection
-declaration envelope remains outside the collection CLI; collection evaluation
-and command behavior remain #153/#164 or separately reviewed follow-up work.
+--format json` evaluates one document against that authority. The separate
+collection envelope is evaluated by `animsmith collection
+evaluate-transition-poses COLLECTION.toml --families TRANSITION_FAMILIES.toml
+--format json`: it first binds one exact manifest identity and verifies every
+logical/source/take witness, then reloads only the source keys selected by the
+declared members. A stale manifest or member witness is control (exit 2, no
+result); unavailable member input makes its whole family incomplete rather
+than comparing a survivor subset.
 
 The format-neutral core provides the strict V1 skeleton-basis identity and
 immutable transition-pose evaluation result contract at
@@ -288,9 +293,9 @@ That docs schema is canonical; the core crate ships an exact checked snapshot
 so packaged integration tests retain the same contract without a repository
 path dependency.
 Its `subject_input` field binds the exact raw subject selected by the
-declaration scope: the current document evaluator supplies document bytes,
-while a future collection adapter will supply manifest bytes without forking
-the V1 result wire. The document evaluator accepts the loader's same-load
+declaration scope: the document evaluator supplies document bytes and the
+collection evaluator supplies manifest bytes without forking the V1 result
+wire. The document evaluator accepts the loader's same-load
 `DependencyClosureV1`, derives `subject_input` only from its `primary_input`,
 and retains the complete `subject_dependency_closure_identity` both at the
 subject and as each member's `source_dependency_closure_identity`. A configured
