@@ -74,7 +74,7 @@ fn analytic_timing_fixture(global_properties: &[&str]) -> String {
         .replace("\r\n", "\n");
     let anchor = "\t\tP: \"OriginalUnitScaleFactor\", \"double\", \"Number\", \"\",1";
     let replacement = std::iter::once(anchor)
-        .chain(global_properties.iter().map(|property| *property))
+        .chain(global_properties.iter().copied())
         .collect::<Vec<_>>()
         .join("\n");
     source.replacen(anchor, &replacement, 1)
