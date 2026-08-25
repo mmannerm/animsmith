@@ -1,0 +1,1056 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:skill:animation-pack-evaluation:1",
+  "title": "AnimSmith animation-pack evaluation model V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "binding",
+    "presentation",
+    "evidence",
+    "runs",
+    "clips",
+    "runtime_sets",
+    "profiles",
+    "pipeline_stages",
+    "readiness",
+    "capabilities",
+    "integration_steps",
+    "issues",
+    "remediations",
+    "engine_evidence",
+    "limitations",
+    "sources",
+    "narratives",
+    "collection"
+  ],
+  "properties": {
+    "schema": {
+      "const": "urn:animsmith:skill:animation-pack-evaluation:1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "binding": {
+      "$ref": "#/$defs/binding"
+    },
+    "presentation": {
+      "$ref": "#/$defs/presentation"
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "runs": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/run"
+      }
+    },
+    "clips": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/clip"
+      }
+    },
+    "runtime_sets": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/runtime_set"
+      }
+    },
+    "profiles": {
+      "type": "array",
+      "maxItems": 11,
+      "items": {
+        "$ref": "#/$defs/profile"
+      }
+    },
+    "pipeline_stages": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/pipeline_stage"
+      }
+    },
+    "readiness": {
+      "type": "array",
+      "maxItems": 13,
+      "items": {
+        "$ref": "#/$defs/readiness"
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "integration_steps": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "$ref": "#/$defs/integration_step"
+      }
+    },
+    "issues": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
+    },
+    "remediations": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/remediation"
+      }
+    },
+    "engine_evidence": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/engine"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/limitation"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "narratives": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "$ref": "#/$defs/narrative"
+      }
+    },
+    "collection": {
+      "$ref": "#/$defs/collection"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "not": {"pattern": "[\\r\\n]"}
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768,
+      "pattern": "\\S"
+    },
+    "public_locator": {
+      "allOf": [
+        {"$ref": "#/$defs/text"},
+        {"anyOf": [
+          {"allOf": [
+            {"pattern": "^https://[^/@\\s?#]+(?:[/?#][^@\\s]*)?$"},
+            {"not": {"pattern": "[\\r\\n]"}},
+            {"not": {"pattern": "(^|/)\\.\\.(/|$)"}}
+          ]},
+          {"allOf": [
+            {"pattern": "^[a-z0-9][a-z0-9._/-]*\\.(?:md|json)$"},
+            {"not": {"pattern": "[\\r\\n]"}},
+            {"not": {"pattern": "//|(^|/)\\.\\.(/|$)"}}
+          ]}
+        ]}
+      ]
+    },
+    "narrative_text": {
+      "allOf": [
+        {"$ref": "#/$defs/text"},
+        {"not": {"pattern": "[\\n|<>{}#*`]"}},
+        {"not": {"pattern": "- "}},
+        {"not": {"pattern": "(?:^|[^A-Za-z0-9._-])/[^\\s]|(?:^|[^A-Za-z0-9._-])\\.\\.(?:[\\\\/])|\\\\\\\\[^\\s\\\\]+\\\\|\\b[A-Za-z]:[\\\\/]+|\\b(?:[Ff][Ii][Ll][Ee]|[Dd][Aa][Tt][Aa]):|[Hh][Tt][Tt][Pp][Ss]?://[^/\\s@]+@|\\b[A-Za-z0-9._-]+/[A-Za-z0-9._/-]*\\.[A-Za-z0-9._-]+\\b"}},
+        {"not": {"pattern": "\\b[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9._:-]*\\b"}},
+        {"not": {"pattern": "\\b\\d+(?:\\.\\d+)?\\b|\\b(?:[Pp][Aa][Ss][Ss]|[Ff][Ii][Nn][Dd][Ii][Nn][Gg]|[Rr][Ee][Aa][Dd][Yy]|[Cc][Oo][Nn][Dd][Ii][Tt][Ii][Oo][Nn][Aa][Ll]|[Pp][Oo][Oo][Rr]-[Ff][Ii][Tt]|[Uu][Nn][Kk][Nn][Oo][Ww][Nn]|[Cc][Oo][Mm][Pp][Ll][Ee][Tt][Ee]|[Pp][Aa][Rr][Tt][Ii][Aa][Ll]|[Nn][Oo][Tt]-[Ee][Vv][Aa][Ll][Uu][Aa][Tt][Ee][Dd]|[Uu][Ss][Aa][Bb][Ll][Ee](?: [Ww][Ii][Tt][Hh] [Cc][Oo][Nn][Dd][Ii][Tt][Ii][Oo][Nn][Ss])?|[Rr][Ee][Ss][Tt][Rr][Ii][Cc][Tt][Ee][Dd] [Uu][Ss][Ee]|[Pp][Oo][Oo][Rr] [Ff][Ii][Tt]|[Ii][Nn][Ss][Uu][Ff][Ff][Ii][Cc][Ii][Ee][Nn][Tt] [Tt][Ee][Cc][Hh][Nn][Ii][Cc][Aa][Ll] [Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]|[Nn][Oo][Tt] [Aa][Pp][Pp][Ll][Ii][Cc][Aa][Bb][Ll][Ee]|[Pp][Rr][Ee][Vv][Ii][Ee][Ww](?: [Oo][Nn][Ll][Yy]|-[Oo][Nn][Ll][Yy])|[Nn][Oo][Tt] [Ss][Ee][Ll][Ee][Cc][Tt][Ee][Dd]|[Ss][Ee][Ll][Ee][Cc][Tt][Ee][Dd]|[Ee][Vv][Aa][Ll][Uu][Aa][Tt][Ee][Dd](?: [Cc][Ll][Ee][Aa][Nn]| [Ff][Ii][Nn][Dd][Ii][Nn][Gg])|[Pp][Aa][Rr][Tt][Ii][Aa][Ll][Ll][Yy] [Ee][Vv][Aa][Ll][Uu][Aa][Tt][Ee][Dd]|[Uu][Nn][Ss][Uu][Pp][Pp][Oo][Rr][Tt][Ee][Dd] [Ii][Nn][Pp][Uu][Tt]|[Uu][Nn][Aa][Vv][Aa][Ii][Ll][Aa][Bb][Ll][Ee] [Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]|[Dd][Oo][Cc][Uu][Mm][Ee][Nn][Tt][Aa][Tt][Ii][Oo][Nn] [Oo][Nn][Ll][Yy]|[Pp][Rr][Oo][Tt][Oo][Tt][Yy][Pp][Ee] [Oo][Bb][Ss][Ee][Rr][Vv][Ee][Dd])\\b"}}
+      ]
+    },
+    "refs": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "available",
+            "unavailable",
+            "not-applicable"
+          ]
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"state": {"const": "available"}}}, "then": {"required": ["value"]}},
+        {"if": {"properties": {"state": {"enum": ["unavailable", "not-applicable"]}}}, "then": {"not": {"required": ["value"]}}}
+      ]
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collection_id",
+        "manifest_sha256",
+        "manifest_bytes"
+      ],
+      "properties": {
+        "collection_id": {
+          "$ref": "#/$defs/id"
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "verdict",
+        "completeness",
+        "confidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "$ref": "#/$defs/text"
+        },
+        "verdict": {
+          "enum": [
+            "Usable",
+            "Usable with conditions",
+            "Restricted use",
+            "Poor fit",
+            "Insufficient technical evidence"
+          ]
+        },
+        "completeness": {
+          "enum": [
+            "complete",
+            "partial",
+            "preview-only"
+          ]
+        },
+        "confidence": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "locator",
+        "summary"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "user-stated",
+            "observed-file",
+            "observed-animsmith",
+            "observed-report",
+            "observed-engine",
+            "vendor-stated",
+            "documentation-stated",
+            "inferred",
+            "not-evaluated"
+          ]
+        },
+        "locator": {
+          "$ref": "#/$defs/public_locator"
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "state",
+        "evidence_refs",
+        "summary"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "state": {
+          "enum": [
+            "current",
+            "historical"
+          ]
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        },
+        "supersedes": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "take_index",
+        "take_name",
+        "primary_role",
+        "tags",
+        "classification_basis",
+        "evidence_refs",
+        "loop",
+        "duration_s",
+        "root_motion_speed_mps",
+        "movement_owner",
+        "assessment",
+        "coverage"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "source": {
+          "$ref": "#/$defs/id"
+        },
+        "take_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "take_name": {
+          "$ref": "#/$defs/text"
+        },
+        "primary_role": {
+          "enum": [
+            "idle-pose",
+            "continuous-locomotion",
+            "locomotion-transition",
+            "airborne",
+            "traversal",
+            "action-interaction",
+            "reaction-death",
+            "emote-cinematic",
+            "other-unknown"
+          ]
+        },
+        "tags": {
+          "$ref": "#/$defs/refs"
+        },
+        "classification_basis": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "user-required",
+              "vendor-stated",
+              "observed-file",
+              "inferred"
+            ]
+          }
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        },
+        "loop": {
+          "enum": [
+            "loop",
+            "not-loop",
+            "unknown",
+            "not-applicable"
+          ]
+        },
+        "duration_s": {
+          "$ref": "#/$defs/availability"
+        },
+        "root_motion_speed_mps": {
+          "$ref": "#/$defs/availability"
+        },
+        "movement_owner": {
+          "$ref": "#/$defs/owner"
+        },
+        "assessment": {
+          "enum": [
+            "pass",
+            "finding",
+            "not-evaluated",
+            "not-applicable"
+          ]
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        }
+      }
+    },
+    "runtime_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "members",
+        "assessment",
+        "coverage",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "directional-blend",
+            "speed-blend",
+            "sync-group",
+            "transition-chain",
+            "mask-composition",
+            "retarget-group",
+            "paired-interaction",
+            "motion-database",
+            "other"
+          ]
+        },
+        "members": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "clip_id",
+              "eligibility"
+            ],
+            "properties": {
+              "clip_id": {
+                "$ref": "#/$defs/id"
+              },
+              "eligibility": {
+                "enum": [
+                  "complete",
+                  "incomplete",
+                  "quarantined"
+                ]
+              }
+            }
+          }
+        },
+        "assessment": {
+          "enum": [
+            "pass",
+            "finding",
+            "not-evaluated",
+            "not-applicable"
+          ]
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "activation_basis",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "marketplace-intake",
+            "blended-locomotion",
+            "root-motion-controller",
+            "state-machine-transitions",
+            "layered-upper-body-weapons",
+            "traversal-environment",
+            "contact-actions-interactions",
+            "retargeted-customizable-characters",
+            "motion-matching-search",
+            "networked-movement",
+            "runtime-performance"
+          ]
+        },
+        "status": {
+          "enum": [
+            "selected",
+            "not-selected",
+            "not-applicable"
+          ]
+        },
+        "activation_basis": {
+          "enum": [
+            "user-required",
+            "vendor-intended",
+            "observed-pack-capability",
+            "evaluator-selected-generic-scenario"
+          ]
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "pipeline_stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "coverage",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "acquire",
+            "preserve-raw",
+            "inspect",
+            "segment",
+            "root-motion",
+            "conform",
+            "validate",
+            "optimize",
+            "export",
+            "gate-report"
+          ]
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "coverage": {
+      "enum": [
+        "evaluated-clean",
+        "evaluated-finding",
+        "partially-evaluated",
+        "not-applicable",
+        "not-evaluated",
+        "unsupported-input",
+        "unavailable-evidence"
+      ]
+    },
+    "owner": {
+      "enum": [
+        "engine-config",
+        "animsmith-current-safe",
+        "animsmith-current-declared",
+        "animsmith-future-candidate",
+        "artist-author",
+        "vendor-license",
+        "unknown"
+      ]
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "state",
+        "adoption_consequence",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "delivery-completeness",
+            "animsmith-readable-format",
+            "untouched-mechanical-health",
+            "declared-clip-semantics",
+            "set-sync-locomotion",
+            "rig-rest-bind-retarget",
+            "root-motion-in-place",
+            "target-engine-import-playback",
+            "masks-additive-ik-attachments",
+            "performance-runtime-footprint",
+            "game-content-artistic-fit",
+            "cross-pack-compatibility",
+            "maintainability-reproducibility"
+          ]
+        },
+        "state": {
+          "enum": [
+            "ready",
+            "conditional",
+            "poor-fit",
+            "not-applicable",
+            "unknown"
+          ]
+        },
+        "adoption_consequence": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "state",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "state": {
+          "enum": [
+            "pass",
+            "finding",
+            "not-evaluated",
+            "not-applicable"
+          ]
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "integration_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "order",
+        "action",
+        "movement_owner",
+        "phase_owner",
+        "coordinates_or_thresholds",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "action": {
+          "enum": [
+            "topology",
+            "timing",
+            "ownership",
+            "composition",
+            "acceptance-gate"
+          ]
+        },
+        "movement_owner": {
+          "$ref": "#/$defs/owner"
+        },
+        "phase_owner": {
+          "$ref": "#/$defs/owner"
+        },
+        "coordinates_or_thresholds": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "severity",
+        "impact",
+        "primary_owner",
+        "current_action",
+        "future_candidate",
+        "secondary_workaround",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "severity": {
+          "enum": [
+            "blocker",
+            "major",
+            "moderate",
+            "minor",
+            "note"
+          ]
+        },
+        "impact": {
+          "$ref": "#/$defs/text"
+        },
+        "primary_owner": {
+          "$ref": "#/$defs/owner"
+        },
+        "current_action": {
+          "$ref": "#/$defs/text"
+        },
+        "future_candidate": {
+          "$ref": "#/$defs/text"
+        },
+        "secondary_workaround": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "remediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "run_id",
+        "state",
+        "input_evidence_refs",
+        "output_id",
+        "refusal_evidence_refs",
+        "historical_output_id"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "run_id": {
+          "$ref": "#/$defs/id"
+        },
+        "state": {
+          "enum": [
+            "produced",
+            "refused",
+            "not-run"
+          ]
+        },
+        "input_evidence_refs": {
+          "$ref": "#/$defs/refs"
+        },
+        "output_id": {
+          "$ref": "#/$defs/id"
+        },
+        "refusal_evidence_refs": {
+          "$ref": "#/$defs/refs"
+        },
+        "historical_output_id": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"state": {"const": "produced"}}}, "then": {"properties": {"output_id": {"not": {"const": "none"}}, "historical_output_id": {"const": "none"}, "refusal_evidence_refs": {"maxItems": 0}}}},
+        {"if": {"properties": {"state": {"const": "refused"}}}, "then": {"properties": {"output_id": {"const": "none"}, "historical_output_id": {"not": {"const": "none"}}, "refusal_evidence_refs": {"minItems": 1}}}},
+        {"if": {"properties": {"state": {"const": "not-run"}}}, "then": {"properties": {"output_id": {"const": "none"}, "historical_output_id": {"const": "none"}, "refusal_evidence_refs": {"maxItems": 0}}}}
+      ]
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "runtime",
+        "version",
+        "level",
+        "coverage",
+        "settings",
+        "procedure",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "runtime": {
+          "$ref": "#/$defs/text"
+        },
+        "version": {
+          "$ref": "#/$defs/text"
+        },
+        "level": {
+          "enum": [
+            "documentation-only",
+            "prototype-observed",
+            "not-evaluated",
+            "deferred"
+          ]
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        },
+        "settings": {
+          "$ref": "#/$defs/text"
+        },
+        "procedure": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "summary",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source_commit",
+        "report_sha256",
+        "acquisition_scope",
+        "license_scope",
+        "evidence_kind",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "source_commit": {
+          "$ref": "#/$defs/text"
+        },
+        "report_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "acquisition_scope": {
+          "$ref": "#/$defs/text"
+        },
+        "license_scope": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence_kind": {
+          "enum": ["user-stated", "observed-file", "observed-animsmith", "observed-report", "observed-engine", "vendor-stated", "documentation-stated", "inferred", "not-evaluated"]
+        },
+        "evidence_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "narrative": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "slot",
+        "text",
+        "fact_refs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "slot": {
+          "enum": [
+            "technical-decision",
+            "fit-and-limitations",
+            "evidence-status",
+            "pack-inventory",
+            "mechanical-baseline",
+            "reproduction"
+          ]
+        },
+        "text": {
+          "$ref": "#/$defs/narrative_text"
+        },
+        "fact_refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "constituents",
+        "exclusions",
+        "cross_pack_records"
+      ],
+      "properties": {
+        "constituents": {
+          "type": "array",
+          "maxItems": 90,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "model_sha256",
+              "clip_ids",
+              "source_file_count",
+              "runtime_set_ids"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "model_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "clip_ids": {
+                "$ref": "#/$defs/refs"
+              },
+              "source_file_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "runtime_set_ids": {
+                "$ref": "#/$defs/refs"
+              }
+            }
+          }
+        },
+        "exclusions": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "reason",
+              "evidence_refs"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "reason": {
+                "$ref": "#/$defs/text"
+              },
+              "evidence_refs": {
+                "$ref": "#/$defs/refs"
+              }
+            }
+          }
+        },
+        "cross_pack_records": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "left",
+              "right",
+              "result",
+              "evidence_refs"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "left": {
+                "$ref": "#/$defs/id"
+              },
+              "right": {
+                "$ref": "#/$defs/id"
+              },
+              "result": {
+                "enum": [
+                  "direct",
+                  "engine-config",
+                  "animsmith-current",
+                  "artist-required",
+                  "incompatible",
+                  "unknown"
+                ]
+              },
+              "evidence_refs": {
+                "$ref": "#/$defs/refs"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
