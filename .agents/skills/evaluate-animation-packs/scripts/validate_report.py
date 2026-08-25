@@ -39,6 +39,7 @@ PRIMARY_HEADINGS = (
     "Fit and limitations", "Evidence status", "Sources",
 )
 CAPABILITY_HEADINGS = ("Complete core", "Partial supporting gameplay", "Absent")
+V1_CAPABILITY_HEADINGS = CAPABILITY_HEADINGS + ("Not evaluated", "Not applicable")
 APPENDIX_HEADINGS = (
     "Evaluation scope and provenance", "Evaluation manifest and taxonomy",
     "Pack inventory and content evidence", "Mechanical baseline",
@@ -77,6 +78,9 @@ ISSUE_HEADER = (
 ENGINE_HEADER = ("Runtime", "Evidence level", "Technical result", "Remaining gate")
 ROLE_HEADER = (
     "Canonical primary role", "Logical motions", "Delivered files", "Evidence boundary",
+)
+V1_ROLE_HEADER = (
+    "Canonical primary role", "Logical motions", "Unique source files used by role", "Evidence boundary",
 )
 PIPELINE_HEADER = ("Stage", "Coverage state", "Evidence / remaining gate")
 PROFILE_HEADER = ("Validation profile", "Selection", "Result / next evidence")
@@ -117,6 +121,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check a report and evidence appendix.")
     parser.add_argument("report", type=Path)
     parser.add_argument("--appendix", type=Path)
+    parser.add_argument("--evaluation-model-v1", action="store_true", help="validate the fixed V1 renderer projection")
     return parser.parse_args()
 
 
@@ -388,6 +393,12 @@ def _key_values(value: str) -> tuple[dict[str, str], bool]:
 def _timing_values(value: str) -> tuple[dict[str, str], bool]:
     if value == "N/A":
         return {}, False
+    # V1's fixed renderer may summarize all member witnesses as an available
+    # count plus a deterministic single value/range.  The full exact values
+    # remain in its authority ledger; this report cell must not impersonate one
+    # member as the set metric.
+    if value.startswith("duration available="):
+        return {}, False
     result: dict[str, str] = {}
     malformed = False
     for raw in value.split(";"):
@@ -584,7 +595,7 @@ def _validate_recipe(document: dict[str, Any]) -> list[str]:
     return errors
 
 
-def validate(text: str) -> list[str]:
+def validate(text: str, *, evaluation_schema: str = SCHEMA) -> list[str]:
     document = _parse_report_markdown(text)
     errors: list[str] = []
     if document["has_raw_html"]:
@@ -595,11 +606,12 @@ def validate(text: str) -> list[str]:
     ):
         errors.append("report must start with '# Animation pack evaluation:'")
     errors.extend(_heading_order(document, PRIMARY_HEADINGS, level=2))
-    errors.extend(_heading_order(document, CAPABILITY_HEADINGS, level=3, section="Capability coverage"))
+    capability_headings = V1_CAPABILITY_HEADINGS if evaluation_schema != SCHEMA else CAPABILITY_HEADINGS
+    errors.extend(_heading_order(document, capability_headings, level=3, section="Capability coverage"))
     errors.extend(_required_body_errors(
         document,
         PRIMARY_HEADINGS,
-        tuple(("Capability coverage", heading) for heading in CAPABILITY_HEADINGS),
+        tuple(("Capability coverage", heading) for heading in capability_headings),
     ))
     errors.extend(_validate_runtime_sets(document))
     errors.extend(_validate_recipe(document))
@@ -695,7 +707,7 @@ def _appendix_table(
     return table, [] if table is not None else [_missing_table(header)]
 
 
-def validate_appendix(text: str) -> list[str]:
+def validate_appendix(text: str, *, evaluation_schema: str = SCHEMA) -> list[str]:
     document = _parse_report_markdown(text)
     errors: list[str] = []
     if document["has_raw_html"]:
@@ -728,8 +740,8 @@ def validate_appendix(text: str) -> list[str]:
         errors.append("appendix must declare one canonical bold Evidence status")
     if _evaluation_date(document) is None:
         errors.append("appendix must declare a bold YYYY-MM-DD Evaluation date")
-    if not any(SCHEMA in paragraph["code"] for paragraph in document["paragraphs"]):
-        errors.append(f"appendix must identify evaluation manifest schema: {SCHEMA}")
+    if not any(evaluation_schema in paragraph["code"] for paragraph in document["paragraphs"]):
+        errors.append(f"appendix must identify evaluation manifest schema: {evaluation_schema}")
     if not any(link["destination"] == CANONICAL_LADDER for link in document["links"]):
         errors.append("appendix must link the canonical readiness ladder")
     if (
@@ -742,8 +754,9 @@ def validate_appendix(text: str) -> list[str]:
     ):
         errors.append("appendix must not duplicate the technical issue register")
 
+    role_header = V1_ROLE_HEADER if evaluation_schema != SCHEMA else ROLE_HEADER
     role_table, table_errors = _appendix_table(
-        document, "Canonical clip-role inventory", ROLE_HEADER
+        document, "Canonical clip-role inventory", role_header
     )
     errors.extend(table_errors)
     role_rows = [] if role_table is None else role_table["rows"]
@@ -753,7 +766,7 @@ def validate_appendix(text: str) -> list[str]:
         if not matching:
             errors.append(f"canonical role inventory is missing: {role}")
         elif (
-            len(matching) != 1 or len(matching[0]) != len(ROLE_HEADER)
+            len(matching) != 1 or len(matching[0]) != len(role_header)
             or not _ascii_count(matching[0][1]["text"])
             or not _ascii_count(matching[0][2]["text"])
             or not matching[0][3]["text"]
@@ -765,17 +778,20 @@ def validate_appendix(text: str) -> list[str]:
     if any(row and row[0]["text"] not in allowed_roles for row in role_rows):
         errors.append("canonical role inventory contains an unknown role row")
     total_rows = [row for row in role_rows if row and row[0]["text"] == "Total"]
-    if len(total_rows) != 1 or len(total_rows[0]) != len(ROLE_HEADER):
+    if len(total_rows) != 1 or len(total_rows[0]) != len(role_header):
         errors.append("canonical role inventory requires one Total row")
     else:
         total_logical, total_files = total_rows[0][1]["text"], total_rows[0][2]["text"]
         if not _ascii_count(total_logical) or not _ascii_count(total_files):
             errors.append("canonical role inventory Total row is malformed")
-        elif len(role_totals) == len(PRIMARY_ROLES) and (
-            sum(logical for logical, _files in role_totals) != int(total_logical)
-            or sum(files for _logical, files in role_totals) != int(total_files)
-        ):
-            errors.append("canonical role inventory totals do not reconcile")
+        elif len(role_totals) == len(PRIMARY_ROLES):
+            logical_total, file_total = int(total_logical), int(total_files)
+            if sum(logical for logical, _files in role_totals) != logical_total:
+                errors.append("canonical role inventory totals do not reconcile")
+            elif evaluation_schema == SCHEMA and sum(files for _logical, files in role_totals) != file_total:
+                errors.append("canonical role inventory totals do not reconcile")
+            elif evaluation_schema != SCHEMA and any(files > file_total for _logical, files in role_totals):
+                errors.append("canonical role inventory V1 source counts exceed the unique binding total")
 
     no_sets = "No runtime sets were identified."
     runtime_paragraphs = _subsection_paragraphs(
@@ -929,8 +945,9 @@ def main() -> int:
     try:
         report_text = args.report.read_text(encoding="utf-8")
         appendix_text = appendix.read_text(encoding="utf-8")
-        errors = validate(report_text)
-        errors.extend(validate_appendix(appendix_text))
+        evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:1" if args.evaluation_model_v1 else SCHEMA
+        errors = validate(report_text, evaluation_schema=evaluation_schema)
+        errors.extend(validate_appendix(appendix_text, evaluation_schema=evaluation_schema))
         errors.extend(validate_pair(report_text, appendix_text, str(args.report), str(appendix)))
     except (OSError, UnicodeError, subprocess.SubprocessError, ValueError) as error:
         print(f"validate_report.py: {error}", file=sys.stderr)

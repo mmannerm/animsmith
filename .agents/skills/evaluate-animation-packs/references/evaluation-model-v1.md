@@ -29,7 +29,8 @@ The independently validated projection must include its `sources` list, even
 when the list is empty, so derived source-file totals distinguish known zero
 from an absent projection.
 
-Every V1 model is a closed object with these fixed records: presentation; one
+Every V1 model is a closed object with these fixed records: presentation
+(including its canonical evaluation date); one
 current plus zero or more historical runs; manifest-bound clips and runtime
 sets; capability assessments; integration steps; one-owner issues;
 remediations; engine evidence; limitations; sources; fixed-slot narratives;
@@ -104,3 +105,18 @@ model authoritative only after their fixed views, AST assertions, and reviewed
 migration evidence land. Old schema identifiers must never be silently
 reinterpreted; a changed wire contract receives a new schema URN and explicit
 migration.
+
+## Fixed views
+
+`scripts/render_evaluation_model.py` accepts a strict V1 model and its
+independently validated `collection-output:2` binding, validates both, and
+emits the one primary decision report plus companion appendix. Both views carry
+the model schema/version, canonical digest, and renderer version. They are
+validated with the existing pinned Markdown AST workflow and additional
+model-to-view assertions; `--check` compares generated LF UTF-8 bytes without
+writing. The model's canonical `presentation.evaluation_date` supplies the
+report date, so rendering never depends on a clock.
+
+This adds no report migration, report discovery, legacy-manifest retirement,
+or library inventory API. Those remain separate accepted steps after the fixed
+renderer is reviewed.

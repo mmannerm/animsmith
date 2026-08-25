@@ -40,7 +40,7 @@ The animation-pack skill gate also uses Python 3, PyYAML 6.x, and JSON Schema
 4.x to validate skill metadata and the closed evaluation-model schema:
 
 ```console
-$ python3 -m pip install "PyYAML>=6,<7" "jsonschema>=4,<5"
+$ python3 -m pip install "PyYAML>=6,<7" "jsonschema>=4.18,<5"
 ```
 
 ## sccache
