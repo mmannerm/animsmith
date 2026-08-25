@@ -695,7 +695,7 @@ def _appendix_table(
     return table, [] if table is not None else [_missing_table(header)]
 
 
-def validate_appendix(text: str) -> list[str]:
+def validate_appendix(text: str, *, evaluation_schema: str = SCHEMA) -> list[str]:
     document = _parse_report_markdown(text)
     errors: list[str] = []
     if document["has_raw_html"]:
@@ -728,8 +728,8 @@ def validate_appendix(text: str) -> list[str]:
         errors.append("appendix must declare one canonical bold Evidence status")
     if _evaluation_date(document) is None:
         errors.append("appendix must declare a bold YYYY-MM-DD Evaluation date")
-    if not any(SCHEMA in paragraph["code"] for paragraph in document["paragraphs"]):
-        errors.append(f"appendix must identify evaluation manifest schema: {SCHEMA}")
+    if not any(evaluation_schema in paragraph["code"] for paragraph in document["paragraphs"]):
+        errors.append(f"appendix must identify evaluation manifest schema: {evaluation_schema}")
     if not any(link["destination"] == CANONICAL_LADDER for link in document["links"]):
         errors.append("appendix must link the canonical readiness ladder")
     if (
@@ -771,11 +771,14 @@ def validate_appendix(text: str) -> list[str]:
         total_logical, total_files = total_rows[0][1]["text"], total_rows[0][2]["text"]
         if not _ascii_count(total_logical) or not _ascii_count(total_files):
             errors.append("canonical role inventory Total row is malformed")
-        elif len(role_totals) == len(PRIMARY_ROLES) and (
-            sum(logical for logical, _files in role_totals) != int(total_logical)
-            or sum(files for _logical, files in role_totals) != int(total_files)
-        ):
-            errors.append("canonical role inventory totals do not reconcile")
+        elif len(role_totals) == len(PRIMARY_ROLES):
+            logical_total, file_total = int(total_logical), int(total_files)
+            if sum(logical for logical, _files in role_totals) != logical_total:
+                errors.append("canonical role inventory totals do not reconcile")
+            elif evaluation_schema == SCHEMA and sum(files for _logical, files in role_totals) != file_total:
+                errors.append("canonical role inventory totals do not reconcile")
+            elif evaluation_schema != SCHEMA and any(files > file_total for _logical, files in role_totals):
+                errors.append("canonical role inventory V1 source counts exceed the unique binding total")
 
     no_sets = "No runtime sets were identified."
     runtime_paragraphs = _subsection_paragraphs(

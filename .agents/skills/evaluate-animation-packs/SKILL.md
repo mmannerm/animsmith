@@ -194,6 +194,19 @@ binds to an independently validated `collection-output:2` projection; it does
 not parse collection-manifest TOML or make generated Markdown authoritative
 before the later renderer and migration slices.
 
+Render a validated V1 model with its independently validated binding through
+the one fixed renderer. It produces the paired Markdown views from the same
+canonical model and never reverse-imports Markdown as authority:
+
+```text
+.agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
+  MODEL.json --binding COLLECTION.json --report REPORT.md --appendix REPORT-evidence.md
+```
+
+Use `--check` in a clean generated-view checkout to byte-compare both files
+without writing. Basic/Sword report migration, report discovery, legacy
+retirement, and library-facing inventory work remain later slices.
+
 ## Run the untouched baseline
 
 Run the baseline before any conversion, repair, transform, or engine-side

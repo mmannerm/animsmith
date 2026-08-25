@@ -165,7 +165,7 @@
         {"$ref": "#/$defs/text"},
         {"anyOf": [
           {"allOf": [
-            {"pattern": "^https://[^/@\\s?#]+(?:[/?#][^@\\s]*)?$"},
+            {"pattern": "^https://[^/@\\s?#]+(?:[/?#][^@\\s<>]*)?$"},
             {"not": {"pattern": "[\\r\\n]"}},
             {"not": {"pattern": "(^|/)\\.\\.(/|$)"}}
           ]},
@@ -247,6 +247,7 @@
       "required": [
         "id",
         "title",
+        "evaluation_date",
         "verdict",
         "completeness",
         "confidence"
@@ -257,6 +258,11 @@
         },
         "title": {
           "$ref": "#/$defs/text"
+        },
+        "evaluation_date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "not": {"pattern": "[\\r\\n]"}
         },
         "verdict": {
           "enum": [

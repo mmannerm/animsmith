@@ -8,10 +8,12 @@ import json
 import math
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import jsonschema
+from referencing import Registry, Resource
 
 from evaluation_contract_v1 import (
     ACTIVATION_BASES, CLASSIFICATION_BASES, CONFIDENCE, COVERAGE_STATES,
@@ -32,6 +34,23 @@ from evaluation_model_v1 import (
 _MODEL_SCHEMA_PATH = Path(__file__).parents[1] / "schemas" / "evaluation-model-v1.schema.json"
 _MODEL_SCHEMA = json.loads(_MODEL_SCHEMA_PATH.read_text(encoding="utf-8"))
 _MODEL_SCHEMA_VALIDATOR = jsonschema.Draft202012Validator(_MODEL_SCHEMA)
+_SCHEMA_ROOT = Path(__file__).parents[4] / "docs" / "schemas"
+
+
+def _collection_output_validator() -> jsonschema.Draft202012Validator:
+    """Compile the exact offline registry used by collection-output V2."""
+    names = (
+        "collection-output-v2.schema.json", "output-v10.schema.json",
+        "output-v11.schema.json", "measurements-v15.schema.json",
+    )
+    documents = [json.loads((_SCHEMA_ROOT / name).read_text(encoding="utf-8")) for name in names]
+    registry = Registry().with_resources(
+        (document["$id"], Resource.from_contents(document)) for document in documents
+    )
+    return jsonschema.Draft202012Validator(documents[0], registry=registry)
+
+
+_COLLECTION_OUTPUT_VALIDATOR = _collection_output_validator()
 
 
 def _schema_errors(model: Any) -> list[str]:
@@ -124,7 +143,7 @@ def _public_locator(value: Any, path: str, errors: list[str]) -> bool:
     # Markdown/JSON paths or direct https citations. Absolute,
     # credential-bearing, data, parent-traversal, and arbitrary asset paths
     # could leak a local evaluation workspace.
-    https = re.fullmatch(r"https://[^/@\s?#]+(?:[/?#][^@\s]*)?", value)
+    https = re.fullmatch(r"https://[^/@\s?#]+(?:[/?#][^@\s<>]*)?", value)
     relative = re.fullmatch(r"[a-z0-9][a-z0-9._/-]*\.(?:md|json)", value)
     parent_segment = re.search(r"(?:^|/)\.\.(?:/|$)", value)
     if https and not parent_segment:
@@ -219,8 +238,11 @@ def _refs(value: Any, path: str, known: set[str], errors: list[str], *, check_da
 
 def _binding(binding: Any, errors: list[str]) -> tuple[dict[str, Any], dict[str, tuple[Any, ...]], dict[str, tuple[str, list[str]]], dict[str, dict[str, Any]], bool]:
     # This is a projection consumer, not a reimplementation of the TOML parser.
-    root = _object(binding, "binding", errors, {"schema", "command", "manifest", "clips", "runtime_sets", "sources"}, {"schema_version", "tool", "budget", "summary", "work"})
-    if root.get("schema") != COLLECTION_OUTPUT_SCHEMA or root.get("command") != "collection lint":
+    for error in sorted(_COLLECTION_OUTPUT_VALIDATOR.iter_errors(binding), key=lambda item: tuple(map(str, item.absolute_path))):
+        path = "binding" + "".join(f"[{part}]" if isinstance(part, int) else f".{part}" for part in error.absolute_path)
+        errors.append(f"{path} collection-output schema: {error.message}")
+    root = _object(binding, "binding", errors, {"schema", "schema_version", "tool", "command", "manifest", "budget", "summary", "work", "clips", "runtime_sets", "sources"})
+    if root.get("schema") != COLLECTION_OUTPUT_SCHEMA or root.get("schema_version") != 2 or root.get("command") != "collection lint":
         errors.append("binding must be an independently validated collection-output:2 lint envelope")
     manifest = _object(root.get("manifest"), "binding.manifest", errors, {"schema", "schema_version", "collection_id", "input"})
     _id(manifest.get("collection_id"), "binding.manifest.collection_id", errors)
@@ -262,7 +284,7 @@ def _binding(binding: Any, errors: list[str]) -> tuple[dict[str, Any], dict[str,
             clips[item["id"]] = (item["source"], item["take_index"], item["take_name"])
     sets: dict[str, tuple[str, list[str]]] = {}
     for index, raw in enumerate(_array(root.get("runtime_sets"), "binding.runtime_sets", errors)):
-        item = _object(raw, f"binding.runtime_sets[{index}]", errors, {"id", "kind", "members"})
+        item = _object(raw, f"binding.runtime_sets[{index}]", errors, {"id", "kind", "members"}, {"lifecycle", "decision", "gaps", "evidence"})
         members = _array(item.get("members"), f"binding.runtime_sets[{index}].members", errors)
         member_ids = [member.get("id") for member in members if isinstance(member, dict)]
         if isinstance(item.get("id"), str) and isinstance(item.get("kind"), str):
@@ -295,9 +317,14 @@ def validate_model(model: Any, binding: Any) -> list[str]:
     _sha(declared.get("manifest_sha256"), "model.binding.manifest_sha256", errors)
     if not isinstance(declared.get("manifest_bytes"), int) or isinstance(declared.get("manifest_bytes"), bool) or declared.get("manifest_bytes", -1) < 0:
         errors.append("model.binding.manifest_bytes must be a non-negative integer")
-    presentation = _object(root.get("presentation"), "model.presentation", errors, {"id", "title", "verdict", "completeness", "confidence"})
+    presentation = _object(root.get("presentation"), "model.presentation", errors, {"id", "title", "evaluation_date", "verdict", "completeness", "confidence"})
     _id(presentation.get("id"), "model.presentation.id", errors)
     _text(presentation.get("title"), "model.presentation.title", errors)
+    try:
+        if date.fromisoformat(presentation.get("evaluation_date", "")).isoformat() != presentation.get("evaluation_date"):
+            raise ValueError("not canonical")
+    except (TypeError, ValueError):
+        errors.append("model.presentation.evaluation_date must be a canonical YYYY-MM-DD date")
     if not _choice(presentation.get("verdict"), TECHNICAL_VERDICTS): errors.append("model.presentation.verdict has an unknown token")
     if not _choice(presentation.get("completeness"), EVALUATION_COMPLETENESS): errors.append("model.presentation.completeness has an unknown token")
     if not _choice(presentation.get("confidence"), CONFIDENCE): errors.append("model.presentation.confidence has an unknown token")
