@@ -1024,3 +1024,88 @@ fn v2_resolution_marks_exact_limit_complete() {
         ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
     );
 }
+
+#[test]
+fn v2_resolution_validates_only_the_retained_prefix_before_bounded_overflow() {
+    struct ExactInventory<'a> {
+        rows: usize,
+        next_calls: &'a Cell<usize>,
+        malformed_at: Option<usize>,
+        malformed: &'a str,
+    }
+
+    impl<'a> Iterator for ExactInventory<'a> {
+        type Item = &'a str;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let index = self.next_calls.get();
+            if index >= self.rows {
+                return None;
+            }
+            self.next_calls.set(index + 1);
+            Some(if self.malformed_at == Some(index) {
+                self.malformed
+            } else {
+                "valid"
+            })
+        }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let remaining = self.rows.saturating_sub(self.next_calls.get());
+            (remaining, Some(remaining))
+        }
+    }
+
+    impl ExactSizeIterator for ExactInventory<'_> {
+        fn len(&self) -> usize {
+            self.rows.saturating_sub(self.next_calls.get())
+        }
+    }
+
+    let bevy = resolve_static(EngineDeclaration {
+        selection: Some(selection("bevy", "0.19.0", "gltf-asset-loader")),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap();
+    let malformed = "x".repeat(ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1);
+
+    let prefix_calls = Cell::new(0);
+    assert!(matches!(
+        bevy.resolve_input_v2_iter(
+            SourceFormatV1::GltfJson,
+            ExactInventory {
+                rows: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 8,
+                next_calls: &prefix_calls,
+                malformed_at: Some(0),
+                malformed: &malformed,
+            },
+        ),
+        Err(ResolutionError::ResolvedSettingsContract(_))
+    ));
+    assert_eq!(prefix_calls.get(), 1);
+
+    let tail_calls = Cell::new(0);
+    let resolved = bevy
+        .resolve_input_v2_iter(
+            SourceFormatV1::GltfJson,
+            ExactInventory {
+                rows: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 8,
+                next_calls: &tail_calls,
+                malformed_at: Some(ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS),
+                malformed: &malformed,
+            },
+        )
+        .unwrap();
+    assert_eq!(tail_calls.get(), ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS);
+    assert_eq!(
+        resolved.clip_coverage(),
+        ResolvedClipCoverageV2::Partial {
+            reason: ResolvedClipCoverageReasonV2::ActualClipRowsExceeded
+        }
+    );
+    assert_eq!(
+        resolved.work().actual_clip_rows_inspected(),
+        ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1
+    );
+}

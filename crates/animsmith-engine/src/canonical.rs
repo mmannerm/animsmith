@@ -201,6 +201,21 @@ fn project_settings<'a>(
     )
 }
 
+/// Validate one materialized clip row before a bounded resolver advances.
+pub(crate) fn validate_clip_settings(
+    clip_name: &str,
+    values: &BTreeMap<SettingId, SettingValue>,
+) -> Result<(), EngineContractError> {
+    EngineClipSettingsV1::new(
+        clip_name,
+        values
+            .iter()
+            .map(|(id, value)| EngineSettingRowV1::new(setting_id(*id), setting_value(value)))
+            .collect(),
+    )?;
+    Ok(())
+}
+
 fn fact_state(state: &FactState) -> EngineFactStateV1 {
     match state {
         FactState::Known(value) => EngineFactStateV1::Known(fact_value(value)),

@@ -956,6 +956,18 @@ pub enum EvaluationError {
     /// Explicit selection named an id absent from the supplied catalog.
     #[error("unknown selected check id {0:?}")]
     UnknownSelection(String),
+    /// A V2 production rule did not emit exactly its preallocated slots.
+    #[error(
+        "check {check_id:?} emitted {emitted} V2 prediction facets after receiving {allocated} allocated slots"
+    )]
+    PredictionAllocationMismatch {
+        /// Stable id of the production rule.
+        check_id: &'static str,
+        /// Candidate plus summary slots assigned before evaluation.
+        allocated: usize,
+        /// Facets actually returned by the rule.
+        emitted: usize,
+    },
     /// Check evidence violates the derived coverage-state invariants.
     #[error("check {check_id:?} emitted invalid output: {reason}")]
     InvalidCheckOutput {
@@ -1158,10 +1170,18 @@ pub fn evaluate_checks_v2(
             .find(|allocation| allocation.rule_id() == check.id())
             .copied()
             .expect("active check was allocated");
-        let mut evaluation = CheckEvaluation::evaluated(
-            check.id(),
-            check.evaluate_with_prediction_allocation_v2(ctx, allocation),
-        )?;
+        let output = check.evaluate_with_prediction_allocation_v2(ctx, allocation);
+        let emitted = output
+            .engine_prediction_v2()
+            .map_or(0, |prediction| prediction.facets().len());
+        if emitted != allocation.emitted_slots() {
+            return Err(EvaluationError::PredictionAllocationMismatch {
+                check_id: check.id(),
+                allocated: allocation.emitted_slots(),
+                emitted,
+            });
+        }
+        let mut evaluation = CheckEvaluation::evaluated(check.id(), output)?;
         if let Some(setting) = setting {
             evaluation.override_severity(setting);
         }
@@ -1186,9 +1206,10 @@ mod authority_contract {
     use crate::InputIdentity;
     use crate::finding::{Finding, Severity};
     use crate::prediction::{
-        EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionV1,
-        PredictionBasisReferenceV1, PredictionProvenanceIdentityV1, PredictionScalarV1,
-        PredictionUnavailableReasonV1,
+        EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionFacetV2,
+        EnginePredictionV1, EnginePredictionV2, PredictionBasisReferenceV1,
+        PredictionProvenanceIdentityV1, PredictionProvenanceIdentityV2, PredictionScalarV1,
+        PredictionUnavailableReasonV1, PredictionUnavailableReasonV2,
     };
     use crate::{
         Applicability, Check, CheckCtx, CheckSelection, Config, Document, MetricGrids,
@@ -1201,6 +1222,30 @@ mod authority_contract {
         applicable: bool,
         allocations: Rc<RefCell<Vec<(String, usize, bool)>>>,
         constructed_candidates: Rc<RefCell<usize>>,
+    }
+
+    struct EmptyAllocatedCheck;
+
+    impl Check for EmptyAllocatedCheck {
+        fn id(&self) -> &'static str {
+            "test:empty-allocated"
+        }
+
+        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+            panic!("V2 orchestration must call the allocation-aware hook")
+        }
+
+        fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
+            PredictionFacetDemandV2::Exact(1)
+        }
+
+        fn evaluate_with_prediction_allocation_v2(
+            &self,
+            _ctx: &CheckCtx<'_>,
+            _allocation: PredictionRuleAllocationV2<'_>,
+        ) -> CheckOutput {
+            CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
+        }
     }
 
     impl Check for AllocatedSyntheticCheck {
@@ -1237,7 +1282,46 @@ mod authority_contract {
             // This represents actual candidate construction in a production
             // rule: omitted capacity must not be evaluated post hoc.
             *self.constructed_candidates.borrow_mut() += allocation.candidate_capacity();
-            CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
+            let basis = || {
+                EnginePredictionBasisV1::new(vec![
+                    PredictionBasisReferenceV1::profile_fact("animation_addressability").unwrap(),
+                ])
+                .unwrap()
+            };
+            let mut scopes = Vec::with_capacity(allocation.candidate_capacity());
+            let mut facets = Vec::with_capacity(allocation.emitted_slots());
+            for index in 0..allocation.candidate_capacity() {
+                let scope =
+                    EvaluationScope::new(EvaluationScopeCode::custom("test:allocated-candidate"))
+                        .subject(format!("{}:{index}", self.id));
+                scopes.push(scope.clone());
+                facets.push(EnginePredictionFacetV2::available(scope, basis()).unwrap());
+            }
+            if allocation.summary_required() {
+                facets.push(
+                    EnginePredictionFacetV2::required_unavailable(
+                        EvaluationScope::new(EvaluationScopeCode::custom(match self.id {
+                            "test:first" => "test:first:facet-budget",
+                            "test:second" => "test:second:facet-budget",
+                            "test:active" => "test:active:facet-budget",
+                            _ => "test:synthetic:facet-budget",
+                        })),
+                        basis(),
+                        vec![PredictionUnavailableReasonV2::FacetBudgetExceeded],
+                    )
+                    .unwrap(),
+                );
+            }
+            if facets.is_empty() {
+                return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            }
+            let identity: PredictionProvenanceIdentityV2 = serde_json::from_value(
+                serde_json::to_value(InputIdentity::from_bytes(b"synthetic-v2-provenance"))
+                    .unwrap(),
+            )
+            .unwrap();
+            CheckOutput::from_coverage(Vec::new(), scopes, Vec::new())
+                .with_engine_prediction_v2(EnginePredictionV2::new(identity, facets).unwrap())
         }
     }
 
@@ -1363,6 +1447,25 @@ mod authority_contract {
         );
         assert_eq!(*constructed.borrow(), 4_096);
         assert_eq!(records[1].applicability(), Applicability::NotApplicable);
+    }
+
+    #[test]
+    fn v2_orchestration_rejects_output_that_does_not_fill_its_allocation() {
+        let doc = Document::default();
+        let grids = MetricGrids::new(&doc);
+        let roles = ResolvedRoles::default();
+        let config = Config::default();
+        let ctx = CheckCtx::new(&grids, &roles, &config);
+        let checks: Vec<Box<dyn Check>> = vec![Box::new(EmptyAllocatedCheck)];
+
+        assert!(matches!(
+            evaluate_checks_v2(&ctx, &checks, CheckSelection::All),
+            Err(EvaluationError::PredictionAllocationMismatch {
+                check_id: "test:empty-allocated",
+                allocated: 1,
+                emitted: 0,
+            })
+        ));
     }
 
     #[test]

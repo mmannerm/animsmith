@@ -4264,6 +4264,26 @@ mod tests {
         .unwrap();
 
         assert_ne!(complete.settings_identity(), partial.settings_identity());
+        for changed_work in [
+            ResolvedEngineSettingsWorkV2::new(
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS - 1,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            ),
+            ResolvedEngineSettingsWorkV2::new(
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+                ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS - 1,
+            ),
+        ] {
+            let mut changed = complete.clone();
+            changed.work = changed_work;
+            assert_ne!(
+                complete.settings_identity(),
+                &changed.computed_identity(&profile),
+                "every bounded work counter must change the V2 identity preimage"
+            );
+        }
         complete.validate_against(&profile).unwrap();
         partial.validate_against(&profile).unwrap();
 

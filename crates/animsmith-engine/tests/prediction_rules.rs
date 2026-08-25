@@ -858,7 +858,18 @@ fn v2_raw_clip_bound_has_complete_4096_facets_and_n_plus_one_reasons() {
         &EngineAddressabilityCheckV2::new(&source, Some(&provenance)).unwrap(),
         &source,
     );
-    let facet = &output.engine_prediction_v2().unwrap().facets()[0];
+    let prediction = output.engine_prediction_v2().unwrap();
+    assert_eq!(prediction.facets().len(), 1);
+    let facet = &prediction.facets()[0];
+    assert_eq!(
+        facet.scope().code.as_str(),
+        "animation_asset_label_inventory"
+    );
+    assert!(facet.scope().subject.is_none());
+    assert_eq!(
+        facet.state(),
+        EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+    );
     assert_eq!(
         facet
             .reasons()

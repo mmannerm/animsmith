@@ -1,4 +1,4 @@
-use crate::canonical::settings_identity;
+use crate::canonical::{settings_identity, validate_clip_settings};
 use crate::{
     DefaultStatus, EngineDeclaration, EngineProfile, InvalidSettingReason, ProfileSelection,
     ResolutionError, SettingApplicability, SettingDomain, SettingId, SettingLocation, SettingMap,
@@ -306,6 +306,7 @@ impl StaticResolution {
                 });
             }
         }
+        validate_clip_settings(clip_name, &materialized)?;
         Ok(ResolvedClipSettings {
             clip_name: clip_name.to_owned(),
             settings: materialized,
