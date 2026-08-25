@@ -327,7 +327,8 @@ pub use transition_family::{
     TransitionFamilyManifestIdentityV1, TransitionFamilyTolerancesV1,
 };
 pub use transition_pose_evaluation::{
-    SkeletonBasisBoneV1, SkeletonBasisError, SkeletonBasisV1, TRANSITION_POSE_EVALUATION_V1_ID,
+    CollectionTransitionPoseMemberInputV1, SkeletonBasisBoneV1, SkeletonBasisError,
+    SkeletonBasisV1, TRANSITION_POSE_EVALUATION_V1_ID,
     TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_COMPARISONS,
     TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_OFFENDERS,
     TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_PAIR_BOUNDARIES,
@@ -344,5 +345,6 @@ pub use transition_pose_evaluation::{
     TransitionPoseEvaluationControlError, TransitionPoseEvaluationV1,
     TransitionPoseFamilyEvaluationV1, TransitionPoseMemberV1, TransitionPosePairEvaluationV1,
     TransitionPoseReasonV1, TransitionPoseRotationOffenderV1, TransitionPoseStatusV1,
-    TransitionPoseTranslationOffenderV1, evaluate_document_transition_poses_v1,
+    TransitionPoseTranslationOffenderV1, evaluate_collection_transition_poses_v1,
+    evaluate_document_transition_poses_v1,
 };

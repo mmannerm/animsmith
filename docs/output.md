@@ -34,6 +34,18 @@ operator error (exit 2), rather than a successful result with a best-effort
 diagnostic. V1 evaluates one loaded document and does not imply collection
 source reload, graph generation, engine runtime behavior, or input mutation.
 
+`animsmith collection evaluate-transition-poses COLLECTION.toml --families
+TRANSITION_FAMILIES.toml --format json` uses the same immutable result schema,
+with `subject_input` bound to the exact collection manifest bytes. It verifies
+the envelope's manifest identity and every logical/source/take witness before
+source work. Missing, unreadable, oversized, digest-mismatched, malformed, or
+otherwise unusable source input makes its whole family
+`incomplete/not_evaluated` with `member_unavailable`; it never compares a
+surviving subset. A readable raw source retains its exact `source_input` even
+when unusable; only a source for which no complete bytes were available uses
+`source_input: null`, and only in a `member_unavailable` family. Per-family
+members may span documents but must have one exact normalized skeleton basis.
+
 ## Collection lint
 
 `animsmith collection lint COLLECTION.toml --format json` emits the separate

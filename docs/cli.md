@@ -55,6 +55,7 @@ animsmith evaluate-transition-poses <input.glb|input.gltf|input.fbx> [--config a
 animsmith collection lint <collection.toml> [--format json]
 animsmith collection generate-contact-fragment <manifest.toml> --clip <logical-id> -o <out.json> [--format text|json]
 animsmith collection evaluate-directional-speed --policy <policy.toml> --evidence <collection-output.json> [--format json]
+animsmith collection evaluate-transition-poses <collection.toml> --families <transition-families.toml> --format json
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
@@ -223,12 +224,12 @@ tangents.
 The code reports what the run *did*, never how well it could report it. This
 holds for parser-rendered help/version, text, Markdown, and every `--format json`
 path (`measure`, `lint`,
-`evaluate-transition-poses`, `collection lint`, `collection evaluate-directional-speed`,
+`evaluate-transition-poses`, `collection evaluate-transition-poses`, `collection lint`, `collection evaluate-directional-speed`,
 `diff`, `convert`, `assemble`, `scale`, `generate addressability`). If
 stdout cannot accept the result — a closed pipe or full filesystem — the
 checked write never panics, a best-effort checked diagnostic goes to stderr,
 and the stdout-bearing path's already-established code stands **except for
-`evaluate-transition-poses`**. That standalone immutable result has no
+`evaluate-transition-poses` or `collection evaluate-transition-poses`**. These immutable results have no
 sidecar or previously established outcome: a failed stdout write is an
 operator error, produces no usable result, and exits 2. Thus
 `lint … --format text | head` still
