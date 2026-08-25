@@ -476,3 +476,88 @@ fn failed_standalone_result_delivery_is_an_operator_error() {
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot write JSON output to stdout"));
 }
+
+#[test]
+fn collection_command_binds_manifest_and_compares_cross_file_members() {
+    let dir = tempdir("collection");
+    let walk = dir.path().join("walk.glb");
+    let run = dir.path().join("run.glb");
+    let manifest = dir.path().join("collection.toml");
+    let families = dir.path().join("families.toml");
+    write_document(&walk, false);
+    write_document(&run, true);
+    let manifest_bytes = r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "test"
+sources = [
+  { key = "walk", path = "walk.glb" },
+  { key = "run", path = "run.glb" },
+]
+clips = [
+  { id = "test/walk", source = "walk", take_index = 0, take_name = "walk" },
+  { id = "test/run", source = "run", take_index = 1, take_name = "run" },
+]
+"#;
+    std::fs::write(&manifest, manifest_bytes).unwrap();
+    let identity = InputIdentity::from_bytes(manifest_bytes.as_bytes());
+    std::fs::write(
+        &families,
+        format!(
+            r#"schema = "urn:animsmith:schema:transition-family:1"
+schema_version = 1
+scope = "collection"
+collection_id = "test"
+manifest_input_identity = {{ sha256 = "{}", bytes = {} }}
+[[families]]
+family_id = "test/walk_to_run"
+boundary = "entry"
+[families.basis]
+translation = "skeleton-local-metres"
+rotation = "skeleton-local-degrees"
+time = "normalized-clip"
+[families.tolerances]
+translation_m = 0.0
+rotation_deg = 0.0
+time_normalized = 0.0
+[[families.members]]
+logical_id = "test/walk"
+source = "walk"
+take_index = 0
+take_name = "walk"
+[[families.members]]
+logical_id = "test/run"
+source = "run"
+take_index = 1
+take_name = "run"
+"#,
+            identity.sha256(),
+            identity.bytes()
+        ),
+    )
+    .unwrap();
+    let output = animsmith()
+        .current_dir(dir.path())
+        .args([
+            "collection",
+            "evaluate-transition-poses",
+            "collection.toml",
+            "--families",
+            "families.toml",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let value = json(&output);
+    assert_schema(&value);
+    assert_eq!(
+        value["subject_input"],
+        serde_json::to_value(identity).unwrap()
+    );
+    assert_eq!(value["decision"], "finding");
+    assert_ne!(
+        value["families"][0]["members"][0]["source_input"],
+        value["families"][0]["members"][1]["source_input"]
+    );
+}

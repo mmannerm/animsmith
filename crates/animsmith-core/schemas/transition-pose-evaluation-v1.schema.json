@@ -60,7 +60,7 @@
         "reason": { "$ref": "#/$defs/reason" }, "members": { "type": "array", "minItems": 2, "maxItems": 4096, "items": { "$ref": "#/$defs/member" } },
         "skeleton_basis_input": { "$ref": "#/$defs/identity" }, "pairs": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/pair" } }
       },
-      "allOf": [{ "$ref": "#/$defs/family_state" }]
+      "allOf": [{ "$ref": "#/$defs/family_state" }, { "if": { "properties": { "reason": { "const": "member_unavailable" } }, "required": ["reason"] }, "then": true, "else": { "properties": { "members": { "items": { "properties": { "source_input": { "$ref": "#/$defs/identity" } }, "required": ["source_input"] } } } } }]
     },
     "top_level_state": {
       "oneOf": [

@@ -500,6 +500,89 @@ pub enum TransitionPoseEvaluationControlError {
     /// Even the deterministic bounded result summary could not be serialized.
     #[error("transition-pose result exceeds the V1 result cap")]
     ResultTooLarge,
+    /// A prepared collection member no longer agrees with its immutable
+    /// declaration witness.
+    #[error("collection transition-pose declaration member witness is structurally contradictory")]
+    InvalidCollectionMemberWitness,
+}
+
+/// One already resolved collection member supplied to the format-neutral
+/// collection evaluator.
+///
+/// The collection CLI owns filesystem access and constructs this only after
+/// it has checked the manifest's logical/source/take binding. The core repeats
+/// that witness comparison before sampling so a stale or reordered adapter
+/// input cannot become an apparently valid result.
+#[derive(Clone, Copy)]
+pub struct CollectionTransitionPoseMemberInputV1<'a> {
+    logical_id: &'a crate::CollectionLogicalIdV1,
+    source: &'a crate::CollectionSourceKeyV1,
+    take_index: u64,
+    take_name: &'a str,
+    source_input: Option<&'a InputIdentity>,
+    document: Option<&'a Document>,
+}
+
+impl<'a> CollectionTransitionPoseMemberInputV1<'a> {
+    /// Construct one available member from its exact raw source and decoded
+    /// document.
+    #[must_use]
+    pub const fn available(
+        logical_id: &'a crate::CollectionLogicalIdV1,
+        source: &'a crate::CollectionSourceKeyV1,
+        take_index: u64,
+        take_name: &'a str,
+        source_input: &'a InputIdentity,
+        document: &'a Document,
+    ) -> Self {
+        Self {
+            logical_id,
+            source,
+            take_index,
+            take_name,
+            source_input: Some(source_input),
+            document: Some(document),
+        }
+    }
+
+    /// Construct one unavailable member. It deliberately retains no invented
+    /// source identity or substitute document.
+    #[must_use]
+    pub const fn unavailable(
+        logical_id: &'a crate::CollectionLogicalIdV1,
+        source: &'a crate::CollectionSourceKeyV1,
+        take_index: u64,
+        take_name: &'a str,
+    ) -> Self {
+        Self {
+            logical_id,
+            source,
+            take_index,
+            take_name,
+            source_input: None,
+            document: None,
+        }
+    }
+
+    /// Construct an unavailable member whose raw source bytes were read and
+    /// identified but could not provide a usable document/take.
+    #[must_use]
+    pub const fn unavailable_with_source_input(
+        logical_id: &'a crate::CollectionLogicalIdV1,
+        source: &'a crate::CollectionSourceKeyV1,
+        take_index: u64,
+        take_name: &'a str,
+        source_input: &'a InputIdentity,
+    ) -> Self {
+        Self {
+            logical_id,
+            source,
+            take_index,
+            take_name,
+            source_input: Some(source_input),
+            document: None,
+        }
+    }
 }
 
 /// Evaluate document-local transition families without I/O.
@@ -526,6 +609,490 @@ pub fn evaluate_document_transition_poses_v1(
         document,
         TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES,
     )
+}
+
+/// Evaluate collection-owned transition families over real resolved members.
+///
+/// The caller must preserve declaration family/member order in `members` and
+/// provide the exact manifest input identity. Filesystem and loader failures
+/// are represented with [`CollectionTransitionPoseMemberInputV1::unavailable`]
+/// and become a whole-family `member_unavailable` result; stale declaration
+/// witnesses remain control errors.
+///
+/// # Errors
+///
+/// Returns a control error for the wrong declaration scope, a stale member
+/// witness, invalid skeleton authority, or an unrepresentable bounded result.
+pub fn evaluate_collection_transition_poses_v1(
+    declaration: &TransitionFamilyDeclarationInputV1,
+    manifest_input: InputIdentity,
+    members: &[CollectionTransitionPoseMemberInputV1<'_>],
+) -> Result<TransitionPoseEvaluationV1, TransitionPoseEvaluationControlError> {
+    let families = declaration
+        .declaration()
+        .collection_families()
+        .ok_or(TransitionPoseEvaluationControlError::WrongDeclarationScope)?;
+    let expected_members = families
+        .iter()
+        .map(|family| family.members().len())
+        .sum::<usize>();
+    if expected_members != members.len() {
+        return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
+    }
+    let mut result = TransitionPoseEvaluationV1 {
+        schema: TRANSITION_POSE_EVALUATION_V1_ID,
+        schema_version: TRANSITION_POSE_EVALUATION_V1_SCHEMA_VERSION,
+        status: TransitionPoseStatusV1::Complete,
+        decision: TransitionPoseDecisionV1::Pass,
+        reason: None,
+        declaration_input: declaration.source_identity().clone(),
+        declaration_normalized: declaration.normalized_identity().clone(),
+        subject_input: manifest_input,
+        families: Vec::with_capacity(families.len()),
+    };
+    let mut cursor = 0usize;
+    let mut ready = Vec::<CollectionFamilyReady<'_>>::new();
+    for (family_index, family) in families.iter().enumerate() {
+        let family_members = &members[cursor..cursor + family.members().len()];
+        cursor += family_members.len();
+        let mut row = collection_family_result_row(family, family_members)?;
+        // Resolve every structural witness before accepting a normal
+        // unavailable/basis result. A stale later member must never be hidden
+        // behind an earlier unavailable source.
+        for (declared, prepared) in family.members().iter().zip(family_members) {
+            if declared.logical_id() != prepared.logical_id
+                || declared.source() != prepared.source
+                || declared.take_index() != prepared.take_index
+                || declared.take_name() != prepared.take_name
+            {
+                return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
+            }
+            if let Some(document) = prepared.document {
+                let index = usize::try_from(declared.take_index()).map_err(|_| {
+                    TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness
+                })?;
+                document
+                    .clips
+                    .get(index)
+                    .filter(|clip| clip.name == declared.take_name())
+                    .ok_or(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness)?;
+            }
+        }
+        let mut selected = Vec::with_capacity(family_members.len());
+        let mut basis: Option<SkeletonBasisV1> = None;
+        for (declared, prepared) in family.members().iter().zip(family_members) {
+            let (Some(source_input), Some(document)) = (prepared.source_input, prepared.document)
+            else {
+                row.reason = Some(TransitionPoseReasonV1::MemberUnavailable);
+                selected.clear();
+                break;
+            };
+            let index = usize::try_from(declared.take_index()).expect("preflighted take index");
+            let clip = &document.clips[index];
+            if !skeleton_input_is_within_limits(&document.skeleton) {
+                row.reason = Some(TransitionPoseReasonV1::MemberUnavailable);
+                selected.clear();
+                break;
+            }
+            let current = match validate_transition_pose_skeleton(&document.skeleton)
+                .and_then(|()| SkeletonBasisV1::from_skeleton(&document.skeleton))
+            {
+                Ok(value) => value,
+                Err(_) => {
+                    row.reason = Some(TransitionPoseReasonV1::MemberUnavailable);
+                    selected.clear();
+                    break;
+                }
+            };
+            if let Some(existing) = &basis {
+                if existing.identity() != current.identity() {
+                    row.reason = Some(TransitionPoseReasonV1::SkeletonBasisMismatch);
+                    selected.clear();
+                    break;
+                }
+            } else {
+                basis = Some(current);
+            }
+            selected.push((document, clip, source_input));
+        }
+        if !selected.is_empty() {
+            let basis = basis.as_ref().expect("selected family has basis");
+            row.skeleton_basis_input = Some(basis.identity().clone());
+        }
+        let row_index = result.families.len();
+        result.families.push(row);
+        if !selected.is_empty() {
+            ready.push(CollectionFamilyReady {
+                family_index,
+                row_index,
+                family,
+                members: selected,
+            });
+        }
+    }
+    let policy_rejected = families
+        .iter()
+        .map(|family| family.tolerances().time_normalized() != 0.0)
+        .collect::<Vec<_>>();
+    let plans = plan_collection_families(families, &ready, &policy_rejected);
+    let track_limits = plan_collection_track_limits(families, &ready, &policy_rejected);
+    let mut detailed_name_budget = collection_detailed_budget_after_base(&result)?;
+    for ready_family in ready {
+        let row = &mut result.families[ready_family.row_index];
+        if policy_rejected[ready_family.family_index] {
+            row.reason = Some(TransitionPoseReasonV1::TimeToleranceUnsupported);
+        } else if let Some(reason) = plans[ready_family.family_index] {
+            row.reason = Some(reason);
+        } else if track_limits[ready_family.family_index] {
+            row.reason = Some(TransitionPoseReasonV1::InputLimit);
+        } else if !reserve_collection_detailed_name_budget(
+            &mut detailed_name_budget,
+            ready_family.family,
+            &ready_family.members[0].0.skeleton,
+        ) {
+            row.reason = Some(TransitionPoseReasonV1::ResultLimit);
+        } else {
+            let endpoints = match strict_collection_endpoints(
+                &ready_family.members,
+                ready_family.family.boundary(),
+            ) {
+                Ok(value) => value,
+                Err(reason) => {
+                    row.reason = Some(reason);
+                    continue;
+                }
+            };
+            row.pairs = match compare_pairs(
+                &endpoints,
+                ready_family.family.boundary(),
+                ready_family.family.tolerances(),
+                &ready_family.members[0].0.skeleton,
+            ) {
+                Ok(pairs) => pairs,
+                Err(reason) => {
+                    row.reason = Some(reason);
+                    continue;
+                }
+            };
+            row.status = TransitionPoseStatusV1::Complete;
+            row.decision = if row.pairs.iter().any(pair_has_finding) {
+                TransitionPoseDecisionV1::Finding
+            } else {
+                TransitionPoseDecisionV1::Pass
+            };
+        }
+    }
+    derive_result_state(&mut result);
+    enforce_result_limit(&mut result, TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES)?;
+    Ok(result)
+}
+
+struct CollectionFamilyReady<'a> {
+    family_index: usize,
+    row_index: usize,
+    family: &'a crate::CollectionTransitionFamilyV1,
+    members: Vec<(&'a Document, &'a Clip, &'a InputIdentity)>,
+}
+
+fn collection_family_result_row(
+    family: &crate::CollectionTransitionFamilyV1,
+    members: &[CollectionTransitionPoseMemberInputV1<'_>],
+) -> Result<TransitionPoseFamilyEvaluationV1, TransitionPoseEvaluationControlError> {
+    if family.members().len() != members.len() {
+        return Err(TransitionPoseEvaluationControlError::InvalidCollectionMemberWitness);
+    }
+    Ok(TransitionPoseFamilyEvaluationV1 {
+        family_id: family.family_id().as_str().to_owned(),
+        status: TransitionPoseStatusV1::Incomplete,
+        decision: TransitionPoseDecisionV1::NotEvaluated,
+        reason: None,
+        members: family
+            .members()
+            .iter()
+            .zip(members)
+            .map(|(declared, prepared)| TransitionPoseMemberV1 {
+                take_index: declared.take_index(),
+                take_name: declared.take_name().to_owned(),
+                source_input: prepared.source_input.cloned(),
+            })
+            .collect(),
+        skeleton_basis_input: None,
+        pairs: Vec::new(),
+    })
+}
+
+fn plan_collection_families(
+    families: &[crate::CollectionTransitionFamilyV1],
+    ready: &[CollectionFamilyReady<'_>],
+    policy_rejected: &[bool],
+) -> Vec<Option<TransitionPoseReasonV1>> {
+    let mut by_family = vec![None; families.len()];
+    for (ready_index, family) in ready.iter().enumerate() {
+        by_family[family.family_index] = Some(ready_index);
+    }
+    let mut aggregate_pairs = 0usize;
+    let mut aggregate_comparisons = 0usize;
+    let mut aggregate_retention = 0usize;
+    families
+        .iter()
+        .enumerate()
+        .map(|(index, family)| {
+            let Some(ready) = by_family[index].map(|ready_index| &ready[ready_index]) else {
+                return None;
+            };
+            if policy_rejected[index] {
+                return None;
+            }
+            let boundaries = match family.boundary() {
+                TransitionFamilyBoundaryV1::Entry | TransitionFamilyBoundaryV1::Exit => 1usize,
+                TransitionFamilyBoundaryV1::Both => 2usize,
+            };
+            let pair_boundaries = checked_pair_count(family.members().len())
+                .and_then(|pairs| pairs.checked_mul(boundaries));
+            let bones = ready.members[0].0.skeleton.bones.len();
+            let comparisons = pair_boundaries.and_then(|pairs| pairs.checked_mul(bones));
+            let retention = pair_boundaries.and_then(|pairs| {
+                bones
+                    .min(TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS)
+                    .checked_add(bones.min(TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS))
+                    .and_then(|per_pair| pairs.checked_mul(per_pair))
+            });
+            match (pair_boundaries, comparisons, retention) {
+                (Some(pairs), _, _)
+                    if pairs > TRANSITION_POSE_EVALUATION_V1_MAX_FAMILY_PAIR_BOUNDARIES =>
+                {
+                    Some(TransitionPoseReasonV1::FamilyWorkLimit)
+                }
+                (Some(pairs), Some(comparisons), Some(_))
+                    if aggregate_pairs.checked_add(pairs).is_none_or(|value| {
+                        value > TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_PAIR_BOUNDARIES
+                    }) || aggregate_comparisons.checked_add(comparisons).is_none_or(
+                        |value| value > TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_COMPARISONS,
+                    ) =>
+                {
+                    Some(TransitionPoseReasonV1::AggregateWorkLimit)
+                }
+                (Some(_), Some(_), Some(retention))
+                    if aggregate_retention
+                        .checked_add(retention)
+                        .is_none_or(|value| {
+                            value > TRANSITION_POSE_EVALUATION_V1_MAX_AGGREGATE_OFFENDERS
+                        }) =>
+                {
+                    Some(TransitionPoseReasonV1::RetentionLimit)
+                }
+                (Some(pairs), Some(comparisons), Some(retention)) => {
+                    aggregate_pairs += pairs;
+                    aggregate_comparisons += comparisons;
+                    aggregate_retention += retention;
+                    None
+                }
+                _ => Some(TransitionPoseReasonV1::AggregateWorkLimit),
+            }
+        })
+        .collect()
+}
+
+fn plan_collection_track_limits(
+    families: &[crate::CollectionTransitionFamilyV1],
+    ready: &[CollectionFamilyReady<'_>],
+    policy_rejected: &[bool],
+) -> Vec<bool> {
+    let mut by_family = vec![None; families.len()];
+    for (ready_index, family) in ready.iter().enumerate() {
+        by_family[family.family_index] = Some(ready_index);
+    }
+    let mut aggregate = 0usize;
+    families
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            let Some(ready) = by_family[index].map(|ready_index| &ready[ready_index]) else {
+                return false;
+            };
+            if policy_rejected[index] {
+                return false;
+            }
+            let bones = ready.members[0].0.skeleton.bones.len();
+            let (Some(raw), Some(selected)) = (bones.checked_mul(3), bones.checked_mul(2)) else {
+                return true;
+            };
+            let mut family_elements = 0usize;
+            for (_, clip, _) in &ready.members {
+                if clip.tracks.len() > raw {
+                    return true;
+                }
+                let mut selected_tracks = 0usize;
+                for track in clip
+                    .tracks
+                    .iter()
+                    .filter(|track| is_transition_pose_property(track.property))
+                {
+                    selected_tracks += 1;
+                    if selected_tracks > selected {
+                        return true;
+                    }
+                    let Some(elements) = track.times.len().checked_add(track.values.len()) else {
+                        return true;
+                    };
+                    let Some(total) = family_elements.checked_add(elements) else {
+                        return true;
+                    };
+                    if total > TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACK_ELEMENTS {
+                        return true;
+                    }
+                    family_elements = total;
+                }
+            }
+            let Some(total) = aggregate.checked_add(family_elements) else {
+                return true;
+            };
+            if total > TRANSITION_POSE_EVALUATION_V1_MAX_SELECTED_TRACK_ELEMENTS {
+                return true;
+            }
+            aggregate = total;
+            false
+        })
+        .collect()
+}
+
+fn collection_detailed_budget_after_base(
+    result: &TransitionPoseEvaluationV1,
+) -> Result<usize, TransitionPoseEvaluationControlError> {
+    let mut base = result.clone();
+    base.status = TransitionPoseStatusV1::Incomplete;
+    base.decision = TransitionPoseDecisionV1::NotEvaluated;
+    for family in &mut base.families {
+        family.reason = Some(TransitionPoseReasonV1::TimeToleranceUnsupported);
+        family.pairs.clear();
+    }
+    let bytes = canonical_bytes(&base, TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES)
+        .map_err(|_| TransitionPoseEvaluationControlError::ResultTooLarge)?
+        .len();
+    // A null member source is truthful only for an unavailable source. Reserve
+    // the larger possible identity spelling nevertheless, so a future source
+    // becoming available cannot make detail admission depend on that absence.
+    let absent_source_reserve = base
+        .families
+        .iter()
+        .flat_map(|family| family.members.iter())
+        .filter(|member| member.source_input.is_none())
+        .count()
+        .checked_mul(max_member_input_identity_replacement_bytes()?)
+        .ok_or(TransitionPoseEvaluationControlError::ResultTooLarge)?;
+    TRANSITION_POSE_EVALUATION_V1_MAX_RESULT_BYTES
+        .checked_sub(bytes)
+        .and_then(|remaining| remaining.checked_sub(absent_source_reserve))
+        .ok_or(TransitionPoseEvaluationControlError::ResultTooLarge)
+}
+
+/// Measure, rather than hand-wave, the only possible expansion from the
+/// truthful unavailable `null` spelling to an `InputIdentity`. The digest is
+/// always 32 bytes and the byte count is a `u64`, so all real identities fit
+/// this canonical worst-case record. Field punctuation is already present in
+/// the pair-free base; only the value spelling can grow.
+fn max_member_input_identity_replacement_bytes()
+-> Result<usize, TransitionPoseEvaluationControlError> {
+    let identity = InputIdentity::from_sha256_digest([0xff; 32], u64::MAX);
+    let identity_bytes = canonical_bytes(&identity, 256)
+        .map_err(|_| TransitionPoseEvaluationControlError::ResultTooLarge)?
+        .len();
+    identity_bytes
+        .checked_sub(b"null".len())
+        .ok_or(TransitionPoseEvaluationControlError::ResultTooLarge)
+}
+
+fn reserve_collection_detailed_name_budget(
+    remaining: &mut usize,
+    family: &crate::CollectionTransitionFamilyV1,
+    skeleton: &Skeleton,
+) -> bool {
+    let boundaries = match family.boundary() {
+        TransitionFamilyBoundaryV1::Entry | TransitionFamilyBoundaryV1::Exit => 1usize,
+        TransitionFamilyBoundaryV1::Both => 2usize,
+    };
+    let Some(pair_boundaries) =
+        checked_pair_count(family.members().len()).and_then(|pairs| pairs.checked_mul(boundaries))
+    else {
+        return false;
+    };
+    let Some(rows) = skeleton
+        .bones
+        .len()
+        .min(TRANSITION_POSE_EVALUATION_V1_MAX_TRANSLATION_OFFENDERS)
+        .checked_add(
+            skeleton
+                .bones
+                .len()
+                .min(TRANSITION_POSE_EVALUATION_V1_MAX_ROTATION_OFFENDERS),
+        )
+    else {
+        return false;
+    };
+    let Some(max_name) = skeleton
+        .bones
+        .iter()
+        .map(|bone| bone.name.len().checked_mul(6))
+        .max()
+        .unwrap_or(Some(0))
+    else {
+        return false;
+    };
+    let Some(bytes) = pair_boundaries
+        .checked_mul(MAX_DETAILED_PAIR_FIXED_BYTES)
+        .and_then(|fixed| {
+            pair_boundaries
+                .checked_mul(rows)?
+                .checked_mul(max_name)
+                .and_then(|names| fixed.checked_add(names))
+        })
+    else {
+        return false;
+    };
+    if bytes > *remaining {
+        return false;
+    }
+    *remaining -= bytes;
+    true
+}
+
+fn strict_collection_endpoints(
+    members: &[(&Document, &Clip, &InputIdentity)],
+    boundary: TransitionFamilyBoundaryV1,
+) -> Result<Vec<Endpoints>, TransitionPoseReasonV1> {
+    members
+        .iter()
+        .map(|(document, clip, _)| {
+            if !selected_tracks_are_strict(clip, document.skeleton.bones.len()) {
+                return Err(TransitionPoseReasonV1::UnsupportedSampling);
+            }
+            if clip.duration_s == 0.0 {
+                return Err(TransitionPoseReasonV1::ZeroDuration);
+            }
+            if !clip.duration_s.is_finite() || clip.duration_s < 0.0 {
+                return Err(TransitionPoseReasonV1::UnsupportedSampling);
+            }
+            let entry = matches!(
+                boundary,
+                TransitionFamilyBoundaryV1::Entry | TransitionFamilyBoundaryV1::Both
+            )
+            .then(|| strict_endpoint(&document.skeleton, clip, 0.0))
+            .transpose()?;
+            let exit = matches!(
+                boundary,
+                TransitionFamilyBoundaryV1::Exit | TransitionFamilyBoundaryV1::Both
+            )
+            .then(|| {
+                let time = clip.duration_s as f32;
+                if !time.is_finite() || f64::from(time) != clip.duration_s {
+                    return Err(TransitionPoseReasonV1::UnsupportedSampling);
+                }
+                strict_endpoint(&document.skeleton, clip, time)
+            })
+            .transpose()?;
+            Ok(Endpoints { entry, exit })
+        })
+        .collect()
 }
 
 fn evaluate_document_transition_poses_v1_with_result_limit(

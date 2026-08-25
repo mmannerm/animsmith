@@ -3664,9 +3664,9 @@ urn:animsmith:schema:transition-family:1
 
 The document-local tables are admitted by the CLI's normal strict config
 loader, which retains the whole-config exact input identity alongside the
-normalized declaration. The JSON-only document command now evaluates that
-authority; the separate collection envelope remains outside the collection CLI
-until its own reviewed evaluation slice.
+normalized declaration. The JSON-only document command and manifest-bound
+collection command now evaluate that authority. The collection form binds its
+exact manifest before source work and reloads only manifest-witnessed takes.
 
 The format-neutral core now owns the strict `SkeletonBasisV1` identity and
 document transition-pose evaluator/result contract
@@ -3680,8 +3680,9 @@ it loads one document through the normal public loader/config path, binds the
 loaded exact raw document identity, and emits the core result unchanged. It
 uses the exact zero-byte TOML sequence as the defined omitted-config
 declaration source, so an omitted config and an explicitly empty config have
-the same exact and normalized declaration identities. Collection source
-reload remains separately reviewed work.
+the same exact and normalized declaration identities. The collection adapter
+preserves every declared family member and makes an unavailable or unusable
+source a whole-family incomplete result rather than evaluating a subset.
 Its scope-neutral `subject_input` binds the exact raw document in this
 document evaluator; a later collection adapter binds its manifest subject
 under the same result schema. The normalized declaration scope determines

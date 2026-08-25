@@ -55,6 +55,7 @@ animsmith evaluate-transition-poses <input.glb|input.gltf|input.fbx> [--config a
 animsmith collection lint <collection.toml> [--format json]
 animsmith collection generate-contact-fragment <manifest.toml> --clip <logical-id> -o <out.json> [--format text|json]
 animsmith collection evaluate-directional-speed --policy <policy.toml> --evidence <collection-output.json> [--format json]
+animsmith collection evaluate-transition-poses <collection.toml> --families <transition-families.toml> --format json
 animsmith report <file> -o <report.html> [--clip name]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]

@@ -54,6 +54,7 @@ mod collection_directional_speed_policy;
 mod collection_lint;
 mod collection_manifest;
 mod collection_output;
+mod collection_transition_pose;
 mod contact_producer;
 #[cfg(feature = "fbx")]
 mod material_recipe;
@@ -319,6 +320,18 @@ enum CollectionCmd {
         /// Emit the immutable directional-speed evaluation JSON contract.
         #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
         format: CollectionFormat,
+    },
+    /// Evaluate manifest-bound transition families over their declared raw sources.
+    EvaluateTransitionPoses {
+        /// Strict collection-manifest V1 TOML input.
+        #[arg(value_name = "COLLECTION.toml")]
+        manifest: PathBuf,
+        /// Strict manifest-bound transition-family V1 TOML envelope.
+        #[arg(long, value_name = "TRANSITION_FAMILIES.toml")]
+        families: PathBuf,
+        /// Emit the immutable transition-pose evaluation V1 JSON contract.
+        #[arg(long, value_enum)]
+        format: JsonOnlyFormat,
     },
 }
 
@@ -1286,6 +1299,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 } => {
                     debug_assert_eq!(format, CollectionFormat::Json);
                     collection_directional_speed::run(&policy, &evidence)
+                }
+                CollectionCmd::EvaluateTransitionPoses {
+                    manifest,
+                    families,
+                    format,
+                } => {
+                    debug_assert_eq!(format, JsonOnlyFormat::Json);
+                    collection_transition_pose::run(&manifest, &families)
                 }
             }
         }
