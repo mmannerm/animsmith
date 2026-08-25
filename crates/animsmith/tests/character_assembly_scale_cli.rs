@@ -1248,17 +1248,17 @@ fn v4_rebases_before_remap_then_proves_and_publishes_the_exact_final_artifact() 
         (
             "base",
             "base.glb",
-            "b99923e8525fe6ef5ea0ec6a8e6f1ace5ec43acecf9dd0ab0b436fead0e3c471",
+            "ca9b52526de2f99f82c9a2b8b181b322b4474529af79c96236e8aaf2e0eb3002",
         ),
         (
             "clip:walk",
             "clip.glb",
-            "16b542079fb60c09623b8dc2853d49b1b39b0abf6123b06909d52fbfa2e52937",
+            "ab867b7f06889e166e954e288e1b6f885efaa8ae8dd465f1b71712812e69f070",
         ),
         (
             "clip:run",
             "clip-two.glb",
-            "27fd58e62a3e25a68aaf2ea1721b06e09203be2ef90a4a7108dd1b1b54e9fffe",
+            "8d06ac854a18c8e70bf64f332327d3c6478d76ed76dc1ad4e7129732f74b08d4",
         ),
     ]) {
         let bytes = std::fs::read(dir.path().join("inputs").join(declared)).unwrap();
@@ -1303,12 +1303,12 @@ fn v4_rebases_before_remap_then_proves_and_publishes_the_exact_final_artifact() 
     assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
     assert_eq!(
         evidence["artifact"]["sha256"],
-        "f642fe83a907dd443b0615efd312a5e4bd31cb564d9b83326266ad6860430cf1"
+        "65607bc60673d2ea5c2c642aaa89ebbe90cb6a48aed1e876eb16db7af2efa449"
     );
     assert_eq!(evidence["artifact"]["bytes"], 3424);
     assert_eq!(
         scale["staged_source_sha256"],
-        "51d502a8e0443ee1bf7071179749cae167f7399118d857fd69179e5cec99f420"
+        "7839eee21f0a3971c555a5d5d6164af6fa7540e3e9ea011df9abc40665ca6e4c"
     );
     assert_eq!(scale["read_back_sha256"], evidence["artifact"]["sha256"]);
     assert_eq!(

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/mmannerm/animsmith/compare/v0.5.0...v0.6.0) - 2026-08-25
+
+### Added
+
+- add collection transition-pose evaluation
+- add transition-pose document CLI
+- render evaluation model views
+- admit transition-family declarations in config
+- add strict evaluation model v1
+- add transition-family declaration v1
+- evaluate collection directional speed policies
+- generate strict contact fragments
+- evaluate directional speed policies
+- add contact fragment v1 core reader
+- add directional speed policy v1 reader
+- add transition-pose core evaluation v1
+
+### Fixed
+
+- bound collection transition admission
+- bind collection transition manifests
+- harden collection transition-pose bounds
+- bind collection transition poses to source closures
+- bind transition-pose CLI to source closure
+- harden evaluation model renderer
+- validate collection closure state
+- bind transition evaluation to dependency closure
+- align transition-pose evaluator with v1 contract
+- reject mismatched standalone FBX scale correspondence
+
 ## [0.5.0](https://github.com/mmannerm/animsmith/compare/v0.4.4...v0.5.0) - 2026-08-24
 
 ### Added
