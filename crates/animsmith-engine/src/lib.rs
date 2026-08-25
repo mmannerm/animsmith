@@ -106,8 +106,8 @@ pub use import_advice::{
 pub use prediction::{
     BevyAnimationAssetLabelError, BevyAnimationAssetLabelV1, ENGINE_ADDRESSABILITY_CHECK_ID,
     ENGINE_CHECK_IDS_V1, ENGINE_CHECK_IDS_V2, EngineAddressabilityCheck,
-    EngineAddressabilityCheckV2, GltfAnimationAddressabilityAdapterError,
-    build_bevy_animation_addressability_adapter_v1,
+    EngineAddressabilityCheckV2, EngineAddressabilityCheckV3,
+    GltfAnimationAddressabilityAdapterError, build_bevy_animation_addressability_adapter_v1,
 };
 pub use provenance::{
     PredictionProvenanceProjectionError, project_prediction_provenance_v1,
