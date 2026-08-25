@@ -17,11 +17,14 @@ import unittest
 from pathlib import Path, PurePosixPath
 
 import yaml
+import jsonschema
 
 import evaluation_contract_v1 as contract
 import inventory_pack
 import validate_evaluation_manifest as manifest_validator
 import validate_report as report_validator
+import evaluation_model_v1 as model_contract
+import validate_evaluation_model as model_validator
 
 
 V1_SCHEMA = "urn:animsmith:skill:animation-pack-evaluation-manifest:1"
@@ -3475,6 +3478,434 @@ class ExecutableContractTests(unittest.TestCase):
         )
         self.assertEqual(explicit.returncode, 0, explicit.stderr)
         self.assertIn("validated animation-pack report pair", explicit.stdout)
+
+
+def valid_collection_output_projection() -> dict[str, object]:
+    """Self-authored projection of an independently validated Rust envelope."""
+    return {
+        "schema": "urn:animsmith:schema:collection-output:2",
+        "command": "collection lint",
+        "manifest": {
+            "schema": "urn:animsmith:schema:collection-manifest:1",
+            "schema_version": 1,
+            "collection_id": "fixture-collection",
+            "input": {"sha256": "a" * 64, "bytes": 17},
+        },
+        "clips": [
+            {"id": "fixture:idle-ip", "source": "fixture", "take_index": 0, "take_name": "Idle IP"},
+            {"id": "fixture:walk-rm", "source": "fixture", "take_index": 1, "take_name": "Walk RM"},
+        ],
+        "sources": [{"key": "fixture-source"}],
+        "runtime_sets": [{"id": "fixture:paired", "kind": "paired-interaction", "members": [{"id": "fixture:idle-ip"}, {"id": "fixture:walk-rm"}]}],
+    }
+
+
+def valid_evaluation_model() -> dict[str, object]:
+    """License-safe synthetic V1 model exercising all value categories."""
+    evidence = [{"id": "evidence-a", "kind": "observed-animsmith", "locator": "docs/synthetic-evidence.md", "summary": "Self-authored fixture evidence."}]
+    profiles = sorted(({"id": profile_id, "status": "selected" if profile_id == "marketplace-intake" else "not-selected", "activation_basis": "user-required", "evidence_refs": ["evidence-a"]} for profile_id in model_contract.PROFILE_IDS), key=lambda item: item["id"])
+    stages = sorted(({"id": stage_id, "coverage": "evaluated-clean", "evidence_refs": ["evidence-a"]} for stage_id in model_contract.PIPELINE_STAGES), key=lambda item: item["id"])
+    readiness = [{"id": lane, "state": "unknown", "adoption_consequence": "More evidence is required.", "evidence_refs": ["evidence-a"]} for lane in sorted(model_contract.READINESS_LANES)]
+    return {
+        "schema": model_contract.SCHEMA,
+        "schema_version": 1,
+        "binding": {"collection_id": "fixture-collection", "manifest_sha256": "a" * 64, "manifest_bytes": 17},
+        "presentation": {"id": "fixture-evaluation", "title": "Synthetic fixture", "verdict": "Restricted use", "completeness": "partial", "confidence": "low"},
+        "evidence": evidence,
+        "runs": [{"id": "current-run", "state": "current", "evidence_refs": ["evidence-a"], "summary": "Current refusal.", "supersedes": "historical-run"}, {"id": "historical-run", "state": "historical", "evidence_refs": ["evidence-a"], "summary": "Historical generated candidate."}],
+        "clips": [
+            {"id": "fixture:idle-ip", "source": "fixture", "take_index": 0, "take_name": "Idle IP", "primary_role": "idle-pose", "tags": [], "classification_basis": ["observed-file"], "evidence_refs": ["evidence-a"], "loop": "not-loop", "duration_s": {"state": "available", "value": 1.0}, "root_motion_speed_mps": {"state": "not-applicable"}, "movement_owner": "engine-config", "assessment": "pass", "coverage": "evaluated-clean"},
+            {"id": "fixture:walk-rm", "source": "fixture", "take_index": 1, "take_name": "Walk RM", "primary_role": "continuous-locomotion", "tags": [], "classification_basis": ["observed-file"], "evidence_refs": ["evidence-a"], "loop": "loop", "duration_s": {"state": "available", "value": 1.0}, "root_motion_speed_mps": {"state": "available", "value": 1.0}, "movement_owner": "engine-config", "assessment": "finding", "coverage": "evaluated-finding"},
+        ],
+        "runtime_sets": [{"id": "fixture:paired", "kind": "paired-interaction", "members": [{"clip_id": "fixture:idle-ip", "eligibility": "complete"}, {"clip_id": "fixture:walk-rm", "eligibility": "incomplete"}], "assessment": "not-evaluated", "coverage": "not-evaluated", "evidence_refs": ["evidence-a"]}],
+        "profiles": profiles, "pipeline_stages": stages,
+        "readiness": readiness,
+        "capabilities": [{"id": "contact-actions", "state": "not-evaluated", "evidence_refs": ["evidence-a"]}],
+        "integration_steps": [{"id": "full-body", "order": 1, "action": "topology", "movement_owner": "engine-config", "phase_owner": "engine-config", "coordinates_or_thresholds": "none", "evidence_refs": ["evidence-a"]}],
+        "issues": [{"id": "artist-contact", "severity": "major", "impact": "Contact evidence is missing.", "primary_owner": "artist-author", "current_action": "Author contact cleanup.", "future_candidate": "not-applicable", "secondary_workaround": "none", "evidence_refs": ["evidence-a"]}],
+        "remediations": [
+            {"id": "current-refusal", "run_id": "current-run", "state": "refused", "input_evidence_refs": ["evidence-a"], "output_id": "none", "refusal_evidence_refs": ["evidence-a"], "historical_output_id": "candidate-v0"},
+            {"id": "historical-output", "run_id": "historical-run", "state": "produced", "input_evidence_refs": ["evidence-a"], "output_id": "candidate-v0", "refusal_evidence_refs": [], "historical_output_id": "none"},
+        ],
+        "engine_evidence": [{"id": "unity", "runtime": "Unity", "version": "unknown", "level": "not-evaluated", "coverage": "not-evaluated", "settings": "not-evaluated", "procedure": "not-evaluated", "evidence_refs": ["evidence-a"]}],
+        "limitations": [{"id": "unknown-engine", "summary": "Runtime behavior is unknown.", "evidence_refs": ["evidence-a"]}],
+        "sources": [{"id": "source-record", "source_commit": "fixture", "report_sha256": "b" * 64, "acquisition_scope": "synthetic", "license_scope": "self-authored", "evidence_kind": "documentation-stated", "evidence_refs": ["evidence-a"]}],
+        "narratives": [{"id": "technical-decision", "slot": "technical-decision", "text": "A fixed-slot interpretation.", "fact_refs": ["fixture:idle-ip"]}],
+        "collection": {"constituents": [], "exclusions": [], "cross_pack_records": []},
+    }
+
+
+class EvaluationModelV1Tests(unittest.TestCase):
+    def test_synthetic_fixture_covers_pair_refusal_unknown_and_artist_work(self) -> None:
+        self.assertEqual(model_validator.validate_model(valid_evaluation_model(), valid_collection_output_projection()), [])
+
+    def test_no_set_and_no_issue_sentinels_are_valid(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["issues"] = []
+        model["runtime_sets"] = []
+        binding["runtime_sets"] = []
+        self.assertEqual(model_validator.validate_model(model, binding), [])
+
+    def test_rejects_unknown_dangling_duplicate_and_stale_identity(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["unknown"] = "no"
+        self.assertTrue(any("unknown fields" in error for error in model_validator.validate_model(model, binding)))
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["clips"].append(copy.deepcopy(model["clips"][0]))  # type: ignore[index]
+        self.assertTrue(any("duplicate id" in error for error in model_validator.validate_model(model, binding)))
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["remediations"][1]["historical_output_id"] = "missing"  # type: ignore[index]
+        model["binding"]["manifest_sha256"] = "b" * 64  # type: ignore[index]
+        errors = model_validator.validate_model(model, binding)
+        self.assertTrue(any("stale" in error or "historical_output_id" in error for error in errors))
+
+    def test_collection_pairs_are_derived_and_n_plus_one_is_rejected(self) -> None:
+        model = valid_evaluation_model()
+        model["collection"] = {
+            "constituents": [{"id": "basic", "model_sha256": "b" * 64, "clip_ids": ["fixture:idle-ip"], "source_file_count": 1, "runtime_set_ids": ["fixture:paired"]}, {"id": "sword", "model_sha256": "c" * 64, "clip_ids": ["fixture:walk-rm"], "source_file_count": 0, "runtime_set_ids": []}],
+            "exclusions": [],
+            "cross_pack_records": [{"id": "basic-sword", "left": "basic", "right": "sword", "result": "artist-required", "evidence_refs": ["evidence-a"]}],
+        }
+        self.assertEqual(model_validator.validate_model(model, valid_collection_output_projection()), [])
+        model["collection"]["constituents"].append({"id": "third", "model_sha256": "d" * 64, "clip_ids": [], "source_file_count": 0, "runtime_set_ids": []})  # type: ignore[index]
+        self.assertIn("model.collection.cross_pack_records must contain exactly one derived unordered pair per constituent tuple", model_validator.validate_model(model, valid_collection_output_projection()))
+        bounded = valid_evaluation_model()
+        bounded["collection"]["constituents"] = [  # type: ignore[index]
+            {"id": f"constituent-{index}", "model_sha256": "b" * 64, "clip_ids": [], "source_file_count": 0, "runtime_set_ids": []}
+            for index in range(model_contract.MAX_COLLECTION_CONSTITUENTS + 1)
+        ]
+        schema_path = Path(__file__).parents[1] / "schemas" / "evaluation-model-v1.schema.json"
+        validator = jsonschema.Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+        self.assertTrue(list(validator.iter_errors(bounded)))
+        self.assertTrue(model_validator.validate_model(bounded, valid_collection_output_projection()))
+
+    def test_canonical_round_trip_number_domain_and_hash_seed_determinism(self) -> None:
+        model = valid_evaluation_model()
+        model["presentation"]["ratio"] = 1.0  # type: ignore[index]
+        # The added field is rightly rejected by the closed schema, while the
+        # canonical encoder itself remains stable for permitted JSON values.
+        self.assertIn("unknown fields", "\n".join(model_validator.validate_model(model, valid_collection_output_projection())))
+        value = {"z": 1e-07, "a": -0.0, "nested": [1.0, 1.25]}
+        expected = b'{"a":0,"nested":[1,1.25],"z":1e-7}'
+        self.assertEqual(model_contract.canonical_json(value), expected)
+        reparsed = json.loads(model_contract.canonical_json(valid_evaluation_model()))
+        self.assertEqual(model_contract.canonical_json(reparsed), model_contract.canonical_json(valid_evaluation_model()))
+        self.assertEqual(model_contract.canonical_digest(value), model_contract.canonical_digest(dict(reversed(list(value.items())))))
+        with self.assertRaises(model_contract.CanonicalJsonError):
+            model_contract.canonical_json(float("nan"))
+        self.assertEqual(model_contract.canonical_json(True), b"true")
+        with self.assertRaises(model_contract.CanonicalJsonError):
+            model_contract.canonical_number(True)
+        with self.assertRaises(model_contract.CanonicalJsonError):
+            model_contract.canonical_json({1: "not-a-string-key"})  # type: ignore[dict-item]
+        too_deep: object = None
+        for _ in range(model_contract.MAX_DEPTH + 1):
+            too_deep = [too_deep]
+        with self.assertRaises(model_contract.CanonicalJsonError):
+            model_contract.canonical_json(too_deep)
+
+    def test_schema_matches_the_closed_validator_root(self) -> None:
+        schema_path = Path(__file__).parents[1] / "schemas" / "evaluation-model-v1.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        self.assertEqual(schema["$id"], model_contract.SCHEMA)
+        self.assertEqual(set(schema["required"]), set(valid_evaluation_model()))
+        self.assertFalse(schema["additionalProperties"])
+        validator = jsonschema.Draft202012Validator(schema)
+        self.assertEqual(list(validator.iter_errors(valid_evaluation_model())), [])
+        malformed = valid_evaluation_model()
+        malformed["clips"] = [{"id": "only-id"}]
+        self.assertTrue(list(validator.iter_errors(malformed)))
+
+    def test_schema_catalog_enums_are_the_python_contract_catalogs(self) -> None:
+        schema_path = Path(__file__).parents[1] / "schemas" / "evaluation-model-v1.schema.json"
+        definitions = json.loads(schema_path.read_text(encoding="utf-8"))["$defs"]
+        self.assertEqual(set(definitions["profile"]["properties"]["id"]["enum"]), set(model_contract.PROFILE_IDS))
+        self.assertEqual(set(definitions["pipeline_stage"]["properties"]["id"]["enum"]), set(model_contract.PIPELINE_STAGES))
+        self.assertEqual(set(definitions["readiness"]["properties"]["id"]["enum"]), set(model_contract.READINESS_LANES))
+
+    def test_schema_and_validator_reject_the_same_local_mutations(self) -> None:
+        """Keep every locally expressible closed-model rule in both authorities."""
+        schema_path = Path(__file__).parents[1] / "schemas" / "evaluation-model-v1.schema.json"
+        validator = jsonschema.Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+        mutations = (
+            ("presentation-id", lambda m: m["presentation"].update(id="Uppercase")),
+            ("presentation-title", lambda m: m["presentation"].update(title="")),
+            ("run-summary", lambda m: m["runs"][0].update(summary="")),
+            ("private-locator", lambda m: m["evidence"][0].update(locator="file:///home/fixture/private.fbx")),
+            ("remediation-private-output", lambda m: m["remediations"][0].update(historical_output_id="file:///home/fixture/output.glb")),
+            ("remediation-windows-output", lambda m: m["remediations"][1].update(output_id="C:\\fixture\\output.glb")),
+            ("source-evidence-kind", lambda m: m["sources"][0].update(evidence_kind="garbage")),
+            ("narrative-table", lambda m: m["narratives"][0].update(text="| state | count |")),
+            ("remediation-output-type", lambda m: m["remediations"][0].update(output_id=7)),
+            ("remediation-produced-history", lambda m: m["remediations"][1].update(historical_output_id="old")),
+            ("classification-bound", lambda m: m["clips"][0].update(classification_basis=["observed-file"] * (model_contract.MAX_RECORDS + 1))),
+            ("member-bound", lambda m: m["runtime_sets"][0].update(members=[{"clip_id": "fixture:idle-ip", "eligibility": "complete"}] * (model_contract.MAX_RECORDS + 1))),
+            ("exclusion-reason", lambda m: m["collection"].update(exclusions=[{"id": "excluded", "reason": 7, "evidence_refs": []}])),
+            ("exclusion-bound", lambda m: m["collection"].update(exclusions=[{"id": f"excluded-{index}", "reason": "Synthetic exclusion.", "evidence_refs": []} for index in range(model_contract.MAX_RECORDS + 1)])),
+            ("pair-bound", lambda m: m["collection"].update(cross_pack_records=[{"id": f"pair-{index}", "left": "a", "right": "b", "result": "unknown", "evidence_refs": []} for index in range(model_contract.MAX_RECORDS + 1)])),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label):
+                model = valid_evaluation_model()
+                mutate(model)
+                self.assertTrue(list(validator.iter_errors(model)), label)
+                self.assertTrue(model_validator.validate_model(model, valid_collection_output_projection()), label)
+
+    def test_public_locators_and_plain_narrative_have_positive_and_negative_alignment(self) -> None:
+        schema_path = Path(__file__).parents[1] / "schemas" / "evaluation-model-v1.schema.json"
+        validator = jsonschema.Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+        for locator in (
+            "https://example.test",
+            "https://example.test/proof?revision=v1#evidence",
+            "docs/synthetic-evidence.md",
+            "references/assessment-taxonomy.md",
+            "evidence/synthetic-output.json",
+        ):
+            with self.subTest(locator=locator):
+                model = valid_evaluation_model()
+                model["evidence"][0]["locator"] = locator  # type: ignore[index]
+                self.assertEqual(list(validator.iter_errors(model)), [])
+                self.assertEqual(model_validator.validate_model(model, valid_collection_output_projection()), [])
+        for locator in (
+            "docs/..",
+            "https://example.test/foo/..",
+            "docs/private-evaluator-notes.fbx",
+            "reports/licensed-motion.glb",
+            "evidence/raw-pack.zip",
+        ):
+            with self.subTest(invalid_locator=locator):
+                model = valid_evaluation_model()
+                model["evidence"][0]["locator"] = locator  # type: ignore[index]
+                self.assertTrue(list(validator.iter_errors(model)))
+                self.assertTrue(model_validator.validate_model(model, valid_collection_output_projection()))
+        ordinary = valid_evaluation_model()
+        ordinary["narratives"][0]["text"] = "The evaluator notes: linked observations remain conservative."  # type: ignore[index]
+        self.assertEqual(list(validator.iter_errors(ordinary)), [])
+        self.assertEqual(model_validator.validate_model(ordinary, valid_collection_output_projection()), [])
+        slash_prose = valid_evaluation_model()
+        slash_prose["narratives"][0]["text"] = "The evaluator considers and/or alternatives."  # type: ignore[index]
+        self.assertEqual(list(validator.iter_errors(slash_prose)), [])
+        self.assertEqual(model_validator.validate_model(slash_prose, valid_collection_output_projection()), [])
+        for text in (
+            "Usable with conditions.", "Poor fit.", "Insufficient technical evidence.", "not applicable.",
+            "/root/.ssh/id_rsa", "/opt/evaluation/clip.fbx", "/srv/private/clip.fbx", "/évaluation/clip.fbx", "/~evaluator/clip.fbx", "/$private/clip.fbx",
+            r"\\server\share\private.fbx", r"C:\\fixture\\private.fbx", "../private/clip.fbx", r"..\private\clip.fbx",
+            "file:///private.fbx", "data:application/json,{}", "https://user:pass@example.test/private", "docs/private-evaluator-notes.fbx", "Model:ABC", "model:Abc",
+        ):
+            with self.subTest(text=text):
+                model = valid_evaluation_model()
+                model["narratives"][0]["text"] = text  # type: ignore[index]
+                self.assertTrue(list(validator.iter_errors(model)))
+                self.assertTrue(model_validator.validate_model(model, valid_collection_output_projection()))
+
+    def test_schema_runtime_rejects_newline_terminators_and_malformed_nested_arrays(self) -> None:
+        schema_path = Path(__file__).parents[1] / "schemas" / "evaluation-model-v1.schema.json"
+        validator = jsonschema.Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+        for mutate in (
+            lambda m: m["presentation"].update(id="fixture-evaluation\n"),
+            lambda m: m["evidence"][0].update(locator="docs/proof.md\n"),
+            lambda m: m["clips"][0].update(tags=None),
+            lambda m: m["clips"][0].update(classification_basis=None),
+            lambda m: m["clips"][0].update(evidence_refs=None),
+            lambda m: m["runtime_sets"][0].update(members=None),
+            lambda m: m["runtime_sets"][0].update(evidence_refs=None),
+            lambda m: m["remediations"][0].update(input_evidence_refs=None),
+            lambda m: m["remediations"][0].update(refusal_evidence_refs=None),
+            lambda m: m["collection"].update(constituents=[{"id": "fixture", "model_sha256": "b" * 64, "clip_ids": None, "source_file_count": 0, "runtime_set_ids": None}]),
+            lambda m: m["collection"].update(constituents=[{"id": "fixture", "model_sha256": "b" * 64, "clip_ids": [["nonhashable"]], "source_file_count": 0, "runtime_set_ids": []}]),
+        ):
+            with self.subTest(mutate=mutate):
+                model = valid_evaluation_model()
+                mutate(model)
+                self.assertTrue(list(validator.iter_errors(model)))
+                self.assertTrue(model_validator.validate_model(model, valid_collection_output_projection()))
+
+    def test_exact_binding_and_catalog_sets_are_relational_requirements(self) -> None:
+        for label, mutate, needle in (
+            ("clips", lambda m: m["clips"].pop(), "binding clip IDs"),
+            ("sets", lambda m: m["runtime_sets"].clear(), "binding runtime-set IDs"),
+            ("profiles", lambda m: m["profiles"].pop(), "validation profile"),
+            ("stages", lambda m: m["pipeline_stages"].pop(), "canonical stages"),
+            ("readiness", lambda m: m["readiness"].pop(), "readiness lane"),
+        ):
+            with self.subTest(label=label):
+                model = valid_evaluation_model()
+                mutate(model)
+                self.assertTrue(any(needle in error for error in model_validator.validate_model(model, valid_collection_output_projection())))
+
+    def test_runtime_set_witness_and_remediation_shapes_are_closed(self) -> None:
+        model = valid_evaluation_model()
+        model["runtime_sets"][0]["kind"] = "speed-blend"  # type: ignore[index]
+        self.assertTrue(any("preserve binding kind" in error for error in model_validator.validate_model(model, valid_collection_output_projection())))
+        model = valid_evaluation_model()
+        model["runtime_sets"][0]["members"].reverse()  # type: ignore[index]
+        self.assertTrue(any("member order" in error for error in model_validator.validate_model(model, valid_collection_output_projection())))
+        model = valid_evaluation_model()
+        model["remediations"][0]["output_id"] = "candidate-v1"  # type: ignore[index]
+        self.assertTrue(model_validator.validate_model(model, valid_collection_output_projection()))
+        model = valid_evaluation_model()
+        model["remediations"][0]["state"] = "not-run"  # type: ignore[index]
+        self.assertTrue(model_validator.validate_model(model, valid_collection_output_projection()))
+
+    def test_refusal_cannot_link_an_output_from_the_current_run(self) -> None:
+        model = valid_evaluation_model()
+        model["remediations"][1]["run_id"] = "current-run"  # type: ignore[index]
+        errors = model_validator.validate_model(model, valid_collection_output_projection())
+        self.assertTrue(any("historical_output_id" in error for error in errors))
+
+    def test_collection_constituents_and_exclusions_are_disjoint(self) -> None:
+        model = valid_evaluation_model()
+        model["collection"] = {
+            "constituents": [{"id": "fixture", "model_sha256": "b" * 64, "clip_ids": ["fixture:idle-ip", "fixture:walk-rm"], "source_file_count": 1, "runtime_set_ids": ["fixture:paired"]}],
+            "exclusions": [{"id": "fixture", "reason": "Excluded only for the overlap regression.", "evidence_refs": ["evidence-a"]}],
+            "cross_pack_records": [],
+        }
+        self.assertTrue(any("disjointly" in error for error in model_validator.validate_model(model, valid_collection_output_projection())))
+
+    def test_bounded_json_loader_rejects_depth_constants_and_duplicate_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for name, raw in (("constant", b'{"x":Infinity}'), ("duplicate", b'{"x":1,"x":2}')):
+                path = directory / f"{name}.json"
+                path.write_bytes(raw)
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    model_validator.load_json(path)
+            nested = "[" * (model_contract.MAX_DEPTH + 2) + "0" + "]" * (model_contract.MAX_DEPTH + 2)
+            path = directory / "deep.json"; path.write_text(nested, encoding="utf-8")
+            with self.assertRaises(ValueError):
+                model_validator.load_json(path)
+
+    def test_cli_distinguishes_invalid_model_from_invalid_json_and_noncanonical_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            binding = directory / "binding.json"; binding.write_bytes(model_contract.canonical_json(valid_collection_output_projection()))
+            model = directory / "model.json"; model.write_text(json.dumps(valid_evaluation_model()), encoding="utf-8")
+            noncanonical = subprocess.run([str(Path(__file__).with_name("validate_evaluation_model.py")), str(model), "--binding", str(binding), "--check-canonical"], check=False, text=True, capture_output=True)
+            model.write_text("{", encoding="utf-8")
+            malformed = subprocess.run([str(Path(__file__).with_name("validate_evaluation_model.py")), str(model), "--binding", str(binding)], check=False, text=True, capture_output=True)
+            model.write_bytes(model_contract.canonical_json(valid_evaluation_model()))
+            binding.write_text("{", encoding="utf-8")
+            malformed_binding = subprocess.run([str(Path(__file__).with_name("validate_evaluation_model.py")), str(model), "--binding", str(binding)], check=False, text=True, capture_output=True)
+            binding.write_bytes(model_contract.canonical_json(valid_collection_output_projection()))
+            success = subprocess.run([str(Path(__file__).with_name("validate_evaluation_model.py")), str(model), "--binding", str(binding), "--check-canonical"], check=False, text=True, capture_output=True)
+        self.assertEqual(noncanonical.returncode, 1, noncanonical.stderr)
+        self.assertEqual(malformed.returncode, 2, malformed.stderr)
+        self.assertEqual(malformed_binding.returncode, 2, malformed_binding.stderr)
+        self.assertEqual(success.returncode, 0, success.stderr)
+        self.assertIn("validated animation-pack evaluation model", success.stdout)
+
+    def test_duplicate_binding_source_keys_are_rejected(self) -> None:
+        binding = valid_collection_output_projection()
+        binding["sources"].append({"key": "fixture-source"})  # type: ignore[index]
+        self.assertTrue(any("duplicate key" in error for error in model_validator.validate_model(valid_evaluation_model(), binding)))
+
+    def test_bounded_reader_and_relations_fail_closed_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            oversized = directory / "oversized.json"
+            oversized.write_bytes(b"{" + b" " * model_contract.MAX_MODEL_BYTES)
+            with self.assertRaises(ValueError):
+                model_validator.load_json(oversized)
+        model = valid_evaluation_model()
+        model["runs"][0]["supersedes"] = "current-run"  # type: ignore[index]
+        errors = model_validator.validate_model(model, valid_collection_output_projection())
+        self.assertTrue(any("historical run" in error for error in errors))
+
+    def test_remediation_states_and_empty_source_projection_fail_closed(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["remediations"].append(copy.deepcopy(model["remediations"][1]))  # type: ignore[index]
+        model["remediations"][2]["id"] = "duplicate-output"  # type: ignore[index]
+        errors = model_validator.validate_model(model, binding)
+        self.assertTrue(any("duplicate produced output_id" in error for error in errors))
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        binding["sources"] = []
+        model["collection"] = {
+            "constituents": [
+                {"id": "basic", "model_sha256": "b" * 64, "clip_ids": ["fixture:idle-ip", "fixture:walk-rm"], "source_file_count": 1, "runtime_set_ids": ["fixture:paired"]}
+            ],
+            "exclusions": [], "cross_pack_records": [],
+        }
+        self.assertTrue(any("source_file_count" in error for error in model_validator.validate_model(model, binding)))
+
+    def test_populated_source_projection_derives_exact_source_total(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["collection"] = {
+            "constituents": [
+                {"id": "fixture", "model_sha256": "b" * 64, "clip_ids": ["fixture:idle-ip", "fixture:walk-rm"], "source_file_count": 1, "runtime_set_ids": ["fixture:paired"]}
+            ],
+            "exclusions": [], "cross_pack_records": [],
+        }
+        self.assertEqual(model_validator.validate_model(model, binding), [])
+        model["collection"]["constituents"][0]["source_file_count"] = 0  # type: ignore[index]
+        self.assertTrue(any("source_file_count" in error for error in model_validator.validate_model(model, binding)))
+
+    def test_clip_witness_projection_is_typed_even_when_model_matches_it(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["clips"][0]["take_index"] = -1  # type: ignore[index]
+        binding["clips"][0]["take_index"] = -1  # type: ignore[index]
+        self.assertTrue(model_validator.validate_model(model, binding))
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["clips"][0]["take_name"] = 7  # type: ignore[index]
+        binding["clips"][0]["take_name"] = 7  # type: ignore[index]
+        self.assertTrue(model_validator.validate_model(model, binding))
+
+    def test_text_byte_limit_is_intentionally_stricter_than_schema_codepoints(self) -> None:
+        schema_path = Path(__file__).parents[1] / "schemas" / "evaluation-model-v1.schema.json"
+        validator = jsonschema.Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+        model = valid_evaluation_model()
+        model["presentation"]["title"] = "☃" * 11_000  # type: ignore[index]
+        self.assertEqual(list(validator.iter_errors(model)), [])
+        self.assertTrue(any("within" in error for error in model_validator.validate_model(model, valid_collection_output_projection())))
+
+    def test_nonhashable_malformed_values_are_reported_not_raised(self) -> None:
+        model = valid_evaluation_model()
+        model["clips"][0]["id"] = ["not-an-id"]  # type: ignore[index]
+        model["remediations"][0]["run_id"] = ["not-a-run"]  # type: ignore[index]
+        model["collection"]["cross_pack_records"] = [{"id": "bad-pair", "left": ["not-an-id"], "right": "basic", "result": "unknown", "evidence_refs": []}]  # type: ignore[index]
+        errors = model_validator.validate_model(model, valid_collection_output_projection())
+        self.assertTrue(errors)
+
+    def test_typed_text_narrative_locator_and_lane_mutations_fail_closed(self) -> None:
+        model = valid_evaluation_model()
+        model["evidence"][0]["locator"] = "file:///private/asset.fbx"  # type: ignore[index]
+        model["clips"][0]["movement_owner"] = "garbage"  # type: ignore[index]
+        model["readiness"][0]["adoption_consequence"] = 7  # type: ignore[index]
+        model["integration_steps"][0]["coordinates_or_thresholds"] = 7  # type: ignore[index]
+        model["issues"][0]["impact"] = 7  # type: ignore[index]
+        model["engine_evidence"][0]["runtime"] = 7  # type: ignore[index]
+        model["sources"][0]["license_scope"] = 7  # type: ignore[index]
+        model["limitations"][0]["summary"] = 7  # type: ignore[index]
+        model["narratives"][0]["text"] = "| state | count |\n|---|---:|\n| pass | 1 |"  # type: ignore[index]
+        errors = model_validator.validate_model(model, valid_collection_output_projection())
+        self.assertTrue(errors)
+        self.assertTrue(all("schema:" in error for error in errors))
+
+    def test_validator_cli_is_seed_deterministic_and_checks_canonical_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            model_path = directory / "model.json"
+            binding_path = directory / "binding.json"
+            model_path.write_bytes(model_contract.canonical_json(valid_evaluation_model()))
+            binding_path.write_bytes(model_contract.canonical_json(valid_collection_output_projection()))
+            commands = []
+            for seed in ("1", "2"):
+                environment = os.environ.copy()
+                environment["PYTHONHASHSEED"] = seed
+                commands.append(subprocess.run(
+                    [str(Path(__file__).with_name("validate_evaluation_model.py")), str(model_path), "--binding", str(binding_path), "--check-canonical"],
+                    check=False, text=True, capture_output=True, env=environment,
+                ))
+        self.assertEqual(commands[0].returncode, 0, commands[0].stderr)
+        self.assertEqual(commands[1].returncode, 0, commands[1].stderr)
+        self.assertEqual(commands[0].stdout, commands[1].stdout)
+        self.assertEqual(commands[0].stderr, commands[1].stderr)
+        expression = "import sys;sys.path.insert(0, sys.argv[1]);import evaluation_model_v1 as m;print(m.canonical_json({'z':1e-7,'a':-0.0,'u':'\\u2603'}).decode());print(m.canonical_digest({'z':1e-7,'a':-0.0,'u':'\\u2603'}))"
+        generated = []
+        for seed in ("1", "2"):
+            environment = os.environ.copy(); environment["PYTHONHASHSEED"] = seed
+            generated.append(subprocess.run([sys.executable, "-c", expression, str(Path(__file__).parent)], check=False, text=True, capture_output=True, env=environment))
+        self.assertEqual(generated[0].returncode, 0, generated[0].stderr)
+        self.assertEqual(generated[0].stdout, generated[1].stdout)
 
 
 if __name__ == "__main__":

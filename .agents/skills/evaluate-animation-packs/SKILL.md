@@ -186,6 +186,14 @@ summary counts. Treat pipeline stages as process coverage and the readiness
 ladder as outcome coverage; for example, a completed inspect stage may still
 produce file-ready findings.
 
+The legacy evaluation manifest remains the report-input contract until its
+explicit migration. New structured evaluations may additionally use the strict
+`urn:animsmith:skill:animation-pack-evaluation:1` model documented in
+[`references/evaluation-model-v1.md`](references/evaluation-model-v1.md). It
+binds to an independently validated `collection-output:2` projection; it does
+not parse collection-manifest TOML or make generated Markdown authoritative
+before the later renderer and migration slices.
+
 ## Run the untouched baseline
 
 Run the baseline before any conversion, repair, transform, or engine-side
