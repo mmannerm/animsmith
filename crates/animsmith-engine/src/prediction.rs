@@ -51,6 +51,16 @@ pub const ENGINE_ADDRESSABILITY_CHECK_ID: &str = "engine-addressability";
 /// Versioned engine-owned check ids callers may use for pre-I/O selection validation.
 pub const ENGINE_CHECK_IDS_V1: &[&str] = &[ENGINE_ADDRESSABILITY_CHECK_ID];
 
+/// Current engine-owned check ids in immutable catalog order.
+///
+/// The V1 catalog remains unchanged for historical standalone addressability
+/// artifacts; current lint may additionally register the V3-only exact FBX
+/// boundary rule.
+pub const ENGINE_CHECK_IDS_V2: &[&str] = &[
+    ENGINE_ADDRESSABILITY_CHECK_ID,
+    crate::clip_boundary::ENGINE_CLIP_BOUNDARY_CHECK_ID,
+];
+
 const BEVY_FAMILY: &str = "bevy";
 const BEVY_PROFILE_REVISION: u32 = 1;
 const BEVY_ENGINE_VERSION: &str = "0.19.0";
