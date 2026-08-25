@@ -2998,7 +2998,7 @@ the existing multi-file spelling of `lint` collection-aware.
 
 ### F.1 Separate collection authority
 
-AnimSmith will add two independently versioned contracts:
+AnimSmith provides two independently versioned contracts:
 
 - `urn:animsmith:schema:collection-manifest:1`, a strict TOML declaration; and
 - `urn:animsmith:schema:collection-output:1`, deterministic JSON evidence.
@@ -3008,7 +3008,7 @@ Collection-output V1 remains immutable. The current
 and reader rules from V1, changing only the nested ordinary output envelope
 identity from output v10 to output v11.
 
-They are consumed and produced by an explicit future command:
+They are consumed and produced by an explicit command:
 
 ```text
 animsmith collection lint COLLECTION.toml --format json
@@ -3340,8 +3340,8 @@ Its self-authored, motion-free glTF files cover two distinct sources with the
 same bytes and embedded `Take 001`, one two-take source, cross-file gait and
 sync sets, an explicit config basis, and duplicate-member, missing-member, and
 escaping-source failures. The preservation table pins each locator, byte count,
-digest, logical id, and index-plus-name witness without pretending that the
-future output schema already exists.
+digest, logical id, and index-plus-name witness without treating that retained
+fixture as output-schema authority.
 
 Repository tests use only synthetic/self-authored or explicitly
 redistribution-safe multi-file assets. Licensed pack bytes and motion-bearing
@@ -3379,8 +3379,8 @@ runtime interpretation remain later consumers or separately accepted contracts.
 
 ### F.10 Contact-fragment V1 (#147)
 
-Issue #147 freezes the interchange contract for contact facts. Issue #152 now
-delivers its narrow strict producer: `animsmith generate contact-fragment` and
+Issue #147 freezes the interchange contract for contact facts. In 0.6.0,
+issue #152 delivers its narrow strict producer: `animsmith generate contact-fragment` and
 `animsmith collection generate-contact-fragment` sample stance support and
 atomically publish one source-bound fragment. The collection command reloads
 its selected manifest source rather than consuming `collection-output:2`.
@@ -3522,7 +3522,7 @@ A minimal collection-scoped envelope is illustrative of the normative shape
 {
   "schema": "urn:animsmith:schema:contact-fragment:1",
   "schema_version": 1,
-  "producer": {"tool": "animsmith", "version": "0.5.0"},
+  "producer": {"tool": "animsmith", "version": "0.6.0"},
   "artifact": {"sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "bytes": 123456},
   "dependency_closure_identity": {"sha256": "1111111111111111111111111111111111111111111111111111111111111111", "bytes": 456},
   "clip": {"scope": "collection", "logical_id": "com.example.pack/locomotion/walk-forward-in-place", "source": "walk-forward", "take_index": 0, "take_name": "Take 001"},
@@ -3753,7 +3753,7 @@ The two scopes are intentionally different authorities:
   `InputIdentity` and complete dependency-closure identity in its output, while
   members use exact embedded take-index/name witnesses. A
   repeated or loader-ambiguous take name is a strict resolution failure.
-- future `collection` declarations use a separate declaration envelope, not
+- `collection` declarations use a separate declaration envelope, not
   an extension of collection-manifest V1 and not another path/member authority.
   The envelope binds the exact collection-manifest `InputIdentity` `{sha256,
   bytes}`, collection id, and one or more family records. Each record
@@ -3788,7 +3788,7 @@ considers entry, exit, or both; it does not itself perform a comparison.
 Additional policy fields require a separately versioned contract, not a
 generic TOML map or untyped extension payload.
 
-Both future declaration placements are bounded before retention or
+Both declaration placements are bounded before retention or
 canonicalization. The exact declaration source is at most 8,388,608 bytes and
 16 nested tables/arrays, with at most 4,096 families, 4,096 members in one
 family, and 16,384 members across all families. Authored strings are at most
@@ -3796,7 +3796,7 @@ family, and 16,384 members across all families. Authored strings are at most
 strictly. The normalized JSON envelope is at most 8,388,608 JCS bytes and has
 the same nesting limit. Depth counts each table/array or JSON object/array on
 the root-to-value path, inclusive; the root table or envelope object is depth
-1. The future strict reader accepts each exact maximum and rejects the first
+1. The strict reader accepts each exact maximum and rejects the first
 byte, element, string byte, aggregate member, or nesting level above it while
 decoding, before retaining that excess value or allocating an unbounded
 canonical buffer. Canonical byte limits are enforced with a bounded JCS sink.
@@ -3957,8 +3957,8 @@ kind `directional-blend`.
 
 The explicit `source_basis` contains `x` and `z`, each a semantic 2-D
 orientation witness for the raw collection-output V2 +X/+Z endpoint
-displacement. Their magnitudes are nonsemantic; a future evaluator uses unit
-axes for heading comparison. Every component is finite and has absolute value
+displacement. Their magnitudes are nonsemantic; the evaluator uses unit axes
+for heading comparison. Every component is finite and has absolute value
 at most `1,000,000`. Each axis is nonzero. Perpendicularity is judged by the
 normalized dot product
 
