@@ -143,6 +143,9 @@ def _public_locator(value: Any, path: str, errors: list[str]) -> bool:
     # Markdown/JSON paths or direct https citations. Absolute,
     # credential-bearing, data, parent-traversal, and arbitrary asset paths
     # could leak a local evaluation workspace.
+    if "<" in value or ">" in value:
+        errors.append(f"{path} must be a public https or repository-relative locator")
+        return False
     https = re.fullmatch(r"https://[^/@\s?#]+(?:[/?#][^@\s<>]*)?", value)
     relative = re.fullmatch(r"[a-z0-9][a-z0-9._/-]*\.(?:md|json)", value)
     parent_segment = re.search(r"(?:^|/)\.\.(?:/|$)", value)
@@ -426,7 +429,9 @@ def validate_model(model: Any, binding: Any) -> list[str]:
                 for name in ("impact", "current_action", "future_candidate", "secondary_workaround"): _text(item.get(name), f"model.issues[{index}].{name}", errors)
             if field == "engine_evidence":
                 if not _choice(item.get("level"), ENGINE_LEVELS) or not _choice(item.get("coverage"), COVERAGE_STATES): errors.append(f"model.engine_evidence[{index}] has an unknown token")
-                for name in ("runtime", "version", "settings", "procedure"): _text(item.get(name), f"model.engine_evidence[{index}].{name}", errors)
+                if item.get("runtime") not in ("Unity", "Unreal Engine", "Godot", "Bevy"):
+                    errors.append(f"model.engine_evidence[{index}].runtime must name one fixed runtime")
+                for name in ("version", "settings", "procedure"): _text(item.get(name), f"model.engine_evidence[{index}].{name}", errors)
             if field == "sources":
                 if not _sha(item.get("report_sha256"), f"model.sources[{index}].report_sha256", errors) or not _choice(item.get("evidence_kind"), EVIDENCE_KINDS): errors.append(f"model.sources[{index}] has an invalid provenance token")
                 for name in ("source_commit", "acquisition_scope", "license_scope"): _text(item.get(name), f"model.sources[{index}].{name}", errors)
@@ -435,6 +440,11 @@ def validate_model(model: Any, binding: Any) -> list[str]:
                 if not _choice(item.get("slot"), NARRATIVE_SLOTS): errors.append(f"model.narratives[{index}].slot has an unknown token")
                 _plain_narrative(item.get("text"), f"model.narratives[{index}].text", errors)
                 _refs(item.get("fact_refs"), f"model.narratives[{index}].fact_refs", set(evidence_by_id) | set(clip_by_id) | set(set_by_id), errors)
+
+    runtimes = [record.get("runtime") for record in _array(root.get("engine_evidence"), "model.engine_evidence", errors)]
+    fixed_runtimes = ("Unity", "Unreal Engine", "Godot", "Bevy")
+    if set(runtimes) != set(fixed_runtimes) or len(runtimes) != len(set(runtimes)):
+        errors.append("model.engine_evidence must contain exactly one record for Unity, Unreal Engine, Godot, and Bevy")
 
     remediations, remediation_by_id = _id_records(root.get("remediations"), "model.remediations", errors, {"id", "run_id", "state", "input_evidence_refs", "output_id", "refusal_evidence_refs", "historical_output_id"})
     outputs: dict[str, str] = {}

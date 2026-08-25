@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -3540,7 +3541,12 @@ def valid_evaluation_model() -> dict[str, object]:
             {"id": "current-refusal", "run_id": "current-run", "state": "refused", "input_evidence_refs": ["evidence-a"], "output_id": "none", "refusal_evidence_refs": ["evidence-a"], "historical_output_id": "candidate-v0"},
             {"id": "historical-output", "run_id": "historical-run", "state": "produced", "input_evidence_refs": ["evidence-a"], "output_id": "candidate-v0", "refusal_evidence_refs": [], "historical_output_id": "none"},
         ],
-        "engine_evidence": [{"id": "unity", "runtime": "Unity", "version": "unknown", "level": "not-evaluated", "coverage": "not-evaluated", "settings": "not-evaluated", "procedure": "not-evaluated", "evidence_refs": ["evidence-a"]}],
+        "engine_evidence": [
+            {"id": "bevy", "runtime": "Bevy", "version": "unknown", "level": "not-evaluated", "coverage": "not-evaluated", "settings": "not-evaluated", "procedure": "not-evaluated", "evidence_refs": ["evidence-a"]},
+            {"id": "godot", "runtime": "Godot", "version": "unknown", "level": "not-evaluated", "coverage": "not-evaluated", "settings": "not-evaluated", "procedure": "not-evaluated", "evidence_refs": ["evidence-a"]},
+            {"id": "unity", "runtime": "Unity", "version": "unknown", "level": "not-evaluated", "coverage": "not-evaluated", "settings": "not-evaluated", "procedure": "not-evaluated", "evidence_refs": ["evidence-a"]},
+            {"id": "unreal-engine", "runtime": "Unreal Engine", "version": "unknown", "level": "not-evaluated", "coverage": "not-evaluated", "settings": "not-evaluated", "procedure": "not-evaluated", "evidence_refs": ["evidence-a"]},
+        ],
         "limitations": [{"id": "unknown-engine", "summary": "Runtime behavior is unknown.", "evidence_refs": ["evidence-a"]}],
         "sources": [{"id": "source-record", "source_commit": "fixture", "report_sha256": "b" * 64, "acquisition_scope": "synthetic", "license_scope": "self-authored", "evidence_kind": "documentation-stated", "evidence_refs": ["evidence-a"]}],
         "narratives": [{"id": "technical-decision", "slot": "technical-decision", "text": "A fixed-slot interpretation.", "fact_refs": ["fixture:idle-ip"]}],
@@ -3612,13 +3618,185 @@ class EvaluationModelV1Tests(unittest.TestCase):
         views = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
         self.assertEqual(model_renderer.validate_views(model, binding, views, report_name="fixture.md", appendix_name="fixture-evidence.md"), [])
         appendix = report_validator.parse_markdown(views.appendix)
-        role_table = next(table for table in appendix["tables"] if tuple(cell["text"] for cell in table["header"]) == report_validator.ROLE_HEADER)
+        role_table = next(table for table in appendix["tables"] if tuple(cell["text"] for cell in table["header"]) == report_validator.V1_ROLE_HEADER)
         role_counts = {row[0]["text"]: row[2]["text"] for row in role_table["rows"]}
         self.assertEqual(role_counts["idle-pose"], "1")
         self.assertEqual(role_counts["continuous-locomotion"], "1")
         self.assertEqual(role_counts["Total"], "1")
         issue_table = next(table for table in report_validator.parse_markdown(views.report)["tables"] if tuple(cell["text"] for cell in table["header"]) == report_validator.ISSUE_HEADER)
         self.assertIn("Use a full-body handoff.", issue_table["rows"][0][2]["text"])
+
+    def test_renderer_keeps_capability_states_and_runtime_ranges_truthful(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["capabilities"] = [
+            {"id": "cap-finding", "state": "finding", "evidence_refs": ["evidence-a"]},
+            {"id": "cap-na", "state": "not-applicable", "evidence_refs": ["evidence-a"]},
+            {"id": "cap-pass", "state": "pass", "evidence_refs": ["evidence-a"]},
+            {"id": "cap-unknown", "state": "not-evaluated", "evidence_refs": ["evidence-a"]},
+        ]
+        model["clips"][1]["duration_s"] = {"state": "available", "value": 2.0}  # type: ignore[index]
+        model["clips"][1]["root_motion_speed_mps"] = {"state": "not-applicable"}  # type: ignore[index]
+        views = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
+        report = report_validator.parse_markdown(views.report)
+        lists_by_section = {paragraph["subsection"]: paragraph["text"] for paragraph in report["paragraphs"] if paragraph["list_depth"] == 1}
+        self.assertIn("cap-unknown", lists_by_section["Not evaluated"])
+        self.assertIn("cap-na", lists_by_section["Not applicable"])
+        self.assertNotIn("cap-unknown", lists_by_section["Absent"])
+        runtime = next(table for table in report["tables"] if tuple(cell["text"] for cell in table["header"]) == report_validator.RUNTIME_SET_HEADER)
+        self.assertIn("duration available=2/2; range=1..2 s", runtime["rows"][0][4]["text"])
+        self.assertIn("rm_speed available=0/2", runtime["rows"][0][4]["text"])
+
+    def test_renderer_keeps_binding_authority_but_scrubs_private_locators(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        private_source, private_config = "/private/vendor/source.fbx", r"C:\\private\\config.toml"
+        binding["sources"][0]["locator"] = private_source  # type: ignore[index]
+        binding["sources"][0]["config"] = {"state": "explicit", "locator": private_config, "input": {"sha256": "c" * 64, "bytes": 23}}  # type: ignore[index]
+        private_gap, private_key = r"C:\\private\\secrets\\token", r"C:\\private\\measurement-key"
+        binding["runtime_sets"][0]["gaps"] = [private_gap]  # type: ignore[index]
+        self.assertEqual(model_validator.validate_model(model, binding), [])
+        clip_projection = model_renderer._public_clip_binding({
+            "state": "established", "observed_source_take_index": 0,
+            "observed_take_name": "Public take", "normalized_clip_index": 2,
+            "measurements": {"unmodeled": private_key},
+            "check_reference": {"state": "available", "reference": {"source": "fixture", "normalized_clip_index": 2, "measurement_key": private_key}},
+        })
+        self.assertEqual(clip_projection["check_reference"], {"state": "available", "reference": {"source": "fixture", "normalized_clip_index": 2}})
+        self.assertNotIn(private_key, json.dumps(clip_projection))
+        projected = model_renderer._public_binding_projection(binding)
+        self.assertEqual(projected["sources"][0]["config"]["input"], {"sha256": "c" * 64, "bytes": 23})  # type: ignore[index]
+        self.assertNotIn("locator", projected["sources"][0])  # type: ignore[index]
+        views = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
+        self.assertNotIn(private_source, views.report + views.appendix)
+        self.assertNotIn(private_config, views.report + views.appendix)
+        self.assertNotIn(private_gap, views.report + views.appendix)
+        self.assertNotIn(private_key, views.report + views.appendix)
+        self.assertNotIn(f'"locator":"{private_source}"', views.report + views.appendix)
+        self.assertNotIn(f'"locator":"{private_config}"', views.report + views.appendix)
+        self.assertIn('"gap_count":1', views.appendix)
+
+    def test_renderer_rejects_swapped_evidence_links_per_human_row(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["evidence"].append({"id": "evidence-b", "kind": "observed-file", "locator": "docs/second-evidence.md", "summary": "Second fixture evidence."})  # type: ignore[index]
+        model["issues"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["runtime_sets"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        views = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
+        issue_start = views.report.index("## Technical issue register")
+        issue_end = views.report.index("## Engine status", issue_start)
+        bad_issue = views.report[:issue_start] + views.report[issue_start:issue_end].replace("docs/second-evidence.md", "docs/synthetic-evidence.md") + views.report[issue_end:]
+        appendix_start = views.appendix.index("### Runtime-set inventory")
+        appendix_end = views.appendix.index("### Pipeline-stage coverage", appendix_start)
+        bad_runtime = views.appendix[:appendix_start] + views.appendix[appendix_start:appendix_end].replace("docs/second-evidence.md", "docs/synthetic-evidence.md") + views.appendix[appendix_end:]
+        self.assertTrue(any("issue row 1 has misattached evidence" in error for error in model_renderer.validate_views(model, binding, model_renderer.RenderedViews(bad_issue, views.appendix), report_name="fixture.md", appendix_name="fixture-evidence.md")))
+        self.assertTrue(any("runtime-set row 1 has misattached evidence" in error for error in model_renderer.validate_views(model, binding, model_renderer.RenderedViews(views.report, bad_runtime), report_name="fixture.md", appendix_name="fixture-evidence.md")))
+
+    def test_renderer_pins_every_human_evidence_projection_to_its_row(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["evidence"].append({"id": "evidence-b", "kind": "observed-file", "locator": "docs/second-evidence.md", "summary": "Second fixture evidence."})  # type: ignore[index]
+        model["clips"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["runtime_sets"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["profiles"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["pipeline_stages"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["readiness"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["capabilities"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["integration_steps"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["issues"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["remediations"][0]["input_evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["engine_evidence"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["limitations"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["sources"][0]["evidence_refs"] = ["evidence-b"]  # type: ignore[index]
+        model["collection"] = {
+            "constituents": [
+                {"id": "basic", "model_sha256": "b" * 64, "clip_ids": ["fixture:idle-ip"], "source_file_count": 1, "runtime_set_ids": ["fixture:paired"]},
+                {"id": "sword", "model_sha256": "c" * 64, "clip_ids": ["fixture:walk-rm"], "source_file_count": 0, "runtime_set_ids": []},
+            ],
+            "exclusions": [],
+            "cross_pack_records": [{"id": "basic-sword", "left": "basic", "right": "sword", "result": "artist-required", "evidence_refs": ["evidence-b"]}],
+        }
+        views = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
+
+        def mutate(text: str, start: str, end: str | None) -> str:
+            begin = text.index(start)
+            finish = len(text) if end is None else text.index(end, begin)
+            section = text[begin:finish].replace(
+                "[Second fixture evidence.](<docs/second-evidence.md>)",
+                "[Self-authored fixture evidence.](<docs/synthetic-evidence.md>)",
+            )
+            return text[:begin] + section + text[finish:]
+
+        cases = (
+            ("primary runtime", "report", "## Runtime sets and authored motion", "## Integration recipe", "primary runtime-set row 1 has misattached evidence"),
+            ("appendix runtime", "appendix", "### Runtime-set inventory", "### Pipeline-stage coverage", "runtime-set row 1 has misattached evidence"),
+            ("issue", "report", "## Technical issue register", "## Engine status", "issue row 1 has misattached evidence"),
+            ("clip", "appendix", "## Pack inventory and content evidence", "## Mechanical baseline", "clip row 1 has misattached evidence"),
+            ("profile", "appendix", "### Validation-profile status", "## Pack inventory and content evidence", "profile row 1 has misattached evidence"),
+            ("pipeline", "appendix", "### Pipeline-stage coverage", "### Readiness evidence by clip set", "pipeline row 1 has misattached evidence"),
+            ("readiness", "appendix", "### Readiness evidence by clip set", "### Validation-profile status", "readiness row 1 has misattached evidence"),
+            ("remediation", "appendix", "## AnimSmith remediation evidence", "## Engine procedures and evidence", "remediation row 1 has misattached evidence"),
+            ("primary engine", "report", "## Engine status", "## Fit and limitations", "primary engine row 4 has misattached evidence"),
+            ("appendix engine", "appendix", "## Engine procedures and evidence", "## Rig, masking, and compatibility evidence", "appendix engine row 1 has misattached evidence"),
+            ("cross-pack", "appendix", "## Rig, masking, and compatibility evidence", "## Limitations and unknowns", "cross-pack row 1 has misattached evidence"),
+            ("capability", "report", "### Not evaluated", "### Not applicable", "capability contact-actions has misattached evidence"),
+            ("integration", "report", "## Integration recipe", "## Technical issue register", "integration step full-body has misattached evidence"),
+            ("report source", "report", "## Sources", None, "source source-record has misattached evidence"),
+            ("appendix source", "appendix", "## Sources", None, "source source-record has misattached evidence"),
+            ("limitation", "appendix", "## Limitations and unknowns", "## Reproduction", "limitation unknown-engine has misattached evidence"),
+        )
+        baseline_links = {
+            (link["text"], link["destination"])
+            for document in (report_validator.parse_markdown(views.report), report_validator.parse_markdown(views.appendix))
+            for link in document["links"]
+        }
+        for name, view, start, end, expected in cases:
+            with self.subTest(projection=name):
+                report, appendix = views.report, views.appendix
+                if view == "report":
+                    report = mutate(report, start, end)
+                else:
+                    appendix = mutate(appendix, start, end)
+                mutated_links = {
+                    (link["text"], link["destination"])
+                    for document in (report_validator.parse_markdown(report), report_validator.parse_markdown(appendix))
+                    for link in document["links"]
+                }
+                self.assertEqual(mutated_links, baseline_links)
+                errors = model_renderer.validate_views(model, binding, model_renderer.RenderedViews(report, appendix), report_name="fixture.md", appendix_name="fixture-evidence.md")
+                self.assertTrue(any(expected in error for error in errors), errors)
+
+    def test_engine_matrix_and_public_locator_contract_are_closed(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["engine_evidence"][0]["runtime"] = "bevy"  # type: ignore[index]
+        self.assertTrue(any("runtime" in error for error in model_validator.validate_model(model, binding)))
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["engine_evidence"][0]["runtime"] = "Unity"  # type: ignore[index]
+        self.assertIn("model.engine_evidence must contain exactly one record for Unity, Unreal Engine, Godot, and Bevy", model_validator.validate_model(model, binding))
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["evidence"][0]["locator"] = "https://exa<mple.test/path"  # type: ignore[index]
+        self.assertTrue(model_validator.validate_model(model, binding))
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["evidence"][0]["summary"] = "Evidence with `backticks`."  # type: ignore[index]
+        views = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
+        self.assertIn(("Evidence with `backticks`.", "docs/synthetic-evidence.md"), {(link["text"], link["destination"]) for link in report_validator.parse_markdown(views.report)["links"]})
+
+    def test_semantic_record_loop_checks_an_earlier_family(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["capabilities"][0]["evidence_refs"] = ["missing-evidence"]  # type: ignore[index]
+        self.assertIn("model.capabilities[0].evidence_refs has dangling references: missing-evidence", model_validator.validate_model(model, binding))
+
+
+    def test_renderer_rejects_misattached_record_local_evidence_link_and_large_check_file(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        views = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
+        ledger, code = views.appendix.split("```json", 1)
+        prefix, marker, suffix = ledger.rpartition("docs/synthetic-evidence.md")
+        bad = prefix + marker.replace("docs/synthetic-evidence.md", "docs/wrong-evidence.md") + suffix + "```json" + code
+        errors = model_renderer.validate_views(model, binding, model_renderer.RenderedViews(views.report, bad), report_name="fixture.md", appendix_name="fixture-evidence.md")
+        self.assertTrue(any("evidence relationship" in error for error in errors), errors)
+        with tempfile.TemporaryDirectory() as temporary:
+            stale = Path(temporary) / "large.md"
+            with stale.open("wb") as handle:
+                handle.truncate(64 * 1024 * 1024)
+            with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("unbounded read")):
+                self.assertFalse(model_renderer._matches_expected(stale, b"small\n"))
 
     def test_renderer_refuses_input_output_and_output_output_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -3634,6 +3812,14 @@ class EvaluationModelV1Tests(unittest.TestCase):
             output_hardlink = directory / "output-hardlink.md"; os.link(output, output_hardlink)
             with self.assertRaises(ValueError):
                 model_renderer._checked_paths(model, binding, output, output_hardlink)
+            dangling_output = directory / "dangling-output.md"
+            try:
+                dangling_output.symlink_to(directory / "missing-victim.md")
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+            with self.assertRaises(ValueError):
+                model_renderer._checked_paths(model, binding, dangling_output, directory / "appendix.md")
+            dangling_output.unlink()
             hardlink = directory / "hardlink.md"
             os.link(binding, hardlink)
             with self.assertRaises(ValueError):
@@ -3649,39 +3835,48 @@ class EvaluationModelV1Tests(unittest.TestCase):
     def test_renderer_pair_failure_restores_both_outputs_and_cleans_staging(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            report, appendix = directory / "report.md", directory / "appendix.md"
+            report, appendix = directory / "report.md", directory / "report-evidence.md"
             report.write_bytes(b"old report\n")
             appendix.write_bytes(b"old appendix\n")
             views = model_renderer.RenderedViews("new report\n", "new appendix\n")
+
+            def publish() -> None:
+                targets = model_renderer._open_output_targets(report, appendix)
+                try:
+                    model_renderer._publish_pair(targets[0], targets[1], views)
+                finally:
+                    model_renderer._close_output_targets(targets)
+
             real_replace = os.replace
             calls = 0
 
-            def fail_second(source: os.PathLike[str] | str, destination: os.PathLike[str] | str) -> None:
+            def fail_second(source: os.PathLike[str] | str, destination: os.PathLike[str] | str, *args: object, **kwargs: object) -> None:
                 nonlocal calls
-                if Path(destination) == appendix:
+                if destination == appendix.name and kwargs.get("dst_dir_fd") is not None:
                     calls += 1
                     if calls == 1:
                         raise OSError("injected second publish failure")
-                real_replace(source, destination)
+                real_replace(source, destination, *args, **kwargs)
 
             with mock.patch.object(model_renderer.os, "replace", side_effect=fail_second):
                 with self.assertRaises(OSError):
-                    model_renderer._publish_pair(report, appendix, views)
+                    publish()
             self.assertEqual(report.read_bytes(), b"old report\n")
             self.assertEqual(appendix.read_bytes(), b"old appendix\n")
             self.assertEqual(list(directory.glob("tmp*")), [])
             report.unlink(); appendix.unlink(); calls = 0
             with mock.patch.object(model_renderer.os, "replace", side_effect=fail_second):
                 with self.assertRaises(OSError):
-                    model_renderer._publish_pair(report, appendix, views)
+                    publish()
             self.assertFalse(report.exists())
             self.assertFalse(appendix.exists())
             self.assertEqual(list(directory.glob("tmp*")), [])
             report.mkdir()
             with self.assertRaises(ValueError):
-                model_renderer._publish_pair(report, appendix, views)
+                publish()
             self.assertEqual(list(directory.glob("tmp*")), [])
             self.assertEqual(list(directory.glob(".animsmith-render-*")), [])
+
             report.rmdir()
             fifo = directory / "output.fifo"
             try:
@@ -3690,7 +3885,11 @@ class EvaluationModelV1Tests(unittest.TestCase):
                 self.assertIsNotNone(error)  # Directory refusal above is portable.
             else:
                 with self.assertRaises(ValueError):
-                    model_renderer._publish_pair(fifo, appendix, views)
+                    targets = model_renderer._open_output_targets(fifo, appendix)
+                    try:
+                        model_renderer._publish_pair(targets[0], targets[1], views)
+                    finally:
+                        model_renderer._close_output_targets(targets)
                 self.assertEqual(list(directory.glob(".animsmith-render-*")), [])
                 fifo.unlink()
             with report.open("wb") as handle:
@@ -3700,10 +3899,357 @@ class EvaluationModelV1Tests(unittest.TestCase):
             with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("must not snapshot output bytes")):
                 with mock.patch.object(model_renderer.os, "replace", side_effect=fail_second):
                     with self.assertRaises(OSError):
-                        model_renderer._publish_pair(report, appendix, views)
+                        publish()
             self.assertEqual(report.stat().st_size, 64 * 1024 * 1024)
             self.assertEqual(appendix.read_bytes(), b"small old appendix\n")
             self.assertEqual(list(directory.glob(".animsmith-render-*")), [])
+
+    def test_renderer_publish_rechecks_a_symlink_introduced_after_path_check(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            model, binding = directory / "model.json", directory / "binding.json"
+            model.write_bytes(model_contract.canonical_json(valid_evaluation_model()))
+            binding.write_bytes(model_contract.canonical_json(valid_collection_output_projection()))
+            report, appendix = directory / "report.md", directory / "report-evidence.md"
+            _model, _binding, checked_report, checked_appendix = model_renderer._checked_paths(model, binding, report, appendix)
+            targets = model_renderer._open_output_targets(checked_report, checked_appendix)
+            victim = directory / "victim.md"
+            victim.write_text("do not overwrite\n", encoding="utf-8")
+            try:
+                checked_report.symlink_to(victim)
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+            try:
+                with self.assertRaises(ValueError):
+                    model_renderer._publish_pair(targets[0], targets[1], model_renderer.RenderedViews("new report\n", "new appendix\n"))
+            finally:
+                model_renderer._close_output_targets(targets)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "do not overwrite\n")
+            self.assertFalse(checked_appendix.exists())
+
+    def test_renderer_retains_output_parent_descriptors_across_parent_swaps(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            model, binding = directory / "model.json", directory / "binding.json"
+            model.write_bytes(model_contract.canonical_json(valid_evaluation_model()))
+            binding.write_bytes(model_contract.canonical_json(valid_collection_output_projection()))
+            victim = directory / "victim"; victim.mkdir()
+            missing_parent = directory / "missing-parent"
+            with self.assertRaises(ValueError):
+                model_renderer._checked_paths(model, binding, missing_parent / "report.md", missing_parent / "appendix.md")
+            try:
+                missing_parent.symlink_to(victim, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+            self.assertFalse((victim / "report.md").exists())
+            self.assertFalse((victim / "appendix.md").exists())
+            missing_parent.unlink()
+
+            canonical = directory / "canonical-parent"; canonical.mkdir()
+            alias = directory / "original-alias"
+            alias.symlink_to(canonical, target_is_directory=True)
+            _model, _binding, report, appendix = model_renderer._checked_paths(model, binding, alias / "report.md", alias / "appendix.md")
+            targets = model_renderer._open_output_targets(report, appendix)
+            alias.unlink(); alias.symlink_to(victim, target_is_directory=True)
+            try:
+                model_renderer._publish_pair(targets[0], targets[1], model_renderer.RenderedViews("report\n", "appendix\n"))
+            finally:
+                model_renderer._close_output_targets(targets)
+            self.assertEqual((canonical / "report.md").read_text(encoding="utf-8"), "report\n")
+            self.assertEqual((canonical / "appendix.md").read_text(encoding="utf-8"), "appendix\n")
+            self.assertFalse((victim / "report.md").exists())
+            self.assertFalse((victim / "appendix.md").exists())
+
+            stable = directory / "stable-parent"; stable.mkdir()
+            _model, _binding, report, appendix = model_renderer._checked_paths(model, binding, stable / "report.md", stable / "appendix.md")
+            targets = model_renderer._open_output_targets(report, appendix)
+            moved = directory / "moved-parent"
+            stable.rename(moved); stable.symlink_to(victim, target_is_directory=True)
+            try:
+                with self.assertRaises(ValueError):
+                    model_renderer._publish_pair(targets[0], targets[1], model_renderer.RenderedViews("report\n", "appendix\n"))
+            finally:
+                model_renderer._close_output_targets(targets)
+            self.assertFalse((victim / "report.md").exists())
+            self.assertFalse((victim / "appendix.md").exists())
+            self.assertFalse((moved / "report.md").exists())
+            self.assertFalse((moved / "appendix.md").exists())
+
+    def test_renderer_check_stays_portable_and_write_fails_closed_without_dir_fds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            model, binding = directory / "model.json", directory / "binding.json"
+            model.write_bytes(model_contract.canonical_json(valid_evaluation_model()))
+            binding.write_bytes(model_contract.canonical_json(valid_collection_output_projection()))
+            report, appendix = directory / "report.md", directory / "report-evidence.md"
+            arguments = ["render_evaluation_model.py", str(model), "--binding", str(binding), "--report", str(report), "--appendix", str(appendix)]
+            with mock.patch.object(model_renderer, "_safe_dir_fd_available", return_value=False):
+                with mock.patch.object(sys, "argv", arguments + ["--check"]):
+                    self.assertEqual(model_renderer.main(), 1)
+                with mock.patch.object(sys, "argv", arguments):
+                    self.assertEqual(model_renderer.main(), 2)
+            self.assertFalse(report.exists())
+            self.assertFalse(appendix.exists())
+
+            opened: list[int] = []
+            real_open = os.open
+
+            def fail_second_open(*args: object, **kwargs: object) -> int:
+                if opened:
+                    raise OSError("injected second directory-open failure")
+                descriptor = real_open(*args, **kwargs)
+                opened.append(descriptor)
+                return descriptor
+
+            with mock.patch.object(model_renderer, "_safe_dir_fd_available", return_value=True):
+                with mock.patch.object(model_renderer.os, "open", side_effect=fail_second_open):
+                    with self.assertRaises(OSError):
+                        model_renderer._open_output_targets(report, appendix)
+            self.assertEqual(len(opened), 1)
+            with self.assertRaises(OSError):
+                os.fstat(opened[0])
+
+    def test_renderer_rolls_back_when_a_parent_moves_during_publication(self) -> None:
+        # WSL's mounted Windows temporary directory does not support relative
+        # directory-fd operations after a rename; this test needs the POSIX
+        # semantics exercised by the production no-follow publication path.
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            directory = Path(temporary)
+            views = model_renderer.RenderedViews("new report\n", "new appendix\n")
+
+            def prepare(label: str) -> tuple[Path, Path, Path, Path, tuple[object, object]]:
+                parent = directory / f"{label}-parent"; parent.mkdir()
+                victim = directory / f"{label}-victim"; victim.mkdir()
+                report, appendix = parent / "report.md", parent / "appendix.md"
+                report.write_text("old report\n", encoding="utf-8")
+                appendix.write_text("old appendix\n", encoding="utf-8")
+                return parent, victim, report, appendix, model_renderer._open_output_targets(report, appendix)
+
+            parent, victim, report, appendix, targets = prepare("post-stage")
+            moved = directory / "post-stage-moved"
+            real_assert = model_renderer._assert_parent_identities
+            assertions = 0
+
+            def move_after_staging(current: tuple[object, object]) -> None:
+                nonlocal assertions
+                assertions += 1
+                real_assert(current)  # type: ignore[arg-type]
+                if assertions == 2:
+                    parent.rename(moved); parent.symlink_to(victim, target_is_directory=True)
+
+            try:
+                with mock.patch.object(model_renderer, "_assert_parent_identities", side_effect=move_after_staging):
+                    with self.assertRaises(ValueError):
+                        model_renderer._publish_pair(targets[0], targets[1], views)  # type: ignore[arg-type]
+            finally:
+                model_renderer._close_output_targets(targets)  # type: ignore[arg-type]
+            self.assertEqual((moved / report.name).read_text(encoding="utf-8"), "old report\n")
+            self.assertEqual((moved / appendix.name).read_text(encoding="utf-8"), "old appendix\n")
+            self.assertFalse((victim / report.name).exists())
+            self.assertFalse((victim / appendix.name).exists())
+            self.assertEqual(list(moved.glob(".animsmith-render-*")), [])
+
+            parent, victim, report, appendix, targets = prepare("between-publishes")
+            moved = directory / "between-publishes-moved"
+            real_replace = os.replace
+            moved_parent = False
+
+            def move_after_first_publish(source: str, destination: str, *args: object, **kwargs: object) -> None:
+                nonlocal moved_parent
+                real_replace(source, destination, *args, **kwargs)
+                if not moved_parent and source.startswith(".animsmith-render-stage-") and destination == report.name:
+                    moved_parent = True
+                    parent.rename(moved); parent.symlink_to(victim, target_is_directory=True)
+
+            try:
+                with mock.patch.object(model_renderer.os, "replace", side_effect=move_after_first_publish):
+                    with self.assertRaises(ValueError):
+                        model_renderer._publish_pair(targets[0], targets[1], views)  # type: ignore[arg-type]
+            finally:
+                model_renderer._close_output_targets(targets)  # type: ignore[arg-type]
+            self.assertTrue(moved_parent)
+            self.assertEqual((moved / report.name).read_text(encoding="utf-8"), "old report\n")
+            self.assertEqual((moved / appendix.name).read_text(encoding="utf-8"), "old appendix\n")
+            self.assertFalse((victim / report.name).exists())
+            self.assertFalse((victim / appendix.name).exists())
+            self.assertEqual(list(moved.glob(".animsmith-render-*")), [])
+
+    def test_renderer_staging_handles_partial_and_zero_writes(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            directory = Path(temporary)
+            report, appendix = directory / "report.md", directory / "appendix.md"
+            views = model_renderer.RenderedViews("new report bytes\n", "new appendix bytes\n")
+            real_write = os.write
+
+            def publish() -> None:
+                targets = model_renderer._open_output_targets(report, appendix)
+                try:
+                    model_renderer._publish_pair(targets[0], targets[1], views)
+                finally:
+                    model_renderer._close_output_targets(targets)
+
+            def short_write(descriptor: int, data: bytes | memoryview) -> int:
+                return real_write(descriptor, data[:max(1, min(3, len(data)))])
+
+            with mock.patch.object(model_renderer.os, "write", side_effect=short_write):
+                publish()
+            self.assertEqual(report.read_text(encoding="utf-8"), views.report)
+            self.assertEqual(appendix.read_text(encoding="utf-8"), views.appendix)
+            self.assertEqual(list(directory.glob(".animsmith-render-*")), [])
+
+            report.write_text("old report\n", encoding="utf-8")
+            appendix.write_text("old appendix\n", encoding="utf-8")
+            with mock.patch.object(model_renderer.os, "write", return_value=0):
+                with self.assertRaises(OSError):
+                    publish()
+            self.assertEqual(report.read_text(encoding="utf-8"), "old report\n")
+            self.assertEqual(appendix.read_text(encoding="utf-8"), "old appendix\n")
+            self.assertEqual(list(directory.glob(".animsmith-render-*")), [])
+
+    def test_renderer_refuses_nonregular_final_entries_introduced_after_staging(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            directory = Path(temporary)
+            views = model_renderer.RenderedViews("new report\n", "new appendix\n")
+
+            def prepare(label: str) -> tuple[Path, Path, Path]:
+                parent = directory / label; parent.mkdir()
+                report, appendix = parent / "report.md", parent / "appendix.md"
+                report.write_text("old report\n", encoding="utf-8")
+                appendix.write_text("old appendix\n", encoding="utf-8")
+                return parent, report, appendix
+
+            cases: list[tuple[str, object]] = [
+                ("directory", lambda target, victim: target.mkdir()),
+                ("symlink", lambda target, victim: target.symlink_to(victim)),
+            ]
+            fifo_probe = directory / "fifo-probe"
+            try:
+                os.mkfifo(fifo_probe)
+            except (AttributeError, OSError):
+                pass
+            else:
+                fifo_probe.unlink()
+                cases.append(("fifo", lambda target, victim: os.mkfifo(target)))
+
+            for kind, introduce in cases:
+                with self.subTest(kind=kind):
+                    parent, report, appendix = prepare(kind)
+                    victim = directory / f"{kind}-victim"
+                    victim.write_text("do not overwrite\n", encoding="utf-8")
+                    targets = model_renderer._open_output_targets(report, appendix)
+                    real_assert = model_renderer._assert_parent_identities
+                    assertions = 0
+
+                    def introduce_after_staging(current: tuple[object, object]) -> None:
+                        nonlocal assertions
+                        assertions += 1
+                        real_assert(current)  # type: ignore[arg-type]
+                        if assertions == 2:
+                            report.unlink()
+                            introduce(report, victim)  # type: ignore[operator]
+
+                    try:
+                        with mock.patch.object(model_renderer, "_assert_parent_identities", side_effect=introduce_after_staging):
+                            with self.assertRaises(ValueError):
+                                model_renderer._publish_pair(targets[0], targets[1], views)  # type: ignore[arg-type]
+                    finally:
+                        model_renderer._close_output_targets(targets)  # type: ignore[arg-type]
+                    self.assertEqual(appendix.read_text(encoding="utf-8"), "old appendix\n")
+                    self.assertEqual(list(parent.glob(".animsmith-render-*")), [])
+                    if kind == "directory":
+                        self.assertTrue(report.is_dir())
+                    elif kind == "fifo":
+                        self.assertTrue(stat.S_ISFIFO(report.lstat().st_mode))
+                    else:
+                        self.assertTrue(report.is_symlink())
+                        self.assertEqual(victim.read_text(encoding="utf-8"), "do not overwrite\n")
+
+            parent, report, appendix = prepare("between-backups")
+            targets = model_renderer._open_output_targets(report, appendix)
+            real_replace = os.replace
+            introduced = False
+
+            def introduce_between_backups(source: str, destination: str, *args: object, **kwargs: object) -> None:
+                nonlocal introduced
+                real_replace(source, destination, *args, **kwargs)
+                if not introduced and source == report.name and destination.startswith(".animsmith-render-backup-"):
+                    introduced = True
+                    appendix.unlink()
+                    appendix.mkdir()
+
+            try:
+                with mock.patch.object(model_renderer.os, "replace", side_effect=introduce_between_backups):
+                    with self.assertRaises(ValueError):
+                        model_renderer._publish_pair(targets[0], targets[1], views)  # type: ignore[arg-type]
+            finally:
+                model_renderer._close_output_targets(targets)  # type: ignore[arg-type]
+            self.assertTrue(introduced)
+            self.assertEqual(report.read_text(encoding="utf-8"), "old report\n")
+            self.assertTrue(appendix.is_dir())
+            self.assertEqual(list(parent.glob(".animsmith-render-*")), [])
+
+    def test_renderer_preserves_an_interleaved_nonregular_publish_target_for_recovery(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            directory = Path(temporary)
+            report, appendix = directory / "report.md", directory / "appendix.md"
+            report.write_text("old report\n", encoding="utf-8")
+            appendix.write_text("old appendix\n", encoding="utf-8")
+            targets = model_renderer._open_output_targets(report, appendix)
+            real_replace = os.replace
+            report_backup: list[str] = []
+
+            def replace_then_interleave(source: str, destination: str, *args: object, **kwargs: object) -> None:
+                if source == report.name and destination.startswith(".animsmith-render-backup-"):
+                    report_backup.append(destination)
+                if source.startswith(".animsmith-render-stage-") and destination == report.name:
+                    real_replace(source, destination, *args, **kwargs)
+                    report.unlink(); report.mkdir()
+                    return
+                if source.startswith(".animsmith-render-stage-") and destination == appendix.name:
+                    raise OSError("injected second publish failure")
+                real_replace(source, destination, *args, **kwargs)
+
+            try:
+                with mock.patch.object(model_renderer.os, "replace", side_effect=replace_then_interleave):
+                    with self.assertRaises(model_renderer.PublicationRecoveryError) as raised:
+                        model_renderer._publish_pair(targets[0], targets[1], model_renderer.RenderedViews("new report\n", "new appendix\n"))
+            finally:
+                model_renderer._close_output_targets(targets)
+            self.assertTrue(report.is_dir())
+            self.assertEqual(appendix.read_text(encoding="utf-8"), "old appendix\n")
+            self.assertEqual(len(report_backup), 1)
+            backup = directory / report_backup[0]
+            self.assertEqual(backup.read_text(encoding="utf-8"), "old report\n")
+            self.assertIn("manual recovery", str(raised.exception))
+            self.assertIn(str(backup), str(raised.exception))
+            self.assertEqual(list(directory.glob(".animsmith-render-stage-*")), [])
+
+    def test_renderer_preserves_a_substituted_internal_staging_name_during_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            directory = Path(temporary)
+            report, appendix = directory / "report.md", directory / "appendix.md"
+            targets = model_renderer._open_output_targets(report, appendix)
+            real_replace = os.replace
+            substituted: list[str] = []
+
+            def substitute_after_final_publish(source: str, destination: str, *args: object, **kwargs: object) -> None:
+                real_replace(source, destination, *args, **kwargs)
+                if source.startswith(".animsmith-render-stage-") and destination == appendix.name:
+                    substituted.append(source)
+                    os.mkdir(source, dir_fd=kwargs["src_dir_fd"])  # type: ignore[arg-type]
+
+            try:
+                with mock.patch.object(model_renderer.os, "replace", side_effect=substitute_after_final_publish):
+                    with self.assertRaises(model_renderer.PublicationRecoveryError) as raised:
+                        model_renderer._publish_pair(targets[0], targets[1], model_renderer.RenderedViews("new report\n", "new appendix\n"))
+            finally:
+                model_renderer._close_output_targets(targets)
+            self.assertEqual(report.read_text(encoding="utf-8"), "new report\n")
+            self.assertEqual(appendix.read_text(encoding="utf-8"), "new appendix\n")
+            self.assertEqual(len(substituted), 1)
+            replacement = directory / substituted[0]
+            self.assertTrue(replacement.is_dir())
+            self.assertIn(str(replacement), str(raised.exception))
 
     def test_renderer_cli_check_is_byte_exact_and_never_writes_stale_views(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -3713,10 +4259,45 @@ class EvaluationModelV1Tests(unittest.TestCase):
             model_path.write_bytes(model_contract.canonical_json(valid_evaluation_model()))
             binding_path.write_bytes(model_contract.canonical_json(valid_collection_output_projection()))
             command = [str(Path(__file__).with_name("render_evaluation_model.py")), str(model_path), "--binding", str(binding_path), "--report", str(report_path), "--appendix", str(appendix_path)]
+            real_parent = directory / "real-output-parent"
+            real_parent.mkdir()
+            left_parent, right_parent = directory / "left-output-parent", directory / "right-output-parent"
+            try:
+                left_parent.symlink_to(real_parent, target_is_directory=True)
+                right_parent.symlink_to(real_parent, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+            aliased_target = real_parent / "same.md"
+            aliased = [str(Path(__file__).with_name("render_evaluation_model.py")), str(model_path), "--binding", str(binding_path), "--report", str(left_parent / "same.md"), "--appendix", str(right_parent / "same.md")]
+            blocked_parent_alias = subprocess.run(aliased, check=False, text=True, capture_output=True)
+            self.assertEqual(blocked_parent_alias.returncode, 2, blocked_parent_alias.stderr)
+            self.assertFalse(aliased_target.exists())
+            victim = directory / "unrelated.md"
+            victim.write_text("do not overwrite\n", encoding="utf-8")
+            try:
+                report_path.symlink_to(victim)
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+            blocked_report = subprocess.run(command, check=False, text=True, capture_output=True)
+            self.assertEqual(blocked_report.returncode, 2, blocked_report.stderr)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "do not overwrite\n")
+            self.assertFalse(appendix_path.exists())
+            report_path.unlink()
+            appendix_path.symlink_to(victim)
+            blocked_appendix = subprocess.run(command, check=False, text=True, capture_output=True)
+            self.assertEqual(blocked_appendix.returncode, 2, blocked_appendix.stderr)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "do not overwrite\n")
+            self.assertFalse(report_path.exists())
+            appendix_path.unlink()
             rendered = subprocess.run(command, check=False, text=True, capture_output=True)
             self.assertEqual(rendered.returncode, 0, rendered.stderr)
             clean = subprocess.run(command + ["--check"], check=False, text=True, capture_output=True)
             self.assertEqual(clean.returncode, 0, clean.stderr)
+            rendered_validator = subprocess.run(
+                [str(Path(__file__).with_name("validate_report.py")), str(report_path), "--appendix", str(appendix_path), "--evaluation-model-v1"],
+                check=False, text=True, capture_output=True,
+            )
+            self.assertEqual(rendered_validator.returncode, 0, rendered_validator.stderr)
             before = report_path.read_bytes(), appendix_path.read_bytes()
             report_path.write_text("stale\n", encoding="utf-8")
             stale = subprocess.run(command + ["--check"], check=False, text=True, capture_output=True)
@@ -3728,7 +4309,7 @@ class EvaluationModelV1Tests(unittest.TestCase):
                 command[:4] + ["--report", str(missing_parent / "report.md"), "--appendix", str(missing_parent / "report-evidence.md"), "--check"],
                 check=False, text=True, capture_output=True,
             )
-            self.assertEqual(check_only.returncode, 1, check_only.stderr)
+            self.assertEqual(check_only.returncode, 2, check_only.stderr)
             self.assertFalse(missing_parent.parent.exists())
             seeded_views = []
             for seed in ("1", "2"):

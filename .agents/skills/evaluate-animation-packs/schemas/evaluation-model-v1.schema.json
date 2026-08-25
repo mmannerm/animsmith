@@ -118,7 +118,8 @@
     },
     "engine_evidence": {
       "type": "array",
-      "maxItems": 4096,
+      "minItems": 4,
+      "maxItems": 4,
       "items": {
         "$ref": "#/$defs/engine"
       }
@@ -163,6 +164,7 @@
     "public_locator": {
       "allOf": [
         {"$ref": "#/$defs/text"},
+        {"not": {"pattern": "[<>]"}},
         {"anyOf": [
           {"allOf": [
             {"pattern": "^https://[^/@\\s?#]+(?:[/?#][^@\\s<>]*)?$"},
@@ -835,7 +837,7 @@
           "$ref": "#/$defs/id"
         },
         "runtime": {
-          "$ref": "#/$defs/text"
+          "enum": ["Unity", "Unreal Engine", "Godot", "Bevy"]
         },
         "version": {
           "$ref": "#/$defs/text"

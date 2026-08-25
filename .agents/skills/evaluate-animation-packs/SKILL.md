@@ -192,7 +192,7 @@ explicit migration. New structured evaluations may additionally use the strict
 [`references/evaluation-model-v1.md`](references/evaluation-model-v1.md). It
 binds to an independently validated `collection-output:2` projection; it does
 not parse collection-manifest TOML or make generated Markdown authoritative
-before the later renderer and migration slices.
+before the explicit renderer and migration boundaries.
 
 Render a validated V1 model with its independently validated binding through
 the one fixed renderer. It produces the paired Markdown views from the same
@@ -203,9 +203,27 @@ canonical model and never reverse-imports Markdown as authority:
   MODEL.json --binding COLLECTION.json --report REPORT.md --appendix REPORT-evidence.md
 ```
 
-Use `--check` in a clean generated-view checkout to byte-compare both files
-without writing. Basic/Sword report migration, report discovery, legacy
-retirement, and library-facing inventory work remain later slices.
+Before publishing, validate the exact canonical model and then check the
+already-rendered pair without writing:
+
+```text
+.agents/skills/evaluate-animation-packs/scripts/validate_evaluation_model.py \
+  MODEL.json --binding COLLECTION.json --check-canonical
+.agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
+  MODEL.json --binding COLLECTION.json --report REPORT.md --appendix REPORT-evidence.md --check
+.agents/skills/evaluate-animation-packs/scripts/validate_report.py \
+  REPORT.md --appendix REPORT-evidence.md --evaluation-model-v1
+```
+
+Both output-parent directories must already exist. `--check` byte-compares
+both views with bounded reads, never writes them, and remains cross-platform.
+Write publication uses descriptor-relative no-follow operations and fails
+closed when that support is unavailable. If an output, staging, or backup name
+changes during publication, the renderer preserves the unexpected entry and
+any retained original backup, then reports the exact manual-recovery location;
+reconcile those entries before retrying. Basic/Sword report migration, report
+discovery, legacy retirement, and library-facing inventory work remain later
+slices.
 
 ## Run the untouched baseline
 
