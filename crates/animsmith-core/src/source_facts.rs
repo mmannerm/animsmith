@@ -4,7 +4,8 @@
 //! [`Document`] produced from the same primary bytes.
 
 use crate::{
-    DependencyClosureError, DependencyClosureV1, Document, InputIdentity, SourceSkeletonAssets,
+    DependencyClosureError, DependencyClosureV1, Document, ExactFbxTimingContractError,
+    ExactFbxTimingV1, InputIdentity, SourceSkeletonAssets,
 };
 use serde::Serialize;
 use std::fmt;
@@ -1779,6 +1780,7 @@ impl RawSourceFactsBuilderV1 {
             document,
             facts: self.facts,
             dependency_closure,
+            exact_fbx_timing: None,
         })
     }
 
@@ -1902,6 +1904,7 @@ pub struct LoadedSource {
     document: Document,
     facts: RawSourceFactsV1,
     dependency_closure: DependencyClosureV1,
+    exact_fbx_timing: Option<ExactFbxTimingV1>,
 }
 
 impl fmt::Debug for LoadedSource {
@@ -1911,6 +1914,7 @@ impl fmt::Debug for LoadedSource {
             .field("format", &self.facts.format)
             .field("primary_identity", &self.facts.primary_identity)
             .field("dependency_closure", &self.dependency_closure)
+            .field("exact_fbx_timing", &self.exact_fbx_timing)
             .field("work", &self.facts.work)
             .finish_non_exhaustive()
     }
@@ -1933,6 +1937,40 @@ impl LoadedSource {
     /// Borrow the bounded dependency closure captured during this same load.
     pub const fn dependency_closure(&self) -> &DependencyClosureV1 {
         &self.dependency_closure
+    }
+
+    /// Attach bounded exact timing evidence produced by the same FBX parse.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExactFbxTimingContractError`] when the source is not FBX or the
+    /// exact stack prefix and coverage do not match the existing V1 clip domain.
+    pub fn with_exact_fbx_timing(
+        mut self,
+        timing: ExactFbxTimingV1,
+    ) -> Result<Self, ExactFbxTimingContractError> {
+        if self.facts.format != SourceFormatV1::Fbx {
+            return Err(ExactFbxTimingContractError::NonFbxSource);
+        }
+        if timing.stacks().len() != self.facts.clips.rows.len() {
+            return Err(ExactFbxTimingContractError::StackCountMismatch {
+                exact: timing.stacks().len(),
+                source_count: self.facts.clips.rows.len(),
+            });
+        }
+        if timing.stack_coverage() != self.facts.clips.coverage {
+            return Err(ExactFbxTimingContractError::StackCoverageMismatch);
+        }
+        self.exact_fbx_timing = Some(timing);
+        Ok(self)
+    }
+
+    /// Borrow exact FBX timing evidence when this loader retained it.
+    ///
+    /// Non-FBX sources and FBX sources produced by callers that only construct
+    /// the legacy V1 facts return `None`.
+    pub const fn exact_fbx_timing(&self) -> Option<&ExactFbxTimingV1> {
+        self.exact_fbx_timing.as_ref()
     }
 
     /// Consume the owner and deliberately discard importer-sensitive source facts.
@@ -2459,6 +2497,7 @@ mod tests {
         assert_eq!(facts.format(), SourceFormatV1::Glb);
         assert_eq!(facts.primary_identity(), &identity);
         assert_eq!(facts.primary_identity().bytes(), bytes.len() as u64);
+        assert!(loaded.exact_fbx_timing().is_none());
         assert!(std::ptr::eq(
             facts.source_skeleton() as *const _,
             source_skeleton_ptr

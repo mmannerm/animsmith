@@ -132,6 +132,7 @@ pub mod directional_speed_evaluation;
 pub mod directional_speed_policy;
 pub mod engine_contract;
 pub mod evaluation;
+pub mod fbx_timing;
 pub mod finding;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
@@ -245,6 +246,13 @@ pub use evaluation::{
     CheckOutput, CheckSelection, ConfigurationState, CoverageGap, CoverageGapCode, EvaluationError,
     EvaluationScope, EvaluationScopeCode, EvaluationState, SelectionState, evaluate_checks,
     evaluate_checks_v2, lint_requires_failure,
+};
+pub use fbx_timing::{
+    EXACT_FBX_TIMING_V1_ID, EXACT_FBX_TIMING_V1_MAX_STACKS, ExactFbxStackTimingV1,
+    ExactFbxTimingContractError, ExactFbxTimingObservationStateV1, ExactFbxTimingObservationV1,
+    ExactFbxTimingUnavailableReasonV1, ExactFbxTimingV1, FBX_KTIME_LEGACY_TICKS_PER_SECOND,
+    FBX_KTIME_STANDARD_TICKS_PER_SECOND, FbxCustomFrameRateV1, FbxFramePeriodV1, FbxKTimeBasisV1,
+    FbxStackTickRangeV1, FbxTimeModeV1, FbxTimeProtocolV1, FbxTimeSpanSelectionV1,
 };
 pub use finding::{Finding, MemberMeasurement, Severity, Value};
 /// Re-export of the exact `glam` version used by animsmith's public math

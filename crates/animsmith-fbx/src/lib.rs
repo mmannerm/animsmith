@@ -81,6 +81,7 @@
 #![warn(missing_docs)]
 
 mod capability;
+mod exact_timing;
 mod source_facts;
 
 pub use capability::{
@@ -144,6 +145,9 @@ pub enum LoadError {
     /// The loader produced source facts that violate the core binding contract.
     #[error("invalid FBX source-facts projection: {0}")]
     SourceFacts(#[from] SourceFactsError),
+    /// Exact FBX/KTime evidence violated its isolated in-memory contract.
+    #[error("invalid exact FBX timing projection: {0}")]
+    ExactTiming(String),
 }
 
 fn vec3(v: ufbx::Vec3) -> Vec3 {
@@ -527,6 +531,13 @@ fn load_scale_source_bytes_inner(
         },
     };
     let source = raw_facts.finish_with_dependency_closure(document, dependency_closure)?;
+    let source_clips = source.source_facts().clips();
+    let exact_timing =
+        exact_timing::project(&scene, source_clips.coverage(), source_clips.rows().len())
+            .map_err(|error| LoadError::ExactTiming(error.to_string()))?;
+    let source = source
+        .with_exact_fbx_timing(exact_timing)
+        .map_err(|error| LoadError::ExactTiming(error.to_string()))?;
 
     Ok(FbxScaleSource {
         source,
