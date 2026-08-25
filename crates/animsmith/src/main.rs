@@ -62,6 +62,7 @@ mod scale;
 mod staged_selector;
 #[cfg(feature = "fbx")]
 mod texture_processing;
+mod transition_family;
 
 /// Exit codes, matching common asset-validation gate conventions:
 /// 0 = no failing findings (warnings/notes allowed), 1 = error

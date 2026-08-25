@@ -147,6 +147,7 @@ pub mod source_facts;
 pub mod stance_support;
 pub mod static_bake;
 pub mod transform;
+pub mod transition_family;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use collection::{
@@ -311,4 +312,15 @@ pub use stance_support::{
 pub use static_bake::{
     StaticMeshBake, StaticMeshBakeError, StaticMeshBakeEvidence, StaticMeshBakeInstanceEvidence,
     bake_static_mesh_transforms,
+};
+pub use transition_family::{
+    CollectionTransitionFamilyMemberV1, CollectionTransitionFamilyV1,
+    DocumentTransitionFamilyMemberV1, DocumentTransitionFamilyV1, TRANSITION_FAMILY_V1_ID,
+    TRANSITION_FAMILY_V1_MAX_AGGREGATE_MEMBERS, TRANSITION_FAMILY_V1_MAX_DEPTH,
+    TRANSITION_FAMILY_V1_MAX_DOCUMENT_FAMILY_ID_BYTES, TRANSITION_FAMILY_V1_MAX_FAMILIES,
+    TRANSITION_FAMILY_V1_MAX_MEMBERS_PER_FAMILY, TRANSITION_FAMILY_V1_MAX_NORMALIZED_BYTES,
+    TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES, TRANSITION_FAMILY_V1_MAX_STRING_BYTES,
+    TRANSITION_FAMILY_V1_SCHEMA_VERSION, TransitionFamilyBasisV1, TransitionFamilyBoundaryV1,
+    TransitionFamilyDeclarationInputV1, TransitionFamilyDeclarationV1, TransitionFamilyError,
+    TransitionFamilyManifestIdentityV1, TransitionFamilyTolerancesV1,
 };
