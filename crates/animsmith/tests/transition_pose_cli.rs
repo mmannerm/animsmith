@@ -2,7 +2,7 @@ use animsmith_core::InputIdentity;
 use animsmith_core::glam::Quat;
 use animsmith_testkit::{quats_from_angles, two_bone_rotation_doc};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Stdio;
 use std::process::{Command, Output};
@@ -32,6 +32,103 @@ fn write_document(path: &Path, finding: bool) {
     }
     document.clips.push(run);
     animsmith_gltf::write::write(&document, path).expect("writes synthetic transition fixture");
+}
+
+fn glb_u32(bytes: &[u8], offset: usize) -> usize {
+    usize::try_from(u32::from_le_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("self-authored GLB has a complete length field"),
+    ))
+    .expect("u32 GLB length fits usize")
+}
+
+struct ExternalDocument {
+    bin: PathBuf,
+    run_rotation_entry_offset: usize,
+}
+
+fn run_rotation_entry_offset(document: &Value) -> usize {
+    let animation = document["animations"]
+        .as_array()
+        .and_then(|animations| {
+            animations
+                .iter()
+                .find(|animation| animation["name"] == "run")
+        })
+        .expect("self-authored fixture has the run animation");
+    let channel = animation["channels"]
+        .as_array()
+        .and_then(|channels| {
+            channels
+                .iter()
+                .find(|channel| channel["target"]["path"] == "rotation")
+        })
+        .expect("self-authored fixture has a run rotation channel");
+    let sampler = animation["samplers"]
+        .as_array()
+        .and_then(|samplers| {
+            channel["sampler"]
+                .as_u64()
+                .and_then(|index| samplers.get(index as usize))
+        })
+        .expect("rotation channel selects a sampler");
+    let accessor = document["accessors"]
+        .as_array()
+        .and_then(|accessors| {
+            sampler["output"]
+                .as_u64()
+                .and_then(|index| accessors.get(index as usize))
+        })
+        .expect("rotation sampler selects an output accessor");
+    assert_eq!(accessor["type"], "VEC4");
+    let view_offset = document["bufferViews"]
+        .as_array()
+        .and_then(|views| {
+            accessor["bufferView"]
+                .as_u64()
+                .and_then(|index| views.get(index as usize))
+        })
+        .and_then(|view| view["byteOffset"].as_u64())
+        .and_then(|offset| usize::try_from(offset).ok())
+        .unwrap_or(0);
+    let accessor_offset = accessor["byteOffset"]
+        .as_u64()
+        .and_then(|offset| usize::try_from(offset).ok())
+        .unwrap_or(0);
+    view_offset
+        .checked_add(accessor_offset)
+        .expect("self-authored rotation accessor offset fits usize")
+}
+
+fn write_external_document(
+    path: &Path,
+    finding: bool,
+    unmodeled_extension: bool,
+) -> ExternalDocument {
+    let glb = path.with_extension("glb");
+    write_document(&glb, finding);
+    let bytes = std::fs::read(&glb).expect("reads self-authored GLB");
+    assert_eq!(&bytes[..4], b"glTF");
+    assert_eq!(&bytes[16..20], b"JSON");
+    let json_end = 20 + glb_u32(&bytes, 12);
+    assert_eq!(&bytes[json_end + 4..json_end + 8], b"BIN\0");
+    let bin_end = json_end + 8 + glb_u32(&bytes, json_end);
+    assert_eq!(bin_end, bytes.len(), "writer emits one complete BIN chunk");
+
+    let mut document: Value =
+        serde_json::from_slice(&bytes[20..json_end]).expect("self-authored GLB JSON parses");
+    document["buffers"][0]["uri"] = Value::String("animation.bin".into());
+    if unmodeled_extension {
+        document["extensionsUsed"] = serde_json::json!(["ANIMSMITH_test_unmodeled"]);
+    }
+    let bin = path.with_file_name("animation.bin");
+    std::fs::write(path, serde_json::to_vec(&document).unwrap()).expect("writes primary glTF");
+    std::fs::write(&bin, &bytes[json_end + 8..bin_end]).expect("writes external animation bytes");
+    ExternalDocument {
+        bin,
+        run_rotation_entry_offset: run_rotation_entry_offset(&document),
+    }
 }
 
 fn config(time_normalized: f64) -> String {
@@ -188,6 +285,106 @@ fn command_reports_pass_finding_and_incomplete_with_the_contract_exit_codes() {
     assert_eq!(
         incomplete["families"][0]["reason"],
         "time_tolerance_unsupported"
+    );
+}
+
+#[test]
+fn external_animation_bytes_bind_the_same_load_dependency_closure() {
+    let dir = tempdir("external-closure");
+    let input = dir.path().join("input.gltf");
+    let config_path = dir.path().join("config.toml");
+    let external = write_external_document(&input, false, false);
+    std::fs::write(&config_path, config(0.0)).unwrap();
+    let primary = std::fs::read(&input).unwrap();
+
+    let first = run(dir.path(), &input, Some(&config_path));
+    assert!(first.status.success());
+    let first = json(&first);
+    assert_schema(&first);
+    assert_eq!(first["decision"], "pass");
+    let first_closure = first["subject_dependency_closure_identity"].clone();
+    assert!(
+        first_closure.is_object(),
+        "configured source retains its closure"
+    );
+    for member in first["families"][0]["members"].as_array().unwrap() {
+        assert_eq!(member["source_dependency_closure_identity"], first_closure);
+    }
+
+    let mut changed = std::fs::read(&external.bin).unwrap();
+    let offset = external.run_rotation_entry_offset;
+    changed[offset..offset + 4].copy_from_slice(&0.24740396f32.to_le_bytes());
+    changed[offset + 12..offset + 16].copy_from_slice(&0.9689124f32.to_le_bytes());
+    std::fs::write(&external.bin, changed).unwrap();
+    assert_eq!(
+        std::fs::read(&input).unwrap(),
+        primary,
+        "primary glTF remains unchanged"
+    );
+
+    let second = run(dir.path(), &input, Some(&config_path));
+    assert_eq!(second.status.code(), Some(1));
+    let second = json(&second);
+    assert_schema(&second);
+    assert_eq!(second["status"], "complete");
+    assert_eq!(second["decision"], "finding");
+    assert_eq!(second["subject_input"], first["subject_input"]);
+    assert_ne!(second["subject_dependency_closure_identity"], first_closure);
+    assert_ne!(
+        second["families"][0]["pairs"],
+        first["families"][0]["pairs"]
+    );
+    assert!(
+        !second["families"][0]["pairs"][0]["rotation_offenders"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    for member in second["families"][0]["members"].as_array().unwrap() {
+        assert_eq!(
+            member["source_dependency_closure_identity"],
+            second["subject_dependency_closure_identity"]
+        );
+        assert_ne!(member["source_dependency_closure_identity"], first_closure);
+    }
+}
+
+#[test]
+fn incomplete_load_closure_blocks_configured_families_but_not_no_config() {
+    let dir = tempdir("incomplete-closure");
+    let input = dir.path().join("input.gltf");
+    let config_path = dir.path().join("config.toml");
+    write_external_document(&input, false, true);
+    std::fs::write(&config_path, config(0.0)).unwrap();
+
+    let configured = run(dir.path(), &input, Some(&config_path));
+    assert_eq!(configured.status.code(), Some(1));
+    let configured = json(&configured);
+    assert_schema(&configured);
+    assert_eq!(configured["status"], "incomplete");
+    assert_eq!(configured["decision"], "not_evaluated");
+    assert!(
+        configured
+            .get("subject_dependency_closure_identity")
+            .is_none()
+    );
+    assert_eq!(
+        configured["families"][0]["reason"],
+        "dependency_closure_incomplete"
+    );
+    for member in configured["families"][0]["members"].as_array().unwrap() {
+        assert!(member.get("source_dependency_closure_identity").is_none());
+    }
+
+    let no_config = run(dir.path(), &input, None);
+    assert!(no_config.status.success());
+    let no_config = json(&no_config);
+    assert_schema(&no_config);
+    assert_eq!(no_config["reason"], "no_configured_families");
+    assert!(
+        no_config
+            .get("subject_dependency_closure_identity")
+            .is_none()
     );
 }
 

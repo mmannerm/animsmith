@@ -13,14 +13,21 @@ by [`transition-pose-evaluation-v1.schema.json`](schemas/transition-pose-evaluat
 It is neither an output-v11 measure/lint envelope nor a check stream. The
 result binds the exact input document bytes as `subject_input`, the complete
 exact config source as `declaration_input`, and the declaration's independent
-normalized identity as `declaration_normalized`. With no selected or ambient
-config, the exact declaration source is the defined zero-byte TOML sequence;
-an explicitly empty config is intentionally identical.
+normalized identity as `declaration_normalized`. For configured document
+families it also binds the complete same-load dependency-closure identity at
+the subject and each member, so a changed external glTF animation buffer cannot
+be masked by unchanged primary JSON bytes. With no selected or ambient config,
+the exact declaration source is the defined zero-byte TOML sequence; an
+explicitly empty config is intentionally identical.
 
 An absent or empty `[transition_families]` table is a complete passing result
 with `reason: "no_configured_families"`. Complete configured passes exit 0;
 findings and every retained incomplete family exit 1 with this same result.
-Invalid config/declaration, contradictory witnesses, input/load failures, and
+If same-load dependency-closure capture is incomplete, configured families are
+retained as `incomplete/not_evaluated` with
+`dependency_closure_incomplete`; an empty declaration remains the complete
+`no_configured_families` pass because it evaluates no source data. Invalid
+config/declaration, contradictory witnesses, input/load failures, and
 serialization failures emit no result and exit 2. Because this result has no
 sidecar or previously published artifact, failed stdout delivery is also an
 operator error (exit 2), rather than a successful result with a best-effort

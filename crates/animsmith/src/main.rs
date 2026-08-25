@@ -1237,7 +1237,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let loaded = load_with_config(&input, &loaded_config)?;
             let result = evaluate_document_transition_poses_v1(
                 &declaration,
-                loaded.input().clone(),
+                loaded.dependency_closure(),
                 loaded.document(),
             )
             .map_err(|error| error.to_string())?;
