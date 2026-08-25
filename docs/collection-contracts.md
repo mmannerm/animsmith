@@ -273,16 +273,16 @@ id, an explicit ordered member list, a boundary selection (`entry`, `exit`, or
 
 The document-local `transition_families` tables are admitted by AnimSmith's
 strict config loader, which retains the exact whole-config input identity with
-the normalized declaration. That admission does not expose an evaluator,
-result schema, or command. The collection declaration envelope remains outside
-the collection CLI; evaluation and command behavior remain #153/#164 or
-separately reviewed follow-up work.
+the normalized declaration. `animsmith evaluate-transition-poses INPUT
+--format json` evaluates one document against that authority. The collection
+declaration envelope remains outside the collection CLI; collection evaluation
+and command behavior remain #153/#164 or separately reviewed follow-up work.
 
 The format-neutral core provides the strict V1 skeleton-basis identity and
 immutable transition-pose evaluation result contract at
-`urn:animsmith:schema:transition-pose-evaluation:1`. It is not a CLI command
-or collection adapter: document/collection resolution, raw-source loading, and
-JSON-only command publication remain deferred. The schema is checked in as
+`urn:animsmith:schema:transition-pose-evaluation:1`. The document adapter is
+the JSON-only CLI command above; collection resolution, raw-source reload, and
+collection command publication remain deferred. The schema is checked in as
 [`transition-pose-evaluation-v1.schema.json`](schemas/transition-pose-evaluation-v1.schema.json).
 That docs schema is canonical; the core crate ships an exact checked snapshot
 so packaged integration tests retain the same contract without a repository
@@ -320,9 +320,9 @@ Appendix F's slash-qualified logical-id grammar and collection-id prefix.
 The declaration distinguishes two ownership scopes:
 
 - `document` families are placed in the existing `animsmith.toml` under
-  `[transition_families."<family_id>"]` and will resolve exact embedded clip/take
-  identities. The reusable config carries no artifact digest; the future
-  evaluator binds the document's primary `InputIdentity` and complete
+  `[transition_families."<family_id>"]` and resolve exact embedded clip/take
+  identities. The reusable config carries no artifact digest; the document
+  evaluator binds the primary document `InputIdentity` and complete
   dependency-closure identity in its output.
 - future `collection` families use a separate declaration envelope, not the
   collection-manifest V1 itself. The envelope binds the exact manifest
@@ -430,12 +430,13 @@ Both placements normalize to the exact closed JSON envelopes shown in
 collection form retaining `collection_id` and `manifest_input_identity`, and
 one document form in which each quoted table key becomes `family_id`. Families
 sort by id, member order is retained, and RFC 8785 JCS produces the normalized
-declaration identity. Future evidence separately binds the exact declaration
+declaration identity. V1 evidence separately binds the exact declaration
 source, normalized declaration, and evaluated document or manifest identities.
 
-This milestone does not run transition checks, emit findings or reports,
-infer graph edges, add gameplay metadata, or generate engine state-machine or
-blend-tree data. Those consumers remain follow-up work under [#153](https://github.com/mmannerm/animsmith/issues/153),
+The document command runs transition-pose checks and emits its V1 result. It
+does not infer graph edges, add gameplay metadata, or generate engine
+state-machine or blend-tree data. Collection evaluation and those consumers
+remain follow-up work under [#153](https://github.com/mmannerm/animsmith/issues/153),
 [#164](https://github.com/mmannerm/animsmith/issues/164), and later milestones.
 
 The complete normative contract, including ownership, strict resolution, and

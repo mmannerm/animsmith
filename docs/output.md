@@ -5,6 +5,28 @@ Text and Markdown lint output are presentation views over the same evaluation
 results. The HTML report renders the same typed findings, coverage gaps, and
 prediction facets beside its sampled-motion view.
 
+## Transition-pose evaluation
+
+`animsmith evaluate-transition-poses INPUT --format json` emits exactly one
+immutable `urn:animsmith:schema:transition-pose-evaluation:1` result described
+by [`transition-pose-evaluation-v1.schema.json`](schemas/transition-pose-evaluation-v1.schema.json).
+It is neither an output-v11 measure/lint envelope nor a check stream. The
+result binds the exact input document bytes as `subject_input`, the complete
+exact config source as `declaration_input`, and the declaration's independent
+normalized identity as `declaration_normalized`. With no selected or ambient
+config, the exact declaration source is the defined zero-byte TOML sequence;
+an explicitly empty config is intentionally identical.
+
+An absent or empty `[transition_families]` table is a complete passing result
+with `reason: "no_configured_families"`. Complete configured passes exit 0;
+findings and every retained incomplete family exit 1 with this same result.
+Invalid config/declaration, contradictory witnesses, input/load failures, and
+serialization failures emit no result and exit 2. Because this result has no
+sidecar or previously published artifact, failed stdout delivery is also an
+operator error (exit 2), rather than a successful result with a best-effort
+diagnostic. V1 evaluates one loaded document and does not imply collection
+source reload, graph generation, engine runtime behavior, or input mutation.
+
 ## Collection lint
 
 `animsmith collection lint COLLECTION.toml --format json` emits the separate

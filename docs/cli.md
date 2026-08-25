@@ -51,6 +51,7 @@ reference. The help output reflects compile-time features: a
 animsmith inspect <file>
 animsmith measure <file...> [--format text|json]
 animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
+animsmith evaluate-transition-poses <input.glb|input.gltf|input.fbx> [--config animsmith.toml] --format json
 animsmith collection lint <collection.toml> [--format json]
 animsmith collection generate-contact-fragment <manifest.toml> --clip <logical-id> -o <out.json> [--format text|json]
 animsmith collection evaluate-directional-speed --policy <policy.toml> --evidence <collection-output.json> [--format json]
@@ -78,6 +79,18 @@ uses each source config declared in the collection manifest, or exact built-in
 defaults when none is declared; it never discovers an ambient
 `./animsmith.toml`. `collection evaluate-directional-speed` has no config or
 output-path option: its policy and evidence inputs fully declare its boundary.
+
+`evaluate-transition-poses` is a JSON-only, single-result transition-family
+contract, not a lint/check stream. It evaluates exact named/indexed takes in
+the input against document-local `[transition_families."<id>"]` declarations
+and never changes the input. When no config file is selected or found, its
+declaration authority is the exact zero-byte TOML input; this is deliberately
+the same authority as an explicitly empty config file. An absent or empty
+transition-family table emits `no_configured_families` and exits 0. With
+families, all complete passes exit 0; findings or any incomplete family emit
+the immutable result and exit 1. Invalid config/declaration, input loading,
+or output errors emit no result and exit 2. Collection transition-family
+reload/evaluation is a separate command boundary.
 
 `transform --gait-anchor` is an explicit declaration that each selected clip
 is an in-place cyclic gait. Before rewriting, it samples the configured Root
@@ -204,17 +217,20 @@ tangents.
 | Code | Meaning |
 |---:|---|
 | 0 | No failing findings and no required-unavailable engine prediction facets; warnings, notes, or ordinary coverage gaps may remain. |
-| 1 | At least one failing finding, any `required_prediction_unavailable` facet (including an embedded Bevy addressability evaluation), an incomplete `collection lint` result, an incomplete or not-evaluable directional-speed evaluation, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
+| 1 | At least one failing finding, any `required_prediction_unavailable` facet (including an embedded Bevy addressability evaluation), an incomplete `collection lint` result, an incomplete or not-evaluable directional-speed or transition-pose evaluation, a significant `diff`, pending repairs under `fix --dry-run`, or a `scale`, `convert`, or `assemble` refusal that is a property of source asset bytes. |
 | 2 | Operator/tool error: unopenable input, bad config, unsupported format, or invalid flags. |
 
 The code reports what the run *did*, never how well it could report it. This
-holds for **every stdout presentation**: parser-rendered help/version, text,
-Markdown, and every `--format json` path (`measure`, `lint`, `collection lint`,
-`collection evaluate-directional-speed`, `diff`, `convert`, `assemble`, `scale`,
-`generate addressability`). If
+holds for parser-rendered help/version, text, Markdown, and every `--format json`
+path (`measure`, `lint`,
+`evaluate-transition-poses`, `collection lint`, `collection evaluate-directional-speed`,
+`diff`, `convert`, `assemble`, `scale`, `generate addressability`). If
 stdout cannot accept the result — a closed pipe or full filesystem — the
 checked write never panics, a best-effort checked diagnostic goes to stderr,
-and the stdout-bearing path's already-established code stands. Thus
+and the stdout-bearing path's already-established code stands **except for
+`evaluate-transition-poses`**. That standalone immutable result has no
+sidecar or previously established outcome: a failed stdout write is an
+operator error, produces no usable result, and exits 2. Thus
 `lint … --format text | head` still
 exits `1` for findings it found, `inspect … | head` still exits `0` for an
 inspection it completed, and `scale` still exits `1` for a refusal or `0` for
@@ -222,9 +238,9 @@ a published pair. Stderr may itself be closed; losing both streams is still
 not a panic. Raising the stdout failure instead would report an operator error
 for work that was actually done and make exit semantics depend on presentation
 format. JSON serialization failure remains exit `2` because the CLI could not
-form a truthful record; delivery failure after rendering is only reporting.
-Other operator errors occur before stdout reporting, remain stderr-only, and
-retain exit `2`.
+form a truthful record; delivery failure after rendering is only reporting for
+the ordinary streams. Other operator errors occur before stdout reporting,
+remain stderr-only, and retain exit `2`.
 
 For `convert` and `assemble`, classification is by typed provenance, never by
 diagnostic wording. The JSON refusal identity is
