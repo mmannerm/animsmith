@@ -21,20 +21,25 @@
 
 #![warn(missing_docs)]
 
+#[cfg(feature = "report")]
+use animsmith_core::evaluate_checks;
 use animsmith_core::{
     Check, CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport,
     MeasureEnvelope, MeasureFileReport, MeasurementContract, MeasurementFileError,
     MeasurementReportError, MeasurementReportInput, MeasurementReportReadError, MetricGrids,
     RigInfo, Severity, TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES, ToolInfo, ToolSource,
     TransitionFamilyDeclarationInputV1, TransitionPoseDecisionV1, TransitionPoseStatusV1,
-    all_checks, evaluate_checks, evaluate_document_transition_poses_v1, resolve_configured_roles,
+    all_checks, evaluate_checks_v2, evaluate_document_transition_poses_v1,
+    resolve_configured_roles,
 };
 use animsmith_core::{Document, InputIdentity};
+#[cfg(feature = "report")]
+use animsmith_engine::EngineAddressabilityCheck;
 use animsmith_engine::{
-    BakeOrExtract, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineDeclaration,
+    BakeOrExtract, ENGINE_CHECK_IDS_V1, EngineAddressabilityCheckV2, EngineDeclaration,
     EngineImportAdviceStateV1, EngineImportAdviceV1, GltfAnimationAddressabilityInventoryV1,
-    GltfAnimationAddressabilityV1, ProfileSelection, ResolvedProfile, SettingMap, SettingValue,
-    StaticResolution, build_bevy_animation_addressability_adapter_v1,
+    GltfAnimationAddressabilityV1, ProfileSelection, ResolvedProfile, ResolvedProfileV2,
+    SettingMap, SettingValue, StaticResolution, build_bevy_animation_addressability_adapter_v1,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -267,12 +272,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file output-v11 `measure` or `lint` JSON carrying measurements-v15) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file output-v12 `measure` or `lint` JSON carrying measurements-v15) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v11 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v12 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v11 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v12 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -1038,6 +1043,26 @@ impl LoadedConfig {
                 None => format!("bad config: {error}"),
             })
     }
+
+    fn resolve_engine_input_v2(
+        &self,
+        source_format: animsmith_core::SourceFormatV1,
+        document: &Document,
+    ) -> Result<Option<ResolvedProfileV2>, String> {
+        let Some(engine) = &self.engine else {
+            return Ok(None);
+        };
+        engine
+            .resolve_input_v2_iter(
+                source_format,
+                document.clips.iter().map(|clip| clip.name.as_str()),
+            )
+            .map(Some)
+            .map_err(|error| match &self.path {
+                Some(path) => format!("bad config {}: {error}", path.display()),
+                None => format!("bad config: {error}"),
+            })
+    }
 }
 
 fn full_check_ids() -> Result<Vec<&'static str>, String> {
@@ -1091,9 +1116,9 @@ fn analyze_loaded_lint(
 ) -> Result<LintAnalysis, String> {
     let input = loaded.input().clone();
     let prediction_provenance = loaded
-        .engine
+        .engine_v2
         .as_ref()
-        .map(|profile| animsmith_engine::project_prediction_provenance_v1(profile, &loaded.source))
+        .map(|profile| animsmith_engine::project_prediction_provenance_v2(profile, &loaded.source))
         .transpose()
         .map_err(|error| error.to_string())?;
     let doc = loaded.document();
@@ -1103,10 +1128,10 @@ fn analyze_loaded_lint(
     let evaluations = {
         let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
         checks.push(Box::new(
-            EngineAddressabilityCheck::new(&loaded.source, prediction_provenance.as_ref())
+            EngineAddressabilityCheckV2::new(&loaded.source, prediction_provenance.as_ref())
                 .map_err(|error| error.to_string())?,
         ));
-        evaluate_checks(&ctx, &checks, selection).map_err(|error| error.to_string())?
+        evaluate_checks_v2(&ctx, &checks, selection).map_err(|error| error.to_string())?
     };
     let requires_failure =
         animsmith_core::evaluation::lint_requires_failure(&evaluations, fail_at, allowed);
@@ -1212,7 +1237,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let mut reports = Vec::new();
             let mut requires_failure = false;
             for file in &files {
-                let loaded = load_with_config(file, &loaded_config)?;
+                let loaded = load_with_config_v2(file, &loaded_config)?;
                 let analysis = analyze_loaded_lint(
                     &loaded,
                     &loaded_config,
@@ -1766,7 +1791,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// output-v11 `measure`/`lint` JSON report carrying measurements-v15.
+/// output-v12 `measure`/`lint` JSON report carrying measurements-v15.
 fn load_measurements(
     path: &Path,
     loaded_config: &LoadedConfig,
@@ -1786,9 +1811,10 @@ fn load_measurements(
             }
             _ => format!("{} {error}", path.display()),
         })?;
-        // Only the current output-v11 envelope with measurement contract v15 is
-        // accepted. Older report shapes are intentionally not retained while
-        // the project is alpha.
+        // Current output-v12 and released output-v11 envelopes are accepted
+        // when they carry the supported measurements-v15 contract. The V11
+        // route retains its original V1 evidence validation; producers emit
+        // V12.
         let file_count = report.file_count();
         let files = report.into_files().map_err(|error| {
             format!(
@@ -2023,6 +2049,7 @@ fn load_source_bytes_typed(
 struct LoadedInput {
     source: animsmith_core::LoadedSource,
     engine: Option<ResolvedProfile>,
+    engine_v2: Option<ResolvedProfileV2>,
 }
 
 impl LoadedInput {
@@ -2057,6 +2084,7 @@ fn load_with_identity(path: &Path) -> Result<LoadedInput, String> {
     Ok(LoadedInput {
         source,
         engine: None,
+        engine_v2: None,
     })
 }
 
@@ -2064,6 +2092,16 @@ fn load_with_config(path: &Path, config: &LoadedConfig) -> Result<LoadedInput, S
     let mut loaded = load_with_identity(path)?;
     let facts = loaded.source.source_facts();
     loaded.engine = config.resolve_engine_input(facts.format(), loaded.source.document())?;
+    Ok(loaded)
+}
+
+/// Load an input for the current V2 lint path.  V1-only commands retain their
+/// historical strict resolver and therefore cannot accidentally serialize a
+/// bounded partial V2 setting prefix as V1 evidence.
+fn load_with_config_v2(path: &Path, config: &LoadedConfig) -> Result<LoadedInput, String> {
+    let mut loaded = load_with_identity(path)?;
+    let facts = loaded.source.source_facts();
+    loaded.engine_v2 = config.resolve_engine_input_v2(facts.format(), loaded.source.document())?;
     Ok(loaded)
 }
 
@@ -2081,7 +2119,11 @@ fn load_with_config_for_producer(
     let engine = config
         .resolve_engine_input(source.source_facts().format(), source.document())
         .map_err(producer::Failure::operator)?;
-    Ok(LoadedInput { source, engine })
+    Ok(LoadedInput {
+        source,
+        engine,
+        engine_v2: None,
+    })
 }
 
 fn contact_producer_load_failure(error: InputLoadError) -> producer::Failure {

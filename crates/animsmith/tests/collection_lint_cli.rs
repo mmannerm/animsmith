@@ -4,13 +4,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:3";
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:11";
+const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:4";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:12";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const COLLECTION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-output-v3.schema.json");
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v11.schema.json");
+    include_str!("../../../docs/schemas/collection-output-v4.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v12.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v15.schema.json");
@@ -620,7 +620,7 @@ members = ["com.example.failures/bad", "com.example.failures/digest", "com.examp
     assert_eq!(sources[5]["result"]["state"], "available");
     assert_eq!(
         sources[5]["result"]["envelope"]["schema"],
-        "urn:animsmith:schema:output:11"
+        "urn:animsmith:schema:output:12"
     );
     assert_eq!(sources[5]["result"]["envelope"]["command"], "lint");
     assert_eq!(

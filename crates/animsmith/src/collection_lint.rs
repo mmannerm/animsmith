@@ -260,13 +260,14 @@ fn execute_source(
             ));
         }
     };
-    let engine = config.loaded.resolve_engine_input(
+    let engine_v2 = config.loaded.resolve_engine_input_v2(
         loaded_source.source_facts().format(),
         loaded_source.document(),
     )?;
     let loaded = LoadedInput {
         source: loaded_source,
-        engine,
+        engine: None,
+        engine_v2,
     };
     let dependency_closure =
         SourceDependencyClosureState::from_closure(loaded.dependency_closure(), &input)

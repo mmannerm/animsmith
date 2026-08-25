@@ -103,14 +103,18 @@ pub use import_advice::{
 };
 pub use prediction::{
     BevyAnimationAssetLabelError, BevyAnimationAssetLabelV1, ENGINE_ADDRESSABILITY_CHECK_ID,
-    ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, GltfAnimationAddressabilityAdapterError,
-    build_bevy_animation_addressability_adapter_v1,
+    ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineAddressabilityCheckV2,
+    GltfAnimationAddressabilityAdapterError, build_bevy_animation_addressability_adapter_v1,
 };
-pub use provenance::{PredictionProvenanceProjectionError, project_prediction_provenance_v1};
+pub use provenance::{
+    PredictionProvenanceProjectionError, project_prediction_provenance_v1,
+    project_prediction_provenance_v2,
+};
 pub use registry::{profiles_v1, validate_registry_v1};
 pub use resolver::{
-    ResolvedClipSettings, ResolvedProfile, SOURCE_TRANSFORM_PATH_MAX_BYTES, StaticResolution,
-    lookup_profile, resolve_static,
+    RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS, ResolvedClipCoverageReasonV2, ResolvedClipCoverageV2,
+    ResolvedClipSettings, ResolvedEngineSettingsWorkV2, ResolvedProfile, ResolvedProfileV2,
+    SOURCE_TRANSFORM_PATH_MAX_BYTES, StaticResolution, lookup_profile, resolve_static,
 };
 pub use types::{
     AnimationAddressability, BakeOrExtract, ConversionControl, CoordinateBasis, DefaultStatus,

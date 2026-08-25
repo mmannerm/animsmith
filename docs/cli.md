@@ -590,9 +590,9 @@ that animation loading was enabled, that the runtime asset exists, or that its
 targets and graph wiring are usable. The selector can change when source
 animation order changes.
 
-Prediction provenance v1 materializes at most 4,096 actual clips. A
-4,097-clip input returns a bounded operator error before prediction instead of
-truncating resolved settings; issue #485 owns a future overflow representation.
+Current lint uses prediction provenance v2 with bounded 4,096/N+1 settings
+coverage. A 4,097th clip is retained as typed partial-settings overflow
+evidence, never as a complete prefix.
 
 `generate addressability` packages the same immutable raw-source evidence as a
 standalone, animation-only contract. It emits canonical JSON by default:
@@ -640,9 +640,9 @@ form selects one exact manifest logical id and reloads its declared
 source/config rather than consuming collection-output evidence. Neither form
 infers physical contact, footsteps, gameplay, IK, or engine behavior.
 
-An output-v11 measure report deliberately has no engine provenance or
+An output-v12 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.
-When its operands are JSON reports, `diff` validates the complete v11 records
+When its operands are JSON reports, `diff` validates the complete v12 records
 and compares only measurements-v15; a selected engine profile does not change
 that report meaning. When its operands are source assets, the profile is still
 resolved against each loader-owned source format before measurement.
@@ -670,16 +670,16 @@ absent selector field or explicit empty list means no runtime-node policy.
 `generate import-advice` support
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
-See [output.md](output.md) and
-[`output-v11.schema.json`](schemas/output-v11.schema.json). Nested measurement
+See [output.md](output.md) and the current
+`urn:animsmith:schema:output:12` [`output-v12.schema.json`](schemas/output-v12.schema.json). Nested measurement
 evidence has its own
 [`measurements-v15.schema.json`](schemas/measurements-v15.schema.json) contract.
 Output-v10 and earlier reports, including reports carrying measurements v14,
-are historical contracts; regenerate a current output-v11 report from the
+and output-v11 are historical contracts; regenerate a current output-v12 report from the
 original asset with the current CLI before using `diff`.
 
 `collection lint COLLECTION.toml --format json` emits the separate immutable
-`urn:animsmith:schema:collection-output:3` contract. The manifest directory is
+`urn:animsmith:schema:collection-output:4` contract. The manifest directory is
 the control root; safe missing/unreadable sources, rejected readable bytes,
 digest/take mismatches, and incomplete runtime-set members remain typed rows
 and exit 1 while later safe sources continue. Invalid manifests, unsafe or
@@ -691,7 +691,7 @@ closure identity can establish that source, one of its clips, or a runtime-set
 member; partial/unavailable reasons remain typed and make the result incomplete
 with exit 1. Each established clip binds an exact source take index/name
 to a normalized clip index and carries duplicate-safe indexed measurements.
-The nested whole-document lint envelope advances to output v11 while retaining
+The nested whole-document lint envelope advances to output v12 while retaining
 measurements v15.
 Runtime sets keep `decision: not_evaluated`; they make no blend, controller,
 engine, artistic, or gameplay claim. Every declared member carries raw
@@ -705,12 +705,12 @@ carry raw gait-phase availability, and only a fully established, phase-measured
 set emits `evidence.gait_phase.phase_spread` with basis
 `max_circular_deviation_from_mean`; this preserves existing gait lint
 threshold semantics. See
-[`collection-output-v3.schema.json`](schemas/collection-output-v3.schema.json).
+[`collection-output-v4.schema.json`](schemas/collection-output-v4.schema.json).
 
 `collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` strictly reads a bounded
 `collection-directional-speed-policy:1` declaration and a bounded
-`collection-output:3` document, then writes the separate immutable
+`collection-output:4` document, then writes the separate immutable
 `urn:animsmith:schema:collection-directional-speed-evaluation:1` result. The
 result binds the exact raw TOML and JSON byte identities and preserves every
 declared member in manifest order. Invalid, stale, wrong-kind, unreadable,

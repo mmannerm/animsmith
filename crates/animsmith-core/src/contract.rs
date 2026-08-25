@@ -32,21 +32,34 @@ use crate::model::{
     SourceSkeletonCoverage,
 };
 use crate::prediction::{
-    EnginePredictionFacetStateV1, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+    EnginePredictionFacetStateV1, EnginePredictionV1, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
     PREDICTION_V1_MAX_FACETS_PER_FILE, PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
-    PredictionContractError, PredictionDecodeError, PredictionProvenanceV1,
-    decode_engine_prediction_v1, decode_prediction_provenance_v1,
-    validate_measurement_references_batch,
+    PredictionContractError, PredictionDecodeError, decode_engine_prediction_v1,
+    decode_engine_prediction_v2, decode_prediction_provenance_v1, decode_prediction_provenance_v2,
+    validate_measurement_references_batch, validate_measurement_references_batch_v2,
 };
 use crate::profile::ResolvedRoles;
 use crate::{Document, Severity};
+use crate::{
+    EnginePredictionV2, PredictionBasisReferenceV1, PredictionProvenanceV1, PredictionProvenanceV2,
+    PredictionUnavailableReasonV2, RawSourceDomainV1, RawSourceKeyV1, RawSourceSetCoverageStateV1,
+    ResolvedEngineSettingsCoverageStateV2,
+};
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 11;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 12;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:11";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:12";
 /// Immutable output-v10 identity retained by V1 dependent contracts.
 pub const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
+/// Immutable output-v11 identity retained as historical schema evidence.
+pub const OUTPUT_V11_SCHEMA_ID: &str = "urn:animsmith:schema:output:11";
+/// Immutable output-v11 version retained as historical schema evidence.
+pub const OUTPUT_V11_SCHEMA_VERSION: u32 = 11;
+/// Immutable identity of the bounded-overflow outer result envelope.
+pub const OUTPUT_V12_SCHEMA_ID: &str = OUTPUT_SCHEMA_ID;
+/// Schema version of output-v12.
+pub const OUTPUT_V12_SCHEMA_VERSION: u32 = OUTPUT_SCHEMA_VERSION;
 /// Maximum serialized bytes accepted by the output-v11 report reader.
 pub const OUTPUT_V11_MAX_REPORT_BYTES: u64 = 256 * 1024 * 1024;
 /// Maximum file records carried by one output-v11 envelope.
@@ -1890,8 +1903,42 @@ struct MeasurementFileInput {
     path: Option<String>,
     input: Option<InputIdentityInput>,
     measurements: Option<Box<RawValue>>,
-    prediction_provenance: RequiredNullable<PredictionProvenanceV1>,
+    prediction_provenance: RequiredNullable<PredictionProvenanceV2>,
     checks: Option<Vec<PredictionCheckInput>>,
+    legacy_prediction_provenance: RequiredNullable<PredictionProvenanceV1>,
+    legacy_checks: Option<Vec<LegacyPredictionCheckInput>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyPredictionCheckWireV11 {
+    check_id: String,
+    selection: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    evaluation: EvaluationState,
+    findings: Vec<PredictionFindingInput>,
+    #[serde(default)]
+    evaluated_scopes: Vec<crate::evaluation::EvaluationScope>,
+    #[serde(default)]
+    gaps: Vec<PredictionGapInput>,
+    prediction: Option<Box<RawValue>>,
+}
+
+/// The immutable V11 check attachment.  This deliberately remains a separate
+/// internal shape: V11 evidence is validated with its V1 identity and staged
+/// decoding rules, never converted into a V2 attachment.
+#[derive(Debug)]
+struct LegacyPredictionCheckInput {
+    check_id: String,
+    selection: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    evaluation: EvaluationState,
+    findings: Vec<PredictionFindingInput>,
+    evaluated_scopes: Vec<crate::evaluation::EvaluationScope>,
+    gaps: Vec<PredictionGapInput>,
+    prediction: Option<EnginePredictionV1>,
 }
 
 #[derive(Debug, Default)]
@@ -1899,6 +1946,15 @@ enum RequiredNullable<T> {
     #[default]
     Missing,
     Present(Option<T>),
+}
+
+impl<T> RequiredNullable<T> {
+    fn as_present(&self) -> Option<&T> {
+        match self {
+            Self::Missing | Self::Present(None) => None,
+            Self::Present(Some(value)) => Some(value),
+        }
+    }
 }
 
 fn deserialize_required_nullable<'de, D, T>(
@@ -1958,7 +2014,7 @@ struct PredictionCheckInput {
     findings: Vec<PredictionFindingInput>,
     evaluated_scopes: Vec<crate::evaluation::EvaluationScope>,
     gaps: Vec<PredictionGapInput>,
-    prediction: Option<crate::prediction::EnginePredictionV1>,
+    prediction: Option<EnginePredictionV2>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2690,6 +2746,15 @@ pub enum MeasurementFileError {
         /// Immutable V1 limit.
         limit: usize,
     },
+    /// A decoded V2 budget summary did not coincide with an exhausted shared
+    /// file facet budget.
+    #[error("facet-budget summary requires exactly {limit} aggregate facets, found {found}")]
+    FacetBudgetSummaryWithoutExhaustedFileBudget {
+        /// Aggregate facet count.
+        found: usize,
+        /// Immutable shared file limit.
+        limit: usize,
+    },
     /// Aggregate prediction basis rows exceeded the per-file V1 bound.
     #[error("contains {found} prediction basis rows, exceeding the V1 limit of {limit}")]
     TooManyPredictionBasisReferences {
@@ -2828,6 +2893,8 @@ fn decode_prediction_phase_file(
             measurements: wire.measurements,
             prediction_provenance: RequiredNullable::Missing,
             checks: None,
+            legacy_prediction_provenance: RequiredNullable::Missing,
+            legacy_checks: None,
         });
     }
 
@@ -2856,30 +2923,29 @@ fn decode_prediction_phase_file(
         RequiredNullable::Missing => unreachable!("missing provenance was rejected above"),
         RequiredNullable::Present(None) => RequiredNullable::Present(None),
         RequiredNullable::Present(Some(raw)) => {
-            let provenance = decode_prediction_provenance_v1(raw.get()).map_err(|error| {
-                prediction_file_error(
-                    file_index,
-                    match error {
-                        PredictionDecodeError::Shape(source) => {
-                            MeasurementFileError::InvalidPredictionProvenanceShape {
-                                reason: source.to_string(),
-                            }
+            let provenance = decode_prediction_provenance_v2(raw.get()).map_err(|error| {
+                let source = match error {
+                    PredictionDecodeError::Shape(source) => {
+                        MeasurementFileError::InvalidPredictionProvenanceShape {
+                            reason: source.to_string(),
                         }
-                        PredictionDecodeError::Semantic(source) => {
-                            MeasurementFileError::InvalidPredictionProvenance { source }
-                        }
-                        PredictionDecodeError::TooManyFileFacets
-                        | PredictionDecodeError::TooManyFileBasisReferences => {
-                            unreachable!("provenance decoding cannot consume prediction budgets")
-                        }
-                    },
-                )
+                    }
+                    PredictionDecodeError::Semantic(source) => {
+                        MeasurementFileError::InvalidPredictionProvenance { source }
+                    }
+                    PredictionDecodeError::TooManyFileFacets
+                    | PredictionDecodeError::TooManyFileBasisReferences => {
+                        unreachable!("provenance never consumes prediction budgets")
+                    }
+                };
+                prediction_file_error(file_index, source)
             })?;
             RequiredNullable::Present(Some(provenance))
         }
     };
     let mut decoded_facets = 0usize;
     let mut decoded_references = 0usize;
+    let mut has_facet_budget_summary = false;
     let mut decoded_text = match &prediction_provenance {
         RequiredNullable::Present(Some(provenance)) => {
             provenance.retained_text_bytes().map_err(|source| {
@@ -2910,6 +2976,286 @@ fn decode_prediction_phase_file(
                             },
                         )
                     })?;
+                if provenance_for_checks.is_none() && wire.prediction.is_some() {
+                    return Err(prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionWithoutProvenance { check_index },
+                    ));
+                }
+                if (wire.selection == SelectionState::Unselected
+                    || wire.configuration == ConfigurationState::Disabled
+                    || wire.applicability == Applicability::NotApplicable)
+                    && wire.prediction.is_some()
+                {
+                    return Err(prediction_file_error(
+                        file_index,
+                        MeasurementFileError::InvalidPredictionLifecycle {
+                            check_index,
+                            reason: "inactive check must have empty output",
+                        },
+                    ));
+                }
+                // Allocate the remaining aggregate facet/reference budgets
+                // before parsing this attachment.  This prevents an over-limit
+                // later prediction from retaining a prefix whose findings can
+                // no longer be represented by the file contract.
+                let prediction = wire
+                    .prediction
+                    .map(|raw| {
+                        decode_engine_prediction_v2(
+                            raw.get(),
+                            PREDICTION_V1_MAX_FACETS_PER_FILE.saturating_sub(decoded_facets),
+                            PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE
+                                .saturating_sub(decoded_references),
+                        )
+                        .map_err(|error| {
+                            let source = match error {
+                                PredictionDecodeError::Shape(source) => {
+                                    MeasurementFileError::InvalidPredictionShape {
+                                        check_index,
+                                        reason: source.to_string(),
+                                    }
+                                }
+                                PredictionDecodeError::Semantic(source) => {
+                                    MeasurementFileError::InvalidPrediction {
+                                        check_index,
+                                        source,
+                                    }
+                                }
+                                PredictionDecodeError::TooManyFileFacets => {
+                                    MeasurementFileError::TooManyPredictionFacets {
+                                        found: PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
+                                        limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                                    }
+                                }
+                                PredictionDecodeError::TooManyFileBasisReferences => {
+                                    MeasurementFileError::TooManyPredictionBasisReferences {
+                                        found: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE + 1,
+                                        limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+                                    }
+                                }
+                            };
+                            prediction_file_error(file_index, source)
+                        })
+                    })
+                    .transpose()?;
+                let check = PredictionCheckInput {
+                    check_id: wire.check_id,
+                    selection: wire.selection,
+                    configuration: wire.configuration,
+                    applicability: wire.applicability,
+                    evaluation: wire.evaluation,
+                    findings: wire.findings,
+                    evaluated_scopes: wire.evaluated_scopes,
+                    gaps: wire.gaps,
+                    prediction,
+                };
+                check
+                    .validate(check_index, provenance_for_checks)
+                    .map_err(|source| prediction_file_error(file_index, source))?;
+                if let Some(prediction) = &check.prediction {
+                    has_facet_budget_summary |= prediction.has_facet_budget_summary();
+                    decoded_facets = decoded_facets
+                        .checked_add(prediction.facets().len())
+                        .ok_or_else(|| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::PredictionAccountingOverflow,
+                            )
+                        })?;
+                    if decoded_facets > PREDICTION_V1_MAX_FACETS_PER_FILE {
+                        return Err(prediction_file_error(
+                            file_index,
+                            MeasurementFileError::TooManyPredictionFacets {
+                                found: decoded_facets,
+                                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                            },
+                        ));
+                    }
+                    decoded_references = decoded_references
+                        .checked_add(prediction.basis_reference_count())
+                        .ok_or_else(|| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::PredictionAccountingOverflow,
+                            )
+                        })?;
+                    if decoded_references > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE {
+                        return Err(prediction_file_error(
+                            file_index,
+                            MeasurementFileError::TooManyPredictionBasisReferences {
+                                found: decoded_references,
+                                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+                            },
+                        ));
+                    }
+                    decoded_text = decoded_text
+                        .checked_add(prediction.retained_text_bytes().map_err(|source| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::InvalidPrediction {
+                                    check_index,
+                                    source,
+                                },
+                            )
+                        })?)
+                        .ok_or_else(|| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::PredictionAccountingOverflow,
+                            )
+                        })?;
+                    if decoded_text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+                        return Err(prediction_file_error(
+                            file_index,
+                            MeasurementFileError::TooMuchPredictionText {
+                                found: decoded_text,
+                                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+                            },
+                        ));
+                    }
+                }
+                checks.push(check);
+            }
+            if has_facet_budget_summary && decoded_facets != PREDICTION_V1_MAX_FACETS_PER_FILE {
+                return Err(prediction_file_error(
+                    file_index,
+                    MeasurementFileError::FacetBudgetSummaryWithoutExhaustedFileBudget {
+                        found: decoded_facets,
+                        limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                    },
+                ));
+            }
+            Ok(checks)
+        })
+        .transpose()?;
+    Ok(MeasurementFileInput {
+        path: wire.path,
+        input: wire.input,
+        measurements: wire.measurements,
+        prediction_provenance,
+        checks,
+        legacy_prediction_provenance: RequiredNullable::Missing,
+        legacy_checks: None,
+    })
+}
+
+/// Decode the immutable output-v11 file envelope with its original V1 staged
+/// reader.  Historical evidence remains V1 all the way through validation;
+/// accepting it must be neither weaker nor a reinterpretation as V2.
+fn decode_legacy_v11_file(
+    command: &str,
+    file_index: usize,
+    raw: &RawValue,
+) -> Result<MeasurementFileInput, MeasurementReportError> {
+    let wire: MeasurementFileWireInput = serde_json::from_str(raw.get()).map_err(|source| {
+        prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidFileShape {
+                reason: source.to_string(),
+            },
+        )
+    })?;
+    if command == "measure" {
+        if !matches!(wire.prediction_provenance, RequiredNullable::Missing) {
+            return Err(prediction_file_error(
+                file_index,
+                MeasurementFileError::UnexpectedPredictionProvenance,
+            ));
+        }
+        if wire.checks.is_some() {
+            return Err(prediction_file_error(
+                file_index,
+                MeasurementFileError::UnexpectedChecks,
+            ));
+        }
+        return Ok(MeasurementFileInput {
+            path: wire.path,
+            input: wire.input,
+            measurements: wire.measurements,
+            prediction_provenance: RequiredNullable::Missing,
+            checks: None,
+            legacy_prediction_provenance: RequiredNullable::Missing,
+            legacy_checks: None,
+        });
+    }
+
+    if wire
+        .checks
+        .as_ref()
+        .is_some_and(|checks| checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE)
+    {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyChecks {
+                found: wire.checks.as_ref().map_or(0, Vec::len),
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
+            },
+        ));
+    }
+    if matches!(wire.prediction_provenance, RequiredNullable::Missing) {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::MissingPredictionProvenance,
+        ));
+    }
+    let legacy_prediction_provenance = match wire.prediction_provenance {
+        RequiredNullable::Missing => unreachable!("missing provenance was rejected above"),
+        RequiredNullable::Present(None) => RequiredNullable::Present(None),
+        RequiredNullable::Present(Some(raw)) => RequiredNullable::Present(Some(
+            decode_prediction_provenance_v1(raw.get()).map_err(|error| {
+                prediction_file_error(
+                    file_index,
+                    match error {
+                        PredictionDecodeError::Shape(source) => {
+                            MeasurementFileError::InvalidPredictionProvenanceShape {
+                                reason: source.to_string(),
+                            }
+                        }
+                        PredictionDecodeError::Semantic(source) => {
+                            MeasurementFileError::InvalidPredictionProvenance { source }
+                        }
+                        PredictionDecodeError::TooManyFileFacets
+                        | PredictionDecodeError::TooManyFileBasisReferences => {
+                            unreachable!("provenance decoding cannot consume prediction budgets")
+                        }
+                    },
+                )
+            })?,
+        )),
+    };
+    let mut decoded_facets = 0usize;
+    let mut decoded_references = 0usize;
+    let mut decoded_text = legacy_prediction_provenance
+        .as_present()
+        .map(PredictionProvenanceV1::retained_text_bytes)
+        .transpose()
+        .map_err(|source| {
+            prediction_file_error(
+                file_index,
+                MeasurementFileError::InvalidPredictionProvenance { source },
+            )
+        })?
+        .unwrap_or(0);
+    let provenance_for_checks = legacy_prediction_provenance.as_present();
+    let legacy_checks = wire
+        .checks
+        .map(|raw_checks| {
+            let mut checks = Vec::with_capacity(raw_checks.len());
+            for (check_index, raw) in raw_checks.into_iter().enumerate() {
+                let wire: LegacyPredictionCheckWireV11 =
+                    serde_json::from_str(raw.get()).map_err(|source| {
+                        prediction_file_error(
+                            file_index,
+                            MeasurementFileError::InvalidPredictionShape {
+                                check_index,
+                                reason: source.to_string(),
+                            },
+                        )
+                    })?;
+                // Preserve the released V11 reader's precedence: these
+                // lifecycle violations are decided from the raw attachment
+                // presence before a malformed prediction can be decoded.
                 if provenance_for_checks.is_none() && wire.prediction.is_some() {
                     return Err(prediction_file_error(
                         file_index,
@@ -2971,7 +3317,7 @@ fn decode_prediction_phase_file(
                         })
                     })
                     .transpose()?;
-                let check = PredictionCheckInput {
+                let check = LegacyPredictionCheckInput {
                     check_id: wire.check_id,
                     selection: wire.selection,
                     configuration: wire.configuration,
@@ -3055,9 +3401,284 @@ fn decode_prediction_phase_file(
         path: wire.path,
         input: wire.input,
         measurements: wire.measurements,
-        prediction_provenance,
-        checks,
+        prediction_provenance: RequiredNullable::Missing,
+        checks: None,
+        legacy_prediction_provenance,
+        legacy_checks,
     })
+}
+
+fn validate_legacy_v11_prediction_phase_file(
+    command: &str,
+    file_index: usize,
+    file: &MeasurementFileInput,
+) -> Result<(usize, usize), MeasurementReportError> {
+    match command {
+        "measure" => return Ok((0, 0)),
+        "lint" => {}
+        _ => unreachable!("command was validated before prediction phase"),
+    }
+    let provenance = match &file.legacy_prediction_provenance {
+        RequiredNullable::Missing => {
+            return Err(prediction_file_error(
+                file_index,
+                MeasurementFileError::MissingPredictionProvenance,
+            ));
+        }
+        RequiredNullable::Present(provenance) => provenance.as_ref(),
+    };
+    let checks = file
+        .legacy_checks
+        .as_ref()
+        .ok_or_else(|| prediction_file_error(file_index, MeasurementFileError::MissingChecks))?;
+    if checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyChecks {
+                found: checks.len(),
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
+            },
+        ));
+    }
+    if let Some(provenance) = provenance {
+        provenance.validate().map_err(|source| {
+            prediction_file_error(
+                file_index,
+                MeasurementFileError::InvalidPredictionProvenance { source },
+            )
+        })?;
+        let input = file
+            .input
+            .as_ref()
+            .ok_or_else(|| prediction_file_error(file_index, MeasurementFileError::MissingInput))?;
+        if input.sha256.as_deref() != Some(provenance.raw_source().primary_input().sha256())
+            || input.bytes != Some(provenance.raw_source().primary_input().bytes())
+        {
+            return Err(prediction_file_error(
+                file_index,
+                MeasurementFileError::PredictionPrimaryInputMismatch,
+            ));
+        }
+    }
+    let mut facets = 0usize;
+    let mut references = 0usize;
+    let mut text = provenance
+        .map(PredictionProvenanceV1::retained_text_bytes)
+        .transpose()
+        .map_err(|source| {
+            prediction_file_error(
+                file_index,
+                MeasurementFileError::InvalidPredictionProvenance { source },
+            )
+        })?
+        .unwrap_or(0);
+    let mut available = 0usize;
+    let mut unavailable = 0usize;
+    for (check_index, check) in checks.iter().enumerate() {
+        if let Some(prediction) = &check.prediction {
+            facets = facets
+                .checked_add(prediction.facets().len())
+                .ok_or_else(|| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionAccountingOverflow,
+                    )
+                })?;
+            references = references
+                .checked_add(prediction.basis_reference_count())
+                .ok_or_else(|| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionAccountingOverflow,
+                    )
+                })?;
+            text = text
+                .checked_add(prediction.retained_text_bytes().map_err(|source| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::InvalidPrediction {
+                            check_index,
+                            source,
+                        },
+                    )
+                })?)
+                .ok_or_else(|| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionAccountingOverflow,
+                    )
+                })?;
+            for facet in prediction.facets() {
+                match facet.state() {
+                    EnginePredictionFacetStateV1::Available => {
+                        available = available
+                            .checked_add(1)
+                            .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                    }
+                    EnginePredictionFacetStateV1::RequiredPredictionUnavailable => {
+                        unavailable = unavailable
+                            .checked_add(1)
+                            .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                    }
+                }
+            }
+        }
+    }
+    if facets > PREDICTION_V1_MAX_FACETS_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyPredictionFacets {
+                found: facets,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            },
+        ));
+    }
+    if references > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyPredictionBasisReferences {
+                found: references,
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            },
+        ));
+    }
+    if text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooMuchPredictionText {
+                found: text,
+                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+            },
+        ));
+    }
+    Ok((available, unavailable))
+}
+
+impl LegacyPredictionCheckInput {
+    fn validate(
+        &self,
+        check_index: usize,
+        provenance: Option<&PredictionProvenanceV1>,
+    ) -> Result<(), MeasurementFileError> {
+        let gap_refs = self
+            .gaps
+            .iter()
+            .map(|gap| CheckEvaluationGapRef {
+                code: &gap.code,
+                scope: gap.scope.as_ref(),
+            })
+            .collect::<Vec<_>>();
+        let finding_check_ids = self
+            .findings
+            .iter()
+            .map(|finding| finding.check_id.as_str())
+            .collect::<Vec<_>>();
+        let prediction_scopes = self
+            .prediction
+            .as_ref()
+            .into_iter()
+            .flat_map(EnginePredictionV1::facets)
+            .map(|facet| facet.scope())
+            .collect::<Vec<_>>();
+        let derived = validate_and_derive_check_evaluation(CheckEvaluationValidationInput {
+            check_id: &self.check_id,
+            selection: self.selection,
+            configuration: self.configuration,
+            applicability: self.applicability,
+            finding_check_ids: &finding_check_ids,
+            evaluated_scopes: &self.evaluated_scopes,
+            gaps: &gap_refs,
+            prediction_scopes: &prediction_scopes,
+            has_prediction: self.prediction.is_some(),
+            prediction_has_required_unavailable: self
+                .prediction
+                .as_ref()
+                .is_some_and(EnginePredictionV1::has_required_unavailable),
+        })
+        .map_err(|error| MeasurementFileError::InvalidPredictionLifecycle {
+            check_index,
+            reason: error.reason(),
+        })?;
+        if self.evaluation != derived {
+            return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                check_index,
+                reason: "evaluation does not match completed and missing prediction work",
+            });
+        }
+        let Some(prediction) = &self.prediction else {
+            if self
+                .findings
+                .iter()
+                .any(|finding| finding.prediction_scope.is_some())
+            {
+                return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                    check_index,
+                    reason: "finding has prediction_scope without prediction",
+                });
+            }
+            return Ok(());
+        };
+        let provenance =
+            provenance.ok_or(MeasurementFileError::PredictionWithoutProvenance { check_index })?;
+        prediction
+            .validate_against_provenance(provenance)
+            .map_err(|source| MeasurementFileError::InvalidPrediction {
+                check_index,
+                source,
+            })?;
+        for facet in prediction.facets() {
+            let evaluated = self
+                .evaluated_scopes
+                .iter()
+                .filter(|scope| *scope == facet.scope())
+                .count();
+            let duplicated_gap = self
+                .gaps
+                .iter()
+                .any(|gap| gap.scope.as_ref() == Some(facet.scope()));
+            match facet.state() {
+                EnginePredictionFacetStateV1::Available if evaluated != 1 => {
+                    return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                        check_index,
+                        reason: "available facet scope must occur exactly once in evaluated_scopes",
+                    });
+                }
+                EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+                    if evaluated != 0 || duplicated_gap =>
+                {
+                    return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                        check_index,
+                        reason: "required-unavailable facet scope must be absent from evaluated_scopes and gaps",
+                    });
+                }
+                _ => {}
+            }
+        }
+        for finding in &self.findings {
+            let Some(scope) = &finding.prediction_scope else {
+                return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                    check_index,
+                    reason: "prediction-backed finding must carry prediction_scope",
+                });
+            };
+            if prediction
+                .facets()
+                .iter()
+                .filter(|facet| {
+                    facet.scope() == scope
+                        && facet.state() == EnginePredictionFacetStateV1::Available
+                })
+                .count()
+                != 1
+            {
+                return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                    check_index,
+                    reason: "finding prediction_scope must name one available facet",
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 fn validate_prediction_phase_file(
@@ -3127,7 +3748,7 @@ fn validate_prediction_phase_file(
             let mut facets = 0usize;
             let mut references = 0usize;
             let mut text = provenance
-                .map(PredictionProvenanceV1::retained_text_bytes)
+                .map(PredictionProvenanceV2::retained_text_bytes)
                 .transpose()
                 .map_err(|source| {
                     prediction_file_error(
@@ -3260,7 +3881,7 @@ impl PredictionCheckInput {
     fn validate(
         &self,
         check_index: usize,
-        provenance: Option<&PredictionProvenanceV1>,
+        provenance: Option<&PredictionProvenanceV2>,
     ) -> Result<(), MeasurementFileError> {
         let gap_refs = self
             .gaps
@@ -3279,7 +3900,7 @@ impl PredictionCheckInput {
             .prediction
             .as_ref()
             .into_iter()
-            .flat_map(crate::prediction::EnginePredictionV1::facets)
+            .flat_map(EnginePredictionV2::facets)
             .map(|facet| facet.scope())
             .collect::<Vec<_>>();
         let derived = validate_and_derive_check_evaluation(CheckEvaluationValidationInput {
@@ -3295,7 +3916,7 @@ impl PredictionCheckInput {
             prediction_has_required_unavailable: self
                 .prediction
                 .as_ref()
-                .is_some_and(crate::prediction::EnginePredictionV1::has_required_unavailable),
+                .is_some_and(EnginePredictionV2::has_required_unavailable),
         })
         .map_err(|error| MeasurementFileError::InvalidPredictionLifecycle {
             check_index,
@@ -3329,6 +3950,21 @@ impl PredictionCheckInput {
                 check_index,
                 source,
             })?;
+        prediction
+            .validate_facet_budget_summary_for_check(&self.check_id)
+            .map_err(|source| MeasurementFileError::InvalidPrediction {
+                check_index,
+                source,
+            })?;
+        validate_current_engine_addressability_prediction_v2(
+            &self.check_id,
+            prediction,
+            provenance,
+        )
+        .map_err(|source| MeasurementFileError::InvalidPrediction {
+            check_index,
+            source,
+        })?;
         for facet in prediction.facets() {
             let evaluated = self
                 .evaluated_scopes
@@ -3384,6 +4020,113 @@ impl PredictionCheckInput {
     }
 }
 
+/// Validate the frozen current-lint addressability inventory contract.  This
+/// is deliberately output-facing: standalone V1 engine artifacts retain their
+/// historic provenance and reason vocabulary.
+fn validate_current_engine_addressability_prediction_v2(
+    check_id: &str,
+    prediction: &EnginePredictionV2,
+    provenance: &PredictionProvenanceV2,
+) -> Result<(), PredictionContractError> {
+    if check_id != "engine-addressability" {
+        return Ok(());
+    }
+    let raw_partial =
+        provenance.raw_source().clips_coverage().state() != RawSourceSetCoverageStateV1::Complete;
+    let settings_partial = matches!(
+        provenance.settings().clip_coverage().state(),
+        ResolvedEngineSettingsCoverageStateV2::Partial
+    );
+    let inventories = prediction
+        .facets()
+        .iter()
+        .filter(|facet| {
+            facet.scope().code.as_str() == "animation_asset_label_inventory"
+                && facet.scope().subject.is_none()
+        })
+        .collect::<Vec<_>>();
+    if !raw_partial && !settings_partial {
+        if prediction.facets().iter().any(|facet| {
+            facet
+                .reasons()
+                .contains(&PredictionUnavailableReasonV2::ResolvedSettingsOverflow)
+        }) {
+            return Err(PredictionContractError::EngineAddressabilityInventoryReasonsMismatch);
+        }
+        let available = prediction
+            .facets()
+            .iter()
+            .filter(|facet| facet.state() == EnginePredictionFacetStateV1::Available)
+            .collect::<Vec<_>>();
+        let expected_rows = provenance.settings().clips().len();
+        if (!prediction.has_facet_budget_summary() && available.len() != expected_rows)
+            || (prediction.has_facet_budget_summary() && available.len() >= expected_rows)
+        {
+            return Err(PredictionContractError::EngineAddressabilityFacetPrefixMismatch);
+        }
+        let mut seen = vec![false; available.len()];
+        for facet in available {
+            let Some(ordinal) = facet
+                .scope()
+                .subject
+                .as_deref()
+                .and_then(|subject| subject.strip_prefix("Animation"))
+                .and_then(|ordinal| ordinal.parse::<usize>().ok())
+            else {
+                return Err(PredictionContractError::EngineAddressabilityFacetPrefixMismatch);
+            };
+            if facet.scope().code.as_str() != "animation_asset_label"
+                || ordinal >= seen.len()
+                || std::mem::replace(&mut seen[ordinal], true)
+                || !facet.basis().references().iter().any(|reference| {
+                    matches!(
+                        reference,
+                        PredictionBasisReferenceV1::RawSource { reference }
+                            if reference.domain() == RawSourceDomainV1::Clip
+                                && matches!(
+                                    reference.key(),
+                                    RawSourceKeyV1::Clip { source_clip_index }
+                                        if *source_clip_index == ordinal as u64
+                                )
+                                && reference.field().as_str() == "source_name.state"
+                    )
+                })
+            {
+                return Err(PredictionContractError::EngineAddressabilityFacetPrefixMismatch);
+            }
+        }
+        if seen.iter().any(|seen| !seen) {
+            return Err(PredictionContractError::EngineAddressabilityFacetPrefixMismatch);
+        }
+        return Ok(());
+    }
+
+    let mut expected = Vec::new();
+    if raw_partial {
+        expected.push(PredictionUnavailableReasonV2::RawSourceIncomplete);
+    }
+    if settings_partial {
+        expected.push(PredictionUnavailableReasonV2::ResolvedSettingsOverflow);
+    }
+    if inventories.len() != 1 && !(inventories.is_empty() && prediction.has_facet_budget_summary())
+    {
+        return Err(PredictionContractError::EngineAddressabilityInventoryReasonsMismatch);
+    }
+    if let Some(inventory) = inventories.first()
+        && (inventory.state() != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+            || inventory.reasons() != expected)
+    {
+        return Err(PredictionContractError::EngineAddressabilityInventoryReasonsMismatch);
+    }
+    if inventories.is_empty() {
+        // The allocator may replace this sole incomplete-inventory candidate
+        // with its canonical budget summary.  The enclosing file validator
+        // separately proves that the shared 4,096-slot budget was exhausted.
+        return Ok(());
+    }
+    Ok(())
+}
+
 impl MeasurementReportInput {
     /// Read one report through the immutable output-v11 byte bound before
     /// UTF-8 or JSON parsing.
@@ -3436,14 +4179,20 @@ impl MeasurementReportInput {
     /// Returns a typed error for a missing or unsupported identity, command,
     /// file shape, nested measurement contract, or measurement payload.
     pub fn into_files(self) -> Result<Vec<MeasurementReportFile>, MeasurementReportError> {
-        match self.schema_version {
-            Some(OUTPUT_SCHEMA_VERSION) => {}
+        let legacy_v11 = match self.schema_version {
+            Some(OUTPUT_SCHEMA_VERSION) => false,
+            Some(OUTPUT_V11_SCHEMA_VERSION) => true,
             Some(found) => {
                 return Err(MeasurementReportError::UnsupportedOutputVersion { found });
             }
             None => return Err(MeasurementReportError::MissingOutputVersion),
-        }
-        if self.schema.as_deref() != Some(OUTPUT_SCHEMA_ID) {
+        };
+        let expected_schema = if legacy_v11 {
+            OUTPUT_V11_SCHEMA_ID
+        } else {
+            OUTPUT_SCHEMA_ID
+        };
+        if self.schema.as_deref() != Some(expected_schema) {
             return Err(MeasurementReportError::WrongOutputIdentity);
         }
         let command = match self.command.as_deref() {
@@ -3463,6 +4212,8 @@ impl MeasurementReportInput {
         if self._tool.is_none() {
             return Err(MeasurementReportError::MissingTool);
         }
+        // The V11 reader retains the same summary obligation as the released
+        // V1 contract; only its prediction attachment identity differs.
         validate_prediction_summary_presence(command, self.summary.as_ref())?;
         let files = self.files.ok_or(MeasurementReportError::MissingFiles)?;
         if files.len() > OUTPUT_V11_MAX_FILES {
@@ -3475,15 +4226,29 @@ impl MeasurementReportInput {
         let mut unavailable = 0usize;
         let mut decoded_files = Vec::with_capacity(files.len());
         for (file_index, raw) in files.into_iter().enumerate() {
-            let file = decode_prediction_phase_file(command, file_index, &raw)?;
-            let (file_available, file_unavailable) =
-                validate_prediction_phase_file(command, file_index, &file)?;
-            available = available
-                .checked_add(file_available)
-                .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
-            unavailable = unavailable
-                .checked_add(file_unavailable)
-                .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+            let file = if legacy_v11 {
+                let file = decode_legacy_v11_file(command, file_index, &raw)?;
+                let (file_available, file_unavailable) =
+                    validate_legacy_v11_prediction_phase_file(command, file_index, &file)?;
+                available = available
+                    .checked_add(file_available)
+                    .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                unavailable = unavailable
+                    .checked_add(file_unavailable)
+                    .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                file
+            } else {
+                let file = decode_prediction_phase_file(command, file_index, &raw)?;
+                let (file_available, file_unavailable) =
+                    validate_prediction_phase_file(command, file_index, &file)?;
+                available = available
+                    .checked_add(file_available)
+                    .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                unavailable = unavailable
+                    .checked_add(file_unavailable)
+                    .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                file
+            };
             decoded_files.push(file);
         }
         validate_prediction_summary(command, self.summary.as_ref(), available, unavailable)?;
@@ -3662,17 +4427,41 @@ impl MeasurementReportInput {
                         input: InputIdentity { sha256, bytes },
                         measurements,
                     },
-                    file.checks.unwrap_or_default(),
+                    (
+                        file.checks.unwrap_or_default(),
+                        file.legacy_checks.unwrap_or_default(),
+                    ),
                 ))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         // Measurement-dependent basis pointers are deliberately resolved only
         // after every file's complete measurements-v15 contract has passed.
-        for (file_index, (file, checks)) in parsed.iter().enumerate() {
-            validate_measurement_references_batch(
+        for (file_index, (file, (checks, legacy_checks))) in parsed.iter().enumerate() {
+            validate_measurement_references_batch_v2(
                 &file.measurements,
                 checks
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(check_index, check)| {
+                        check
+                            .prediction
+                            .as_ref()
+                            .map(|prediction| (check_index, prediction))
+                    }),
+            )
+            .map_err(|error| {
+                MeasurementReportError::file(
+                    file_index,
+                    MeasurementFileError::InvalidPrediction {
+                        check_index: error.prediction_index,
+                        source: error.source,
+                    },
+                )
+            })?;
+            validate_measurement_references_batch(
+                &file.measurements,
+                legacy_checks
                     .iter()
                     .enumerate()
                     .filter_map(|(check_index, check)| {
@@ -3702,16 +4491,17 @@ mod measurement_report_input_tests {
 
     use super::*;
     use crate::engine_contract::{
-        EngineFactIdV1, EngineFactStateV1, EngineFactValueV1, EnginePrimarySourceV1,
-        EngineProfileFactV1, EngineProfileSelectionV1, ResolvedEngineProfileV1,
-        ResolvedEngineSettingsV1,
+        EngineClipSettingsV1, EngineFactIdV1, EngineFactStateV1, EngineFactValueV1,
+        EnginePrimarySourceV1, EngineProfileFactV1, EngineProfileSelectionV1,
+        ResolvedEngineProfileV1, ResolvedEngineSettingsCoverageV2, ResolvedEngineSettingsV1,
+        ResolvedEngineSettingsV2, ResolvedEngineSettingsWorkV2,
     };
     use crate::evaluation::{CheckOutput, EvaluationScope, EvaluationScopeCode};
     use crate::measure::AssetMeasurements;
     use crate::prediction::{
-        EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionV1,
-        PredictionBasisReferenceV1, PredictionScalarV1, PredictionUnavailableReasonV1,
-        RawSourceBindingV1,
+        EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionFacetV2,
+        EnginePredictionV1, EnginePredictionV2, PredictionBasisReferenceV1, PredictionScalarV1,
+        PredictionUnavailableReasonV1, PredictionUnavailableReasonV2, RawSourceBindingV1,
     };
     use crate::source_facts::SourceFormatV1;
     use crate::{DependencyClosureV1, Document, ResolvedRoles};
@@ -3766,7 +4556,7 @@ mod measurement_report_input_tests {
         .unwrap()
     }
 
-    fn prediction_test_provenance() -> PredictionProvenanceV1 {
+    fn prediction_test_provenance() -> PredictionProvenanceV2 {
         let raw: RawSourceBindingV1 = serde_json::from_value(serde_json::json!({
             "schema": crate::RAW_SOURCE_FACTS_V1_ID,
             "primary_input": {"sha256": "00".repeat(32), "bytes": 0},
@@ -3796,8 +4586,44 @@ mod measurement_report_input_tests {
         .unwrap();
         let closure = DependencyClosureV1::unavailable(raw.primary_input().clone());
         let profile = prediction_test_profile();
-        let settings = ResolvedEngineSettingsV1::new(&profile, vec![], vec![]).unwrap();
-        PredictionProvenanceV1::new(profile, SourceFormatV1::Glb, settings, raw, closure).unwrap()
+        let settings = ResolvedEngineSettingsV2::new(
+            &profile,
+            vec![],
+            vec![],
+            ResolvedEngineSettingsCoverageV2::complete(),
+            ResolvedEngineSettingsWorkV2::new(0, 0, 0),
+        )
+        .unwrap();
+        PredictionProvenanceV2::new(profile, SourceFormatV1::Glb, settings, raw, closure).unwrap()
+    }
+
+    fn partial_engine_provenance() -> PredictionProvenanceV2 {
+        let complete = prediction_test_provenance();
+        let mut raw_wire = serde_json::to_value(complete.raw_source()).unwrap();
+        raw_wire["clips_coverage"] = serde_json::json!({
+            "state": "partial",
+            "reason": "projection_budget_exceeded"
+        });
+        let raw = serde_json::from_value(raw_wire).unwrap();
+        let clips = (0..PREDICTION_V1_MAX_FACETS_PER_FILE)
+            .map(|index| EngineClipSettingsV1::new(format!("clip-{index:04}"), Vec::new()).unwrap())
+            .collect();
+        let settings = ResolvedEngineSettingsV2::new(
+            complete.profile(),
+            Vec::new(),
+            clips,
+            ResolvedEngineSettingsCoverageV2::actual_clip_rows_exceeded(),
+            ResolvedEngineSettingsWorkV2::new(4_097, 4_096, 4_096),
+        )
+        .unwrap();
+        PredictionProvenanceV2::new(
+            complete.profile().clone(),
+            complete.source_format(),
+            settings,
+            raw,
+            complete.dependency_closure().clone(),
+        )
+        .unwrap()
     }
 
     fn prediction_test_measurements() -> MeasurementContract {
@@ -3811,32 +4637,32 @@ mod measurement_report_input_tests {
     fn unavailable_facet(
         subject: String,
         basis: EnginePredictionBasisV1,
-    ) -> EnginePredictionFacetV1 {
-        EnginePredictionFacetV1::required_unavailable(
+    ) -> EnginePredictionFacetV2 {
+        EnginePredictionFacetV2::required_unavailable(
             EvaluationScope::new(EvaluationScopeCode::custom("test:prediction-limit"))
                 .subject(subject),
             basis,
-            vec![PredictionUnavailableReasonV1::ProjectIntentUnavailable],
+            vec![PredictionUnavailableReasonV2::ProjectIntentUnavailable],
         )
         .unwrap()
     }
 
     fn unavailable_check(
         check_id: &'static str,
-        provenance: &PredictionProvenanceV1,
-        facets: Vec<EnginePredictionFacetV1>,
+        provenance: &PredictionProvenanceV2,
+        facets: Vec<EnginePredictionFacetV2>,
     ) -> CheckEvaluation {
-        let prediction = EnginePredictionV1::new(provenance.identity().clone(), facets).unwrap();
+        let prediction = EnginePredictionV2::new(provenance.identity().clone(), facets).unwrap();
         CheckEvaluation::evaluated(
             check_id,
             CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
-                .with_engine_prediction(prediction),
+                .with_engine_prediction_v2(prediction),
         )
         .unwrap()
     }
 
     fn lint_file(
-        provenance: &PredictionProvenanceV1,
+        provenance: &PredictionProvenanceV2,
         checks: Vec<CheckEvaluation>,
     ) -> Result<LintFileReport, OutputContractError> {
         LintFileReport::new(
@@ -3850,7 +4676,7 @@ mod measurement_report_input_tests {
     }
 
     fn validated_lint_wire(
-        provenance: &PredictionProvenanceV1,
+        provenance: &PredictionProvenanceV2,
         checks: Vec<CheckEvaluation>,
     ) -> serde_json::Value {
         let file = lint_file(provenance, checks).expect("producer accepts exact N");
@@ -3869,13 +4695,13 @@ mod measurement_report_input_tests {
     }
 
     fn prediction_with_retained_text(
-        provenance: &PredictionProvenanceV1,
+        provenance: &PredictionProvenanceV2,
         retained_text: usize,
-    ) -> EnginePredictionV1 {
+    ) -> EnginePredictionV2 {
         const FIELD_ID_BYTES: usize = 16;
         const MAX_VALUE_BYTES: usize = crate::PREDICTION_V1_MAX_TEXT_BYTES;
         let fixed = "test:prediction-limit".len()
-            + PredictionUnavailableReasonV1::ProjectIntentUnavailable
+            + PredictionUnavailableReasonV2::ProjectIntentUnavailable
                 .as_str()
                 .len();
         let remaining = retained_text.checked_sub(fixed).unwrap();
@@ -3913,14 +4739,14 @@ mod measurement_report_input_tests {
             );
         }
         let basis = EnginePredictionBasisV1::new(references).unwrap();
-        let facet = EnginePredictionFacetV1::required_unavailable(
+        let facet = EnginePredictionFacetV2::required_unavailable(
             EvaluationScope::new(EvaluationScopeCode::custom("test:prediction-limit")),
             basis,
-            vec![PredictionUnavailableReasonV1::ProjectIntentUnavailable],
+            vec![PredictionUnavailableReasonV2::ProjectIntentUnavailable],
         )
         .unwrap();
         let prediction =
-            EnginePredictionV1::new(provenance.identity().clone(), vec![facet]).unwrap();
+            EnginePredictionV2::new(provenance.identity().clone(), vec![facet]).unwrap();
         assert_eq!(prediction.retained_text_bytes().unwrap(), retained_text);
         prediction
     }
@@ -3983,6 +4809,191 @@ mod measurement_report_input_tests {
     }
 
     #[test]
+    fn v2_budget_summary_is_canonical_and_requires_an_exhausted_file_budget() {
+        let provenance = prediction_test_provenance();
+        let basis = EnginePredictionBasisV1::new(Vec::new()).unwrap();
+        let mut facets = (0..PREDICTION_V1_MAX_FACETS_PER_FILE - 1)
+            .map(|index| unavailable_facet(format!("facet-{index:04}"), basis.clone()))
+            .collect::<Vec<_>>();
+        facets.push(
+            EnginePredictionFacetV2::required_unavailable(
+                EvaluationScope::new(EvaluationScopeCode::custom("test:budget:facet-budget")),
+                basis,
+                vec![PredictionUnavailableReasonV2::FacetBudgetExceeded],
+            )
+            .unwrap(),
+        );
+        let check = unavailable_check("test:budget", &provenance, facets);
+        let wire = validated_lint_wire(&provenance, vec![check]);
+        let facets = wire["files"][0]["checks"][0]["prediction"]["facets"]
+            .as_array()
+            .unwrap();
+        let summary_index = facets
+            .iter()
+            .position(|facet| facet["reasons"] == serde_json::json!(["facet_budget_exceeded"]))
+            .unwrap();
+
+        let mut wrong_scope = wire.clone();
+        wrong_scope["files"][0]["checks"][0]["prediction"]["facets"][summary_index]["scope"]["code"] =
+            serde_json::json!("test:wrong:facet-budget");
+        assert!(matches!(
+            lint_read_error(wrong_scope),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidPrediction {
+                    source: PredictionContractError::InvalidFacetBudgetSummary,
+                    ..
+                },
+                ..
+            }
+        ));
+
+        let mut subject = wire.clone();
+        subject["files"][0]["checks"][0]["prediction"]["facets"][summary_index]["scope"]["subject"] =
+            serde_json::json!("forged");
+        assert!(matches!(
+            lint_read_error(subject),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidPrediction {
+                    source: PredictionContractError::InvalidFacetBudgetSummary,
+                    ..
+                },
+                ..
+            }
+        ));
+
+        let mut available = wire.clone();
+        available["files"][0]["checks"][0]["prediction"]["facets"][summary_index]["state"] =
+            serde_json::json!("available");
+        let available_error = lint_read_error(available);
+        assert!(
+            matches!(
+                available_error,
+                MeasurementReportError::File {
+                    source: MeasurementFileError::InvalidPrediction {
+                        source: PredictionContractError::AvailableBasisEmpty,
+                        ..
+                    },
+                    ..
+                }
+            ),
+            "unexpected available mutation: {available_error:?}"
+        );
+
+        let mut duplicate = wire.clone();
+        let duplicate_summary =
+            duplicate["files"][0]["checks"][0]["prediction"]["facets"][summary_index].clone();
+        duplicate["files"][0]["checks"][0]["prediction"]["facets"]
+            [if summary_index == 0 { 1 } else { 0 }] = duplicate_summary;
+        assert!(matches!(
+            lint_read_error(duplicate),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidPrediction {
+                    source: PredictionContractError::DuplicateFacetScope,
+                    ..
+                },
+                ..
+            }
+        ));
+
+        let mut under_full = wire;
+        under_full["files"][0]["checks"][0]["prediction"]["facets"]
+            .as_array_mut()
+            .unwrap()
+            .remove(if summary_index == 0 { 1 } else { 0 });
+        under_full["summary"]["prediction_facets"]["required_prediction_unavailable"] =
+            serde_json::json!(PREDICTION_V1_MAX_FACETS_PER_FILE - 1);
+        assert_eq!(
+            lint_read_error(under_full),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::FacetBudgetSummaryWithoutExhaustedFileBudget {
+                    found: PREDICTION_V1_MAX_FACETS_PER_FILE - 1,
+                    limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn partial_engine_inventory_can_be_replaced_by_its_budget_summary() {
+        let provenance = partial_engine_provenance();
+        let summary = EnginePredictionFacetV2::required_unavailable(
+            EvaluationScope::new(EvaluationScopeCode::custom(
+                "engine-addressability:facet-budget",
+            )),
+            EnginePredictionBasisV1::new(Vec::new()).unwrap(),
+            vec![PredictionUnavailableReasonV2::FacetBudgetExceeded],
+        )
+        .unwrap();
+        let engine = unavailable_check("engine-addressability", &provenance, vec![summary]);
+        let filler_basis = EnginePredictionBasisV1::new(Vec::new()).unwrap();
+        let filler = unavailable_check(
+            "test:filler",
+            &provenance,
+            (0..PREDICTION_V1_MAX_FACETS_PER_FILE - 1)
+                .map(|index| unavailable_facet(format!("filler-{index:04}"), filler_basis.clone()))
+                .collect(),
+        );
+        // A capacity-zero incomplete inventory is represented by the one
+        // canonical summary while other rules consume the retained slots.
+        let wire = validated_lint_wire(&provenance, vec![engine, filler]);
+        assert_eq!(
+            wire["summary"]["prediction_facets"]["required_prediction_unavailable"],
+            serde_json::json!(PREDICTION_V1_MAX_FACETS_PER_FILE)
+        );
+    }
+
+    #[test]
+    fn engine_addressability_inventory_reasons_follow_raw_and_settings_coverage() {
+        let partial = partial_engine_provenance();
+        let basis = EnginePredictionBasisV1::new(Vec::new()).unwrap();
+        let inventory = EnginePredictionFacetV2::required_unavailable(
+            EvaluationScope::new(EvaluationScopeCode::ANIMATION_ASSET_LABEL_INVENTORY),
+            basis.clone(),
+            vec![
+                PredictionUnavailableReasonV2::RawSourceIncomplete,
+                PredictionUnavailableReasonV2::ResolvedSettingsOverflow,
+            ],
+        )
+        .unwrap();
+        let check = unavailable_check("engine-addressability", &partial, vec![inventory]);
+        let mut wire = validated_lint_wire(&partial, vec![check]);
+        wire["files"][0]["checks"][0]["prediction"]["facets"][0]["reasons"] =
+            serde_json::json!(["raw_source_incomplete"]);
+        assert!(matches!(
+            lint_read_error(wire),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidPrediction {
+                    source: PredictionContractError::EngineAddressabilityInventoryReasonsMismatch,
+                    ..
+                },
+                ..
+            }
+        ));
+
+        let complete = prediction_test_provenance();
+        let forged = EnginePredictionFacetV2::required_unavailable(
+            EvaluationScope::new(EvaluationScopeCode::ANIMATION_ASSET_LABEL_INVENTORY),
+            basis,
+            vec![PredictionUnavailableReasonV2::ResolvedSettingsOverflow],
+        )
+        .unwrap();
+        assert!(matches!(
+            lint_file(
+                &complete,
+                vec![unavailable_check(
+                    "engine-addressability",
+                    &complete,
+                    vec![forged]
+                )],
+            ),
+            Err(OutputContractError::InvalidPrediction(
+                PredictionContractError::EngineAddressabilityInventoryReasonsMismatch
+            ))
+        ));
+    }
+
+    #[test]
     fn prediction_basis_file_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         let provenance = prediction_test_provenance();
         let basis = EnginePredictionBasisV1::new(
@@ -4042,16 +5053,13 @@ mod measurement_report_input_tests {
             .and_then(serde_json::Value::as_array_mut)
             .and_then(|references| references.first_mut())
             .unwrap() = serde_json::Value::Null;
-        assert_eq!(
+        assert!(matches!(
             lint_read_error(wire),
             MeasurementReportError::File {
                 file_index: 0,
-                source: MeasurementFileError::TooManyPredictionBasisReferences {
-                    found: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE + 1,
-                    limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
-                },
+                source: MeasurementFileError::TooManyPredictionBasisReferences { .. },
             }
-        );
+        ));
     }
 
     #[test]
@@ -4065,7 +5073,7 @@ mod measurement_report_input_tests {
         let at_limit = CheckEvaluation::evaluated(
             "test:text-limit",
             CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
-                .with_engine_prediction(at_limit_prediction),
+                .with_engine_prediction_v2(at_limit_prediction),
         )
         .unwrap();
         let mut wire = validated_lint_wire(&provenance, vec![at_limit]);
@@ -4077,7 +5085,7 @@ mod measurement_report_input_tests {
         let above_limit = CheckEvaluation::evaluated(
             "test:text-limit",
             CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
-                .with_engine_prediction(above_limit_prediction),
+                .with_engine_prediction_v2(above_limit_prediction),
         )
         .unwrap();
         let above_limit_wire = serde_json::to_value(&above_limit).unwrap();
@@ -4214,12 +5222,7 @@ mod measurement_report_input_tests {
             reader_error(provenance_wire),
             MeasurementReportError::File {
                 file_index: 0,
-                source: MeasurementFileError::InvalidPredictionProvenance {
-                    source: PredictionContractError::InvalidSchema {
-                        field: "provenance.schema",
-                        ..
-                    },
-                },
+                source: MeasurementFileError::InvalidPredictionProvenance { .. },
             }
         ));
 
@@ -4231,10 +5234,10 @@ mod measurement_report_input_tests {
             .unwrap(),
         ])
         .unwrap();
-        let facet = EnginePredictionFacetV1::required_unavailable(
+        let facet = EnginePredictionFacetV2::required_unavailable(
             EvaluationScope::new(EvaluationScopeCode::custom("test:prediction")),
             basis,
-            vec![PredictionUnavailableReasonV1::ProjectIntentUnavailable],
+            vec![PredictionUnavailableReasonV2::ProjectIntentUnavailable],
         )
         .unwrap();
         let prediction_wire = validated_lint_wire(
@@ -4263,13 +5266,7 @@ mod measurement_report_input_tests {
             reader_error(empty_scope),
             MeasurementReportError::File {
                 file_index: 0,
-                source: MeasurementFileError::InvalidPrediction {
-                    check_index: 0,
-                    source: PredictionContractError::InvalidToken {
-                        field: "facet scope code",
-                        ..
-                    },
-                },
+                source: MeasurementFileError::InvalidPrediction { check_index: 0, .. },
             }
         ));
 
@@ -4446,10 +5443,10 @@ mod measurement_report_input_tests {
             .unwrap(),
         ])
         .unwrap();
-        let facet = EnginePredictionFacetV1::required_unavailable(
+        let facet = EnginePredictionFacetV2::required_unavailable(
             EvaluationScope::new(EvaluationScopeCode::custom("test:prediction")),
             basis,
-            vec![PredictionUnavailableReasonV1::ProjectIntentUnavailable],
+            vec![PredictionUnavailableReasonV2::ProjectIntentUnavailable],
         )
         .unwrap();
         let mut wire = validated_lint_wire(
@@ -4515,6 +5512,152 @@ mod measurement_report_input_tests {
             })
         ));
     }
+
+    #[test]
+    fn legacy_output_v11_reader_dispatch_preserves_measurement_recovery() {
+        let provenance = prediction_test_provenance();
+        let legacy = PredictionProvenanceV1::new(
+            provenance.profile().clone(),
+            provenance.source_format(),
+            ResolvedEngineSettingsV1::new(provenance.profile(), Vec::new(), Vec::new()).unwrap(),
+            provenance.raw_source().clone(),
+            provenance.dependency_closure().clone(),
+        )
+        .unwrap();
+        let legacy_prediction = EnginePredictionV1::new(
+            legacy.identity().clone(),
+            vec![
+                EnginePredictionFacetV1::required_unavailable(
+                    EvaluationScope::new(EvaluationScopeCode::custom("test:legacy-v11")),
+                    EnginePredictionBasisV1::new(Vec::new()).unwrap(),
+                    vec![PredictionUnavailableReasonV1::ProjectIntentUnavailable],
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        // This is an actual V11/V1 wire shape, deliberately constructed
+        // without producing a V12 envelope and swapping only its header.
+        let wire = serde_json::json!({
+            "schema_version": OUTPUT_V11_SCHEMA_VERSION,
+            "schema": OUTPUT_V11_SCHEMA_ID,
+            "tool": {},
+            "command": "lint",
+            "summary": {
+                "prediction_facets": {
+                    "available": 0,
+                    "required_prediction_unavailable": 1,
+                },
+            },
+            "files": [{
+                "path": "legacy-v11.glb",
+                "input": { "sha256": "00".repeat(32), "bytes": 0 },
+                "rig": serde_json::to_value(prediction_test_rig()).unwrap(),
+                "measurements": serde_json::to_value(prediction_test_measurements()).unwrap(),
+                "prediction_provenance": serde_json::to_value(legacy.clone()).unwrap(),
+                "checks": [{
+                    "check_id": "test:legacy-v11",
+                    "selection": "selected",
+                    "configuration": "enabled",
+                    "applicability": "applicable",
+                    "evaluation": "not_evaluated",
+                    "findings": [],
+                    "evaluated_scopes": [],
+                    "gaps": [],
+                    "prediction": legacy_prediction,
+                }],
+            }],
+        });
+        let report: MeasurementReportInput = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(report.file_count(), Some(1));
+        assert_eq!(report.into_files().unwrap().len(), 1);
+
+        let mut bad_provenance = wire.clone();
+        bad_provenance["files"][0]["prediction_provenance"]["schema"] =
+            serde_json::json!("urn:forged");
+        assert!(matches!(
+            lint_read_error(bad_provenance),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidPredictionProvenance { .. },
+                ..
+            }
+        ));
+
+        let mut bad_prediction = wire.clone();
+        bad_prediction["files"][0]["checks"] = serde_json::json!([{
+            "check_id": "test:legacy-v11",
+            "selection": "selected",
+            "configuration": "enabled",
+            "applicability": "applicable",
+            "evaluation": "not_evaluated",
+            "findings": [],
+            "evaluated_scopes": [],
+            "gaps": [],
+            "prediction": { "schema": "urn:forged" }
+        }]);
+        assert!(matches!(
+            lint_read_error(bad_prediction),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidPredictionShape { .. },
+                ..
+            }
+        ));
+
+        let mut missing_provenance_before_malformed_prediction = wire.clone();
+        missing_provenance_before_malformed_prediction["files"][0]["prediction_provenance"] =
+            serde_json::Value::Null;
+        missing_provenance_before_malformed_prediction["files"][0]["checks"][0]["prediction"] =
+            serde_json::json!({ "schema": "urn:forged" });
+        assert!(matches!(
+            lint_read_error(missing_provenance_before_malformed_prediction),
+            MeasurementReportError::File {
+                source: MeasurementFileError::PredictionWithoutProvenance { check_index: 0 },
+                ..
+            }
+        ));
+
+        let mut inactive_before_malformed_prediction = wire.clone();
+        inactive_before_malformed_prediction["files"][0]["checks"][0]["selection"] =
+            serde_json::json!("unselected");
+        inactive_before_malformed_prediction["files"][0]["checks"][0]["prediction"] =
+            serde_json::json!({ "schema": "urn:forged" });
+        assert!(matches!(
+            lint_read_error(inactive_before_malformed_prediction),
+            MeasurementReportError::File {
+                source: MeasurementFileError::InvalidPredictionLifecycle { check_index: 0, .. },
+                ..
+            }
+        ));
+
+        // A V11 aggregate overflow is terminal at the check that creates it;
+        // a malformed later check must never change that first error.
+        let mut overbudget_before_later_malformed = wire.clone();
+        let facet =
+            overbudget_before_later_malformed["files"][0]["checks"][0]["prediction"]["facets"][0]
+                .clone();
+        overbudget_before_later_malformed["files"][0]["checks"][0]["prediction"]["facets"] =
+            serde_json::Value::Array(
+                std::iter::repeat_n(facet, PREDICTION_V1_MAX_FACETS_PER_FILE + 1).collect(),
+            );
+        overbudget_before_later_malformed["files"][0]["checks"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({ "check_id": 7 }));
+        let precedence_error = lint_read_error(overbudget_before_later_malformed);
+        assert!(
+            matches!(
+                precedence_error,
+                MeasurementReportError::File {
+                    source: MeasurementFileError::InvalidPrediction {
+                        source: PredictionContractError::TooManyFacets { .. },
+                        ..
+                    },
+                    ..
+                },
+            ),
+            "{precedence_error:?}"
+        );
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -4577,139 +5720,6 @@ impl MeasureFileReport {
     }
 }
 
-/// One source file and its lint-command evidence.
-#[derive(Debug, Clone, Serialize)]
-pub struct LintFileReport {
-    #[serde(flatten)]
-    evidence: FileEvidence,
-    prediction_provenance: Option<PredictionProvenanceV1>,
-    checks: Vec<CheckEvaluation>,
-}
-
-impl LintFileReport {
-    /// Construct and validate a lint file report with one record per catalog check.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OutputContractError`] when the file exceeds an output-v11
-    /// bound or prediction evidence does not bind to the same file/provenance.
-    pub fn new(
-        path: impl Into<String>,
-        input: InputIdentity,
-        rig: RigInfo,
-        prediction_provenance: Option<PredictionProvenanceV1>,
-        checks: Vec<CheckEvaluation>,
-        measurements: MeasurementContract,
-    ) -> Result<Self, OutputContractError> {
-        let report = Self {
-            evidence: FileEvidence::new(path, input, rig, measurements),
-            prediction_provenance,
-            checks,
-        };
-        report.validate()?;
-        Ok(report)
-    }
-
-    /// Display path supplied by the producer.
-    pub fn path(&self) -> &str {
-        &self.evidence.path
-    }
-
-    /// Immutable identity of the source bytes used to produce this record.
-    pub fn input(&self) -> &InputIdentity {
-        &self.evidence.input
-    }
-
-    /// Check records in catalog order.
-    pub fn checks(&self) -> &[CheckEvaluation] {
-        &self.checks
-    }
-
-    /// File-scoped prediction provenance, or `None` for engine-neutral lint.
-    pub const fn prediction_provenance(&self) -> Option<&PredictionProvenanceV1> {
-        self.prediction_provenance.as_ref()
-    }
-
-    /// Nested measurement evidence.
-    pub fn measurements(&self) -> &MeasurementContract {
-        &self.evidence.measurements
-    }
-
-    fn validate(&self) -> Result<(), OutputContractError> {
-        if self.checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE {
-            return Err(OutputContractError::TooManyChecks {
-                found: self.checks.len(),
-                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
-            });
-        }
-        if let Some(provenance) = &self.prediction_provenance {
-            provenance.validate()?;
-            if provenance.raw_source().primary_input() != &self.evidence.input {
-                return Err(OutputContractError::PredictionPrimaryInputMismatch);
-            }
-        }
-
-        let mut facets = 0usize;
-        let mut references = 0usize;
-        let mut text = self
-            .prediction_provenance
-            .as_ref()
-            .map(PredictionProvenanceV1::retained_text_bytes)
-            .transpose()?
-            .unwrap_or(0);
-        for check in &self.checks {
-            let Some(prediction) = check.engine_prediction() else {
-                continue;
-            };
-            let provenance = self
-                .prediction_provenance
-                .as_ref()
-                .ok_or(OutputContractError::PredictionWithoutProvenance)?;
-            prediction.validate_against_provenance(provenance)?;
-            facets = facets
-                .checked_add(prediction.facets().len())
-                .ok_or(OutputContractError::ArithmeticOverflow)?;
-            references = references
-                .checked_add(prediction.basis_reference_count())
-                .ok_or(OutputContractError::ArithmeticOverflow)?;
-            text = text
-                .checked_add(prediction.retained_text_bytes()?)
-                .ok_or(OutputContractError::ArithmeticOverflow)?;
-        }
-        validate_measurement_references_batch(
-            &self.evidence.measurements,
-            self.checks
-                .iter()
-                .enumerate()
-                .filter_map(|(check_index, check)| {
-                    check
-                        .engine_prediction()
-                        .map(|prediction| (check_index, prediction))
-                }),
-        )
-        .map_err(|error| OutputContractError::InvalidPrediction(error.source))?;
-        if facets > PREDICTION_V1_MAX_FACETS_PER_FILE {
-            return Err(OutputContractError::TooManyPredictionFacets {
-                found: facets,
-                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
-            });
-        }
-        if references > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE {
-            return Err(OutputContractError::TooManyPredictionBasisReferences {
-                found: references,
-                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
-            });
-        }
-        if text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
-            return Err(OutputContractError::TooMuchPredictionText {
-                found: text,
-                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
-            });
-        }
-        Ok(())
-    }
-}
-
 /// A producer attempted to construct output outside the immutable v11 contract.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -4733,6 +5743,10 @@ pub enum OutputContractError {
     /// A check carried prediction evidence without its file-scoped authority.
     #[error("engine prediction requires non-null file prediction_provenance")]
     PredictionWithoutProvenance,
+    /// A current output-v12 lint record attempted to attach historical V1
+    /// prediction evidence.
+    #[error("output-v12 lint cannot carry engine-prediction-v1 evidence")]
+    HistoricalPredictionInV2Output,
     /// File and provenance primary-input identities differed.
     #[error("prediction provenance primary input does not match the lint file input")]
     PredictionPrimaryInputMismatch,
@@ -4742,6 +5756,15 @@ pub enum OutputContractError {
         /// Supplied facet count.
         found: usize,
         /// Immutable V1 limit.
+        limit: usize,
+    },
+    /// A V2 rule emitted a budget summary although the file did not consume
+    /// every one of its shared prediction-facet slots.
+    #[error("facet-budget summary requires exactly {limit} aggregate facets, found {found}")]
+    FacetBudgetSummaryWithoutExhaustedFileBudget {
+        /// Aggregate facet count.
+        found: usize,
+        /// Immutable shared file limit.
         limit: usize,
     },
     /// Aggregate basis references exceeded the V1 file limit.
@@ -4886,18 +5909,175 @@ impl MeasureEnvelope {
     }
 }
 
-/// Current lint-command result envelope.
+/// Current output-v12 lint file evidence with V2 prediction provenance.
+#[derive(Debug, Clone, Serialize)]
+pub struct LintFileReport {
+    #[serde(flatten)]
+    evidence: FileEvidence,
+    prediction_provenance: Option<PredictionProvenanceV2>,
+    checks: Vec<CheckEvaluation>,
+}
+
+impl LintFileReport {
+    /// Construct a V2 lint file report.
+    pub fn new(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        prediction_provenance: Option<PredictionProvenanceV2>,
+        checks: Vec<CheckEvaluation>,
+        measurements: MeasurementContract,
+    ) -> Result<Self, OutputContractError> {
+        if checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE {
+            return Err(OutputContractError::TooManyChecks {
+                found: checks.len(),
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
+            });
+        }
+        let report = Self {
+            evidence: FileEvidence::new(path, input, rig, measurements),
+            prediction_provenance,
+            checks,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+
+    /// V2 prediction provenance, or `None` for engine-neutral lint.
+    pub const fn prediction_provenance(&self) -> Option<&PredictionProvenanceV2> {
+        self.prediction_provenance.as_ref()
+    }
+
+    /// Display path supplied by the producer.
+    pub fn path(&self) -> &str {
+        &self.evidence.path
+    }
+
+    /// Immutable identity of the source bytes used to produce this record.
+    pub fn input(&self) -> &InputIdentity {
+        &self.evidence.input
+    }
+
+    /// Nested measurement evidence.
+    pub fn measurements(&self) -> &MeasurementContract {
+        &self.evidence.measurements
+    }
+
+    /// Catalog-ordered check records.
+    pub fn checks(&self) -> &[CheckEvaluation] {
+        &self.checks
+    }
+
+    fn validate(&self) -> Result<(), OutputContractError> {
+        if let Some(provenance) = &self.prediction_provenance {
+            provenance.validate()?;
+            if provenance.raw_source().primary_input() != &self.evidence.input {
+                return Err(OutputContractError::PredictionPrimaryInputMismatch);
+            }
+        }
+        let mut facets = 0usize;
+        let mut references = 0usize;
+        let mut has_facet_budget_summary = false;
+        let mut text = self
+            .prediction_provenance
+            .as_ref()
+            .map(PredictionProvenanceV2::retained_text_bytes)
+            .transpose()?
+            .unwrap_or(0);
+        for check in &self.checks {
+            if check.engine_prediction().is_some() {
+                return Err(OutputContractError::HistoricalPredictionInV2Output);
+            }
+            if let Some(prediction) = check.engine_prediction_v2() {
+                let provenance = self
+                    .prediction_provenance
+                    .as_ref()
+                    .ok_or(OutputContractError::PredictionWithoutProvenance)?;
+                prediction.validate_against_provenance(provenance)?;
+                prediction.validate_for_check(
+                    check.check_id(),
+                    check.evaluated_scopes(),
+                    check.gaps(),
+                    check.findings(),
+                )?;
+                validate_current_engine_addressability_prediction_v2(
+                    check.check_id(),
+                    prediction,
+                    provenance,
+                )?;
+                has_facet_budget_summary |= prediction.has_facet_budget_summary();
+                facets = facets
+                    .checked_add(prediction.facets().len())
+                    .ok_or(OutputContractError::ArithmeticOverflow)?;
+                references = references
+                    .checked_add(prediction.basis_reference_count())
+                    .ok_or(OutputContractError::ArithmeticOverflow)?;
+                text = text
+                    .checked_add(prediction.retained_text_bytes()?)
+                    .ok_or(OutputContractError::ArithmeticOverflow)?;
+            }
+        }
+        if facets > PREDICTION_V1_MAX_FACETS_PER_FILE {
+            return Err(OutputContractError::TooManyPredictionFacets {
+                found: facets,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            });
+        }
+        if has_facet_budget_summary && facets != PREDICTION_V1_MAX_FACETS_PER_FILE {
+            return Err(
+                OutputContractError::FacetBudgetSummaryWithoutExhaustedFileBudget {
+                    found: facets,
+                    limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                },
+            );
+        }
+        if references > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE {
+            return Err(OutputContractError::TooManyPredictionBasisReferences {
+                found: references,
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            });
+        }
+        if text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+            return Err(OutputContractError::TooMuchPredictionText {
+                found: text,
+                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+            });
+        }
+        validate_measurement_references_batch_v2(
+            &self.evidence.measurements,
+            self.checks
+                .iter()
+                .enumerate()
+                .filter_map(|(check_index, check)| {
+                    check
+                        .engine_prediction_v2()
+                        .map(|prediction| (check_index, prediction))
+                }),
+        )
+        .map_err(|error| OutputContractError::InvalidPrediction(error.source))?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EnvelopeHeaderV2 {
+    schema_version: u32,
+    schema: &'static str,
+    tool: ToolInfo,
+    command: &'static str,
+}
+
+/// Current output-v12 lint envelope.
 #[derive(Debug, Clone, Serialize)]
 pub struct LintEnvelope {
     #[serde(flatten)]
-    header: EnvelopeHeader,
+    header: EnvelopeHeaderV2,
     summary: LintSummary,
     files: Vec<LintFileReport>,
 }
 
 impl LintEnvelope {
-    /// Construct a schema-valid lint envelope and derive its summary from the
-    /// supplied check records.
+    /// Construct a V2 lint envelope and derive its summaries.
     pub fn new(tool: ToolInfo, files: Vec<LintFileReport>) -> Result<Self, OutputContractError> {
         if files.len() > OUTPUT_V11_MAX_FILES {
             return Err(OutputContractError::TooManyFiles {
@@ -4933,7 +6113,7 @@ impl LintEnvelope {
                     EvaluationState::NotEvaluated => checks.evaluation.not_evaluated += 1,
                 }
                 checks.gaps += check.gaps().len();
-                if let Some(prediction) = check.engine_prediction() {
+                if let Some(prediction) = check.engine_prediction_v2() {
                     for facet in prediction.facets() {
                         match facet.state() {
                             EnginePredictionFacetStateV1::Available => {
@@ -4948,7 +6128,12 @@ impl LintEnvelope {
             }
         }
         Ok(Self {
-            header: EnvelopeHeader::new(tool, "lint"),
+            header: EnvelopeHeaderV2 {
+                schema_version: OUTPUT_V12_SCHEMA_VERSION,
+                schema: OUTPUT_V12_SCHEMA_ID,
+                tool,
+                command: "lint",
+            },
             summary: LintSummary {
                 files: files.len(),
                 findings,

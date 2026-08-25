@@ -1,8 +1,8 @@
 use crate::{
     AnimationAddressability, BakeOrExtract, ConversionControl, DefaultStatus, EngineProfile,
-    FactState, FactValue, ForwardAxis, Handedness, ImportHandling, LinearUnit, ResolvedProfile,
-    RootMotionAddressability, SettingApplicability, SettingId, SettingScope, SettingValue,
-    TargetAddressability, UpAxis,
+    FactState, FactValue, ForwardAxis, Handedness, ImportHandling, LinearUnit,
+    ResolvedClipCoverageV2, ResolvedProfile, ResolvedProfileV2, RootMotionAddressability,
+    SettingApplicability, SettingId, SettingScope, SettingValue, TargetAddressability, UpAxis,
 };
 use animsmith_core::engine_contract::{
     EngineAnimationAddressabilityV1, EngineBakeOrExtractV1, EngineClipSettingsV1,
@@ -12,7 +12,8 @@ use animsmith_core::engine_contract::{
     EngineProfileSelectionV1, EngineRootMotionAddressabilityV1, EngineSettingApplicabilityV1,
     EngineSettingDescriptorV1, EngineSettingDomainV1, EngineSettingIdV1, EngineSettingRowV1,
     EngineSettingScopeV1, EngineSettingValueV1, EngineTargetAddressabilityV1, EngineUpAxisV1,
-    ResolvedEngineProfileV1, ResolvedEngineSettingsV1,
+    ResolvedEngineProfileV1, ResolvedEngineSettingsCoverageV2, ResolvedEngineSettingsV1,
+    ResolvedEngineSettingsV2, ResolvedEngineSettingsWorkV2,
 };
 use animsmith_core::{InputIdentity, SourceFormatV1};
 use std::collections::BTreeMap;
@@ -46,6 +47,50 @@ pub(crate) fn project_resolved_profile(
             .clip_settings()
             .iter()
             .map(|clip| (clip.clip_name(), clip.settings())),
+    )?;
+    Ok((profile, settings))
+}
+
+/// Project one bounded V2 resolution into core-owned V2 settings.
+pub(crate) fn project_resolved_profile_v2(
+    resolved: &ResolvedProfileV2,
+) -> Result<(ResolvedEngineProfileV1, ResolvedEngineSettingsV2), EngineContractError> {
+    let profile = project_profile(resolved.profile())?;
+    let coverage = match resolved.clip_coverage() {
+        ResolvedClipCoverageV2::Complete => ResolvedEngineSettingsCoverageV2::complete(),
+        ResolvedClipCoverageV2::Partial { .. } => {
+            ResolvedEngineSettingsCoverageV2::actual_clip_rows_exceeded()
+        }
+    };
+    let work = resolved.work();
+    let settings = ResolvedEngineSettingsV2::new(
+        &profile,
+        resolved
+            .document_settings()
+            .iter()
+            .map(|(id, value)| EngineSettingRowV1::new(setting_id(*id), setting_value(value)))
+            .collect(),
+        resolved
+            .clip_settings()
+            .iter()
+            .map(|clip| {
+                EngineClipSettingsV1::new(
+                    clip.clip_name(),
+                    clip.settings()
+                        .iter()
+                        .map(|(id, value)| {
+                            EngineSettingRowV1::new(setting_id(*id), setting_value(value))
+                        })
+                        .collect(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        coverage,
+        ResolvedEngineSettingsWorkV2::new(
+            work.actual_clip_rows_inspected(),
+            work.materialized_clip_rows(),
+            work.retained_clip_rows(),
+        ),
     )?;
     Ok((profile, settings))
 }

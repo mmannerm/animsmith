@@ -1,28 +1,74 @@
 use animsmith_core::config::{CheckSettings, SeveritySetting};
+use animsmith_core::measure::AssetMeasurements;
 use animsmith_core::{
-    Check, CheckCtx, CheckEvaluation, CheckSelection, DependencyClosureBuilderV1,
+    Check, CheckCtx, CheckEvaluation, CheckOutput, CheckSelection, DependencyClosureBuilderV1,
     DependencyResourceKeyV1, Document, EnginePredictionBasisV1, EnginePredictionFacetStateV1,
-    InputIdentity, MetricGrids, PredictionBasisReferenceV1, PredictionUnavailableReasonV1,
-    RawSourceBasisReferenceV1, RawSourceDomainV1, RawSourceFactsBuilderV1, RawSourceFieldIdV1,
-    RawSourceKeyV1, ResolvedRoles, ResourceKeySyntaxV1, SourceClipFactV1, SourceFactDomainV1,
-    SourceFactSetV1, SourceFormatV1, SourceLoaderDispositionV1, SourceObservationV1,
-    SourceProvenanceV1, SourceResourceKindV1, SourceResourceLocatorV1, SourceResourceReferenceV1,
-    SourceTextV1, SourceUnavailableReasonV1,
+    EnginePredictionFacetV2, EnginePredictionV2, EvaluationScope, EvaluationScopeCode,
+    InputIdentity, LintEnvelope, LintFileReport, MeasurementContract, MeasurementFileError,
+    MeasurementReportError, MeasurementReportInput, MetricGrids, PredictionBasisReferenceV1,
+    PredictionFacetDemandV2, PredictionProvenanceIdentityV2, PredictionRuleAllocationV2,
+    PredictionUnavailableReasonV1, PredictionUnavailableReasonV2, RawSourceBasisReferenceV1,
+    RawSourceDomainV1, RawSourceFactsBuilderV1, RawSourceFieldIdV1, RawSourceKeyV1, ResolvedRoles,
+    ResourceKeySyntaxV1, RigInfo, SourceClipFactV1, SourceFactDomainV1, SourceFactSetV1,
+    SourceFormatV1, SourceLoaderDispositionV1, SourceObservationV1, SourceProvenanceV1,
+    SourceResourceKindV1, SourceResourceLocatorV1, SourceResourceReferenceV1, SourceTextV1,
+    SourceUnavailableReasonV1,
 };
 use animsmith_engine::{
     BevyAnimationAssetLabelError, BevyAnimationAssetLabelV1, ENGINE_ADDRESSABILITY_CHECK_ID,
-    ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineDeclaration,
+    ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineAddressabilityCheckV2, EngineDeclaration,
     GltfAnimationAddressabilityInventoryV1, PredictionRuleError, ProfileSelection,
     build_bevy_animation_addressability_adapter_v1, project_prediction_provenance_v1,
-    resolve_static,
+    project_prediction_provenance_v2, resolve_static,
 };
-use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 #[derive(Clone, Copy)]
 enum ClipCoverage {
     Complete,
     Partial,
     Unavailable,
+}
+
+struct LaterFacetRule {
+    identity: PredictionProvenanceIdentityV2,
+    allocations: Rc<RefCell<Vec<(usize, bool)>>>,
+}
+
+impl Check for LaterFacetRule {
+    fn id(&self) -> &'static str {
+        "test:later-facet"
+    }
+
+    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+        panic!("current V2 evaluation must use the allocated hook")
+    }
+
+    fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
+        PredictionFacetDemandV2::Exact(1)
+    }
+
+    fn evaluate_with_prediction_allocation_v2(
+        &self,
+        _ctx: &CheckCtx<'_>,
+        allocation: PredictionRuleAllocationV2<'_>,
+    ) -> CheckOutput {
+        self.allocations.borrow_mut().push((
+            allocation.candidate_capacity(),
+            allocation.summary_required(),
+        ));
+        let scope = EvaluationScope::new(EvaluationScopeCode::custom("test:later-facet"));
+        let basis = EnginePredictionBasisV1::new(vec![
+            PredictionBasisReferenceV1::profile_fact("animation_addressability").unwrap(),
+        ])
+        .unwrap();
+        let facet = EnginePredictionFacetV2::available(scope.clone(), basis).unwrap();
+        let prediction = EnginePredictionV2::new(self.identity.clone(), vec![facet]).unwrap();
+        CheckOutput::from_coverage(Vec::new(), vec![scope], Vec::new())
+            .with_engine_prediction_v2(prediction)
+    }
 }
 
 fn loaded_source(coverage: ClipCoverage, names: &[Option<&str>]) -> animsmith_core::LoadedSource {
@@ -749,4 +795,188 @@ fn raw_clip_bound_uses_available_facets_at_4096_and_one_partial_inventory_facet(
         prediction.facets()[0].state(),
         EnginePredictionFacetStateV1::RequiredPredictionUnavailable
     );
+}
+
+#[test]
+fn v2_raw_clip_bound_has_complete_4096_facets_and_n_plus_one_reasons() {
+    let clips = vec![Some("clip"); animsmith_core::RAW_SOURCE_V1_MAX_CLIPS];
+    let source = loaded_source(ClipCoverage::Complete, &clips);
+    let profile = resolve_static(EngineDeclaration {
+        selection: Some(ProfileSelection::new(
+            "bevy",
+            1,
+            "0.19.0",
+            "gltf-asset-loader",
+        )),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap()
+    .resolve_input_v2_iter(SourceFormatV1::GltfJson, std::iter::repeat_n("walk", 4096))
+    .unwrap();
+    let provenance = project_prediction_provenance_v2(&profile, &source).unwrap();
+    let output = evaluate(
+        &EngineAddressabilityCheckV2::new(&source, Some(&provenance)).unwrap(),
+        &source,
+    );
+    let prediction = output.engine_prediction_v2().unwrap();
+    assert_eq!(prediction.facets().len(), 4096);
+    assert!(
+        prediction
+            .facets()
+            .iter()
+            .all(|facet| facet.state() == EnginePredictionFacetStateV1::Available)
+    );
+    let complete_record =
+        CheckEvaluation::evaluated(ENGINE_ADDRESSABILITY_CHECK_ID, output).unwrap();
+    LintFileReport::new(
+        "addressability-complete.glb",
+        provenance.raw_source().primary_input().clone(),
+        RigInfo::from_resolved(source.document(), &ResolvedRoles::default()).unwrap(),
+        Some(provenance.clone()),
+        vec![complete_record],
+        MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default()).unwrap(),
+    )
+    .unwrap();
+
+    let source = loaded_source(ClipCoverage::Partial, &clips);
+    let overflow_profile = resolve_static(EngineDeclaration {
+        selection: Some(ProfileSelection::new(
+            "bevy",
+            1,
+            "0.19.0",
+            "gltf-asset-loader",
+        )),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap()
+    .resolve_input_v2_iter(SourceFormatV1::GltfJson, std::iter::repeat_n("walk", 4097))
+    .unwrap();
+    let provenance = project_prediction_provenance_v2(&overflow_profile, &source).unwrap();
+    let output = evaluate(
+        &EngineAddressabilityCheckV2::new(&source, Some(&provenance)).unwrap(),
+        &source,
+    );
+    let facet = &output.engine_prediction_v2().unwrap().facets()[0];
+    assert_eq!(
+        facet
+            .reasons()
+            .iter()
+            .map(|reason| reason.as_str())
+            .collect::<Vec<_>>(),
+        vec!["raw_source_incomplete", "resolved_settings_overflow"]
+    );
+}
+
+#[test]
+fn v2_current_evaluation_allocates_addressability_before_constructing_facets() {
+    let clips = vec![Some("clip"); animsmith_core::RAW_SOURCE_V1_MAX_CLIPS];
+    let source = loaded_source(ClipCoverage::Complete, &clips);
+    let profile = resolve_static(EngineDeclaration {
+        selection: Some(ProfileSelection::new(
+            "bevy",
+            1,
+            "0.19.0",
+            "gltf-asset-loader",
+        )),
+        ..EngineDeclaration::default()
+    })
+    .unwrap()
+    .unwrap()
+    .resolve_input_v2_iter(SourceFormatV1::GltfJson, std::iter::repeat_n("walk", 4096))
+    .unwrap();
+    let provenance = project_prediction_provenance_v2(&profile, &source).unwrap();
+    let grids = MetricGrids::new(source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let allocations = Rc::new(RefCell::new(Vec::new()));
+    let checks: Vec<Box<dyn Check + '_>> = vec![
+        Box::new(EngineAddressabilityCheckV2::new(&source, Some(&provenance)).unwrap()),
+        Box::new(LaterFacetRule {
+            identity: provenance.identity().clone(),
+            allocations: allocations.clone(),
+        }),
+    ];
+
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let first = animsmith_core::evaluate_checks_v2(&ctx, &checks, CheckSelection::All).unwrap();
+    let engine = first[0].engine_prediction_v2().unwrap();
+    assert_eq!(engine.facets().len(), 4_095);
+    assert!(
+        engine.facets()[..4_094]
+            .iter()
+            .all(|facet| facet.state() == EnginePredictionFacetStateV1::Available)
+    );
+    let summary = &engine.facets()[4_094];
+    assert_eq!(
+        summary.scope().code.as_str(),
+        "engine-addressability:facet-budget"
+    );
+    assert!(summary.scope().subject.is_none());
+    assert_eq!(
+        summary.state(),
+        EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+    );
+    assert_eq!(
+        summary.reasons(),
+        &[PredictionUnavailableReasonV2::FacetBudgetExceeded]
+    );
+    assert_eq!(allocations.borrow().as_slice(), &[(1, false)]);
+    assert_eq!(first[1].engine_prediction_v2().unwrap().facets().len(), 1);
+    assert_eq!(
+        first
+            .iter()
+            .filter_map(CheckEvaluation::engine_prediction_v2)
+            .map(|prediction| prediction.facets().len())
+            .sum::<usize>(),
+        4_096
+    );
+    // Output-v12 accepts the lexicographically serialized numeric prefix
+    // (Animation0, Animation1, Animation10, ...) without treating that wire
+    // ordering as source-index ordering.
+    let report = LintFileReport::new(
+        "addressability.glb",
+        provenance.raw_source().primary_input().clone(),
+        RigInfo::from_resolved(source.document(), &roles).unwrap(),
+        Some(provenance.clone()),
+        first.clone(),
+        MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default()).unwrap(),
+    )
+    .unwrap();
+    let mut forged = serde_json::to_value(
+        LintEnvelope::new(
+            animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
+            vec![report],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let facets = forged["files"][0]["checks"][0]["prediction"]["facets"]
+        .as_array_mut()
+        .unwrap();
+    let first_available = facets
+        .iter()
+        .position(|facet| facet["state"] == serde_json::json!("available"))
+        .unwrap();
+    // This is a valid later label, but not part of the allocated 0..N prefix.
+    facets[first_available]["scope"]["subject"] = serde_json::json!("Animation4095");
+    let forged: MeasurementReportInput = serde_json::from_value(forged).unwrap();
+    assert!(matches!(
+        forged.into_files(),
+        Err(MeasurementReportError::File {
+            source: MeasurementFileError::InvalidPrediction {
+                source:
+                    animsmith_core::PredictionContractError::EngineAddressabilityFacetPrefixMismatch,
+                ..
+            },
+            ..
+        })
+    ));
+    let first_bytes = serde_json::to_vec(&first).unwrap();
+
+    allocations.borrow_mut().clear();
+    let second = animsmith_core::evaluate_checks_v2(&ctx, &checks, CheckSelection::All).unwrap();
+    assert_eq!(serde_json::to_vec(&second).unwrap(), first_bytes);
+    assert_eq!(allocations.borrow().as_slice(), &[(1, false)]);
 }

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use crate::check::{Check, CheckCtx};
 use crate::config::{ConfigValidationError, SeveritySetting};
 use crate::finding::Finding;
-use crate::prediction::{EnginePredictionV1, PredictionContractError};
+use crate::prediction::{EnginePredictionV1, EnginePredictionV2, PredictionContractError};
 
 /// One authoritative built-in evidence-code definition.
 ///
@@ -365,7 +365,39 @@ pub struct CheckOutput {
     findings: Vec<Finding>,
     evaluated_scopes: Vec<EvaluationScope>,
     gaps: Vec<CoverageGap>,
-    engine_prediction: Option<EnginePredictionV1>,
+    engine_prediction: Option<EnginePredictionEvidence>,
+}
+
+/// Versioned prediction attachment kept private so standalone V1 contracts
+/// retain their existing public API while current lint can carry V2 evidence.
+#[derive(Debug, Clone)]
+enum EnginePredictionEvidence {
+    V1(EnginePredictionV1),
+    V2(EnginePredictionV2),
+}
+
+impl EnginePredictionEvidence {
+    fn scopes(&self) -> Vec<&EvaluationScope> {
+        match self {
+            Self::V1(prediction) => prediction
+                .facets()
+                .iter()
+                .map(|facet| facet.scope())
+                .collect(),
+            Self::V2(prediction) => prediction
+                .facets()
+                .iter()
+                .map(|facet| facet.scope())
+                .collect(),
+        }
+    }
+
+    fn scope(&self, index: usize) -> &EvaluationScope {
+        match self {
+            Self::V1(prediction) => prediction.facets()[index].scope(),
+            Self::V2(prediction) => prediction.facets()[index].scope(),
+        }
+    }
 }
 
 impl CheckOutput {
@@ -392,7 +424,13 @@ impl CheckOutput {
     /// The shared evaluation boundary validates facet/scope/finding
     /// relationships after it knows the authoritative parent check id.
     pub fn with_engine_prediction(mut self, prediction: EnginePredictionV1) -> Self {
-        self.engine_prediction = Some(prediction);
+        self.engine_prediction = Some(EnginePredictionEvidence::V1(prediction));
+        self
+    }
+
+    /// Attach a bounded-overflow V2 engine-prediction record.
+    pub fn with_engine_prediction_v2(mut self, prediction: EnginePredictionV2) -> Self {
+        self.engine_prediction = Some(EnginePredictionEvidence::V2(prediction));
         self
     }
 
@@ -413,15 +451,31 @@ impl CheckOutput {
 
     /// Engine-prediction facets emitted by this check, when any.
     pub const fn engine_prediction(&self) -> Option<&EnginePredictionV1> {
-        self.engine_prediction.as_ref()
+        match self.engine_prediction.as_ref() {
+            Some(EnginePredictionEvidence::V1(prediction)) => Some(prediction),
+            Some(EnginePredictionEvidence::V2(_)) | None => None,
+        }
+    }
+
+    /// V2 prediction attachment used by the current output-v12 lint path.
+    pub const fn engine_prediction_v2(&self) -> Option<&EnginePredictionV2> {
+        match self.engine_prediction.as_ref() {
+            Some(EnginePredictionEvidence::V2(prediction)) => Some(prediction),
+            Some(EnginePredictionEvidence::V1(_)) | None => None,
+        }
+    }
+
+    fn has_required_prediction_unavailable(&self) -> bool {
+        self.engine_prediction
+            .as_ref()
+            .is_some_and(|prediction| match prediction {
+                EnginePredictionEvidence::V1(prediction) => prediction.has_required_unavailable(),
+                EnginePredictionEvidence::V2(prediction) => prediction.has_required_unavailable(),
+            })
     }
 
     fn has_missing_work(&self) -> bool {
-        !self.gaps.is_empty()
-            || self
-                .engine_prediction
-                .as_ref()
-                .is_some_and(EnginePredictionV1::has_required_unavailable)
+        !self.gaps.is_empty() || self.has_required_prediction_unavailable()
     }
 }
 
@@ -579,7 +633,7 @@ pub(crate) fn validate_and_derive_check_evaluation(
     Ok(derived)
 }
 
-/// Final output-v11 record for one catalog check.
+/// Final output-v12 record for one catalog check.
 #[derive(Debug, Clone)]
 pub struct CheckEvaluation {
     check_id: &'static str,
@@ -615,10 +669,7 @@ impl CheckEvaluation {
         let prediction_scopes = output
             .engine_prediction
             .as_ref()
-            .into_iter()
-            .flat_map(EnginePredictionV1::facets)
-            .map(|facet| facet.scope())
-            .collect::<Vec<_>>();
+            .map_or_else(Vec::new, EnginePredictionEvidence::scopes);
         validate_and_derive_check_evaluation(CheckEvaluationValidationInput {
             check_id,
             selection: SelectionState::Selected,
@@ -688,8 +739,7 @@ impl CheckEvaluation {
                     .engine_prediction
                     .as_ref()
                     .expect("the validator reports only present prediction scopes")
-                    .facets()[facet_index]
-                    .scope()
+                    .scope(facet_index)
                     .code
                     .clone();
                 if code.as_str().is_empty() {
@@ -703,12 +753,20 @@ impl CheckEvaluation {
             }
         })?;
         if let Some(prediction) = &output.engine_prediction {
-            prediction.validate_for_check(
-                check_id,
-                &output.evaluated_scopes,
-                &output.gaps,
-                &output.findings,
-            )?;
+            match prediction {
+                EnginePredictionEvidence::V1(prediction) => prediction.validate_for_check(
+                    check_id,
+                    &output.evaluated_scopes,
+                    &output.gaps,
+                    &output.findings,
+                )?,
+                EnginePredictionEvidence::V2(prediction) => prediction.validate_for_check(
+                    check_id,
+                    &output.evaluated_scopes,
+                    &output.gaps,
+                    &output.findings,
+                )?,
+            }
         } else if output
             .findings
             .iter()
@@ -785,6 +843,17 @@ impl CheckEvaluation {
         self.output.engine_prediction()
     }
 
+    /// V2 engine-prediction attachment used by output-v12 lint reports.
+    pub const fn engine_prediction_v2(&self) -> Option<&EnginePredictionV2> {
+        self.output.engine_prediction_v2()
+    }
+
+    /// Whether this check has unavailable prediction work under either
+    /// versioned prediction contract.
+    pub fn has_required_prediction_unavailable(&self) -> bool {
+        self.output.has_required_prediction_unavailable()
+    }
+
     fn inactive(
         check_id: &'static str,
         selection: SelectionState,
@@ -837,7 +906,14 @@ impl Serialize for CheckEvaluation {
             state.serialize_field("gaps", &self.output.gaps)?;
         }
         if let Some(prediction) = &self.output.engine_prediction {
-            state.serialize_field("prediction", prediction)?;
+            match prediction {
+                EnginePredictionEvidence::V1(prediction) => {
+                    state.serialize_field("prediction", prediction)?;
+                }
+                EnginePredictionEvidence::V2(prediction) => {
+                    state.serialize_field("prediction", prediction)?;
+                }
+            }
         }
         state.end()
     }
@@ -924,9 +1000,7 @@ pub fn lint_requires_failure(
     allowed_content_check_ids: &BTreeSet<String>,
 ) -> bool {
     checks.iter().any(|check| {
-        check
-            .engine_prediction()
-            .is_some_and(EnginePredictionV1::has_required_unavailable)
+        check.has_required_prediction_unavailable()
             || check.findings().iter().any(|finding| {
                 finding.severity >= fail_at && !allowed_content_check_ids.contains(finding.check_id)
             })
@@ -1011,10 +1085,97 @@ pub fn evaluate_checks(
     Ok(records)
 }
 
+/// Current-output V2 evaluation: reserve every prediction facet in catalog
+/// order before any selected check evaluates. Historical V1 callers retain
+/// [`evaluate_checks`].
+pub fn evaluate_checks_v2(
+    ctx: &CheckCtx<'_>,
+    checks: &[Box<dyn Check + '_>],
+    selection: CheckSelection<'_>,
+) -> Result<Vec<CheckEvaluation>, EvaluationError> {
+    ctx.config.validate()?;
+    let mut ids = BTreeSet::new();
+    for check in checks {
+        if check.id().is_empty() {
+            return Err(EvaluationError::InvalidCheckId(check.id()));
+        }
+        if !ids.insert(check.id()) {
+            return Err(EvaluationError::DuplicateCheckId(check.id()));
+        }
+    }
+    if let CheckSelection::Only(selected) = selection
+        && let Some(unknown) = selected.iter().find(|id| !ids.contains(id.as_str()))
+    {
+        return Err(EvaluationError::UnknownSelection(unknown.clone()));
+    }
+    let states = checks
+        .iter()
+        .map(|check| {
+            let selected = selection.contains(check.id());
+            let setting = ctx.config.check_settings(check.id()).severity;
+            let configuration = match setting {
+                Some(SeveritySetting::Off) => ConfigurationState::Disabled,
+                Some(_) => ConfigurationState::Enabled,
+                None if check.enabled_by_default() => ConfigurationState::Enabled,
+                None => ConfigurationState::Disabled,
+            };
+            (selected, setting, configuration, check.applicability(ctx))
+        })
+        .collect::<Vec<_>>();
+    let demands = checks
+        .iter()
+        .zip(&states)
+        .filter(|(_, (selected, _, configuration, applicability))| {
+            *selected
+                && *configuration == ConfigurationState::Enabled
+                && *applicability == Applicability::Applicable
+        })
+        .map(|(check, _)| {
+            crate::PredictionRuleDemandV2::new(check.id(), check.prediction_facet_demand_v2(ctx))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let allocations = crate::allocate_prediction_facets_v2(&demands)?;
+    let mut records = Vec::with_capacity(checks.len());
+    for (check, (selected, setting, configuration, applicability)) in checks.iter().zip(states) {
+        if !selected
+            || configuration == ConfigurationState::Disabled
+            || applicability == Applicability::NotApplicable
+        {
+            records.push(CheckEvaluation::inactive(
+                check.id(),
+                if selected {
+                    SelectionState::Selected
+                } else {
+                    SelectionState::Unselected
+                },
+                configuration,
+                applicability,
+            ));
+            continue;
+        }
+        let allocation = allocations
+            .iter()
+            .find(|allocation| allocation.rule_id() == check.id())
+            .copied()
+            .expect("active check was allocated");
+        let mut evaluation = CheckEvaluation::evaluated(
+            check.id(),
+            check.evaluate_with_prediction_allocation_v2(ctx, allocation),
+        )?;
+        if let Some(setting) = setting {
+            evaluation.override_severity(setting);
+        }
+        records.push(evaluation);
+    }
+    Ok(records)
+}
+
 #[cfg(test)]
 mod authority_contract {
+    use std::cell::RefCell;
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
+    use std::rc::Rc;
 
     use super::{
         BUILTIN_COVERAGE_GAP_CODE_DEFINITIONS, BUILTIN_EVALUATION_SCOPE_CODE_DEFINITIONS,
@@ -1029,6 +1190,56 @@ mod authority_contract {
         PredictionBasisReferenceV1, PredictionProvenanceIdentityV1, PredictionScalarV1,
         PredictionUnavailableReasonV1,
     };
+    use crate::{
+        Applicability, Check, CheckCtx, CheckSelection, Config, Document, MetricGrids,
+        PredictionFacetDemandV2, PredictionRuleAllocationV2, ResolvedRoles, evaluate_checks_v2,
+    };
+
+    struct AllocatedSyntheticCheck {
+        id: &'static str,
+        demand: usize,
+        applicable: bool,
+        allocations: Rc<RefCell<Vec<(String, usize, bool)>>>,
+        constructed_candidates: Rc<RefCell<usize>>,
+    }
+
+    impl Check for AllocatedSyntheticCheck {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+
+        fn applicability(&self, _ctx: &CheckCtx<'_>) -> Applicability {
+            if self.applicable {
+                Applicability::Applicable
+            } else {
+                Applicability::NotApplicable
+            }
+        }
+
+        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+            panic!("V2 orchestration must call the allocation-aware hook")
+        }
+
+        fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
+            PredictionFacetDemandV2::Exact(self.demand)
+        }
+
+        fn evaluate_with_prediction_allocation_v2(
+            &self,
+            _ctx: &CheckCtx<'_>,
+            allocation: PredictionRuleAllocationV2<'_>,
+        ) -> CheckOutput {
+            self.allocations.borrow_mut().push((
+                self.id.to_owned(),
+                allocation.candidate_capacity(),
+                allocation.summary_required(),
+            ));
+            // This represents actual candidate construction in a production
+            // rule: omitted capacity must not be evaluated post hoc.
+            *self.constructed_candidates.borrow_mut() += allocation.candidate_capacity();
+            CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
+        }
+    }
 
     fn assert_reference_table(docs: &str, heading: &str, entries: &[BuiltinEvidenceCode]) {
         let section = docs
@@ -1071,6 +1282,87 @@ mod authority_contract {
         );
         let expected = expected.iter().map(String::as_str).collect::<BTreeSet<_>>();
         assert_eq!(documented, expected, "exact rows for {heading}");
+    }
+
+    #[test]
+    fn v2_orchestration_reserves_catalog_order_before_constructing_candidates() {
+        let doc = Document::default();
+        let grids = MetricGrids::new(&doc);
+        let roles = ResolvedRoles::default();
+        let config = Config::default();
+        let ctx = CheckCtx::new(&grids, &roles, &config);
+        let allocations = Rc::new(RefCell::new(Vec::new()));
+        let constructed = Rc::new(RefCell::new(0));
+        let checks: Vec<Box<dyn Check>> = vec![
+            Box::new(AllocatedSyntheticCheck {
+                id: "test:first",
+                demand: 4_096,
+                applicable: true,
+                allocations: allocations.clone(),
+                constructed_candidates: constructed.clone(),
+            }),
+            Box::new(AllocatedSyntheticCheck {
+                id: "test:second",
+                demand: 1,
+                applicable: true,
+                allocations: allocations.clone(),
+                constructed_candidates: constructed.clone(),
+            }),
+        ];
+
+        let first = evaluate_checks_v2(&ctx, &checks, CheckSelection::All).unwrap();
+        assert_eq!(
+            allocations.borrow().as_slice(),
+            [
+                ("test:first".to_owned(), 4_094, true),
+                ("test:second".to_owned(), 1, false),
+            ]
+        );
+        // The first rule demanded 4,096, but its two omitted candidates were
+        // never constructed; its reserved summary is constructed separately.
+        assert_eq!(*constructed.borrow(), 4_095);
+        let first_bytes = serde_json::to_vec(&first).unwrap();
+
+        allocations.borrow_mut().clear();
+        *constructed.borrow_mut() = 0;
+        let second = evaluate_checks_v2(&ctx, &checks, CheckSelection::All).unwrap();
+        assert_eq!(serde_json::to_vec(&second).unwrap(), first_bytes);
+        assert_eq!(*constructed.borrow(), 4_095);
+    }
+
+    #[test]
+    fn v2_orchestration_does_not_reserve_or_evaluate_inactive_rule_demand() {
+        let doc = Document::default();
+        let grids = MetricGrids::new(&doc);
+        let roles = ResolvedRoles::default();
+        let config = Config::default();
+        let ctx = CheckCtx::new(&grids, &roles, &config);
+        let allocations = Rc::new(RefCell::new(Vec::new()));
+        let constructed = Rc::new(RefCell::new(0));
+        let checks: Vec<Box<dyn Check>> = vec![
+            Box::new(AllocatedSyntheticCheck {
+                id: "test:active",
+                demand: 4_096,
+                applicable: true,
+                allocations: allocations.clone(),
+                constructed_candidates: constructed.clone(),
+            }),
+            Box::new(AllocatedSyntheticCheck {
+                id: "test:inactive",
+                demand: 4_096,
+                applicable: false,
+                allocations: allocations.clone(),
+                constructed_candidates: constructed.clone(),
+            }),
+        ];
+
+        let records = evaluate_checks_v2(&ctx, &checks, CheckSelection::All).unwrap();
+        assert_eq!(
+            allocations.borrow().as_slice(),
+            [("test:active".to_owned(), 4_096, false)]
+        );
+        assert_eq!(*constructed.borrow(), 4_096);
+        assert_eq!(records[1].applicability(), Applicability::NotApplicable);
     }
 
     #[test]

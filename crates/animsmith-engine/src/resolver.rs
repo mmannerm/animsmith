@@ -12,6 +12,12 @@ use std::collections::BTreeMap;
 /// Maximum UTF-8 byte count of a V1 source-transform path.
 pub const SOURCE_TRANSFORM_PATH_MAX_BYTES: usize = 4_096;
 
+/// Maximum actual clip settings rows retained by the bounded V2 projection.
+///
+/// The V2 path inspects at most this many rows plus one overflow sentinel. It
+/// never clones, validates, resolves, or sorts the sentinel row.
+pub const RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS: usize = ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS;
+
 /// Find one exact registry tuple without aliases, ranges, or fallback.
 ///
 /// # Errors
@@ -208,6 +214,103 @@ impl StaticResolution {
             settings_identity: identity,
         })
     }
+
+    /// Resolve an input into the bounded V2 settings projection.
+    ///
+    /// In contrast with [`Self::resolve_input_iter`], an actual inventory
+    /// larger than 4,096 is a successful, explicitly partial result. The
+    /// source iterator is only consumed for the retained prefix. The exact
+    /// iterator length supplies the N+1 overflow sentinel, so no tail name or
+    /// settings value is cloned, validated, materialized, or canonicalized.
+    ///
+    /// Prefix validation deliberately happens before the overflow result: a
+    /// malformed retained row is still an ordinary typed configuration error,
+    /// while a defect solely in the tail cannot outrank bounded overflow.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same configuration and profile errors as V1 for the
+    /// document and retained source-order prefix.
+    pub fn resolve_input_v2_iter<'a>(
+        &self,
+        source_format: SourceFormatV1,
+        clip_names: impl ExactSizeIterator<Item = &'a str>,
+    ) -> Result<ResolvedProfileV2, ResolutionError> {
+        if !self.profile.accepted_inputs().contains(&source_format) {
+            return Err(ResolutionError::UnacceptedInputFormat {
+                selection: self.profile.selection().clone(),
+                format: source_format,
+            });
+        }
+
+        let actual_clip_rows = clip_names.len();
+        let retained_clip_rows = actual_clip_rows.min(RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS);
+        let overflowed = actual_clip_rows > RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS;
+        let mut clips = Vec::with_capacity(retained_clip_rows);
+        for clip_name in clip_names.take(retained_clip_rows) {
+            clips.push(self.materialize_clip(clip_name)?);
+        }
+        clips.sort_by(|left, right| left.clip_name.cmp(&right.clip_name));
+
+        // This is intentionally the unchanged V1 preimage for the retained
+        // prefix only. The V2 wire identity additionally commits to coverage
+        // and work counters in its core-owned projection.
+        let settings_identity = settings_identity(
+            self.profile,
+            &self.document_settings,
+            clips
+                .iter()
+                .map(|clip| (clip.clip_name.as_str(), &clip.settings)),
+        )?;
+        Ok(ResolvedProfileV2 {
+            profile: self.profile,
+            source_format,
+            document_settings: self.document_settings.clone(),
+            clips,
+            settings_identity,
+            clip_coverage: if overflowed {
+                ResolvedClipCoverageV2::Partial {
+                    reason: ResolvedClipCoverageReasonV2::ActualClipRowsExceeded,
+                }
+            } else {
+                ResolvedClipCoverageV2::Complete
+            },
+            work: ResolvedEngineSettingsWorkV2 {
+                actual_clip_rows_inspected: actual_clip_rows
+                    .min(RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS.saturating_add(1)),
+                materialized_clip_rows: retained_clip_rows,
+                retained_clip_rows,
+            },
+        })
+    }
+
+    fn materialize_clip(&self, clip_name: &str) -> Result<ResolvedClipSettings, ResolutionError> {
+        let mut materialized = BTreeMap::new();
+        for (selector, settings) in &self.clip_overlays {
+            if selector != clip_name && animsmith_core::config::glob_match(selector, clip_name) {
+                materialized.extend(settings.iter().map(|(id, value)| (*id, value.clone())));
+            }
+        }
+        if let Some(exact) = self.clip_overlays.get(clip_name) {
+            materialized.extend(exact.iter().map(|(id, value)| (*id, value.clone())));
+        }
+        for descriptor in self.profile.setting_descriptors() {
+            if descriptor.applicability() == SettingApplicability::Applicable
+                && descriptor.scope() == SettingScope::Clip
+                && descriptor.default_status() == DefaultStatus::RequiredWithoutDefault
+                && !materialized.contains_key(&descriptor.id())
+            {
+                return Err(ResolutionError::MissingRequiredSetting {
+                    setting: descriptor.id(),
+                    location: SettingLocation::ClipSelector(clip_name.to_owned()),
+                });
+            }
+        }
+        Ok(ResolvedClipSettings {
+            clip_name: clip_name.to_owned(),
+            settings: materialized,
+        })
+    }
 }
 
 /// Fully materialized settings for one real clip.
@@ -237,6 +340,99 @@ pub struct ResolvedProfile {
     document_settings: BTreeMap<SettingId, SettingValue>,
     clips: Vec<ResolvedClipSettings>,
     settings_identity: InputIdentity,
+}
+
+/// Complete or explicitly partial actual-clip coverage in a V2 resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedClipCoverageV2 {
+    /// Every actual clip has a retained materialized settings row.
+    Complete,
+    /// The retained prefix is valid but the actual inventory exceeded its cap.
+    Partial {
+        /// Stable reason for partial settings coverage.
+        reason: ResolvedClipCoverageReasonV2,
+    },
+}
+
+/// Stable reason why V2 settings do not cover every actual clip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedClipCoverageReasonV2 {
+    /// The source reported more actual clips than the retained V2 prefix.
+    ActualClipRowsExceeded,
+}
+
+/// Bounded work accounting for one V2 settings resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedEngineSettingsWorkV2 {
+    actual_clip_rows_inspected: usize,
+    materialized_clip_rows: usize,
+    retained_clip_rows: usize,
+}
+
+impl ResolvedEngineSettingsWorkV2 {
+    /// Actual source rows inspected, capped at the retained limit plus one.
+    pub const fn actual_clip_rows_inspected(&self) -> usize {
+        self.actual_clip_rows_inspected
+    }
+
+    /// Rows whose settings were materialized.
+    pub const fn materialized_clip_rows(&self) -> usize {
+        self.materialized_clip_rows
+    }
+
+    /// Rows retained in canonical lexical-name order.
+    pub const fn retained_clip_rows(&self) -> usize {
+        self.retained_clip_rows
+    }
+}
+
+/// V2 bounded engine resolution retaining a valid canonical prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProfileV2 {
+    profile: &'static EngineProfile,
+    source_format: SourceFormatV1,
+    document_settings: BTreeMap<SettingId, SettingValue>,
+    clips: Vec<ResolvedClipSettings>,
+    settings_identity: InputIdentity,
+    clip_coverage: ResolvedClipCoverageV2,
+    work: ResolvedEngineSettingsWorkV2,
+}
+
+impl ResolvedProfileV2 {
+    /// Exact immutable selected profile.
+    pub const fn profile(&self) -> &'static EngineProfile {
+        self.profile
+    }
+
+    /// Authoritative accepted source format.
+    pub const fn source_format(&self) -> SourceFormatV1 {
+        self.source_format
+    }
+
+    /// Fully materialized document settings.
+    pub const fn document_settings(&self) -> &BTreeMap<SettingId, SettingValue> {
+        &self.document_settings
+    }
+
+    /// Retained clip settings rows in canonical lexical-name order.
+    pub fn clip_settings(&self) -> &[ResolvedClipSettings] {
+        &self.clips
+    }
+
+    /// V1-prefix identity, retained only as an input to the V2 projection.
+    pub const fn settings_identity(&self) -> &InputIdentity {
+        &self.settings_identity
+    }
+
+    /// Coverage state for the actual source clip inventory.
+    pub const fn clip_coverage(&self) -> ResolvedClipCoverageV2 {
+        self.clip_coverage
+    }
+
+    /// Bounded work counters.
+    pub const fn work(&self) -> ResolvedEngineSettingsWorkV2 {
+        self.work
+    }
 }
 
 impl ResolvedProfile {

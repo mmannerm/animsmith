@@ -1,4 +1,4 @@
-//! Internal producer and strict reader types for collection-output V3.
+//! Internal producer and strict reader types for collection-output V4.
 //!
 //! This is deliberately a CLI-local contract.  Core owns the validated
 //! collection declaration vocabulary; this module owns the command's evidence
@@ -25,8 +25,8 @@ use serde_json::value::RawValue;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read, Write};
 
-pub(crate) const COLLECTION_OUTPUT_V3_ID: &str = "urn:animsmith:schema:collection-output:3";
-pub(crate) const COLLECTION_OUTPUT_V3_SCHEMA_VERSION: u32 = 3;
+pub(crate) const COLLECTION_OUTPUT_V4_ID: &str = "urn:animsmith:schema:collection-output:4";
+pub(crate) const COLLECTION_OUTPUT_V4_SCHEMA_VERSION: u32 = 4;
 pub(crate) const COLLECTION_OUTPUT_BUDGET_V1_ID: &str = "urn:animsmith:collection-output-budget:1";
 pub(crate) const COLLECTION_OUTPUT_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) const COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -839,8 +839,8 @@ impl CollectionOutput {
             serialized_bytes,
         )?;
         let output = Self {
-            schema_version: COLLECTION_OUTPUT_V3_SCHEMA_VERSION,
-            schema: COLLECTION_OUTPUT_V3_ID,
+            schema_version: COLLECTION_OUTPUT_V4_SCHEMA_VERSION,
+            schema: COLLECTION_OUTPUT_V4_ID,
             tool,
             command: "collection lint",
             manifest,
@@ -1077,8 +1077,8 @@ impl CollectionOutputInput {
 
     fn validate(&self, read_bytes: u64) -> Result<(), CollectionOutputError> {
         let wire = &self.wire;
-        if wire.schema_version != COLLECTION_OUTPUT_V3_SCHEMA_VERSION
-            || wire.schema != COLLECTION_OUTPUT_V3_ID
+        if wire.schema_version != COLLECTION_OUTPUT_V4_SCHEMA_VERSION
+            || wire.schema != COLLECTION_OUTPUT_V4_ID
             || wire.command != "collection lint"
             || !valid_tool(&wire.tool)
             || wire.manifest.schema != animsmith_core::COLLECTION_MANIFEST_V1_ID
