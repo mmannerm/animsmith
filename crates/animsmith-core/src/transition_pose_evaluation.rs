@@ -660,8 +660,10 @@ pub fn evaluate_document_transition_poses_v1(
 ///
 /// # Errors
 ///
-/// Returns a control error for the wrong declaration scope, a stale member
-/// witness, invalid skeleton authority, or an unrepresentable bounded result.
+/// Returns a control error for the wrong declaration scope, manifest mismatch,
+/// a stale or contradictory member/source-key witness, or an unrepresentable
+/// bounded result. Invalid collection skeleton authority is instead retained
+/// as a whole-family `member_unavailable` result.
 pub fn evaluate_collection_transition_poses_v1(
     declaration: &TransitionFamilyDeclarationInputV1,
     manifest: &TransitionFamilyManifestIdentityV1,

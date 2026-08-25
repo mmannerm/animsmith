@@ -3668,8 +3668,8 @@ normalized declaration. The JSON-only document command and manifest-bound
 collection command now evaluate that authority. The collection form binds its
 exact manifest before source work and reloads only manifest-witnessed takes.
 
-The format-neutral core now owns the strict `SkeletonBasisV1` identity and
-document transition-pose evaluator/result contract
+The format-neutral core now owns the strict `SkeletonBasisV1` identity, both
+document and collection transition-pose evaluators, and their shared result contract
 `urn:animsmith:schema:transition-pose-evaluation:1`. It admits a mutable
 loaded document's skeleton and selected T/R tracks, plans bounded endpoint
 work before sampling, and returns an
