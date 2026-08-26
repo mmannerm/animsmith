@@ -824,7 +824,10 @@ fn unreal_v2() -> EngineProfileV2 {
         target_version: "5.8",
         url: "https://dev.epicgames.com/documentation/en-us/unreal-engine/fbx-import-options-reference-in-unreal-engine?application_version=5.8",
         verified_on: IMPORT_ADVICE_V2_VERIFIED_ON,
-        supported_facts: vec![EngineFactIdV2::AcceptedInputs],
+        supported_facts: vec![
+            EngineFactIdV2::AcceptedInputs,
+            EngineFactIdV2::ImportSettingProjection,
+        ],
         supported_settings: vec![SampleRateId],
     }];
 
@@ -832,7 +835,7 @@ fn unreal_v2() -> EngineProfileV2 {
         selection: ProfileSelection::new("unreal", 2, "5.8", "fbx-importer"),
         profile_urn: "urn:animsmith:engine-profile:unreal:2",
         accepted_inputs: vec![SourceFormatV1::Fbx],
-        facts: document_advice_facts_v2(vec![SourceFormatV1::Fbx]),
+        facts: document_advice_facts_v2(vec![SourceFormatV1::Fbx], "unreal_fbx_import_data"),
         settings,
         sources,
     }
@@ -866,7 +869,10 @@ fn godot_v2() -> EngineProfileV2 {
         target_version: "4.7",
         url: "https://docs.godotengine.org/en/4.7/classes/class_resourceimporterscene.html",
         verified_on: IMPORT_ADVICE_V2_VERIFIED_ON,
-        supported_facts: vec![EngineFactIdV2::AcceptedInputs],
+        supported_facts: vec![
+            EngineFactIdV2::AcceptedInputs,
+            EngineFactIdV2::ImportSettingProjection,
+        ],
         supported_settings: vec![AnimationFps, AnimationTrimming],
     }];
 
@@ -874,7 +880,7 @@ fn godot_v2() -> EngineProfileV2 {
     EngineProfileV2 {
         selection: ProfileSelection::new("godot", 2, "4.7", "resource-importer-scene"),
         profile_urn: "urn:animsmith:engine-profile:godot:2",
-        facts: document_advice_facts_v2(accepted_inputs.clone()),
+        facts: document_advice_facts_v2(accepted_inputs.clone(), "godot_params"),
         accepted_inputs,
         settings,
         sources,
@@ -883,6 +889,7 @@ fn godot_v2() -> EngineProfileV2 {
 
 fn document_advice_facts_v2(
     accepted_inputs: Vec<SourceFormatV1>,
+    import_setting_projection: &'static str,
 ) -> Vec<animsmith_core::engine_contract::EngineProfileFactV2> {
     use animsmith_core::engine_contract::{
         EngineFactIdV2, EngineFactStateV2, EngineFactValueV2, EngineProfileFactV2,
@@ -899,7 +906,7 @@ fn document_advice_facts_v2(
         ),
         EngineProfileFactV2::new(
             EngineFactIdV2::ImportSettingProjection,
-            EngineFactStateV2::Unknown,
+            EngineFactStateV2::Known(EngineFactValueV2::Token(import_setting_projection.into())),
         ),
         EngineProfileFactV2::new(
             EngineFactIdV2::ImporterScaleConversion,

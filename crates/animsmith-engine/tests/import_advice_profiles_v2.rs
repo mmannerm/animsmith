@@ -1,8 +1,8 @@
 use animsmith_core::SourceFormatV1;
 use animsmith_core::engine_contract::{
-    EngineSampleRateV2, EngineSettingDomainV2 as CoreSettingDomainV2,
-    EngineSettingIdV2 as CoreSettingIdV2, EngineSettingValueOriginV3,
-    EngineSettingValueV2 as CoreSettingValueV2,
+    EngineFactIdV2, EngineFactStateV2, EngineFactValueV2, EngineSampleRateV2,
+    EngineSettingDomainV2 as CoreSettingDomainV2, EngineSettingIdV2 as CoreSettingIdV2,
+    EngineSettingValueOriginV3, EngineSettingValueV2 as CoreSettingValueV2,
 };
 use animsmith_engine::{
     EngineDeclarationV2, ProfileSelection, ResolutionError, ResolutionErrorV2,
@@ -62,8 +62,20 @@ fn godot_v2_freezes_glb_and_gltf_defaults_with_origins() {
             .default(),
         &SettingDefaultV2::Verified(SettingValueV2::Boolean(false))
     );
+    assert_eq!(
+        profile
+            .facts()
+            .iter()
+            .find(|fact| fact.id() == EngineFactIdV2::ImportSettingProjection)
+            .unwrap()
+            .state(),
+        &EngineFactStateV2::Known(EngineFactValueV2::Token("godot_params".into()))
+    );
     assert!(profile.sources().iter().any(|source| {
         source.target_version() == "4.7"
+            && source
+                .supported_facts()
+                .contains(&EngineFactIdV2::ImportSettingProjection)
             && source
                 .supported_settings()
                 .contains(&SettingIdV2::AnimationFps)
@@ -74,9 +86,9 @@ fn godot_v2_freezes_glb_and_gltf_defaults_with_origins() {
     let core_profile = project_engine_profile_v2(profile).unwrap();
     assert_eq!(
         core_profile.facts_identity().sha256(),
-        "3d2c21f0652c0d62e65db4044a6413b7d3ac6283c3b06328e2253b58f3e11cca"
+        "5911192e94b514bc1a82a3914def9444a45b7f4999e8976585e28af6288833d1"
     );
-    assert_eq!(core_profile.facts_identity().bytes(), 1_518);
+    assert_eq!(core_profile.facts_identity().bytes(), 1_571);
 
     let static_resolution = resolve_static_v2(EngineDeclarationV2 {
         selection: Some(godot_selection()),
@@ -163,8 +175,20 @@ fn unreal_v2_requires_explicit_sample_rate_and_projects_its_closed_domain() {
     let descriptor = profile.setting_descriptor(SettingIdV2::SampleRate).unwrap();
     assert_eq!(descriptor.domain(), SettingDomainV2::SampleRate);
     assert_eq!(descriptor.default(), &SettingDefaultV2::RequiredExplicit);
+    assert_eq!(
+        profile
+            .facts()
+            .iter()
+            .find(|fact| fact.id() == EngineFactIdV2::ImportSettingProjection)
+            .unwrap()
+            .state(),
+        &EngineFactStateV2::Known(EngineFactValueV2::Token("unreal_fbx_import_data".into()))
+    );
     assert!(profile.sources().iter().any(|source| {
         source.target_version() == "5.8"
+            && source
+                .supported_facts()
+                .contains(&EngineFactIdV2::ImportSettingProjection)
             && source
                 .supported_settings()
                 .contains(&SettingIdV2::SampleRate)
@@ -172,9 +196,9 @@ fn unreal_v2_requires_explicit_sample_rate_and_projects_its_closed_domain() {
     let core = project_engine_profile_v2(profile).unwrap();
     assert_eq!(
         core.facts_identity().sha256(),
-        "213c267c62be511fe4ca589433f0d2facb8630fc57ffe7885869c403ebe26af4"
+        "77df5554413b29767fb8d7f4f8d65d199ea54da80ae08e8c006128eb6cf9e329"
     );
-    assert_eq!(core.facts_identity().bytes(), 1_330);
+    assert_eq!(core.facts_identity().bytes(), 1_393);
     assert_eq!(
         core.setting_descriptor(CoreSettingIdV2::SampleRate)
             .unwrap()
