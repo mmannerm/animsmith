@@ -4,7 +4,7 @@
 >
 > Evidence status: **partial** — AnimSmith 0.4.0 re-run (baseline, contracts, gait-anchor, remediation) on a byte-identical source, retained 2026-08-17 Unity 6000.5.8f1 combined-project probe, new 0.4.0 engine-advisory checks now corrected by a direct Unity 6000.5.8f1 observation of import-advice root-lock declarations, and a headless Unity glTFast import of all 134 collection-wide gait-anchored GLB candidates (including this pack's 24); visual acceptance, Humanoid retarget of the new candidates, and full non-Unity engine passes remain unevaluated.
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 
@@ -248,6 +248,20 @@ animsmith --config config/engine/bevy.animsmith.toml generate addressability <ca
 ```
 
 Retained portable artifacts (0.3.0, 2026-08-17) include: baseline summary SHA-256 `5aec24f63aad108179406ced3a8df42055d55961f530124f6487d6835b1dc3b1`; contract summary `a62c87b94e11a84ba238420b4b3f0462ca8e14e004b703b7ebb2a528afe74701`; clip catalog `a980252db9eb48dbddeae27ca150820a3f02c3cf9f25b4e2d3489488c659a60c`; remediation record `65802bf6980ec6105c8a1d254adb4d7183379cb61ba98ca53d1a47ae32fe9438`; combined Unity probe `c4310bedddfd27e06696207e8bb1c4076039126c467ed4964aba067c8524c392`; Basic cross-pack comparison `346e254927a65de26307a5e82da29f70d642c69cea3347b840fb0761e32a4142`. The 2026-08-21 AnimSmith 0.4.0 baseline and contract passes reproduce these historical totals exactly (17,078 constant-track notes; 17 pass/115 fail contracts), so no new summary digests are published for this refresh.
+
+### Current evaluator: AnimSmith 0.7.0 (2026-08-26)
+
+The same source corpus was re-inventoried and rerun with `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16.
+
+| Retained external evidence | SHA-256 | Result |
+|---|---|---|
+| Source inventory | `e4dc4740bf35ff2812e81ff78970fc6737e62e8022664643c14b5cb8fdf2e4b8` | 136 FBXs; source unchanged |
+| Exhaustive baseline | `7ee7b4063350b006a9831d0b281db56905b76f62176552ad299ddbe0251eb557` | 134 animation-bearing FBXs complete |
+| Declared contracts | `4b80d70b3fd1debb96db3e6851fe2d36b6f86903908c2e710dfaf22e2aea4b1b` | 132 files; 17 pass / 115 fail |
+| Remediation | `b522372a6a2687eeb8c3e93b8f7c7db979eb64ebaa7c1e681cf0dcb9abb76e6e` | 28 candidates completed and verified |
+| 0.7 supplemental projections | `5d812576b84a2f21ccb7aa8351863aee93027424322a88e4fe6ac14db03d8556` | 28 addressability V1 + rich V2 pairs; exact-profile advice available |
+
+The new projections do not evaluate shield/weapon contact, runtime graph wiring, target survival, retarget deformation, or visual acceptance.
 
 ### Evaluator currency: AnimSmith 0.4.1
 

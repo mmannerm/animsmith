@@ -2,11 +2,11 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — AnimSmith 0.4.0 re-evaluated all 77 delivered FBXs and 75 contracts, adding measured vertical/yaw root trajectory to the retained Unity probe and new Unreal/Godot import-advice attempts, but environment contacts, engine root-motion extraction, retarget, and motion quality were not visually accepted, and Bevy had no candidate to probe.
+> Evaluation completeness: **partial** — AnimSmith 0.7.0 reevaluated all 77 FBXs, 75 contracts, remediation, addressability, and bounded advice; retained Unity evidence exists, but contacts, engine root-motion extraction, retargeting, and motion quality lack visual acceptance.
 >
 > Confidence: **high**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 >
@@ -87,9 +87,13 @@ Poor fit: drop-in climbing, first-person arms, procedural geometry without motio
 
 The standard motions combine technically with Basic Locomotion, Sword & Shield, Campfire, and Injured: skeleton signatures align, pairwise shared paths are byte-identical, and the five-pack Unity project co-imports. Basic can own approach/departure and Sword can own combat, but weapon sheathing, hand release, surface entry, style, and timing remain untested; see the [partial collection report](protofactor-ultimate-animation-collection.md).
 
+## AnimSmith 0.7.0 refresh (2026-08-26)
+
+The 77-FBX corpus was rerun with exact `v0.7.0` under output v17 / measurements v16. Its 75 contracts reproduce 34 pass / 41 fail; the verified pruning candidate emitted addressability V1 plus Bevy rich V2. Unity, Unreal, and Godot advice does not prove engine execution, ledge contact, retargeting, or visuals.
+
 ## Evidence status
 
-The evaluation covers 77 FBXs: 75 individual motions, one combined take, and one actor. This 2026-08-21 refresh uses AnimSmith 0.4.0 (tag `v0.4.0`, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`, binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`, output schema v10, measurements schema v15) against the same source: re-inventory reproduces the published manifest exactly (0 added, 0 removed, 0 changed) and the archive digest re-verifies, so this is a pure evaluator-version refresh. Historical results from AnimSmith 0.3.0 (revision `aabac28edf2719db236068339f1208bbf156d0bb`) and the 2026-08-17 Unity 6000.5.8f1 headless probe are retained as dated evidence and keep their original date because the source is byte-identical. This report uses manifest schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1` and the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder). The local archive was supplied as a Protofactor-site download; current store/license pages establish context, not its revision or transaction rights. Exact evidence and limitations are in the [appendix](protofactor-climbing-evidence.md).
+Current evidence is the exact 0.7.0 rerun above; byte-identical 0.3/0.4 and retained Unity evidence remain historical. Local revision and rights remain unproven. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-climbing-evidence.md).
 
 ## Sources
 

@@ -2,11 +2,11 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — every delivered FBX and declared clip contract was evaluated, Unity 6000.5.8f1 was probed directly, and 0.4.0 engine import-advice was probed for Unity, Unreal, and Godot, but transition, prop-contact, and loop quality were not visually accepted.
+> Evaluation completeness: **partial** — every FBX and clip contract was reevaluated with AnimSmith 0.7.0, including generated-candidate addressability and bounded advice; retained Unity evidence exists, but transitions, contacts, and loops lack visual acceptance.
 >
 > Confidence: **high**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 >
@@ -88,6 +88,10 @@ Best fit: third-person RPG, survival, social, or cinematic camp scenes using a f
 Poor fit: first-person hands, procedural interaction, seamless locomotion-layered camp actions, or games expecting complete props/events/IK out of the box. Upper-body masking is not recommended for kneel/sit/lie/contact clips because the pelvis and support posture are integral. AnimSmith 0.4.0's per-bone `bone_channels` coverage — delivered this release by closed issue #402 ("expose per-clip channel coverage at (bone, property) granularity", closed 2026-08-20) — confirms which bones carry authored translation/rotation/scale tracks on these clips, which can narrow a composition/prop-mask risk discussion, but channel presence alone does not prove a visually acceptable engine mask.
 
 Campfire combines technically with Basic Locomotion, Sword & Shield, Climbing, and Injured: the standard files share the same 56-bone signature, all 25 overlapping package paths are byte-identical across every evaluated pair, and the five-pack Unity project co-imports. Style, entry timing, and contacts remain visual gates; see the [partial collection report](protofactor-ultimate-animation-collection.md).
+
+## AnimSmith 0.7.0 refresh (2026-08-26)
+
+The unchanged 29-FBX corpus was rerun with exact `v0.7.0` under output v17 / measurements v16. Its 25 contracts reproduce 17 pass / 8 fail and the prior findings; the pruning candidate passed verification and emitted addressability V1 plus Bevy rich V2. Unity, Unreal, and Godot advice was available, but these projections do not prove engine execution or contact/visual acceptance.
 
 ## Evidence status
 

@@ -6,7 +6,7 @@
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 >
@@ -18,7 +18,7 @@ Adopt the eight evaluated constituents as explicit full-body gameplay modes arou
 
 Technical co-existence is strong. The rollup contains 582 logical motions and 895 individual files. Each of the 28 pack pairs has exactly 25 overlapping package paths, all byte-identical, with no conflicts. Most standard motions share the same 56-bone structure; the dominant 2-Handed family adds left/right forearm twists and uses capitalized bone identifiers. One Unity 6000.5.8f1 project imports all eight packs. The latest melee probe passes 33/33 required sampling, mixing, masking, and prop checks, while four expected Generic-rig failures are kept separate; the earlier contextual probe retains its 22/22 result.
 
-AnimSmith 0.4.0 extends the gait fix to the whole collection. Every clip in all eight packs resolves a vertical `positive_y` root heading, the exact condition that made 0.3.0 refuse anchoring, so all 134 selected in-place ring members across the six gait-bearing packs now anchor and none refuse. Basic Locomotion, Sword & Shield, and Injured move from 62 combined refusals to 24, 24, and 14 successes, and the three melee packs reproduce their earlier pre-release spreads to seven decimal places. Every ring's circular phase spread falls below 0.14, with per-pack figures in the appendix. Campfire and Climbing have no in-place cyclic ring, which 0.4.0 records as not applicable rather than as a failure. Root-motion members were not transformed. All 159 generated candidates remain external and unpromoted: they load as Generic clips only, with no Humanoid-retarget or visual acceptance.
+The historical 0.4.0 gait fix accepted the collection's vertical `positive_y` root heading: all 134 selected in-place ring members across six gait-bearing packs anchored, while Campfire and Climbing correctly had no applicable ring. Root-motion members were not transformed. All 159 generated candidates remain external and unpromoted; no Humanoid-retarget or visual acceptance is implied.
 
 This does not make the collection acceptance-ready. Residual seam/phase issues remain, weapon contacts and action timing need gameplay validation, Climbing has measured vertical and yaw root facts but still needs environment and contact validation, Campfire needs prop/contact authoring, and six files are quarantined or excluded. The 15 unevaluated constituents prevent any collection-wide quality or value verdict.
 
@@ -97,6 +97,10 @@ Best fit: a third-person action RPG, survival game, or prototype with explicit u
 Poor fit without further packs/work: firearm-heavy, first-person, creature/zombie, crowd, motion-matching, fighting-game contact, or network-root-motion systems. Fencing-specific reach and stance behavior also remains unevaluated. A seamless universal locomotion/mask graph is not proven.
 
 The eight packs are technically compatible enough to justify a shared project and staged visual evaluation. The next collection work should remain category-based; compare a category to these eight only where a real gameplay handoff, mask, prop, or replacement decision exists.
+
+## AnimSmith 0.7.0 refresh (2026-08-26)
+
+Exact `v0.7.0` reproduced all eight evaluated constituents under output v17 / measurements v16. Their 159 candidates emitted addressability V1 plus Bevy rich V2. Scope remains eight of 23; nothing here proves engine execution or artistic compatibility.
 
 ## Evidence status
 

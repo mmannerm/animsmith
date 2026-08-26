@@ -4,7 +4,7 @@
 >
 > Evidence status: **partial** — exhaustive file/AnimSmith coverage, Unity 6000.5.8f1 headless evidence now corrected by a direct Unity 6000.5.8f1 observation of import-advice root-lock declarations, and 0.4.0 `generate import-advice` probes for Unity/Unreal/Godot; visual contact, target-character, and full three-engine import passes remain absent, and Bevy has no generated glTF/GLB candidate to probe. A collection-wide headless Unity glTFast import of all 134 gait-anchored GLB candidates from the other evaluated packs ran 2026-08-21; this pack has no gait ring and contributed none of them.
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 
@@ -197,6 +197,20 @@ Run `inspect`, `measure --format json`, `lint --format json`, and `lint --format
 Portable evidence digests (2026-08-17, historical): baseline `f9797cfd04dddac8b366a474dceac08dd968a95c52874398c014c81a1b2f9992`; contract `b9a858bcfce12ef799b06a91242054b8d0aa4a6f257660a41f0393bf20d1e7d2`; catalog `480ded14c195158d8768512e764c442cf14cf1fd04584bd27dfe24fd857ca1b9`; remediation `0e72dade266ad288c5ce2db068370d7563f0437def4177448783ea5bc9644b2e`; Basic comparison `0f6b0f6588822b1d309a6162de615c3de174bce92f6bfa6edc222a4467795903`; combined Unity probe `d2b6d1b0af14c2c77dca3c2cc4aa892d6e507f3cf8b9bb50bfdb4ef78d407afa`.
 
 2026-08-21 refresh evaluator: `animsmith 0.4.0`, tag `v0.4.0`; revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`; binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`; output schema v10; measurements schema v15. **Rebuild reproducibility:** rebuilding tag `v0.4.0` at this same commit produced a binary with a *different* SHA-256, `1e53013bbe3224557a8783eafeb818f4ef9d74666590cbaa8c18ef48c5b7d6fa` — the build is not byte-reproducible. Both builds emit byte-identical import-advice artifacts, verified by `diff`, so the Unity headless-probe correction below is attributable to the tag and commit, not to one specific binary digest. Re-ran the source inventory against the same archive: byte-identical to the published manifest (0 added, 0 removed, 0 changed across 29 FBXs); archive SHA-256 `bed86be7f91fdd46b376fce4b1a00c88372a3f703e0fe9077925712d8af8e8e9` re-verifies. Re-ran `inspect`, `measure --format json`, and `lint --format json` for both the untouched baseline and the retained declared contract on every FBX; findings, exit codes, and constant-track/loop-closure/loop-seam counts reproduce the 2026-08-17 numbers exactly, with the newly available `loop_seam_ratio`, `gait.phase_availability`, `gait-group` applicability, `root_trajectory` (delivered by closed issue #408), and `bone_channels` (delivered by closed issue #402) facts now populated. Ran `generate import-advice` under the frozen `unity-humanoid` (Unity 6000.3), `unreal` (5.8), and `godot` (4.7) profiles on every individual clip: `unity-humanoid` returned `available` (exit 0); `unreal` and `godot` returned the typed `profile_settings_unmodeled` refusal (exit 1). Checked for a Bevy `generate addressability` candidate; none exists because this stationary pack has no gait-anchored in-place ring, so Bevy 0.19.0 is recorded not-evaluated rather than failed. Re-ran the `--prune-constant-tracks` trial on `Humanoid@IdleKneelCampfire.fbx` (source not modified; bounded by open issue #401). The retained Unity 6000.5.8f1 headless probe (2026-08-17) was not rerun because the source is byte-identical; it keeps its original date and attribution.
+
+### Current evaluator: AnimSmith 0.7.0 (2026-08-26)
+
+The same source corpus was re-inventoried and rerun with `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16. Historical evidence above keeps its original attribution.
+
+| Retained external evidence | SHA-256 | Result |
+|---|---|---|
+| Source inventory | `2f7e61f5c5d667272a2a67d756ccd96b9c9e1dc60b73e38613f83a9396a29ba4` | 29 FBXs; source unchanged |
+| Exhaustive baseline command envelope | `7d46f1744efbb0a521059912bab11bc75a464ce48b489ab8c07b8854724fd908` | 29/29 complete |
+| Declared-contract command envelope | `1f0e00639590daba19c8638045bfc5445d03ccea71acba240b2584bd145bfe3c` | 25 files; 17 pass / 8 fail |
+| Remediation command envelope | `c77c17c296b1536a2fa39c75f63c86dd0233b75b3c3f4e9c5dbef3bc41ec2199` | Pruning candidate completed and verified |
+| 0.7 supplemental projections | `d696122f26d75c94767dd4713f4aac8dfd54227faac529f3f390874f112adffa` | Addressability V1 + rich V2; Unity v1, Unreal v2, Godot v2 advice available |
+
+The pruning candidate closes the former Bevy coverage gap at the source-addressability layer. It does not make the stationary/contact pack Bevy-ready: runtime target survival, graph wiring, props, contacts, and visual acceptance remain untested.
 
 ### Evaluator currency: AnimSmith 0.4.1
 

@@ -4,7 +4,7 @@
 >
 > Evidence status: **partial** — exhaustive file/AnimSmith coverage, Unity 6000.5.8f1 headless evidence, 0.4.0 gait-anchor plus per-engine advice/addressability checks, a corrected observed Unity root-lock policy, and a new-project GLB import test; visual loops, blends, masks, target-character, and full three-engine (Unreal/Godot/Bevy) passes remain absent.
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 
@@ -191,6 +191,20 @@ A 2026-08-21 rebuild of this pinned commit (tag `v0.4.0`) produced a binary with
 Run baseline commands on every FBX. For every individual file, apply the humanoid rig, Unity-derived loop declaration, and in-place only to the non-RM side of a true pair. Measure each gait, compute pair/family phase evidence, and attempt gait anchoring without promoting refused candidates. Generate and inspect three risk-selected offline reports. Prune one sample and run inspect/measure/lint/diff/fix dry-run. Import all five evaluated packs into Unity and execute the retained probe. For the 0.4.0 refresh (2026-08-21): re-inventory the source archive and confirm the manifest reproduces exactly; re-run baseline and contract lint; re-run `transform --gait-anchor` on the 14 selected IP gaits and retain the succeeding output without promotion; re-run the constant-track prune trial on `Humanoid@WalkInjuredA.fbx`; run `generate import-advice`/`generate addressability` across the `unity-humanoid`, `unreal`, `godot`, and `bevy` profiles; run a headless Unity 6000.5.8f1 probe of `ModelImporterClipAnimation` over a 120-clip cross-pack sample to correct the assumed root-lock defaults; and stage all 134 gait-anchor GLB candidates (14 from this pack) into a separate new Unity 6000.5.8f1 project with `com.unity.cloud.gltfast` 6.9.0 to confirm each imports as exactly one Generic AnimationClip, without modifying the retained eight-pack project.
 
 Portable evidence digests (0.3.0, 2026-08-17, historical): baseline `7d3653df78ed84a4213a0c5e2b0d65a61cd7696704edb58d29ad96f398e82dc0`; contract `a59a242483aec788c6cc928096101072d12752128134fd3d54b7d062637d321e`; catalog `08acae7a14c6717877afd255c4eafaf4c147224b2f3ccbd4ead25429498a6d43`; remediation `9cb1afa636de97a57a8ef9f73361955356684c10bb17e0ea8744195768c08df9`; Basic comparison `576ecaac0918834ab840199e2d9b4e555c1c6130e9f0dde185376dc624e1a57`; combined Unity probe `d2b6d1b0af14c2c77dca3c2cc4aa892d6e507f3cf8b9bb50bfdb4ef78d407afa`. 0.4.0 portable evidence digests were not captured this session.
+
+### Current evaluator: AnimSmith 0.7.0 (2026-08-26)
+
+The unchanged corpus was rerun with `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16.
+
+| Retained external evidence | SHA-256 | Result |
+|---|---|---|
+| Source inventory | `27937e9a4d2eed8c57147931d32c88905057f407b2e29882f31086135536c068` | 72 FBXs; source unchanged |
+| Exhaustive baseline | `70990cdf38a3f2d9f1a28caba319bc8ac32c2d8c620fafdf15c8869dfa619788` | 72/72 complete |
+| Declared contracts | `aea4184b500dd0825369e656b9e56aecedd038187bdee966af91cc2f39c08c83` | 70 files; 28 pass / 42 fail |
+| Remediation | `1f90528096026ed186a467395f1205f739ea93a7d41858183f8675bccbebb51c` | 14 gait candidates plus one pruning candidate completed |
+| 0.7 supplemental projections | `94a88103ee12883ba07dc2d4c5e5f5804ec24f53e50bfe5ffdfdfef9f50cc14a` | 15 addressability V1 + rich V2 pairs; exact-profile advice available |
+
+The new projections do not evaluate injury-style blending, runtime target survival, retarget deformation, or visual acceptance.
 
 ### Evaluator currency: AnimSmith 0.4.1
 

@@ -2,11 +2,11 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — AnimSmith 0.4.0 re-run (baseline, contracts, gait-anchor) on a byte-identical source, retained 2026-08-17 Unity probes, and new engine-advisory checks; no visual controller, target character, or non-Unity pass.
+> Evaluation completeness: **partial** — complete AnimSmith 0.7.0 baseline, contracts, remediation, addressability, and bounded advice on unchanged source plus retained Unity probes; no visual controller, target character, or current engine pass.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 >
@@ -114,7 +114,7 @@ Combine with Basic Locomotion as a full-body armed/unarmed state switch; the par
 
 ## Evidence status
 
-All 136 FBXs were inspected; the v1 manifest covers 87 logical motions and 132 files. A 2026-08-21 re-inventory reproduces the manifest under AnimSmith `0.4.0` (`6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`), re-running baseline/contract/gait-anchor/remediation on the byte-identical source; 2026-08-17 `0.3.0` Unity probes remain historical. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-sword-and-shield-evidence.md) define remaining boundaries.
+Current evidence is the exact 0.7.0 rerun above; byte-identical 0.3/0.4 and retained Unity evidence remain historical. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-sword-and-shield-evidence.md).
 
 ## Sources
 

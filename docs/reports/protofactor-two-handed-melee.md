@@ -2,11 +2,11 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — 0.4.0 baseline/contracts/remediation (default + explicit-role passes), retained Unity 6000.5.8f1 evidence, and new engine-profile advice/addressability probes; no visual controller, target character, or engine-editor import/playback.
+> Evaluation completeness: **partial** — complete 0.7.0 baseline, explicit-role contracts, remediation, addressability, and bounded advice plus retained Unity evidence; no visual controller, target character, or current engine-editor import/playback.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 >
@@ -115,7 +115,7 @@ The dominant rig adds forearm twists to the collection's 56-bone majority; Unity
 
 ## Evidence status
 
-All 123 FBXs were analyzed on AnimSmith `0.4.0` (`6b37ad636b1`); the v1 manifest covers 76 motions/120 individual files. Baseline, contracts, and remediation are complete for both passes; `674396f` gait and `b7c215b` baseline/contracts stay dated historical comparison. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-two-handed-melee-evidence.md) define remaining boundaries.
+Current evidence is the exact 0.7.0 rerun above; byte-identical 0.3/0.4 evidence remains historical. The explicit role map is retained. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-two-handed-melee-evidence.md).
 
 ## Sources
 

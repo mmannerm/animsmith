@@ -4,7 +4,7 @@
 >
 > Evidence status: **partial** — exhaustive AnimSmith `v0.4.0` baseline, contract, and gait/pruning remediation on one frozen released evaluator, plus a retained (dated) Unity 6000.5.8f1 eight-pack probe, new 0.4.0 engine-profile advice/refusal evidence, a corrected observed Unity root-lock policy, and a new-project GLB import test; transformed-clip visual acceptance and full Unreal/Godot/Bevy import remain unevaluated.
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 
@@ -191,6 +191,20 @@ animsmith transform --config <config> <input.fbx> -o <output.glb> --prune-consta
 A headless Unity 6000.5.8f1 probe read `ModelImporterClipAnimation` over a 120-clip cross-pack sample (15 from this pack) to correct the assumed root-lock defaults, and a separate new Unity 6000.5.8f1 project with `com.unity.cloud.gltfast` 6.9.0 staged all 134 gait-anchor GLB candidates (24 from this pack) to confirm each imports as exactly one Generic AnimationClip; the retained eight-pack project was not modified.
 
 Retained summaries (historical, from the superseded mixed-version evaluation): baseline `505cb1c323bba8c259eaf0f88651bbfaa75dd1273563740817cf7f99910c30c0`; contracts `e97e2d44bd79d4d3c3e5fde3cfbe715b6f3bbbcda4bdef8053b17503e007e749`; refusal-era remediation `3f7283e68b3d53109ed48c71309d4f13d5cebc3d8d971bd2ecd0422ea6e734d2`; pre-release remediation commands `6f8717ec84797cbb89d830e7098baf529fdc6f37eb1b877775a0f6c5d514c5d6`; pre-release combined summary `118116c9173df4e3e782cdfe3b712deb9fb14cec23c8e0e75cd484e8156d7f4b`. Unity probe (retained, dated 2026-08-17, unchanged because the source is byte-identical): `1c147ff6683833ba28c1db210d58aee65140ac232311f370782c28c3925ae62d`.
+
+### Current evaluator: AnimSmith 0.7.0 (2026-08-26)
+
+The unchanged corpus was rerun with `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16.
+
+| Retained external evidence | SHA-256 | Result |
+|---|---|---|
+| Baseline command envelope | `94a35ceaa33ded273c01ff002d4959fc60fcaf8a77d9b561ae88519a6694a475` | 113 FBXs; all commands complete |
+| Declared contracts | `3cf7c419a46224a94514f7fbf6b753f71ad4abaa09e6ca63506a9b53745f7fca` | 110 files; 23 pass / 87 fail |
+| Remediation | `a4fa16a295b6f9eedde392bb1f88b4f1d1b1b54f965e400df3e3765a4bdd5b08` | 25 candidates completed and verified |
+| 0.7 supplemental projections | `846a2456f3f5d01c39fd18d15807cad18c465ac06eeaad242977c8055d31b477` | 25 addressability V1 + rich V2 pairs; exact-profile advice available |
+| Refreshed legacy manifest | `71846e7671a298010c3e09876a237ff765297822ae1fcd6b145f1c3a17672c81` | Valid schema; 72 logical motions |
+
+The new projections do not evaluate weapon contact, runtime graph wiring, target survival, retarget deformation, or visual acceptance.
 
 ### Evaluator currency: AnimSmith 0.4.1
 

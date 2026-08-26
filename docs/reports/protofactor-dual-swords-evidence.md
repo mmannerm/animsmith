@@ -4,7 +4,7 @@
 >
 > Evidence status: **partial** — exhaustive 0.4.0 baseline/contract/gait-remediation captured on one released evaluator for the first time on this pack; retained 2026-08-17 Unity 6000.5.8f1 probe plus new 0.4.0 engine-profile advice/refusal/addressability evidence, a corrected observed Unity root-lock policy, and a new-project GLB import test; transformed-clip visual/engine acceptance and three full engine imports remain unevaluated.
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 
@@ -203,6 +203,20 @@ animsmith --config <bevy.animsmith.toml> generate addressability <candidate.glb>
 ```
 
 Retained historical summaries: b7 baseline `d627e5fd7957b373cdfd5dd4368b1d619d9a990d667dc482f08c67fcb822cde0`; b7 contracts `dea91806cab5c0e85fb8cd344769f26e9f7e36f1954b8770fcc448f48611c7ae`; historical b7 remediation `6610cd4d5382bd203a3d7f92d9b520348e802cbb59285b4b6b1c752bfd10fab1`; pre-release 674396f gait commands `16d31a27a961180154afc30613e1ab3e5e4a7cdb8aab94238861947c8e819a15`; pre-release 674396f combined summary `118116c9173df4e3e782cdfe3b712deb9fb14cec23c8e0e75cd484e8156d7f4b`; retained Unity probe `1c147ff6683833ba28c1db210d58aee65140ac232311f370782c28c3925ae62d`. The 2026-08-21 AnimSmith 0.4.0 baseline, contract, and gait-remediation run reproduced these historical totals and the pre-release gait spreads exactly (see Mechanical baseline and AnimSmith remediation evidence above); its JSON/Markdown outputs and generated GLB candidates are retained with the commercial source outside the repository, and no new digest is asserted here beyond the evaluator binary identity above. A headless Unity 6000.5.8f1 probe additionally read `ModelImporterClipAnimation` over a 120-clip cross-pack sample (15 from this pack) to correct the assumed root-lock defaults, and a separate new Unity 6000.5.8f1 project with `com.unity.cloud.gltfast` 6.9.0 staged all 134 gait-anchor GLB candidates (24 from this pack) to confirm each imports as exactly one Generic AnimationClip; the retained eight-pack project was not modified.
+
+### Current evaluator: AnimSmith 0.7.0 (2026-08-26)
+
+The unchanged corpus was rerun with `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16.
+
+| Retained external evidence | SHA-256 | Result |
+|---|---|---|
+| Baseline command envelope | `4434feed1f9dd7b26d0b3151064e3843c57bc67363488f8d1d8293e8a663af6b` | 189 FBXs; all commands complete |
+| Declared contracts | `feb394d9bf66c0b58a1c53406fb69f39119e1be9d9c5ddba1a1ba07e816a380e` | 186 files; 24 pass / 162 fail |
+| Remediation | `074018e7ad446330c3d10bc3f0b5664bcbbc0fce10b10bc0fd4f5f35c8ad4653` | 25 candidates completed and verified |
+| 0.7 supplemental projections | `c24514d418fc808ea6aa5efabb2b256ca62ca370302756d8ae492ed068b96eb5` | 25 addressability V1 + rich V2 pairs; exact-profile advice available |
+| Refreshed legacy manifest | `614aed097308a1928b62b2b1a90b8f4b0bca991cf25d04a273e622d6fcccd018` | Valid schema; 112 logical motions |
+
+The new projections do not evaluate weapon contact, runtime graph wiring, target survival, retarget deformation, or visual acceptance.
 
 ### Evaluator currency: AnimSmith 0.4.1
 

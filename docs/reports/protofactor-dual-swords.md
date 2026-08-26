@@ -2,11 +2,11 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — 0.4.0 baseline/contract/gait-remediation on one evaluator; retained 2026-08-17 Unity probe; no visual, target-character, or engine-reimport pass.
+> Evaluation completeness: **partial** — complete 0.7.0 baseline, contracts, remediation, addressability, and bounded advice plus a retained Unity probe; no visual, target-character, or current engine-reimport pass.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 >
@@ -112,7 +112,7 @@ The 56-bone structure matches Basic Locomotion, Sword & Shield, and the 1-Handed
 
 ## Evidence status
 
-All 189 FBXs were analyzed on this evaluator (`6b37ad6`); the v1 manifest covers 112 logical motions and 186 individual files. Baseline, contracts, and remediation all reran here; only the Unity probe stays dated 2026-08-17. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-dual-swords-evidence.md) define the boundary. The local archive came from the user's Protofactor Ultimate collection; current pages do not prove its revision or historical terms.
+Current evidence is the exact 0.7.0 rerun above; byte-identical 0.3/0.4 and retained Unity evidence remain historical. Local revision and terms remain unproven. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-dual-swords-evidence.md).
 
 ## Sources
 

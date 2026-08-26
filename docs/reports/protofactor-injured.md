@@ -2,11 +2,11 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — all 72 delivered FBXs and 70 individual motion contracts were evaluated, Unity 6000.5.8f1 was probed, and 0.4.0's gait-anchor and per-engine advice checks ran, but gait blends, loop quality, transitions, masks, target-character results, and the newly anchored candidates were not visually accepted.
+> Evaluation completeness: **partial** — AnimSmith 0.7.0 reevaluated all 72 FBXs, 70 contracts, remediation, addressability, and bounded advice; retained Unity evidence exists, but blends, loops, transitions, masks, target-character results, and candidates lack visual acceptance.
 >
 > Confidence: **high**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 >
@@ -92,6 +92,10 @@ Best fit: third-person games that treat injury A–G as explicit full-body state
 Poor fit: drop-in omnidirectional locomotion, first-person arms, one universal blend space, or games requiring complete kneel recovery and visually clean loops without authoring. Upper-body-only masking may add a torso injury to Basic or Sword movement, and its headless graph executes, but it discards authored injured legs/pelvis and remains visually unaccepted.
 
 The pack combines technically with Basic Locomotion, Sword & Shield, Campfire, and Climbing: standard skeleton signatures align, pairwise shared paths are byte-identical, and the five-pack Unity project co-imports. Artistic style, gait transition, weapon posture, and state handoffs remain gates; see the [partial collection report](protofactor-ultimate-animation-collection.md).
+
+## AnimSmith 0.7.0 refresh (2026-08-26)
+
+The unchanged 72-FBX corpus was rerun with exact `v0.7.0` under output v17 / measurements v16. Its 70 contracts reproduce 28 pass / 42 fail and the prior findings; 15 remediation candidates passed verification and emitted addressability V1 plus Bevy rich V2. Unity, Unreal, and Godot advice was available, but these projections do not prove engine execution, blending, retargeting, or visuals.
 
 ## Evidence status
 

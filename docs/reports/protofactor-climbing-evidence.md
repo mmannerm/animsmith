@@ -4,7 +4,7 @@
 >
 > Evidence status: **partial** — exhaustive file/AnimSmith 0.4.0 coverage, measured vertical/yaw root trajectory, retained Unity 6000.5.8f1 headless evidence now corrected by a direct Unity 6000.5.8f1 observation of import-advice root-lock declarations, and new Unreal/Godot import-advice attempts; visual traversal, engine root-motion extraction, target-character, and full Unreal/Godot/Bevy passes are absent. A collection-wide headless Unity glTFast import of all 134 gait-anchored GLB candidates from the other evaluated packs ran 2026-08-21; this pack has no gait ring and contributed none of them.
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 
@@ -194,6 +194,20 @@ Run baseline commands for every FBX. For each individual file, apply the humanoi
 Portable evidence digests (2026-08-17, historical): baseline `0325119190ccddbe272c74b94808853438488d21dde53b3ce3e56c1d3461800c`; contract `5a95252f8046ca1471022327140331c6233cb376c89de6aa91805b3427de6d6e`; catalog `3c752cc75f73ea6589916e62a35b52aa2f6a004e7af3c39c84970ef6a4744419`; remediation `c1a34efc74d287a5b3334e9ec708b0498286342f42761656bb11049dab3737d`; Basic comparison `96f1ffe158139600495281b57e6a9c37d61720bc9029feb23590681a8e163e5d`; combined Unity probe `d2b6d1b0af14c2c77dca3c2cc4aa892d6e507f3cf8b9bb50bfdb4ef78d407afa`.
 
 2026-08-21 refresh evaluator: `animsmith 0.4.0`, tag `v0.4.0`; revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`; binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`; output schema v10; measurements schema v15. **Rebuild reproducibility:** rebuilding tag `v0.4.0` at this same commit produced a binary with a *different* SHA-256, `1e53013bbe3224557a8783eafeb818f4ef9d74666590cbaa8c18ef48c5b7d6fa` — the build is not byte-reproducible. Both builds emit byte-identical import-advice artifacts, verified by `diff`, so the Unity headless-probe correction below is attributable to the tag and commit, not to one specific binary digest. Re-ran the source inventory against the same archive: byte-identical to the published manifest (0 added, 0 removed, 0 changed across 77 FBXs); archive SHA-256 `4b353c3ded36889ab29096b7d0c04e54859f6dc380fa41e5ebeb925b74241101` re-verifies. Re-ran `inspect`, `measure --format json`, and `lint --format json` for both the untouched baseline and the retained declared contract on every FBX; findings, exit codes, and constant-track/loop-closure/loop-seam counts reproduce the 2026-08-17 numbers exactly, with the newly available `loop_seam_ratio`, `gait.phase_availability`, `gait-group` applicability, and `root_trajectory` facts now populated. Ran `generate import-advice` under the frozen `unity-humanoid` (Unity 6000.3), `unreal` (5.8), and `godot` (4.7) profiles on every individual clip: `unity-humanoid` returned `available` (exit 0); `unreal` and `godot` returned the typed `profile_settings_unmodeled` refusal (exit 1). Checked for a Bevy `generate addressability` candidate; none exists because this pack has no gait-anchored in-place ring, so Bevy 0.19.0 is recorded not-evaluated rather than failed. Re-ran the `--prune-constant-tracks` trial on `Humanoid@WallClimbUp.fbx` (source not modified; bounded by open issue #401, verified open 2026-08-21). The retained Unity 6000.5.8f1 headless probe (2026-08-17) was not rerun because the source is byte-identical; it keeps its original date and attribution.
+
+### Current evaluator: AnimSmith 0.7.0 (2026-08-26)
+
+The unchanged corpus was rerun with `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16.
+
+| Retained external evidence | SHA-256 | Result |
+|---|---|---|
+| Source inventory | `3b7d199c5d19e2b593baf06053bc73ef6e456f1ea39394952cc3b37178141e26` | 77 FBXs; source unchanged |
+| Exhaustive baseline | `22c29dc1d8853df56bd94ba9e627fda7db8875efd328729852b5a45d26b3ccf5` | 77/77 complete |
+| Declared contracts | `3729e12c28b88237c8f0291e55047f4d0df81d079c744122125f8e1700776d24` | 75 files; 34 pass / 41 fail |
+| Remediation | `ca0117478e6f32f04bc27512f20769f551908bbf04cc1e1a056a3810e680d550` | Pruning candidate completed and verified |
+| 0.7 supplemental projections | `3b3aa46ff91710d16b1a916e026f70d3dde3187e1417f082cba97603bc045ecd` | Addressability V1 + rich V2; exact-profile advice available |
+
+The new projections do not evaluate ledge topology, contacts, root-motion extraction in an engine, retarget deformation, or visual continuity.
 
 ### Evaluator currency: AnimSmith 0.4.1
 

@@ -4,7 +4,7 @@
 >
 > Evidence status: **partial** — eight constituent manifests, all 28 pairwise shared-file comparisons, and an eight-pack Unity project with retained contextual and melee probe phases are recorded; 15 listed constituents and visual acceptance are absent.
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 
@@ -201,6 +201,14 @@ The eight-pack rollup and new melee evaluations used AnimSmith 0.3.0 at revision
 The gait-only refresh used the pre-release 0.3.1 code at revision `674396f0f53b10c4344e7315a5756fe5ef71b469`; its binary identified as `animsmith 0.3.0 (v0.3.0-39-g674396f)` and has SHA-256 `7744b71580e04d80f9e5738efce76e0295323ccb3150fa57b0ad9b37c5ff1513`. The later 0.3.1 release commit changes version metadata, example assets, and one fixture test, not transform/core source. The combined refresh summary SHA-256 is `118116c9173df4e3e782cdfe3b712deb9fb14cec23c8e0e75cd484e8156d7f4b`; pack command-result SHA-256 values are 1-Handed `6f8717ec84797cbb89d830e7098baf529fdc6f37eb1b877775a0f6c5d514c5d6`, 2-Handed `65d6a098d67478e6ce4af1c758e48b3b737e96b10a8df5e5444f861147cfcb5e`, and Dual Swords `16d31a27a961180154afc30613e1ab3e5e4a7cdb8aab94238861947c8e819a15`. Baseline, contract, manifest, Unity, and non-gait remediation evidence remain tied to their earlier recorded revisions.
 
 Rebuild the namespaced manifest, verify all pairwise overlaps, validate its schema, then reconstruct the eight authorized Unity deliveries outside the repository and run the retained probes. Re-run constituent contracts when their source, evaluator, declared policy, or target runtime changes. To reproduce the gait refresh, select only each new melee manifest's 24 in-place walk/run/crouch ring members, write new GLBs, and rerun inspect, measure, lint, diff, and fix dry-run while retaining every exit code.
+
+### Current evaluator: AnimSmith 0.7.0 (2026-08-26)
+
+Every one of the eight evaluated constituents was re-inventoried or reconciled and rerun under `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16. The constituent appendices bind their individual baseline, contract, remediation, manifest, and supplemental-projection digests.
+
+All 159 current GLB remediation candidates emitted immutable addressability V1 and Bevy revision-3 rich addressability V2 with 64-bit target UUIDs. Representative Unity Humanoid revision-1, Unreal revision-2, and Godot revision-2 advice projections were available for every constituent. This adds sealed addressability and version-pinned settings evidence only; it does not supersede the retained Unity import observations or fill the Unreal/Godot/Bevy execution, retarget, visual, contact, gameplay, or artistic gates.
+
+The collection is still partial at eight of 23 constituents. Source inventories are unchanged, so the historical 28 pairwise shared-path comparisons remain relevant as byte-identity observations. A new comparison helper run that accidentally targeted a directory above the Basic Locomotion FBXs returned zero files; it was rejected and is not evidence.
 
 ### Evaluator currency: AnimSmith 0.4.1
 

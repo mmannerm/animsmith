@@ -2,11 +2,11 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — AnimSmith 0.4.0 analysis, a retained Unity probe, and 0.4.0 advice-only profiles for Unity/Unreal/Godot/Bevy; no target-character, visual-blend, or new-candidate engine pass.
+> Evaluation completeness: **partial** — complete AnimSmith 0.7.0 baseline, contracts, remediation, addressability, and bounded advice plus a retained Unity probe; no target-character, visual-blend, or current candidate engine pass.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 >
@@ -119,9 +119,13 @@ Best fit: grounded third-person controllers needing broad locomotion, turns, and
 
 Caveats: loop polish, phase/root ownership, retargeting, weapon layers, and contacts remain project work; incomplete for traversal, combat, reaction/death, first-person, or paired-interaction systems. Cross-pack compatibility remains untested.
 
+## AnimSmith 0.7.0 refresh (2026-08-26)
+
+Exact `v0.7.0` output v17 / measurements v16 reproduced the 179-FBX baseline and 177 contracts (58 pass / 119 fail). The 39 verified candidates emitted addressability V1 plus Bevy rich V2. Engine advice does not prove execution, retargeting, visuals, or gameplay.
+
 ## Evidence status
 
-The evaluation covers all 177 motion FBXs with AnimSmith 0.4.0 (tag v0.4.0, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`). Source identity is unchanged from the published 0.3.0 pass — an evaluator-only refresh; the mechanical baseline (24,186 constant-track notes, 36 time-monotonic errors) reproduces exactly. Loop-seam scoring is now more honest: 111/177 files are seam-applicable, and of those 84 completed measurement while 93 are recorded not-evaluated rather than pass/fail. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) defines what the claims mean; details are in the [evidence appendix](protofactor-basic-locomotion-evidence.md).
+Current evidence is the exact 0.7.0 rerun above; byte-identical 0.3/0.4 and retained Unity evidence remain historical. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-basic-locomotion-evidence.md).
 
 ## Sources
 

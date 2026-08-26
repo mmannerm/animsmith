@@ -4,7 +4,7 @@
 >
 > Evidence status: **partial** — exhaustive file and AnimSmith 0.4.0 coverage, a retained Unity 6000.5.8f1 headless probe, 0.4.0 advice-only engine profiles for Unity/Unreal/Godot/Bevy now corrected by a direct Unity 6000.5.8f1 observation of import-advice root-lock declarations, and a headless Unity glTFast import of all 134 collection-wide gait-anchored GLB candidates (including this pack's 24); target-character visual acceptance and Humanoid retarget of the new candidates remain unevaluated.
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
 > Report format: **1**
 
@@ -544,6 +544,20 @@ Observed result: package import exit 0 and probe exit 0. Unity exposed 177 human
 | AnimSmith binary (0.3.0, historical) | Exact 0.3.0 evaluator executable | SHA-256 `a273f260d118de7de20e83d5c72c009540a63d63af352a4a6dd3cf97e62fbd5d` |
 | AnimSmith binary (0.4.0, current) | Exact 0.4.0 evaluator executable, tag `v0.4.0`, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e` | SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6` |
 | `evidence/animsmith-0.4.0/` | 0.4.0 baseline, contract, remediation, and engine-profile command results, argv, exits, and evidence paths (parallel structure to the 0.3.0 tree above); specific per-file digests were not re-captured in this appendix | Not individually re-hashed here; see the 0.4.0 command reproduction above |
+
+### Current evaluator: AnimSmith 0.7.0 (2026-08-26)
+
+The same source corpus was re-inventoried and rerun with `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16. Historical evidence above keeps its original attribution.
+
+| Retained external evidence | SHA-256 | Result |
+|---|---|---|
+| Source inventory | `c6cc4d541fa2cb8e4f3e14c283d5b925f83957db35bfa079309f250cdaf101ba` | 179 FBXs; source unchanged |
+| Exhaustive baseline command envelope | `723ca37c489d34d525ab5c9ea681508cb273f5886da338c1aa9dfc6d79d74b2b` | 179 inspected/measured; prior findings reproduced |
+| Declared-contract command envelope | `6b643ead6c923997e8df740e81ef85d0772c10ab71a01301bd8d3e8e7cd77c1f` | 177 files; 58 pass / 119 fail |
+| Remediation command envelope | `a4ccc86f5932b1459102f382457f24ac2915d6d6d1d9a4b233002318eb9d6ba5` | 39/39 transforms completed and verified |
+| 0.7 supplemental projections | `1f804804fb8a623cd9c435c9e231da0a4ccf0a2287f1281b6b43f0098847aa95` | 39 addressability V1 + rich V2 pairs; Unity v1, Unreal v2, Godot v2 advice available |
+
+Rich Bevy addressability used the exact revision-3 `0.19.0` / `gltf-asset-loader` tuple with a declared bare extension-handler environment, animation feature enabled, animations loaded, and 64-bit target UUIDs. Advice used the preserved Unity Humanoid revision-1 settings vocabulary and the new bounded Unreal/Godot revision-2 projection vocabularies. These documents predict declared settings and sealed source addressability only; they do not execute an engine or prove runtime survival.
 
 ### Evaluator currency: AnimSmith 0.4.1
 
