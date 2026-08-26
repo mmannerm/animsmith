@@ -53,8 +53,8 @@ pub fn lookup_profile_v2(
 ///
 /// Verified defaults are inserted with [`ResolvedSettingOriginV2::ProfileDefault`].
 /// Explicit values always retain [`ResolvedSettingOriginV2::ExplicitConfig`].
-/// The initial Bevy revision-2 profile has only document-scoped descriptors;
-/// nonempty clip declarations therefore fail closed during this phase.
+/// Document settings are materialized during this phase. Clip declarations
+/// are retained and materialized once the authoritative clip names arrive.
 ///
 /// # Errors
 ///
@@ -116,18 +116,21 @@ pub fn resolve_static_v2(
         }
     }
 
+    let mut clip_overlays = BTreeMap::new();
     for (selector, settings) in clip_settings {
-        validate_map_v2(
+        let values = validate_map_v2(
             profile,
             settings,
             SettingScope::Clip,
-            SettingLocation::ClipSelector(selector),
+            SettingLocation::ClipSelector(selector.clone()),
         )?;
+        clip_overlays.insert(selector, values);
     }
 
     Ok(Some(StaticResolutionV2 {
         profile,
         document_settings,
+        clip_overlays,
     }))
 }
 
@@ -136,6 +139,7 @@ pub fn resolve_static_v2(
 pub struct StaticResolutionV2 {
     profile: &'static EngineProfileV2,
     document_settings: BTreeMap<SettingIdV2, ResolvedSettingV2>,
+    clip_overlays: BTreeMap<String, BTreeMap<SettingIdV2, SettingValueV2>>,
 }
 
 impl StaticResolutionV2 {
@@ -149,12 +153,17 @@ impl StaticResolutionV2 {
         &self.document_settings
     }
 
+    /// Validated selector-keyed clip setting overlays.
+    pub const fn clip_overlays(&self) -> &BTreeMap<String, BTreeMap<SettingIdV2, SettingValueV2>> {
+        &self.clip_overlays
+    }
+
     /// Validate the authoritative source format against the exact profile.
     ///
     /// # Errors
     ///
     /// Returns [`ResolutionErrorV2::UnacceptedInputFormat`] for any container
-    /// outside the profile's glTF JSON/GLB boundary.
+    /// outside the selected profile's exact input boundary.
     pub fn resolve_input(
         &self,
         source_format: SourceFormatV1,
@@ -169,6 +178,98 @@ impl StaticResolutionV2 {
             profile: self.profile,
             source_format,
             document_settings: self.document_settings.clone(),
+            clips: Vec::new(),
+        })
+    }
+
+    /// Resolve the authoritative input format and materialize clip settings.
+    ///
+    /// Selector overlays use the same lexical-glob then exact-name precedence
+    /// as the historical V1 resolver. Duplicate clip names remain distinct
+    /// rows in source order.
+    pub fn resolve_input_with_clips(
+        &self,
+        source_format: SourceFormatV1,
+        clip_names: &[String],
+    ) -> Result<ResolvedProfileSettingsV2, ResolutionErrorV2> {
+        if !self.profile.accepted_inputs().contains(&source_format) {
+            return Err(ResolutionErrorV2::UnacceptedInputFormat {
+                selection: self.profile.selection().clone(),
+                format: source_format,
+            });
+        }
+        // Profiles whose immutable vocabulary has no clip-scoped settings
+        // retain their historical empty clip-settings graph. Merely routing
+        // them through this source-aware entry point must not change Bevy's
+        // resolved-settings identity.
+        if !self
+            .profile
+            .setting_descriptors()
+            .iter()
+            .any(|descriptor| descriptor.scope() == SettingScope::Clip)
+        {
+            return self.resolve_input(source_format);
+        }
+        let mut clips = Vec::with_capacity(clip_names.len());
+        for clip_name in clip_names {
+            let mut values = BTreeMap::new();
+            for (selector, settings) in &self.clip_overlays {
+                if selector != clip_name && animsmith_core::config::glob_match(selector, clip_name)
+                {
+                    values.extend(settings.iter().map(|(id, value)| (*id, value.clone())));
+                }
+            }
+            if let Some(exact) = self.clip_overlays.get(clip_name) {
+                values.extend(exact.iter().map(|(id, value)| (*id, value.clone())));
+            }
+            let mut resolved = BTreeMap::new();
+            for descriptor in self.profile.setting_descriptors() {
+                if descriptor.scope() != SettingScope::Clip {
+                    continue;
+                }
+                if let Some(value) = values.get(&descriptor.id()) {
+                    resolved.insert(
+                        descriptor.id(),
+                        ResolvedSettingV2 {
+                            value: value.clone(),
+                            origin: ResolvedSettingOriginV2::ExplicitConfig,
+                        },
+                    );
+                } else {
+                    match descriptor.default() {
+                        SettingDefaultV2::RequiredExplicit => {
+                            return Err(ResolutionErrorV2::MissingRequiredSetting {
+                                setting: descriptor.id(),
+                                location: SettingLocation::ClipSelector(clip_name.clone()),
+                            });
+                        }
+                        SettingDefaultV2::Verified(value) => {
+                            resolved.insert(
+                                descriptor.id(),
+                                ResolvedSettingV2 {
+                                    value: value.clone(),
+                                    origin: ResolvedSettingOriginV2::ProfileDefault,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+            clips.push(ResolvedClipSettingsV2 {
+                clip_ordinal: clips.len() as u64,
+                clip_name: clip_name.clone(),
+                settings: resolved,
+            });
+        }
+        clips.sort_by(|left, right| {
+            (left.clip_name.as_str(), left.clip_ordinal)
+                .cmp(&(right.clip_name.as_str(), right.clip_ordinal))
+        });
+        Ok(ResolvedProfileSettingsV2 {
+            profile: self.profile,
+            source_format,
+            document_settings: self.document_settings.clone(),
+            clips,
         })
     }
 }
@@ -179,6 +280,7 @@ pub struct ResolvedProfileSettingsV2 {
     profile: &'static EngineProfileV2,
     source_format: SourceFormatV1,
     document_settings: BTreeMap<SettingIdV2, ResolvedSettingV2>,
+    clips: Vec<ResolvedClipSettingsV2>,
 }
 
 impl ResolvedProfileSettingsV2 {
@@ -195,6 +297,43 @@ impl ResolvedProfileSettingsV2 {
     /// Fully materialized document settings with explicit/default origins.
     pub const fn document_settings(&self) -> &BTreeMap<SettingIdV2, ResolvedSettingV2> {
         &self.document_settings
+    }
+
+    /// Fully materialized clip-scoped settings in lexical clip-name order.
+    pub fn clip_settings(&self) -> &[ResolvedClipSettingsV2] {
+        &self.clips
+    }
+
+    /// Look up one materialized clip by its source ordinal and exact name.
+    pub fn clip_setting(&self, ordinal: u64, name: &str) -> Option<&ResolvedClipSettingsV2> {
+        self.clips
+            .iter()
+            .find(|clip| clip.clip_ordinal == ordinal && clip.clip_name == name)
+    }
+}
+
+/// One materialized revision-2 clip settings row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedClipSettingsV2 {
+    clip_ordinal: u64,
+    clip_name: String,
+    settings: BTreeMap<SettingIdV2, ResolvedSettingV2>,
+}
+
+impl ResolvedClipSettingsV2 {
+    /// Original zero-based source clip ordinal.
+    pub const fn clip_ordinal(&self) -> u64 {
+        self.clip_ordinal
+    }
+
+    /// Exact source clip name.
+    pub fn clip_name(&self) -> &str {
+        &self.clip_name
+    }
+
+    /// Fully materialized settings for this clip.
+    pub const fn settings(&self) -> &BTreeMap<SettingIdV2, ResolvedSettingV2> {
+        &self.settings
     }
 }
 
@@ -286,7 +425,7 @@ fn validate_map_v2(
                 location: location.clone(),
             });
         }
-        if !value.matches_domain(descriptor.domain()) {
+        if !valid_setting_value_v2(profile, id, &value, descriptor.domain()) {
             return Err(ResolutionErrorV2::InvalidSettingValue {
                 setting: id,
                 expected: descriptor.domain(),
@@ -296,6 +435,50 @@ fn validate_map_v2(
         validated.insert(id, value);
     }
     Ok(validated)
+}
+
+fn valid_setting_value_v2(
+    profile: &EngineProfileV2,
+    id: SettingIdV2,
+    value: &SettingValueV2,
+    domain: SettingDomainV2,
+) -> bool {
+    if !value.matches_domain(domain) {
+        return false;
+    }
+    if id == SettingIdV2::RootMotionSource && !valid_source_transform_path_v2(value) {
+        return false;
+    }
+    if profile.selection().family() == "unity-generic"
+        && profile.selection().profile_revision() == 2
+    {
+        match (id, value) {
+            (
+                SettingIdV2::AnimationType,
+                SettingValueV2::AnimationType(crate::UnityAnimationTypeV2::Generic),
+            )
+            | (
+                SettingIdV2::AvatarSetup,
+                SettingValueV2::AvatarSetup(crate::UnityAvatarSetupV2::CreateFromThisModel),
+            )
+            | (SettingIdV2::ImportAnimation, SettingValueV2::Boolean(true)) => {}
+            (
+                SettingIdV2::AnimationType
+                | SettingIdV2::AvatarSetup
+                | SettingIdV2::ImportAnimation,
+                _,
+            ) => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+fn valid_source_transform_path_v2(value: &SettingValueV2) -> bool {
+    let SettingValueV2::SourceTransformPath(path) = value else {
+        return false;
+    };
+    animsmith_core::RawTransformPathV1::parse(path).is_ok()
 }
 
 /// Validate an engine declaration without inspecting an asset.

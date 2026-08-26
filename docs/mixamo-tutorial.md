@@ -239,8 +239,8 @@ sample values as vendor evidence:
 ```console
 $ animsmith measure --format json walking.glb
 {
-  "schema_version": 15,
-  "schema": "urn:animsmith:schema:output:15",
+  "schema_version": 17,
+  "schema": "urn:animsmith:schema:output:17",
   "tool": { "name": "animsmith", "version": "0.6.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",

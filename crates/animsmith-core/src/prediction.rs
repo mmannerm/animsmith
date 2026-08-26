@@ -82,10 +82,17 @@ pub const ENGINE_PREDICTION_V3_ID: &str = "urn:animsmith:engine-prediction:3";
 pub const ENGINE_PREDICTION_V4_ID: &str = "urn:animsmith:engine-prediction:4";
 /// Immutable track-inventory-bound per-check engine-prediction identity.
 pub const ENGINE_PREDICTION_V5_ID: &str = "urn:animsmith:engine-prediction:5";
+/// Immutable transform-path-and-intent-bound per-check engine-prediction identity.
+pub const ENGINE_PREDICTION_V6_ID: &str = "urn:animsmith:engine-prediction:6";
 /// Immutable result-bearing prediction-provenance V4 schema identity.
 pub const PREDICTION_PROVENANCE_V4_ID: &str = "urn:animsmith:prediction-provenance:4";
 /// Immutable track-inventory-bound prediction-provenance identity.
 pub const PREDICTION_PROVENANCE_V5_ID: &str = "urn:animsmith:prediction-provenance:5";
+/// Immutable transform-path-and-intent-bound prediction-provenance identity.
+pub const PREDICTION_PROVENANCE_V6_ID: &str = "urn:animsmith:prediction-provenance:6";
+/// Immutable project movement-intent contract consumed by provenance V6.
+pub const ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_ID: &str =
+    "urn:animsmith:engine-root-motion-project-intent:1";
 /// Immutable rule-input policy bound into prediction provenance V4.
 pub const PREDICTION_RULE_INPUTS_V1_ID: &str = "urn:animsmith:prediction-rule-inputs:1";
 
@@ -101,6 +108,21 @@ const CONSUMED_CONTRACTS_V5: [&str; 11] = [
     RAW_SCENE_ATTACHMENT_INVENTORY_V1_ID,
     PREDICTION_RULE_INPUTS_V1_ID,
     crate::RAW_ANIMATION_CHANNEL_INVENTORY_V1_ID,
+];
+const CONSUMED_CONTRACTS_V6: [&str; 13] = [
+    "urn:animsmith:schema:output:17",
+    MEASUREMENTS_SCHEMA_ID,
+    PREDICTION_PROVENANCE_V5_ID,
+    RAW_SOURCE_FACTS_V2_ID,
+    EXACT_SOURCE_TIMING_V1_ID,
+    DEPENDENCY_CLOSURE_V1_ID,
+    ENGINE_PROFILE_FACTS_V2_ID,
+    RESOLVED_ENGINE_SETTINGS_V3_ID,
+    RAW_SCENE_ATTACHMENT_INVENTORY_V1_ID,
+    PREDICTION_RULE_INPUTS_V1_ID,
+    crate::RAW_ANIMATION_CHANNEL_INVENTORY_V1_ID,
+    crate::RAW_TRANSFORM_PATH_INVENTORY_V1_ID,
+    ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_ID,
 ];
 /// Immutable identity of raw-source facts V2, composed from V1 and exact timing.
 pub const RAW_SOURCE_FACTS_V2_ID: &str = "urn:animsmith:raw-source-facts:2";
@@ -469,6 +491,12 @@ pub enum PredictionContractError {
     /// Raw scene/attachment availability contradicted source format or identity.
     #[error("raw scene/attachment provenance binding is inconsistent")]
     InvalidRawSceneAttachmentBinding,
+    /// Raw transform-path inventory failed its immutable semantic validation.
+    #[error("raw transform-path inventory is invalid")]
+    InvalidRawTransformPathInventory,
+    /// Effective root-motion project intent violated its immutable contract.
+    #[error("invalid root-motion project intent: {0}")]
+    InvalidProjectIntent(&'static str),
     /// A V4 basis reference did not resolve in the bound raw scene inventory.
     #[error("raw scene/attachment basis reference was not found in the bound inventory")]
     RawSceneAttachmentBasisReferenceNotFound,
@@ -1214,6 +1242,12 @@ fn raw_source_scalar(
                 .find(|row| u64::try_from(row.source_clip_index()).ok() == Some(*source_clip_index))
                 .ok_or(PredictionContractError::RawSourceRowNotFound)?;
             if let Some(value) = observation_metadata(row.source_name(), field)? {
+                return Ok(value);
+            }
+            if let Some(normalized_field) = field.strip_prefix("normalized_clip_index.")
+                && let Some(value) =
+                    observation_metadata(row.normalized_clip_index(), normalized_field)?
+            {
                 return Ok(value);
             }
             match field {
@@ -8818,6 +8852,15 @@ pub enum RootMotionProjectOwnerV1 {
     Animation,
 }
 
+impl From<crate::MovementOwner> for RootMotionProjectOwnerV1 {
+    fn from(value: crate::MovementOwner) -> Self {
+        match value {
+            crate::MovementOwner::Gameplay => Self::Gameplay,
+            crate::MovementOwner::Animation => Self::Animation,
+        }
+    }
+}
+
 /// Importer routing disposition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -12556,6 +12599,15 @@ impl PredictionProvenanceV5 {
     pub(crate) fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
         self.base.retained_text_bytes()
     }
+    fn provenance_rows(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "V5 aggregate provenance rows",
+            [
+                self.base.retained_provenance_rows()?,
+                self.raw_animation_channels.rows().len(),
+            ],
+        )
+    }
     fn computed_identity(&self) -> InputIdentity {
         let mut encoder = CanonicalEncoder::new("animsmith-prediction-provenance-v5");
         encoder.field("schema");
@@ -12661,6 +12713,814 @@ impl EnginePredictionV5 {
     }
 }
 
+/// Maximum clip-intent rows retained by one V1 root-motion project contract.
+pub const ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS: usize = 4_096;
+
+/// Loader-established source-to-normalized clip mapping state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineRootMotionClipMappingStateV1 {
+    /// The normalized clip index and exact name are retained.
+    Observed,
+    /// The loader proved that this source row has no normalized clip.
+    ProvenAbsent,
+    /// The loader could not establish the mapping.
+    Unavailable,
+}
+
+/// Effective movement ownership for one source clip.
+///
+/// `normalized_clip_name` is the exact normalized-document name used to resolve
+/// [`crate::Config`] and the measurements map. `source_clip_index` remains the
+/// stable source ordinal used by prediction scopes; duplicate normalized names
+/// are retained rather than silently selecting one measurement row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineRootMotionClipIntentV1 {
+    source_clip_index: u64,
+    normalized_clip_mapping_state: EngineRootMotionClipMappingStateV1,
+    normalized_clip_index: Option<u64>,
+    normalized_clip_name: Option<String>,
+    movement_owner_xz: Option<RootMotionProjectOwnerV1>,
+    movement_owner_y: Option<RootMotionProjectOwnerV1>,
+    movement_owner_yaw: Option<RootMotionProjectOwnerV1>,
+}
+
+/// Unindexed effective clip intent consumed by the bounded streaming builder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineRootMotionClipIntentInputV1 {
+    normalized_clip_mapping_state: EngineRootMotionClipMappingStateV1,
+    normalized_clip_index: Option<u64>,
+    normalized_clip_name: Option<String>,
+    movement_owner_xz: Option<RootMotionProjectOwnerV1>,
+    movement_owner_y: Option<RootMotionProjectOwnerV1>,
+    movement_owner_yaw: Option<RootMotionProjectOwnerV1>,
+}
+
+impl EngineRootMotionClipIntentInputV1 {
+    /// Construct one effective normalized-clip intent input.
+    pub fn new(
+        normalized_clip_mapping_state: EngineRootMotionClipMappingStateV1,
+        normalized_clip_index: Option<u64>,
+        normalized_clip_name: Option<String>,
+        movement_owner_xz: Option<RootMotionProjectOwnerV1>,
+        movement_owner_y: Option<RootMotionProjectOwnerV1>,
+        movement_owner_yaw: Option<RootMotionProjectOwnerV1>,
+    ) -> Self {
+        Self {
+            normalized_clip_mapping_state,
+            normalized_clip_index,
+            normalized_clip_name,
+            movement_owner_xz,
+            movement_owner_y,
+            movement_owner_yaw,
+        }
+    }
+}
+
+impl EngineRootMotionClipIntentV1 {
+    /// Construct one bounded source-ordinal/effective-intent row.
+    pub fn new(
+        source_clip_index: u64,
+        normalized_clip_mapping_state: EngineRootMotionClipMappingStateV1,
+        normalized_clip_index: Option<u64>,
+        normalized_clip_name: Option<String>,
+        movement_owner_xz: Option<RootMotionProjectOwnerV1>,
+        movement_owner_y: Option<RootMotionProjectOwnerV1>,
+        movement_owner_yaw: Option<RootMotionProjectOwnerV1>,
+    ) -> Result<Self, PredictionContractError> {
+        let row = Self {
+            source_clip_index,
+            normalized_clip_mapping_state,
+            normalized_clip_index,
+            normalized_clip_name: normalized_clip_name
+                .map(|name| bounded_string("root-motion intent normalized clip name", name))
+                .transpose()?,
+            movement_owner_xz,
+            movement_owner_y,
+            movement_owner_yaw,
+        };
+        row.validate()?;
+        Ok(row)
+    }
+
+    /// Zero-based source clip ordinal used by prediction scopes.
+    pub const fn source_clip_index(&self) -> u64 {
+        self.source_clip_index
+    }
+
+    /// Same-load normalized document clip ordinal, when the loader established
+    /// one for this source clip.
+    pub const fn normalized_clip_index(&self) -> Option<u64> {
+        self.normalized_clip_index
+    }
+
+    /// Loader-established state of the source-to-normalized clip mapping.
+    pub const fn normalized_clip_mapping_state(&self) -> EngineRootMotionClipMappingStateV1 {
+        self.normalized_clip_mapping_state
+    }
+
+    /// Exact normalized-document clip name used for config and measurements.
+    pub fn normalized_clip_name(&self) -> Option<&str> {
+        self.normalized_clip_name.as_deref()
+    }
+
+    /// Effective horizontal XZ movement owner.
+    pub const fn movement_owner_xz(&self) -> Option<RootMotionProjectOwnerV1> {
+        self.movement_owner_xz
+    }
+
+    /// Effective vertical Y movement owner.
+    pub const fn movement_owner_y(&self) -> Option<RootMotionProjectOwnerV1> {
+        self.movement_owner_y
+    }
+
+    /// Effective yaw movement owner.
+    pub const fn movement_owner_yaw(&self) -> Option<RootMotionProjectOwnerV1> {
+        self.movement_owner_yaw
+    }
+
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        let observed =
+            self.normalized_clip_mapping_state == EngineRootMotionClipMappingStateV1::Observed;
+        if observed != self.normalized_clip_index.is_some()
+            || observed != self.normalized_clip_name.is_some()
+        {
+            return Err(PredictionContractError::InvalidProjectIntent(
+                "normalized clip index and name must be present together",
+            ));
+        }
+        if let Some(name) = &self.normalized_clip_name {
+            bounded_string("root-motion intent normalized clip name", name)?;
+        } else if self.movement_owner_xz.is_some()
+            || self.movement_owner_y.is_some()
+            || self.movement_owner_yaw.is_some()
+        {
+            return Err(PredictionContractError::InvalidProjectIntent(
+                "an unmapped source clip cannot declare movement ownership",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Coverage of the effective source-clip intent inventory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineRootMotionProjectIntentCoverageV1 {
+    /// Every source clip and its effective intent are retained.
+    Complete,
+    /// Only the canonical source-order prefix is retained.
+    PartialProjectionBudgetExceeded,
+}
+
+/// A bounded exact count or the first witness beyond its domain cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum EngineRootMotionProjectIntentCountV1 {
+    /// The exact count was established within the relevant cap.
+    Exact {
+        /// Exact observed count.
+        count: u64,
+    },
+    /// Counting reached the first element after the relevant cap.
+    NPlusOne,
+}
+
+impl EngineRootMotionProjectIntentCountV1 {
+    /// Construct one exact bounded count.
+    pub fn exact(count: usize, limit: usize) -> Result<Self, PredictionContractError> {
+        if count > limit {
+            return Err(PredictionContractError::InvalidProjectIntent(
+                "exact work count exceeds its V1 bound",
+            ));
+        }
+        Ok(Self::Exact {
+            count: count as u64,
+        })
+    }
+
+    /// Whether this count carries an N+1 overflow witness.
+    pub const fn overflowed(self) -> bool {
+        matches!(self, Self::NPlusOne)
+    }
+}
+
+fn deserialize_project_intent_clips<'de, D>(
+    deserializer: D,
+) -> Result<Vec<EngineRootMotionClipIntentV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let rows =
+        deserialize_capped_sequence(deserializer, ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS)?;
+    if rows.overflowed {
+        return Err(D::Error::custom(
+            "root-motion project intent exceeds the V1 clip bound",
+        ));
+    }
+    Ok(rows.values)
+}
+
+/// Bounded effective project intent consumed by root-motion prediction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineRootMotionProjectIntentV1 {
+    schema: String,
+    resolved_root_bone_index: Option<u64>,
+    clip_coverage: EngineRootMotionProjectIntentCoverageV1,
+    observed_source_clips: EngineRootMotionProjectIntentCountV1,
+    declared_axis_candidates: EngineRootMotionProjectIntentCountV1,
+    unmapped_declared_axis_candidates: EngineRootMotionProjectIntentCountV1,
+    #[serde(deserialize_with = "deserialize_project_intent_clips")]
+    clips: Vec<EngineRootMotionClipIntentV1>,
+}
+
+impl EngineRootMotionProjectIntentV1 {
+    /// Scan effective clips once, retaining only the canonical V1 prefix while
+    /// deriving exact or N+1 clip and declared-axis work counts.
+    pub fn from_clips(
+        clips: impl IntoIterator<Item = EngineRootMotionClipIntentInputV1>,
+    ) -> Result<Self, PredictionContractError> {
+        Self::from_clips_and_unmapped(
+            clips,
+            std::iter::empty::<[Option<RootMotionProjectOwnerV1>; 3]>(),
+        )
+    }
+
+    /// Scan source rows and independently retained document declarations which
+    /// could not be mapped to any source row. This keeps declared work from
+    /// disappearing merely because loader mapping evidence is unavailable.
+    pub fn from_clips_and_unmapped(
+        clips: impl IntoIterator<Item = EngineRootMotionClipIntentInputV1>,
+        unmapped_declarations: impl IntoIterator<Item = [Option<RootMotionProjectOwnerV1>; 3]>,
+    ) -> Result<Self, PredictionContractError> {
+        Self::from_clips_with_root_and_unmapped(None, clips, unmapped_declarations)
+    }
+
+    /// Scan source rows while retaining the resolved Root role identity.
+    pub fn from_clips_with_root_and_unmapped(
+        resolved_root_bone_index: Option<u64>,
+        clips: impl IntoIterator<Item = EngineRootMotionClipIntentInputV1>,
+        unmapped_declarations: impl IntoIterator<Item = [Option<RootMotionProjectOwnerV1>; 3]>,
+    ) -> Result<Self, PredictionContractError> {
+        let mut retained = Vec::new();
+        let mut observed_source_clips = 0usize;
+        let mut source_overflow = false;
+        let mut declared_axis_candidates = 0usize;
+        let mut candidate_overflow = false;
+        let mut unmapped_candidates = 0usize;
+        let mut unmapped_overflow = false;
+        for clip in clips {
+            if observed_source_clips < ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS {
+                retained.push(EngineRootMotionClipIntentV1::new(
+                    observed_source_clips as u64,
+                    clip.normalized_clip_mapping_state,
+                    clip.normalized_clip_index,
+                    clip.normalized_clip_name,
+                    clip.movement_owner_xz,
+                    clip.movement_owner_y,
+                    clip.movement_owner_yaw,
+                )?);
+                observed_source_clips += 1;
+            } else {
+                source_overflow = true;
+            }
+            if !candidate_overflow {
+                let candidates = usize::from(clip.movement_owner_xz.is_some())
+                    + usize::from(clip.movement_owner_y.is_some())
+                    + usize::from(clip.movement_owner_yaw.is_some());
+                match declared_axis_candidates.checked_add(candidates) {
+                    Some(total) if total <= PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE => {
+                        declared_axis_candidates = total;
+                    }
+                    _ => candidate_overflow = true,
+                }
+            }
+        }
+        for owners in unmapped_declarations {
+            let candidates = owners.into_iter().filter(Option::is_some).count();
+            if !unmapped_overflow {
+                match unmapped_candidates.checked_add(candidates) {
+                    Some(total) if total <= PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE => {
+                        unmapped_candidates = total;
+                    }
+                    _ => unmapped_overflow = true,
+                }
+            }
+            if !candidate_overflow {
+                match declared_axis_candidates.checked_add(candidates) {
+                    Some(total) if total <= PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE => {
+                        declared_axis_candidates = total;
+                    }
+                    _ => candidate_overflow = true,
+                }
+            }
+        }
+        let clip_coverage = if source_overflow {
+            EngineRootMotionProjectIntentCoverageV1::PartialProjectionBudgetExceeded
+        } else {
+            EngineRootMotionProjectIntentCoverageV1::Complete
+        };
+        let observed_source_clips = if source_overflow {
+            EngineRootMotionProjectIntentCountV1::NPlusOne
+        } else {
+            EngineRootMotionProjectIntentCountV1::exact(
+                observed_source_clips,
+                ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS,
+            )?
+        };
+        let declared_axis_candidates = if candidate_overflow {
+            EngineRootMotionProjectIntentCountV1::NPlusOne
+        } else {
+            EngineRootMotionProjectIntentCountV1::exact(
+                declared_axis_candidates,
+                PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE,
+            )?
+        };
+        let unmapped_declared_axis_candidates = if unmapped_overflow {
+            EngineRootMotionProjectIntentCountV1::NPlusOne
+        } else {
+            EngineRootMotionProjectIntentCountV1::exact(
+                unmapped_candidates,
+                PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE,
+            )?
+        };
+        Self::new_with_root(
+            resolved_root_bone_index,
+            retained,
+            clip_coverage,
+            observed_source_clips,
+            declared_axis_candidates,
+            unmapped_declared_axis_candidates,
+        )
+    }
+
+    /// Construct canonical source-ordinal movement intent.
+    pub fn new(
+        clips: Vec<EngineRootMotionClipIntentV1>,
+        clip_coverage: EngineRootMotionProjectIntentCoverageV1,
+        observed_source_clips: EngineRootMotionProjectIntentCountV1,
+        declared_axis_candidates: EngineRootMotionProjectIntentCountV1,
+        unmapped_declared_axis_candidates: EngineRootMotionProjectIntentCountV1,
+    ) -> Result<Self, PredictionContractError> {
+        Self::new_with_root(
+            None,
+            clips,
+            clip_coverage,
+            observed_source_clips,
+            declared_axis_candidates,
+            unmapped_declared_axis_candidates,
+        )
+    }
+
+    /// Strict constructor retaining the resolved Root role identity.
+    pub fn new_with_root(
+        resolved_root_bone_index: Option<u64>,
+        mut clips: Vec<EngineRootMotionClipIntentV1>,
+        clip_coverage: EngineRootMotionProjectIntentCoverageV1,
+        observed_source_clips: EngineRootMotionProjectIntentCountV1,
+        declared_axis_candidates: EngineRootMotionProjectIntentCountV1,
+        unmapped_declared_axis_candidates: EngineRootMotionProjectIntentCountV1,
+    ) -> Result<Self, PredictionContractError> {
+        clips.sort_by_key(EngineRootMotionClipIntentV1::source_clip_index);
+        let intent = Self {
+            schema: ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_ID.to_owned(),
+            resolved_root_bone_index,
+            clip_coverage,
+            observed_source_clips,
+            declared_axis_candidates,
+            unmapped_declared_axis_candidates,
+            clips,
+        };
+        intent.validate()?;
+        Ok(intent)
+    }
+
+    /// Immutable project-intent contract id.
+    pub fn contract_id(&self) -> &str {
+        &self.schema
+    }
+
+    /// Resolved Root role bone index captured before measurement derivation.
+    pub const fn resolved_root_bone_index(&self) -> Option<u64> {
+        self.resolved_root_bone_index
+    }
+
+    /// Coverage of the retained canonical source-clip prefix.
+    pub const fn clip_coverage(&self) -> EngineRootMotionProjectIntentCoverageV1 {
+        self.clip_coverage
+    }
+
+    /// Exact source-clip count or its N+1 witness.
+    pub const fn observed_source_clips(&self) -> EngineRootMotionProjectIntentCountV1 {
+        self.observed_source_clips
+    }
+
+    /// Exact declared-axis candidate count or its N+1 witness.
+    pub const fn declared_axis_candidates(&self) -> EngineRootMotionProjectIntentCountV1 {
+        self.declared_axis_candidates
+    }
+
+    /// Declared document axes which could not be bound to a source row.
+    pub const fn unmapped_declared_axis_candidates(&self) -> EngineRootMotionProjectIntentCountV1 {
+        self.unmapped_declared_axis_candidates
+    }
+
+    /// Canonical rows ordered by source clip ordinal.
+    pub fn clips(&self) -> &[EngineRootMotionClipIntentV1] {
+        &self.clips
+    }
+
+    /// Validate schema identity, row bounds, and canonical source ordering.
+    pub fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.schema != ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "root_motion_project_intent.schema",
+                expected: ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_ID,
+                found: self.schema.clone(),
+            });
+        }
+        if self.clips.len() > ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS {
+            return Err(PredictionContractError::InvalidProjectIntent(
+                "too many source clip rows",
+            ));
+        }
+        if self
+            .resolved_root_bone_index
+            .is_some_and(|index| index >= ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS as u64)
+        {
+            return Err(PredictionContractError::InvalidProjectIntent(
+                "resolved Root bone index exceeds its V1 bound",
+            ));
+        }
+        for clip in &self.clips {
+            clip.validate()?;
+        }
+        let mut normalized_indices = BTreeSet::new();
+        for clip in &self.clips {
+            if let Some(index) = clip.normalized_clip_index {
+                if index >= ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS as u64 {
+                    return Err(PredictionContractError::InvalidProjectIntent(
+                        "normalized clip index exceeds its V1 bound",
+                    ));
+                }
+                if !normalized_indices.insert(index) {
+                    return Err(PredictionContractError::InvalidProjectIntent(
+                        "normalized clip index is duplicated",
+                    ));
+                }
+            }
+        }
+        if self
+            .clips
+            .iter()
+            .enumerate()
+            .any(|(index, clip)| u64::try_from(index).ok() != Some(clip.source_clip_index))
+        {
+            return Err(PredictionContractError::NonCanonicalOrder(
+                "root-motion project intent clips",
+            ));
+        }
+        match (self.clip_coverage, self.observed_source_clips) {
+            (
+                EngineRootMotionProjectIntentCoverageV1::Complete,
+                EngineRootMotionProjectIntentCountV1::Exact { count },
+            ) if usize::try_from(count).ok() == Some(self.clips.len()) => {}
+            (
+                EngineRootMotionProjectIntentCoverageV1::PartialProjectionBudgetExceeded,
+                EngineRootMotionProjectIntentCountV1::NPlusOne,
+            ) if self.clips.len() == ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS => {}
+            _ => {
+                return Err(PredictionContractError::InvalidProjectIntent(
+                    "clip coverage, count, and retained prefix disagree",
+                ));
+            }
+        }
+        let retained_candidates = self.clips.iter().try_fold(0usize, |total, clip| {
+            total
+                .checked_add(usize::from(clip.movement_owner_xz.is_some()))
+                .and_then(|total| total.checked_add(usize::from(clip.movement_owner_y.is_some())))
+                .and_then(|total| total.checked_add(usize::from(clip.movement_owner_yaw.is_some())))
+                .ok_or(PredictionContractError::ArithmeticOverflow(
+                    "root-motion intent candidates",
+                ))
+        })?;
+        let retained_and_unmapped_candidates = match self.unmapped_declared_axis_candidates {
+            EngineRootMotionProjectIntentCountV1::Exact { count } => retained_candidates
+                .checked_add(usize::try_from(count).map_err(|_| {
+                    PredictionContractError::InvalidProjectIntent(
+                        "unmapped declared-axis count is not representable",
+                    )
+                })?)
+                .ok_or(PredictionContractError::ArithmeticOverflow(
+                    "root-motion total intent candidates",
+                ))?,
+            EngineRootMotionProjectIntentCountV1::NPlusOne => {
+                PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE.saturating_add(1)
+            }
+        };
+        match self.declared_axis_candidates {
+            EngineRootMotionProjectIntentCountV1::Exact { count }
+                if usize::try_from(count).is_ok_and(|count| {
+                    count <= PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE
+                        && if self.clip_coverage
+                            == EngineRootMotionProjectIntentCoverageV1::Complete
+                        {
+                            count == retained_and_unmapped_candidates
+                        } else {
+                            count >= retained_and_unmapped_candidates
+                        }
+                }) => {}
+            EngineRootMotionProjectIntentCountV1::NPlusOne => {}
+            _ => {
+                return Err(PredictionContractError::InvalidProjectIntent(
+                    "declared-axis candidate count contradicts retained intent",
+                ));
+            }
+        }
+        match self.unmapped_declared_axis_candidates {
+            EngineRootMotionProjectIntentCountV1::Exact { count }
+                if count <= PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE as u64 => {}
+            EngineRootMotionProjectIntentCountV1::NPlusOne => {}
+            _ => {
+                return Err(PredictionContractError::InvalidProjectIntent(
+                    "unmapped declared-axis candidate count exceeds its V1 bound",
+                ));
+            }
+        }
+        let text = self.retained_text_bytes()?;
+        if text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+            return Err(PredictionContractError::TooMuchRetainedText {
+                found: text,
+                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+            });
+        }
+        Ok(())
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "root-motion project intent retained text",
+            self.clips
+                .iter()
+                .map(|clip| clip.normalized_clip_name.as_ref().map_or(0, String::len)),
+        )
+    }
+}
+
+/// Domain-separated identity of one V6 provenance record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PredictionProvenanceIdentityV6(InputIdentity);
+
+impl PredictionProvenanceIdentityV6 {
+    /// SHA-256 and canonical-preimage byte count.
+    pub const fn input_identity(&self) -> &InputIdentity {
+        &self.0
+    }
+}
+
+/// Successor provenance binding immutable V5 authority to raw transform paths
+/// and the effective per-clip movement ownership needed by root-motion rules.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PredictionProvenanceV6 {
+    schema: String,
+    identity: PredictionProvenanceIdentityV6,
+    base: PredictionProvenanceV5,
+    raw_transform_paths: crate::RawTransformPathInventoryV1,
+    root_motion_project_intent: EngineRootMotionProjectIntentV1,
+    consumed_contracts: [String; 13],
+}
+
+impl PredictionProvenanceV6 {
+    /// Bind immutable V5 authority to same-load transform paths and project intent.
+    pub fn new(
+        base: PredictionProvenanceV5,
+        raw_transform_paths: crate::RawTransformPathInventoryV1,
+        root_motion_project_intent: EngineRootMotionProjectIntentV1,
+    ) -> Result<Self, PredictionContractError> {
+        let mut value = Self {
+            schema: PREDICTION_PROVENANCE_V6_ID.to_owned(),
+            identity: PredictionProvenanceIdentityV6(InputIdentity::from_bytes(&[])),
+            base,
+            raw_transform_paths,
+            root_motion_project_intent,
+            consumed_contracts: CONSUMED_CONTRACTS_V6.map(str::to_owned),
+        };
+        value.identity = PredictionProvenanceIdentityV6(value.computed_identity());
+        value.validate()?;
+        Ok(value)
+    }
+
+    /// Immutable V6 contract id.
+    pub fn contract_id(&self) -> &str {
+        &self.schema
+    }
+
+    /// Canonical V6 identity.
+    pub const fn identity(&self) -> &PredictionProvenanceIdentityV6 {
+        &self.identity
+    }
+
+    /// Immutable V5 authority retained without reinterpretation.
+    pub const fn base(&self) -> &PredictionProvenanceV5 {
+        &self.base
+    }
+
+    /// Same-load raw transform-path inventory.
+    pub const fn raw_transform_paths(&self) -> &crate::RawTransformPathInventoryV1 {
+        &self.raw_transform_paths
+    }
+
+    /// Effective per-source-clip project movement intent.
+    pub const fn root_motion_project_intent(&self) -> &EngineRootMotionProjectIntentV1 {
+        &self.root_motion_project_intent
+    }
+
+    /// Validate V6's immutable links, aggregate bounds, and identity.
+    pub fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.schema != PREDICTION_PROVENANCE_V6_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "provenance.schema",
+                expected: PREDICTION_PROVENANCE_V6_ID,
+                found: self.schema.clone(),
+            });
+        }
+        if self.consumed_contracts != CONSUMED_CONTRACTS_V6 {
+            return Err(PredictionContractError::InvalidConsumedContracts);
+        }
+        self.base.validate()?;
+        self.raw_transform_paths
+            .validate()
+            .map_err(|_| PredictionContractError::InvalidRawTransformPathInventory)?;
+        self.root_motion_project_intent.validate()?;
+        if self.raw_transform_paths.primary_input()
+            != self.base.raw_animation_channels().primary_input()
+            || self.raw_transform_paths.source_format()
+                != self.base.raw_animation_channels().source_format()
+        {
+            return Err(PredictionContractError::PrimaryInputMismatch);
+        }
+        let rows = checked_sum(
+            "V6 aggregate provenance rows",
+            [
+                self.base.provenance_rows()?,
+                self.raw_transform_paths.rows().len(),
+                self.root_motion_project_intent.clips().len(),
+            ],
+        )?;
+        if rows > PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS {
+            return Err(PredictionContractError::TooManyAggregateProvenanceRows {
+                found: rows,
+                limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+            });
+        }
+        let text = self.retained_text_bytes()?;
+        if text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+            return Err(PredictionContractError::TooMuchRetainedText {
+                found: text,
+                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+            });
+        }
+        if self.identity.0 != self.computed_identity() {
+            return Err(PredictionContractError::IdentityMismatch {
+                contract: PREDICTION_PROVENANCE_V6_ID,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "V6 provenance retained text",
+            [
+                self.base.retained_text_bytes()?,
+                self.raw_transform_paths
+                    .retained_text_bytes()
+                    .map_err(|_| PredictionContractError::InvalidRawTransformPathInventory)?,
+                self.root_motion_project_intent.retained_text_bytes()?,
+            ],
+        )
+    }
+
+    fn computed_identity(&self) -> InputIdentity {
+        let mut encoder = CanonicalEncoder::new("animsmith-prediction-provenance-v6");
+        encoder.field("schema");
+        encoder.token(&self.schema);
+        encoder.field("base");
+        encoder.token(serde_json::to_string(&self.base).expect("V5 provenance serializes"));
+        encoder.field("raw_transform_paths");
+        encoder.token(
+            serde_json::to_string(&self.raw_transform_paths)
+                .expect("raw transform-path inventory serializes"),
+        );
+        encoder.field("root_motion_project_intent");
+        encoder.token(
+            serde_json::to_string(&self.root_motion_project_intent)
+                .expect("root-motion project intent serializes"),
+        );
+        encoder.field("consumed_contracts");
+        encoder.count(self.consumed_contracts.len());
+        for contract in &self.consumed_contracts {
+            encoder.token(contract);
+        }
+        encoder.identity()
+    }
+}
+
+/// V6 wrapper binding the unchanged V4 facet/result graph to provenance V6.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnginePredictionV6 {
+    schema: String,
+    provenance_identity: PredictionProvenanceIdentityV6,
+    prediction: EnginePredictionV4,
+}
+
+impl EnginePredictionV6 {
+    /// Bind an already validated V4 prediction to V6 provenance.
+    pub fn new(
+        provenance: &PredictionProvenanceV6,
+        prediction: EnginePredictionV4,
+    ) -> Result<Self, PredictionContractError> {
+        prediction.validate_against_provenance(provenance.base().base())?;
+        let value = Self {
+            schema: ENGINE_PREDICTION_V6_ID.to_owned(),
+            provenance_identity: provenance.identity().clone(),
+            prediction,
+        };
+        value.validate_against_provenance(provenance)?;
+        Ok(value)
+    }
+
+    /// Immutable V6 contract id.
+    pub fn contract_id(&self) -> &str {
+        &self.schema
+    }
+
+    /// Bound V6 provenance identity.
+    pub const fn provenance_identity(&self) -> &PredictionProvenanceIdentityV6 {
+        &self.provenance_identity
+    }
+
+    /// Canonical facets from the unchanged V4 graph.
+    pub fn facets(&self) -> &[EnginePredictionFacetV4] {
+        self.prediction.facets()
+    }
+
+    /// Immutable nested V4 result graph.
+    pub const fn base_prediction(&self) -> &EnginePredictionV4 {
+        &self.prediction
+    }
+
+    /// Whether required work was unavailable.
+    pub fn has_required_unavailable(&self) -> bool {
+        self.prediction.has_required_unavailable()
+    }
+
+    /// Aggregate basis-reference count.
+    pub fn basis_reference_count(&self) -> usize {
+        self.prediction.basis_reference_count()
+    }
+
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        self.prediction.retained_text_bytes()
+    }
+
+    /// Validate immutable V4 nesting and the V6 identity binding.
+    pub fn validate_against_provenance(
+        &self,
+        provenance: &PredictionProvenanceV6,
+    ) -> Result<(), PredictionContractError> {
+        if self.schema != ENGINE_PREDICTION_V6_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "prediction.schema",
+                expected: ENGINE_PREDICTION_V6_ID,
+                found: self.schema.clone(),
+            });
+        }
+        provenance.validate()?;
+        if &self.provenance_identity != provenance.identity() {
+            return Err(PredictionContractError::ProvenanceIdentityMismatch);
+        }
+        self.prediction
+            .validate_against_provenance(provenance.base().base())
+    }
+
+    pub(crate) fn validate_for_check(
+        &self,
+        check_id: &str,
+        evaluated_scopes: &[EvaluationScope],
+        gaps: &[CoverageGap],
+        findings: &[Finding],
+    ) -> Result<(), PredictionContractError> {
+        self.prediction
+            .validate_for_check(check_id, evaluated_scopes, gaps, findings)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -12692,6 +13552,64 @@ mod tests {
         )
         .expect("valid facet");
         EnginePredictionV1::new(test_identity(), vec![facet]).expect("valid prediction")
+    }
+
+    #[test]
+    fn root_motion_intent_builder_retains_a_canonical_prefix_and_n_plus_one_counts() {
+        let inputs = (0..=ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS).map(|index| {
+            EngineRootMotionClipIntentInputV1::new(
+                EngineRootMotionClipMappingStateV1::Observed,
+                Some(index as u64),
+                Some(format!("clip-{index}")),
+                Some(RootMotionProjectOwnerV1::Gameplay),
+                Some(RootMotionProjectOwnerV1::Animation),
+                None,
+            )
+        });
+        let intent = EngineRootMotionProjectIntentV1::from_clips(inputs).unwrap();
+
+        assert_eq!(
+            intent.clips().len(),
+            ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS
+        );
+        assert_eq!(
+            intent.clip_coverage(),
+            EngineRootMotionProjectIntentCoverageV1::PartialProjectionBudgetExceeded
+        );
+        assert_eq!(
+            intent.observed_source_clips(),
+            EngineRootMotionProjectIntentCountV1::NPlusOne
+        );
+        assert_eq!(
+            intent.declared_axis_candidates(),
+            EngineRootMotionProjectIntentCountV1::NPlusOne
+        );
+        assert_eq!(
+            intent.clips().last().unwrap().source_clip_index(),
+            (ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS - 1) as u64
+        );
+    }
+
+    #[test]
+    fn root_motion_intent_strict_decode_rejects_forged_complete_counts() {
+        let intent =
+            EngineRootMotionProjectIntentV1::from_clips([EngineRootMotionClipIntentInputV1::new(
+                EngineRootMotionClipMappingStateV1::Observed,
+                Some(0),
+                Some("idle".to_owned()),
+                Some(RootMotionProjectOwnerV1::Animation),
+                None,
+                None,
+            )])
+            .unwrap();
+        let mut wire = serde_json::to_value(intent).unwrap();
+        wire["observed_source_clips"]["count"] = json!(2);
+
+        let decoded: EngineRootMotionProjectIntentV1 = serde_json::from_value(wire).unwrap();
+        assert!(matches!(
+            decoded.validate(),
+            Err(PredictionContractError::InvalidProjectIntent(_))
+        ));
     }
 
     fn raw_binding_wire() -> serde_json::Value {

@@ -19,7 +19,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-const CURRENT_OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
+const CURRENT_OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:17";
+const OUTPUT_V16_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
 const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
 const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
@@ -28,7 +29,8 @@ const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
 const IMPORT_ADVICE_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:1";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
-const CURRENT_OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v16.schema.json");
+const CURRENT_OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v17.schema.json");
+const OUTPUT_V16_SCHEMA: &str = include_str!("../../../docs/schemas/output-v16.schema.json");
 const OUTPUT_V15_SCHEMA: &str = include_str!("../../../docs/schemas/output-v15.schema.json");
 const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
 const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
@@ -43,7 +45,7 @@ const IMPORT_ADVICE_SCHEMA: &str =
     include_str!("../../../docs/schemas/engine-import-advice-v1.schema.json");
 #[cfg(feature = "fbx")]
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
-const EXPECTED_CHECK_IDS: [&str; 30] = [
+const EXPECTED_CHECK_IDS: [&str; 31] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -74,6 +76,7 @@ const EXPECTED_CHECK_IDS: [&str; 30] = [
     "engine-clip-boundary",
     "engine-unit-scale",
     "engine-track-support",
+    "engine-root-motion",
 ];
 
 fn output_validator() -> jsonschema::Validator {
@@ -116,7 +119,39 @@ fn assert_output_schema_valid(instance: &Value) {
         .collect();
     assert!(
         errors.is_empty(),
-        "output must satisfy the published v16 schemas:\n{}\ninstance: {instance:#}",
+        "output must satisfy the published v17 schemas:\n{}\ninstance: {instance:#}",
+        errors.join("\n")
+    );
+}
+
+fn output_v16_validator() -> jsonschema::Validator {
+    let output: Value =
+        serde_json::from_str(OUTPUT_V16_SCHEMA).expect("valid historical output-v16 schema JSON");
+    let measurements_v15: Value = serde_json::from_str(MEASUREMENTS_V15_SCHEMA)
+        .expect("valid historical measurement schema JSON");
+    let measurements: Value =
+        serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let registry = jsonschema::Registry::new()
+        .add(MEASUREMENTS_V15_SCHEMA_ID, measurements_v15)
+        .expect("valid historical measurement schema identity")
+        .add(MEASUREMENTS_SCHEMA_ID, measurements)
+        .expect("valid measurement schema identity")
+        .prepare()
+        .expect("historical measurement schema registry prepares");
+    jsonschema::options()
+        .with_registry(&registry)
+        .build(&output)
+        .expect("output-v16 schema compiles with nested measurement contract")
+}
+
+fn assert_output_v16_schema_valid(instance: &Value) {
+    let errors: Vec<_> = output_v16_validator()
+        .iter_errors(instance)
+        .map(|error| error.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "output must satisfy the historical v16 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -3158,7 +3193,7 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_eq!(lint_json.status.code(), Some(0));
     let lint_json: Value = serde_json::from_slice(&lint_json.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&lint_json);
-    assert_eq!(lint_json["schema_version"], 16);
+    assert_eq!(lint_json["schema_version"], 17);
     assert_eq!(lint_json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 16);
     assert_eq!(
@@ -3841,6 +3876,7 @@ fn help_matches_compiled_feature_set() {
         .expect("runs diff help");
     assert!(diff.status.success(), "stderr:\n{}", stderr(&diff));
     let out = stdout(&diff);
+    assert!(out.contains("output-v17"), "{out}");
     assert!(out.contains("output-v16"), "{out}");
     assert!(out.contains("output-v15"), "{out}");
     assert!(out.contains("output-v13"), "{out}");
@@ -4047,7 +4083,7 @@ fn measure_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 16);
+    assert_eq!(json["schema_version"], 17);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -4519,8 +4555,8 @@ fn embedded_contract_types_emit_the_published_v16_envelope() {
     .expect("bounded lint envelope");
 
     let json = serde_json::to_value(envelope).expect("embedded envelope serializes");
-    assert_output_schema_valid(&json);
-    assert_eq!(json["schema"], animsmith_core::OUTPUT_SCHEMA_ID);
+    assert_output_v16_schema_valid(&json);
+    assert_eq!(json["schema"], OUTPUT_V16_SCHEMA_ID);
     assert_eq!(
         json["files"][0]["measurements"]["schema"],
         animsmith_core::MEASUREMENTS_SCHEMA_ID
@@ -4528,7 +4564,7 @@ fn embedded_contract_types_emit_the_published_v16_envelope() {
 }
 
 #[test]
-fn published_v16_schema_requires_matching_role_policy_provenance() {
+fn published_v17_schema_requires_matching_role_policy_provenance() {
     let output = animsmith()
         .args([
             "measure",
@@ -4772,7 +4808,7 @@ fn published_v16_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
     )
     .expect("bounded prediction envelope");
     let valid = serde_json::to_value(envelope).expect("prediction envelope serializes");
-    assert_output_schema_valid(&valid);
+    assert_output_v16_schema_valid(&valid);
     assert_eq!(
         valid["summary"]["prediction_facets"],
         json!({
@@ -4789,16 +4825,16 @@ fn published_v16_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
 
     let mut unknown = valid.clone();
     unknown["files"][0]["checks"][0]["prediction"]["unexpected"] = json!(true);
-    assert!(!output_validator().is_valid(&unknown));
+    assert!(!output_v16_validator().is_valid(&unknown));
 
     let mut pointer_at_limit = valid.clone();
     pointer_at_limit["files"][0]["checks"][3]["prediction"]["facets"][0]["basis"]["references"]
         [0]["reference"]["pointer"] = json!(format!("/measurements{}", "/x".repeat(127)));
-    assert!(output_validator().is_valid(&pointer_at_limit));
+    assert!(output_v16_validator().is_valid(&pointer_at_limit));
     let mut pointer_above_limit = pointer_at_limit;
     pointer_above_limit["files"][0]["checks"][3]["prediction"]["facets"][0]["basis"]["references"]
         [0]["reference"]["pointer"] = json!(format!("/measurements{}", "/x".repeat(128)));
-    assert!(!output_validator().is_valid(&pointer_above_limit));
+    assert!(!output_v16_validator().is_valid(&pointer_above_limit));
 
     let report_path = dir.path().join("prediction-pointer.json");
     std::fs::write(
@@ -4843,7 +4879,7 @@ fn published_v16_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
     let mut invalid_reason = valid;
     invalid_reason["files"][0]["checks"][1]["prediction"]["facets"][1]["reasons"][0] =
         json!("not a valid reason");
-    assert!(!output_validator().is_valid(&invalid_reason));
+    assert!(!output_v16_validator().is_valid(&invalid_reason));
 }
 
 #[test]
@@ -4890,7 +4926,7 @@ fn output_schema_rejects_every_empty_custom_check_identifier() {
     )
     .expect("bounded lint envelope");
     let valid = serde_json::to_value(envelope).expect("embedded envelope serializes");
-    assert_output_schema_valid(&valid);
+    assert_output_v16_schema_valid(&valid);
 
     for pointer in [
         "/files/0/checks/0/check_id",
@@ -4901,7 +4937,7 @@ fn output_schema_rejects_every_empty_custom_check_identifier() {
         let mut invalid = valid.clone();
         *invalid.pointer_mut(pointer).expect("fixture path exists") = json!("");
         assert!(
-            !output_validator().is_valid(&invalid),
+            !output_v16_validator().is_valid(&invalid),
             "schema accepted an empty identifier at {pointer}"
         );
     }
@@ -4921,7 +4957,7 @@ fn lint_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 16);
+    assert_eq!(json["schema_version"], 17);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -5188,7 +5224,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 16);
+    assert_eq!(json["schema_version"], 17);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
@@ -5644,7 +5680,7 @@ fn diff_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 16);
+    assert_eq!(json["schema_version"], 17);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -6039,7 +6075,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported output version",
             unsupported_output_version,
-            format!("has schema_version 2; this build reads schema_version 16; {remediation}"),
+            format!("has schema_version 2; this build reads schema_version 17; {remediation}"),
         ),
         (
             "missing command",
@@ -6450,7 +6486,7 @@ fn diff_rejects_historical_output_v5_with_v11_measurements() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has schema_version 5; this build reads schema_version 16; regenerate it from the original asset with `animsmith measure --format json <asset>`"
+            "has schema_version 5; this build reads schema_version 17; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)
@@ -8794,7 +8830,7 @@ fn bevy_v3_track_support_partial_or_unavailable_saturated_inventory_readbacks() 
             .expect("V16 envelope"),
         )
         .expect("report serializes");
-        assert_output_schema_valid(&report);
+        assert_output_v16_schema_valid(&report);
         assert_eq!(track_support_facets(&report).len(), 1, "{name}");
         let path = dir.path().join(format!("{name}-saturated.json"));
         write_json(&path, &report);

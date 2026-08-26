@@ -338,13 +338,46 @@ is not applicable, while partial or unavailable inventory produces exactly one
 subjectless unsuppressible inventory facet and no retained-prefix prediction.
 This slice does not model extensions, other animation constructs,
 positive runtime survival, or a content finding for a dropped row. Its V5
-provenance and V16 output are the current CLI contracts; revisions 1 and 2 and
-output-v15 remain preserved and readable.
+provenance and output-v17 contract are current; output-v16, revisions 1 and 2,
+and output-v15 remain preserved and readable.
+
+The exact Unity Generic revision-2 tuple uses profile id unity-generic,
+revision `2`, engine version `6000.3`, and importer id fbx-model-importer for
+FBX. Its required closed settings are
+`animation_type = "generic"`, `avatar_setup = "create_from_this_model"`,
+`import_animation = true`, and the document-scoped
+`root_motion_source`, plus per-clip `root_rotation`, `root_position_y`, and
+`root_position_xz` values of `"bake"` or `"extract"`. The preserved Unity
+Humanoid revision-1 profile is a separate contract; `root_motion_source` is not
+applicable to it.
+
+For this Generic tuple, `engine-root-motion` compares each explicitly declared
+`movement_owner_xz`, `movement_owner_y`, and `movement_owner_yaw` with its
+corresponding importer setting. It reports typed `RootMotionRouting` results
+(gameplay + `baked_into_pose`, or animation + `stored_as_root_motion`) and
+ordinary error findings for conflicts. Required-unavailable facets cover
+missing/ambiguous paths, a path that does not identify the explicit Root role,
+incomplete raw path or intent coverage, settings overflow, and unavailable
+axis measurements. Hips is never a fallback for this engine rule. Measurement
+availability is required, but displacement/yaw magnitude never controls
+applicability or routing; this is not a travel threshold.
+
+The configured FBX path is case-sensitive and byte-exact: `/` is the only
+unescaped separator; empty, `.`, `..`, backslash, control, and Unicode-format
+segments are rejected, with limits of 1,024 bytes per segment, 4,096 bytes per
+path, and 256 segments. The loader records same-byte raw source identities,
+parent chains, and names; implicit and generated helper nodes cannot match,
+and incomplete coverage cannot prove `NoMatch`. V6 provenance and output-v17
+carry this prediction. AnimSmith does not execute Unity, read back imported
+assets, play runtime clips, or certify engine behavior. Repository and CI use
+only self-authored synthetic fixtures for this slice.
 
 `generate import-advice` is the separate engine-setting projection path. With
-an exact Unity 6000.3 Generic or Humanoid profile, it emits only the documented
-importer properties already materialized by config and binds them to same-load
-source, closure, intent, and measurement evidence. Unreal 5.8 and Godot 4.7
+the preserved revision-1 Unity 6000.3 Generic or Humanoid profile, it emits
+only the documented importer properties already materialized by config and
+binds them to same-load source, closure, intent, and measurement evidence.
+The current Generic revision-2 profile is the root-motion lint contract;
+it does not add import-advice fields. Unreal 5.8 and Godot 4.7
 revision 1 refuse with typed `profile_settings_unmodeled` evidence rather than
 inventing settings. V1 never guesses frame-number ranges, sample rates, unit
 conversion, or root-motion behavior. See the runnable

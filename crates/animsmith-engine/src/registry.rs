@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 const VERIFIED_ON: &str = "2026-08-20";
+const UNITY_GENERIC_V2_VERIFIED_ON: &str = "2026-08-26";
 const BEVY_V2_VERIFIED_ON: &str = "2026-08-25";
 const BEVY_0_19_COMMIT: &str = "c6f634ca9f406d68ba5109d921247b654cb42c10";
 const ALL_FACT_IDS: [FactId; 14] = [
@@ -41,14 +42,14 @@ pub fn profiles_v1() -> &'static [EngineProfile] {
     })
 }
 
-/// Enumerate immutable revision-2-contract profile records in exact tuple order.
+/// Enumerate immutable V2-contract profile records in exact tuple order.
 ///
 /// This registry is separate from [`profiles_v1`], whose five records and
 /// canonical identities remain unchanged.
 pub fn profiles_v2() -> &'static [EngineProfileV2] {
     static PROFILES: OnceLock<Vec<EngineProfileV2>> = OnceLock::new();
     PROFILES.get_or_init(|| {
-        let mut profiles = vec![bevy_v2(), bevy_v3()];
+        let mut profiles = vec![unity_generic_v2(), bevy_v2(), bevy_v3()];
         profiles.sort_by(|left, right| left.selection().cmp(right.selection()));
         profiles
     })
@@ -74,7 +75,7 @@ pub fn validate_registry_v2() -> Result<(), RegistryValidationErrorV2> {
         EngineFactIdV2::TargetLinearUnit,
     ];
     let profiles = profiles_v2();
-    if profiles.len() != 2 {
+    if profiles.len() != 3 {
         return Err(RegistryValidationErrorV2::ProfileCount {
             found: profiles.len(),
         });
@@ -200,8 +201,8 @@ pub fn validate_registry_v2() -> Result<(), RegistryValidationErrorV2> {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum RegistryValidationErrorV2 {
-    /// The initial registry does not contain exactly the one authorized tuple.
-    #[error("V2 registry contains {found} profiles rather than one")]
+    /// The registry does not contain the authorized V2 profile set.
+    #[error("V2 registry contains {found} profiles rather than the authorized set")]
     ProfileCount {
         /// Actual profile count.
         found: usize,
@@ -643,6 +644,159 @@ fn bevy() -> EngineProfile {
             ),
         ],
     )
+}
+
+/// Frozen Unity Generic revision-2 profile for root-motion routing.
+///
+/// The record deliberately contains only the importer controls required by
+/// the first bounded root-motion slice. Revision 1 remains the historical V1
+/// profile and is not amended by this sibling record.
+fn unity_generic_v2() -> EngineProfileV2 {
+    use SettingDefaultV2::RequiredExplicit;
+    use SettingDomainV2::{
+        AnimationType, AvatarSetup, BakeOrExtract, Boolean, SourceTransformPath,
+    };
+    use SettingIdV2::{
+        AnimationType as AnimationTypeId, AvatarSetup as AvatarSetupId, ImportAnimation,
+        RootMotionSource, RootPositionXz, RootPositionY, RootRotation,
+    };
+    use animsmith_core::engine_contract::{
+        EngineFactIdV2, EngineFactStateV2, EngineFactValueV2, EngineProfileFactV2,
+        EngineRootMotionAddressabilityV1,
+    };
+
+    let mut settings = vec![
+        SettingDescriptorV2::new(
+            AnimationTypeId,
+            SettingScope::Document,
+            AnimationType,
+            RequiredExplicit,
+        ),
+        SettingDescriptorV2::new(
+            AvatarSetupId,
+            SettingScope::Document,
+            AvatarSetup,
+            RequiredExplicit,
+        ),
+        SettingDescriptorV2::new(
+            ImportAnimation,
+            SettingScope::Document,
+            Boolean,
+            RequiredExplicit,
+        ),
+        SettingDescriptorV2::new(
+            RootMotionSource,
+            SettingScope::Document,
+            SourceTransformPath,
+            RequiredExplicit,
+        ),
+        SettingDescriptorV2::new(
+            RootRotation,
+            SettingScope::Clip,
+            BakeOrExtract,
+            RequiredExplicit,
+        ),
+        SettingDescriptorV2::new(
+            RootPositionY,
+            SettingScope::Clip,
+            BakeOrExtract,
+            RequiredExplicit,
+        ),
+        SettingDescriptorV2::new(
+            RootPositionXz,
+            SettingScope::Clip,
+            BakeOrExtract,
+            RequiredExplicit,
+        ),
+    ];
+    settings.sort_by_key(|descriptor| descriptor.id().as_str());
+
+    let facts = vec![
+        EngineProfileFactV2::new(
+            EngineFactIdV2::AcceptedInputs,
+            EngineFactStateV2::Known(EngineFactValueV2::AcceptedFormats(vec![
+                SourceFormatV1::Fbx,
+            ])),
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ApplicationWorldUnitPolicy,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ImportSettingProjection,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ImporterScaleConversion,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::PhysicalDimensionsPreserved,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ResultingTransformScale,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::RootMotionAddressability,
+            EngineFactStateV2::Known(EngineFactValueV2::RootMotionAddressability(
+                EngineRootMotionAddressabilityV1::ExactSourceTransformPath,
+            )),
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::SourceImportDisposition,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::SourceToTargetUnitMapping,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(EngineFactIdV2::TargetLinearUnit, EngineFactStateV2::Unknown),
+    ];
+
+    let mut sources = vec![
+        PrimarySourceV2 {
+            id: "unity-fbx-model-importer-6000.3",
+            target_version: "6000.3",
+            url: "https://docs.unity3d.com/6000.3/Documentation/Manual/FBXImporter-Model.html",
+            verified_on: UNITY_GENERIC_V2_VERIFIED_ON,
+            supported_facts: vec![EngineFactIdV2::AcceptedInputs],
+            supported_settings: vec![AnimationTypeId, AvatarSetupId, ImportAnimation],
+        },
+        PrimarySourceV2 {
+            id: "unity-fbx-animation-clip-6000.3",
+            target_version: "6000.3",
+            url: "https://docs.unity3d.com/6000.3/Documentation/Manual/class-AnimationClip.html",
+            verified_on: UNITY_GENERIC_V2_VERIFIED_ON,
+            supported_facts: vec![],
+            supported_settings: vec![RootRotation, RootPositionY, RootPositionXz],
+        },
+        PrimarySourceV2 {
+            id: "unity-fbx-motion-node-6000.3",
+            target_version: "6000.3",
+            url: "https://docs.unity3d.com/6000.3/Documentation/ScriptReference/ModelImporter-motionNodeName.html",
+            verified_on: UNITY_GENERIC_V2_VERIFIED_ON,
+            supported_facts: vec![EngineFactIdV2::RootMotionAddressability],
+            supported_settings: vec![RootMotionSource],
+        },
+    ];
+    for source in &mut sources {
+        source.supported_facts.sort_by_key(|fact| fact.as_str());
+        source
+            .supported_settings
+            .sort_by_key(|setting| setting.as_str());
+    }
+    sources.sort_by_key(|source| source.id);
+
+    EngineProfileV2 {
+        selection: ProfileSelection::new("unity-generic", 2, "6000.3", "fbx-model-importer"),
+        profile_urn: "urn:animsmith:engine-profile:unity-generic:2",
+        accepted_inputs: vec![SourceFormatV1::Fbx],
+        facts,
+        settings,
+        sources,
+    }
 }
 
 fn bevy_v2() -> EngineProfileV2 {

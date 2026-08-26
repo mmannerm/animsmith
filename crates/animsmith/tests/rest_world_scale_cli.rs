@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v16.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v17.schema.json");
 const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
 const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");

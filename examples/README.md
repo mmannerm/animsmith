@@ -664,8 +664,8 @@ not run Bevy. Complete-empty inventory is not applicable; partial or
 unavailable inventory yields one subjectless, unsuppressible inventory facet
 and no retained-prefix prediction, including bounded N+1 overflow. Extensions,
 other animation constructs, and positive runtime survival are outside this
-slice. V5 provenance and output-v16 are current; the rev1/rev2 and output-v15
-contracts remain preserved.
+slice. V5 provenance and output-v17 are current; output-v16, the rev1/rev2
+profiles, and output-v15 contracts remain preserved.
 
 Generate a reusable engine-neutral inventory as canonical JSON without a
 profile:
@@ -688,7 +688,7 @@ names, raw targets and accessors, and dependency-closure identity. It does not
 infer scenes, skins, named-map winners, target UUIDs, extension support, or
 successful runtime loading.
 
-### Generating engine import advice
+### Predicting Unity Generic root motion
 
 Select an exact engine profile and fully materialize every required importer
 setting before generating advice. For Unity Generic, for example:
@@ -696,13 +696,14 @@ setting before generating advice. For Unity Generic, for example:
 ```toml
 [engine]
 profile = "unity-generic"
-profile_revision = 1
+profile_revision = 2
 engine_version = "6000.3"
 importer = "fbx-model-importer"
 
 [engine.settings]
-convert_units = true
-bake_axis_conversion = false
+animation_type = "generic"
+avatar_setup = "create_from_this_model"
+import_animation = true
 root_motion_source = "Reference/Root"
 
 [clips."*"]
@@ -716,18 +717,46 @@ root_position_xz = "extract"
 ```
 
 ```console
-$ animsmith --config unity.animsmith.toml generate import-advice export.fbx \
+$ animsmith --config unity.animsmith.toml lint \
+    --select engine-root-motion export.fbx
+```
+
+The current Generic revision-2 lint prediction compares the three declared
+movement-owner axes with the three `bake | extract` clip settings. `bake`
+means `baked_into_pose`; `extract` means `stored_as_root_motion`. It requires a
+case-sensitive, byte-exact `Reference/Root` path to the explicitly resolved
+Root role and never uses Hips as a fallback. The path grammar has no escaping
+or Unicode normalization, rejects empty/reserved/control/format segments, and
+limits segments, paths, and depth to 1,024 bytes, 4,096 bytes, and 256
+segments. Raw path evidence is projected from the same FBX bytes; the implicit
+root and generated helpers cannot match.
+
+An available facet records a typed routing result; a conflict is an error
+finding. Missing path, Root, intent, settings, raw inventory, or measured
+translation/yaw availability is `required_prediction_unavailable`, not a
+content finding, and exits 1. Measurement magnitude does not affect routing:
+zero and nonzero travel use the same comparison. This is prediction evidence
+only—no Unity editor execution, imported-asset readback, runtime playback, or
+engine certification occurs. The contract uses prediction provenance V6 and
+output V17; historical output V9 and other readers remain immutable. The
+checked-in/CI FBX inputs for this slice are self-authored synthetic fixtures.
+
+### Generating engine import advice
+
+The separate historical revision-1 advice profile remains the route for
+projecting `Convert Units`, `Bake Axis Conversion`, Generic `Root Motion
+Source`, and the three `ModelImporterClipAnimation.lockRoot*` booleans. Use a
+revision-1 Unity advice config for this command:
+
+```console
+$ animsmith --config unity-advice.animsmith.toml generate import-advice export.fbx \
     > export.import-advice.json
 ```
 
-The Unity payload maps those resolved values to `Convert Units`, `Bake Axis
-Conversion`, Generic `Root Motion Source`, and the three
-`ModelImporterClipAnimation.lockRoot*` booleans. The contract also keeps raw
-source versus normalized clip identity, explicit intent, normalized
-measurements, and the full same-load provenance/closure. Unreal 5.8 and Godot
-4.7 revision 1 deliberately exit 1 with `profile_settings_unmodeled`; their
-frozen profiles do not yet define importer settings. This command does not
-guess frame ranges, sample rates, unit conversion, or root-motion behavior.
+Unreal 5.8 and Godot 4.7 revision 1 deliberately exit 1 with
+`profile_settings_unmodeled`; their frozen profiles do not yet define importer
+settings. That command does not guess frame ranges, sample rates, unit
+conversion, or root-motion behavior.
 
 ### Steering a run without a config
 

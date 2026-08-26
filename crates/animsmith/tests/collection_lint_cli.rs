@@ -4,16 +4,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:8";
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
+const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:9";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:17";
 const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
 const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const COLLECTION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-output-v8.schema.json");
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v16.schema.json");
+    include_str!("../../../docs/schemas/collection-output-v9.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v17.schema.json");
 const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
 const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
@@ -90,14 +90,14 @@ fn retained_spike_emits_exact_deterministic_collection_evidence() {
     let value: Value = serde_json::from_slice(&first.stdout).expect("collection JSON");
     assert_schema(&value);
     assert_eq!(value["schema"], COLLECTION_SCHEMA_ID);
-    assert_eq!(value["schema_version"], 8);
+    assert_eq!(value["schema_version"], 9);
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema"],
         OUTPUT_SCHEMA_ID
     );
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema_version"],
-        16
+        17
     );
     assert_eq!(value["summary"]["sources"], 3);
     assert_eq!(value["summary"]["established_clips"], 4);

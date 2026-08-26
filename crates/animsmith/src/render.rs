@@ -20,8 +20,8 @@ use animsmith_core::{
     DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, Document,
     EnginePredictionFacetStateV1, EnginePredictionFacetV3, EnginePredictionFacetV4,
     EvaluationScope, EvaluationState, Finding, LintFileReport, LintFileReportV16,
-    MeasureFileReport, PredictionUnavailableReasonV2, ResolvedRoles, SelectionState, Severity,
-    SourceFormatV1,
+    LintFileReportV17, MeasureFileReport, PredictionUnavailableReasonV2, ResolvedRoles,
+    SelectionState, Severity, SourceFormatV1,
 };
 use animsmith_engine::{
     EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
@@ -1722,6 +1722,34 @@ impl LintReportView for LintFileReportV16 {
     }
 }
 
+impl LintReportView for LintFileReportV17 {
+    fn path(&self) -> &str {
+        self.path()
+    }
+    fn checks(&self) -> &[CheckEvaluation] {
+        self.checks()
+    }
+    fn profile_selection(&self) -> Option<ProfileSelectionView<'_>> {
+        let selection = self
+            .prediction_provenance_v3()
+            .map(|provenance| provenance.profile().selection())
+            .or_else(|| {
+                self.prediction_provenance_v5()
+                    .map(|provenance| provenance.base().profile().selection())
+            })
+            .or_else(|| {
+                self.prediction_provenance_v6()
+                    .map(|provenance| provenance.base().base().profile().selection())
+            })?;
+        Some(ProfileSelectionView {
+            family: selection.family(),
+            revision: selection.profile_revision(),
+            engine_version: selection.engine_version(),
+            importer: selection.importer(),
+        })
+    }
+}
+
 enum RenderPredictionFacet<'a> {
     V3(&'a EnginePredictionFacetV3),
     V4(&'a EnginePredictionFacetV4),
@@ -1933,6 +1961,14 @@ fn prediction_facets<R: LintReportView>(report: &R) -> Vec<(&str, RenderPredicti
             );
         }
         if let Some(prediction) = check.engine_prediction_v5() {
+            facets.extend(
+                prediction
+                    .facets()
+                    .iter()
+                    .map(|facet| (check.check_id(), RenderPredictionFacet::V4(facet))),
+            );
+        }
+        if let Some(prediction) = check.engine_prediction_v6() {
             facets.extend(
                 prediction
                     .facets()

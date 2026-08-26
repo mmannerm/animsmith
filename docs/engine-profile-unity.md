@@ -1,16 +1,19 @@
 # Unity 6000.3 animation profile
 
 Use this page when FBX animation will be imported by Unity 6.3 LTS. AnimSmith
-has two exact V1 profiles:
+has a current Unity Generic root-motion profile plus the preserved Humanoid
+profile:
 
 | Rig path | Exact tuple |
 |---|---|
-| Generic | `unity-generic` / revision `1` / `6000.3` / `fbx-model-importer` |
+| Generic | `unity-generic` / revision `2` / `6000.3` / `fbx-model-importer` |
 | Humanoid | `unity-humanoid` / revision `1` / `6000.3` / `fbx-model-importer` |
 
 These are importer contracts, not claims that every Unity 6000.3 project uses
 the same rig, controller, physics setup, or root-motion policy. Both accept FBX
-only. An engine profile never changes AnimSmith measurements.
+only. Revision 2 is the exact Generic contract used by the
+`engine-root-motion` prediction; revision 1 remains readable for historical
+advice artifacts. An engine profile never changes AnimSmith measurements.
 
 ## What Unity expects
 
@@ -24,11 +27,11 @@ cuts, movement ownership, and controller setup.
 
 The [Model tab](https://docs.unity3d.com/6000.3/Documentation/Manual/FBXImporter-Model.html)
 documents three separate scale influences: source-file scale, Scale Factor,
-and Transform scale. `Convert Units` converts the file's declared scale;
-`Bake Axis Conversion` either bakes conversion into asset data or leaves a
-compensating root transform. AnimSmith V1 models those two booleans, not Scale
-Factor, Avatar construction, or the imported hierarchy that Unity ultimately
-creates.
+and Transform scale. The preserved revision-1 advice profile models `Convert
+Units` and `Bake Axis Conversion`; Generic revision 2 deliberately does not
+claim either setting. It models only the closed animation/root-motion controls
+listed below, not Scale Factor, Avatar construction, or the imported hierarchy
+that Unity ultimately creates.
 
 ## AnimSmith checks and thresholds
 
@@ -45,9 +48,11 @@ unchanged under either Unity profile. The most importer-sensitive rows are:
 | `loop-closure` | `0.01 m` position and `1.0°` rotation | Checks declared loops before Unity's Loop Pose processing. |
 | `loop-seam-vel` / `loop-seam-rot` | `0.1 m/s` / `5.0°/s` | Finds velocity discontinuities that matching endpoint poses can hide. |
 
-There is no Unity-only finding in V1. `engine-addressability` is not applicable;
-it is an exact Bevy rule. Unity-specific output comes from `generate
-import-advice`, which projects only settings you declared.
+The current Unity-only check is `engine-root-motion`, and it is applicable only
+for the exact Generic revision-2 tuple, an FBX source, and declared movement
+ownership. `engine-addressability` remains a Bevy-only rule. The separate
+`generate import-advice` contract still projects only settings declared under
+the historical revision-1 Unity advice profile.
 
 The ownership line is explicit: [#267](https://github.com/mmannerm/animsmith/issues/267)
 provides the parent/rest-world/bind scale measurements,
@@ -60,19 +65,20 @@ are different repair domains.
 
 ## Configure the exact importer contract
 
-Every applicable Unity setting is required. The profile does not invent a
-default. For Generic:
+Every applicable revision-2 setting is required; the profile does not invent a
+default. The exact Generic root-motion tuple is:
 
 ```toml
 [engine]
 profile = "unity-generic"
-profile_revision = 1
+profile_revision = 2
 engine_version = "6000.3"
 importer = "fbx-model-importer"
 
 [engine.settings]
-convert_units = true
-bake_axis_conversion = false
+animation_type = "generic"
+avatar_setup = "create_from_this_model"
+import_animation = true
 root_motion_source = "Reference/Root"
 
 [clips."*".engine_settings]
@@ -88,11 +94,63 @@ expected_uniform_scale = 1.0
 uniform_scale_tolerance = 0.0001
 ```
 
-For Humanoid, select `unity-humanoid` and omit `root_motion_source`; that
-setting is not applicable because the profile records the Avatar body as the
-root-motion authority. Both profiles require the three clip-scoped `bake` or
-`extract` choices for every actual clip. Generate the bounded advice document
-with:
+For Humanoid, select the preserved `unity-humanoid` revision-1 profile and omit
+`root_motion_source`; that setting is not applicable to the Humanoid profile.
+Generic revision 2 freezes `animation_type = "generic"`,
+`avatar_setup = "create_from_this_model"`, and `import_animation = true`; other
+values are rejected. The three clip-scoped `bake` or `extract` choices are
+required for every actual Generic clip. The example above is a prediction
+configuration, not a Unity project file.
+
+## Root-motion prediction
+
+`engine-root-motion` compares one declared movement owner with one materialized
+Unity clip setting for each declared axis: `horizontal_xz` uses
+`root_position_xz`, `vertical_y` uses `root_position_y`, and `yaw` uses
+`root_rotation`. `bake` means `baked_into_pose`; `extract` means
+`stored_as_root_motion`. Gameplay ownership is compatible with baking, while
+animation ownership is compatible with extraction. A conflict is an ordinary
+error finding with a `prediction_scope`, not a rewritten measurement or an
+automatic fix.
+
+The check's lifecycle is explicit. A selected, enabled, applicable check emits
+one available facet per clip/axis when all evidence is present. Its machine
+result is `RootMotionRouting` with `project_owner`, `importer_disposition`, and
+`compatibility`. A clip with no declared axis is not applicable for that axis.
+Missing raw-path coverage, incomplete project intent, duplicate/overflowed
+settings, a missing or ambiguous source path, a path that does not identify the
+resolved Root role, or unavailable axis-specific trajectory evidence emits a
+`required_prediction_unavailable` facet instead. Required-unavailable work is
+not a content finding, cannot be suppressed with `--allow`, makes the check
+`not_evaluated` when all work is unavailable (or `partial` when mixed), and
+makes `lint` exit 1.
+
+The source path must resolve to the explicitly resolved `Root` role. This rule
+does not use the consumer-neutral Hips fallback: a resolved Hips role cannot
+stand in for a missing Root. Root trajectory measurements may be unavailable
+for an individual axis, but their numeric magnitude is never an applicability
+or routing threshold. A zero-travel clip and a travelling clip use the same
+ownership/setting comparison when their required measurement availability is
+`measured`.
+
+### Closed raw FBX path evidence
+
+`root_motion_source` is a case-sensitive, byte-exact relative transform path.
+The V1 grammar uses `/` as its only separator and has no escaping or Unicode
+normalization. Paths must have nonempty segments; leading/trailing `/`, `//`,
+`.` and `..` segments, backslashes, control or Unicode format characters are
+rejected. A segment is at most 1,024 UTF-8 bytes, a complete path at most 4,096
+bytes, and a path at most 256 segments.
+
+The FBX loader projects this path inventory from the same input bytes through a
+raw-preserving ufbx load. Original source node identities, parent chains, and
+names are retained; the implicit ufbx root and generated geometry/scale helper
+nodes remain evidence but cannot satisfy a configured path. Complete coverage
+is required to prove `NoMatch`; incomplete or unavailable coverage produces
+`CoverageIncomplete`, never a guessed absence. This is raw-source evidence,
+not a claim that Unity executed the import.
+
+Generate the bounded advice document with the historical advice profile using:
 
 ```console
 animsmith --config unity.animsmith.toml generate import-advice character.fbx
@@ -100,7 +158,11 @@ animsmith --config unity.animsmith.toml generate import-advice character.fbx
 
 The result maps the declared values to Unity importer properties. It does not
 assert that Unity imported successfully or that the imported motion matches
-the source visually.
+the source visually. The root-motion prediction likewise performs no Unity
+editor execution, imported-asset readback, runtime playback, or engine
+certification. Repository and CI evidence for this slice uses only
+self-authored synthetic FBX fixtures; commercial animation packs are not
+fixtures or uploaded artifacts.
 
 ## Common failures and fixes
 

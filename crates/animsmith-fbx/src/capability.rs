@@ -412,6 +412,16 @@ impl FbxScaleSource {
         self.source.dependency_closure()
     }
 
+    /// Bounded original-FBX transform paths projected from the exact same bytes.
+    ///
+    /// The projection uses a raw-preserving ufbx pass and correlates original
+    /// nodes to normalized document bones by ufbx's same-file `element_id`.
+    pub fn raw_transform_path_inventory(
+        &self,
+    ) -> Option<&animsmith_core::RawTransformPathInventoryV1> {
+        self.source.raw_transform_path_inventory()
+    }
+
     /// The conservative ufbx-side inventory.
     pub fn inventory(&self) -> &FbxScaleCapabilityInventory {
         &self.inventory

@@ -17,7 +17,7 @@ use crate::config::{ConfigValidationError, SeveritySetting};
 use crate::finding::Finding;
 use crate::prediction::{
     EnginePredictionV1, EnginePredictionV2, EnginePredictionV3, EnginePredictionV4,
-    EnginePredictionV5, PredictionContractError,
+    EnginePredictionV5, EnginePredictionV6, PredictionContractError,
 };
 
 /// One authoritative built-in evidence-code definition.
@@ -390,6 +390,7 @@ enum EnginePredictionEvidence {
     V3(EnginePredictionV3),
     V4(EnginePredictionV4),
     V5(EnginePredictionV5),
+    V6(EnginePredictionV6),
 }
 
 impl EnginePredictionEvidence {
@@ -420,6 +421,11 @@ impl EnginePredictionEvidence {
                 .iter()
                 .map(|facet| facet.scope())
                 .collect(),
+            Self::V6(prediction) => prediction
+                .facets()
+                .iter()
+                .map(|facet| facet.scope())
+                .collect(),
         }
     }
 
@@ -430,6 +436,7 @@ impl EnginePredictionEvidence {
             Self::V3(prediction) => prediction.facets()[index].scope(),
             Self::V4(prediction) => prediction.facets()[index].scope(),
             Self::V5(prediction) => prediction.facets()[index].scope(),
+            Self::V6(prediction) => prediction.facets()[index].scope(),
         }
     }
 }
@@ -486,6 +493,12 @@ impl CheckOutput {
         self
     }
 
+    /// Attach a transform-path-and-intent-bound V6 engine-prediction record.
+    pub fn with_engine_prediction_v6(mut self, prediction: EnginePredictionV6) -> Self {
+        self.engine_prediction = Some(EnginePredictionEvidence::V6(prediction));
+        self
+    }
+
     /// Content findings emitted by evaluated work.
     pub fn findings(&self) -> &[Finding] {
         &self.findings
@@ -509,7 +522,8 @@ impl CheckOutput {
                 EnginePredictionEvidence::V2(_)
                 | EnginePredictionEvidence::V3(_)
                 | EnginePredictionEvidence::V4(_)
-                | EnginePredictionEvidence::V5(_),
+                | EnginePredictionEvidence::V5(_)
+                | EnginePredictionEvidence::V6(_),
             )
             | None => None,
         }
@@ -523,7 +537,8 @@ impl CheckOutput {
                 EnginePredictionEvidence::V1(_)
                 | EnginePredictionEvidence::V3(_)
                 | EnginePredictionEvidence::V4(_)
-                | EnginePredictionEvidence::V5(_),
+                | EnginePredictionEvidence::V5(_)
+                | EnginePredictionEvidence::V6(_),
             )
             | None => None,
         }
@@ -537,7 +552,8 @@ impl CheckOutput {
                 EnginePredictionEvidence::V1(_)
                 | EnginePredictionEvidence::V2(_)
                 | EnginePredictionEvidence::V4(_)
-                | EnginePredictionEvidence::V5(_),
+                | EnginePredictionEvidence::V5(_)
+                | EnginePredictionEvidence::V6(_),
             )
             | None => None,
         }
@@ -551,7 +567,8 @@ impl CheckOutput {
                 EnginePredictionEvidence::V1(_)
                 | EnginePredictionEvidence::V2(_)
                 | EnginePredictionEvidence::V3(_)
-                | EnginePredictionEvidence::V5(_),
+                | EnginePredictionEvidence::V5(_)
+                | EnginePredictionEvidence::V6(_),
             )
             | None => None,
         }
@@ -565,7 +582,23 @@ impl CheckOutput {
                 EnginePredictionEvidence::V1(_)
                 | EnginePredictionEvidence::V2(_)
                 | EnginePredictionEvidence::V3(_)
-                | EnginePredictionEvidence::V4(_),
+                | EnginePredictionEvidence::V4(_)
+                | EnginePredictionEvidence::V6(_),
+            )
+            | None => None,
+        }
+    }
+
+    /// V6 transform-path-and-intent-bound prediction attachment.
+    pub const fn engine_prediction_v6(&self) -> Option<&EnginePredictionV6> {
+        match self.engine_prediction.as_ref() {
+            Some(EnginePredictionEvidence::V6(prediction)) => Some(prediction),
+            Some(
+                EnginePredictionEvidence::V1(_)
+                | EnginePredictionEvidence::V2(_)
+                | EnginePredictionEvidence::V3(_)
+                | EnginePredictionEvidence::V4(_)
+                | EnginePredictionEvidence::V5(_),
             )
             | None => None,
         }
@@ -580,6 +613,7 @@ impl CheckOutput {
                 EnginePredictionEvidence::V3(prediction) => prediction.has_required_unavailable(),
                 EnginePredictionEvidence::V4(prediction) => prediction.has_required_unavailable(),
                 EnginePredictionEvidence::V5(prediction) => prediction.has_required_unavailable(),
+                EnginePredictionEvidence::V6(prediction) => prediction.has_required_unavailable(),
             })
     }
 
@@ -742,7 +776,7 @@ pub(crate) fn validate_and_derive_check_evaluation(
     Ok(derived)
 }
 
-/// Final output-v15 record for one catalog check.
+/// Final output-v17 record for one catalog check.
 #[derive(Debug, Clone)]
 pub struct CheckEvaluation {
     check_id: &'static str,
@@ -893,6 +927,12 @@ impl CheckEvaluation {
                     &output.gaps,
                     &output.findings,
                 )?,
+                EnginePredictionEvidence::V6(prediction) => prediction.validate_for_check(
+                    check_id,
+                    &output.evaluated_scopes,
+                    &output.gaps,
+                    &output.findings,
+                )?,
             }
         } else if output
             .findings
@@ -990,6 +1030,11 @@ impl CheckEvaluation {
         self.output.engine_prediction_v5()
     }
 
+    /// V6 transform-path-and-intent-bound engine-prediction attachment.
+    pub const fn engine_prediction_v6(&self) -> Option<&EnginePredictionV6> {
+        self.output.engine_prediction_v6()
+    }
+
     /// Whether this check has unavailable prediction work under either
     /// versioned prediction contract.
     pub fn has_required_prediction_unavailable(&self) -> bool {
@@ -1064,6 +1109,9 @@ impl Serialize for CheckEvaluation {
                 EnginePredictionEvidence::V5(prediction) => {
                     state.serialize_field("prediction", prediction)?;
                 }
+                EnginePredictionEvidence::V6(prediction) => {
+                    state.serialize_field("prediction", prediction)?;
+                }
             }
         }
         state.end()
@@ -1107,6 +1155,14 @@ pub enum EvaluationError {
     /// Explicit selection named an id absent from the supplied catalog.
     #[error("unknown selected check id {0:?}")]
     UnknownSelection(String),
+    /// A selected, applicable check opted out of `severity = "off"`.
+    #[error(
+        "check {check_id:?} cannot be disabled with severity = \"off\" while selected and applicable"
+    )]
+    SeverityOffNotAllowed {
+        /// Stable id of the protected check.
+        check_id: &'static str,
+    },
     /// A current production rule did not emit exactly its preallocated slots.
     #[error(
         "check {check_id:?} emitted {emitted} prediction facets after receiving {allocated} allocated slots"
@@ -1226,6 +1282,16 @@ pub fn evaluate_checks(
         };
         let applicability = check.applicability(ctx);
 
+        if selection_state == SelectionState::Selected
+            && setting == Some(SeveritySetting::Off)
+            && applicability == Applicability::Applicable
+            && !check.allows_severity_off()
+        {
+            return Err(EvaluationError::SeverityOffNotAllowed {
+                check_id: check.id(),
+            });
+        }
+
         if selection_state == SelectionState::Unselected
             || configuration == ConfigurationState::Disabled
             || applicability == Applicability::NotApplicable
@@ -1282,9 +1348,19 @@ pub fn evaluate_checks_v2(
                 None if check.enabled_by_default() => ConfigurationState::Enabled,
                 None => ConfigurationState::Disabled,
             };
-            (selected, setting, configuration, check.applicability(ctx))
+            let applicability = check.applicability(ctx);
+            if selected
+                && setting == Some(SeveritySetting::Off)
+                && applicability == Applicability::Applicable
+                && !check.allows_severity_off()
+            {
+                return Err(EvaluationError::SeverityOffNotAllowed {
+                    check_id: check.id(),
+                });
+            }
+            Ok((selected, setting, configuration, applicability))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, EvaluationError>>()?;
     let demands = checks
         .iter()
         .zip(&states)
@@ -1333,6 +1409,9 @@ pub fn evaluate_checks_v2(
                 .map_or(0, |prediction| prediction.facets().len())
             + output
                 .engine_prediction_v5()
+                .map_or(0, |prediction| prediction.facets().len())
+            + output
+                .engine_prediction_v6()
                 .map_or(0, |prediction| prediction.facets().len());
         if emitted != allocation.emitted_slots() {
             return Err(EvaluationError::PredictionAllocationMismatch {
