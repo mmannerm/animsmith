@@ -20,18 +20,21 @@ use animsmith_core::{
     DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, Document,
     EnginePredictionFacetStateV1, EnginePredictionFacetV3, EnginePredictionFacetV4,
     EvaluationScope, EvaluationState, Finding, LintFileReport, LintFileReportV16,
-    LintFileReportV17, MeasureFileReport, PredictionUnavailableReasonV2, ResolvedRoles,
-    SelectionState, Severity, SourceFormatV1,
+    LintFileReportV17, MeasureFileReport, PredictionUnavailableReasonV2,
+    RawGltfAddressabilityCoverageReasonV1, RawGltfAddressabilityCoverageV1,
+    RawGltfDefaultSceneObservationV1, ResolvedRoles, SelectionState, Severity, SourceFormatV1,
 };
 use animsmith_engine::{
-    EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
+    BevyNamedMapDuplicatePolicyV1, EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
     EngineImportAdviceProjectionValueV2, EngineImportAdviceRefusalReasonV1,
     EngineImportAdviceRefusalReasonV2, EngineImportAdviceSourceNameV1,
     EngineImportAdviceSourceUnavailableReasonV1, EngineImportAdviceStateV1,
     EngineImportAdviceStateV2, EngineImportAdviceV1, EngineImportAdviceV2,
-    GltfAnimationAddressabilityV1, GltfAnimationChannelPropertyV1, GltfAnimationCoverageStateV1,
-    GltfAnimationCoverageV1, GltfAnimationObservationV1, GltfAnimationTargetKindV1,
-    GltfAnimationUnavailableReasonV1,
+    GltfAddressabilityNamedMapKindV2, GltfAddressabilityProjectionV2,
+    GltfAddressabilityUnavailableReasonV2, GltfAddressabilityV2, GltfAnimationAddressabilityV1,
+    GltfAnimationChannelPropertyV1, GltfAnimationCoverageStateV1, GltfAnimationCoverageV1,
+    GltfAnimationObservationV1, GltfAnimationTargetKindV1, GltfAnimationUnavailableReasonV1,
+    TargetPointerWidth,
 };
 use animsmith_gltf::fix::{FixReport, Repair};
 use animsmith_gltf::write::WriteSummary;
@@ -888,6 +891,478 @@ pub(crate) fn render_addressability_markdown(report: &GltfAnimationAddressabilit
                 reasons,
             );
         }
+    }
+    out
+}
+
+fn raw_addressability_coverage(value: RawGltfAddressabilityCoverageV1) -> String {
+    let reason = |reason| match reason {
+        RawGltfAddressabilityCoverageReasonV1::ProjectionBudgetExceeded => {
+            "projection_budget_exceeded"
+        }
+        RawGltfAddressabilityCoverageReasonV1::ParserUnavailable => "parser_unavailable",
+    };
+    match value {
+        RawGltfAddressabilityCoverageV1::Complete => "complete".into(),
+        RawGltfAddressabilityCoverageV1::Partial { reason: value } => {
+            format!("partial ({})", reason(value))
+        }
+        RawGltfAddressabilityCoverageV1::Unavailable { reason: value } => {
+            format!("unavailable ({})", reason(value))
+        }
+    }
+}
+
+fn addressability_v2_reason(value: GltfAddressabilityUnavailableReasonV2) -> &'static str {
+    match value {
+        GltfAddressabilityUnavailableReasonV2::RawSourceIncomplete => "raw_source_incomplete",
+        GltfAddressabilityUnavailableReasonV2::DependencyClosureIncomplete => {
+            "dependency_closure_incomplete"
+        }
+        GltfAddressabilityUnavailableReasonV2::UnreachableTarget => "unreachable_target",
+        GltfAddressabilityUnavailableReasonV2::MultipleCandidatePaths => "multiple_candidate_paths",
+        GltfAddressabilityUnavailableReasonV2::DuplicateFullPath => "duplicate_full_path",
+        GltfAddressabilityUnavailableReasonV2::TargetIdCollision => "target_id_collision",
+        GltfAddressabilityUnavailableReasonV2::TargetPointerWidthMissing => {
+            "target_pointer_width_missing"
+        }
+        GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated => "target_domain_truncated",
+        GltfAddressabilityUnavailableReasonV2::ProjectionBoundsExceeded => {
+            "projection_bounds_exceeded"
+        }
+        GltfAddressabilityUnavailableReasonV2::BevyAnimationFeatureDisabled => {
+            "bevy_animation_feature_disabled"
+        }
+        GltfAddressabilityUnavailableReasonV2::LoadAnimationsDisabled => "load_animations_disabled",
+        GltfAddressabilityUnavailableReasonV2::PathBoundsExceeded => "path_bounds_exceeded",
+        GltfAddressabilityUnavailableReasonV2::NamedMapIncomplete => "named_map_incomplete",
+    }
+}
+
+fn addressability_v2_projection<T>(
+    value: &GltfAddressabilityProjectionV2<T>,
+    available: impl FnOnce(&T) -> String,
+) -> String {
+    match value {
+        GltfAddressabilityProjectionV2::Available { value } => {
+            format!("available ({})", available(value))
+        }
+        GltfAddressabilityProjectionV2::ProvenAbsent => "proven_absent".into(),
+        GltfAddressabilityProjectionV2::RequiredUnavailable { reasons } => format!(
+            "required_unavailable ({})",
+            reasons
+                .iter()
+                .map(|reason| addressability_v2_reason(*reason))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn addressability_v2_pointer_width(value: Option<TargetPointerWidth>) -> &'static str {
+    match value {
+        Some(TargetPointerWidth::Bits32) => "32",
+        Some(TargetPointerWidth::Bits64) => "64",
+        None => "missing",
+    }
+}
+
+fn addressability_v2_named_map_kind(value: GltfAddressabilityNamedMapKindV2) -> &'static str {
+    match value {
+        GltfAddressabilityNamedMapKindV2::Scene => "scene",
+        GltfAddressabilityNamedMapKindV2::Animation => "animation",
+        GltfAddressabilityNamedMapKindV2::Skin => "skin",
+    }
+}
+
+fn addressability_v2_duplicate_policy(value: BevyNamedMapDuplicatePolicyV1) -> &'static str {
+    match value {
+        BevyNamedMapDuplicatePolicyV1::LastWriteWins => "last_write_wins",
+    }
+}
+
+/// Render one validated rich addressability document as escaped line-oriented text.
+pub(crate) fn render_addressability_v2_text(report: &GltfAddressabilityV2) -> String {
+    use std::fmt::Write as _;
+
+    let inventory = report.inventory();
+    let raw = inventory.raw();
+    let animations = inventory.animations().animations();
+    let mut out = String::new();
+    let _ = writeln!(out, "glTF addressability v2");
+    let _ = writeln!(
+        out,
+        "input: sha256={} bytes={}",
+        report.input().sha256(),
+        report.input().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "raw inventory: sha256={} canonical-bytes={}",
+        raw.identity().sha256(),
+        raw.identity().bytes()
+    );
+    for (domain, coverage, count) in [
+        ("scenes", raw.scene_coverage(), raw.scenes().len()),
+        ("nodes", raw.node_coverage(), raw.nodes().len()),
+        ("skins", raw.skin_coverage(), raw.skins().len()),
+        (
+            "attachments",
+            raw.attachment_coverage(),
+            raw.attachments().len(),
+        ),
+        (
+            "path candidates",
+            raw.path_candidate_coverage(),
+            raw.path_candidates().len(),
+        ),
+    ] {
+        let _ = writeln!(
+            out,
+            "{domain}: {} ({count} retained row(s))",
+            raw_addressability_coverage(coverage)
+        );
+    }
+    let default_scene = match raw.default_scene() {
+        RawGltfDefaultSceneObservationV1::Absent => "absent".into(),
+        RawGltfDefaultSceneObservationV1::Selected { source_scene_index } => {
+            format!("selected ({source_scene_index})")
+        }
+        RawGltfDefaultSceneObservationV1::Unavailable { reason } => format!(
+            "unavailable ({})",
+            match reason {
+                RawGltfAddressabilityCoverageReasonV1::ProjectionBudgetExceeded => {
+                    "projection_budget_exceeded"
+                }
+                RawGltfAddressabilityCoverageReasonV1::ParserUnavailable => "parser_unavailable",
+            }
+        ),
+    };
+    let _ = writeln!(out, "default scene observation: {default_scene}");
+    let _ = writeln!(
+        out,
+        "animations: {} ({} retained row(s))",
+        addressability_coverage_label(animations.coverage()),
+        animations.rows().len()
+    );
+
+    let Some(adapter) = report.bevy() else {
+        let _ = writeln!(out, "Bevy adapter: null");
+        return out;
+    };
+    let selection = adapter.prediction_provenance().profile().selection();
+    let check = adapter.check();
+    let projection = adapter.projection();
+    let _ = writeln!(
+        out,
+        "Bevy adapter: {} revision {} ({} / {})",
+        text_atom(selection.family()),
+        selection.profile_revision(),
+        text_atom(selection.engine_version()),
+        text_atom(selection.importer())
+    );
+    let _ = writeln!(
+        out,
+        "  target pointer width: {}",
+        addressability_v2_pointer_width(adapter.rules().target_pointer_width())
+    );
+    let _ = writeln!(
+        out,
+        "  settings: bevy_animation_feature={} load_animations={}",
+        adapter.settings().bevy_animation_feature(),
+        adapter.settings().load_animations()
+    );
+    let _ = writeln!(
+        out,
+        "  check {}: {} / {} / {} / {}",
+        text_atom(check.check_id()),
+        selection_name(check.selection()),
+        configuration_name(check.configuration()),
+        applicability_name(check.applicability()),
+        evaluation_name(check.evaluation())
+    );
+    for scene in projection.scenes() {
+        let _ = writeln!(
+            out,
+            "  scene label {}: {}",
+            scene.source_scene_index(),
+            text_atom(scene.label())
+        );
+    }
+    let _ = writeln!(
+        out,
+        "  default scene route: {}",
+        addressability_v2_projection(projection.default_scene_route(), |value| {
+            text_atom(value).into_owned()
+        })
+    );
+    for skin in projection.skins() {
+        let root = skin
+            .explicit_skeleton_root_node_index()
+            .map_or_else(|| "null".into(), |value| value.to_string());
+        let label =
+            addressability_v2_projection(skin.skin_label(), |value| text_atom(value).into_owned());
+        let _ = writeln!(
+            out,
+            "  skin label {}: {} explicit-skeleton-root={} inverse-bind-label={}",
+            skin.source_skin_index(),
+            label,
+            root,
+            text_atom(skin.inverse_bind_matrices_label())
+        );
+    }
+    for map in projection.named_maps() {
+        let winners = addressability_v2_projection(map.winners(), |values| {
+            values
+                .iter()
+                .map(|winner| {
+                    format!(
+                        "{} -> {} {}",
+                        quoted_text_atom(winner.name()),
+                        winner.source_index(),
+                        text_atom(winner.typed_label())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        });
+        let _ = writeln!(
+            out,
+            "  named {} map ({}): {}",
+            addressability_v2_named_map_kind(map.kind()),
+            addressability_v2_duplicate_policy(map.duplicate_policy()),
+            winners
+        );
+    }
+    let _ = writeln!(
+        out,
+        "  animation target coverage: {}",
+        addressability_v2_projection(projection.target_coverage(), |_| "complete".into())
+    );
+    for target in projection.targets() {
+        let contributors = target
+            .contributing_channels()
+            .iter()
+            .map(|channel| {
+                format!(
+                    "{}:{}",
+                    channel.source_animation_index(),
+                    channel.source_channel_index()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let value = addressability_v2_projection(target.projection(), |value| {
+            format!(
+                "path={} uuid={}",
+                quoted_text_atom(value.path()),
+                text_atom(value.uuid())
+            )
+        });
+        let _ = writeln!(
+            out,
+            "  animation target node {} channels=[{}]: {}",
+            target.source_node_index(),
+            contributors,
+            value
+        );
+    }
+    out
+}
+
+/// Render one validated rich addressability document as escaped Markdown.
+pub(crate) fn render_addressability_v2_markdown(report: &GltfAddressabilityV2) -> String {
+    use std::fmt::Write as _;
+
+    let inventory = report.inventory();
+    let raw = inventory.raw();
+    let animations = inventory.animations().animations();
+    let mut out = String::from("# glTF addressability v2\n\n");
+    let _ = writeln!(
+        out,
+        "- Input: `{}` (`{}` bytes)",
+        report.input().sha256(),
+        report.input().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "- Raw inventory: `{}` (`{}` canonical bytes)",
+        raw.identity().sha256(),
+        raw.identity().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "- Animations: `{}` (`{}` retained rows)\n",
+        md_cell(&addressability_coverage_label(animations.coverage())),
+        animations.rows().len()
+    );
+    let _ = writeln!(out, "## Raw inventory\n");
+    let _ = writeln!(out, "| Domain | Coverage | Retained rows |");
+    let _ = writeln!(out, "| --- | --- | ---: |");
+    for (domain, coverage, count) in [
+        ("scenes", raw.scene_coverage(), raw.scenes().len()),
+        ("nodes", raw.node_coverage(), raw.nodes().len()),
+        ("skins", raw.skin_coverage(), raw.skins().len()),
+        (
+            "attachments",
+            raw.attachment_coverage(),
+            raw.attachments().len(),
+        ),
+        (
+            "path candidates",
+            raw.path_candidate_coverage(),
+            raw.path_candidates().len(),
+        ),
+    ] {
+        let _ = writeln!(
+            out,
+            "| `{}` | `{}` | {} |",
+            domain,
+            md_cell(&raw_addressability_coverage(coverage)),
+            count
+        );
+    }
+    let default_scene = match raw.default_scene() {
+        RawGltfDefaultSceneObservationV1::Absent => "absent".into(),
+        RawGltfDefaultSceneObservationV1::Selected { source_scene_index } => {
+            format!("selected ({source_scene_index})")
+        }
+        RawGltfDefaultSceneObservationV1::Unavailable { reason } => format!(
+            "unavailable ({})",
+            match reason {
+                RawGltfAddressabilityCoverageReasonV1::ProjectionBudgetExceeded => {
+                    "projection_budget_exceeded"
+                }
+                RawGltfAddressabilityCoverageReasonV1::ParserUnavailable => "parser_unavailable",
+            }
+        ),
+    };
+    let _ = writeln!(out, "\nDefault scene observation: `{}`.\n", default_scene);
+    let Some(adapter) = report.bevy() else {
+        let _ = writeln!(out, "\n## Bevy adapter\n\n`null`\n");
+        return out;
+    };
+    let selection = adapter.prediction_provenance().profile().selection();
+    let check = adapter.check();
+    let projection = adapter.projection();
+    let _ = writeln!(out, "\n## Bevy adapter\n");
+    let _ = writeln!(
+        out,
+        "Profile: `{}` revision `{}` (`{}` / `{}`).\n",
+        md_cell(selection.family()),
+        selection.profile_revision(),
+        md_cell(selection.engine_version()),
+        md_cell(selection.importer())
+    );
+    let _ = writeln!(
+        out,
+        "Target pointer width: `{}`. Settings: `bevy_animation_feature={}`, `load_animations={}`.\n",
+        addressability_v2_pointer_width(adapter.rules().target_pointer_width()),
+        adapter.settings().bevy_animation_feature(),
+        adapter.settings().load_animations()
+    );
+    let _ = writeln!(
+        out,
+        "Check `{}`: `{}` / `{}` / `{}` / `{}`.\n",
+        md_cell(check.check_id()),
+        selection_name(check.selection()),
+        configuration_name(check.configuration()),
+        applicability_name(check.applicability()),
+        evaluation_name(check.evaluation())
+    );
+    let _ = writeln!(out, "| Scene | Typed label |");
+    let _ = writeln!(out, "| ---: | --- |");
+    for scene in projection.scenes() {
+        let _ = writeln!(
+            out,
+            "| {} | `{}` |",
+            scene.source_scene_index(),
+            md_cell(scene.label())
+        );
+    }
+    let default_route =
+        addressability_v2_projection(projection.default_scene_route(), |value| md_cell(value));
+    let _ = writeln!(
+        out,
+        "\nDefault scene route: `{}`.\n",
+        md_cell(&default_route)
+    );
+    let _ = writeln!(
+        out,
+        "| Skin | Typed label | Explicit skeleton root | Inverse-bind label |"
+    );
+    let _ = writeln!(out, "| ---: | --- | ---: | --- |");
+    for skin in projection.skins() {
+        let root = skin
+            .explicit_skeleton_root_node_index()
+            .map_or_else(|| "null".into(), |value| value.to_string());
+        let label = addressability_v2_projection(skin.skin_label(), |value| md_cell(value));
+        let _ = writeln!(
+            out,
+            "| {} | `{}` | `{}` | `{}` |",
+            skin.source_skin_index(),
+            md_cell(&label),
+            root,
+            md_cell(skin.inverse_bind_matrices_label())
+        );
+    }
+    let _ = writeln!(out, "\n| Named map | Duplicate policy | Winners |");
+    let _ = writeln!(out, "| --- | --- | --- |");
+    for map in projection.named_maps() {
+        let winners = addressability_v2_projection(map.winners(), |values| {
+            values
+                .iter()
+                .map(|winner| {
+                    format!(
+                        "{} -> {} {}",
+                        md_cell(winner.name()),
+                        winner.source_index(),
+                        md_cell(winner.typed_label())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        });
+        let _ = writeln!(
+            out,
+            "| `{}` | `{}` | `{}` |",
+            addressability_v2_named_map_kind(map.kind()),
+            addressability_v2_duplicate_policy(map.duplicate_policy()),
+            md_cell(&winners)
+        );
+    }
+    let target_coverage =
+        addressability_v2_projection(projection.target_coverage(), |_| "complete".into());
+    let _ = writeln!(
+        out,
+        "\nAnimation target coverage: `{}`.\n",
+        md_cell(&target_coverage)
+    );
+    let _ = writeln!(out, "\n| Target node | Channels | Projection |");
+    let _ = writeln!(out, "| ---: | --- | --- |");
+    for target in projection.targets() {
+        let contributors = target
+            .contributing_channels()
+            .iter()
+            .map(|channel| {
+                format!(
+                    "{}:{}",
+                    channel.source_animation_index(),
+                    channel.source_channel_index()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let value = addressability_v2_projection(target.projection(), |value| {
+            format!("path={} uuid={}", md_cell(value.path()), value.uuid())
+        });
+        let _ = writeln!(
+            out,
+            "| {} | `{}` | `{}` |",
+            target.source_node_index(),
+            contributors,
+            md_cell(&value)
+        );
     }
     out
 }

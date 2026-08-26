@@ -28,6 +28,7 @@ const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
+const ADDRESSABILITY_V2_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-addressability:2";
 const IMPORT_ADVICE_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:1";
 const IMPORT_ADVICE_V2_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:2";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
@@ -43,6 +44,8 @@ const MEASUREMENTS_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v16.schema.json");
 const ADDRESSABILITY_SCHEMA: &str =
     include_str!("../../../docs/schemas/gltf-animation-addressability-v1.schema.json");
+const ADDRESSABILITY_V2_SCHEMA: &str =
+    include_str!("../../../docs/schemas/gltf-addressability-v2.schema.json");
 const IMPORT_ADVICE_SCHEMA: &str =
     include_str!("../../../docs/schemas/engine-import-advice-v1.schema.json");
 const IMPORT_ADVICE_V2_SCHEMA: &str =
@@ -211,6 +214,38 @@ fn addressability_validator() -> jsonschema::Validator {
         .with_registry(&registry)
         .build(&addressability)
         .expect("addressability schema compiles with reused historical output-v10 definitions")
+}
+
+fn addressability_v2_validator() -> jsonschema::Validator {
+    let output: Value =
+        serde_json::from_str(CURRENT_OUTPUT_SCHEMA).expect("valid current output schema JSON");
+    let output_v10: Value =
+        serde_json::from_str(OUTPUT_V10_SCHEMA).expect("valid historical output schema JSON");
+    let addressability_v1: Value =
+        serde_json::from_str(ADDRESSABILITY_SCHEMA).expect("valid addressability V1 schema JSON");
+    let measurements_v15: Value = serde_json::from_str(MEASUREMENTS_V15_SCHEMA)
+        .expect("valid historical measurement schema JSON");
+    let measurements: Value =
+        serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let addressability: Value = serde_json::from_str(ADDRESSABILITY_V2_SCHEMA)
+        .expect("valid addressability V2 schema JSON");
+    let registry = jsonschema::Registry::new()
+        .add(MEASUREMENTS_V15_SCHEMA_ID, measurements_v15)
+        .expect("valid historical measurement schema identity")
+        .add(MEASUREMENTS_SCHEMA_ID, measurements)
+        .expect("valid measurement schema identity")
+        .add(OUTPUT_V10_SCHEMA_ID, output_v10)
+        .expect("valid historical output schema identity")
+        .add(ADDRESSABILITY_SCHEMA_ID, addressability_v1)
+        .expect("valid addressability V1 schema identity")
+        .add(CURRENT_OUTPUT_SCHEMA_ID, output)
+        .expect("valid current output schema identity")
+        .prepare()
+        .expect("addressability V2 schema registry prepares");
+    jsonschema::options()
+        .with_registry(&registry)
+        .build(&addressability)
+        .expect("addressability V2 schema compiles with output-v17 definitions")
 }
 
 fn assert_addressability_schema_valid(instance: &Value) {
@@ -1026,6 +1061,88 @@ fn write_track_support_gltf(path: &std::path::Path, channels_per_animation: &[us
             "scene": 0
         }),
     );
+}
+
+#[derive(Clone, Copy)]
+enum RichAddressabilityFixture {
+    Reachable,
+    ZeroScenes,
+    DuplicatePath,
+    Unreachable,
+    HostileName,
+}
+
+fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressabilityFixture) {
+    let target_name = if matches!(fixture, RichAddressabilityFixture::HostileName) {
+        HOSTILE_PRESENTATION_TEXT
+    } else if matches!(fixture, RichAddressabilityFixture::DuplicatePath) {
+        "duplicate"
+    } else {
+        "target"
+    };
+    let duplicate = matches!(fixture, RichAddressabilityFixture::DuplicatePath);
+    let zero_scenes = matches!(fixture, RichAddressabilityFixture::ZeroScenes);
+    let unreachable = matches!(fixture, RichAddressabilityFixture::Unreachable);
+    let nodes = vec![
+        json!({ "name": "root", "children": if duplicate { vec![1, 2] } else { vec![1] }, "skin": 0 }),
+        json!({ "name": target_name }),
+        json!({ "name": if duplicate { target_name } else { "detached" } }),
+    ];
+    let channels = if zero_scenes {
+        Vec::new()
+    } else if duplicate {
+        vec![
+            json!({ "sampler": 0, "target": { "node": 1, "path": "translation" } }),
+            json!({ "sampler": 0, "target": { "node": 2, "path": "translation" } }),
+        ]
+    } else {
+        vec![json!({
+            "sampler": 0,
+            "target": { "node": if unreachable { 2 } else { 1 }, "path": "translation" }
+        })]
+    };
+    let animations = if channels.is_empty() {
+        Vec::new()
+    } else {
+        vec![json!({
+            "name": "move",
+            "samplers": [{ "input": 0, "output": 1 }],
+            "channels": channels
+        })]
+    };
+    let scenes = if zero_scenes {
+        Vec::new()
+    } else {
+        vec![json!({ "name": "main", "nodes": [0] })]
+    };
+    let mut document = json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{
+            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "byteLength": 96
+        }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+            { "buffer": 0, "byteOffset": 8, "byteLength": 24 },
+            { "buffer": 0, "byteOffset": 32, "byteLength": 64 }
+        ],
+        "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0] },
+            { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3" },
+            { "bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4" }
+        ],
+        "nodes": nodes,
+        "skins": [
+            { "name": "body", "joints": [1], "skeleton": 0, "inverseBindMatrices": 2 },
+            { "name": "unused", "joints": [2] }
+        ],
+        "animations": animations,
+        "scenes": scenes
+    });
+    if !zero_scenes {
+        document["scene"] = json!(0);
+    }
+    write_json(path, &document);
 }
 
 fn track_support_facets(report: &Value) -> &Vec<Value> {
@@ -2879,6 +2996,248 @@ fn generate_addressability_complete_empty_inventory_keeps_exact_bevy_check_not_a
         readback.bevy().expect("exact adapter").check().evaluation(),
         animsmith_core::EvaluationState::NotEvaluated
     );
+}
+
+fn generate_rich_addressability(
+    input: &std::path::Path,
+    config: &std::path::Path,
+    target_pointer_width: Option<&str>,
+    format: Option<&str>,
+) -> Output {
+    let mut command = animsmith();
+    command
+        .arg("--config")
+        .arg(config)
+        .args(["generate", "addressability"]);
+    if let Some(width) = target_pointer_width {
+        command.args(["--target-pointer-width", width]);
+    }
+    if let Some(format) = format {
+        command.args(["--format", format]);
+    }
+    command
+        .arg(input)
+        .output()
+        .expect("runs rich addressability generation")
+}
+
+#[test]
+fn generate_addressability_v2_is_exact_schema_profile_and_projects_scenes_skins_and_ibm() {
+    let dir = unique_temp_dir("generate-addressability-v2-rich");
+    let input = dir.path().join("rich.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::Reachable);
+    let config = write_bevy_v3_track_config(dir.path(), "rich", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    let schema_errors = addressability_v2_validator()
+        .iter_errors(&report)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        schema_errors.is_empty(),
+        "V2 JSON must validate against its public schema:\n{}",
+        schema_errors.join("\n")
+    );
+    assert_eq!(report["schema_version"], 2);
+    assert_eq!(report["schema"], ADDRESSABILITY_V2_SCHEMA_ID);
+    assert_eq!(
+        report["bevy"]["prediction_provenance"]["profile"]["selection"]["profile_revision"],
+        3
+    );
+    assert_eq!(
+        report["inventory"]["raw"]["default_scene"]["state"],
+        "selected"
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["scenes"],
+        json!([{ "source_scene_index": 0, "label": "Scene0" }])
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["default_scene_route"],
+        json!({ "state": "available", "value": "Scene0" })
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][0]["skin_label"],
+        json!({ "state": "available", "value": "Skin0" })
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][0]["explicit_skeleton_root_node_index"],
+        0
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][0]["inverse_bind_matrices_label"],
+        "Skin0/InverseBindMatrices"
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][1]["skin_label"]["state"],
+        "proven_absent"
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][1]["inverse_bind_matrices_label"],
+        "Skin1/InverseBindMatrices"
+    );
+    let readback = animsmith_engine::GltfAddressabilityV2::read_from(output.stdout.as_slice())
+        .expect("strict V2 readback");
+    assert_eq!(readback.input(), readback.inventory().raw().primary_input());
+    assert!(readback.bevy().is_some());
+}
+
+#[test]
+fn generate_addressability_v2_target_width_controls_uuid_and_missing_width_exits_one() {
+    let dir = unique_temp_dir("generate-addressability-v2-width");
+    let input = dir.path().join("target.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::Reachable);
+    let config = write_bevy_v3_track_config(dir.path(), "width", true, Some(true));
+
+    let bits32 = generate_rich_addressability(&input, &config, Some("32"), None);
+    let bits64 = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(bits32.status.code(), Some(0), "{}", stderr(&bits32));
+    assert_eq!(bits64.status.code(), Some(0), "{}", stderr(&bits64));
+    let bits32: Value = serde_json::from_slice(&bits32.stdout).unwrap();
+    let bits64: Value = serde_json::from_slice(&bits64.stdout).unwrap();
+    let target32 = &bits32["bevy"]["projection"]["targets"][0]["projection"];
+    let target64 = &bits64["bevy"]["projection"]["targets"][0]["projection"];
+    assert_eq!(target32["state"], "available");
+    assert_eq!(target32["value"]["path"], "root/target");
+    assert_eq!(target64["state"], "available");
+    assert_ne!(target32["value"]["uuid"], target64["value"]["uuid"]);
+
+    let missing = generate_rich_addressability(&input, &config, None, None);
+    assert_eq!(missing.status.code(), Some(1), "{}", stderr(&missing));
+    assert!(stderr(&missing).is_empty());
+    let missing: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(
+        missing["bevy"]["projection"]["targets"][0]["projection"],
+        json!({
+            "state": "required_unavailable",
+            "reasons": ["target_pointer_width_missing"]
+        })
+    );
+    assert_eq!(missing["bevy"]["check"]["evaluation"], "partial");
+}
+
+#[test]
+fn generate_addressability_v2_zero_scenes_never_invents_scene_zero() {
+    let dir = unique_temp_dir("generate-addressability-v2-zero-scenes");
+    let input = dir.path().join("zero-scenes.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::ZeroScenes);
+    let config = write_bevy_v3_track_config(dir.path(), "zero-scenes", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory"]["raw"]["scenes"], json!([]));
+    assert_eq!(report["bevy"]["projection"]["scenes"], json!([]));
+    assert_eq!(
+        report["bevy"]["projection"]["default_scene_route"]["state"],
+        "proven_absent"
+    );
+    assert!(
+        !output
+            .stdout
+            .windows(b"Scene0".len())
+            .any(|window| window == b"Scene0")
+    );
+}
+
+#[test]
+fn generate_addressability_v2_duplicate_and_unreachable_targets_are_unavailable() {
+    let dir = unique_temp_dir("generate-addressability-v2-unavailable-targets");
+    let config = write_bevy_v3_track_config(dir.path(), "unavailable", true, Some(true));
+    for (name, fixture, reason) in [
+        (
+            "duplicate",
+            RichAddressabilityFixture::DuplicatePath,
+            "duplicate_full_path",
+        ),
+        (
+            "unreachable",
+            RichAddressabilityFixture::Unreachable,
+            "unreachable_target",
+        ),
+    ] {
+        let input = dir.path().join(format!("{name}.gltf"));
+        write_rich_addressability_gltf(&input, fixture);
+        let output = generate_rich_addressability(&input, &config, Some("64"), None);
+        assert_eq!(output.status.code(), Some(1), "{name}: {}", stderr(&output));
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let targets = report["bevy"]["projection"]["targets"]
+            .as_array()
+            .expect("target rows");
+        assert!(!targets.is_empty());
+        assert!(targets.iter().all(|target| {
+            target["projection"]["state"] == "required_unavailable"
+                && target["projection"]["reasons"]
+                    .as_array()
+                    .is_some_and(|reasons| reasons.iter().any(|value| value == reason))
+        }));
+    }
+}
+
+#[test]
+fn generate_addressability_v2_flag_profile_validation_precedes_input_io() {
+    let dir = unique_temp_dir("generate-addressability-v2-config-order");
+    let missing = dir.path().join("missing.gltf");
+    let old_bevy = write_bevy_config(dir.path(), "old-profile");
+    let output = generate_rich_addressability(&missing, &old_bevy, Some("64"), None);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(stderr(&output).contains("--target-pointer-width"));
+    assert!(!stderr(&output).contains("failed to read"));
+
+    let bad_profile = write_config(
+        dir.path(),
+        "bad-rich-profile.toml",
+        r#"
+[engine]
+profile = "bevy-next"
+profile_revision = 3
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+"#,
+    );
+    let output = generate_rich_addressability(&missing, &bad_profile, None, None);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(stderr(&output).contains("unknown engine profile"));
+    assert!(!stderr(&output).contains("failed to read"));
+}
+
+#[test]
+fn generate_addressability_v2_text_and_markdown_have_escaped_semantic_parity() {
+    let dir = unique_temp_dir("generate-addressability-v2-renderers");
+    let input = dir.path().join("hostile.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::HostileName);
+    let config = write_bevy_v3_track_config(dir.path(), "renderers", true, Some(true));
+
+    let text = generate_rich_addressability(&input, &config, Some("64"), Some("text"));
+    let markdown = generate_rich_addressability(&input, &config, Some("64"), Some("markdown"));
+    assert_eq!(text.status.code(), Some(0), "{}", stderr(&text));
+    assert_eq!(markdown.status.code(), Some(0), "{}", stderr(&markdown));
+    let text = stdout(&text);
+    let markdown = stdout(&markdown);
+    for expected in [
+        "glTF addressability v2",
+        "Scene0",
+        "Skin0",
+        "Skin0/InverseBindMatrices",
+        "root",
+        "pointer width",
+    ] {
+        assert!(text.contains(expected), "text missing {expected}: {text}");
+        assert!(
+            markdown.contains(expected),
+            "Markdown missing {expected}: {markdown}"
+        );
+    }
+    assert!(text.contains("forged\\nline\\u001B"), "{text}");
+    assert!(!text.contains(HOSTILE_PRESENTATION_TEXT), "{text}");
+    assert!(!markdown.contains(HOSTILE_PRESENTATION_TEXT), "{markdown}");
+    assert!(!text.as_bytes().contains(&0x1b));
+    assert!(!markdown.as_bytes().contains(&0x1b));
 }
 
 #[test]
