@@ -20,8 +20,8 @@ when a finding names a frame, the viewer scrubs to that judged frame.
 
 ```toml
 [dependencies]
-animsmith-core = "0.6"
-animsmith-report = "0.6"
+animsmith-core = "0.7"
+animsmith-report = "0.7"
 ```
 
 The compiling render example lives in the crate-level API documentation.
