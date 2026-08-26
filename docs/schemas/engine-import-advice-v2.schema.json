@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:engine-import-advice:2",
+  "title": "animsmith engine import advice v2",
+  "description": "Bounded document-level importer-setting projection for the exact Godot 4.7 and Unreal 5.8 revision-2 profiles. Provenance and basis use output-v15 V4 contracts.",
+  "type": "object",
+  "required": ["schema_version", "schema", "tool", "command", "identity", "prediction_provenance", "basis", "state"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "schema": { "const": "urn:animsmith:schema:engine-import-advice:2" },
+    "tool": { "$ref": "urn:animsmith:schema:output:15#/$defs/tool" },
+    "command": { "const": "generate-import-advice" },
+    "identity": { "$ref": "urn:animsmith:schema:output:15#/$defs/input_identity" },
+    "prediction_provenance": { "$ref": "urn:animsmith:schema:output:15#/$defs/prediction_provenance_v4" },
+    "basis": { "$ref": "urn:animsmith:schema:output:15#/$defs/prediction_basis_v4" },
+    "projection": { "$ref": "#/$defs/projection" },
+    "state": { "enum": ["available", "refused"] },
+    "refusal_reason": { "enum": ["profile_fact_unknown", "primary_source_unavailable", "dependency_closure_incomplete", "setting_unavailable"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "available" } }, "required": ["state"] },
+      "then": { "required": ["projection"], "not": { "required": ["refusal_reason"] } },
+      "else": { "required": ["refusal_reason"], "not": { "required": ["projection"] } }
+    },
+    {
+      "oneOf": [
+        { "properties": { "prediction_provenance": { "properties": { "profile": { "properties": { "selection": { "properties": { "family": { "const": "godot" }, "profile_revision": { "const": 2 }, "engine_version": { "const": "4.7" }, "importer": { "const": "resource-importer-scene" } } } } } }, "source_format": { "enum": ["gltf_json", "glb"] } } }, "required": ["prediction_provenance"] },
+        { "properties": { "prediction_provenance": { "properties": { "profile": { "properties": { "selection": { "properties": { "family": { "const": "unreal" }, "profile_revision": { "const": 2 }, "engine_version": { "const": "5.8" }, "importer": { "const": "fbx-importer" } } } } } }, "source_format": { "const": "fbx" } } }, "required": ["prediction_provenance"] }
+      ]
+    },
+    {
+      "if": { "properties": { "prediction_provenance": { "properties": { "profile": { "properties": { "selection": { "properties": { "family": { "const": "godot" } } } } } } } } },
+      "then": { "properties": { "projection": { "properties": { "projection_kind": { "const": "godot_params" }, "fields": { "minItems": 2, "maxItems": 2, "prefixItems": [{ "$ref": "#/$defs/godot_fps_field" }, { "$ref": "#/$defs/godot_trimming_field" }], "items": false } } } } }
+    },
+    {
+      "if": { "properties": { "prediction_provenance": { "properties": { "profile": { "properties": { "selection": { "properties": { "family": { "const": "unreal" } } } } } } } } },
+      "then": { "properties": { "projection": { "properties": { "projection_kind": { "const": "unreal_fbx_import_data" }, "fields": { "oneOf": [{ "minItems": 1, "maxItems": 1, "prefixItems": [{ "$ref": "#/$defs/unreal_default_field" }], "items": false }, { "minItems": 2, "maxItems": 2, "prefixItems": [{ "$ref": "#/$defs/unreal_custom_field" }, { "$ref": "#/$defs/unreal_nondefault_field" }], "items": false }] } } } } }
+    }
+  ],
+  "$defs": {
+    "origin": { "enum": ["explicit_config", "profile_default"] },
+    "boolean_value": { "type": "object", "required": ["boolean"], "properties": { "boolean": { "type": "boolean" } }, "additionalProperties": false },
+    "integer_value": { "type": "object", "required": ["unsigned_integer"], "properties": { "unsigned_integer": { "type": "integer", "minimum": 0, "maximum": 4294967295 } }, "additionalProperties": false },
+    "field": { "type": "object", "required": ["key", "value", "value_origin"], "properties": { "key": { "type": "string", "minLength": 1, "maxLength": 4096 }, "value": { "oneOf": [{ "$ref": "#/$defs/boolean_value" }, { "$ref": "#/$defs/integer_value" }] }, "value_origin": { "$ref": "#/$defs/origin" } }, "additionalProperties": false },
+    "godot_fps_field": { "allOf": [{ "$ref": "#/$defs/field" }, { "type": "object", "properties": { "key": { "const": "animation/fps" }, "value": { "type": "object", "required": ["unsigned_integer"], "properties": { "unsigned_integer": { "type": "integer", "minimum": 1, "maximum": 120 } }, "additionalProperties": false } } }] },
+    "godot_trimming_field": { "allOf": [{ "$ref": "#/$defs/field" }, { "type": "object", "properties": { "key": { "const": "animation/trimming" }, "value": { "$ref": "#/$defs/boolean_value" } } }] },
+    "unreal_default_field": { "allOf": [{ "$ref": "#/$defs/field" }, { "type": "object", "properties": { "key": { "const": "bUseDefaultSampleRate" }, "value": { "type": "object", "required": ["boolean"], "properties": { "boolean": { "const": true } }, "additionalProperties": false } } }] },
+    "unreal_custom_field": { "allOf": [{ "$ref": "#/$defs/field" }, { "type": "object", "properties": { "key": { "const": "CustomSampleRate" }, "value": { "type": "object", "required": ["unsigned_integer"], "properties": { "unsigned_integer": { "type": "integer", "minimum": 0, "maximum": 48000 } }, "additionalProperties": false } } }] },
+    "unreal_nondefault_field": { "allOf": [{ "$ref": "#/$defs/field" }, { "type": "object", "properties": { "key": { "const": "bUseDefaultSampleRate" }, "value": { "type": "object", "required": ["boolean"], "properties": { "boolean": { "const": false } }, "additionalProperties": false } } }] },
+    "projection": { "type": "object", "required": ["projection_kind", "fields"], "properties": { "projection_kind": { "enum": ["godot_params", "unreal_fbx_import_data"] }, "fields": { "type": "array", "minItems": 1, "maxItems": 4096, "uniqueItems": true, "items": { "$ref": "#/$defs/field" } } }, "additionalProperties": false }
+  },
+  "additionalProperties": false
+}

@@ -870,6 +870,22 @@ config, unsupported-profile/input-format, I/O, and serialization errors exit
 conversion, or root-motion behavior. Text and Markdown are presentation-only
 views of the same validated value.
 
+The exact revision-2 tuples are also supported by this command. Godot uses
+`godot` / `2` / `4.7` / `resource-importer-scene` with glTF JSON or GLB and
+projects only `animation/fps` (1..120, profile default 30) and
+`animation/trimming` (profile default false). Unreal uses `unreal` / `2` /
+`5.8` / `fbx-importer` with FBX and requires an explicit
+`sample_rate = "default_30"`, `"source_determined"`, or
+`"custom_hz(n)"` for 1..48,000 Hz. The V2 JSON identity is
+`urn:animsmith:schema:engine-import-advice:2`; its basis is bound to the
+document-scope import-setting projection and its optional projection is typed.
+An available document carries the projection; a refused document
+carries a typed reason and no projection.
+The schema is [`engine-import-advice-v2.schema.json`](schemas/engine-import-advice-v2.schema.json).
+Neither state means the engine imported or played the asset: frame ranges,
+units, skeleton/retargeting, compression, root motion, runtime behavior, and
+project-file writes remain outside this output.
+
 Measurements v16 retains the v15 clip evidence and adds source-order primitive
 geometry plus bounded leading-magic evidence for unsupported nonempty images.
 Measurements v15 added canonical per-bone local TRS channel coverage and

@@ -46,6 +46,19 @@ their immutable profiles have no setting vocabulary. The contract makes no
 filesystem writes and does not infer frame coordinates, sampling, units, or
 root-motion behavior.
 
+`EngineImportAdviceV2` is the separate immutable document-level contract
+`urn:animsmith:schema:engine-import-advice:2` for the
+exact Godot 4.7 revision-2 (`resource-importer-scene`, glTF JSON/GLB) and
+Unreal 5.8 revision-2 (`fbx-importer`, FBX) tuples. Godot projects only
+`animation/fps` (1..120, verified default 30) and `animation/trimming`
+(verified default false). Unreal requires explicit `sample_rate` from the
+closed `default_30`, `source_determined`, or `custom_hz(1..48000)` domain.
+The V2 envelope references output-v15's V4 provenance/basis types and
+has one document-scope projection basis plus an optional native projection, or
+a typed refusal. It remains a
+same-load parameter projection: engine execution, imported-asset readback,
+runtime behavior, and project-file writes are outside its boundary.
+
 ## Install
 
 ```toml

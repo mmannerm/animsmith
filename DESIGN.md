@@ -2513,14 +2513,17 @@ to a coverage gap. The resolved settings record therefore contains one exact
 document value or per-clip value for every applicable setting.
 
 The registry contains the preserved revision-1 tuples plus the current
-revision-2 Unity Generic and Bevy tuples and the revision-3 Bevy tuple:
+revision-2 Unity Generic, Godot, Unreal, and Bevy tuples and the revision-3
+Bevy tuple:
 
 | family | revision | engine version | importer | AnimSmith input boundary |
 |---|---:|---|---|---|
 | `unity-generic` | 2 | `6000.3` | `fbx-model-importer` | FBX |
 | `unity-humanoid` | 1 | `6000.3` | `fbx-model-importer` | FBX |
 | `unreal` | 1 | `5.8` | `fbx-importer` | FBX |
+| `unreal` | 2 | `5.8` | `fbx-importer` | FBX |
 | `godot` | 1 | `4.7` | `resource-importer-scene` | glTF JSON, GLB, FBX |
+| `godot` | 2 | `4.7` | `resource-importer-scene` | glTF JSON, GLB |
 | `bevy` | 1 | `0.19.0` | `gltf-asset-loader` | glTF JSON, GLB |
 | `bevy` | 2 | `0.19.0` | `gltf-asset-loader` | glTF JSON, GLB |
 | `bevy` | 3 | `0.19.0` | `gltf-asset-loader` | glTF JSON, GLB |
@@ -2828,6 +2831,25 @@ Root Motion Source, and the three bake/extract root controls. Frozen Unreal
 typed refusal rather than a guessed preset. Authored frame coordinates,
 sampling policy, root-motion prediction, and unit-conversion inference remain
 out of scope until their own exact source/profile authorities exist.
+
+Revision 2 of the producer is an independent immutable contract,
+`urn:animsmith:schema:engine-import-advice:2`. It uses output-v15's V4
+prediction-provenance and prediction-basis types by reference and carries one
+optional native `projection`. `available` requires that projection and omits
+`refusal_reason`; `refused` requires a typed reason and no projection. This
+lifecycle keeps incomplete closure, unknown facts,
+missing primary authority, and unavailable settings from being mistaken for
+an importer preset.
+
+The only V2 advice profiles are exact: Godot `2` / `4.7` /
+`resource-importer-scene` accepts glTF JSON and GLB and projects
+`animation/fps` (1..120, verified default 30) plus `animation/trimming`
+(verified default false); Unreal `2` / `5.8` / `fbx-importer` accepts FBX and
+requires explicit `sample_rate` from `default_30`, `source_determined`, or
+`custom_hz(1..48000)`. The projection retains explicit/default origin and no
+other settings. It is a parameter projection from same-load evidence, not
+engine execution, imported-asset readback, runtime/gameplay certification, or
+project-file mutation.
 
 `[checks.<id>]` remains the only authority for severity and explicit
 enable/disable overrides. Existing checks such as `loop-closure`, `in-place`,

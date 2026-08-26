@@ -198,6 +198,7 @@ if ! cmp -s docs/schemas/output-v5.schema.json <(
 fi
 check_schema docs/schemas/conversion-evidence-v1.schema.json urn:animsmith:schema:conversion-evidence:1 docs/output.md
 check_schema docs/schemas/conversion-evidence-v2.schema.json urn:animsmith:schema:conversion-evidence:2 docs/output.md docs/cli.md
+check_schema docs/schemas/engine-import-advice-v2.schema.json urn:animsmith:schema:engine-import-advice:2 docs/output.md docs/cli.md README.md DESIGN.md crates/animsmith-engine/README.md examples/README.md docs/engine-profile-godot.md docs/engine-profile-unreal.md
 check_schema docs/schemas/producer-refusal-v1.schema.json urn:animsmith:schema:producer-refusal:1 crates/animsmith/src/producer.rs docs/output.md docs/cli.md
 check_schema docs/schemas/scale-evidence-v1.schema.json urn:animsmith:schema:scale-evidence:1
 check_schema docs/schemas/scale-evidence-v2.schema.json urn:animsmith:schema:scale-evidence:2

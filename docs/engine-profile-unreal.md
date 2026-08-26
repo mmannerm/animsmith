@@ -73,6 +73,34 @@ import-advice` returns the typed `profile_settings_unmodeled` refusal rather
 than inventing Convert Scene Unit, frame ranges, sample rates, or root-motion
 settings.
 
+### Revision 2 import advice
+
+The exact revision-2 advice tuple is `unreal` / `2` / `5.8` / `fbx-importer`.
+It accepts FBX only and has one required document setting. There is no safe
+profile default, so the setting must be explicit:
+
+```toml
+[engine]
+profile = "unreal"
+profile_revision = 2
+engine_version = "5.8"
+importer = "fbx-importer"
+
+[engine.settings]
+sample_rate = "default_30"       # or "source_determined"
+# sample_rate = "custom_hz(60)"   # 1..48000
+```
+
+The closed sample-rate domain is `default_30`, `source_determined`, or
+`custom_hz(n)` with `n` from 1 through 48,000. The `unreal_fbx_import_data`
+projection in `urn:animsmith:schema:engine-import-advice:2`
+projection emits `bUseDefaultSampleRate=true` for `default_30`; the other two
+forms emit `false` and a `CustomSampleRate` value (`0` for
+`source_determined`, otherwise the explicit hertz). No frame range, unit
+conversion, skeleton, compression, root-motion, or runtime result is inferred.
+The advice is a same-load projection of the declared setting, not an Unreal
+import execution or certification.
+
 ## Common failures and fixes
 
 | Symptom | Evidence to inspect | Correct owner |
