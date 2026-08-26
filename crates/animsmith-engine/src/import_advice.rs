@@ -1730,6 +1730,13 @@ fn validate_v2_semantics(
     if let Some(projection) = projection {
         projection.validate()?;
     }
+    if !matches!(
+        (state, projection.is_some(), refusal_reason.is_some()),
+        (EngineImportAdviceStateV2::Available, true, false)
+            | (EngineImportAdviceStateV2::Refused, false, true)
+    ) {
+        return Err(EngineImportAdviceError::InvalidV2Lifecycle);
+    }
     if state == EngineImportAdviceStateV2::Available && projection != Some(&expected_projection) {
         return Err(EngineImportAdviceError::InvalidV2Projection);
     }

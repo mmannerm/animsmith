@@ -4267,7 +4267,7 @@ fn help_matches_compiled_feature_set() {
         out.contains("[possible values: json, text, markdown]"),
         "{out}"
     );
-    assert!(out.contains("No frame coordinates"), "{out}");
+    assert!(out.contains("No frame ranges"), "{out}");
 }
 
 #[test]

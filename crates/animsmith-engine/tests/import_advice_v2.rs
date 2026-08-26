@@ -248,4 +248,11 @@ fn strict_readback_rejects_projection_value_mutation() {
     let bytes = serde_json::to_vec(&value).unwrap();
     let input = EngineImportAdviceInputV2::read_from(bytes.as_slice()).unwrap();
     assert!(input.into_report().is_err());
+
+    let mut lifecycle: Value =
+        serde_json::from_slice(&serde_json::to_vec(&report).unwrap()).unwrap();
+    lifecycle["refusal_reason"] = Value::from("dependency_closure_incomplete");
+    let bytes = serde_json::to_vec(&lifecycle).unwrap();
+    let input = EngineImportAdviceInputV2::read_from(bytes.as_slice()).unwrap();
+    assert!(input.into_report().is_err());
 }

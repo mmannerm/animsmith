@@ -19,7 +19,9 @@
 //! [`EngineImportAdviceV1`] independently projects exact materialized Unity
 //! importer settings beside same-load provenance and bounded clip evidence;
 //! profiles without modeled settings produce a typed refusal rather than a
-//! guessed preset.
+//! guessed preset. [`EngineImportAdviceV2`] separately projects the exact
+//! Godot and Unreal revision-2 document settings with origin-bearing shared
+//! provenance and an advice-owned native scalar vocabulary.
 //!
 //! # Example
 //!
