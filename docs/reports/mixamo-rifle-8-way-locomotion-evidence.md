@@ -139,7 +139,7 @@ The external inventory contains 83 FBX files and 81 manifest-declared motions. A
 
 ## Reproduction
 
-AnimSmith `0.7.0` revision `461ac8a` was captured with external empty-baseline and variant contract configs. Source and extracted inventories, command outputs, exit codes, and SHA-256 digests remain outside the repository.
+AnimSmith `0.7.0` (tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, measurements schema v16) was captured with external empty-baseline and variant contract configs. Source and extracted inventories, command outputs, exit codes, and SHA-256 digests remain outside the repository.
 
 ## Sources
 

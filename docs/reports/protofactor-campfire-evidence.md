@@ -2,7 +2,7 @@
 
 > Companion report: [Protofactor Campfire](protofactor-campfire.md)
 >
-> Evidence status: **partial** — exhaustive file/AnimSmith coverage, Unity 6000.5.8f1 headless evidence now corrected by a direct Unity 6000.5.8f1 observation of import-advice root-lock declarations, and 0.4.0 `generate import-advice` probes for Unity/Unreal/Godot; visual contact, target-character, and full three-engine import passes remain absent, and Bevy has no generated glTF/GLB candidate to probe. A collection-wide headless Unity glTFast import of all 134 gait-anchored GLB candidates from the other evaluated packs ran 2026-08-21; this pack has no gait ring and contributed none of them.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 baseline, contracts, pruning verification, addressability, and bounded advice plus retained 0.3/0.4 and Unity 6000.5.8f1 evidence; visual contact, target-character, and engine-editor/runtime passes remain absent.
 >
 > Evaluation date: **2026-08-26**
 >

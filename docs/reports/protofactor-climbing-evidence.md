@@ -2,7 +2,7 @@
 
 > Companion report: [Protofactor Climbing](protofactor-climbing.md)
 >
-> Evidence status: **partial** — exhaustive file/AnimSmith 0.4.0 coverage, measured vertical/yaw root trajectory, retained Unity 6000.5.8f1 headless evidence now corrected by a direct Unity 6000.5.8f1 observation of import-advice root-lock declarations, and new Unreal/Godot import-advice attempts; visual traversal, engine root-motion extraction, target-character, and full Unreal/Godot/Bevy passes are absent. A collection-wide headless Unity glTFast import of all 134 gait-anchored GLB candidates from the other evaluated packs ran 2026-08-21; this pack has no gait ring and contributed none of them.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 baseline, contracts, pruning verification, addressability, and bounded advice plus retained 0.3/0.4 and Unity 6000.5.8f1 evidence; visual traversal, engine root-motion extraction, target-character, and engine-editor/runtime passes remain absent.
 >
 > Evaluation date: **2026-08-26**
 >

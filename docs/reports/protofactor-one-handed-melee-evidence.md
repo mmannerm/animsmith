@@ -2,7 +2,7 @@
 
 > Companion report: [technical evaluation](protofactor-one-handed-melee.md)
 >
-> Evidence status: **partial** — exhaustive AnimSmith `v0.4.0` baseline, contract, and gait/pruning remediation on one frozen released evaluator, plus a retained (dated) Unity 6000.5.8f1 eight-pack probe, new 0.4.0 engine-profile advice/refusal evidence, a corrected observed Unity root-lock policy, and a new-project GLB import test; transformed-clip visual acceptance and full Unreal/Godot/Bevy import remain unevaluated.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 baseline, contracts, remediation verification, addressability, and bounded advice plus retained 0.3/0.4 and Unity 6000.5.8f1 evidence; transformed-clip visual acceptance and engine-editor/runtime passes remain unevaluated.
 >
 > Evaluation date: **2026-08-26**
 >

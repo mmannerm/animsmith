@@ -2,7 +2,7 @@
 
 > Companion report: [technical evaluation](protofactor-basic-locomotion.md)
 >
-> Evidence status: **partial** — exhaustive file and AnimSmith 0.4.0 coverage, a retained Unity 6000.5.8f1 headless probe, 0.4.0 advice-only engine profiles for Unity/Unreal/Godot/Bevy now corrected by a direct Unity 6000.5.8f1 observation of import-advice root-lock declarations, and a headless Unity glTFast import of all 134 collection-wide gait-anchored GLB candidates (including this pack's 24); target-character visual acceptance and Humanoid retarget of the new candidates remain unevaluated.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 baseline, contracts, remediation verification, addressability, and bounded advice plus retained 0.3/0.4 and Unity 6000.5.8f1 evidence; target-character visual acceptance and Humanoid retarget of the candidates remain unevaluated.
 >
 > Evaluation date: **2026-08-26**
 >
@@ -204,7 +204,7 @@ The 12 negative-time files are:
 
 ### Captured evaluator
 
-**0.4.0 (current, 2026-08-21).**
+**0.4.0 (retained historical evaluator, 2026-08-21).**
 
 | Field | Value |
 |---|---|
@@ -229,11 +229,11 @@ The 12 negative-time files are:
 | Evidence directory | `<evaluation-workspace>/evidence/animsmith-0.3.0` |
 | Output schemas | Command envelope v7; measurements v13 |
 
-Build note: the 0.3.0 checkout was built with `RUSTC_WRAPPER= cargo build --release -p animsmith`; the full baseline, contract, and remediation command sets were rerun at that revision. Baseline and contract counts were unchanged from 0.2.1 at that time; hierarchy/rest evidence and gait-anchor behavior changed then. Under the current 0.4.0 refresh, baseline and contract counts reproduce 0.3.0 exactly (see Untouched AnimSmith findings above); gait-anchor behavior changed again — see Current-tool remediation trial below.
+Build note: the 0.3.0 checkout was built with `RUSTC_WRAPPER= cargo build --release -p animsmith`; the full baseline, contract, and remediation command sets were rerun at that revision. Baseline and contract counts were unchanged from 0.2.1 at that time; hierarchy/rest evidence and gait-anchor behavior changed then. Under the retained 0.4.0 refresh, baseline and contract counts reproduce 0.3.0 exactly (see Untouched AnimSmith findings above); gait-anchor behavior changed again — see the retained remediation trial below.
 
-### Current-tool remediation trial
+### Retained 0.4.0 remediation trial
 
-**0.4.0 (current, 2026-08-21).**
+**0.4.0 (retained historical evaluator, 2026-08-21).**
 
 | Source issue | Operation and declarations | Result | Verification | Effort | Remaining caveat |
 |---|---|---|---|---|---|
@@ -255,7 +255,7 @@ Current public issues [#401](https://github.com/mmannerm/animsmith/issues/401) a
 
 ### Before/after conclusion
 
-Current AnimSmith (0.4.0) makes the 12 strict-time failures mechanically usable under a declared frame-range policy, exposes complete loader-projected hierarchy/rest evidence including the hand-scale warning, and now anchors all 24 in-place gait-ring members via a measured vertical heading axis where 0.3.0 refused all 24. It does **not** turn the pack into a production-certified asset automatically: the 24 anchored candidates are unpromoted pending an engine/visual gate, RM-variant anchoring was not attempted, and the 22/24 raw in-place loop failures still require semantic review, engine transition policy, or artist correction. The pruning trial still demonstrates potential storage reduction but fails the proof bar and is excluded from the recommended pipeline.
+The retained AnimSmith 0.4.0 pass made the 12 strict-time failures mechanically usable under a declared frame-range policy, exposed complete loader-projected hierarchy/rest evidence including the hand-scale warning, and anchored all 24 in-place gait-ring members via a measured vertical heading axis where 0.3.0 refused all 24. It did **not** turn the pack into a production-certified asset automatically: the 24 anchored candidates remained unpromoted pending an engine/visual gate, RM-variant anchoring was not attempted, and the 22/24 raw in-place loop failures still required semantic review, engine transition policy, or artist correction. The pruning trial demonstrated potential storage reduction but failed the proof bar and was excluded from the recommended pipeline. The current 0.7.0 rerun is recorded below.
 
 ## Engine procedures and evidence
 
@@ -409,7 +409,7 @@ The manifest maps all 177 physical files to 107 logical motions and every logica
 
 ### AnimSmith commands and outcomes
 
-**0.4.0 (current, 2026-08-21):**
+**0.4.0 (retained historical evaluator, 2026-08-21):**
 
 ```text
 # Build/version capture
@@ -506,7 +506,7 @@ animsmith diff --config <config> --format json <source.fbx> <output.glb>
 animsmith fix --config <config> --dry-run <output.glb>
 ```
 
-The retained runners are `evidence/run_baseline.py`, `evidence/run_contract.py`, `evidence/run_remediation.py`, `evidence/run_targeted_lint.py`, and their summarizers. Command argv, exit codes, stdout, and stderr are retained under versioned `evidence/animsmith-*` directories, including a parallel `evidence/animsmith-0.4.0/` tree for the current pass.
+The retained runners are `evidence/run_baseline.py`, `evidence/run_contract.py`, `evidence/run_remediation.py`, `evidence/run_targeted_lint.py`, and their summarizers. Command argv, exit codes, stdout, and stderr are retained under versioned `evidence/animsmith-*` directories, including the historical `evidence/animsmith-0.4.0/` tree.
 
 ### Engine procedure
 
@@ -542,7 +542,7 @@ Observed result: package import exit 0 and probe exit 0. Unity exposed 177 human
 | `evidence/unity-6000.5.8f1-probe.json` | Importer/clip inventory and representative Playables results | SHA-256 `e8128312b4db544c354c95c397a85fa68155adec1423eba3c22a413053f4fbb9` |
 | `evidence/unity-6000.5.8f1-probe.log` | Headless probe execution log | SHA-256 `7e69b26f6482197046e3f365e15a0bb57e49efd9b9d047b5eef1d12defc5a9ce` |
 | AnimSmith binary (0.3.0, historical) | Exact 0.3.0 evaluator executable | SHA-256 `a273f260d118de7de20e83d5c72c009540a63d63af352a4a6dd3cf97e62fbd5d` |
-| AnimSmith binary (0.4.0, current) | Exact 0.4.0 evaluator executable, tag `v0.4.0`, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e` | SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6` |
+| AnimSmith binary (0.4.0, retained) | Exact 0.4.0 evaluator executable, tag `v0.4.0`, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e` | SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6` |
 | `evidence/animsmith-0.4.0/` | 0.4.0 baseline, contract, remediation, and engine-profile command results, argv, exits, and evidence paths (parallel structure to the 0.3.0 tree above); specific per-file digests were not re-captured in this appendix | Not individually re-hashed here; see the 0.4.0 command reproduction above |
 
 ### Current evaluator: AnimSmith 0.7.0 (2026-08-26)

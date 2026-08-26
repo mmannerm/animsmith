@@ -99,7 +99,7 @@ The unchanged 72-FBX corpus was rerun with exact `v0.7.0` under output v17 / mea
 
 ## Evidence status
 
-The evaluation covers 72 FBXs: 70 individual motions, one combined take, and one actor. This is a pure evaluator-version refresh: AnimSmith 0.4.0 (tag `v0.4.0`, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`) re-inventories the source archive byte-identical to the published manifest (0 added, 0 removed, 0 changed) and reuses manifest schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1` and the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder). The local archive was supplied as a Protofactor-site download; current store/license pages establish context, not its revision or transaction rights. Exact evidence, the historical 0.3.0 baseline, and current limitations are in the [appendix](protofactor-injured-evidence.md).
+Current mechanical evidence is the exact 0.7.0 rerun above. The evaluation covers 72 FBXs: 70 individual motions, one combined take, and one actor. The byte-identical AnimSmith 0.4.0 evaluator refresh, the 0.3.0 baseline, and the retained Unity probe remain historical evidence under their original identities and dates. This report uses manifest schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1` and the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder). The local archive was supplied as a Protofactor-site download; current store/license pages establish context, not its revision or transaction rights. Exact evidence and current limitations are in the [appendix](protofactor-injured-evidence.md).
 
 ## Sources
 

@@ -104,7 +104,7 @@ Exact `v0.7.0` reproduced all eight evaluated constituents under output v17 / me
 
 ## Evidence status
 
-The partial rollup manifest covers 582 logical motions, 895 individual files, and 90 runtime-set records: 76 constituent-owned plus 14 cross-pack. Every constituent now uses one frozen evaluator, AnimSmith 0.4.0 at `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`, replacing the earlier mix of 0.3.0 revisions and a pre-release gait-only build; all evidence is output v10 with measurements v15. Each source identity re-inventoried byte-identical, so the 28-pair shared-path comparison is retained from its original run, not re-attributed. Mechanical counts reproduce the 0.3.0 baseline exactly, so these changes are evaluator semantics, not asset drift. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) retain exact scope, revisions, and reproduction evidence.
+The partial rollup manifest covers 582 logical motions, 895 individual files, and 90 runtime-set records: 76 constituent-owned plus 14 cross-pack. Current mechanical evidence uses exact AnimSmith 0.7.0 under output v17 / measurements v16 across all eight named constituents. The source identities are unchanged, so the 28-pair shared-path comparison, Unity probes, and 0.3/0.4 transform observations remain historical evidence under their original evaluator identities rather than being re-attributed. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) retain exact scope, revisions, and reproduction evidence.
 
 ## Sources
 

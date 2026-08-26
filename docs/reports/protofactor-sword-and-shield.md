@@ -112,9 +112,13 @@ Poor fit: first-person, traversal-heavy, motion-matching, or contact-critical ga
 
 Combine with Basic Locomotion as a full-body armed/unarmed state switch; the partial [Ultimate Animation Collection rollup](protofactor-ultimate-animation-collection.md) owns that cross-pack conclusion.
 
+## AnimSmith 0.7.0 refresh (2026-08-26)
+
+Exact `v0.7.0` reproduced 136 FBXs, 132 contracts (17/115 pass/fail), and 28 candidates under output v17 / measurements v16. Projections are not engine or artistic acceptance.
+
 ## Evidence status
 
-Current evidence is the exact 0.7.0 rerun above; byte-identical 0.3/0.4 and retained Unity evidence remain historical. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-sword-and-shield-evidence.md).
+The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-sword-and-shield-evidence.md) retain exact current and historical provenance; Unity evidence remains historical.
 
 ## Sources
 

@@ -2,7 +2,7 @@
 
 > Companion report: [technical evaluation](protofactor-two-handed-melee.md)
 >
-> Evidence status: **partial** — exhaustive 0.4.0 baseline/contracts/remediation on one frozen evaluator (default and explicit-role passes), retained Unity 6000.5.8f1 eight-pack evidence, new unity-humanoid/unreal/godot/bevy import-advice/addressability probes, a corrected observed Unity root-lock policy, and a new-project GLB import test; transformed-clip visual acceptance and three engine editors/runtimes remain unevaluated.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 baseline, explicit-role contracts, remediation verification, addressability, and bounded advice plus retained 0.3/0.4 and Unity 6000.5.8f1 evidence; transformed-clip visual acceptance and engine-editor/runtime passes remain unevaluated.
 >
 > Evaluation date: **2026-08-26**
 >
@@ -219,7 +219,7 @@ The dominant rig's two forearm-twist bones distinguish it from the 56-bone Basic
 
 ## Reproduction
 
-**Current evaluator (2026-08-21):** AnimSmith `0.4.0`, tag `v0.4.0`, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`, binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`, output schema v10 nesting measurements schema v15. This one frozen binary produced the complete default-pass, explicit-role-pass, contract, gait-anchor, prune, and engine-profile evidence above.
+**Retained historical evaluator (2026-08-21):** AnimSmith `0.4.0`, tag `v0.4.0`, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`, binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`, output schema v10 nesting measurements schema v15. This one frozen binary produced the complete default-pass, explicit-role-pass, contract, gait-anchor, prune, and engine-profile evidence above.
 
 Source identity (re-verified byte-identical 2026-08-21): RAR SHA-256 `dc067fc8233e51df5a16606758b586a1ec18896076212f76551538c92ca2ff04`; Unitypackage SHA-256 `3cf6c5359c8845768afa098b79972679a01d80b59a6c7e94d0858d6b405f7054`; logical manifest SHA-256 `3e21bdc9d8f8bb463fdef8eb7760551bf733d28678c7d2abd093e620e226b347`. Inventory re-run: 0 added, 0 removed, 0 changed across 123 FBXs. Explicit-role config digest, unchanged: `667799ff3e6ccbe29306fe70bce0fb85bb5686215387259b0ca8d63694d5a9cd`.
 

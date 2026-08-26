@@ -2,7 +2,7 @@
 
 > Companion report: [technical evaluation](protofactor-sword-and-shield.md)
 >
-> Evidence status: **partial** — AnimSmith 0.4.0 re-run (baseline, contracts, gait-anchor, remediation) on a byte-identical source, retained 2026-08-17 Unity 6000.5.8f1 combined-project probe, new 0.4.0 engine-advisory checks now corrected by a direct Unity 6000.5.8f1 observation of import-advice root-lock declarations, and a headless Unity glTFast import of all 134 collection-wide gait-anchored GLB candidates (including this pack's 24); visual acceptance, Humanoid retarget of the new candidates, and full non-Unity engine passes remain unevaluated.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 baseline, contracts, remediation verification, addressability, and bounded advice plus retained 0.3/0.4 and Unity 6000.5.8f1 evidence; visual acceptance, Humanoid retarget of the candidates, and engine-editor/runtime passes remain unevaluated.
 >
 > Evaluation date: **2026-08-26**
 >
@@ -211,7 +211,7 @@ The shared-path comparison found 25 overlaps and zero conflicts; every overlap i
 7. Pruned GLBs are experimental and not production candidates because semantic equivalence was not established.
 8. Current public pages and EULA do not prove the local artifact's revision, transaction date, or historical terms.
 9. Only Basic Locomotion was tested cross-pack; the rest of the Ultimate Animation Collection is outside this evaluation.
-10. AnimSmith 0.4.0's circular phase-spread metric (the smallest arc containing the ring) is the current measurement basis for this refresh; it is not directly comparable to a linear max-minus-min figure.
+10. AnimSmith 0.4.0's circular phase-spread metric (the smallest arc containing the ring) is the retained measurement basis for that historical refresh; it is not directly comparable to a linear max-minus-min figure.
 11. A newer AnimSmith classification alone — for example the malformed Crouch FR RM hierarchy — must not be read as inventing a missing clip or asserting author intent beyond what the file evidence shows.
 12. Every issue cited in this report pair was checked against the public tracker on 2026-08-21. Open: [#401](https://github.com/mmannerm/animsmith/issues/401), [#411](https://github.com/mmannerm/animsmith/issues/411), [#427](https://github.com/mmannerm/animsmith/issues/427), [#437](https://github.com/mmannerm/animsmith/issues/437), and [#440](https://github.com/mmannerm/animsmith/issues/440). Closed and delivered in this release: [#407](https://github.com/mmannerm/animsmith/issues/407) (2026-08-17, the fail-closed gait policy behind the 0.3.0 refusal), [#426](https://github.com/mmannerm/animsmith/issues/426) (2026-08-18, vertical-forward-axis gait anchoring, the source of the 24/24 result), [#402](https://github.com/mmannerm/animsmith/issues/402) (2026-08-20, per-(bone, property) channel coverage), and [#408](https://github.com/mmannerm/animsmith/issues/408) (2026-08-20, root displacement and accumulated yaw). Issue state is time-sensitive and should be re-queried before reuse.
 13. The integration recipe's `owner=validate-per-axis` step directs the reader to validate root-motion ownership axis by axis rather than assume it. The observed Unity importer locks bake root rotation on every sampled root-motion clip, so animation cannot be assumed to own root-motion yaw. The step is not a per-axis `movement_owner_xz` / `movement_owner_y` / `movement_owner_yaw` declaration, and no such declaration is derived from measured travel in this refresh. Measured root displacement and yaw are recorded as sampled facts only; choosing the per-axis owner remains a project and engine decision.
@@ -224,7 +224,7 @@ Source identity: RAR SHA-256 `4402f20ba681ec83cf01f60b8dfb69b59435b48408030a5fbb
 
 Historical evaluator (2026-08-17 baseline/contract/remediation capture and the retained Unity 6000.5.8f1 probes): `animsmith 0.3.0 (v0.3.0-23-gc11f135)`, repository revision `c11f135ece5e980e6c98861a52a715a28a424ff9`, binary SHA-256 `2fbf038dab62e380f15d709fbed8be58bbec5d9c06a3dfd02a7adec2eba619b2`.
 
-Current evaluator (2026-08-21 refresh): `animsmith 0.4.0`, tag `v0.4.0`, repository revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`, binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`; output schema v10, measurements schema v15. A same-commit rebuild produced a differently-hashed binary (SHA-256 `1e53013bbe3224557a8783eafeb818f4ef9d74666590cbaa8c18ef48c5b7d6fa`) with byte-identical import-advice output (see Rebuild reproducibility above); this appendix's 2026-08-21 evidence is attributable to the tag and commit, not to one specific binary digest.
+Retained historical evaluator (2026-08-21 refresh): `animsmith 0.4.0`, tag `v0.4.0`, repository revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`, binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`; output schema v10, measurements schema v15. A same-commit rebuild produced a differently-hashed binary (SHA-256 `1e53013bbe3224557a8783eafeb818f4ef9d74666590cbaa8c18ef48c5b7d6fa`) with byte-identical import-advice output (see Rebuild reproducibility above); this appendix's 2026-08-21 evidence is attributable to the tag and commit, not to one specific binary digest.
 
 ```text
 # Exhaustive baseline: 136 FBXs; inspect/measure/lint JSON and Markdown

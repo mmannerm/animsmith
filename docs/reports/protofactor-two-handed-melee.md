@@ -113,9 +113,13 @@ Poor fit: blocking-critical gameplay without substitutes, first-person, traversa
 
 The dominant rig adds forearm twists to the collection's 56-bone majority; Unity Humanoid mixers with Basic Locomotion and Sword & Shield execute. Use full-body handoffs until style, grip, twist deformation, and contacts pass visual review. The [partial collection rollup](protofactor-ultimate-animation-collection.md) owns the cross-pack conclusion.
 
+## AnimSmith 0.7.0 refresh (2026-08-26)
+
+Exact `v0.7.0` reproduced 123 FBXs, 120 explicit-role contracts (13/107 pass/fail), and 25 candidates under output v17 / measurements v16. Projections are not engine or artistic acceptance.
+
 ## Evidence status
 
-Current evidence is the exact 0.7.0 rerun above; byte-identical 0.3/0.4 evidence remains historical. The explicit role map is retained. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-two-handed-melee-evidence.md).
+The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-two-handed-melee-evidence.md) retain current and historical provenance plus the explicit role map.
 
 ## Sources
 

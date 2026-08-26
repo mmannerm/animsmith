@@ -2,7 +2,7 @@
 
 > Companion report: [Protofactor Injured](protofactor-injured.md)
 >
-> Evidence status: **partial** — exhaustive file/AnimSmith coverage, Unity 6000.5.8f1 headless evidence, 0.4.0 gait-anchor plus per-engine advice/addressability checks, a corrected observed Unity root-lock policy, and a new-project GLB import test; visual loops, blends, masks, target-character, and full three-engine (Unreal/Godot/Bevy) passes remain absent.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 baseline, contracts, remediation verification, addressability, and bounded advice plus retained 0.3/0.4 and Unity 6000.5.8f1 evidence; visual loops, blends, masks, target-character, and engine-editor/runtime passes remain absent.
 >
 > Evaluation date: **2026-08-26**
 >
@@ -184,7 +184,7 @@ Source RAR: 157,809,050 bytes, SHA-256 `b459ab3a39a15aa2e499c633f661616449bfc281
 
 Historical evaluator (0.3.0, 2026-08-17, superseded): `animsmith 0.3.0 (v0.3.0-30-gaabac28)`; revision `aabac28edf2719db236068339f1208bbf156d0bb`; binary SHA-256 `2fb43d210b5448fb2cd642946cc46df0cbb34595a48821b22a28daf7c1938f77`.
 
-Current evaluator (0.4.0, 2026-08-21): `animsmith 0.4.0 (v0.4.0)`; revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`; binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`; output schema v10; measurements schema v15.
+Retained historical evaluator (0.4.0, 2026-08-21): `animsmith 0.4.0 (v0.4.0)`; revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`; binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`; output schema v10; measurements schema v15.
 
 A 2026-08-21 rebuild of this pinned commit (tag `v0.4.0`) produced a binary with a different SHA-256, `1e53013bbe3224557a8783eafeb818f4ef9d74666590cbaa8c18ef48c5b7d6fa`, than the digest recorded above; the build is not byte-reproducible. Both builds emit byte-identical advice artifacts (verified by `diff`), so the regenerated Unity import-advice and the corrected root-lock reading in this refresh are attributable to tag `v0.4.0` / commit `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`, not to this specific recorded binary digest.
 

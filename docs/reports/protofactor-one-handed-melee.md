@@ -109,9 +109,13 @@ Poor fit: blocking-critical gameplay without substitute clips, first-person, tra
 
 The majority 56-bone structure matches Basic Locomotion, Sword & Shield, and Dual Swords; shared package paths are byte-identical. Unity mixers and a Basic-locomotion mask execute; use full-body handoffs until style, pose, grip, and contact are accepted. The [partial collection rollup](protofactor-ultimate-animation-collection.md) owns the cross-pack conclusion.
 
+## AnimSmith 0.7.0 refresh (2026-08-26)
+
+Exact `v0.7.0` reproduced 113 FBXs, 110 contracts (23/87 pass/fail), and 25 candidates under output v17 / measurements v16. Projections are not engine or artistic acceptance.
+
 ## Evidence status
 
-Current evidence is the exact 0.7.0 rerun above; byte-identical 0.3/0.4 and retained Unity evidence remain historical. Local revision and terms remain unproven. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-one-handed-melee-evidence.md).
+The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-one-handed-melee-evidence.md) retain exact current and historical provenance. Local revision and terms remain unproven.
 
 ## Sources
 

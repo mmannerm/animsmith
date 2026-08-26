@@ -110,9 +110,13 @@ Poor fit: first-person, traversal-heavy, motion-matching, or network-root-motion
 
 The 56-bone structure matches Basic Locomotion, Sword & Shield, and the 1-Handed majority; every evaluated-constituent path overlap is byte-identical. Unity mixers and a Basic-locomotion mask execute, but use full-body state handoffs until style, pose, grips, and contacts are visually accepted. The [partial collection rollup](protofactor-ultimate-animation-collection.md) owns the cross-pack conclusion.
 
+## AnimSmith 0.7.0 refresh (2026-08-26)
+
+Exact `v0.7.0` reproduced 189 FBXs, 186 contracts (24/162 pass/fail), and 25 candidates under output v17 / measurements v16. Projections are not engine or artistic acceptance.
+
 ## Evidence status
 
-Current evidence is the exact 0.7.0 rerun above; byte-identical 0.3/0.4 and retained Unity evidence remain historical. Local revision and terms remain unproven. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-dual-swords-evidence.md).
+The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-dual-swords-evidence.md) retain exact current and historical provenance. Local revision and terms remain unproven.
 
 ## Sources
 

@@ -2,7 +2,7 @@
 
 > Companion report: [partial collection technical evaluation](protofactor-ultimate-animation-collection.md)
 >
-> Evidence status: **partial** — eight constituent manifests, all 28 pairwise shared-file comparisons, and an eight-pack Unity project with retained contextual and melee probe phases are recorded; 15 listed constituents and visual acceptance are absent.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 mechanical reruns and bounded projections cover eight constituents; all 28 historical pairwise shared-file comparisons and retained Unity probes remain attributable to their original runs; 15 listed constituents and visual acceptance are absent.
 >
 > Evaluation date: **2026-08-26**
 >
