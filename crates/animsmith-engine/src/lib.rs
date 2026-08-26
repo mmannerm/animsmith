@@ -66,6 +66,7 @@
 #![warn(missing_docs)]
 
 mod addressability;
+mod addressability_v2;
 mod canonical;
 mod clip_boundary;
 mod error;
@@ -94,6 +95,24 @@ pub use addressability::{
     GltfAnimationAddressabilityV1, GltfAnimationChannelPropertyV1, GltfAnimationCoverageStateV1,
     GltfAnimationCoverageV1, GltfAnimationObservationV1, GltfAnimationTargetKindV1,
     GltfAnimationTargetV1, GltfAnimationUnavailableReasonV1,
+};
+pub use addressability_v2::{
+    BevyAddressabilityRuleSourceV1, BevyAnimationTargetIdError, BevyGltfAddressabilityProjectionV2,
+    BevyGltfAddressabilityRulesV1, BevyGltfAddressabilitySettingsV2, BevyNamedMapDuplicatePolicyV1,
+    GLTF_ADDRESSABILITY_V2_ID, GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS,
+    GLTF_ADDRESSABILITY_V2_MAX_EVALUATED_SCOPES, GLTF_ADDRESSABILITY_V2_MAX_PATH_BYTES,
+    GLTF_ADDRESSABILITY_V2_MAX_PATH_SEGMENTS, GLTF_ADDRESSABILITY_V2_MAX_REPORT_BYTES,
+    GLTF_ADDRESSABILITY_V2_MAX_SEGMENT_BYTES, GLTF_ADDRESSABILITY_V2_MAX_STRUCTURAL_REFERENCES,
+    GLTF_ADDRESSABILITY_V2_MAX_TOTAL_TEXT_BYTES, GLTF_ADDRESSABILITY_V2_SCHEMA_VERSION,
+    GltfAddressabilityBevyAdapterV2, GltfAddressabilityBevyReadbackV2,
+    GltfAddressabilityCheckReadbackV2, GltfAddressabilityInventoryV2,
+    GltfAddressabilityNamedMapKindV2, GltfAddressabilityNamedMapV2,
+    GltfAddressabilityNamedMapWinnerV2, GltfAddressabilityProjectionV2,
+    GltfAddressabilityReadErrorV2, GltfAddressabilityReadbackV2, GltfAddressabilitySceneV2,
+    GltfAddressabilitySettingOriginV2, GltfAddressabilitySkinV2, GltfAddressabilityTargetChannelV2,
+    GltfAddressabilityTargetV2, GltfAddressabilityTargetValueV2,
+    GltfAddressabilityUnavailableReasonV2, GltfAddressabilityV2, GltfAddressabilityV2Error,
+    TargetPointerWidth, bevy_animation_target_id_v1, build_bevy_addressability_adapter_v2,
 };
 pub use clip_boundary::{ENGINE_CLIP_BOUNDARY_CHECK_ID, EngineClipBoundaryCheck};
 pub use error::{
