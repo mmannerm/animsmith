@@ -2680,6 +2680,15 @@ operation-specific derived consumers because they additionally encode a
 requested rewrite's closure and proof obligations; engine rules do not create
 a third representation of the underlying source fact.
 
+The format-neutral core also owns `urn:animsmith:exact-source-timing:1`, a
+bounded same-load sidecar attached to a loaded source. It records generic exact
+time units, frame periods, selected clip ranges, and typed availability without
+format names, parser types, or format constants. A format adapter performs its
+own projection into that vocabulary: the FBX adapter alone owns KTime constants,
+integer period arithmetic, and ufbx resolved-property selection. Engine rules
+consume the generic sidecar through RawSourceFactsV2 and prediction provenance
+v3; neither the V2 outer identity nor the historical readers are widened.
+
 A rule declares all of its preconditions: the full resolved profile identity,
 input format and raw-source coverage, required measurement fields, rig roles
 where applicable, and every explicit project intent or importer setting. A
@@ -2722,6 +2731,16 @@ This predicts the canonical selector convention only. It does not claim a
 successful Bevy load, runtime asset existence, animation-target survival, or
 graph wiring, and the index is not stable across source-order edits. Richer
 scene/name/target addressability remains a separate inventory/adapter concern.
+
+The current additional production slice is the exact Unreal revision 1 / 5.8 /
+`fbx-importer` whole-end-frame rule. For every retained FBX animation stack,
+the FBX adapter projects ufbx's selected complete range pair and exact KTime
+period into the generic exact-source-timing sidecar. `engine-clip-boundary`
+tests only whether the absolute selected end coordinate is on that lattice.
+Incomplete inventory and unavailable declarations or ranges yield scoped
+required-unavailable facets; decimal FPS, inferred frame numbers, import-range
+selection, resampling, compression, root motion, and all other importer policy
+remain out of scope.
 
 The corresponding 0.4.0 standalone producer is
 `generate addressability`. Its V1 root is separate from output-v11 and contains

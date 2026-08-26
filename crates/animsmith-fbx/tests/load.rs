@@ -9,13 +9,19 @@ use animsmith_core::scale::{
 use animsmith_core::{
     DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES, DependencyClosureCoverageReasonV1,
     DependencyReferenceTargetV1, DependencyResourceRefusalReasonV1,
-    DependencyResourceUnavailableReasonV1, Document, InputIdentity, MeasurementContract,
-    RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES, RAW_SOURCE_V1_MAX_TEXT_BYTES, SourceAxisV1,
-    SourceChannelPropertyV1, SourceConstructKindV1, SourceFormatV1, SourceLoaderDispositionV1,
-    SourceObservationStateV1, SourceResourceKindV1, SourceResourceLocatorV1,
-    SourceSetCoverageStateV1, SourceUnavailableReasonV1, TrackValues, validate_document_shape,
+    DependencyResourceUnavailableReasonV1, Document, ExactSourceRangeSelectionV1,
+    ExactSourceTimingObservationStateV1, ExactSourceTimingUnavailableReasonV1, InputIdentity,
+    MeasurementContract, RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES, RAW_SOURCE_V1_MAX_TEXT_BYTES,
+    SourceAxisV1, SourceChannelPropertyV1, SourceConstructKindV1, SourceFormatV1,
+    SourceLoaderDispositionV1, SourceObservationStateV1, SourceProvenanceKindV1,
+    SourceResourceKindV1, SourceResourceLocatorV1, SourceSetCoverageStateV1,
+    SourceTimeDisplayProtocolV1, SourceTimelineModeV1, SourceUnavailableReasonV1, TrackValues,
+    validate_document_shape,
 };
-use animsmith_fbx::{FbxCoordinateAxis, FbxScaleDomainStatus};
+use animsmith_fbx::{
+    FBX_KTIME_LEGACY_UNITS_PER_SECOND, FBX_KTIME_STANDARD_UNITS_PER_SECOND, FbxCoordinateAxis,
+    FbxScaleDomainStatus,
+};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -63,6 +69,18 @@ enum NormalImage {
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rigged_triangle.fbx")
+}
+
+fn analytic_timing_fixture(global_properties: &[&str]) -> String {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read exact-timing fixture")
+        .replace("\r\n", "\n");
+    let anchor = "\t\tP: \"OriginalUnitScaleFactor\", \"double\", \"Number\", \"\",1";
+    let replacement = std::iter::once(anchor)
+        .chain(global_properties.iter().copied())
+        .collect::<Vec<_>>()
+        .join("\n");
+    source.replacen(anchor, &replacement, 1)
 }
 
 fn appendix_d4_domain_names() -> Vec<&'static str> {
@@ -2677,6 +2695,427 @@ fn source_facts_path_and_captured_bytes_bind_the_same_exact_input() {
     ] {
         assert_eq!(coverage.state(), SourceSetCoverageStateV1::Complete);
     }
+}
+
+#[test]
+fn exact_source_timing_retains_absent_declarations_and_legacy_ktime_ticks() {
+    let loaded = animsmith_fbx::load_source(&fixture()).expect("fixture loads");
+    let timing = loaded
+        .exact_source_timing()
+        .expect("FBX load retains exact timing evidence");
+
+    let ExactSourceTimingObservationStateV1::Observed(basis) = timing.time_basis().state() else {
+        panic!("exact KTime basis");
+    };
+    assert_eq!(basis.units_per_second(), FBX_KTIME_LEGACY_UNITS_PER_SECOND);
+    assert_eq!(
+        timing.declared_time_mode().state(),
+        &ExactSourceTimingObservationStateV1::ProvenAbsent
+    );
+    assert_eq!(
+        timing.effective_time_mode().state(),
+        &ExactSourceTimingObservationStateV1::Observed(SourceTimelineModeV1::Fps24)
+    );
+    assert_eq!(
+        timing.declared_time_protocol().state(),
+        &ExactSourceTimingObservationStateV1::ProvenAbsent
+    );
+    assert_eq!(
+        timing.declared_custom_frame_rate().state(),
+        &ExactSourceTimingObservationStateV1::ProvenAbsent
+    );
+    assert_eq!(
+        timing.effective_time_protocol().state(),
+        &ExactSourceTimingObservationStateV1::Observed(SourceTimeDisplayProtocolV1::Default)
+    );
+    assert_eq!(
+        timing
+            .frame_period()
+            .provenance()
+            .expect("parser fallback provenance")
+            .kind(),
+        SourceProvenanceKindV1::ParserProjected
+    );
+
+    let ExactSourceTimingObservationStateV1::Observed(period) = timing.frame_period().state()
+    else {
+        panic!("24 fps legacy period");
+    };
+    assert_eq!(
+        period.units_per_frame(),
+        FBX_KTIME_LEGACY_UNITS_PER_SECOND / 24
+    );
+    let [stack] = timing.clips() else {
+        panic!("one exact stack row");
+    };
+    let ExactSourceTimingObservationStateV1::Observed(range) = stack.source_time_range().state()
+    else {
+        panic!("exact source tick range");
+    };
+    assert_eq!(range.selection(), ExactSourceRangeSelectionV1::Primary);
+    assert_eq!(range.begin_units(), 0);
+    assert_eq!(range.end_units(), FBX_KTIME_LEGACY_UNITS_PER_SECOND);
+    assert!(period.is_whole_frame(range.end_units()));
+}
+
+#[test]
+fn exact_source_timing_uses_standard_basis_and_absolute_signed_end_coordinate() {
+    let period = 4_708_704i64;
+    for (suffix, end_units, whole) in [
+        ("minus-one", period - 1, false),
+        ("whole", period, true),
+        ("plus-one", period + 1, false),
+    ] {
+        let source = analytic_timing_fixture(&[
+            "\t\tP: \"TimeMode\", \"enum\", \"\", \"\",8",
+            "\t\tP: \"TimeProtocol\", \"enum\", \"\", \"\",0",
+        ])
+        .replacen("FBXHeaderVersion: 1003", "FBXHeaderVersion: 1004", 1)
+        .replacen(
+            "\tCreator: \"animsmith self-authored test fixture\"",
+            concat!(
+                "\tCreator: \"animsmith self-authored test fixture\"\n",
+                "\tOtherFlags: {\n",
+                "\t\tTCDefinition: 0\n",
+                "\t}"
+            ),
+            1,
+        )
+        .replacen(
+            "P: \"LocalStart\", \"KTime\", \"Time\", \"\",0",
+            &format!("P: \"LocalStart\", \"KTime\", \"Time\", \"\",{}", -period),
+            1,
+        )
+        .replacen(
+            "P: \"LocalStop\", \"KTime\", \"Time\", \"\",46186158000",
+            &format!("P: \"LocalStop\", \"KTime\", \"Time\", \"\",{end_units}"),
+            1,
+        );
+        let path = PathBuf::from(format!("exact-{suffix}.fbx"));
+        let loaded = animsmith_fbx::load_source_bytes(&path, source.as_bytes())
+            .expect("standard-basis analytic fixture loads");
+        let timing = loaded.exact_source_timing().expect("exact FBX evidence");
+        assert_eq!(
+            timing.time_basis().state(),
+            &ExactSourceTimingObservationStateV1::Observed(
+                animsmith_core::ExactSourceTimeBasisV1::new(FBX_KTIME_STANDARD_UNITS_PER_SECOND)
+                    .unwrap()
+            )
+        );
+        assert_eq!(
+            timing.declared_time_mode().state(),
+            &ExactSourceTimingObservationStateV1::Observed(SourceTimelineModeV1::NtscDropFrame)
+        );
+        assert_eq!(
+            timing.declared_time_protocol().state(),
+            &ExactSourceTimingObservationStateV1::Observed(SourceTimeDisplayProtocolV1::Smpte)
+        );
+        let ExactSourceTimingObservationStateV1::Observed(frame_period) =
+            timing.frame_period().state()
+        else {
+            panic!("exact NTSC period");
+        };
+        assert_eq!(frame_period.units_per_frame(), period);
+        let ExactSourceTimingObservationStateV1::Observed(range) =
+            timing.clips()[0].source_time_range().state()
+        else {
+            panic!("exact signed range");
+        };
+        assert_eq!(range.begin_units(), -period);
+        assert_eq!(range.end_units(), end_units);
+        assert_eq!(frame_period.is_whole_frame(range.end_units()), whole);
+    }
+}
+
+#[test]
+fn exact_source_timing_reproduces_pair_fallback_without_mixing_or_malformed_substitution() {
+    let reference_start = -123i64;
+    let reference_stop = 456i64;
+    let incomplete_local = analytic_timing_fixture(&[])
+        .replace(
+            "\t\t\tP: \"LocalStop\", \"KTime\", \"Time\", \"\",46186158000\n",
+            "",
+        )
+        .replacen(
+            "P: \"ReferenceStart\", \"KTime\", \"Time\", \"\",0",
+            &format!("P: \"ReferenceStart\", \"KTime\", \"Time\", \"\",{reference_start}"),
+            1,
+        )
+        .replacen(
+            "P: \"ReferenceStop\", \"KTime\", \"Time\", \"\",46186158000",
+            &format!("P: \"ReferenceStop\", \"KTime\", \"Time\", \"\",{reference_stop}"),
+            1,
+        );
+    let loaded = animsmith_fbx::load_source_bytes(
+        PathBuf::from("reference-fallback.fbx").as_path(),
+        incomplete_local.as_bytes(),
+    )
+    .expect("reference fallback fixture loads");
+    let ExactSourceTimingObservationStateV1::Observed(range) = loaded
+        .exact_source_timing()
+        .expect("exact evidence")
+        .clips()[0]
+        .source_time_range()
+        .state()
+    else {
+        panic!("reference range");
+    };
+    assert_eq!(range.selection(), ExactSourceRangeSelectionV1::Fallback);
+    assert_eq!((range.begin_units(), range.end_units()), (-123, 456));
+
+    let malformed_local = analytic_timing_fixture(&[])
+        .replacen(
+            "P: \"LocalStart\", \"KTime\", \"Time\", \"\",0",
+            "P: \"LocalStart\", \"KTime\", \"Time\", \"\",10",
+            1,
+        )
+        .replacen(
+            "P: \"LocalStop\", \"KTime\", \"Time\", \"\",46186158000",
+            "P: \"LocalStop\", \"KTime\", \"Time\", \"\",9",
+            1,
+        );
+    let loaded = animsmith_fbx::load_source_bytes(
+        PathBuf::from("malformed-local.fbx").as_path(),
+        malformed_local.as_bytes(),
+    )
+    .expect("ufbx still loads reversed stack markers");
+    assert_eq!(
+        loaded
+            .exact_source_timing()
+            .expect("exact evidence")
+            .clips()[0]
+            .source_time_range()
+            .state(),
+        &ExactSourceTimingObservationStateV1::Unavailable(
+            ExactSourceTimingUnavailableReasonV1::Malformed
+        )
+    );
+}
+
+#[test]
+fn exact_source_timing_counts_ufbx_resolved_template_defaults_as_complete_range_pairs() {
+    let source = [
+        "\t\t\tP: \"LocalStart\", \"KTime\", \"Time\", \"\",0\n",
+        "\t\t\tP: \"LocalStop\", \"KTime\", \"Time\", \"\",46186158000\n",
+        "\t\t\tP: \"ReferenceStart\", \"KTime\", \"Time\", \"\",0\n",
+        "\t\t\tP: \"ReferenceStop\", \"KTime\", \"Time\", \"\",46186158000\n",
+    ]
+    .into_iter()
+    .fold(analytic_timing_fixture(&[]), |source, property| {
+        source.replace(property, "")
+    })
+    .replacen(
+        "\tObjectType: \"AnimationStack\" { Count: 1 }",
+        concat!(
+            "\tObjectType: \"AnimationStack\" {\n",
+            "\t\tCount: 1\n",
+            "\t\tPropertyTemplate: \"FbxAnimStack\" {\n",
+            "\t\t\tProperties70: {\n",
+            "\t\t\t\tP: \"LocalStart\", \"KTime\", \"Time\", \"\",-123\n",
+            "\t\t\t\tP: \"LocalStop\", \"KTime\", \"Time\", \"\",456\n",
+            "\t\t\t}\n",
+            "\t\t}\n",
+            "\t}"
+        ),
+        1,
+    );
+    let loaded = animsmith_fbx::load_source_bytes(
+        PathBuf::from("template-default-range.fbx").as_path(),
+        source.as_bytes(),
+    )
+    .expect("ufbx resolves AnimationStack property-template defaults");
+    let ExactSourceTimingObservationStateV1::Observed(range) = loaded
+        .exact_source_timing()
+        .expect("exact evidence")
+        .clips()[0]
+        .source_time_range()
+        .state()
+    else {
+        panic!("resolved complete local pair");
+    };
+    assert_eq!(range.selection(), ExactSourceRangeSelectionV1::Primary);
+    assert_eq!((range.begin_units(), range.end_units()), (-123, 456));
+}
+
+#[test]
+fn exact_source_timing_does_not_promote_ufbx_silent_zero_or_wrong_type() {
+    let absent = [
+        "\t\t\tP: \"LocalStart\", \"KTime\", \"Time\", \"\",0\n",
+        "\t\t\tP: \"LocalStop\", \"KTime\", \"Time\", \"\",46186158000\n",
+        "\t\t\tP: \"ReferenceStart\", \"KTime\", \"Time\", \"\",0\n",
+        "\t\t\tP: \"ReferenceStop\", \"KTime\", \"Time\", \"\",46186158000\n",
+    ]
+    .into_iter()
+    .fold(analytic_timing_fixture(&[]), |source, property| {
+        source.replace(property, "")
+    });
+    let loaded = animsmith_fbx::load_source_bytes(
+        PathBuf::from("absent-stack-times.fbx").as_path(),
+        absent.as_bytes(),
+    )
+    .expect("stack without time markers loads");
+    assert_eq!(
+        loaded.source_facts().clips().rows()[0]
+            .source_range()
+            .state(),
+        &SourceObservationStateV1::Observed(
+            animsmith_core::SourceTimeRangeV1::new(0.0, 0.0).unwrap()
+        )
+    );
+    assert_eq!(
+        loaded
+            .exact_source_timing()
+            .expect("exact evidence")
+            .clips()[0]
+            .source_time_range()
+            .state(),
+        &ExactSourceTimingObservationStateV1::ProvenAbsent
+    );
+
+    let wrong_type = analytic_timing_fixture(&[]).replacen(
+        "P: \"LocalStart\", \"KTime\", \"Time\", \"\",0",
+        "P: \"LocalStart\", \"KString\", \"Time\", \"\",0",
+        1,
+    );
+    let loaded = animsmith_fbx::load_source_bytes(
+        PathBuf::from("wrong-type-local.fbx").as_path(),
+        wrong_type.as_bytes(),
+    )
+    .expect("wrong-type time marker remains parser-loadable");
+    assert_eq!(
+        loaded
+            .exact_source_timing()
+            .expect("exact evidence")
+            .clips()[0]
+            .source_time_range()
+            .state(),
+        &ExactSourceTimingObservationStateV1::Unavailable(
+            ExactSourceTimingUnavailableReasonV1::Malformed
+        )
+    );
+}
+
+#[test]
+fn exact_source_timing_distinguishes_explicit_absent_custom_invalid_and_unsupported_modes() {
+    struct Case {
+        name: &'static str,
+        property: Option<&'static str>,
+        declared: ExactSourceTimingObservationStateV1<SourceTimelineModeV1>,
+        effective: SourceTimelineModeV1,
+        period: Result<i64, ExactSourceTimingUnavailableReasonV1>,
+    }
+    let cases = [
+        Case {
+            name: "explicit-default",
+            property: Some("\t\tP: \"TimeMode\", \"enum\", \"\", \"\",0"),
+            declared: ExactSourceTimingObservationStateV1::Observed(SourceTimelineModeV1::Default),
+            effective: SourceTimelineModeV1::Default,
+            period: Ok(FBX_KTIME_LEGACY_UNITS_PER_SECOND / 30),
+        },
+        Case {
+            name: "absent",
+            property: None,
+            declared: ExactSourceTimingObservationStateV1::ProvenAbsent,
+            effective: SourceTimelineModeV1::Fps24,
+            period: Ok(FBX_KTIME_LEGACY_UNITS_PER_SECOND / 24),
+        },
+        Case {
+            name: "custom",
+            property: Some(concat!(
+                "\t\tP: \"TimeMode\", \"enum\", \"\", \"\",14\n",
+                "\t\tP: \"CustomFrameRate\", \"double\", \"Number\", \"\",23.5"
+            )),
+            declared: ExactSourceTimingObservationStateV1::Observed(SourceTimelineModeV1::Custom),
+            effective: SourceTimelineModeV1::Custom,
+            period: Err(ExactSourceTimingUnavailableReasonV1::CustomFrameRateNotExact),
+        },
+        Case {
+            name: "invalid",
+            property: Some("\t\tP: \"TimeMode\", \"enum\", \"\", \"\",99"),
+            declared: ExactSourceTimingObservationStateV1::Unavailable(
+                ExactSourceTimingUnavailableReasonV1::UnsupportedTimeMode,
+            ),
+            effective: SourceTimelineModeV1::Fps24,
+            period: Ok(FBX_KTIME_LEGACY_UNITS_PER_SECOND / 24),
+        },
+        Case {
+            name: "legacy-72",
+            property: Some("\t\tP: \"TimeMode\", \"enum\", \"\", \"\",16"),
+            declared: ExactSourceTimingObservationStateV1::Observed(SourceTimelineModeV1::Fps72),
+            effective: SourceTimelineModeV1::Fps72,
+            period: Err(ExactSourceTimingUnavailableReasonV1::UnsupportedTimeBasis),
+        },
+    ];
+
+    for case in cases {
+        let properties = case.property.into_iter().collect::<Vec<_>>();
+        let source = analytic_timing_fixture(&properties);
+        let loaded = animsmith_fbx::load_source_bytes(
+            PathBuf::from(format!("{}.fbx", case.name)).as_path(),
+            source.as_bytes(),
+        )
+        .expect("time-mode analytic fixture loads");
+        let timing = loaded.exact_source_timing().expect("exact evidence");
+        assert_eq!(timing.declared_time_mode().state(), &case.declared);
+        assert_eq!(
+            timing.effective_time_mode().state(),
+            &ExactSourceTimingObservationStateV1::Observed(case.effective)
+        );
+        match case.period {
+            Ok(expected) => {
+                let ExactSourceTimingObservationStateV1::Observed(period) =
+                    timing.frame_period().state()
+                else {
+                    panic!("{} has exact period", case.name);
+                };
+                assert_eq!(period.units_per_frame(), expected, "{}", case.name);
+            }
+            Err(expected) => assert_eq!(
+                timing.frame_period().state(),
+                &ExactSourceTimingObservationStateV1::Unavailable(expected),
+                "{}",
+                case.name
+            ),
+        }
+        if case.name == "custom" {
+            let ExactSourceTimingObservationStateV1::Observed(custom_rate) =
+                timing.declared_custom_frame_rate().state()
+            else {
+                panic!("custom rate binary64 evidence");
+            };
+            assert_eq!(custom_rate.binary64_bits(), 23.5f64.to_bits());
+        } else {
+            assert_eq!(
+                timing.declared_custom_frame_rate().state(),
+                &ExactSourceTimingObservationStateV1::ProvenAbsent,
+                "{}",
+                case.name
+            );
+        }
+    }
+
+    let malformed_custom = analytic_timing_fixture(&[concat!(
+        "\t\tP: \"TimeMode\", \"enum\", \"\", \"\",14\n",
+        "\t\tP: \"CustomFrameRate\", \"double\", \"Number\", \"\",-1"
+    )]);
+    let loaded = animsmith_fbx::load_source_bytes(
+        PathBuf::from("malformed-custom.fbx").as_path(),
+        malformed_custom.as_bytes(),
+    )
+    .expect("malformed custom-rate evidence does not prevent parsing");
+    let timing = loaded.exact_source_timing().expect("exact evidence");
+    assert_eq!(
+        timing.declared_custom_frame_rate().state(),
+        &ExactSourceTimingObservationStateV1::Unavailable(
+            ExactSourceTimingUnavailableReasonV1::Malformed
+        )
+    );
+    assert_eq!(
+        timing.frame_period().state(),
+        &ExactSourceTimingObservationStateV1::Unavailable(
+            ExactSourceTimingUnavailableReasonV1::CustomFrameRateNotExact
+        )
+    );
 }
 
 #[test]

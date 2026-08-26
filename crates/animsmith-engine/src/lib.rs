@@ -65,6 +65,7 @@
 
 mod addressability;
 mod canonical;
+mod clip_boundary;
 mod error;
 mod import_advice;
 mod prediction;
@@ -87,6 +88,7 @@ pub use addressability::{
     GltfAnimationCoverageV1, GltfAnimationObservationV1, GltfAnimationTargetKindV1,
     GltfAnimationTargetV1, GltfAnimationUnavailableReasonV1,
 };
+pub use clip_boundary::{ENGINE_CLIP_BOUNDARY_CHECK_ID, EngineClipBoundaryCheck};
 pub use error::{
     InvalidSettingReason, PredictionRuleError, RegistryValidationError, ResolutionError,
     SettingLocation,
@@ -103,12 +105,13 @@ pub use import_advice::{
 };
 pub use prediction::{
     BevyAnimationAssetLabelError, BevyAnimationAssetLabelV1, ENGINE_ADDRESSABILITY_CHECK_ID,
-    ENGINE_CHECK_IDS_V1, EngineAddressabilityCheck, EngineAddressabilityCheckV2,
+    ENGINE_CHECK_IDS_V1, ENGINE_CHECK_IDS_V2, EngineAddressabilityCheck,
+    EngineAddressabilityCheckV2, EngineAddressabilityCheckV3,
     GltfAnimationAddressabilityAdapterError, build_bevy_animation_addressability_adapter_v1,
 };
 pub use provenance::{
     PredictionProvenanceProjectionError, project_prediction_provenance_v1,
-    project_prediction_provenance_v2,
+    project_prediction_provenance_v2, project_prediction_provenance_v3,
 };
 pub use registry::{profiles_v1, validate_registry_v1};
 pub use resolver::{

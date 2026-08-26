@@ -8,12 +8,14 @@ use crate::registry::profiles_v1;
 use animsmith_core::{
     Applicability, Check, CheckCtx, CheckOutput, CheckSelection, EngineAnimationAddressabilityV1,
     EngineFactIdV1, EngineFactStateV1, EngineFactValueV1, EnginePredictionBasisV1,
-    EnginePredictionFacetV1, EnginePredictionFacetV2, EnginePredictionV1, EnginePredictionV2,
+    EnginePredictionBasisV2, EnginePredictionFacetV1, EnginePredictionFacetV2,
+    EnginePredictionFacetV3, EnginePredictionV1, EnginePredictionV2, EnginePredictionV3,
     EvaluationScope, EvaluationScopeCode, LoadedSource, PredictionBasisReferenceV1,
-    PredictionFacetDemandV2, PredictionProvenanceV1, PredictionProvenanceV2,
-    PredictionRuleAllocationV2, PredictionUnavailableReasonV1, RAW_SOURCE_V1_MAX_CLIPS,
-    RawSourceBasisReferenceV1, RawSourceBindingV1, RawSourceDomainV1, RawSourceFieldIdV1,
-    RawSourceKeyV1, SourceFormatV1, SourceSetCoverageStateV1, evaluate_checks,
+    PredictionBasisReferenceV2, PredictionFacetDemandV2, PredictionProvenanceV1,
+    PredictionProvenanceV2, PredictionProvenanceV3, PredictionRuleAllocationV2,
+    PredictionUnavailableReasonV1, RAW_SOURCE_V1_MAX_CLIPS, RawSourceBasisReferenceV1,
+    RawSourceBindingV1, RawSourceBindingV2, RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1,
+    SourceFormatV1, SourceSetCoverageStateV1, evaluate_checks,
 };
 
 /// A Bevy animation asset-label index outside the bounded raw-source
@@ -50,6 +52,16 @@ pub const ENGINE_ADDRESSABILITY_CHECK_ID: &str = "engine-addressability";
 
 /// Versioned engine-owned check ids callers may use for pre-I/O selection validation.
 pub const ENGINE_CHECK_IDS_V1: &[&str] = &[ENGINE_ADDRESSABILITY_CHECK_ID];
+
+/// Current engine-owned check ids in immutable catalog order.
+///
+/// The V1 catalog remains unchanged for historical standalone addressability
+/// artifacts; current lint may additionally register the V3-only exact source
+/// boundary rule.
+pub const ENGINE_CHECK_IDS_V2: &[&str] = &[
+    ENGINE_ADDRESSABILITY_CHECK_ID,
+    crate::clip_boundary::ENGINE_CLIP_BOUNDARY_CHECK_ID,
+];
 
 const BEVY_FAMILY: &str = "bevy";
 const BEVY_PROFILE_REVISION: u32 = 1;
@@ -116,6 +128,121 @@ pub struct EngineAddressabilityCheck<'a> {
 pub struct EngineAddressabilityCheckV2<'a> {
     source: &'a LoadedSource,
     provenance: Option<&'a PredictionProvenanceV2>,
+}
+
+/// Current-output V3 engine addressability check.
+///
+/// This preserves the V2 rule and allocation behavior while lifting its basis
+/// references and prediction attachment into the exact-source-capable V3
+/// contracts required by current lint output.
+pub struct EngineAddressabilityCheckV3<'a> {
+    source: &'a LoadedSource,
+    provenance: Option<&'a PredictionProvenanceV3>,
+}
+
+impl<'a> EngineAddressabilityCheckV3<'a> {
+    /// Bind current V3 provenance to same-load source evidence.
+    pub fn new(
+        source: &'a LoadedSource,
+        provenance: Option<&'a PredictionProvenanceV3>,
+    ) -> Result<Self, PredictionRuleError> {
+        if let Some(provenance) = provenance {
+            provenance
+                .validate()
+                .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
+            let raw_source = RawSourceBindingV2::from_source(
+                source.source_facts(),
+                source.exact_source_timing(),
+            )
+            .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
+            if &raw_source != provenance.raw_source()
+                || source.dependency_closure() != provenance.dependency_closure()
+            {
+                return Err(PredictionRuleError::SourceProvenanceMismatch);
+            }
+            let selection = provenance.profile().selection();
+            if selection.family() == BEVY_FAMILY
+                && selection.profile_revision() == BEVY_PROFILE_REVISION
+                && selection.engine_version() == BEVY_ENGINE_VERSION
+                && selection.importer() == BEVY_IMPORTER
+                && !profiles_v1().iter().any(|profile| {
+                    let selection = profile.selection();
+                    selection.family() == BEVY_FAMILY
+                        && selection.profile_revision() == BEVY_PROFILE_REVISION
+                        && selection.engine_version() == BEVY_ENGINE_VERSION
+                        && selection.importer() == BEVY_IMPORTER
+                        && profile.facts_identity() == provenance.profile().facts_identity()
+                })
+            {
+                return Err(PredictionRuleError::FrozenProfileMismatch);
+            }
+        }
+        Ok(Self { source, provenance })
+    }
+}
+
+impl Check for EngineAddressabilityCheckV3<'_> {
+    fn id(&self) -> &'static str {
+        ENGINE_ADDRESSABILITY_CHECK_ID
+    }
+
+    fn applicability(&self, _ctx: &CheckCtx<'_>) -> Applicability {
+        match self.provenance {
+            Some(provenance)
+                if is_bevy_gltf_v3(self.source, provenance)
+                    && !facts_are_complete_and_empty(self.source) =>
+            {
+                Applicability::Applicable
+            }
+            _ => Applicability::NotApplicable,
+        }
+    }
+
+    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+        let Some(provenance) = self.provenance else {
+            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+        };
+        if !is_bevy_gltf_v3(self.source, provenance) || facts_are_complete_and_empty(self.source) {
+            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+        }
+        evaluate_animation_asset_labels_v3(self.source, provenance)
+    }
+
+    fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
+        match self.provenance {
+            Some(provenance)
+                if is_bevy_gltf_v3(self.source, provenance)
+                    && !facts_are_complete_and_empty(self.source) =>
+            {
+                if self.source.source_facts().clips().coverage().state()
+                    != SourceSetCoverageStateV1::Complete
+                    || matches!(
+                        provenance.settings().clip_coverage().state(),
+                        animsmith_core::ResolvedEngineSettingsCoverageStateV2::Partial
+                    )
+                {
+                    PredictionFacetDemandV2::Exact(1)
+                } else {
+                    PredictionFacetDemandV2::Exact(self.source.source_facts().clips().rows().len())
+                }
+            }
+            _ => PredictionFacetDemandV2::Exact(0),
+        }
+    }
+
+    fn evaluate_with_prediction_allocation_v2(
+        &self,
+        _ctx: &CheckCtx<'_>,
+        allocation: PredictionRuleAllocationV2<'_>,
+    ) -> CheckOutput {
+        let Some(provenance) = self.provenance else {
+            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+        };
+        if !is_bevy_gltf_v3(self.source, provenance) || facts_are_complete_and_empty(self.source) {
+            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+        }
+        evaluate_animation_asset_labels_v3_allocated(self.source, provenance, allocation)
+    }
 }
 
 impl<'a> EngineAddressabilityCheckV2<'a> {
@@ -372,6 +499,30 @@ fn is_bevy_gltf(source: &LoadedSource, provenance: &PredictionProvenanceV1) -> b
 }
 
 fn is_bevy_gltf_v2(source: &LoadedSource, provenance: &PredictionProvenanceV2) -> bool {
+    let selection = provenance.profile().selection();
+    source.source_facts().format() == provenance.source_format()
+        && selection.family() == BEVY_FAMILY
+        && selection.profile_revision() == BEVY_PROFILE_REVISION
+        && selection.engine_version() == BEVY_ENGINE_VERSION
+        && selection.importer() == BEVY_IMPORTER
+        && matches!(
+            provenance
+                .profile()
+                .fact(EngineFactIdV1::AnimationAddressability)
+                .map(|fact| fact.state()),
+            Some(EngineFactStateV1::Known(
+                EngineFactValueV1::AnimationAddressability(
+                    EngineAnimationAddressabilityV1::GltfAssetLabel
+                )
+            ))
+        )
+        && provenance
+            .profile()
+            .source(BEVY_ANIMATION_LABEL_SOURCE)
+            .is_some()
+}
+
+fn is_bevy_gltf_v3(source: &LoadedSource, provenance: &PredictionProvenanceV3) -> bool {
     let selection = provenance.profile().selection();
     source.source_facts().format() == provenance.source_format()
         && selection.family() == BEVY_FAMILY
@@ -660,4 +811,139 @@ fn evaluate_animation_asset_labels_v2_allocated(
         EnginePredictionV2::new(provenance.identity().clone(), facets)
             .expect("allocated V2 facets"),
     )
+}
+
+fn evaluate_animation_asset_labels_v3(
+    source: &LoadedSource,
+    provenance: &PredictionProvenanceV3,
+) -> CheckOutput {
+    let raw_partial =
+        source.source_facts().clips().coverage().state() != SourceSetCoverageStateV1::Complete;
+    let settings_partial = matches!(
+        provenance.settings().clip_coverage().state(),
+        animsmith_core::ResolvedEngineSettingsCoverageStateV2::Partial
+    );
+    let candidate_capacity = if raw_partial || settings_partial {
+        1
+    } else {
+        source.source_facts().clips().rows().len()
+    };
+    evaluate_animation_asset_labels_v3_with_limits(source, provenance, candidate_capacity, false)
+}
+
+fn evaluate_animation_asset_labels_v3_allocated(
+    source: &LoadedSource,
+    provenance: &PredictionProvenanceV3,
+    allocation: PredictionRuleAllocationV2<'_>,
+) -> CheckOutput {
+    evaluate_animation_asset_labels_v3_with_limits(
+        source,
+        provenance,
+        allocation.candidate_capacity(),
+        allocation.summary_required(),
+    )
+}
+
+fn evaluate_animation_asset_labels_v3_with_limits(
+    source: &LoadedSource,
+    provenance: &PredictionProvenanceV3,
+    candidate_capacity: usize,
+    summary_required: bool,
+) -> CheckOutput {
+    let facts = source.source_facts();
+    let settings_partial = matches!(
+        provenance.settings().clip_coverage().state(),
+        animsmith_core::ResolvedEngineSettingsCoverageStateV2::Partial
+    );
+    let raw_partial = facts.clips().coverage().state() != SourceSetCoverageStateV1::Complete;
+    let mut scopes = Vec::with_capacity(candidate_capacity);
+    let mut facets = Vec::with_capacity(candidate_capacity + usize::from(summary_required));
+
+    if raw_partial || settings_partial {
+        if candidate_capacity != 0 {
+            let mut reasons = Vec::new();
+            if raw_partial {
+                reasons.push(animsmith_core::PredictionUnavailableReasonV2::RawSourceIncomplete);
+            }
+            if settings_partial {
+                reasons
+                    .push(animsmith_core::PredictionUnavailableReasonV2::ResolvedSettingsOverflow);
+            }
+            facets.push(
+                EnginePredictionFacetV3::required_unavailable(
+                    EvaluationScope::new(EvaluationScopeCode::ANIMATION_ASSET_LABEL_INVENTORY),
+                    addressability_basis_v3(facts, None),
+                    reasons,
+                )
+                .expect("static unavailable V3 facet"),
+            );
+        }
+    } else {
+        for clip in facts.clips().rows().iter().take(candidate_capacity) {
+            let source_index = clip.source_clip_index();
+            let label = BevyAnimationAssetLabelV1::new(source_index)
+                .expect("loader-valid retained clip indices satisfy the V1 raw-source bound");
+            let scope = EvaluationScope::new(EvaluationScopeCode::ANIMATION_ASSET_LABEL)
+                .subject(label.as_str().to_owned());
+            facets.push(
+                EnginePredictionFacetV3::available(
+                    scope.clone(),
+                    addressability_basis_v3(facts, Some(source_index)),
+                )
+                .expect("complete rows form V3 facets"),
+            );
+            scopes.push(scope);
+        }
+    }
+
+    if summary_required {
+        facets.push(
+            EnginePredictionFacetV3::required_unavailable(
+                EvaluationScope::new(EvaluationScopeCode::custom(
+                    "engine-addressability:facet-budget",
+                )),
+                addressability_basis_v3(facts, None),
+                vec![animsmith_core::PredictionUnavailableReasonV2::FacetBudgetExceeded],
+            )
+            .expect("budget summary V3 facet"),
+        );
+    }
+    if facets.is_empty() {
+        return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+    }
+    CheckOutput::from_coverage(Vec::new(), scopes, Vec::new()).with_engine_prediction_v3(
+        EnginePredictionV3::new(provenance.identity().clone(), facets)
+            .expect("allocated V3 facets"),
+    )
+}
+
+fn addressability_basis_v3(
+    facts: animsmith_core::SourceFactsViewV1<'_>,
+    source_index: Option<usize>,
+) -> EnginePredictionBasisV2 {
+    let mut references = vec![
+        PredictionBasisReferenceV2::v1(
+            PredictionBasisReferenceV1::profile_fact("animation_addressability")
+                .expect("static fact id is valid"),
+        ),
+        PredictionBasisReferenceV2::v1(
+            PredictionBasisReferenceV1::primary_source(BEVY_ANIMATION_LABEL_SOURCE)
+                .expect("static primary-source id is valid"),
+        ),
+    ];
+    if let Some(source_index) = source_index {
+        let source_name = RawSourceBasisReferenceV1::from_source(
+            RawSourceDomainV1::Clip,
+            RawSourceKeyV1::Clip {
+                source_clip_index: source_index as u64,
+            },
+            RawSourceFieldIdV1::new("source_name.state").expect("static field is valid"),
+            facts,
+        )
+        .expect("retained clip rows resolve their raw-source witness");
+        references.push(PredictionBasisReferenceV2::v1(
+            PredictionBasisReferenceV1::raw_source(source_name),
+        ));
+    }
+    EnginePredictionBasisV2::new(references).expect("static addressability basis is canonical")
 }

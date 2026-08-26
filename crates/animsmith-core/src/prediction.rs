@@ -47,20 +47,30 @@ use crate::source_facts::{
     SourceTargetKindV1, SourceUnavailableReasonV1,
 };
 use crate::{
-    DEPENDENCY_CLOSURE_V1_ID, DependencyClosureV1, InputIdentity, MEASUREMENTS_SCHEMA_ID,
-    MEASUREMENTS_V15_SCHEMA_ID, MeasurementContract, OUTPUT_SCHEMA_ID, OUTPUT_V10_SCHEMA_ID,
-    OUTPUT_V12_SCHEMA_ID, SourceInverseBindAccessorStatus, SourceNodeLocalRest,
-    SourceSkeletonCoverage,
+    DEPENDENCY_CLOSURE_V1_ID, DependencyClosureV1, EXACT_SOURCE_TIMING_V1_ID,
+    ExactSourceClipTimingV1, ExactSourceFramePeriodV1, ExactSourceRangeSelectionV1,
+    ExactSourceTimeBasisV1, ExactSourceTimingObservationStateV1, ExactSourceTimingObservationV1,
+    ExactSourceTimingUnavailableReasonV1, ExactSourceTimingV1, InputIdentity,
+    MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_V15_SCHEMA_ID, MeasurementContract, OUTPUT_V10_SCHEMA_ID,
+    OUTPUT_V12_SCHEMA_ID, OUTPUT_V13_SCHEMA_ID, ParserFrameRateProjectionV1,
+    SourceInverseBindAccessorStatus, SourceNodeLocalRest, SourceSkeletonCoverage,
+    SourceTimeDisplayProtocolV1, SourceTimelineModeV1,
 };
 
 /// Immutable prediction-provenance V1 schema identity.
 pub const PREDICTION_PROVENANCE_V1_ID: &str = "urn:animsmith:prediction-provenance:1";
 /// Immutable bounded-overflow prediction-provenance V2 schema identity.
 pub const PREDICTION_PROVENANCE_V2_ID: &str = "urn:animsmith:prediction-provenance:2";
+/// Immutable exact-source prediction-provenance V3 schema identity.
+pub const PREDICTION_PROVENANCE_V3_ID: &str = "urn:animsmith:prediction-provenance:3";
 /// Immutable per-check engine-prediction V1 schema identity.
 pub const ENGINE_PREDICTION_V1_ID: &str = "urn:animsmith:engine-prediction:1";
 /// Immutable bounded-overflow engine-prediction V2 schema identity.
 pub const ENGINE_PREDICTION_V2_ID: &str = "urn:animsmith:engine-prediction:2";
+/// Immutable exact-source per-check engine-prediction V3 schema identity.
+pub const ENGINE_PREDICTION_V3_ID: &str = "urn:animsmith:engine-prediction:3";
+/// Immutable identity of raw-source facts V2, composed from V1 and exact timing.
+pub const RAW_SOURCE_FACTS_V2_ID: &str = "urn:animsmith:raw-source-facts:2";
 /// Maximum facets retained across one lint file.
 pub const PREDICTION_V1_MAX_FACETS_PER_FILE: usize = 4_096;
 /// Maximum basis references retained by one prediction facet.
@@ -335,6 +345,21 @@ pub enum PredictionContractError {
     /// The retained raw-source scalar disagrees with same-load facts.
     #[error("raw-source basis scalar disagrees with same-load facts")]
     RawSourceValueMismatch,
+    /// Exact source timing and V1 source-clip coverage disagree.
+    #[error("exact source timing clip coverage contradicts raw-source clip coverage")]
+    ExactSourceTimingCoverageMismatch,
+    /// Exact source clip rows were not a canonical zero-based retained prefix.
+    #[error("exact source timing clip rows are not a canonical source-index prefix")]
+    ExactSourceTimingClipPrefixMismatch,
+    /// One exact source timing observation has an invalid state/disposition/provenance combination.
+    #[error("exact source timing observation {0:?} has incoherent metadata")]
+    InvalidExactSourceTimingObservation(&'static str),
+    /// An exact source timing basis reference names no scalar in the embedded binding.
+    #[error("exact source timing basis field {0:?} is not available")]
+    ExactSourceTimingFieldUnavailable(String),
+    /// An exact source timing basis scalar disagrees with the embedded binding.
+    #[error("exact source timing basis scalar disagrees with prediction provenance")]
+    ExactSourceTimingValueMismatch,
     /// One facet exceeded the per-facet basis-reference bound.
     #[error("prediction basis has {found} references, exceeding the V1 limit of {limit}")]
     TooManyBasisReferences {
@@ -425,6 +450,15 @@ pub enum PredictionContractError {
     /// canonical source-index prefix.
     #[error("engine-addressability facets are not the canonical source-index prefix")]
     EngineAddressabilityFacetPrefixMismatch,
+    /// The current engine-clip-boundary facets did not match the exact timing
+    /// rows, availability states, reasons, or canonical evidence bases implied
+    /// by V3 provenance.
+    #[error("engine-clip-boundary facets contradict exact source timing provenance")]
+    EngineClipBoundaryFacetMismatch,
+    /// The current engine-clip-boundary findings did not identify exactly the
+    /// available source-clip ends outside their exact frame lattice.
+    #[error("engine-clip-boundary findings contradict exact source timing provenance")]
+    EngineClipBoundaryFindingMismatch,
     /// A required-unavailable facet scope was also reported as completed.
     #[error("required-unavailable prediction facet scope cannot occur in evaluated_scopes")]
     UnavailableScopeEvaluated,
@@ -2379,6 +2413,1133 @@ impl RawSourceBindingV1 {
     }
 }
 
+/// exact-source unavailability vocabulary retained by the prediction wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExactSourceTimingUnavailableReasonWireV1 {
+    /// A source property or selected range was malformed.
+    Malformed,
+    /// A custom rate was exposed only as a floating-point value.
+    CustomFrameRateNotExact,
+    /// No frozen exact period exists for the time mode.
+    UnsupportedTimeMode,
+    /// The source-time basis cannot represent the frozen integer period.
+    UnsupportedTimeBasis,
+    /// The parser did not expose the exact value.
+    ParserUnavailable,
+}
+
+impl From<ExactSourceTimingUnavailableReasonV1> for ExactSourceTimingUnavailableReasonWireV1 {
+    fn from(value: ExactSourceTimingUnavailableReasonV1) -> Self {
+        match value {
+            ExactSourceTimingUnavailableReasonV1::Malformed => Self::Malformed,
+            ExactSourceTimingUnavailableReasonV1::CustomFrameRateNotExact => {
+                Self::CustomFrameRateNotExact
+            }
+            ExactSourceTimingUnavailableReasonV1::UnsupportedTimeMode => Self::UnsupportedTimeMode,
+            ExactSourceTimingUnavailableReasonV1::UnsupportedTimeBasis => {
+                Self::UnsupportedTimeBasis
+            }
+            ExactSourceTimingUnavailableReasonV1::ParserUnavailable => Self::ParserUnavailable,
+        }
+    }
+}
+
+/// Availability of one exact-source timing value in prediction provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum ExactSourceTimingObservationStateWireV1<T> {
+    /// Exact observed value.
+    Observed(T),
+    /// Complete evidence proves that no declaration exists.
+    ProvenAbsent,
+    /// Exact evidence could not be established.
+    Unavailable(ExactSourceTimingUnavailableReasonWireV1),
+}
+
+/// One exact-source timing observation with its loader treatment and provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExactSourceTimingObservationWireV1<T> {
+    state: ExactSourceTimingObservationStateWireV1<T>,
+    disposition: RawSourceDispositionV1,
+    provenance: Option<RawSourceProvenanceV1>,
+}
+
+impl<T> ExactSourceTimingObservationWireV1<T> {
+    fn from_source<U>(
+        observation: &ExactSourceTimingObservationV1<U>,
+        map: impl FnOnce(&U) -> T,
+    ) -> Self {
+        let state = match observation.state() {
+            ExactSourceTimingObservationStateV1::Observed(value) => {
+                ExactSourceTimingObservationStateWireV1::Observed(map(value))
+            }
+            ExactSourceTimingObservationStateV1::ProvenAbsent => {
+                ExactSourceTimingObservationStateWireV1::ProvenAbsent
+            }
+            ExactSourceTimingObservationStateV1::Unavailable(reason) => {
+                ExactSourceTimingObservationStateWireV1::Unavailable((*reason).into())
+            }
+        };
+        Self {
+            state,
+            disposition: observation.disposition().into(),
+            provenance: observation
+                .provenance()
+                .map(RawSourceProvenanceV1::from_source),
+        }
+    }
+
+    /// Availability and exact value state.
+    pub const fn state(&self) -> &ExactSourceTimingObservationStateWireV1<T> {
+        &self.state
+    }
+
+    /// Loader treatment of this source value.
+    pub const fn disposition(&self) -> RawSourceDispositionV1 {
+        self.disposition
+    }
+
+    /// Source/parser provenance retained with the observation.
+    pub const fn provenance(&self) -> Option<&RawSourceProvenanceV1> {
+        self.provenance.as_ref()
+    }
+
+    fn validate(&self, field: &'static str) -> Result<(), PredictionContractError> {
+        let coherent = match &self.state {
+            ExactSourceTimingObservationStateWireV1::Observed(_) => self.provenance.is_some(),
+            ExactSourceTimingObservationStateWireV1::ProvenAbsent => {
+                self.provenance.is_some()
+                    && self.disposition == RawSourceDispositionV1::NotApplicable
+            }
+            ExactSourceTimingObservationStateWireV1::Unavailable(_) => true,
+        };
+        if !coherent {
+            return Err(PredictionContractError::InvalidExactSourceTimingObservation(field));
+        }
+        if let Some(locator) = self
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.locator.as_deref())
+        {
+            bounded_string("exact source timing provenance locator", locator)?;
+        }
+        Ok(())
+    }
+
+    fn retained_text_bytes(&self) -> usize {
+        self.provenance
+            .as_ref()
+            .map_or(0, RawSourceProvenanceV1::retained_text_bytes)
+    }
+}
+
+/// Exact source time-mode wire token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExactSourceTimelineModeWireV1 {
+    /// The source default time mode.
+    Default,
+    /// 120 frames per second.
+    Fps120,
+    /// 100 frames per second.
+    Fps100,
+    /// 60 frames per second.
+    Fps60,
+    /// 50 frames per second.
+    Fps50,
+    /// 48 frames per second.
+    Fps48,
+    /// 30 frames per second.
+    Fps30,
+    /// source 30-fps drop-frame mode.
+    Fps30Drop,
+    /// NTSC drop-frame mode.
+    NtscDropFrame,
+    /// NTSC full-frame mode.
+    NtscFullFrame,
+    /// PAL mode.
+    Pal,
+    /// 24 frames per second.
+    Fps24,
+    /// 1000 frames per second.
+    Fps1000,
+    /// Film full-frame mode.
+    FilmFullFrame,
+    /// A document-declared custom frame rate.
+    Custom,
+    /// 96 frames per second.
+    Fps96,
+    /// 72 frames per second.
+    Fps72,
+    /// 59.94 frames per second.
+    Fps59Dot94,
+}
+
+impl From<SourceTimelineModeV1> for ExactSourceTimelineModeWireV1 {
+    fn from(value: SourceTimelineModeV1) -> Self {
+        match value {
+            SourceTimelineModeV1::Default => Self::Default,
+            SourceTimelineModeV1::Fps120 => Self::Fps120,
+            SourceTimelineModeV1::Fps100 => Self::Fps100,
+            SourceTimelineModeV1::Fps60 => Self::Fps60,
+            SourceTimelineModeV1::Fps50 => Self::Fps50,
+            SourceTimelineModeV1::Fps48 => Self::Fps48,
+            SourceTimelineModeV1::Fps30 => Self::Fps30,
+            SourceTimelineModeV1::Fps30Drop => Self::Fps30Drop,
+            SourceTimelineModeV1::NtscDropFrame => Self::NtscDropFrame,
+            SourceTimelineModeV1::NtscFullFrame => Self::NtscFullFrame,
+            SourceTimelineModeV1::Pal => Self::Pal,
+            SourceTimelineModeV1::Fps24 => Self::Fps24,
+            SourceTimelineModeV1::Fps1000 => Self::Fps1000,
+            SourceTimelineModeV1::FilmFullFrame => Self::FilmFullFrame,
+            SourceTimelineModeV1::Custom => Self::Custom,
+            SourceTimelineModeV1::Fps96 => Self::Fps96,
+            SourceTimelineModeV1::Fps72 => Self::Fps72,
+            SourceTimelineModeV1::Fps59Dot94 => Self::Fps59Dot94,
+        }
+    }
+}
+
+/// Exact source timecode-protocol wire token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExactSourceTimeDisplayProtocolWireV1 {
+    /// SMPTE timecode protocol.
+    Smpte,
+    /// Absolute frame-count protocol.
+    FrameCount,
+    /// The source default timecode protocol.
+    Default,
+}
+
+impl From<SourceTimeDisplayProtocolV1> for ExactSourceTimeDisplayProtocolWireV1 {
+    fn from(value: SourceTimeDisplayProtocolV1) -> Self {
+        match value {
+            SourceTimeDisplayProtocolV1::Smpte => Self::Smpte,
+            SourceTimeDisplayProtocolV1::FrameCount => Self::FrameCount,
+            SourceTimeDisplayProtocolV1::Default => Self::Default,
+        }
+    }
+}
+
+/// Parser-selected source clip span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExactSourceRangeSelectionWireV1 {
+    /// The loader's preferred complete pair was selected.
+    Primary,
+    /// The loader's complete fallback pair was selected.
+    Fallback,
+}
+
+impl From<ExactSourceRangeSelectionV1> for ExactSourceRangeSelectionWireV1 {
+    fn from(value: ExactSourceRangeSelectionV1) -> Self {
+        match value {
+            ExactSourceRangeSelectionV1::Primary => Self::Primary,
+            ExactSourceRangeSelectionV1::Fallback => Self::Fallback,
+        }
+    }
+}
+
+/// Positive exact source-time ticks-per-second value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExactSourceTimeBasisWireV1 {
+    units_per_second: i64,
+}
+
+/// Positive exact source-time ticks-per-frame value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExactSourceFramePeriodWireV1 {
+    units_per_frame: i64,
+}
+
+impl ExactSourceFramePeriodWireV1 {
+    pub(crate) const fn units_per_frame(self) -> i64 {
+        self.units_per_frame
+    }
+}
+
+/// Exact parser-projected binary64 bits for a declared custom frame rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParserFrameRateProjectionWireV1 {
+    binary64_bits: u64,
+}
+
+/// Exact selected begin/end source-time coordinates for one source clip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExactSourceClipTimeRangeWireV1 {
+    selection: ExactSourceRangeSelectionWireV1,
+    begin_units: i64,
+    end_units: i64,
+}
+
+impl ExactSourceClipTimeRangeWireV1 {
+    pub(crate) const fn end_units(self) -> i64 {
+        self.end_units
+    }
+}
+
+/// One canonical exact timing row in the prediction wire.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExactSourceClipTimingBindingV1 {
+    source_clip_index: u64,
+    source_time_range: ExactSourceTimingObservationWireV1<ExactSourceClipTimeRangeWireV1>,
+}
+
+impl ExactSourceClipTimingBindingV1 {
+    fn from_source(value: &ExactSourceClipTimingV1) -> Self {
+        Self {
+            source_clip_index: value.source_clip_index() as u64,
+            source_time_range: ExactSourceTimingObservationWireV1::from_source(
+                value.source_time_range(),
+                |range| ExactSourceClipTimeRangeWireV1 {
+                    selection: range.selection().into(),
+                    begin_units: range.begin_units(),
+                    end_units: range.end_units(),
+                },
+            ),
+        }
+    }
+
+    /// Stable source clip index.
+    pub const fn source_clip_index(&self) -> u64 {
+        self.source_clip_index
+    }
+
+    /// Exact selected source range observation.
+    pub const fn source_time_range(
+        &self,
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceClipTimeRangeWireV1> {
+        &self.source_time_range
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExactSourceTimingBindingWireV1 {
+    schema: String,
+    time_basis: ExactSourceTimingObservationWireV1<ExactSourceTimeBasisWireV1>,
+    declared_time_mode: ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1>,
+    effective_time_mode: ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1>,
+    declared_custom_frame_rate: ExactSourceTimingObservationWireV1<ParserFrameRateProjectionWireV1>,
+    frame_period: ExactSourceTimingObservationWireV1<ExactSourceFramePeriodWireV1>,
+    declared_time_protocol:
+        ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1>,
+    effective_time_protocol:
+        ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1>,
+    clip_coverage: RawSourceSetCoverageV1,
+    #[serde(deserialize_with = "deserialize_exact_source_clip_rows")]
+    clips: CappedSequence<ExactSourceClipTimingBindingV1>,
+}
+
+fn deserialize_exact_source_clip_rows<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<ExactSourceClipTimingBindingV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, crate::EXACT_SOURCE_TIMING_V1_MAX_CLIPS)
+}
+
+/// Self-contained exact-source timing evidence embedded by raw-source binding V2.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExactSourceTimingBindingV1 {
+    schema: &'static str,
+    time_basis: ExactSourceTimingObservationWireV1<ExactSourceTimeBasisWireV1>,
+    declared_time_mode: ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1>,
+    effective_time_mode: ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1>,
+    declared_custom_frame_rate: ExactSourceTimingObservationWireV1<ParserFrameRateProjectionWireV1>,
+    frame_period: ExactSourceTimingObservationWireV1<ExactSourceFramePeriodWireV1>,
+    declared_time_protocol:
+        ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1>,
+    effective_time_protocol:
+        ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1>,
+    clip_coverage: RawSourceSetCoverageV1,
+    clips: Vec<ExactSourceClipTimingBindingV1>,
+}
+
+impl ExactSourceTimingBindingV1 {
+    fn from_source(value: &ExactSourceTimingV1) -> Result<Self, PredictionContractError> {
+        let binding = Self {
+            schema: EXACT_SOURCE_TIMING_V1_ID,
+            time_basis: ExactSourceTimingObservationWireV1::from_source(
+                value.time_basis(),
+                |basis: &ExactSourceTimeBasisV1| ExactSourceTimeBasisWireV1 {
+                    units_per_second: basis.units_per_second(),
+                },
+            ),
+            declared_time_mode: ExactSourceTimingObservationWireV1::from_source(
+                value.declared_time_mode(),
+                |mode| (*mode).into(),
+            ),
+            effective_time_mode: ExactSourceTimingObservationWireV1::from_source(
+                value.effective_time_mode(),
+                |mode| (*mode).into(),
+            ),
+            declared_custom_frame_rate: ExactSourceTimingObservationWireV1::from_source(
+                value.declared_custom_frame_rate(),
+                |rate: &ParserFrameRateProjectionV1| ParserFrameRateProjectionWireV1 {
+                    binary64_bits: rate.binary64_bits(),
+                },
+            ),
+            frame_period: ExactSourceTimingObservationWireV1::from_source(
+                value.frame_period(),
+                |period: &ExactSourceFramePeriodV1| ExactSourceFramePeriodWireV1 {
+                    units_per_frame: period.units_per_frame(),
+                },
+            ),
+            declared_time_protocol: ExactSourceTimingObservationWireV1::from_source(
+                value.declared_time_protocol(),
+                |protocol| (*protocol).into(),
+            ),
+            effective_time_protocol: ExactSourceTimingObservationWireV1::from_source(
+                value.effective_time_protocol(),
+                |protocol| (*protocol).into(),
+            ),
+            clip_coverage: value.clip_coverage().into(),
+            clips: value
+                .clips()
+                .iter()
+                .map(ExactSourceClipTimingBindingV1::from_source)
+                .collect(),
+        };
+        binding.validate()?;
+        Ok(binding)
+    }
+
+    fn from_wire(wire: ExactSourceTimingBindingWireV1) -> Result<Self, PredictionContractError> {
+        if wire.schema != EXACT_SOURCE_TIMING_V1_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "raw_source.exact_source_timing.schema",
+                expected: EXACT_SOURCE_TIMING_V1_ID,
+                found: wire.schema,
+            });
+        }
+        if wire.clips.overflowed {
+            return Err(PredictionContractError::TooManyAggregateProvenanceRows {
+                found: crate::EXACT_SOURCE_TIMING_V1_MAX_CLIPS + 1,
+                limit: crate::EXACT_SOURCE_TIMING_V1_MAX_CLIPS,
+            });
+        }
+        let binding = Self {
+            schema: EXACT_SOURCE_TIMING_V1_ID,
+            time_basis: wire.time_basis,
+            declared_time_mode: wire.declared_time_mode,
+            effective_time_mode: wire.effective_time_mode,
+            declared_custom_frame_rate: wire.declared_custom_frame_rate,
+            frame_period: wire.frame_period,
+            declared_time_protocol: wire.declared_time_protocol,
+            effective_time_protocol: wire.effective_time_protocol,
+            clip_coverage: wire.clip_coverage,
+            clips: wire.clips.values,
+        };
+        binding.validate()?;
+        Ok(binding)
+    }
+
+    /// Exact timing contract identity.
+    pub const fn contract_id(&self) -> &'static str {
+        self.schema
+    }
+
+    /// Exact document source-time-basis observation.
+    pub const fn time_basis(
+        &self,
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimeBasisWireV1> {
+        &self.time_basis
+    }
+
+    /// Document-declared time-mode observation.
+    pub const fn declared_time_mode(
+        &self,
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1> {
+        &self.declared_time_mode
+    }
+
+    /// Effective time-mode observation used for exact timing.
+    pub const fn effective_time_mode(
+        &self,
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1> {
+        &self.effective_time_mode
+    }
+
+    /// Exact integer frame-period observation.
+    pub const fn frame_period(
+        &self,
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceFramePeriodWireV1> {
+        &self.frame_period
+    }
+
+    /// Exact binary64 bits for the declared custom frame rate.
+    pub const fn declared_custom_frame_rate(
+        &self,
+    ) -> &ExactSourceTimingObservationWireV1<ParserFrameRateProjectionWireV1> {
+        &self.declared_custom_frame_rate
+    }
+
+    /// Document-declared timecode-protocol observation.
+    pub const fn declared_time_protocol(
+        &self,
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1> {
+        &self.declared_time_protocol
+    }
+
+    /// Effective timecode-protocol observation.
+    pub const fn effective_time_protocol(
+        &self,
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1> {
+        &self.effective_time_protocol
+    }
+
+    /// Coverage state for retained animation-clip rows.
+    pub const fn clip_coverage(&self) -> RawSourceSetCoverageV1 {
+        self.clip_coverage
+    }
+
+    /// Canonically ordered retained clip timing rows.
+    pub fn clips(&self) -> &[ExactSourceClipTimingBindingV1] {
+        &self.clips
+    }
+
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        self.time_basis.validate("time_basis")?;
+        self.declared_time_mode.validate("declared_time_mode")?;
+        self.effective_time_mode.validate("effective_time_mode")?;
+        self.declared_custom_frame_rate
+            .validate("declared_custom_frame_rate")?;
+        self.frame_period.validate("frame_period")?;
+        self.declared_time_protocol
+            .validate("declared_time_protocol")?;
+        self.effective_time_protocol
+            .validate("effective_time_protocol")?;
+        if matches!(
+            &self.time_basis.state,
+            ExactSourceTimingObservationStateWireV1::Observed(value) if value.units_per_second <= 0
+        ) || matches!(
+            &self.frame_period.state,
+            ExactSourceTimingObservationStateWireV1::Observed(value) if value.units_per_frame <= 0
+        ) || matches!(
+            &self.declared_custom_frame_rate.state,
+            ExactSourceTimingObservationStateWireV1::Observed(value)
+                if !f64::from_bits(value.binary64_bits).is_finite()
+                    || f64::from_bits(value.binary64_bits) <= 0.0
+        ) {
+            return Err(PredictionContractError::ExactSourceTimingValueMismatch);
+        }
+        let coverage_valid = matches!(
+            (self.clip_coverage.state, self.clip_coverage.reason),
+            (RawSourceSetCoverageStateV1::Complete, None)
+                | (RawSourceSetCoverageStateV1::Partial, Some(_))
+                | (RawSourceSetCoverageStateV1::Unavailable, Some(_))
+        );
+        if !coverage_valid {
+            return Err(PredictionContractError::ExactSourceTimingCoverageMismatch);
+        }
+        if self.clips.len() > crate::EXACT_SOURCE_TIMING_V1_MAX_CLIPS
+            || self
+                .clips
+                .iter()
+                .enumerate()
+                .any(|(index, clip)| u64::try_from(index).ok() != Some(clip.source_clip_index))
+        {
+            return Err(PredictionContractError::ExactSourceTimingClipPrefixMismatch);
+        }
+        for clip in &self.clips {
+            clip.source_time_range.validate("clip.source_time_range")?;
+            if matches!(
+                &clip.source_time_range.state,
+                ExactSourceTimingObservationStateWireV1::Observed(range)
+                    if range.begin_units > range.end_units
+            ) {
+                return Err(PredictionContractError::ExactSourceTimingValueMismatch);
+            }
+        }
+        Ok(())
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "exact source timing retained text",
+            self.clips
+                .iter()
+                .map(|clip| clip.source_time_range.retained_text_bytes())
+                .chain([
+                    self.time_basis.retained_text_bytes(),
+                    self.declared_time_mode.retained_text_bytes(),
+                    self.effective_time_mode.retained_text_bytes(),
+                    self.declared_custom_frame_rate.retained_text_bytes(),
+                    self.frame_period.retained_text_bytes(),
+                    self.declared_time_protocol.retained_text_bytes(),
+                    self.effective_time_protocol.retained_text_bytes(),
+                ]),
+        )
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSourceBindingWireV2 {
+    schema: String,
+    source_facts: RawSourceBindingWireV1,
+    exact_source_timing: Option<ExactSourceTimingBindingWireV1>,
+}
+
+/// V2 raw-source binding composed from immutable V1 facts and exact source timing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RawSourceBindingV2 {
+    schema: &'static str,
+    source_facts: RawSourceBindingV1,
+    exact_source_timing: Option<ExactSourceTimingBindingV1>,
+}
+
+impl RawSourceBindingV2 {
+    /// Project one same-load V1 source view and its attached exact timing sidecar.
+    pub fn from_source(
+        facts: SourceFactsViewV1<'_>,
+        exact_source_timing: Option<&ExactSourceTimingV1>,
+    ) -> Result<Self, PredictionContractError> {
+        let binding = Self {
+            schema: RAW_SOURCE_FACTS_V2_ID,
+            source_facts: RawSourceBindingV1::from_source(facts),
+            exact_source_timing: exact_source_timing
+                .map(ExactSourceTimingBindingV1::from_source)
+                .transpose()?,
+        };
+        binding.validate()?;
+        Ok(binding)
+    }
+
+    fn from_wire(wire: RawSourceBindingWireV2) -> Result<Self, PredictionContractError> {
+        if wire.schema != RAW_SOURCE_FACTS_V2_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "raw_source.schema",
+                expected: RAW_SOURCE_FACTS_V2_ID,
+                found: wire.schema,
+            });
+        }
+        let binding = Self {
+            schema: RAW_SOURCE_FACTS_V2_ID,
+            source_facts: RawSourceBindingV1::from_wire(wire.source_facts)?,
+            exact_source_timing: wire
+                .exact_source_timing
+                .map(ExactSourceTimingBindingV1::from_wire)
+                .transpose()?,
+        };
+        binding.validate()?;
+        Ok(binding)
+    }
+
+    /// Immutable V2 raw-source contract identity.
+    pub const fn contract_id(&self) -> &'static str {
+        self.schema
+    }
+
+    /// Embedded immutable V1 raw-source facts.
+    pub const fn source_facts(&self) -> &RawSourceBindingV1 {
+        &self.source_facts
+    }
+
+    /// Same-load exact source timing evidence, when retained.
+    pub const fn exact_source_timing(&self) -> Option<&ExactSourceTimingBindingV1> {
+        self.exact_source_timing.as_ref()
+    }
+
+    /// Primary-input identity inherited from V1 raw-source facts.
+    pub const fn primary_input(&self) -> &InputIdentity {
+        self.source_facts.primary_input()
+    }
+
+    /// Source format inherited from V1 raw-source facts.
+    pub const fn source_format(&self) -> SourceFormatV1 {
+        self.source_facts.source_format()
+    }
+
+    /// Clip-set coverage inherited from V1 raw-source facts.
+    pub const fn clips_coverage(&self) -> RawSourceSetCoverageV1 {
+        self.source_facts.clips_coverage()
+    }
+
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        self.source_facts.validate_wire()?;
+        if let Some(timing) = self.exact_source_timing.as_ref() {
+            timing.validate()?;
+            if timing.clip_coverage != self.source_facts.clips_coverage {
+                return Err(PredictionContractError::ExactSourceTimingCoverageMismatch);
+            }
+        }
+        Ok(())
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "raw-source binding V2 retained text",
+            [
+                self.source_facts.retained_text_bytes()?,
+                self.exact_source_timing
+                    .as_ref()
+                    .map(ExactSourceTimingBindingV1::retained_text_bytes)
+                    .transpose()?
+                    .unwrap_or(0),
+            ],
+        )
+    }
+
+    fn provenance_rows(&self) -> Result<usize, PredictionContractError> {
+        let source_rows = usize::try_from(self.source_facts.work.retained_rows)
+            .map_err(|_| PredictionContractError::ArithmeticOverflow("V2 raw-source rows"))?;
+        checked_sum(
+            "raw-source binding V2 rows",
+            [
+                source_rows,
+                self.exact_source_timing
+                    .as_ref()
+                    .map_or(0, |timing| timing.clips.len().saturating_add(7)),
+            ],
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for RawSourceBindingV2 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_wire(RawSourceBindingWireV2::deserialize(deserializer)?)
+            .map_err(D::Error::custom)
+    }
+}
+
+/// Exact-source timing row domain for V2 prediction basis references.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExactSourceTimingDomainV1 {
+    /// File-level timing settings and clip coverage.
+    Document,
+    /// One source animation-clip row.
+    Clip,
+}
+
+/// Stable row key inside exact-source timing evidence.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExactSourceTimingKeyV1 {
+    /// File-level timing settings and clip coverage.
+    Document,
+    /// One stable source clip index.
+    Clip {
+        /// Zero-based source clip index.
+        source_clip_index: u64,
+    },
+}
+
+/// One exact scalar retained from the embedded exact-source timing binding.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct ExactSourceTimingBasisReferenceV1 {
+    domain: ExactSourceTimingDomainV1,
+    key: ExactSourceTimingKeyV1,
+    field: RawSourceFieldIdV1,
+    value: PredictionScalarV1,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExactSourceTimingBasisReferenceWireV1 {
+    domain: ExactSourceTimingDomainV1,
+    key: ExactSourceTimingKeyV1,
+    field: RawSourceFieldIdV1,
+    value: PredictionScalarV1,
+}
+
+impl ExactSourceTimingBasisReferenceV1 {
+    /// Construct a reference and capture its authoritative embedded scalar.
+    pub fn from_binding(
+        domain: ExactSourceTimingDomainV1,
+        key: ExactSourceTimingKeyV1,
+        field: RawSourceFieldIdV1,
+        binding: &ExactSourceTimingBindingV1,
+    ) -> Result<Self, PredictionContractError> {
+        let mut reference = Self::from_wire(domain, key, field, PredictionScalarV1::Null)?;
+        reference.value = exact_source_timing_scalar(&reference, binding)?;
+        Ok(reference)
+    }
+
+    fn from_wire(
+        domain: ExactSourceTimingDomainV1,
+        key: ExactSourceTimingKeyV1,
+        field: RawSourceFieldIdV1,
+        value: PredictionScalarV1,
+    ) -> Result<Self, PredictionContractError> {
+        if !matches!(
+            (domain, &key),
+            (
+                ExactSourceTimingDomainV1::Document,
+                ExactSourceTimingKeyV1::Document
+            ) | (
+                ExactSourceTimingDomainV1::Clip,
+                ExactSourceTimingKeyV1::Clip { .. }
+            )
+        ) {
+            return Err(PredictionContractError::RawSourceDomainKeyMismatch);
+        }
+        validate_scalar(&value)?;
+        Ok(Self {
+            domain,
+            key,
+            field,
+            value,
+        })
+    }
+
+    /// Exact-source timing row domain.
+    pub const fn domain(&self) -> ExactSourceTimingDomainV1 {
+        self.domain
+    }
+
+    /// Stable document/clip row key.
+    pub const fn key(&self) -> &ExactSourceTimingKeyV1 {
+        &self.key
+    }
+
+    /// Exact scalar field identifier.
+    pub const fn field(&self) -> &RawSourceFieldIdV1 {
+        &self.field
+    }
+
+    /// Scalar retained from the exact timing binding.
+    pub const fn value(&self) -> &PredictionScalarV1 {
+        &self.value
+    }
+
+    /// Revalidate this reference against an embedded exact timing binding.
+    pub fn validate_against(
+        &self,
+        binding: &ExactSourceTimingBindingV1,
+    ) -> Result<(), PredictionContractError> {
+        if exact_source_timing_scalar(self, binding)? != self.value {
+            return Err(PredictionContractError::ExactSourceTimingValueMismatch);
+        }
+        Ok(())
+    }
+
+    fn retained_text_bytes(&self) -> usize {
+        self.field.0.len() + self.value.retained_text_bytes()
+    }
+}
+
+impl<'de> Deserialize<'de> for ExactSourceTimingBasisReferenceV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ExactSourceTimingBasisReferenceWireV1::deserialize(deserializer)?;
+        Self::from_wire(wire.domain, wire.key, wire.field, wire.value).map_err(D::Error::custom)
+    }
+}
+
+fn exact_source_timing_scalar(
+    reference: &ExactSourceTimingBasisReferenceV1,
+    binding: &ExactSourceTimingBindingV1,
+) -> Result<PredictionScalarV1, PredictionContractError> {
+    let field = reference.field.as_str();
+    match (&reference.key, reference.domain) {
+        (ExactSourceTimingKeyV1::Document, ExactSourceTimingDomainV1::Document) => {
+            if let Some(suffix) = field.strip_prefix("time_basis.") {
+                return exact_observation_scalar(&binding.time_basis, suffix, |value, field| {
+                    match field {
+                        "units_per_second" => Ok(PredictionScalarV1::SignedInteger {
+                            value: value.units_per_second,
+                        }),
+                        _ => Err(exact_field_error(reference)),
+                    }
+                });
+            }
+            if let Some(suffix) = field.strip_prefix("declared_time_mode.") {
+                return exact_observation_scalar(
+                    &binding.declared_time_mode,
+                    suffix,
+                    |value, field| match field {
+                        "time_mode" => Ok(token_scalar(exact_time_mode_name(*value))),
+                        _ => Err(exact_field_error(reference)),
+                    },
+                );
+            }
+            if let Some(suffix) = field.strip_prefix("effective_time_mode.") {
+                return exact_observation_scalar(
+                    &binding.effective_time_mode,
+                    suffix,
+                    |value, field| match field {
+                        "time_mode" => Ok(token_scalar(exact_time_mode_name(*value))),
+                        _ => Err(exact_field_error(reference)),
+                    },
+                );
+            }
+            if let Some(suffix) = field.strip_prefix("declared_custom_frame_rate.") {
+                return exact_observation_scalar(
+                    &binding.declared_custom_frame_rate,
+                    suffix,
+                    |value, field| match field {
+                        "binary64_bits" => Ok(PredictionScalarV1::UnsignedInteger {
+                            value: value.binary64_bits,
+                        }),
+                        _ => Err(exact_field_error(reference)),
+                    },
+                );
+            }
+            if let Some(suffix) = field.strip_prefix("frame_period.") {
+                return exact_observation_scalar(&binding.frame_period, suffix, |value, field| {
+                    match field {
+                        "units_per_frame" => Ok(PredictionScalarV1::SignedInteger {
+                            value: value.units_per_frame,
+                        }),
+                        _ => Err(exact_field_error(reference)),
+                    }
+                });
+            }
+            if let Some(suffix) = field.strip_prefix("declared_time_protocol.") {
+                return exact_observation_scalar(
+                    &binding.declared_time_protocol,
+                    suffix,
+                    |value, field| match field {
+                        "time_protocol" => Ok(token_scalar(exact_time_protocol_name(*value))),
+                        _ => Err(exact_field_error(reference)),
+                    },
+                );
+            }
+            if let Some(suffix) = field.strip_prefix("effective_time_protocol.") {
+                return exact_observation_scalar(
+                    &binding.effective_time_protocol,
+                    suffix,
+                    |value, field| match field {
+                        "time_protocol" => Ok(token_scalar(exact_time_protocol_name(*value))),
+                        _ => Err(exact_field_error(reference)),
+                    },
+                );
+            }
+            match field {
+                "clip_coverage.state" => Ok(token_scalar(raw_coverage_state_name(
+                    binding.clip_coverage.state,
+                ))),
+                "clip_coverage.reason" => Ok(binding
+                    .clip_coverage
+                    .reason
+                    .map_or(PredictionScalarV1::Null, |reason| {
+                        token_scalar(raw_unavailable_reason_name(reason))
+                    })),
+                _ => Err(exact_field_error(reference)),
+            }
+        }
+        (ExactSourceTimingKeyV1::Clip { source_clip_index }, ExactSourceTimingDomainV1::Clip) => {
+            let row = binding
+                .clips
+                .iter()
+                .find(|row| row.source_clip_index == *source_clip_index)
+                .ok_or(PredictionContractError::RawSourceRowNotFound)?;
+            let Some(suffix) = field.strip_prefix("source_time_range.") else {
+                return Err(exact_field_error(reference));
+            };
+            exact_observation_scalar(&row.source_time_range, suffix, |value, field| match field {
+                "selection" => Ok(token_scalar(exact_time_span_selection_name(
+                    value.selection,
+                ))),
+                "begin_units" => Ok(PredictionScalarV1::SignedInteger {
+                    value: value.begin_units,
+                }),
+                "end_units" => Ok(PredictionScalarV1::SignedInteger {
+                    value: value.end_units,
+                }),
+                _ => Err(exact_field_error(reference)),
+            })
+        }
+        _ => Err(PredictionContractError::RawSourceDomainKeyMismatch),
+    }
+}
+
+fn exact_observation_scalar<T>(
+    observation: &ExactSourceTimingObservationWireV1<T>,
+    field: &str,
+    value: impl FnOnce(&T, &str) -> Result<PredictionScalarV1, PredictionContractError>,
+) -> Result<PredictionScalarV1, PredictionContractError> {
+    match field {
+        "state" => Ok(token_scalar(match observation.state {
+            ExactSourceTimingObservationStateWireV1::Observed(_) => "observed",
+            ExactSourceTimingObservationStateWireV1::ProvenAbsent => "proven_absent",
+            ExactSourceTimingObservationStateWireV1::Unavailable(_) => "unavailable",
+        })),
+        "reason" => Ok(match observation.state {
+            ExactSourceTimingObservationStateWireV1::Unavailable(reason) => {
+                token_scalar(exact_unavailable_reason_name(reason))
+            }
+            _ => PredictionScalarV1::Null,
+        }),
+        "disposition" => Ok(token_scalar(raw_disposition_name(observation.disposition))),
+        "provenance.kind" => Ok(observation
+            .provenance
+            .as_ref()
+            .map_or(PredictionScalarV1::Null, |provenance| {
+                token_scalar(raw_provenance_kind_name(provenance.kind))
+            })),
+        "provenance.locator" => Ok(observation
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.locator.as_deref())
+            .map_or(PredictionScalarV1::Null, text_scalar)),
+        value_field if value_field.starts_with("value.") => match &observation.state {
+            ExactSourceTimingObservationStateWireV1::Observed(observed) => {
+                value(observed, &value_field[6..])
+            }
+            _ => Err(PredictionContractError::ExactSourceTimingFieldUnavailable(
+                value_field.to_owned(),
+            )),
+        },
+        _ => Err(PredictionContractError::ExactSourceTimingFieldUnavailable(
+            field.to_owned(),
+        )),
+    }
+}
+
+fn exact_field_error(reference: &ExactSourceTimingBasisReferenceV1) -> PredictionContractError {
+    PredictionContractError::ExactSourceTimingFieldUnavailable(reference.field.0.clone())
+}
+
+fn exact_time_mode_name(value: ExactSourceTimelineModeWireV1) -> &'static str {
+    match value {
+        ExactSourceTimelineModeWireV1::Default => "default",
+        ExactSourceTimelineModeWireV1::Fps120 => "fps120",
+        ExactSourceTimelineModeWireV1::Fps100 => "fps100",
+        ExactSourceTimelineModeWireV1::Fps60 => "fps60",
+        ExactSourceTimelineModeWireV1::Fps50 => "fps50",
+        ExactSourceTimelineModeWireV1::Fps48 => "fps48",
+        ExactSourceTimelineModeWireV1::Fps30 => "fps30",
+        ExactSourceTimelineModeWireV1::Fps30Drop => "fps30_drop",
+        ExactSourceTimelineModeWireV1::NtscDropFrame => "ntsc_drop_frame",
+        ExactSourceTimelineModeWireV1::NtscFullFrame => "ntsc_full_frame",
+        ExactSourceTimelineModeWireV1::Pal => "pal",
+        ExactSourceTimelineModeWireV1::Fps24 => "fps24",
+        ExactSourceTimelineModeWireV1::Fps1000 => "fps1000",
+        ExactSourceTimelineModeWireV1::FilmFullFrame => "film_full_frame",
+        ExactSourceTimelineModeWireV1::Custom => "custom",
+        ExactSourceTimelineModeWireV1::Fps96 => "fps96",
+        ExactSourceTimelineModeWireV1::Fps72 => "fps72",
+        ExactSourceTimelineModeWireV1::Fps59Dot94 => "fps59_dot94",
+    }
+}
+
+fn exact_time_protocol_name(value: ExactSourceTimeDisplayProtocolWireV1) -> &'static str {
+    match value {
+        ExactSourceTimeDisplayProtocolWireV1::Smpte => "smpte",
+        ExactSourceTimeDisplayProtocolWireV1::FrameCount => "frame_count",
+        ExactSourceTimeDisplayProtocolWireV1::Default => "default",
+    }
+}
+
+fn exact_time_span_selection_name(value: ExactSourceRangeSelectionWireV1) -> &'static str {
+    match value {
+        ExactSourceRangeSelectionWireV1::Primary => "primary",
+        ExactSourceRangeSelectionWireV1::Fallback => "fallback",
+    }
+}
+
+fn exact_unavailable_reason_name(value: ExactSourceTimingUnavailableReasonWireV1) -> &'static str {
+    match value {
+        ExactSourceTimingUnavailableReasonWireV1::Malformed => "malformed",
+        ExactSourceTimingUnavailableReasonWireV1::CustomFrameRateNotExact => {
+            "custom_frame_rate_not_exact"
+        }
+        ExactSourceTimingUnavailableReasonWireV1::UnsupportedTimeMode => "unsupported_time_mode",
+        ExactSourceTimingUnavailableReasonWireV1::UnsupportedTimeBasis => "unsupported_time_basis",
+        ExactSourceTimingUnavailableReasonWireV1::ParserUnavailable => "parser_unavailable",
+    }
+}
+
+fn raw_coverage_state_name(value: RawSourceSetCoverageStateV1) -> &'static str {
+    match value {
+        RawSourceSetCoverageStateV1::Complete => "complete",
+        RawSourceSetCoverageStateV1::Partial => "partial",
+        RawSourceSetCoverageStateV1::Unavailable => "unavailable",
+    }
+}
+
+/// Versioned prediction-basis reference vocabulary used by engine-prediction V3.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(
+    tag = "contract",
+    content = "reference",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum PredictionBasisReferenceV2 {
+    /// One immutable V1 profile/settings/project/raw/measurement/source reference.
+    V1(PredictionBasisReferenceV1),
+    /// One scalar from the exact-source timing binding.
+    ExactSourceTiming(ExactSourceTimingBasisReferenceV1),
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "contract",
+    content = "reference",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum PredictionBasisReferenceWireV2 {
+    V1(Box<RawValue>),
+    ExactSourceTiming(ExactSourceTimingBasisReferenceV1),
+}
+
+impl<'de> Deserialize<'de> for PredictionBasisReferenceV2 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match PredictionBasisReferenceWireV2::deserialize(deserializer)? {
+            PredictionBasisReferenceWireV2::V1(raw) => {
+                let wire = serde_json::from_str::<PredictionBasisReferenceWireV1>(raw.get())
+                    .map_err(D::Error::custom)?;
+                PredictionBasisReferenceV1::from_wire_with_measurement_schema(
+                    wire,
+                    MEASUREMENTS_SCHEMA_ID,
+                )
+                .map(Self::V1)
+                .map_err(D::Error::custom)
+            }
+            PredictionBasisReferenceWireV2::ExactSourceTiming(reference) => {
+                Ok(Self::ExactSourceTiming(reference))
+            }
+        }
+    }
+}
+
+impl PredictionBasisReferenceV2 {
+    /// Lift an immutable V1 reference into the V2 basis vocabulary.
+    pub const fn v1(reference: PredictionBasisReferenceV1) -> Self {
+        Self::V1(reference)
+    }
+
+    /// Retain an exact-source timing reference.
+    pub const fn exact_source_timing(reference: ExactSourceTimingBasisReferenceV1) -> Self {
+        Self::ExactSourceTiming(reference)
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        match self {
+            Self::V1(reference) => reference.retained_text_bytes(),
+            Self::ExactSourceTiming(reference) => Ok(reference.retained_text_bytes()),
+        }
+    }
+}
+
 fn validate_raw_observation<T>(
     observation: &RawSourceObservationWireV1<T>,
     valid_value: impl FnOnce(&T) -> bool,
@@ -2991,6 +4152,298 @@ fn compute_basis_identity(references: &[PredictionBasisReferenceV1]) -> InputIde
         encode_basis_reference(&mut encoder, reference);
     }
     encoder.identity()
+}
+
+/// Domain-separated identity of one canonical V2 prediction basis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PredictionBasisIdentityV2(InputIdentity);
+
+impl PredictionBasisIdentityV2 {
+    /// SHA-256 and canonical-preimage byte count.
+    pub const fn input_identity(&self) -> &InputIdentity {
+        &self.0
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnginePredictionBasisWireV2Exact {
+    identity: PredictionBasisIdentityV2,
+    #[serde(deserialize_with = "deserialize_basis_references_v2")]
+    references: CappedSequence<PredictionBasisReferenceV2>,
+}
+
+struct EnginePredictionBasisSeedV2Exact<'a> {
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for EnginePredictionBasisSeedV2Exact<'_> {
+    type Value = EnginePredictionBasisWireV2Exact;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Identity,
+            References,
+        }
+
+        struct BasisVisitor<'a> {
+            references: &'a mut RowBudget,
+        }
+
+        impl<'de> Visitor<'de> for BasisVisitor<'_> {
+            type Value = EnginePredictionBasisWireV2Exact;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an exact-source-capable engine prediction basis")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut identity = None;
+                let mut references = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Identity => {
+                            set_prediction_field(&mut identity, map.next_value()?, "identity")?
+                        }
+                        Field::References => {
+                            if references.is_some() {
+                                return Err(A::Error::duplicate_field("references"));
+                            }
+                            references = Some(map.next_value_seed(BudgetedCappedSequenceSeed {
+                                budget: self.references,
+                                local_limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+                                element: PhantomData,
+                            })?);
+                        }
+                    }
+                }
+                Ok(EnginePredictionBasisWireV2Exact {
+                    identity: required_prediction_field(identity, "identity")?,
+                    references: required_prediction_field(references, "references")?,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "EnginePredictionBasisV2",
+            &["identity", "references"],
+            BasisVisitor {
+                references: self.references,
+            },
+        )
+    }
+}
+
+fn deserialize_basis_references_v2<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<PredictionBasisReferenceV2>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET)
+}
+
+/// Canonical V2 basis that can address exact-source timing evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EnginePredictionBasisV2 {
+    identity: PredictionBasisIdentityV2,
+    references: Vec<PredictionBasisReferenceV2>,
+}
+
+impl EnginePredictionBasisV2 {
+    /// Construct a current basis pinned to measurements-v16 and exact timing V1.
+    pub fn new(
+        mut references: Vec<PredictionBasisReferenceV2>,
+    ) -> Result<Self, PredictionContractError> {
+        if references.len() > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET {
+            return Err(PredictionContractError::TooManyBasisReferences {
+                found: references.len(),
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+            });
+        }
+        for reference in &references {
+            validate_basis_reference_structure_v2(reference, MEASUREMENTS_SCHEMA_ID)?;
+        }
+        references.sort_by_cached_key(basis_reference_key_v2);
+        if references
+            .windows(2)
+            .any(|pair| basis_reference_key_v2(&pair[0]) == basis_reference_key_v2(&pair[1]))
+        {
+            return Err(PredictionContractError::DuplicateBasisReference);
+        }
+        Ok(Self {
+            identity: PredictionBasisIdentityV2(compute_basis_identity_v2(&references)),
+            references,
+        })
+    }
+
+    fn from_wire_with_measurement_schema(
+        wire: EnginePredictionBasisWireV2Exact,
+        expected_measurement_schema: &'static str,
+    ) -> Result<Self, PredictionContractError> {
+        if wire.references.overflowed {
+            return Err(PredictionContractError::TooManyBasisReferences {
+                found: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET + 1,
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+            });
+        }
+        let basis = Self {
+            identity: wire.identity,
+            references: wire.references.values,
+        };
+        basis.validate_with_measurement_schema(expected_measurement_schema)?;
+        Ok(basis)
+    }
+
+    /// Canonical V2 basis identity.
+    pub const fn identity(&self) -> &PredictionBasisIdentityV2 {
+        &self.identity
+    }
+
+    /// Canonically ordered typed references.
+    pub fn references(&self) -> &[PredictionBasisReferenceV2] {
+        &self.references
+    }
+
+    fn validate_with_measurement_schema(
+        &self,
+        expected_measurement_schema: &'static str,
+    ) -> Result<(), PredictionContractError> {
+        if self.references.len() > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET {
+            return Err(PredictionContractError::TooManyBasisReferences {
+                found: self.references.len(),
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+            });
+        }
+        for reference in &self.references {
+            validate_basis_reference_structure_v2(reference, expected_measurement_schema)?;
+        }
+        let keys = self
+            .references
+            .iter()
+            .map(basis_reference_key_v2)
+            .collect::<Vec<_>>();
+        if keys.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(if keys.windows(2).any(|pair| pair[0] == pair[1]) {
+                PredictionContractError::DuplicateBasisReference
+            } else {
+                PredictionContractError::NonCanonicalOrder("V2 basis references")
+            });
+        }
+        if self.identity.0 != compute_basis_identity_v2(&self.references) {
+            return Err(PredictionContractError::IdentityMismatch {
+                contract: "engine prediction basis v2",
+            });
+        }
+        Ok(())
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "V2 basis retained text",
+            self.references
+                .iter()
+                .map(PredictionBasisReferenceV2::retained_text_bytes)
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePredictionBasisV2 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_wire_with_measurement_schema(
+            EnginePredictionBasisWireV2Exact::deserialize(deserializer)?,
+            MEASUREMENTS_SCHEMA_ID,
+        )
+        .map_err(D::Error::custom)
+    }
+}
+
+fn validate_basis_reference_structure_v2(
+    reference: &PredictionBasisReferenceV2,
+    expected_measurement_schema: &'static str,
+) -> Result<(), PredictionContractError> {
+    match reference {
+        PredictionBasisReferenceV2::V1(reference) => {
+            validate_basis_reference_structure(reference, expected_measurement_schema)
+        }
+        PredictionBasisReferenceV2::ExactSourceTiming(reference) => {
+            if !matches!(
+                (reference.domain, &reference.key),
+                (
+                    ExactSourceTimingDomainV1::Document,
+                    ExactSourceTimingKeyV1::Document
+                ) | (
+                    ExactSourceTimingDomainV1::Clip,
+                    ExactSourceTimingKeyV1::Clip { .. }
+                )
+            ) {
+                return Err(PredictionContractError::RawSourceDomainKeyMismatch);
+            }
+            RawSourceFieldIdV1::new(reference.field.as_str())?;
+            validate_scalar(&reference.value)
+        }
+    }
+}
+
+fn basis_reference_key_v2(reference: &PredictionBasisReferenceV2) -> (u8, Vec<u8>) {
+    let mut encoder = CanonicalEncoder::default();
+    encode_basis_reference_v2(&mut encoder, reference);
+    let variant = match reference {
+        PredictionBasisReferenceV2::V1(_) => 0,
+        PredictionBasisReferenceV2::ExactSourceTiming(_) => 1,
+    };
+    (variant, encoder.into_bytes())
+}
+
+fn compute_basis_identity_v2(references: &[PredictionBasisReferenceV2]) -> InputIdentity {
+    let mut encoder = CanonicalEncoder::new("animsmith-engine-prediction-basis-v2");
+    encoder.field("references");
+    encoder.count(references.len());
+    for reference in references {
+        encode_basis_reference_v2(&mut encoder, reference);
+    }
+    encoder.identity()
+}
+
+fn encode_basis_reference_v2(
+    encoder: &mut CanonicalEncoder,
+    reference: &PredictionBasisReferenceV2,
+) {
+    match reference {
+        PredictionBasisReferenceV2::V1(reference) => {
+            encoder.token("v1");
+            encode_basis_reference(encoder, reference);
+        }
+        PredictionBasisReferenceV2::ExactSourceTiming(reference) => {
+            encoder.token("exact_source_timing");
+            encoder.token(match reference.domain {
+                ExactSourceTimingDomainV1::Document => "document",
+                ExactSourceTimingDomainV1::Clip => "clip",
+            });
+            match &reference.key {
+                ExactSourceTimingKeyV1::Document => encoder.token("document"),
+                ExactSourceTimingKeyV1::Clip { source_clip_index } => {
+                    encoder.token("clip");
+                    encoder.token(source_clip_index.to_string());
+                }
+            }
+            encoder.token(reference.field.as_str());
+            encode_scalar(encoder, &reference.value);
+        }
+    }
 }
 
 /// Stable reason prediction work was required but could not be completed.
@@ -3691,6 +5144,9 @@ impl EnginePredictionV1 {
                 found: PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
                 limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
             });
+        }
+        if let Some(error) = Self::first_nested_limit_error(&wire) {
+            return Err(error);
         }
         let prediction = Self {
             schema: ENGINE_PREDICTION_V1_ID,
@@ -4984,6 +6440,816 @@ pub(crate) fn decode_engine_prediction_v2_with_measurement_schema(
         .map_err(PredictionDecodeError::Semantic)
 }
 
+/// Domain-separated identity of one V3 prediction-provenance record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PredictionProvenanceIdentityV3(InputIdentity);
+
+impl PredictionProvenanceIdentityV3 {
+    /// SHA-256 and canonical-preimage byte count.
+    pub const fn input_identity(&self) -> &InputIdentity {
+        &self.0
+    }
+}
+
+/// One V3 prediction facet with exact-source-capable basis evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EnginePredictionFacetV3 {
+    scope: EvaluationScope,
+    state: EnginePredictionFacetStateV1,
+    basis: EnginePredictionBasisV2,
+    reasons: Vec<PredictionUnavailableReasonV2>,
+}
+
+struct EnginePredictionFacetWireV3 {
+    scope: EvaluationScope,
+    state: EnginePredictionFacetStateV1,
+    basis: EnginePredictionBasisWireV2Exact,
+    reasons: CappedSequence<String>,
+}
+
+struct EnginePredictionFacetSeedV3<'a> {
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for EnginePredictionFacetSeedV3<'_> {
+    type Value = EnginePredictionFacetWireV3;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Scope,
+            State,
+            Basis,
+            Reasons,
+        }
+        struct FacetVisitor<'a> {
+            references: &'a mut RowBudget,
+        }
+        impl<'de> Visitor<'de> for FacetVisitor<'_> {
+            type Value = EnginePredictionFacetWireV3;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an engine prediction V3 facet")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut scope = None;
+                let mut state = None;
+                let mut basis = None;
+                let mut reasons = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Scope => {
+                            set_prediction_field(&mut scope, map.next_value()?, "scope")?
+                        }
+                        Field::State => {
+                            set_prediction_field(&mut state, map.next_value()?, "state")?
+                        }
+                        Field::Basis => {
+                            if basis.is_some() {
+                                return Err(A::Error::duplicate_field("basis"));
+                            }
+                            basis =
+                                Some(map.next_value_seed(EnginePredictionBasisSeedV2Exact {
+                                    references: self.references,
+                                })?);
+                        }
+                        Field::Reasons => {
+                            if reasons.is_some() {
+                                return Err(A::Error::duplicate_field("reasons"));
+                            }
+                            reasons = Some(map.next_value_seed(CappedSequenceSeed {
+                                limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
+                                element: PhantomData,
+                            })?);
+                        }
+                    }
+                }
+                Ok(EnginePredictionFacetWireV3 {
+                    scope: required_prediction_field(scope, "scope")?,
+                    state: required_prediction_field(state, "state")?,
+                    basis: required_prediction_field(basis, "basis")?,
+                    reasons: required_prediction_field(reasons, "reasons")?,
+                })
+            }
+        }
+        deserializer.deserialize_struct(
+            "EnginePredictionFacetV3",
+            &["scope", "state", "basis", "reasons"],
+            FacetVisitor {
+                references: self.references,
+            },
+        )
+    }
+}
+
+impl EnginePredictionFacetV3 {
+    /// Construct one available facet with nonempty evidence.
+    pub fn available(
+        scope: EvaluationScope,
+        basis: EnginePredictionBasisV2,
+    ) -> Result<Self, PredictionContractError> {
+        validate_scope(&scope)?;
+        basis.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        if basis.references().is_empty() {
+            return Err(PredictionContractError::AvailableBasisEmpty);
+        }
+        Ok(Self {
+            scope,
+            state: EnginePredictionFacetStateV1::Available,
+            basis,
+            reasons: Vec::new(),
+        })
+    }
+
+    /// Construct one required-unavailable facet with canonical reasons.
+    pub fn required_unavailable(
+        scope: EvaluationScope,
+        basis: EnginePredictionBasisV2,
+        mut reasons: Vec<PredictionUnavailableReasonV2>,
+    ) -> Result<Self, PredictionContractError> {
+        validate_scope(&scope)?;
+        basis.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        reasons.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        reasons.dedup();
+        if reasons.is_empty() {
+            return Err(PredictionContractError::RequiredUnavailableWithoutReason);
+        }
+        let facet = Self {
+            scope,
+            state: EnginePredictionFacetStateV1::RequiredPredictionUnavailable,
+            basis,
+            reasons,
+        };
+        facet.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        Ok(facet)
+    }
+
+    /// Existing check-evaluation work scope.
+    pub const fn scope(&self) -> &EvaluationScope {
+        &self.scope
+    }
+
+    /// Facet availability state.
+    pub const fn state(&self) -> EnginePredictionFacetStateV1 {
+        self.state
+    }
+
+    /// Canonical exact-source-capable basis.
+    pub const fn basis(&self) -> &EnginePredictionBasisV2 {
+        &self.basis
+    }
+
+    /// Sorted stable unavailable reasons.
+    pub fn reasons(&self) -> &[PredictionUnavailableReasonV2] {
+        &self.reasons
+    }
+
+    fn from_wire_with_measurement_schema(
+        wire: EnginePredictionFacetWireV3,
+        expected_measurement_schema: &'static str,
+    ) -> Result<Self, PredictionContractError> {
+        if wire.reasons.overflowed {
+            return Err(PredictionContractError::TooManyUnavailableReasons {
+                found: PREDICTION_V1_MAX_REASONS_PER_FACET + 1,
+                limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
+            });
+        }
+        let facet = Self {
+            scope: wire.scope,
+            state: wire.state,
+            basis: EnginePredictionBasisV2::from_wire_with_measurement_schema(
+                wire.basis,
+                expected_measurement_schema,
+            )?,
+            reasons: wire
+                .reasons
+                .values
+                .into_iter()
+                .map(PredictionUnavailableReasonV2::from_wire)
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        facet.validate_with_measurement_schema(expected_measurement_schema)?;
+        Ok(facet)
+    }
+
+    fn validate_with_measurement_schema(
+        &self,
+        expected_measurement_schema: &'static str,
+    ) -> Result<(), PredictionContractError> {
+        validate_scope(&self.scope)?;
+        self.basis
+            .validate_with_measurement_schema(expected_measurement_schema)?;
+        if self.reasons.len() > PREDICTION_V1_MAX_REASONS_PER_FACET {
+            return Err(PredictionContractError::TooManyUnavailableReasons {
+                found: self.reasons.len(),
+                limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
+            });
+        }
+        if self
+            .reasons
+            .windows(2)
+            .any(|pair| pair[0].as_str() >= pair[1].as_str())
+        {
+            return Err(PredictionContractError::NonCanonicalOrder(
+                "V3 facet reasons",
+            ));
+        }
+        match self.state {
+            EnginePredictionFacetStateV1::Available if self.basis.references().is_empty() => {
+                Err(PredictionContractError::AvailableBasisEmpty)
+            }
+            EnginePredictionFacetStateV1::Available if !self.reasons.is_empty() => {
+                Err(PredictionContractError::AvailableHasReasons)
+            }
+            EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+                if self.reasons.is_empty() =>
+            {
+                Err(PredictionContractError::RequiredUnavailableWithoutReason)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "V3 facet retained text",
+            [
+                self.scope.code.as_str().len(),
+                self.scope.subject.as_ref().map_or(0, String::len),
+                checked_sum(
+                    "V3 facet reason text",
+                    self.reasons.iter().map(|reason| reason.as_str().len()),
+                )?,
+                self.basis.retained_text_bytes()?,
+            ],
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePredictionFacetV3 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut references = RowBudget::new(usize::MAX);
+        Self::from_wire_with_measurement_schema(
+            EnginePredictionFacetSeedV3 {
+                references: &mut references,
+            }
+            .deserialize(deserializer)?,
+            MEASUREMENTS_SCHEMA_ID,
+        )
+        .map_err(D::Error::custom)
+    }
+}
+
+struct EnginePredictionWireV3 {
+    schema: String,
+    provenance_identity: PredictionProvenanceIdentityV3,
+    facets: CappedSequence<EnginePredictionFacetWireV3>,
+    facet_budget: RowBudget,
+    reference_budget: RowBudget,
+}
+
+enum FacetElementV3 {
+    Value(EnginePredictionFacetWireV3),
+    Skipped,
+}
+
+struct FacetElementSeedV3<'a> {
+    facets: &'a mut RowBudget,
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for FacetElementSeedV3<'_> {
+    type Value = FacetElementV3;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if self.facets.admit() {
+            EnginePredictionFacetSeedV3 {
+                references: self.references,
+            }
+            .deserialize(deserializer)
+            .map(FacetElementV3::Value)
+        } else {
+            IgnoredAny::deserialize(deserializer).map(|_| FacetElementV3::Skipped)
+        }
+    }
+}
+
+struct FacetsSeedV3<'a> {
+    facets: &'a mut RowBudget,
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for FacetsSeedV3<'_> {
+    type Value = CappedSequence<EnginePredictionFacetWireV3>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FacetsVisitor<'a> {
+            facets: &'a mut RowBudget,
+            references: &'a mut RowBudget,
+        }
+
+        impl<'de> Visitor<'de> for FacetsVisitor<'_> {
+            type Value = CappedSequence<EnginePredictionFacetWireV3>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a bounded sequence of engine prediction V3 facets")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::with_capacity(
+                    sequence
+                        .size_hint()
+                        .unwrap_or(0)
+                        .min(PREDICTION_V1_MAX_FACETS_PER_FILE),
+                );
+                let mut seen = 0usize;
+                while seen < PREDICTION_V1_MAX_FACETS_PER_FILE {
+                    let Some(element) = sequence.next_element_seed(FacetElementSeedV3 {
+                        facets: self.facets,
+                        references: self.references,
+                    })?
+                    else {
+                        return Ok(CappedSequence {
+                            values,
+                            overflowed: false,
+                        });
+                    };
+                    seen += 1;
+                    match element {
+                        FacetElementV3::Value(value) => values.push(value),
+                        FacetElementV3::Skipped => {
+                            return Ok(CappedSequence {
+                                values,
+                                overflowed: consume_ignored_tail(
+                                    &mut sequence,
+                                    seen,
+                                    PREDICTION_V1_MAX_FACETS_PER_FILE,
+                                )?,
+                            });
+                        }
+                    }
+                }
+                Ok(CappedSequence {
+                    values,
+                    overflowed: consume_ignored_tail(
+                        &mut sequence,
+                        seen,
+                        PREDICTION_V1_MAX_FACETS_PER_FILE,
+                    )?,
+                })
+            }
+        }
+
+        deserializer.deserialize_seq(FacetsVisitor {
+            facets: self.facets,
+            references: self.references,
+        })
+    }
+}
+
+struct EnginePredictionWireSeedV3 {
+    facet_limit: usize,
+    reference_limit: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for EnginePredictionWireSeedV3 {
+    type Value = EnginePredictionWireV3;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Schema,
+            ProvenanceIdentity,
+            Facets,
+        }
+        struct PredictionVisitor {
+            facet_limit: usize,
+            reference_limit: usize,
+        }
+        impl<'de> Visitor<'de> for PredictionVisitor {
+            type Value = EnginePredictionWireV3;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an engine prediction V3")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut facet_budget = RowBudget::new(self.facet_limit);
+                let mut reference_budget = RowBudget::new(self.reference_limit);
+                let mut schema = None;
+                let mut provenance_identity = None;
+                let mut facets = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Schema => {
+                            set_prediction_field(&mut schema, map.next_value()?, "schema")?
+                        }
+                        Field::ProvenanceIdentity => set_prediction_field(
+                            &mut provenance_identity,
+                            map.next_value()?,
+                            "provenance_identity",
+                        )?,
+                        Field::Facets => {
+                            if facets.is_some() {
+                                return Err(A::Error::duplicate_field("facets"));
+                            }
+                            facets = Some(map.next_value_seed(FacetsSeedV3 {
+                                facets: &mut facet_budget,
+                                references: &mut reference_budget,
+                            })?);
+                        }
+                    }
+                }
+                Ok(EnginePredictionWireV3 {
+                    schema: required_prediction_field(schema, "schema")?,
+                    provenance_identity: required_prediction_field(
+                        provenance_identity,
+                        "provenance_identity",
+                    )?,
+                    facets: required_prediction_field(facets, "facets")?,
+                    facet_budget,
+                    reference_budget,
+                })
+            }
+        }
+        deserializer.deserialize_struct(
+            "EnginePredictionV3",
+            &["schema", "provenance_identity", "facets"],
+            PredictionVisitor {
+                facet_limit: self.facet_limit,
+                reference_limit: self.reference_limit,
+            },
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePredictionWireV3 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        EnginePredictionWireSeedV3 {
+            facet_limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            reference_limit: usize::MAX,
+        }
+        .deserialize(deserializer)
+    }
+}
+
+/// Per-check V3 engine prediction attachment bound to V3 provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EnginePredictionV3 {
+    schema: &'static str,
+    provenance_identity: PredictionProvenanceIdentityV3,
+    facets: Vec<EnginePredictionFacetV3>,
+}
+
+impl EnginePredictionV3 {
+    /// Construct one V3 prediction with canonical unique facet scopes.
+    pub fn new(
+        provenance_identity: PredictionProvenanceIdentityV3,
+        mut facets: Vec<EnginePredictionFacetV3>,
+    ) -> Result<Self, PredictionContractError> {
+        if facets.is_empty() {
+            return Err(PredictionContractError::EmptyFacetList);
+        }
+        if facets.len() > PREDICTION_V1_MAX_FACETS_PER_FILE {
+            return Err(PredictionContractError::TooManyFacets {
+                found: facets.len(),
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            });
+        }
+        for facet in &facets {
+            facet.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        }
+        facets.sort_by(|left, right| compare_scopes(left.scope(), right.scope()));
+        if facets
+            .windows(2)
+            .any(|pair| compare_scopes(pair[0].scope(), pair[1].scope()) == Ordering::Equal)
+        {
+            return Err(PredictionContractError::DuplicateFacetScope);
+        }
+        Ok(Self {
+            schema: ENGINE_PREDICTION_V3_ID,
+            provenance_identity,
+            facets,
+        })
+    }
+
+    fn from_wire_with_measurement_schema(
+        wire: EnginePredictionWireV3,
+        expected_measurement_schema: &'static str,
+    ) -> Result<Self, PredictionContractError> {
+        if wire.schema != ENGINE_PREDICTION_V3_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "prediction.schema",
+                expected: ENGINE_PREDICTION_V3_ID,
+                found: wire.schema,
+            });
+        }
+        if wire.facets.overflowed {
+            return Err(PredictionContractError::TooManyFacets {
+                found: PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            });
+        }
+        if let Some(error) = Self::first_nested_limit_error_v3(&wire) {
+            return Err(error);
+        }
+        let mut facets = wire
+            .facets
+            .values
+            .into_iter()
+            .map(|facet| {
+                EnginePredictionFacetV3::from_wire_with_measurement_schema(
+                    facet,
+                    expected_measurement_schema,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        facets.sort_by(|left, right| compare_scopes(left.scope(), right.scope()));
+        let prediction = Self {
+            schema: ENGINE_PREDICTION_V3_ID,
+            provenance_identity: wire.provenance_identity,
+            facets,
+        };
+        prediction.validate_structure_with_measurement_schema(expected_measurement_schema)?;
+        Ok(prediction)
+    }
+
+    fn first_nested_limit_error_v3(
+        wire: &EnginePredictionWireV3,
+    ) -> Option<PredictionContractError> {
+        for facet in &wire.facets.values {
+            if facet.reasons.overflowed {
+                return Some(PredictionContractError::TooManyUnavailableReasons {
+                    found: PREDICTION_V1_MAX_REASONS_PER_FACET + 1,
+                    limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
+                });
+            }
+            if facet.basis.references.overflowed {
+                return Some(PredictionContractError::TooManyBasisReferences {
+                    found: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET + 1,
+                    limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+                });
+            }
+        }
+        None
+    }
+
+    /// Immutable V3 schema identity.
+    pub const fn contract_id(&self) -> &'static str {
+        self.schema
+    }
+
+    /// V3 file-provenance identity.
+    pub const fn provenance_identity(&self) -> &PredictionProvenanceIdentityV3 {
+        &self.provenance_identity
+    }
+
+    /// Canonically ordered facets.
+    pub fn facets(&self) -> &[EnginePredictionFacetV3] {
+        &self.facets
+    }
+
+    /// Whether any required prediction work was unavailable.
+    pub fn has_required_unavailable(&self) -> bool {
+        self.facets
+            .iter()
+            .any(|facet| facet.state == EnginePredictionFacetStateV1::RequiredPredictionUnavailable)
+    }
+
+    /// Number of basis references retained by this attachment.
+    pub fn basis_reference_count(&self) -> usize {
+        self.facets
+            .iter()
+            .map(|facet| facet.basis.references().len())
+            .sum()
+    }
+
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "V3 prediction retained text",
+            self.facets
+                .iter()
+                .map(EnginePredictionFacetV3::retained_text_bytes)
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    }
+
+    /// Cross-validate every basis reference against V3 provenance.
+    pub fn validate_against_provenance(
+        &self,
+        provenance: &PredictionProvenanceV3,
+    ) -> Result<(), PredictionContractError> {
+        self.validate_against_provenance_with_measurement_schema(provenance, MEASUREMENTS_SCHEMA_ID)
+    }
+
+    pub(crate) fn validate_against_provenance_with_measurement_schema(
+        &self,
+        provenance: &PredictionProvenanceV3,
+        expected_measurement_schema: &'static str,
+    ) -> Result<(), PredictionContractError> {
+        if self.provenance_identity != provenance.identity {
+            return Err(PredictionContractError::ProvenanceIdentityMismatch);
+        }
+        self.validate_structure_with_measurement_schema(expected_measurement_schema)?;
+        for reference in self
+            .facets
+            .iter()
+            .flat_map(|facet| facet.basis.references())
+        {
+            validate_basis_reference_v3(reference, provenance, expected_measurement_schema)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_for_check(
+        &self,
+        check_id: &str,
+        evaluated_scopes: &[EvaluationScope],
+        gaps: &[CoverageGap],
+        findings: &[Finding],
+    ) -> Result<(), PredictionContractError> {
+        self.validate_structure_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        self.validate_facet_budget_summary_for_check(check_id)?;
+        for facet in &self.facets {
+            let evaluated = evaluated_scopes
+                .iter()
+                .filter(|scope| *scope == &facet.scope)
+                .count();
+            let is_gap = gaps
+                .iter()
+                .any(|gap| gap.scope.as_ref() == Some(&facet.scope));
+            match facet.state {
+                EnginePredictionFacetStateV1::Available if evaluated != 1 => {
+                    return Err(PredictionContractError::AvailableScopeNotEvaluatedExactlyOnce);
+                }
+                EnginePredictionFacetStateV1::RequiredPredictionUnavailable => {
+                    if evaluated != 0 {
+                        return Err(PredictionContractError::UnavailableScopeEvaluated);
+                    }
+                    if is_gap {
+                        return Err(PredictionContractError::UnavailableScopeDuplicatedAsGap);
+                    }
+                }
+                EnginePredictionFacetStateV1::Available => {}
+            }
+        }
+        for finding in findings {
+            let Some(scope) = finding.prediction_scope.as_ref() else {
+                return Err(PredictionContractError::FindingMissingPredictionScope);
+            };
+            if self
+                .facets
+                .iter()
+                .filter(|facet| {
+                    &facet.scope == scope && facet.state == EnginePredictionFacetStateV1::Available
+                })
+                .count()
+                != 1
+            {
+                return Err(PredictionContractError::FindingScopeNotAvailable);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn has_facet_budget_summary(&self) -> bool {
+        self.facets
+            .iter()
+            .any(|facet| facet.reasons == [PredictionUnavailableReasonV2::FacetBudgetExceeded])
+    }
+
+    pub(crate) fn validate_facet_budget_summary_for_check(
+        &self,
+        check_id: &str,
+    ) -> Result<(), PredictionContractError> {
+        let expected_budget_scope = format!("{check_id}:facet-budget");
+        let mut summaries = 0usize;
+        for facet in &self.facets {
+            if facet
+                .reasons
+                .contains(&PredictionUnavailableReasonV2::FacetBudgetExceeded)
+            {
+                if facet.state != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+                    || facet.scope.subject.is_some()
+                    || facet.scope.code.as_str() != expected_budget_scope
+                    || facet.reasons != [PredictionUnavailableReasonV2::FacetBudgetExceeded]
+                {
+                    return Err(PredictionContractError::InvalidFacetBudgetSummary);
+                }
+                summaries += 1;
+                if summaries > 1 {
+                    return Err(PredictionContractError::DuplicateFacetBudgetSummary);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_structure_with_measurement_schema(
+        &self,
+        expected_measurement_schema: &'static str,
+    ) -> Result<(), PredictionContractError> {
+        if self.schema != ENGINE_PREDICTION_V3_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "prediction.schema",
+                expected: ENGINE_PREDICTION_V3_ID,
+                found: self.schema.to_owned(),
+            });
+        }
+        if self.facets.is_empty() {
+            return Err(PredictionContractError::EmptyFacetList);
+        }
+        if self.facets.len() > PREDICTION_V1_MAX_FACETS_PER_FILE {
+            return Err(PredictionContractError::TooManyFacets {
+                found: self.facets.len(),
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            });
+        }
+        for facet in &self.facets {
+            facet.validate_with_measurement_schema(expected_measurement_schema)?;
+        }
+        for pair in self.facets.windows(2) {
+            match compare_scopes(pair[0].scope(), pair[1].scope()) {
+                Ordering::Equal => return Err(PredictionContractError::DuplicateFacetScope),
+                Ordering::Greater => {
+                    return Err(PredictionContractError::NonCanonicalOrder("V3 facets"));
+                }
+                Ordering::Less => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePredictionV3 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_wire_with_measurement_schema(
+            EnginePredictionWireV3::deserialize(deserializer)?,
+            MEASUREMENTS_SCHEMA_ID,
+        )
+        .map_err(D::Error::custom)
+    }
+}
+
+pub(crate) fn decode_engine_prediction_v3(
+    raw: &str,
+    facet_limit: usize,
+    reference_limit: usize,
+) -> Result<EnginePredictionV3, PredictionDecodeError> {
+    let mut deserializer = serde_json::Deserializer::from_str(raw);
+    let wire = EnginePredictionWireSeedV3 {
+        facet_limit,
+        reference_limit,
+    }
+    .deserialize(&mut deserializer)
+    .map_err(PredictionDecodeError::Shape)?;
+    deserializer.end().map_err(PredictionDecodeError::Shape)?;
+    if wire.facet_budget.overflowed() {
+        return Err(PredictionDecodeError::TooManyFileFacets);
+    }
+    if wire.reference_budget.overflowed() {
+        return Err(PredictionDecodeError::TooManyFileBasisReferences);
+    }
+    let prediction =
+        EnginePredictionV3::from_wire_with_measurement_schema(wire, MEASUREMENTS_SCHEMA_ID)
+            .map_err(PredictionDecodeError::Semantic)?;
+    Ok(prediction)
+}
+
 /// Domain-separated identity of one complete prediction-provenance header.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -5496,7 +7762,7 @@ impl PredictionProvenanceIdentityV2 {
 }
 
 const CONSUMED_CONTRACTS_V2: [&str; 6] = [
-    OUTPUT_SCHEMA_ID,
+    OUTPUT_V13_SCHEMA_ID,
     MEASUREMENTS_SCHEMA_ID,
     RAW_SOURCE_FACTS_V1_ID,
     DEPENDENCY_CLOSURE_V1_ID,
@@ -5893,6 +8159,350 @@ fn decode_prediction_provenance_v2_wire(
     Ok(provenance)
 }
 
+const CONSUMED_CONTRACTS_V3: [&str; 7] = [
+    "urn:animsmith:schema:output:14",
+    MEASUREMENTS_SCHEMA_ID,
+    RAW_SOURCE_FACTS_V2_ID,
+    EXACT_SOURCE_TIMING_V1_ID,
+    DEPENDENCY_CLOSURE_V1_ID,
+    ENGINE_PROFILE_FACTS_V1_ID,
+    "urn:animsmith:resolved-engine-settings:2",
+];
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PredictionProvenanceWireV3 {
+    schema: String,
+    identity: PredictionProvenanceIdentityV3,
+    profile: Box<RawValue>,
+    source_format: SourceFormatV1,
+    settings: Box<RawValue>,
+    raw_source: Box<RawValue>,
+    dependency_closure: Box<RawValue>,
+    #[serde(deserialize_with = "deserialize_consumed_contracts_v3")]
+    consumed_contracts: CappedSequence<String>,
+}
+
+fn deserialize_consumed_contracts_v3<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, CONSUMED_CONTRACTS_V3.len())
+}
+
+/// File-scoped V3 provenance that binds exact source timing evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PredictionProvenanceV3 {
+    schema: &'static str,
+    identity: PredictionProvenanceIdentityV3,
+    profile: ResolvedEngineProfileV1,
+    source_format: SourceFormatV1,
+    settings: ResolvedEngineSettingsV2,
+    raw_source: RawSourceBindingV2,
+    dependency_closure: DependencyClosureV1,
+    consumed_contracts: [&'static str; 7],
+}
+
+impl PredictionProvenanceV3 {
+    /// Bind V2 settings to same-load V2 raw evidence and dependency closure.
+    pub fn new(
+        profile: ResolvedEngineProfileV1,
+        source_format: SourceFormatV1,
+        settings: ResolvedEngineSettingsV2,
+        raw_source: RawSourceBindingV2,
+        dependency_closure: DependencyClosureV1,
+    ) -> Result<Self, PredictionContractError> {
+        let prefix = settings.validation_only_prefix(&profile)?;
+        PredictionProvenanceV1::new(
+            profile.clone(),
+            source_format,
+            prefix,
+            raw_source.source_facts.clone(),
+            dependency_closure.clone(),
+        )?;
+        settings.validate_against(&profile)?;
+        raw_source.validate()?;
+        let mut provenance = Self {
+            schema: PREDICTION_PROVENANCE_V3_ID,
+            identity: PredictionProvenanceIdentityV3(InputIdentity::from_bytes(&[])),
+            profile,
+            source_format,
+            settings,
+            raw_source,
+            dependency_closure,
+            consumed_contracts: CONSUMED_CONTRACTS_V3,
+        };
+        provenance.identity = PredictionProvenanceIdentityV3(provenance.computed_identity());
+        provenance.validate()?;
+        Ok(provenance)
+    }
+
+    /// Immutable V3 schema identity.
+    pub const fn contract_id(&self) -> &'static str {
+        self.schema
+    }
+
+    /// Canonical V3 provenance identity.
+    pub const fn identity(&self) -> &PredictionProvenanceIdentityV3 {
+        &self.identity
+    }
+
+    /// Exact embedded engine profile.
+    pub const fn profile(&self) -> &ResolvedEngineProfileV1 {
+        &self.profile
+    }
+
+    /// Authoritative source format.
+    pub const fn source_format(&self) -> SourceFormatV1 {
+        self.source_format
+    }
+
+    /// Explicit complete/partial resolved settings.
+    pub const fn settings(&self) -> &ResolvedEngineSettingsV2 {
+        &self.settings
+    }
+
+    /// Same-load V2 raw-source and exact timing evidence.
+    pub const fn raw_source(&self) -> &RawSourceBindingV2 {
+        &self.raw_source
+    }
+
+    /// Same-load dependency closure.
+    pub const fn dependency_closure(&self) -> &DependencyClosureV1 {
+        &self.dependency_closure
+    }
+
+    /// Validate all V3 identities, bounds, and evidence cross-links.
+    pub fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.schema != PREDICTION_PROVENANCE_V3_ID
+            || self.consumed_contracts != CONSUMED_CONTRACTS_V3
+        {
+            return Err(PredictionContractError::InvalidConsumedContracts);
+        }
+        if self.source_format != self.raw_source.source_format() {
+            return Err(PredictionContractError::SourceFormatMismatch);
+        }
+        self.raw_source.validate()?;
+        let prefix = self.settings.validation_only_prefix(&self.profile)?;
+        PredictionProvenanceV1::new(
+            self.profile.clone(),
+            self.source_format,
+            prefix,
+            self.raw_source.source_facts.clone(),
+            self.dependency_closure.clone(),
+        )?;
+        self.settings.validate_against(&self.profile)?;
+        let rows = self.retained_provenance_rows()?;
+        if rows > PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS {
+            return Err(PredictionContractError::TooManyAggregateProvenanceRows {
+                found: rows,
+                limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+            });
+        }
+        let text = self.retained_text_bytes()?;
+        if text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+            return Err(PredictionContractError::TooMuchRetainedText {
+                found: text,
+                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+            });
+        }
+        if self.identity.0 != self.computed_identity() {
+            return Err(PredictionContractError::IdentityMismatch {
+                contract: PREDICTION_PROVENANCE_V3_ID,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        let closure_text = checked_sum(
+            "V3 closure retained text",
+            self.dependency_closure
+                .references()
+                .iter()
+                .filter_map(|reference| closure_target_key(reference.target()).map(str::len))
+                .chain(
+                    self.dependency_closure
+                        .external_resources()
+                        .iter()
+                        .map(|resource| resource.key().as_str().len()),
+                ),
+        )?;
+        checked_sum(
+            "V3 provenance retained text",
+            [
+                self.profile.retained_text_bytes()?,
+                self.settings.retained_text_bytes()?,
+                self.raw_source.retained_text_bytes()?,
+                closure_text,
+            ],
+        )
+    }
+
+    fn retained_provenance_rows(&self) -> Result<usize, PredictionContractError> {
+        let clip_settings = checked_sum(
+            "V3 clip setting rows",
+            self.settings
+                .clips()
+                .iter()
+                .map(|clip| clip.settings().len()),
+        )?;
+        checked_sum(
+            "V3 aggregate provenance rows",
+            [
+                self.profile.facts().len(),
+                self.profile.setting_descriptors().len(),
+                self.profile.primary_sources().len(),
+                self.settings.document_settings().len(),
+                clip_settings,
+                self.raw_source.provenance_rows()?,
+            ],
+        )
+    }
+
+    fn computed_identity(&self) -> InputIdentity {
+        let mut encoder = CanonicalEncoder::new("animsmith-prediction-provenance-v3");
+        encoder.field("schema");
+        encoder.token(self.schema);
+        encoder.field("profile");
+        self.profile.encode_preimage(&mut encoder);
+        encoder.field("source_format");
+        encoder.token(source_format_name(self.source_format));
+        encoder.field("settings_identity");
+        encode_input_identity(&mut encoder, self.settings.settings_identity());
+        encoder.field("raw_source");
+        encode_raw_binding_v2(&mut encoder, &self.raw_source);
+        encoder.field("dependency_closure");
+        encode_dependency_closure(&mut encoder, &self.dependency_closure);
+        encoder.field("consumed_contracts");
+        encoder.count(self.consumed_contracts.len());
+        for contract in self.consumed_contracts {
+            encoder.token(contract);
+        }
+        encoder.identity()
+    }
+}
+
+impl<'de> Deserialize<'de> for PredictionProvenanceV3 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        decode_prediction_provenance_v3_wire(PredictionProvenanceWireV3::deserialize(deserializer)?)
+            .map_err(|error| match error {
+                PredictionDecodeError::Shape(source) => D::Error::custom(source),
+                PredictionDecodeError::Semantic(source) => D::Error::custom(source),
+                PredictionDecodeError::TooManyFileFacets
+                | PredictionDecodeError::TooManyFileBasisReferences => {
+                    unreachable!("provenance decoding cannot consume prediction budgets")
+                }
+            })
+    }
+}
+
+pub(crate) fn decode_prediction_provenance_v3(
+    raw: &str,
+) -> Result<PredictionProvenanceV3, PredictionDecodeError> {
+    let wire = serde_json::from_str::<PredictionProvenanceWireV3>(raw)
+        .map_err(PredictionDecodeError::Shape)?;
+    decode_prediction_provenance_v3_wire(wire)
+}
+
+fn decode_prediction_provenance_v3_wire(
+    wire: PredictionProvenanceWireV3,
+) -> Result<PredictionProvenanceV3, PredictionDecodeError> {
+    if wire.schema != PREDICTION_PROVENANCE_V3_ID
+        || wire.consumed_contracts.overflowed
+        || wire
+            .consumed_contracts
+            .values
+            .iter()
+            .map(String::as_str)
+            .ne(CONSUMED_CONTRACTS_V3)
+    {
+        return Err(PredictionDecodeError::Semantic(
+            PredictionContractError::InvalidConsumedContracts,
+        ));
+    }
+    let raw_wire = serde_json::from_str::<RawSourceBindingWireV2>(wire.raw_source.get())
+        .map_err(PredictionDecodeError::Shape)?;
+    let raw_source =
+        RawSourceBindingV2::from_wire(raw_wire).map_err(PredictionDecodeError::Semantic)?;
+    let remaining = PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS.saturating_sub(
+        raw_source
+            .provenance_rows()
+            .map_err(PredictionDecodeError::Semantic)?,
+    );
+    let profile =
+        decode_resolved_engine_profile_v1_with_provenance_limit(wire.profile.get(), remaining)
+            .map_err(map_profile_decode_error)?;
+    let settings = decode_resolved_engine_settings_v2_with_provenance_limit(
+        wire.settings.get(),
+        remaining.saturating_sub(profile.provenance_rows()),
+    )
+    .map_err(map_settings_decode_error)?;
+    let dependency_closure = decode_dependency_closure_v1(wire.dependency_closure.get()).map_err(
+        |error| match error {
+            DependencyClosureDecodeError::Shape(source) => PredictionDecodeError::Shape(source),
+            DependencyClosureDecodeError::Semantic(reason) => PredictionDecodeError::Semantic(
+                PredictionContractError::InvalidDependencyClosure(reason),
+            ),
+        },
+    )?;
+    let provenance = PredictionProvenanceV3 {
+        schema: PREDICTION_PROVENANCE_V3_ID,
+        identity: wire.identity,
+        profile,
+        source_format: wire.source_format,
+        settings,
+        raw_source,
+        dependency_closure,
+        consumed_contracts: CONSUMED_CONTRACTS_V3,
+    };
+    provenance
+        .validate()
+        .map_err(PredictionDecodeError::Semantic)?;
+    Ok(provenance)
+}
+
+fn map_profile_decode_error(error: EngineProfileLimitedDecodeError) -> PredictionDecodeError {
+    match error {
+        EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source)) => {
+            PredictionDecodeError::Shape(source)
+        }
+        EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source)) => {
+            PredictionDecodeError::Semantic(source.into())
+        }
+        EngineProfileLimitedDecodeError::ProvenanceRowsOverflow => PredictionDecodeError::Semantic(
+            PredictionContractError::TooManyAggregateProvenanceRows {
+                found: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS + 1,
+                limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+            },
+        ),
+    }
+}
+
+fn map_settings_decode_error(error: EngineSettingsLimitedDecodeError) -> PredictionDecodeError {
+    match error {
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source)) => {
+            PredictionDecodeError::Shape(source)
+        }
+        EngineSettingsLimitedDecodeError::Contract(EngineContractDecodeError::Semantic(source)) => {
+            PredictionDecodeError::Semantic(source.into())
+        }
+        EngineSettingsLimitedDecodeError::ProvenanceRowsOverflow => {
+            PredictionDecodeError::Semantic(
+                PredictionContractError::TooManyAggregateProvenanceRows {
+                    found: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS + 1,
+                    limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+                },
+            )
+        }
+    }
+}
+
 fn validate_basis_reference(
     reference: &PredictionBasisReferenceV1,
     provenance: &PredictionProvenanceV1,
@@ -6051,6 +8661,97 @@ fn validate_basis_reference_v2(
     Ok(())
 }
 
+fn validate_basis_reference_v3(
+    reference: &PredictionBasisReferenceV2,
+    provenance: &PredictionProvenanceV3,
+    expected_measurement_schema: &'static str,
+) -> Result<(), PredictionContractError> {
+    let PredictionBasisReferenceV2::V1(reference) = reference else {
+        let PredictionBasisReferenceV2::ExactSourceTiming(reference) = reference else {
+            unreachable!()
+        };
+        let timing = provenance
+            .raw_source()
+            .exact_source_timing()
+            .ok_or_else(|| {
+                PredictionContractError::ExactSourceTimingFieldUnavailable("binding".to_owned())
+            })?;
+        return reference.validate_against(timing);
+    };
+    match reference {
+        PredictionBasisReferenceV1::ProfileFact { fact_id } => {
+            if !provenance
+                .profile()
+                .facts()
+                .iter()
+                .any(|fact| fact.id().as_str() == fact_id)
+            {
+                return Err(PredictionContractError::UnknownProfileFact(fact_id.clone()));
+            }
+        }
+        PredictionBasisReferenceV1::ResolvedSetting {
+            location,
+            setting_id,
+        } => {
+            let Some(id) = parse_setting_id(setting_id) else {
+                return Err(PredictionContractError::UnknownResolvedSetting(
+                    setting_id.clone(),
+                ));
+            };
+            let Some(descriptor) = provenance.profile().setting_descriptor(id) else {
+                return Err(PredictionContractError::UnknownResolvedSetting(
+                    setting_id.clone(),
+                ));
+            };
+            let present = match location {
+                ResolvedSettingLocationV1::Document => {
+                    descriptor.scope() == EngineSettingScopeV1::Document
+                        && provenance.settings().document_setting(id).is_some()
+                }
+                ResolvedSettingLocationV1::Clip {
+                    clip_ordinal,
+                    clip_name,
+                } => usize::try_from(*clip_ordinal)
+                    .ok()
+                    .and_then(|ordinal| provenance.settings().clip_row(ordinal, clip_name))
+                    .is_some_and(|row| {
+                        descriptor.scope() == EngineSettingScopeV1::Clip
+                            && row.setting(id).is_some()
+                    }),
+            };
+            if !present {
+                return Err(PredictionContractError::UnknownResolvedSetting(
+                    setting_id.clone(),
+                ));
+            }
+        }
+        PredictionBasisReferenceV1::PrimarySource { source_id } => {
+            if provenance.profile().source(source_id).is_none() {
+                return Err(PredictionContractError::UnknownPrimarySource(
+                    source_id.clone(),
+                ));
+            }
+        }
+        PredictionBasisReferenceV1::Measurement { schema, .. }
+            if *schema != expected_measurement_schema =>
+        {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "basis.measurement.schema",
+                expected: expected_measurement_schema,
+                found: (*schema).to_owned(),
+            });
+        }
+        PredictionBasisReferenceV1::RawSource { reference } => {
+            if !raw_domain_matches_key(reference.domain, &reference.key) {
+                return Err(PredictionContractError::RawSourceDomainKeyMismatch);
+            }
+        }
+        PredictionBasisReferenceV1::ProjectField { .. }
+        | PredictionBasisReferenceV1::Measurement { .. } => {}
+    }
+    Ok(())
+}
+
 fn parse_setting_id(value: &str) -> Option<EngineSettingIdV1> {
     [
         EngineSettingIdV1::ConvertUnits,
@@ -6111,6 +8812,108 @@ fn encode_raw_binding(encoder: &mut CanonicalEncoder, raw: &RawSourceBindingV1) 
     encoder.token(raw.work.retained_rows.to_string());
     encoder.token(raw.work.retained_text_bytes.to_string());
     encoder.token(raw.work.max_traversal_depth.to_string());
+}
+
+fn encode_raw_binding_v2(encoder: &mut CanonicalEncoder, raw: &RawSourceBindingV2) {
+    encoder.token("animsmith-raw-source-binding-v2");
+    encoder.field("schema");
+    encoder.token(raw.schema);
+    encoder.field("source_facts");
+    encode_raw_binding(encoder, &raw.source_facts);
+    encoder.field("exact_source_timing");
+    encode_option(
+        encoder,
+        raw.exact_source_timing.as_ref(),
+        encode_exact_source_timing_binding,
+    );
+}
+
+fn encode_exact_source_timing_binding(
+    encoder: &mut CanonicalEncoder,
+    timing: &ExactSourceTimingBindingV1,
+) {
+    encoder.token("animsmith-exact-source-timing-binding-v1");
+    encoder.field("schema");
+    encoder.token(timing.schema);
+    encoder.field("time_basis");
+    encode_exact_source_observation(encoder, &timing.time_basis, |encoder, value| {
+        encoder.token(value.units_per_second.to_string());
+    });
+    encoder.field("declared_time_mode");
+    encode_exact_source_observation(encoder, &timing.declared_time_mode, |encoder, value| {
+        encoder.token(exact_time_mode_name(*value));
+    });
+    encoder.field("effective_time_mode");
+    encode_exact_source_observation(encoder, &timing.effective_time_mode, |encoder, value| {
+        encoder.token(exact_time_mode_name(*value));
+    });
+    encoder.field("declared_custom_frame_rate");
+    encode_exact_source_observation(
+        encoder,
+        &timing.declared_custom_frame_rate,
+        |encoder, value| {
+            encoder.token(value.binary64_bits.to_string());
+        },
+    );
+    encoder.field("frame_period");
+    encode_exact_source_observation(encoder, &timing.frame_period, |encoder, value| {
+        encoder.token(value.units_per_frame.to_string());
+    });
+    encoder.field("declared_time_protocol");
+    encode_exact_source_observation(encoder, &timing.declared_time_protocol, |encoder, value| {
+        encoder.token(exact_time_protocol_name(*value));
+    });
+    encoder.field("effective_time_protocol");
+    encode_exact_source_observation(
+        encoder,
+        &timing.effective_time_protocol,
+        |encoder, value| {
+            encoder.token(exact_time_protocol_name(*value));
+        },
+    );
+    encoder.field("clip_coverage");
+    encode_raw_coverage(encoder, timing.clip_coverage);
+    encoder.field("clips");
+    encoder.count(timing.clips.len());
+    for clip in &timing.clips {
+        encoder.token(clip.source_clip_index.to_string());
+        encode_exact_source_observation(encoder, &clip.source_time_range, |encoder, range| {
+            encoder.token(exact_time_span_selection_name(range.selection));
+            encoder.token(range.begin_units.to_string());
+            encoder.token(range.end_units.to_string());
+        });
+    }
+}
+
+fn encode_exact_source_observation<T>(
+    encoder: &mut CanonicalEncoder,
+    observation: &ExactSourceTimingObservationWireV1<T>,
+    encode_value: impl FnOnce(&mut CanonicalEncoder, &T),
+) {
+    match &observation.state {
+        ExactSourceTimingObservationStateWireV1::Observed(value) => {
+            encoder.token("observed");
+            encode_value(encoder, value);
+        }
+        ExactSourceTimingObservationStateWireV1::ProvenAbsent => encoder.token("proven_absent"),
+        ExactSourceTimingObservationStateWireV1::Unavailable(reason) => {
+            encoder.token("unavailable");
+            encoder.token(exact_unavailable_reason_name(*reason));
+        }
+    }
+    encoder.token(raw_disposition_name(observation.disposition));
+    encode_option(
+        encoder,
+        observation.provenance.as_ref(),
+        |encoder, provenance| {
+            encoder.token(raw_provenance_kind_name(provenance.kind));
+            encode_option(
+                encoder,
+                provenance.locator.as_deref(),
+                |encoder, locator| encoder.token(locator),
+            );
+        },
+    );
 }
 
 fn encode_raw_observation<T>(
@@ -6394,6 +9197,82 @@ pub(crate) fn validate_measurement_references_batch_v2<'prediction>(
             .flat_map(|facet| facet.basis.references.iter())
         {
             let PredictionBasisReferenceV1::Measurement { pointer, value, .. } = reference else {
+                continue;
+            };
+            let target = pointer
+                .as_str()
+                .split('/')
+                .skip(2)
+                .map(decode_pointer_component)
+                .collect::<Vec<_>>();
+            let next_index = targets.len();
+            let target_index = *targets.entry(target).or_insert(next_index);
+            expectations.push(MeasurementExpectation {
+                prediction_index,
+                pointer,
+                expected: value,
+                target_index,
+            });
+        }
+    }
+    if expectations.is_empty() {
+        return Ok(());
+    }
+    let mut found = vec![None; targets.len()];
+    let mut resolver = MeasurementScalarResolver {
+        targets: &targets,
+        path: Vec::new(),
+        found: &mut found,
+    };
+    if measurements.serialize(&mut resolver).is_err() {
+        let first = &expectations[0];
+        return Err(MeasurementReferenceBatchError {
+            prediction_index: first.prediction_index,
+            source: PredictionContractError::MeasurementPointerMissing(first.pointer.0.clone()),
+        });
+    }
+    for expectation in expectations {
+        let source = match found[expectation.target_index].as_ref() {
+            Some(ResolvedMeasurementNode::Scalar(actual)) if actual == expectation.expected => {
+                continue;
+            }
+            Some(ResolvedMeasurementNode::Scalar(_)) => {
+                PredictionContractError::MeasurementValueMismatch(expectation.pointer.0.clone())
+            }
+            Some(ResolvedMeasurementNode::NonScalar) => {
+                PredictionContractError::MeasurementPointerNotScalar(expectation.pointer.0.clone())
+            }
+            None => {
+                PredictionContractError::MeasurementPointerMissing(expectation.pointer.0.clone())
+            }
+        };
+        return Err(MeasurementReferenceBatchError {
+            prediction_index: expectation.prediction_index,
+            source,
+        });
+    }
+    Ok(())
+}
+
+/// V3 batch resolver for V1 measurement references lifted into basis V2.
+pub(crate) fn validate_measurement_references_batch_v3<'prediction>(
+    measurements: &MeasurementContract,
+    predictions: impl IntoIterator<Item = (usize, &'prediction EnginePredictionV3)>,
+) -> Result<(), MeasurementReferenceBatchError> {
+    let mut targets = BTreeMap::<Vec<String>, usize>::new();
+    let mut expectations = Vec::new();
+    for (prediction_index, prediction) in predictions {
+        for reference in prediction
+            .facets
+            .iter()
+            .flat_map(|facet| facet.basis.references.iter())
+        {
+            let PredictionBasisReferenceV2::V1(PredictionBasisReferenceV1::Measurement {
+                pointer,
+                value,
+                ..
+            }) = reference
+            else {
                 continue;
             };
             let target = pointer
@@ -7428,6 +10307,73 @@ mod tests {
         let mut invalid = wire;
         invalid["extra"] = json!(true);
         assert!(serde_json::from_value::<RawSourceBindingV1>(invalid).is_err());
+    }
+
+    #[test]
+    fn raw_source_v2_allows_missing_or_generic_exact_source_timing() {
+        let mut fbx_source = raw_binding_wire();
+        fbx_source["source_format"] = json!("fbx");
+        let fbx_without_exact = json!({
+            "schema": RAW_SOURCE_FACTS_V2_ID,
+            "source_facts": fbx_source,
+            "exact_source_timing": null
+        });
+        let binding: RawSourceBindingV2 = serde_json::from_value(fbx_without_exact.clone())
+            .expect("missing exact source timing remains representable");
+        assert_eq!(serde_json::to_value(binding).unwrap(), fbx_without_exact);
+
+        let exact_unavailable = json!({
+            "schema": EXACT_SOURCE_TIMING_V1_ID,
+            "time_basis": unavailable_exact_observation(),
+            "declared_time_mode": unavailable_exact_observation(),
+            "effective_time_mode": unavailable_exact_observation(),
+            "declared_custom_frame_rate": unavailable_exact_observation(),
+            "frame_period": unavailable_exact_observation(),
+            "declared_time_protocol": unavailable_exact_observation(),
+            "effective_time_protocol": unavailable_exact_observation(),
+            "clip_coverage": {"state": "complete"},
+            "clips": []
+        });
+        let generic_source_with_exact = json!({
+            "schema": RAW_SOURCE_FACTS_V2_ID,
+            "source_facts": raw_binding_wire(),
+            "exact_source_timing": exact_unavailable
+        });
+        let binding: RawSourceBindingV2 = serde_json::from_value(generic_source_with_exact.clone())
+            .expect("exact source timing is format-neutral evidence");
+        assert_eq!(
+            serde_json::to_value(binding).unwrap(),
+            generic_source_with_exact
+        );
+    }
+
+    fn unavailable_exact_observation() -> serde_json::Value {
+        json!({
+            "state": {"kind": "unavailable", "value": "parser_unavailable"},
+            "disposition": "unknown",
+            "provenance": null
+        })
+    }
+
+    #[test]
+    fn v3_basis_wrapper_decodes_lifted_measurements_against_v16() {
+        let reference =
+            PredictionBasisReferenceV2::v1(PredictionBasisReferenceV1::measurement_v16(
+                MeasurementPointerV1::new("/measurements/schema_version").unwrap(),
+                PredictionScalarV1::UnsignedInteger { value: 16 },
+            ));
+        let basis = EnginePredictionBasisV2::new(vec![reference]).unwrap();
+        let wire = serde_json::to_value(&basis).unwrap();
+        let decoded: EnginePredictionBasisV2 =
+            serde_json::from_value(wire.clone()).expect("V3 basis retains measurements-v16");
+        assert_eq!(decoded, basis);
+
+        let mut historical_nested_schema = wire;
+        historical_nested_schema["references"][0]["reference"]["schema"] =
+            json!(MEASUREMENTS_V15_SCHEMA_ID);
+        assert!(
+            serde_json::from_value::<EnginePredictionBasisV2>(historical_nested_schema).is_err()
+        );
     }
 
     #[test]

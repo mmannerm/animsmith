@@ -49,19 +49,20 @@ members may span documents but must have one exact normalized skeleton basis.
 ## Collection lint
 
 `animsmith collection lint COLLECTION.toml --format json` emits the separate
-current `urn:animsmith:schema:collection-output:5` envelope described by
-[`collection-output-v5.schema.json`](schemas/collection-output-v5.schema.json).
-The historical `urn:animsmith:schema:collection-output:4` envelope remains
-immutable.
+current `urn:animsmith:schema:collection-output:6` envelope described by
+[`collection-output-v6.schema.json`](schemas/collection-output-v6.schema.json).
+Historical `urn:animsmith:schema:collection-output:5` and
+`urn:animsmith:schema:collection-output:4` envelopes remain immutable.
 It binds the exact manifest bytes to canonically ordered source, logical clip,
 and runtime-set records while preserving each set's declared member order.
-Every available source embeds its ordinary one-file output-v13 lint result;
+Every available source embeds its ordinary one-file output-v14 lint result;
 each established logical clip separately carries the existing
 `ClipMeasurements` value selected by raw source take index and exact authored
 take name, then mapped through the loader's observed normalized clip index.
 This duplicate-safe indexed projection does not revise the historical,
-immutable measurements-v15 name-keyed wire contract; collection-output-v5
-embeds measurements-v16 in its nested output-v13 documents.
+immutable measurements-v15 name-keyed wire contract; collection-output-v6
+embeds measurements-v16 in its nested output-v14 documents. The strict reader
+continues to bind historical collection-output-v5 only to output-v13.
 
 Source input, digest pin, config, loader, take inventory, and document-result
 states stay orthogonal. A readable digest mismatch can therefore retain its
@@ -76,7 +77,8 @@ before source execution and reads sources sequentially.
 
 `animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` consumes only strict bounded
-`collection-directional-speed-policy:1` TOML and `collection-output:5` JSON.
+`collection-directional-speed-policy:1` TOML and collection-output V6 or
+historical V5 JSON.
 It emits the JSON-only immutable
 `urn:animsmith:schema:collection-directional-speed-evaluation:1` result
 described by
@@ -107,7 +109,7 @@ Set-level `evidence.root_travel` counts only members with every required raw
 fact and is complete only when all declared members are fully measured; it
 never reduces the set or adds direction, ratios, thresholds, or policy.
 The strict reader applies a 256 MiB N+1 cap before JSON decoding, validates
-nested output-v13 through its
+current nested output-v14 and historical V5/output-v13 through their
 existing reader, recomputes all summaries/work/set lifecycles, and rejects
 unknown fields or contradictory identities and states. Producer and reader
 also freeze 1 GiB per primary source, 16 GiB aggregate primary reads, and the
@@ -115,9 +117,9 @@ collection-manifest V1 row/member/work limits.
 Derived normalized clip names allow at most 4,101 bytes: the 4,096-byte
 authored-name bound plus `#` and the largest duplicate ordinal permitted by the
 4,096-clip manifest bound. Available nested measurement keys retain
-output-v13's 4,096-byte bound.
+output-v14's 4,096-byte bound.
 If such a derived name cannot fit the immutable 4,096-byte text bound of the
-nested output-v13 contract, indexed clip measurements and physical binding are
+nested output-v14 contract, indexed clip measurements and physical binding are
 retained, but the nested document and its name-addressed check reference are
 `nested_output_unavailable`; the collection exits 1 instead of publishing
 schema-invalid nested JSON.
@@ -199,17 +201,19 @@ presentation views; JSON remains the contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v13 with the
-current protocol identity `urn:animsmith:schema:output:13`. The retrievable
-schema is [`output-v13.schema.json`](schemas/output-v13.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v14 with the
+current protocol identity `urn:animsmith:schema:output:14`. The retrievable
+schema is [`output-v14.schema.json`](schemas/output-v14.schema.json); its repository URL
 is a retrieval location, not the protocol identity. Output-v11 remains immutable
 historical schema evidence; the measurement reader retains its validation path
-for existing reports, while CLI producers emit output-v13.
-`urn:animsmith:schema:output:12` remains an immutable historical contract and
-is never retargeted.
+for existing reports, while CLI producers emit output-v14.
+`urn:animsmith:schema:output:13`, `urn:animsmith:schema:output:12`, and
+`urn:animsmith:schema:output:11` remain immutable historical contracts and are
+never retargeted.
 
-Output-v13 uses `prediction-provenance:2`, `resolved-engine-settings:2`, and
-`engine-prediction:2` for current lint results. Settings retain at most 4,096
+Output-v14 uses `prediction-provenance:3`, `raw-source-facts:2`,
+`resolved-engine-settings:2`, and `engine-prediction:3` for current lint
+results. Settings retain at most 4,096
 canonical clip rows. A 4,097th clip records partial coverage and bounded work;
 the identity commits to that state, and lint emits required-unavailable evidence
 (`resolved_settings_overflow`) instead of treating the retained prefix as a
@@ -322,9 +326,10 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 [`output-v8`](schemas/output-v8.schema.json),
 [`output-v9`](schemas/output-v9.schema.json), and
 [`output-v10`](schemas/output-v10.schema.json) remain historical immutable
-contracts, as does `urn:animsmith:schema:output:11`. The current CLI emits and
-`diff` reads output-v13; regenerate a current output-v13 report from the original
-asset with `animsmith measure --format json` before passing it to `diff`.
+contracts, as do output-v11 through output-v13. The current CLI emits
+output-v14; `diff` also retains strict version-matched historical readers.
+Regenerate a current output-v14 report from the original asset with
+`animsmith measure --format json` when a current artifact is required.
 
 ## Contact fragments
 
@@ -342,8 +347,8 @@ deferred rather than exposing a partial transform API.
 
 ```json
 {
-  "schema_version": 13,
-  "schema": "urn:animsmith:schema:output:13",
+  "schema_version": 14,
+  "schema": "urn:animsmith:schema:output:14",
   "tool": {
     "name": "animsmith",
     "version": "0.6.0",
@@ -1198,6 +1203,8 @@ Built-in completed/gap scope codes are:
 | `first_frame_rest_delta` | The named clip's first-frame/rest-pose rotation evidence was evaluated. | `bind-pose` |
 | `animation_asset_label` | One source animation index was projected to the selected engine profile's canonical asset-label selector. | `engine-addressability` |
 | `animation_asset_label_inventory` | Complete source-animation inventory required for asset-label prediction was unavailable. | `engine-addressability` |
+| `engine_clip_boundary` | One source animation clip's exact end-frame boundary was evaluated. | `engine-clip-boundary` |
+| `engine_clip_boundary_inventory` | Complete exact source-animation boundary inventory was unavailable. | `engine-clip-boundary` |
 
 The built-in gap and scope declarations in `animsmith_core` are authoritative
 for each code's identity, meaning, and allowed emitting check ids. Runtime
@@ -1215,13 +1222,13 @@ same total. `summary.checks.gaps` counts typed gaps, while
 
 ### Engine-prediction provenance and scoped facets
 
-Every output-v13 lint file has required nullable `prediction_provenance`. It is
+Every output-v14 lint file has required nullable `prediction_provenance`. It is
 `null` when no exact engine profile was resolved. Otherwise it carries immutable
-prediction-provenance v2 (`urn:animsmith:prediction-provenance:2`): the typed
+prediction-provenance v3 (`urn:animsmith:prediction-provenance:3`): the typed
 profile facts and sources, authoritative input format, bounded resolved
-document/per-clip settings, raw-source scalar observations and independent
-coverage states, the same-load dependency closure, and consumed contract
-identities. The header, profile, settings coverage/work, closure, and primary
+document/per-clip settings, V2 raw-source facts including optional exact
+source-timing observations, the same-load dependency closure, and consumed contract
+identities. The header, profile, settings coverage/work, raw evidence, closure, and primary
 input identities are cross-validated; host paths and arbitrary JSON are
 forbidden.
 
@@ -1236,7 +1243,15 @@ is not applicable. Partial or unavailable inventory emits one subjectless
 `animation_asset_label_inventory` required-unavailable facet and no prefix
 predictions.
 
-Resolved engine settings and prediction provenance v2 use explicit bounded
+Output v14 also carries the bounded `engine-clip-boundary` rule for the exact
+Unreal revision 1 / 5.8 / `fbx-importer` profile. Its FBX adapter supplies the
+parser-resolved absolute animation-stack end coordinate and exact frame period
+as generic exact source-timing evidence. The rule reports only whether that end
+coordinate lies on the exact frame lattice. Missing, partial, or unavailable
+evidence becomes a required-unavailable facet; it does not infer frame ranges,
+resampling, root motion, or other importer behavior.
+
+Resolved engine settings and prediction provenance v3 use explicit bounded
 N+1 work and coverage evidence. A 4,097th clip produces partial settings
 coverage rather than an honest complete prefix; engine facets report the typed
 `resolved_settings_overflow` reason. Current lint allocates the shared 4,096
@@ -1314,13 +1329,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v13 header and emits `inputs`, a
+`diff --format json` uses the same output v14 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 13,
-  "schema": "urn:animsmith:schema:output:13",
+  "schema_version": 14,
+  "schema": "urn:animsmith:schema:output:14",
   "tool": {
     "name": "animsmith",
     "version": "0.6.0",
@@ -1335,8 +1350,8 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files, one-file output-v13 `measure`/`lint` reports with
-measurements-v16, and version-matched historical output-v11/v12 reports with
+`diff` accepts asset files, one-file output-v14 or output-v13 `measure`/`lint`
+reports with measurements-v16, and version-matched historical output-v11/v12 reports with
 measurements-v15. Output-v10 and earlier reports are rejected with guidance to
 regenerate them from the original asset. Multi-file reports and other
 unsupported contract versions are also rejected as operator errors.

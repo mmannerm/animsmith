@@ -4,7 +4,8 @@
 //! [`Document`] produced from the same primary bytes.
 
 use crate::{
-    DependencyClosureError, DependencyClosureV1, Document, InputIdentity, SourceSkeletonAssets,
+    DependencyClosureError, DependencyClosureV1, Document, ExactSourceTimingContractError,
+    ExactSourceTimingV1, InputIdentity, SourceSkeletonAssets,
 };
 use serde::Serialize;
 use std::fmt;
@@ -1779,6 +1780,7 @@ impl RawSourceFactsBuilderV1 {
             document,
             facts: self.facts,
             dependency_closure,
+            exact_source_timing: None,
         })
     }
 
@@ -1902,6 +1904,7 @@ pub struct LoadedSource {
     document: Document,
     facts: RawSourceFactsV1,
     dependency_closure: DependencyClosureV1,
+    exact_source_timing: Option<ExactSourceTimingV1>,
 }
 
 impl fmt::Debug for LoadedSource {
@@ -1911,6 +1914,7 @@ impl fmt::Debug for LoadedSource {
             .field("format", &self.facts.format)
             .field("primary_identity", &self.facts.primary_identity)
             .field("dependency_closure", &self.dependency_closure)
+            .field("exact_source_timing", &self.exact_source_timing)
             .field("work", &self.facts.work)
             .finish_non_exhaustive()
     }
@@ -1933,6 +1937,36 @@ impl LoadedSource {
     /// Borrow the bounded dependency closure captured during this same load.
     pub const fn dependency_closure(&self) -> &DependencyClosureV1 {
         &self.dependency_closure
+    }
+
+    /// Attach bounded exact timing evidence produced by the same loader parse.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExactSourceTimingContractError`] when the exact clip prefix or
+    /// coverage does not match the existing V1 clip domain.
+    pub fn with_exact_source_timing(
+        mut self,
+        timing: ExactSourceTimingV1,
+    ) -> Result<Self, ExactSourceTimingContractError> {
+        if timing.clips().len() != self.facts.clips.rows.len() {
+            return Err(ExactSourceTimingContractError::ClipCountMismatch {
+                exact: timing.clips().len(),
+                source_count: self.facts.clips.rows.len(),
+            });
+        }
+        if timing.clip_coverage() != self.facts.clips.coverage {
+            return Err(ExactSourceTimingContractError::ClipCoverageMismatch);
+        }
+        self.exact_source_timing = Some(timing);
+        Ok(self)
+    }
+
+    /// Borrow exact source timing evidence when this loader retained it.
+    ///
+    /// Sources produced by callers that retain only legacy V1 facts return `None`.
+    pub const fn exact_source_timing(&self) -> Option<&ExactSourceTimingV1> {
+        self.exact_source_timing.as_ref()
     }
 
     /// Consume the owner and deliberately discard importer-sensitive source facts.
@@ -2097,6 +2131,14 @@ mod tests {
             SourceUnavailableReasonV1::ParserUnavailable,
             None,
             SourceLoaderDispositionV1::Unknown,
+        )
+    }
+
+    fn exact_observed<T>(value: T) -> crate::ExactSourceTimingObservationV1<T> {
+        crate::ExactSourceTimingObservationV1::observed(
+            value,
+            format_provenance(),
+            SourceLoaderDispositionV1::Preserved,
         )
     }
 
@@ -2459,6 +2501,7 @@ mod tests {
         assert_eq!(facts.format(), SourceFormatV1::Glb);
         assert_eq!(facts.primary_identity(), &identity);
         assert_eq!(facts.primary_identity().bytes(), bytes.len() as u64);
+        assert!(loaded.exact_source_timing().is_none());
         assert!(std::ptr::eq(
             facts.source_skeleton() as *const _,
             source_skeleton_ptr
@@ -2472,6 +2515,67 @@ mod tests {
         assert!(!format!("{loaded:?}").contains("/home/example/private"));
         let document = loaded.into_document();
         assert!(document.clips.is_empty());
+    }
+
+    #[test]
+    fn exact_source_timing_attachment_is_format_neutral_and_rejects_mismatched_clip_domains() {
+        let loaded = || {
+            let mut builder = RawSourceFactsBuilderV1::new(
+                SourceFormatV1::Glb,
+                InputIdentity::from_bytes(b"generic-exact-source-timing"),
+            );
+            assert!(builder.push_clip(clip(0)));
+            builder.mark_complete(SourceFactDomainV1::Clips);
+            builder.finish(Document::default()).expect("facts bind")
+        };
+
+        let exact = |coverage, clips: Vec<crate::ExactSourceClipTimingV1>| {
+            ExactSourceTimingV1::new(
+                exact_observed(crate::ExactSourceTimeBasisV1::new(1_000).unwrap()),
+                exact_observed(crate::SourceTimelineModeV1::Fps24),
+                exact_observed(crate::SourceTimelineModeV1::Fps24),
+                crate::ExactSourceTimingObservationV1::proven_absent(format_provenance()),
+                exact_observed(crate::ExactSourceFramePeriodV1::new(1).unwrap()),
+                crate::ExactSourceTimingObservationV1::proven_absent(format_provenance()),
+                exact_observed(crate::SourceTimeDisplayProtocolV1::Default),
+                coverage,
+                clips,
+            )
+            .unwrap()
+        };
+        let one_clip = || {
+            vec![crate::ExactSourceClipTimingV1::new(
+                0,
+                exact_observed(
+                    crate::ExactSourceClipTimeRangeV1::new(
+                        crate::ExactSourceRangeSelectionV1::Primary,
+                        0,
+                        1,
+                    )
+                    .unwrap(),
+                ),
+            )]
+        };
+
+        let attached = loaded()
+            .with_exact_source_timing(exact(SourceSetCoverageV1::complete(), one_clip()))
+            .expect("generic exact timing attaches to a GLB source");
+        assert!(attached.exact_source_timing().is_some());
+
+        assert!(matches!(
+            loaded().with_exact_source_timing(exact(SourceSetCoverageV1::complete(), Vec::new())),
+            Err(ExactSourceTimingContractError::ClipCountMismatch {
+                exact: 0,
+                source_count: 1,
+            })
+        ));
+        assert!(matches!(
+            loaded().with_exact_source_timing(exact(
+                SourceSetCoverageV1::partial(SourceUnavailableReasonV1::ParserUnavailable),
+                one_clip(),
+            )),
+            Err(ExactSourceTimingContractError::ClipCoverageMismatch)
+        ));
     }
 
     #[test]

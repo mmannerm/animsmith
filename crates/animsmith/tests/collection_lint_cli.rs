@@ -4,14 +4,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:5";
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
+const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:6";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
+const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const COLLECTION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-output-v5.schema.json");
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
+    include_str!("../../../docs/schemas/collection-output-v6.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
+const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_V15_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v15.schema.json");
@@ -40,6 +42,7 @@ fn collection(manifest: &Path) -> Output {
 fn collection_validator() -> Validator {
     let collection: Value = serde_json::from_str(COLLECTION_SCHEMA).unwrap();
     let output: Value = serde_json::from_str(OUTPUT_SCHEMA).unwrap();
+    let output_v13: Value = serde_json::from_str(OUTPUT_V13_SCHEMA).unwrap();
     let output_v10: Value = serde_json::from_str(OUTPUT_V10_SCHEMA).unwrap();
     let measurements_v15: Value = serde_json::from_str(MEASUREMENTS_V15_SCHEMA).unwrap();
     let measurements: Value = serde_json::from_str(MEASUREMENTS_SCHEMA).unwrap();
@@ -47,6 +50,8 @@ fn collection_validator() -> Validator {
         .add(OUTPUT_V10_SCHEMA_ID, output_v10)
         .unwrap()
         .add(MEASUREMENTS_V15_SCHEMA_ID, measurements_v15)
+        .unwrap()
+        .add(OUTPUT_V13_SCHEMA_ID, output_v13)
         .unwrap()
         .add(OUTPUT_SCHEMA_ID, output)
         .unwrap()
@@ -624,10 +629,7 @@ members = ["com.example.failures/bad", "com.example.failures/digest", "com.examp
     assert_eq!(sources[2]["input"]["reason"], "missing");
     assert_eq!(sources[4]["loader"]["reason"], "unsupported_format");
     assert_eq!(sources[5]["result"]["state"], "available");
-    assert_eq!(
-        sources[5]["result"]["envelope"]["schema"],
-        "urn:animsmith:schema:output:13"
-    );
+    assert_eq!(sources[5]["result"]["envelope"]["schema"], OUTPUT_SCHEMA_ID);
     assert_eq!(sources[5]["result"]["envelope"]["command"], "lint");
     assert_eq!(
         value["clips"][1]["binding"]["reason"], "digest_mismatched",
