@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:collection-output:8",
+  "title": "animsmith collection output v8",
+  "description": "Deterministic aggregate evidence for one strict collection-manifest V1 lint run, with typed loader dependency-closure coverage for every source and current output-v16/measurements-v16 evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "schema", "tool", "command", "manifest", "budget", "summary", "work", "sources", "clips", "runtime_sets"],
+  "properties": {
+    "schema_version": { "const": 8 },
+    "schema": { "const": "urn:animsmith:schema:collection-output:8" },
+    "tool": { "$ref": "urn:animsmith:schema:output:10#/$defs/tool" },
+    "command": { "const": "collection lint" },
+    "manifest": { "$ref": "#/$defs/manifest" },
+    "budget": { "$ref": "#/$defs/budget" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "work": { "$ref": "#/$defs/work" },
+    "sources": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/source" } },
+    "clips": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/clip" } },
+    "runtime_sets": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/runtime_set" } }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "bytes"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "schema_version", "collection_id", "input"],
+      "properties": {
+        "schema": { "const": "urn:animsmith:schema:collection-manifest:1" },
+        "schema_version": { "const": 1 },
+        "collection_id": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "input": { "$ref": "#/$defs/identity" }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "max_source_bytes", "max_aggregate_source_bytes", "max_serialized_bytes", "max_sources", "max_clips", "max_runtime_sets", "max_aggregate_members", "max_aggregate_work"],
+      "properties": {
+        "id": { "const": "urn:animsmith:collection-output-budget:1" },
+        "max_source_bytes": { "const": 1073741824 },
+        "max_aggregate_source_bytes": { "const": 17179869184 },
+        "max_serialized_bytes": { "const": 268435456 },
+        "max_sources": { "const": 4096 },
+        "max_clips": { "const": 4096 },
+        "max_runtime_sets": { "const": 4096 },
+        "max_aggregate_members": { "const": 16384 },
+        "max_aggregate_work": { "const": 24576 }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources", "readable_sources", "established_sources", "clips", "established_clips", "runtime_sets", "complete_runtime_sets", "incomplete"],
+      "properties": {
+        "sources": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "readable_sources": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "established_sources": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "clips": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "established_clips": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "runtime_sets": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "complete_runtime_sets": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "incomplete": { "type": "boolean" }
+      }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_rows", "runtime_set_members", "aggregate_work", "primary_source_bytes", "serialized_bytes"],
+      "properties": {
+        "manifest_rows": { "type": "integer", "minimum": 0, "maximum": 12288 },
+        "runtime_set_members": { "type": "integer", "minimum": 0, "maximum": 16384 },
+        "aggregate_work": { "type": "integer", "minimum": 0, "maximum": 24576 },
+        "primary_source_bytes": { "type": "integer", "minimum": 0, "maximum": 17179869185 },
+        "serialized_bytes": { "type": "integer", "minimum": 0, "maximum": 268435456 }
+      }
+    },
+    "source_input": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "input"], "properties": { "state": { "const": "available" }, "input": { "$ref": "#/$defs/identity" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason", "inspected_bytes"], "properties": { "state": { "const": "unavailable" }, "reason": { "enum": ["missing", "unreadable", "too_large", "aggregate_exhausted"] }, "inspected_bytes": { "type": "integer", "minimum": 0, "maximum": 1073741825 } } }
+      ]
+    },
+    "digest": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "unpinned" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "expected_sha256"], "properties": { "state": { "const": "matched" }, "expected_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "expected_sha256"], "properties": { "state": { "const": "mismatched" }, "expected_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "observed_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }
+      ]
+    },
+    "config": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "default" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "locator", "input"], "properties": { "state": { "const": "explicit" }, "locator": { "type": "string", "minLength": 1, "maxLength": 4096 }, "input": { "$ref": "#/$defs/identity" } } }
+      ]
+    },
+    "loader": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "ready" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "enum": ["source_unavailable", "unsupported_format", "malformed_input", "dependency_unavailable"] } } }
+      ]
+    },
+    "dependency_closure_reason": {
+      "enum": ["source_declarations_partial", "source_declarations_unavailable", "capture_unavailable", "refused_resource", "unavailable_resource", "resource_budget_exceeded", "unmodeled_resource_domain"]
+    },
+    "dependency_closure_reasons": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/dependency_closure_reason" }
+    },
+    "dependency_closure": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "identity"], "properties": { "state": { "const": "complete" }, "identity": { "allOf": [{ "$ref": "#/$defs/identity" }, { "properties": { "bytes": { "minimum": 1, "maximum": 268435456 } } }] } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reasons"], "properties": { "state": { "const": "partial" }, "reasons": { "$ref": "#/$defs/dependency_closure_reasons" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reasons"], "properties": { "state": { "const": "unavailable" }, "reasons": { "$ref": "#/$defs/dependency_closure_reasons" } } }
+      ]
+    },
+    "take_name_state": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "value"], "properties": { "state": { "const": "available" }, "value": { "type": "string", "maxLength": 4096 } } },
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "unavailable" } } }
+      ]
+    },
+    "normalized_state": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "index", "name"], "properties": { "state": { "const": "available" }, "index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "name": { "type": "string", "maxLength": 4101 } } },
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "unavailable" } } }
+      ]
+    },
+    "observed_take": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_take_index", "name", "normalized"],
+      "properties": {
+        "source_take_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "name": { "$ref": "#/$defs/take_name_state" },
+        "normalized": { "$ref": "#/$defs/normalized_state" }
+      }
+    },
+    "document_result": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "envelope"], "properties": { "state": { "const": "available" }, "envelope": { "allOf": [{ "$ref": "urn:animsmith:schema:output:16" }, { "properties": { "command": { "const": "lint" } }, "required": ["files"] }] } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "enum": ["source_unavailable", "loader_unavailable", "nested_output_unavailable"] } } }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "locator", "input", "digest", "config", "loader", "dependency_closure", "take_inventory", "observed_takes", "result"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "locator": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "input": { "$ref": "#/$defs/source_input" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "config": { "$ref": "#/$defs/config" },
+        "loader": { "$ref": "#/$defs/loader" },
+        "dependency_closure": { "$ref": "#/$defs/dependency_closure" },
+        "take_inventory": { "enum": ["complete", "unavailable"] },
+        "observed_takes": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/observed_take" } },
+        "result": { "$ref": "#/$defs/document_result" }
+      }
+    },
+    "clip_unavailable_reason": { "enum": ["source_unavailable", "digest_mismatched", "loader_unavailable", "dependency_closure_incomplete", "document_unavailable", "take_inventory_unavailable", "take_index_missing", "take_name_unavailable", "take_name_mismatched", "normalized_clip_unavailable"] },
+    "check_reference": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "reference"], "properties": { "state": { "const": "available" }, "reference": { "type": "object", "additionalProperties": false, "required": ["source", "normalized_clip_index", "measurement_key"], "properties": { "source": { "type": "string", "minLength": 1 }, "normalized_clip_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "measurement_key": { "type": "string", "maxLength": 4096 } } } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "enum": ["duplicate_embedded_take_name", "nested_output_unavailable"] } } }
+      ]
+    },
+    "clip_binding": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "observed_source_take_index", "observed_take_name", "normalized_clip_index", "measurements", "check_reference"], "properties": { "state": { "const": "established" }, "observed_source_take_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "observed_take_name": { "type": "string", "maxLength": 4096 }, "normalized_clip_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "measurements": { "$ref": "urn:animsmith:schema:measurements:16#/$defs/clip_measurements" }, "check_reference": { "$ref": "#/$defs/check_reference" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "$ref": "#/$defs/clip_unavailable_reason" } } }
+      ]
+    },
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "take_index", "take_name", "binding"],
+      "properties": {
+        "id": { "type": "string", "minLength": 3, "maxLength": 255 },
+        "source": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "take_index": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "take_name": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "binding": { "$ref": "#/$defs/clip_binding" }
+      }
+    },
+    "member_resolution": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "established" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "$ref": "#/$defs/clip_unavailable_reason" } } }
+      ]
+    },
+    "gait_phase_member_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["availability"],
+      "properties": {
+        "availability": { "enum": ["measured", "not_applicable", "unavailable"] },
+        "phase": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 }
+      },
+      "allOf": [
+        { "if": { "properties": { "availability": { "const": "measured" } }, "required": ["availability"] }, "then": { "required": ["phase"] } },
+        { "if": { "properties": { "availability": { "const": "not_applicable" } }, "required": ["availability"] }, "then": { "not": { "required": ["phase"] } } },
+        { "if": { "properties": { "availability": { "const": "unavailable" } }, "required": ["availability"] }, "then": { "not": { "required": ["phase"] } } }
+      ]
+    },
+    "root_travel_member_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["translation_availability", "speed_mps_availability"],
+      "properties": {
+        "duration_s": { "type": "number", "minimum": 0 },
+        "translation_availability": { "enum": ["measured", "not_applicable", "unavailable"] },
+        "horizontal_displacement_x_m": { "type": "number" },
+        "horizontal_displacement_z_m": { "type": "number" },
+        "horizontal_travel_m": { "type": "number", "minimum": 0 },
+        "speed_mps_availability": { "enum": ["measured", "not_applicable", "unavailable"] },
+        "speed_mps": { "type": "number", "minimum": 0 }
+      },
+      "allOf": [
+        { "if": { "properties": { "translation_availability": { "const": "measured" } }, "required": ["translation_availability"] }, "then": { "required": ["horizontal_displacement_x_m", "horizontal_displacement_z_m", "horizontal_travel_m"] }, "else": { "not": { "anyOf": [{ "required": ["horizontal_displacement_x_m"] }, { "required": ["horizontal_displacement_z_m"] }, { "required": ["horizontal_travel_m"] }] } } },
+        { "if": { "properties": { "speed_mps_availability": { "const": "measured" } }, "required": ["speed_mps_availability"] }, "then": { "required": ["speed_mps"] }, "else": { "not": { "required": ["speed_mps"] } } }
+      ]
+    },
+    "root_travel_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "members_measured"],
+      "properties": {
+        "lifecycle": { "enum": ["complete", "incomplete"] },
+        "members_measured": { "type": "integer", "minimum": 0, "maximum": 4096 }
+      }
+    },
+    "gait_phase_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "members_measured"],
+      "properties": {
+        "lifecycle": { "enum": ["complete", "incomplete"] },
+        "members_measured": { "type": "integer", "minimum": 0, "maximum": 4096 },
+        "phase_spread": { "type": "number", "minimum": 0, "maximum": 0.5 },
+        "spread_basis": { "const": "max_circular_deviation_from_mean" }
+      },
+      "allOf": [
+        { "if": { "properties": { "lifecycle": { "const": "complete" } }, "required": ["lifecycle"] }, "then": { "required": ["phase_spread", "spread_basis"] }, "else": { "not": { "anyOf": [{ "required": ["phase_spread"] }, { "required": ["spread_basis"] }] } } }
+      ]
+    },
+    "runtime_set_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_travel"],
+      "properties": {
+        "root_travel": { "$ref": "#/$defs/root_travel_evidence" },
+        "gait_phase": { "$ref": "#/$defs/gait_phase_evidence" }
+      }
+    },
+    "runtime_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "members", "lifecycle", "decision", "gaps"],
+      "properties": {
+        "id": { "type": "string", "minLength": 3, "maxLength": 255 },
+        "kind": { "enum": ["gait-group", "sync-group", "directional-blend", "speed-blend", "transition-chain", "mask-composition", "retarget-group", "paired-interaction", "motion-database"] },
+        "members": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "resolution", "root_travel"],
+            "properties": {
+              "id": { "type": "string", "minLength": 3, "maxLength": 255 },
+              "resolution": { "$ref": "#/$defs/member_resolution" },
+              "root_travel": { "$ref": "#/$defs/root_travel_member_evidence" },
+              "gait_phase": { "$ref": "#/$defs/gait_phase_member_evidence" }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "resolution": { "properties": { "state": { "const": "established" } }, "required": ["state"] } }, "required": ["resolution"] },
+                "then": { "properties": { "root_travel": { "required": ["duration_s"] } } },
+                "else": { "properties": { "root_travel": { "not": { "required": ["duration_s"] } } } }
+              }
+            ]
+          }
+        },
+        "lifecycle": { "enum": ["complete", "incomplete"] },
+        "decision": { "const": "not_evaluated" },
+        "gaps": { "type": "array", "maxItems": 4096, "items": { "type": "string", "minLength": 3, "maxLength": 255 } },
+        "evidence": { "$ref": "#/$defs/runtime_set_evidence" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "gait-group" } }, "required": ["kind"] },
+          "then": {
+            "required": ["evidence"],
+            "properties": { "evidence": { "required": ["gait_phase"] }, "members": { "items": { "required": ["gait_phase"] } } }
+          },
+          "else": {
+            "required": ["evidence"],
+            "properties": { "evidence": { "not": { "required": ["gait_phase"] } }, "members": { "items": { "not": { "required": ["gait_phase"] } } } }
+          }
+        }
+      ]
+    }
+  }
+}

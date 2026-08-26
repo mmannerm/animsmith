@@ -16,12 +16,13 @@ use animsmith_core::{
     EvaluationScopeCode, ImporterSubjectCreationV1, InventoryCoverageResultV1, LoadedSource,
     MeasurementPointerV1, PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE, PredictionBasisReferenceV1,
     PredictionBasisReferenceV2, PredictionFacetDemandV2, PredictionInventoryCoverageStateV1,
-    PredictionInventoryDomainV1, PredictionProvenanceV4, PredictionRuleAllocationV2,
-    PredictionScalarV1, PredictionUnavailableReasonV2, RawSceneAttachmentCoverageV1,
-    RawSceneAttachmentInventoryV1, RawSourceBasisReferenceV1, RawSourceDomainV1,
-    RawSourceFieldIdV1, RawSourceKeyV1, ResolvedSettingLocationV1, SourceFormatV1,
-    SourceNodeLocalRest, SourceSkeletonCoverage, SourceSkeletonRowKindV1, TransformScaleDomainV1,
-    TransformScaleResultV1, TransformScaleSubjectKindV1, UnitMappingResultV1,
+    PredictionInventoryDomainV1, PredictionProvenanceV4, PredictionProvenanceV5,
+    PredictionRuleAllocationV2, PredictionScalarV1, PredictionUnavailableReasonV2,
+    RawSceneAttachmentCoverageV1, RawSceneAttachmentInventoryV1, RawSourceBasisReferenceV1,
+    RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1, ResolvedSettingLocationV1,
+    SourceFormatV1, SourceNodeLocalRest, SourceSkeletonCoverage, SourceSkeletonRowKindV1,
+    TransformScaleDomainV1, TransformScaleResultV1, TransformScaleSubjectKindV1,
+    UnitMappingResultV1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -56,6 +57,7 @@ const SELECTED_ANCESTRY_MAX_NODES: usize = 128;
 pub struct EngineUnitScaleCheck<'a> {
     source: &'a LoadedSource,
     provenance: Option<&'a PredictionProvenanceV4>,
+    successor_provenance: Option<&'a PredictionProvenanceV5>,
 }
 
 impl<'a> EngineUnitScaleCheck<'a> {
@@ -97,7 +99,43 @@ impl<'a> EngineUnitScaleCheck<'a> {
                 return Err(PredictionRuleError::FrozenProfileMismatch);
             }
         }
-        Ok(Self { source, provenance })
+        Ok(Self {
+            source,
+            provenance,
+            successor_provenance: None,
+        })
+    }
+
+    /// Bind optional V5 provenance while retaining this rule's immutable V4
+    /// inputs and machine results inside an EnginePredictionV5 attachment.
+    pub fn new_v5(
+        source: &'a LoadedSource,
+        provenance: Option<&'a PredictionProvenanceV5>,
+    ) -> Result<Self, PredictionRuleError> {
+        let mut check = Self::new(source, provenance.map(PredictionProvenanceV5::base))?;
+        if let Some(provenance) = provenance {
+            provenance
+                .validate()
+                .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
+            if is_bevy_tuple_revision(provenance.base(), 3)
+                && !has_frozen_bevy_profile_revision(provenance.base(), 3)
+            {
+                return Err(PredictionRuleError::FrozenProfileMismatch);
+            }
+        }
+        check.successor_provenance = provenance;
+        Ok(check)
+    }
+
+    fn exact_applicable(&self) -> bool {
+        match (self.provenance, self.successor_provenance) {
+            (Some(provenance), Some(_)) => {
+                is_exact_bevy_gltf_revision(self.source, provenance, 2)
+                    || is_exact_bevy_gltf_revision(self.source, provenance, 3)
+            }
+            (Some(provenance), None) => is_exact_bevy_gltf(self.source, provenance),
+            (None, _) => false,
+        }
     }
 }
 
@@ -107,11 +145,10 @@ impl Check for EngineUnitScaleCheck<'_> {
     }
 
     fn applicability(&self, _ctx: &CheckCtx<'_>) -> Applicability {
-        match self.provenance {
-            Some(provenance) if is_exact_bevy_gltf(self.source, provenance) => {
-                Applicability::Applicable
-            }
-            _ => Applicability::NotApplicable,
+        if self.exact_applicable() {
+            Applicability::Applicable
+        } else {
+            Applicability::NotApplicable
         }
     }
 
@@ -119,7 +156,7 @@ impl Check for EngineUnitScaleCheck<'_> {
         let Some(provenance) = self.provenance else {
             return empty_output();
         };
-        if !is_exact_bevy_gltf(self.source, provenance) {
+        if !self.exact_applicable() {
             return empty_output();
         }
         let plan = plan(self.source, provenance);
@@ -130,14 +167,19 @@ impl Check for EngineUnitScaleCheck<'_> {
                 true,
             ),
         };
-        evaluate_allocated(self.source, provenance, &plan, capacity, summary_required)
+        evaluate_allocated(
+            self.source,
+            provenance,
+            self.successor_provenance,
+            &plan,
+            capacity,
+            summary_required,
+        )
     }
 
     fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
         match self.provenance {
-            Some(provenance) if is_exact_bevy_gltf(self.source, provenance) => {
-                plan(self.source, provenance).demand
-            }
+            Some(provenance) if self.exact_applicable() => plan(self.source, provenance).demand,
             _ => PredictionFacetDemandV2::Exact(0),
         }
     }
@@ -150,13 +192,14 @@ impl Check for EngineUnitScaleCheck<'_> {
         let Some(provenance) = self.provenance else {
             return empty_output();
         };
-        if !is_exact_bevy_gltf(self.source, provenance) {
+        if !self.exact_applicable() {
             return empty_output();
         }
         let plan = plan(self.source, provenance);
         evaluate_allocated(
             self.source,
             provenance,
+            self.successor_provenance,
             &plan,
             allocation.candidate_capacity(),
             allocation.summary_required(),
@@ -414,6 +457,7 @@ fn join_budget_exceeded(work: &mut usize) -> bool {
 fn evaluate_allocated(
     source: &LoadedSource,
     provenance: &PredictionProvenanceV4,
+    successor_provenance: Option<&PredictionProvenanceV5>,
     plan: &RulePlan,
     candidate_capacity: usize,
     summary_required: bool,
@@ -469,8 +513,14 @@ fn evaluate_allocated(
         .collect();
     let prediction = EnginePredictionV4::new(provenance.identity().clone(), facets)
         .expect("allocated unit/scale facets satisfy V4 bounds");
-    CheckOutput::from_coverage(Vec::new(), evaluated_scopes, Vec::new())
-        .with_engine_prediction_v4(prediction)
+    let output = CheckOutput::from_coverage(Vec::new(), evaluated_scopes, Vec::new());
+    match successor_provenance {
+        Some(successor) => output.with_engine_prediction_v5(
+            animsmith_core::EnginePredictionV5::new(successor, prediction)
+                .expect("unit-scale V5 prediction binds the same immutable V4 authority"),
+        ),
+        None => output.with_engine_prediction_v4(prediction),
+    }
 }
 
 fn file_facet(
@@ -1440,18 +1490,26 @@ fn load_meshes(provenance: &PredictionProvenanceV4) -> bool {
 }
 
 fn is_bevy_tuple(provenance: &PredictionProvenanceV4) -> bool {
+    is_bevy_tuple_revision(provenance, BEVY_PROFILE_REVISION)
+}
+
+fn is_bevy_tuple_revision(provenance: &PredictionProvenanceV4, revision: u32) -> bool {
     let selection = provenance.profile().selection();
     selection.family() == BEVY_FAMILY
-        && selection.profile_revision() == BEVY_PROFILE_REVISION
+        && selection.profile_revision() == revision
         && selection.engine_version() == BEVY_ENGINE_VERSION
         && selection.importer() == BEVY_IMPORTER
 }
 
 fn has_frozen_bevy_profile(provenance: &PredictionProvenanceV4) -> bool {
+    has_frozen_bevy_profile_revision(provenance, BEVY_PROFILE_REVISION)
+}
+
+fn has_frozen_bevy_profile_revision(provenance: &PredictionProvenanceV4, revision: u32) -> bool {
     profiles_v2().iter().any(|profile| {
         let selection = profile.selection();
         selection.family() == BEVY_FAMILY
-            && selection.profile_revision() == BEVY_PROFILE_REVISION
+            && selection.profile_revision() == revision
             && selection.engine_version() == BEVY_ENGINE_VERSION
             && selection.importer() == BEVY_IMPORTER
             && crate::project_engine_profile_v2(profile)
@@ -1460,12 +1518,20 @@ fn has_frozen_bevy_profile(provenance: &PredictionProvenanceV4) -> bool {
 }
 
 fn is_exact_bevy_gltf(source: &LoadedSource, provenance: &PredictionProvenanceV4) -> bool {
+    is_exact_bevy_gltf_revision(source, provenance, BEVY_PROFILE_REVISION)
+}
+
+fn is_exact_bevy_gltf_revision(
+    source: &LoadedSource,
+    provenance: &PredictionProvenanceV4,
+    revision: u32,
+) -> bool {
     matches!(
         source.source_facts().format(),
         SourceFormatV1::GltfJson | SourceFormatV1::Glb
     ) && source.source_facts().format() == provenance.source_format()
-        && is_bevy_tuple(provenance)
-        && has_frozen_bevy_profile(provenance)
+        && is_bevy_tuple_revision(provenance, revision)
+        && has_frozen_bevy_profile_revision(provenance, revision)
 }
 
 fn empty_output() -> CheckOutput {

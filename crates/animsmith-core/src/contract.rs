@@ -41,15 +41,16 @@ use crate::model::{
 };
 use crate::prediction::{
     EngineMachineResultV1, EnginePredictionBasisV2, EnginePredictionBasisV4,
-    EnginePredictionFacetStateV1, EnginePredictionV1, EnginePredictionV4,
+    EnginePredictionFacetStateV1, EnginePredictionV1, EnginePredictionV4, EnginePredictionV5,
     ExactSourceTimingBasisReferenceV1, ExactSourceTimingBindingV1, ExactSourceTimingDomainV1,
     ExactSourceTimingKeyV1, ExactSourceTimingObservationStateWireV1,
     PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE, PREDICTION_V1_MAX_FACETS_PER_FILE,
     PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE, PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE,
     PredictionBasisReferenceV4, PredictionContractError, PredictionDecodeError,
-    PredictionProvenanceV4, PredictionScalarV1, RawSceneAttachmentBasisDomainV1,
-    RawSceneAttachmentBasisReferenceV1, RawSourceBasisReferenceV1, TransformScaleDomainV1,
-    TransformScaleResultV1, TransformScaleSubjectKindV1, UnitMappingResultV1,
+    PredictionProvenanceV4, PredictionProvenanceV5, PredictionScalarV1,
+    RawSceneAttachmentBasisDomainV1, RawSceneAttachmentBasisReferenceV1, RawSourceBasisReferenceV1,
+    ResolvedSettingLocationV1, TransformScaleDomainV1, TransformScaleResultV1,
+    TransformScaleSubjectKindV1, UnitMappingResultV1,
     decode_engine_prediction_v1_with_measurement_schema, decode_engine_prediction_v2,
     decode_engine_prediction_v2_with_measurement_schema, decode_engine_prediction_v3,
     decode_engine_prediction_v4, decode_prediction_provenance_v1_with_measurement_schema,
@@ -65,15 +66,21 @@ use crate::{
     EnginePredictionV2, EnginePredictionV3, ImporterSubjectCreationV1, InventoryCoverageResultV1,
     PredictionBasisReferenceV1, PredictionBasisReferenceV2, PredictionInventoryCoverageStateV1,
     PredictionInventoryDomainV1, PredictionProvenanceV1, PredictionProvenanceV2,
-    PredictionProvenanceV3, PredictionUnavailableReasonV2, RawSceneAttachmentCoverageV1,
-    RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1, RawSourceSetCoverageStateV1,
-    ResolvedEngineSettingsCoverageStateV2, SourceSkeletonRowKindV1,
+    PredictionProvenanceV3, PredictionUnavailableReasonV2, RawAnimationChannelInventoryV1,
+    RawSceneAttachmentCoverageV1, RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1,
+    RawSourceSetCoverageStateV1, ResolvedEngineSettingsCoverageStateV2,
+    SourceImportDispositionResultV1, SourceImportDispositionV1, SourceImportSubjectKindV1,
+    SourceSkeletonRowKindV1,
 };
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 15;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 16;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:15";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
+/// Immutable output-v15 identity retained for historical V4 prediction evidence.
+pub const OUTPUT_V15_SCHEMA_ID: &str = "urn:animsmith:schema:output:15";
+/// Schema version of output-v15.
+pub const OUTPUT_V15_SCHEMA_VERSION: u32 = 15;
 /// Immutable output-v10 identity retained by V1 dependent contracts.
 pub const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 /// Immutable output-v11 identity retained as historical schema evidence.
@@ -2164,6 +2171,8 @@ struct MeasurementFileInput {
     checks_v3: Option<Vec<PredictionCheckInputV3>>,
     prediction_provenance_v4: RequiredNullable<PredictionProvenanceV4>,
     checks_v4: Option<Vec<PredictionCheckInputV4>>,
+    prediction_provenance_v5: RequiredNullable<PredictionProvenanceV5>,
+    checks_v5: Option<Vec<PredictionCheckInputV5>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2298,6 +2307,19 @@ struct PredictionCheckInputV4 {
     evaluated_scopes: Vec<crate::evaluation::EvaluationScope>,
     gaps: Vec<PredictionGapInput>,
     prediction: Option<EnginePredictionV4>,
+}
+
+#[derive(Debug)]
+struct PredictionCheckInputV5 {
+    check_id: String,
+    selection: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    evaluation: EvaluationState,
+    findings: Vec<PredictionFindingInput>,
+    evaluated_scopes: Vec<crate::evaluation::EvaluationScope>,
+    gaps: Vec<PredictionGapInput>,
+    prediction: Option<EnginePredictionV5>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3404,6 +3426,8 @@ fn decode_prediction_phase_file(
             checks_v3: None,
             prediction_provenance_v4: RequiredNullable::Missing,
             checks_v4: None,
+            prediction_provenance_v5: RequiredNullable::Missing,
+            checks_v5: None,
         });
     }
 
@@ -3670,6 +3694,8 @@ fn decode_prediction_phase_file(
         checks_v3: None,
         prediction_provenance_v4: RequiredNullable::Missing,
         checks_v4: None,
+        prediction_provenance_v5: RequiredNullable::Missing,
+        checks_v5: None,
     })
 }
 
@@ -3711,6 +3737,8 @@ fn decode_prediction_phase_file_v14(
             checks_v3: None,
             prediction_provenance_v4: RequiredNullable::Missing,
             checks_v4: None,
+            prediction_provenance_v5: RequiredNullable::Missing,
+            checks_v5: None,
         });
     }
     if wire
@@ -3931,6 +3959,8 @@ fn decode_prediction_phase_file_v14(
         checks_v3,
         prediction_provenance_v4: RequiredNullable::Missing,
         checks_v4: None,
+        prediction_provenance_v5: RequiredNullable::Missing,
+        checks_v5: None,
     })
 }
 
@@ -4171,6 +4201,242 @@ fn decode_prediction_phase_file_v15(
         checks_v3: None,
         prediction_provenance_v4: RequiredNullable::Present(Some(provenance)),
         checks_v4,
+        prediction_provenance_v5: RequiredNullable::Missing,
+        checks_v5: None,
+    })
+}
+
+fn decode_prediction_phase_file_v16(
+    command: &str,
+    file_index: usize,
+    raw: &RawValue,
+) -> Result<MeasurementFileInput, MeasurementReportError> {
+    #[derive(Deserialize)]
+    struct SchemaProbe {
+        schema: String,
+    }
+
+    let probe: MeasurementFileWireInput = serde_json::from_str(raw.get()).map_err(|source| {
+        prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidFileShape {
+                reason: source.to_string(),
+            },
+        )
+    })?;
+    if command == "measure"
+        || matches!(probe.prediction_provenance, RequiredNullable::Present(None))
+    {
+        return decode_prediction_phase_file_v15(command, file_index, raw);
+    }
+    let RequiredNullable::Present(Some(provenance_raw)) = &probe.prediction_provenance else {
+        return decode_prediction_phase_file_v15(command, file_index, raw);
+    };
+    let schema = serde_json::from_str::<SchemaProbe>(provenance_raw.get()).map_err(|source| {
+        prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidPredictionProvenanceShape {
+                reason: source.to_string(),
+            },
+        )
+    })?;
+    if schema.schema == crate::prediction::PREDICTION_PROVENANCE_V3_ID {
+        return decode_prediction_phase_file_v15(command, file_index, raw);
+    }
+    if schema.schema != crate::prediction::PREDICTION_PROVENANCE_V5_ID {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidPredictionProvenance {
+                source: PredictionContractError::InvalidSchema {
+                    field: "prediction provenance.schema",
+                    expected: crate::prediction::PREDICTION_PROVENANCE_V5_ID,
+                    found: schema.schema,
+                },
+            },
+        ));
+    }
+    let MeasurementFileWireInput {
+        path,
+        input,
+        measurements,
+        prediction_provenance,
+        checks,
+        ..
+    } = probe;
+    if checks
+        .as_ref()
+        .is_some_and(|checks| checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE)
+    {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyChecks {
+                found: checks.as_ref().map_or(0, Vec::len),
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
+            },
+        ));
+    }
+    let RequiredNullable::Present(Some(raw_provenance)) = prediction_provenance else {
+        unreachable!()
+    };
+    let provenance: PredictionProvenanceV5 =
+        serde_json::from_str(raw_provenance.get()).map_err(|source| {
+            prediction_file_error(
+                file_index,
+                MeasurementFileError::InvalidPredictionProvenanceShape {
+                    reason: source.to_string(),
+                },
+            )
+        })?;
+    provenance.validate().map_err(|source| {
+        prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidPredictionProvenance { source },
+        )
+    })?;
+    let mut decoded_facets = 0usize;
+    let mut decoded_references = 0usize;
+    let mut decoded_text = provenance.retained_text_bytes().map_err(|source| {
+        prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidPredictionProvenance { source },
+        )
+    })?;
+    let checks_v5 = checks
+        .map(|raw_checks| {
+            let mut decoded = Vec::with_capacity(raw_checks.len());
+            for (check_index, raw_check) in raw_checks.into_iter().enumerate() {
+                let wire: PredictionCheckWireInput = serde_json::from_str(raw_check.get())
+                    .map_err(|source| {
+                        prediction_file_error(
+                            file_index,
+                            MeasurementFileError::InvalidPredictionShape {
+                                check_index,
+                                reason: source.to_string(),
+                            },
+                        )
+                    })?;
+                if (wire.selection == SelectionState::Unselected
+                    || wire.configuration == ConfigurationState::Disabled
+                    || wire.applicability == Applicability::NotApplicable)
+                    && wire.prediction.is_some()
+                {
+                    return Err(prediction_file_error(
+                        file_index,
+                        MeasurementFileError::InvalidPredictionLifecycle {
+                            check_index,
+                            reason: "inactive check must have empty output",
+                        },
+                    ));
+                }
+                let prediction =
+                    wire.prediction
+                        .map(|raw_prediction| {
+                            serde_json::from_str::<EnginePredictionV5>(raw_prediction.get())
+                                .map_err(|source| {
+                                    prediction_file_error(
+                                        file_index,
+                                        MeasurementFileError::InvalidPredictionShape {
+                                            check_index,
+                                            reason: source.to_string(),
+                                        },
+                                    )
+                                })
+                        })
+                        .transpose()?;
+                let check = PredictionCheckInputV5 {
+                    check_id: wire.check_id,
+                    selection: wire.selection,
+                    configuration: wire.configuration,
+                    applicability: wire.applicability,
+                    evaluation: wire.evaluation,
+                    findings: wire.findings,
+                    evaluated_scopes: wire.evaluated_scopes,
+                    gaps: wire.gaps,
+                    prediction,
+                };
+                check
+                    .validate(check_index, Some(&provenance))
+                    .map_err(|source| prediction_file_error(file_index, source))?;
+                if let Some(prediction) = &check.prediction {
+                    decoded_facets = decoded_facets
+                        .checked_add(prediction.facets().len())
+                        .ok_or_else(|| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::PredictionAccountingOverflow,
+                            )
+                        })?;
+                    decoded_references = decoded_references
+                        .checked_add(prediction.basis_reference_count())
+                        .ok_or_else(|| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::PredictionAccountingOverflow,
+                            )
+                        })?;
+                    decoded_text = decoded_text
+                        .checked_add(prediction.retained_text_bytes().map_err(|source| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::InvalidPrediction {
+                                    check_index,
+                                    source,
+                                },
+                            )
+                        })?)
+                        .ok_or_else(|| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::PredictionAccountingOverflow,
+                            )
+                        })?;
+                    if decoded_facets > PREDICTION_V1_MAX_FACETS_PER_FILE {
+                        return Err(prediction_file_error(
+                            file_index,
+                            MeasurementFileError::TooManyPredictionFacets {
+                                found: decoded_facets,
+                                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                            },
+                        ));
+                    }
+                    if decoded_references > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE {
+                        return Err(prediction_file_error(
+                            file_index,
+                            MeasurementFileError::TooManyPredictionBasisReferences {
+                                found: decoded_references,
+                                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+                            },
+                        ));
+                    }
+                    if decoded_text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+                        return Err(prediction_file_error(
+                            file_index,
+                            MeasurementFileError::TooMuchPredictionText {
+                                found: decoded_text,
+                                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+                            },
+                        ));
+                    }
+                }
+                decoded.push(check);
+            }
+            Ok(decoded)
+        })
+        .transpose()?;
+    Ok(MeasurementFileInput {
+        path,
+        input,
+        measurements,
+        prediction_provenance: RequiredNullable::Missing,
+        checks: None,
+        legacy_prediction_provenance: RequiredNullable::Missing,
+        legacy_checks: None,
+        prediction_provenance_v3: RequiredNullable::Missing,
+        checks_v3: None,
+        prediction_provenance_v4: RequiredNullable::Missing,
+        checks_v4: None,
+        prediction_provenance_v5: RequiredNullable::Present(Some(provenance)),
+        checks_v5,
     })
 }
 
@@ -4215,6 +4481,8 @@ fn decode_legacy_v11_file(
             checks_v3: None,
             prediction_provenance_v4: RequiredNullable::Missing,
             checks_v4: None,
+            prediction_provenance_v5: RequiredNullable::Missing,
+            checks_v5: None,
         });
     }
 
@@ -4456,6 +4724,8 @@ fn decode_legacy_v11_file(
         checks_v3: None,
         prediction_provenance_v4: RequiredNullable::Missing,
         checks_v4: None,
+        prediction_provenance_v5: RequiredNullable::Missing,
+        checks_v5: None,
     })
 }
 
@@ -5184,6 +5454,167 @@ fn validate_prediction_phase_file_v15(
     Ok((available, unavailable))
 }
 
+fn validate_prediction_phase_file_v16(
+    command: &str,
+    file_index: usize,
+    file: &MeasurementFileInput,
+) -> Result<(usize, usize), MeasurementReportError> {
+    if matches!(file.prediction_provenance_v5, RequiredNullable::Missing) {
+        return validate_prediction_phase_file_v15(command, file_index, file);
+    }
+    if command == "measure" {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::UnexpectedPredictionProvenance,
+        ));
+    }
+    let provenance = match &file.prediction_provenance_v5 {
+        RequiredNullable::Present(provenance) => provenance.as_ref(),
+        RequiredNullable::Missing => unreachable!(),
+    };
+    let checks = file
+        .checks_v5
+        .as_ref()
+        .ok_or_else(|| prediction_file_error(file_index, MeasurementFileError::MissingChecks))?;
+    if let Some(provenance) = provenance {
+        provenance.validate().map_err(|source| {
+            prediction_file_error(
+                file_index,
+                MeasurementFileError::InvalidPredictionProvenance { source },
+            )
+        })?;
+        let input = file
+            .input
+            .as_ref()
+            .ok_or_else(|| prediction_file_error(file_index, MeasurementFileError::MissingInput))?;
+        if input.sha256.as_deref()
+            != Some(provenance.raw_animation_channels().primary_input().sha256())
+            || input.bytes != Some(provenance.raw_animation_channels().primary_input().bytes())
+        {
+            return Err(prediction_file_error(
+                file_index,
+                MeasurementFileError::PredictionPrimaryInputMismatch,
+            ));
+        }
+    }
+    let mut available = 0usize;
+    let mut unavailable = 0usize;
+    let mut facets = 0usize;
+    let mut references = 0usize;
+    let mut has_facet_budget_summary = false;
+    let mut text = provenance
+        .map(PredictionProvenanceV5::retained_text_bytes)
+        .transpose()
+        .map_err(|source| {
+            prediction_file_error(
+                file_index,
+                MeasurementFileError::InvalidPredictionProvenance { source },
+            )
+        })?
+        .unwrap_or(0);
+    for (check_index, check) in checks.iter().enumerate() {
+        check
+            .validate(check_index, provenance)
+            .map_err(|source| prediction_file_error(file_index, source))?;
+        validate_current_engine_track_support_prediction_v5(
+            &check.check_id,
+            check.selection,
+            check.configuration,
+            check.applicability,
+            check.prediction.as_ref(),
+            provenance,
+            check.findings.is_empty(),
+        )
+        .map_err(|source| {
+            prediction_file_error(
+                file_index,
+                MeasurementFileError::InvalidPrediction {
+                    check_index,
+                    source,
+                },
+            )
+        })?;
+        if let Some(prediction) = &check.prediction {
+            has_facet_budget_summary |= prediction.base_prediction().has_facet_budget_summary();
+            facets = facets
+                .checked_add(prediction.facets().len())
+                .ok_or_else(|| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionAccountingOverflow,
+                    )
+                })?;
+            references = references
+                .checked_add(prediction.basis_reference_count())
+                .ok_or_else(|| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionAccountingOverflow,
+                    )
+                })?;
+            text = text
+                .checked_add(prediction.retained_text_bytes().map_err(|source| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::InvalidPrediction {
+                            check_index,
+                            source,
+                        },
+                    )
+                })?)
+                .ok_or_else(|| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionAccountingOverflow,
+                    )
+                })?;
+            for facet in prediction.facets() {
+                match facet.state() {
+                    EnginePredictionFacetStateV1::Available => available += 1,
+                    EnginePredictionFacetStateV1::RequiredPredictionUnavailable => unavailable += 1,
+                }
+            }
+        }
+    }
+    if facets > PREDICTION_V1_MAX_FACETS_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyPredictionFacets {
+                found: facets,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            },
+        ));
+    }
+    if has_facet_budget_summary && facets != PREDICTION_V1_MAX_FACETS_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::FacetBudgetSummaryWithoutExhaustedFileBudget {
+                found: facets,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            },
+        ));
+    }
+    if references > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyPredictionBasisReferences {
+                found: references,
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            },
+        ));
+    }
+    if text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooMuchPredictionText {
+                found: text,
+                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+            },
+        ));
+    }
+    Ok((available, unavailable))
+}
+
 fn validate_prediction_summary(
     command: &str,
     summary: Option<&MeasurementReportSummaryInput>,
@@ -5678,6 +6109,140 @@ impl PredictionCheckInputV4 {
     }
 }
 
+impl PredictionCheckInputV5 {
+    fn validate(
+        &self,
+        check_index: usize,
+        provenance: Option<&PredictionProvenanceV5>,
+    ) -> Result<(), MeasurementFileError> {
+        let gap_refs = self
+            .gaps
+            .iter()
+            .map(|gap| CheckEvaluationGapRef {
+                code: &gap.code,
+                scope: gap.scope.as_ref(),
+            })
+            .collect::<Vec<_>>();
+        let finding_check_ids = self
+            .findings
+            .iter()
+            .map(|finding| finding.check_id.as_str())
+            .collect::<Vec<_>>();
+        let prediction_scopes = self
+            .prediction
+            .as_ref()
+            .into_iter()
+            .flat_map(EnginePredictionV5::facets)
+            .map(|facet| facet.scope())
+            .collect::<Vec<_>>();
+        let derived = validate_and_derive_check_evaluation(CheckEvaluationValidationInput {
+            check_id: &self.check_id,
+            selection: self.selection,
+            configuration: self.configuration,
+            applicability: self.applicability,
+            finding_check_ids: &finding_check_ids,
+            evaluated_scopes: &self.evaluated_scopes,
+            gaps: &gap_refs,
+            prediction_scopes: &prediction_scopes,
+            has_prediction: self.prediction.is_some(),
+            prediction_has_required_unavailable: self
+                .prediction
+                .as_ref()
+                .is_some_and(EnginePredictionV5::has_required_unavailable),
+        })
+        .map_err(|error| MeasurementFileError::InvalidPredictionLifecycle {
+            check_index,
+            reason: error.reason(),
+        })?;
+        if self.evaluation != derived {
+            return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                check_index,
+                reason: "evaluation does not match completed and missing prediction work",
+            });
+        }
+        let Some(prediction) = &self.prediction else {
+            if self
+                .findings
+                .iter()
+                .any(|finding| finding.prediction_scope.is_some())
+            {
+                return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                    check_index,
+                    reason: "finding has prediction_scope without prediction",
+                });
+            }
+            return Ok(());
+        };
+        let provenance =
+            provenance.ok_or(MeasurementFileError::PredictionWithoutProvenance { check_index })?;
+        prediction
+            .validate_against_provenance(provenance)
+            .map_err(|source| MeasurementFileError::InvalidPrediction {
+                check_index,
+                source,
+            })?;
+        prediction
+            .base_prediction()
+            .validate_facet_budget_summary_for_check(&self.check_id)
+            .map_err(|source| MeasurementFileError::InvalidPrediction {
+                check_index,
+                source,
+            })?;
+        for facet in prediction.facets() {
+            let evaluated = self
+                .evaluated_scopes
+                .iter()
+                .filter(|scope| *scope == facet.scope())
+                .count();
+            let duplicated_gap = self
+                .gaps
+                .iter()
+                .any(|gap| gap.scope.as_ref() == Some(facet.scope()));
+            match facet.state() {
+                EnginePredictionFacetStateV1::Available if evaluated != 1 => {
+                    return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                        check_index,
+                        reason: "available facet scope must occur exactly once in evaluated_scopes",
+                    });
+                }
+                EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+                    if evaluated != 0 || duplicated_gap =>
+                {
+                    return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                        check_index,
+                        reason: "required-unavailable facet scope must be absent from evaluated_scopes and gaps",
+                    });
+                }
+                _ => {}
+            }
+        }
+        for finding in &self.findings {
+            let Some(scope) = &finding.prediction_scope else {
+                return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                    check_index,
+                    reason: "prediction-backed finding must carry prediction_scope",
+                });
+            };
+            if prediction
+                .facets()
+                .iter()
+                .filter(|facet| {
+                    facet.scope() == scope
+                        && facet.state() == EnginePredictionFacetStateV1::Available
+                })
+                .count()
+                != 1
+            {
+                return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                    check_index,
+                    reason: "finding prediction_scope must name one available facet",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Validate the frozen current-lint addressability inventory contract.  This
 /// is deliberately output-facing: standalone V1 engine artifacts retain their
 /// historic provenance and reason vocabulary.
@@ -5883,6 +6448,342 @@ fn validate_current_engine_addressability_prediction_v3(
         return Err(PredictionContractError::EngineAddressabilityInventoryReasonsMismatch);
     }
     Ok(())
+}
+
+const ENGINE_TRACK_SUPPORT_CHECK_ID: &str = "engine-track-support";
+const ENGINE_TRACK_SUPPORT_ANIMATION_SCOPE: &str = "engine-track-support:animation";
+const ENGINE_TRACK_SUPPORT_CHANNEL_SCOPE: &str = "engine-track-support:animation-channel";
+const ENGINE_TRACK_SUPPORT_INVENTORY_SCOPE: &str = "engine-track-support:inventory";
+const ENGINE_TRACK_SUPPORT_BUDGET_SCOPE: &str = "engine-track-support:facet-budget";
+
+fn validate_current_engine_track_support_prediction_v5(
+    check_id: &str,
+    selection_state: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    prediction: Option<&EnginePredictionV5>,
+    provenance: Option<&PredictionProvenanceV5>,
+    findings_empty: bool,
+) -> Result<(), PredictionContractError> {
+    if check_id != ENGINE_TRACK_SUPPORT_CHECK_ID {
+        if prediction.is_some_and(|prediction| {
+            prediction.facets().iter().any(|facet| {
+                matches!(
+                    facet.result(),
+                    Some(EngineMachineResultV1::SourceImportDisposition(_))
+                )
+            })
+        }) {
+            return Err(PredictionContractError::InvalidMachineResult(
+                "source-import disposition is confined to engine-track-support",
+            ));
+        }
+        return Ok(());
+    }
+    let exact_profile = provenance.is_some_and(|provenance| {
+        let base = provenance.base();
+        let selected = base.profile().selection();
+        selected.family() == "bevy"
+            && selected.profile_revision() == 3
+            && selected.engine_version() == "0.19.0"
+            && selected.importer() == "gltf-asset-loader"
+            && base.profile().fact_bundle_urn() == "urn:animsmith:engine-profile:bevy:3"
+            && base.profile().facts_identity().sha256()
+                == "d532b00621bf06a2db2dedf896c19aae2c07b3b1873a1b05beade2252d7a89c5"
+            && base.profile().facts_identity().bytes() == 4_849
+            && matches!(
+                base.source_format(),
+                SourceFormatV1::GltfJson | SourceFormatV1::Glb
+            )
+            && !provenance.raw_animation_channels().is_complete_empty()
+    });
+    let expected_applicability = if exact_profile {
+        Applicability::Applicable
+    } else {
+        Applicability::NotApplicable
+    };
+    if applicability != expected_applicability {
+        return Err(PredictionContractError::InvalidMachineResult(
+            "engine-track-support applicability mismatch",
+        ));
+    }
+    if !exact_profile
+        || selection_state != SelectionState::Selected
+        || configuration != ConfigurationState::Enabled
+    {
+        return if prediction.is_none() {
+            Ok(())
+        } else {
+            Err(PredictionContractError::InvalidMachineResult(
+                "inactive engine-track-support carried prediction",
+            ))
+        };
+    }
+    if !findings_empty {
+        return Err(PredictionContractError::InvalidMachineResult(
+            "engine-track-support must not emit findings",
+        ));
+    }
+    let provenance = provenance.ok_or(PredictionContractError::ProvenanceIdentityMismatch)?;
+    let prediction = prediction.ok_or(PredictionContractError::InvalidMachineResult(
+        "applicable engine-track-support check requires prediction",
+    ))?;
+    let inventory = provenance.raw_animation_channels();
+    let mut expected = Vec::new();
+    let has_summary = prediction.base_prediction().has_facet_budget_summary();
+    let expected_demand = if !inventory.source_coverage_complete() {
+        1
+    } else {
+        inventory.rows().len()
+    };
+    if inventory.source_coverage_complete() && inventory.candidate_overflow() && !has_summary {
+        return Err(PredictionContractError::InvalidMachineResult(
+            "saturated engine-track-support demand requires facet-budget summary",
+        ));
+    }
+    let candidate_capacity = if has_summary {
+        prediction.facets().len().saturating_sub(1)
+    } else {
+        expected_demand
+    };
+    if !inventory.is_complete_empty() && candidate_capacity != 0 {
+        if !inventory.source_coverage_complete() {
+            expected.push(track_unavailable(
+                EvaluationScope::new(crate::evaluation::EvaluationScopeCode::custom(
+                    ENGINE_TRACK_SUPPORT_INVENTORY_SCOPE,
+                )),
+                track_inventory_basis(inventory),
+                PredictionUnavailableReasonV2::RawSourceIncomplete,
+            ));
+        } else {
+            for row in inventory.rows().iter().take(candidate_capacity) {
+                let animation = row.source_animation_index();
+                if let Some(channel) = row.source_channel_index() {
+                    expected.push(track_subject_facet(
+                        track_scope(
+                            ENGINE_TRACK_SUPPORT_CHANNEL_SCOPE,
+                            format!("source_animation:{animation}:source_channel:{channel}"),
+                        ),
+                        track_row_basis(inventory, animation, Some(channel)),
+                        SourceImportSubjectKindV1::AnimationChannel,
+                        track_gate(provenance),
+                    ));
+                } else {
+                    expected.push(track_subject_facet(
+                        track_scope(
+                            ENGINE_TRACK_SUPPORT_ANIMATION_SCOPE,
+                            format!("source_animation:{animation}"),
+                        ),
+                        track_row_basis(inventory, animation, None),
+                        SourceImportSubjectKindV1::Animation,
+                        track_gate(provenance),
+                    ));
+                }
+            }
+        }
+    }
+    if has_summary {
+        expected.push(track_unavailable(
+            EvaluationScope::new(crate::evaluation::EvaluationScopeCode::custom(
+                ENGINE_TRACK_SUPPORT_BUDGET_SCOPE,
+            )),
+            track_static_basis(),
+            PredictionUnavailableReasonV2::FacetBudgetExceeded,
+        ));
+    }
+    let expected = EnginePredictionV4::new(provenance.base().identity().clone(), expected)?
+        .facets()
+        .to_vec();
+    if prediction.facets() != expected {
+        return Err(PredictionContractError::InvalidMachineResult(
+            "engine-track-support facets do not reconstruct from V5 provenance",
+        ));
+    }
+    Ok(())
+}
+
+fn track_scope(code: &'static str, subject: String) -> EvaluationScope {
+    EvaluationScope::new(crate::evaluation::EvaluationScopeCode::custom(code)).subject(subject)
+}
+
+fn track_subject_facet(
+    scope: EvaluationScope,
+    basis: EnginePredictionBasisV4,
+    subject_kind: SourceImportSubjectKindV1,
+    gate: Option<EngineSettingIdV2>,
+) -> crate::EnginePredictionFacetV4 {
+    match gate {
+        None => track_unavailable(
+            scope,
+            basis,
+            PredictionUnavailableReasonV2::RuntimeAnimationSurvivalUnavailable,
+        ),
+        Some(controlling_gate) => crate::EnginePredictionFacetV4::available(
+            scope,
+            basis,
+            EngineMachineResultV1::SourceImportDisposition(SourceImportDispositionResultV1 {
+                subject_kind,
+                disposition: SourceImportDispositionV1::Dropped,
+                controlling_gate: Some(controlling_gate),
+            }),
+        )
+        .expect("reconstructed track result is valid"),
+    }
+}
+
+fn track_unavailable(
+    scope: EvaluationScope,
+    basis: EnginePredictionBasisV4,
+    reason: PredictionUnavailableReasonV2,
+) -> crate::EnginePredictionFacetV4 {
+    crate::EnginePredictionFacetV4::required_unavailable(scope, basis, vec![reason])
+        .expect("reconstructed track unavailable facet is valid")
+}
+
+fn track_gate(provenance: &PredictionProvenanceV5) -> Option<EngineSettingIdV2> {
+    let settings = provenance.base().settings();
+    if matches!(
+        settings
+            .document_setting(EngineSettingIdV2::BevyAnimationFeature)
+            .map(|row| row.value()),
+        Some(EngineSettingValueV2::Boolean(false))
+    ) {
+        Some(EngineSettingIdV2::BevyAnimationFeature)
+    } else if matches!(
+        settings
+            .document_setting(EngineSettingIdV2::LoadAnimations)
+            .map(|row| row.value()),
+        Some(EngineSettingValueV2::Boolean(false))
+    ) {
+        Some(EngineSettingIdV2::LoadAnimations)
+    } else {
+        None
+    }
+}
+
+fn track_static_basis() -> EnginePredictionBasisV4 {
+    let v1 = |reference| PredictionBasisReferenceV4::v2(PredictionBasisReferenceV2::v1(reference));
+    EnginePredictionBasisV4::new(vec![
+        v1(PredictionBasisReferenceV1::profile_fact("source_import_disposition").unwrap()),
+        v1(PredictionBasisReferenceV1::primary_source("bevy-gltf-loader-0.19.0-c6f634ca").unwrap()),
+        v1(
+            PredictionBasisReferenceV1::primary_source("bevy-feature-manifest-0.19.0-c6f634ca")
+                .unwrap(),
+        ),
+        v1(PredictionBasisReferenceV1::resolved_setting(
+            ResolvedSettingLocationV1::Document,
+            EngineSettingIdV2::BevyAnimationFeature.as_str(),
+        )
+        .unwrap()),
+        v1(PredictionBasisReferenceV1::resolved_setting(
+            ResolvedSettingLocationV1::Document,
+            EngineSettingIdV2::LoadAnimations.as_str(),
+        )
+        .unwrap()),
+    ])
+    .unwrap()
+}
+
+fn track_inventory_basis(inventory: &RawAnimationChannelInventoryV1) -> EnginePredictionBasisV4 {
+    let mut references = track_static_basis().references().to_vec();
+    references.push(PredictionBasisReferenceV4::v2(
+        PredictionBasisReferenceV2::v1(
+            PredictionBasisReferenceV1::project_field(
+                "raw_animation_channel_inventory.animation_coverage",
+                PredictionScalarV1::text(match inventory.animation_coverage().state() {
+                    RawSourceSetCoverageStateV1::Complete => "complete",
+                    RawSourceSetCoverageStateV1::Partial => "partial",
+                    RawSourceSetCoverageStateV1::Unavailable => "unavailable",
+                })
+                .unwrap(),
+            )
+            .unwrap(),
+        ),
+    ));
+    references.push(PredictionBasisReferenceV4::v2(
+        PredictionBasisReferenceV2::v1(
+            PredictionBasisReferenceV1::project_field(
+                "raw_animation_channel_inventory.source_coverage_complete",
+                PredictionScalarV1::Boolean {
+                    value: inventory.source_coverage_complete(),
+                },
+            )
+            .unwrap(),
+        ),
+    ));
+    if let Some(row) = inventory.rows().iter().find(|row| {
+        row.channel_coverage()
+            .is_some_and(|coverage| coverage.state() != RawSourceSetCoverageStateV1::Complete)
+    }) {
+        let coverage = row.channel_coverage().unwrap();
+        let state = match coverage.state() {
+            RawSourceSetCoverageStateV1::Complete => "complete",
+            RawSourceSetCoverageStateV1::Partial => "partial",
+            RawSourceSetCoverageStateV1::Unavailable => "unavailable",
+        };
+        references.push(PredictionBasisReferenceV4::v2(
+            PredictionBasisReferenceV2::v1(
+                PredictionBasisReferenceV1::project_field(
+                    "raw_animation_channel_inventory.incomplete_channel_animation_row",
+                    PredictionScalarV1::UnsignedInteger {
+                        value: row.source_animation_index(),
+                    },
+                )
+                .unwrap(),
+            ),
+        ));
+        references.push(PredictionBasisReferenceV4::v2(
+            PredictionBasisReferenceV2::v1(
+                PredictionBasisReferenceV1::project_field(
+                    "raw_animation_channel_inventory.incomplete_channel_coverage",
+                    PredictionScalarV1::text(state).unwrap(),
+                )
+                .unwrap(),
+            ),
+        ));
+        if let Some(reason) = coverage.reason() {
+            let reason = serde_json::to_value(reason).unwrap();
+            references.push(PredictionBasisReferenceV4::v2(
+                PredictionBasisReferenceV2::v1(
+                    PredictionBasisReferenceV1::project_field(
+                        "raw_animation_channel_inventory.incomplete_channel_reason",
+                        PredictionScalarV1::text(reason.as_str().unwrap()).unwrap(),
+                    )
+                    .unwrap(),
+                ),
+            ));
+        }
+    }
+    EnginePredictionBasisV4::new(references).unwrap()
+}
+
+fn track_row_basis(
+    inventory: &RawAnimationChannelInventoryV1,
+    animation: u64,
+    channel: Option<u64>,
+) -> EnginePredictionBasisV4 {
+    let mut references = track_inventory_basis(inventory).references().to_vec();
+    references.push(PredictionBasisReferenceV4::v2(
+        PredictionBasisReferenceV2::v1(
+            PredictionBasisReferenceV1::project_field(
+                "raw_animation_channel_inventory.animation_row",
+                PredictionScalarV1::UnsignedInteger { value: animation },
+            )
+            .unwrap(),
+        ),
+    ));
+    if let Some(channel) = channel {
+        references.push(PredictionBasisReferenceV4::v2(
+            PredictionBasisReferenceV2::v1(
+                PredictionBasisReferenceV1::project_field(
+                    "raw_animation_channel_inventory.channel_row",
+                    PredictionScalarV1::UnsignedInteger { value: channel },
+                )
+                .unwrap(),
+            ),
+        ));
+    }
+    EnginePredictionBasisV4::new(references).unwrap()
 }
 
 const ENGINE_UNIT_SCALE_CHECK_ID: &str = "engine-unit-scale";
@@ -7316,6 +8217,80 @@ fn validate_current_engine_unit_scale_prediction_v4(
                 SourceFormatV1::GltfJson | SourceFormatV1::Glb
             )
     });
+    validate_current_engine_unit_scale_prediction_common(
+        check_id,
+        selection,
+        configuration,
+        applicability,
+        prediction,
+        provenance,
+        measurements,
+        exact_profile,
+    )
+}
+
+fn validate_current_engine_unit_scale_prediction_v5(
+    check_id: &str,
+    selection: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    prediction: Option<&EnginePredictionV5>,
+    provenance: Option<&PredictionProvenanceV5>,
+    measurements: &MeasurementContract,
+) -> Result<(), PredictionContractError> {
+    let base = provenance.map(PredictionProvenanceV5::base);
+    let exact_profile = base.is_some_and(|provenance| {
+        let selection = provenance.profile().selection();
+        let exact_identity = match selection.profile_revision() {
+            2 => {
+                provenance.profile().fact_bundle_urn() == "urn:animsmith:engine-profile:bevy:2"
+                    && provenance.profile().facts_identity().sha256()
+                        == "bcd663e891b25029ecdf17e942f6fa93f71a8d0598fc8cb02bc7634749c34597"
+                    && provenance.profile().facts_identity().bytes() == 4_783
+            }
+            3 => {
+                provenance.profile().fact_bundle_urn() == "urn:animsmith:engine-profile:bevy:3"
+                    && provenance.profile().facts_identity().sha256()
+                        == "d532b00621bf06a2db2dedf896c19aae2c07b3b1873a1b05beade2252d7a89c5"
+                    && provenance.profile().facts_identity().bytes() == 4_849
+            }
+            _ => false,
+        };
+        selection.family() == "bevy"
+            && selection.engine_version() == "0.19.0"
+            && selection.importer() == "gltf-asset-loader"
+            && exact_identity
+            && matches!(
+                provenance.source_format(),
+                SourceFormatV1::GltfJson | SourceFormatV1::Glb
+            )
+    });
+    validate_current_engine_unit_scale_prediction_common(
+        check_id,
+        selection,
+        configuration,
+        applicability,
+        prediction.map(EnginePredictionV5::base_prediction),
+        base,
+        measurements,
+        exact_profile,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_current_engine_unit_scale_prediction_common(
+    check_id: &str,
+    selection: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    prediction: Option<&EnginePredictionV4>,
+    provenance: Option<&PredictionProvenanceV4>,
+    measurements: &MeasurementContract,
+    exact_profile: bool,
+) -> Result<(), PredictionContractError> {
+    if check_id != ENGINE_UNIT_SCALE_CHECK_ID {
+        return Ok(());
+    }
     if applicability
         != if exact_profile {
             Applicability::Applicable
@@ -7862,6 +8837,7 @@ impl MeasurementReportInput {
             V13,
             V14,
             V15,
+            V16,
         }
 
         let revision = match self.schema_version {
@@ -7869,7 +8845,8 @@ impl MeasurementReportInput {
             Some(OUTPUT_V12_SCHEMA_VERSION) => ReaderRevision::V12,
             Some(OUTPUT_V13_SCHEMA_VERSION) => ReaderRevision::V13,
             Some(OUTPUT_V14_SCHEMA_VERSION) => ReaderRevision::V14,
-            Some(OUTPUT_SCHEMA_VERSION) => ReaderRevision::V15,
+            Some(OUTPUT_V15_SCHEMA_VERSION) => ReaderRevision::V15,
+            Some(OUTPUT_SCHEMA_VERSION) => ReaderRevision::V16,
             Some(found) => {
                 return Err(MeasurementReportError::UnsupportedOutputVersion { found });
             }
@@ -7880,7 +8857,8 @@ impl MeasurementReportInput {
             ReaderRevision::V12 => OUTPUT_V12_SCHEMA_ID,
             ReaderRevision::V13 => OUTPUT_V13_SCHEMA_ID,
             ReaderRevision::V14 => OUTPUT_V14_SCHEMA_ID,
-            ReaderRevision::V15 => OUTPUT_SCHEMA_ID,
+            ReaderRevision::V15 => OUTPUT_V15_SCHEMA_ID,
+            ReaderRevision::V16 => OUTPUT_SCHEMA_ID,
         };
         if self.schema.as_deref() != Some(expected_schema) {
             return Err(MeasurementReportError::WrongOutputIdentity);
@@ -7942,6 +8920,17 @@ impl MeasurementReportInput {
                 let file = decode_prediction_phase_file_v15(command, file_index, &raw)?;
                 let (file_available, file_unavailable) =
                     validate_prediction_phase_file_v15(command, file_index, &file)?;
+                available = available
+                    .checked_add(file_available)
+                    .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                unavailable = unavailable
+                    .checked_add(file_unavailable)
+                    .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                file
+            } else if revision == ReaderRevision::V16 {
+                let file = decode_prediction_phase_file_v16(command, file_index, &raw)?;
+                let (file_available, file_unavailable) =
+                    validate_prediction_phase_file_v16(command, file_index, &file)?;
                 available = available
                     .checked_add(file_available)
                     .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
@@ -8014,7 +9003,10 @@ impl MeasurementReportInput {
                     &measurements,
                     matches!(
                         revision,
-                        ReaderRevision::V13 | ReaderRevision::V14 | ReaderRevision::V15
+                        ReaderRevision::V13
+                            | ReaderRevision::V14
+                            | ReaderRevision::V15
+                            | ReaderRevision::V16
                     ),
                 )
                 .map_err(|source| {
@@ -8029,9 +9021,10 @@ impl MeasurementReportInput {
                     ReaderRevision::V11 | ReaderRevision::V12 => {
                         (MEASUREMENTS_V15_SCHEMA_VERSION, MEASUREMENTS_V15_SCHEMA_ID)
                     }
-                    ReaderRevision::V13 | ReaderRevision::V14 | ReaderRevision::V15 => {
-                        (MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_SCHEMA_ID)
-                    }
+                    ReaderRevision::V13
+                    | ReaderRevision::V14
+                    | ReaderRevision::V15
+                    | ReaderRevision::V16 => (MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_SCHEMA_ID),
                 };
                 match measurements.schema_version {
                     Some(found) if found == expected_measurement_version => {}
@@ -8160,9 +9153,10 @@ impl MeasurementReportInput {
                     ReaderRevision::V11 | ReaderRevision::V12 => {
                         MeasurementContract::historical_v15(clips, assets)
                     }
-                    ReaderRevision::V13 | ReaderRevision::V14 | ReaderRevision::V15 => {
-                        MeasurementContract::new(clips, assets)
-                    }
+                    ReaderRevision::V13
+                    | ReaderRevision::V14
+                    | ReaderRevision::V15
+                    | ReaderRevision::V16 => MeasurementContract::new(clips, assets),
                 }
                 .map_err(|source| {
                     MeasurementReportError::file(
@@ -8225,6 +9219,35 @@ impl MeasurementReportInput {
                         })?;
                     }
                 }
+                if revision == ReaderRevision::V16 {
+                    let provenance = file.prediction_provenance_v5.as_present();
+                    for (check_index, check) in file
+                        .checks_v5
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .enumerate()
+                    {
+                        validate_current_engine_unit_scale_prediction_v5(
+                            &check.check_id,
+                            check.selection,
+                            check.configuration,
+                            check.applicability,
+                            check.prediction.as_ref(),
+                            provenance,
+                            &measurements,
+                        )
+                        .map_err(|source| {
+                            MeasurementReportError::file(
+                                file_index,
+                                MeasurementFileError::InvalidPrediction {
+                                    check_index,
+                                    source,
+                                },
+                            )
+                        })?;
+                    }
+                }
                 Ok((
                     MeasurementReportFile {
                         path,
@@ -8236,6 +9259,7 @@ impl MeasurementReportInput {
                         file.legacy_checks.unwrap_or_default(),
                         file.checks_v3.unwrap_or_default(),
                         file.checks_v4.unwrap_or_default(),
+                        file.checks_v5.unwrap_or_default(),
                     ),
                 ))
             })
@@ -8243,9 +9267,30 @@ impl MeasurementReportInput {
 
         // Measurement-dependent basis pointers are deliberately resolved only
         // after every file's complete, version-routed measurements contract has passed.
-        for (file_index, (file, (checks, legacy_checks, checks_v3, checks_v4))) in
+        for (file_index, (file, (checks, legacy_checks, checks_v3, checks_v4, checks_v5))) in
             parsed.iter().enumerate()
         {
+            validate_measurement_references_batch_v4(
+                &file.measurements,
+                checks_v5
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(check_index, check)| {
+                        check
+                            .prediction
+                            .as_ref()
+                            .map(|prediction| (check_index, prediction.base_prediction()))
+                    }),
+            )
+            .map_err(|error| {
+                MeasurementReportError::file(
+                    file_index,
+                    MeasurementFileError::InvalidPrediction {
+                        check_index: error.prediction_index,
+                        source: error.source,
+                    },
+                )
+            })?;
             validate_measurement_references_batch_v4(
                 &file.measurements,
                 checks_v4
@@ -11366,7 +12411,7 @@ struct EnvelopeHeaderV2 {
     command: &'static str,
 }
 
-/// Current output-v15 lint envelope.
+/// Immutable historical output-v15 lint envelope.
 #[derive(Debug, Clone, Serialize)]
 pub struct LintEnvelope {
     #[serde(flatten)]
@@ -11433,6 +12478,305 @@ impl LintEnvelope {
                             EnginePredictionFacetStateV1::RequiredPredictionUnavailable => {
                                 prediction_facets.required_prediction_unavailable += 1;
                             }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(Self {
+            header: EnvelopeHeaderV2 {
+                schema_version: OUTPUT_V15_SCHEMA_VERSION,
+                schema: OUTPUT_V15_SCHEMA_ID,
+                tool,
+                command: "lint",
+            },
+            summary: LintSummary {
+                files: files.len(),
+                findings,
+                checks,
+                prediction_facets,
+            },
+            files,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+enum CurrentPredictionProvenanceV16 {
+    V3(PredictionProvenanceV3),
+    V5(PredictionProvenanceV5),
+}
+
+/// Current output-v16 lint file evidence with V3 or V5 prediction provenance.
+#[derive(Debug, Clone, Serialize)]
+pub struct LintFileReportV16 {
+    #[serde(flatten)]
+    evidence: FileEvidence,
+    prediction_provenance: Option<CurrentPredictionProvenanceV16>,
+    checks: Vec<CheckEvaluation>,
+}
+
+impl LintFileReportV16 {
+    /// Construct a revision-1-profile record whose V3 graph is unchanged.
+    pub fn new(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        prediction_provenance: Option<PredictionProvenanceV3>,
+        checks: Vec<CheckEvaluation>,
+        measurements: MeasurementContract,
+    ) -> Result<Self, OutputContractError> {
+        let report = Self {
+            evidence: FileEvidence::new(path, input, rig, measurements),
+            prediction_provenance: prediction_provenance.map(CurrentPredictionProvenanceV16::V3),
+            checks,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+
+    /// Construct a revision-2-contract record using V5 provenance and checks.
+    pub fn new_v5(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        prediction_provenance: Option<PredictionProvenanceV5>,
+        checks: Vec<CheckEvaluation>,
+        measurements: MeasurementContract,
+    ) -> Result<Self, OutputContractError> {
+        let report = Self {
+            evidence: FileEvidence::new(path, input, rig, measurements),
+            prediction_provenance: prediction_provenance.map(CurrentPredictionProvenanceV16::V5),
+            checks,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+
+    /// Display path supplied by the producer.
+    pub fn path(&self) -> &str {
+        &self.evidence.path
+    }
+    /// Immutable source-byte identity.
+    pub fn input(&self) -> &InputIdentity {
+        &self.evidence.input
+    }
+    /// Nested measurement evidence.
+    pub fn measurements(&self) -> &MeasurementContract {
+        &self.evidence.measurements
+    }
+    /// Catalog-ordered check records.
+    pub fn checks(&self) -> &[CheckEvaluation] {
+        &self.checks
+    }
+    /// V3 provenance for a revision-1 profile.
+    pub const fn prediction_provenance_v3(&self) -> Option<&PredictionProvenanceV3> {
+        match self.prediction_provenance.as_ref() {
+            Some(CurrentPredictionProvenanceV16::V3(provenance)) => Some(provenance),
+            Some(CurrentPredictionProvenanceV16::V5(_)) | None => None,
+        }
+    }
+    /// V5 provenance for a revision-2-contract profile.
+    pub const fn prediction_provenance_v5(&self) -> Option<&PredictionProvenanceV5> {
+        match self.prediction_provenance.as_ref() {
+            Some(CurrentPredictionProvenanceV16::V5(provenance)) => Some(provenance),
+            Some(CurrentPredictionProvenanceV16::V3(_)) | None => None,
+        }
+    }
+
+    fn validate(&self) -> Result<(), OutputContractError> {
+        if self.checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE {
+            return Err(OutputContractError::TooManyChecks {
+                found: self.checks.len(),
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
+            });
+        }
+        if let Some(CurrentPredictionProvenanceV16::V3(provenance)) = &self.prediction_provenance {
+            return LintFileReport {
+                evidence: self.evidence.clone(),
+                prediction_provenance: Some(CurrentPredictionProvenance::V3(provenance.clone())),
+                checks: self.checks.clone(),
+            }
+            .validate();
+        }
+        let provenance = match &self.prediction_provenance {
+            Some(CurrentPredictionProvenanceV16::V5(provenance)) => {
+                provenance.validate()?;
+                if provenance.base().raw_source().primary_input() != &self.evidence.input {
+                    return Err(OutputContractError::PredictionPrimaryInputMismatch);
+                }
+                Some(provenance)
+            }
+            Some(CurrentPredictionProvenanceV16::V3(_)) => unreachable!(),
+            None => None,
+        };
+        let mut facets = 0usize;
+        let mut references = 0usize;
+        let mut has_facet_budget_summary = false;
+        let mut text = provenance
+            .map(PredictionProvenanceV5::retained_text_bytes)
+            .transpose()?
+            .unwrap_or(0);
+        for check in &self.checks {
+            if check.engine_prediction().is_some()
+                || check.engine_prediction_v2().is_some()
+                || check.engine_prediction_v3().is_some()
+                || check.engine_prediction_v4().is_some()
+            {
+                return Err(OutputContractError::HistoricalPredictionInV2Output);
+            }
+            let prediction = check.engine_prediction_v5();
+            if provenance.is_none() && prediction.is_some() {
+                return Err(OutputContractError::PredictionWithoutProvenance);
+            }
+            if let Some(prediction) = prediction {
+                let provenance =
+                    provenance.ok_or(OutputContractError::PredictionWithoutProvenance)?;
+                prediction.validate_against_provenance(provenance)?;
+                prediction.validate_for_check(
+                    check.check_id(),
+                    check.evaluated_scopes(),
+                    check.gaps(),
+                    check.findings(),
+                )?;
+                has_facet_budget_summary |= prediction.base_prediction().has_facet_budget_summary();
+                facets = facets
+                    .checked_add(prediction.facets().len())
+                    .ok_or(OutputContractError::ArithmeticOverflow)?;
+                references = references
+                    .checked_add(prediction.basis_reference_count())
+                    .ok_or(OutputContractError::ArithmeticOverflow)?;
+                text = text
+                    .checked_add(prediction.retained_text_bytes()?)
+                    .ok_or(OutputContractError::ArithmeticOverflow)?;
+            }
+            validate_current_engine_track_support_prediction_v5(
+                check.check_id(),
+                check.selection(),
+                check.configuration(),
+                check.applicability(),
+                prediction,
+                provenance,
+                check.findings().is_empty(),
+            )?;
+            validate_current_engine_unit_scale_prediction_v5(
+                check.check_id(),
+                check.selection(),
+                check.configuration(),
+                check.applicability(),
+                prediction,
+                provenance,
+                &self.evidence.measurements,
+            )?;
+        }
+        if facets > PREDICTION_V1_MAX_FACETS_PER_FILE {
+            return Err(OutputContractError::TooManyPredictionFacets {
+                found: facets,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            });
+        }
+        if has_facet_budget_summary && facets != PREDICTION_V1_MAX_FACETS_PER_FILE {
+            return Err(
+                OutputContractError::FacetBudgetSummaryWithoutExhaustedFileBudget {
+                    found: facets,
+                    limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                },
+            );
+        }
+        if references > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE {
+            return Err(OutputContractError::TooManyPredictionBasisReferences {
+                found: references,
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            });
+        }
+        if text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+            return Err(OutputContractError::TooMuchPredictionText {
+                found: text,
+                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+            });
+        }
+        validate_measurement_references_batch_v4(
+            &self.evidence.measurements,
+            self.checks.iter().enumerate().filter_map(|(index, check)| {
+                check
+                    .engine_prediction_v5()
+                    .map(|prediction| (index, prediction.base_prediction()))
+            }),
+        )
+        .map_err(|error| OutputContractError::InvalidPrediction(error.source))?;
+        Ok(())
+    }
+}
+
+/// Current output-v16 lint envelope.
+#[derive(Debug, Clone, Serialize)]
+pub struct LintEnvelopeV16 {
+    #[serde(flatten)]
+    header: EnvelopeHeaderV2,
+    summary: LintSummary,
+    files: Vec<LintFileReportV16>,
+}
+
+impl LintEnvelopeV16 {
+    /// Construct a schema-valid V16 lint envelope and derive summaries.
+    pub fn new(tool: ToolInfo, files: Vec<LintFileReportV16>) -> Result<Self, OutputContractError> {
+        if files.len() > OUTPUT_V11_MAX_FILES {
+            return Err(OutputContractError::TooManyFiles {
+                found: files.len(),
+                limit: OUTPUT_V11_MAX_FILES,
+            });
+        }
+        let mut findings = FindingSummary::default();
+        let mut checks = CheckSummary::default();
+        let mut prediction_facets = PredictionFacetSummary::default();
+        for file in &files {
+            file.validate()?;
+            for check in file.checks() {
+                checks.total += 1;
+                for finding in check.findings() {
+                    findings.add(finding.severity);
+                }
+                match check.selection() {
+                    SelectionState::Selected => checks.selection.selected += 1,
+                    SelectionState::Unselected => checks.selection.unselected += 1,
+                }
+                match check.configuration() {
+                    ConfigurationState::Enabled => checks.configuration.enabled += 1,
+                    ConfigurationState::Disabled => checks.configuration.disabled += 1,
+                }
+                match check.applicability() {
+                    Applicability::Applicable => checks.applicability.applicable += 1,
+                    Applicability::NotApplicable => checks.applicability.not_applicable += 1,
+                }
+                match check.evaluation() {
+                    EvaluationState::Complete => checks.evaluation.complete += 1,
+                    EvaluationState::Partial => checks.evaluation.partial += 1,
+                    EvaluationState::NotEvaluated => checks.evaluation.not_evaluated += 1,
+                }
+                checks.gaps += check.gaps().len();
+                for facet in check
+                    .engine_prediction_v3()
+                    .into_iter()
+                    .flat_map(EnginePredictionV3::facets)
+                {
+                    match facet.state() {
+                        EnginePredictionFacetStateV1::Available => prediction_facets.available += 1,
+                        EnginePredictionFacetStateV1::RequiredPredictionUnavailable => {
+                            prediction_facets.required_prediction_unavailable += 1
+                        }
+                    }
+                }
+                for facet in check
+                    .engine_prediction_v5()
+                    .into_iter()
+                    .flat_map(EnginePredictionV5::facets)
+                {
+                    match facet.state() {
+                        EnginePredictionFacetStateV1::Available => prediction_facets.available += 1,
+                        EnginePredictionFacetStateV1::RequiredPredictionUnavailable => {
+                            prediction_facets.required_prediction_unavailable += 1
                         }
                     }
                 }

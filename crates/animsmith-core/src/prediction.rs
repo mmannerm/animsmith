@@ -80,10 +80,28 @@ pub const ENGINE_PREDICTION_V2_ID: &str = "urn:animsmith:engine-prediction:2";
 pub const ENGINE_PREDICTION_V3_ID: &str = "urn:animsmith:engine-prediction:3";
 /// Immutable result-bearing per-check engine-prediction V4 schema identity.
 pub const ENGINE_PREDICTION_V4_ID: &str = "urn:animsmith:engine-prediction:4";
+/// Immutable track-inventory-bound per-check engine-prediction identity.
+pub const ENGINE_PREDICTION_V5_ID: &str = "urn:animsmith:engine-prediction:5";
 /// Immutable result-bearing prediction-provenance V4 schema identity.
 pub const PREDICTION_PROVENANCE_V4_ID: &str = "urn:animsmith:prediction-provenance:4";
+/// Immutable track-inventory-bound prediction-provenance identity.
+pub const PREDICTION_PROVENANCE_V5_ID: &str = "urn:animsmith:prediction-provenance:5";
 /// Immutable rule-input policy bound into prediction provenance V4.
 pub const PREDICTION_RULE_INPUTS_V1_ID: &str = "urn:animsmith:prediction-rule-inputs:1";
+
+const CONSUMED_CONTRACTS_V5: [&str; 11] = [
+    "urn:animsmith:schema:output:16",
+    MEASUREMENTS_SCHEMA_ID,
+    PREDICTION_PROVENANCE_V4_ID,
+    RAW_SOURCE_FACTS_V2_ID,
+    EXACT_SOURCE_TIMING_V1_ID,
+    DEPENDENCY_CLOSURE_V1_ID,
+    ENGINE_PROFILE_FACTS_V2_ID,
+    RESOLVED_ENGINE_SETTINGS_V3_ID,
+    RAW_SCENE_ATTACHMENT_INVENTORY_V1_ID,
+    PREDICTION_RULE_INPUTS_V1_ID,
+    crate::RAW_ANIMATION_CHANNEL_INVENTORY_V1_ID,
+];
 /// Immutable identity of raw-source facts V2, composed from V1 and exact timing.
 pub const RAW_SOURCE_FACTS_V2_ID: &str = "urn:animsmith:raw-source-facts:2";
 /// Maximum facets retained across one lint file.
@@ -5611,6 +5629,9 @@ pub enum PredictionUnavailableReasonV2 {
     SourceSelectorAmbiguous,
     /// Required primary-source evidence was unavailable.
     PrimarySourceUnavailable,
+    /// Runtime asset/clip/track survival is not established by the negative
+    /// loading gates alone.
+    RuntimeAnimationSurvivalUnavailable,
     /// Bounded namespaced extension reason retained from V1.
     Custom(String),
 }
@@ -5638,6 +5659,7 @@ impl PredictionUnavailableReasonV2 {
             Self::SourceSelectorNoMatch => "source_selector_no_match",
             Self::SourceSelectorAmbiguous => "source_selector_ambiguous",
             Self::PrimarySourceUnavailable => "primary_source_unavailable",
+            Self::RuntimeAnimationSurvivalUnavailable => "runtime_animation_survival_unavailable",
             Self::Custom(value) => value,
         }
     }
@@ -5654,6 +5676,9 @@ impl PredictionUnavailableReasonV2 {
             "source_selector_no_match" => Some(Self::SourceSelectorNoMatch),
             "source_selector_ambiguous" => Some(Self::SourceSelectorAmbiguous),
             "primary_source_unavailable" => Some(Self::PrimarySourceUnavailable),
+            "runtime_animation_survival_unavailable" => {
+                Some(Self::RuntimeAnimationSurvivalUnavailable)
+            }
             _ => None,
         };
         builtin.map_or_else(|| Self::custom(value), Ok)
@@ -12426,6 +12451,213 @@ impl Serializer for MeasurementMapKeySerializer {
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         Err(MeasurementResolveError("invalid map key".into()))
+    }
+}
+
+/// Domain-separated identity of one V5 provenance record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PredictionProvenanceIdentityV5(InputIdentity);
+
+impl PredictionProvenanceIdentityV5 {
+    /// SHA-256 and canonical-preimage byte count.
+    pub const fn input_identity(&self) -> &InputIdentity {
+        &self.0
+    }
+}
+
+/// Successor provenance which binds V4 authority to the raw track inventory.
+///
+/// The V4 record remains nested and immutable.  V5 only adds the source rows
+/// that V4 intentionally did not serialize, so later readers can reconstruct
+/// the engine-track-support candidate sequence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PredictionProvenanceV5 {
+    schema: String,
+    identity: PredictionProvenanceIdentityV5,
+    base: PredictionProvenanceV4,
+    raw_animation_channels: crate::RawAnimationChannelInventoryV1,
+    consumed_contracts: [String; 11],
+}
+
+impl PredictionProvenanceV5 {
+    /// Bind one immutable V4 record to its same-load raw track inventory.
+    pub fn new(
+        base: PredictionProvenanceV4,
+        raw_animation_channels: crate::RawAnimationChannelInventoryV1,
+    ) -> Result<Self, PredictionContractError> {
+        base.validate()?;
+        raw_animation_channels.validate().map_err(|_| {
+            PredictionContractError::InvalidMachineResult("invalid raw track inventory")
+        })?;
+        if raw_animation_channels.primary_input() != base.raw_source().primary_input()
+            || raw_animation_channels.source_format() != base.source_format()
+        {
+            return Err(PredictionContractError::PrimaryInputMismatch);
+        }
+        let mut value = Self {
+            schema: PREDICTION_PROVENANCE_V5_ID.into(),
+            identity: PredictionProvenanceIdentityV5(InputIdentity::from_bytes(&[])),
+            base,
+            raw_animation_channels,
+            consumed_contracts: CONSUMED_CONTRACTS_V5.map(str::to_owned),
+        };
+        value.identity = PredictionProvenanceIdentityV5(value.computed_identity());
+        value.validate()?;
+        Ok(value)
+    }
+
+    /// Immutable V5 contract id.
+    pub fn contract_id(&self) -> &str {
+        &self.schema
+    }
+    /// Canonical V5 identity.
+    pub const fn identity(&self) -> &PredictionProvenanceIdentityV5 {
+        &self.identity
+    }
+    /// Immutable V4 authority retained without reinterpretation.
+    pub const fn base(&self) -> &PredictionProvenanceV4 {
+        &self.base
+    }
+    /// Same-load, index-only raw animation/channel inventory.
+    pub const fn raw_animation_channels(&self) -> &crate::RawAnimationChannelInventoryV1 {
+        &self.raw_animation_channels
+    }
+    /// Validate V5's immutable links and identity.
+    pub fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.schema != PREDICTION_PROVENANCE_V5_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "provenance.schema",
+                expected: PREDICTION_PROVENANCE_V5_ID,
+                found: self.schema.clone(),
+            });
+        }
+        if self.consumed_contracts != CONSUMED_CONTRACTS_V5 {
+            return Err(PredictionContractError::InvalidConsumedContracts);
+        }
+        self.base.validate()?;
+        self.raw_animation_channels.validate().map_err(|_| {
+            PredictionContractError::InvalidMachineResult("invalid raw track inventory")
+        })?;
+        if self.raw_animation_channels.primary_input() != self.base.raw_source().primary_input()
+            || self.raw_animation_channels.source_format() != self.base.source_format()
+        {
+            return Err(PredictionContractError::PrimaryInputMismatch);
+        }
+        if self.identity.0 != self.computed_identity() {
+            return Err(PredictionContractError::IdentityMismatch {
+                contract: PREDICTION_PROVENANCE_V5_ID,
+            });
+        }
+        Ok(())
+    }
+    #[allow(dead_code)] // consumed when output-v16 admits V5 provenance
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        self.base.retained_text_bytes()
+    }
+    fn computed_identity(&self) -> InputIdentity {
+        let mut encoder = CanonicalEncoder::new("animsmith-prediction-provenance-v5");
+        encoder.field("schema");
+        encoder.token(&self.schema);
+        encoder.field("base");
+        encoder.token(serde_json::to_string(&self.base).expect("V4 provenance serializes"));
+        encoder.field("raw_animation_channels");
+        encoder.token(
+            serde_json::to_string(&self.raw_animation_channels)
+                .expect("raw animation/channel inventory serializes"),
+        );
+        encoder.field("consumed_contracts");
+        encoder.count(self.consumed_contracts.len());
+        for contract in &self.consumed_contracts {
+            encoder.token(contract);
+        }
+        encoder.identity()
+    }
+}
+
+/// V5 prediction wrapper binding a V4 result-bearing attachment to V5
+/// provenance.  The inner V4 layout remains immutable; the outer identity is
+/// what commits the additional raw inventory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnginePredictionV5 {
+    schema: String,
+    provenance_identity: PredictionProvenanceIdentityV5,
+    prediction: EnginePredictionV4,
+}
+
+impl EnginePredictionV5 {
+    /// Bind an already-validated result-bearing prediction to V5 provenance.
+    pub fn new(
+        provenance: &PredictionProvenanceV5,
+        prediction: EnginePredictionV4,
+    ) -> Result<Self, PredictionContractError> {
+        prediction.validate_against_provenance(provenance.base())?;
+        let value = Self {
+            schema: ENGINE_PREDICTION_V5_ID.into(),
+            provenance_identity: provenance.identity().clone(),
+            prediction,
+        };
+        value.validate_against_provenance(provenance)?;
+        Ok(value)
+    }
+    /// Immutable V5 contract id.
+    pub fn contract_id(&self) -> &str {
+        &self.schema
+    }
+    /// Bound V5 provenance identity.
+    pub const fn provenance_identity(&self) -> &PredictionProvenanceIdentityV5 {
+        &self.provenance_identity
+    }
+    /// Canonical facets.
+    pub fn facets(&self) -> &[EnginePredictionFacetV4] {
+        self.prediction.facets()
+    }
+    /// Immutable nested V4 result graph.
+    pub const fn base_prediction(&self) -> &EnginePredictionV4 {
+        &self.prediction
+    }
+    /// Whether required work was unavailable.
+    pub fn has_required_unavailable(&self) -> bool {
+        self.prediction.has_required_unavailable()
+    }
+    /// Aggregate basis reference count.
+    pub fn basis_reference_count(&self) -> usize {
+        self.prediction.basis_reference_count()
+    }
+    #[allow(dead_code)] // consumed when output-v16 admits V5 predictions
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        self.prediction.retained_text_bytes()
+    }
+    /// Validate immutable nesting and the V5 identity binding.
+    pub fn validate_against_provenance(
+        &self,
+        provenance: &PredictionProvenanceV5,
+    ) -> Result<(), PredictionContractError> {
+        if self.schema != ENGINE_PREDICTION_V5_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "prediction.schema",
+                expected: ENGINE_PREDICTION_V5_ID,
+                found: self.schema.clone(),
+            });
+        }
+        provenance.validate()?;
+        if &self.provenance_identity != provenance.identity() {
+            return Err(PredictionContractError::ProvenanceIdentityMismatch);
+        }
+        self.prediction
+            .validate_against_provenance(provenance.base())
+    }
+    pub(crate) fn validate_for_check(
+        &self,
+        check_id: &str,
+        evaluated_scopes: &[EvaluationScope],
+        gaps: &[CoverageGap],
+        findings: &[Finding],
+    ) -> Result<(), PredictionContractError> {
+        self.prediction
+            .validate_for_check(check_id, evaluated_scopes, gaps, findings)
     }
 }
 

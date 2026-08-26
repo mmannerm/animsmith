@@ -49,22 +49,24 @@ members may span documents but must have one exact normalized skeleton basis.
 ## Collection lint
 
 `animsmith collection lint COLLECTION.toml --format json` emits the separate
-current `urn:animsmith:schema:collection-output:7` envelope described by
-[`collection-output-v7.schema.json`](schemas/collection-output-v7.schema.json).
-Historical `urn:animsmith:schema:collection-output:6`,
+current `urn:animsmith:schema:collection-output:8` envelope described by
+[`collection-output-v8.schema.json`](schemas/collection-output-v8.schema.json).
+Historical `urn:animsmith:schema:collection-output:7`,
+`urn:animsmith:schema:collection-output:6`,
 `urn:animsmith:schema:collection-output:5`, and
 `urn:animsmith:schema:collection-output:4` envelopes remain immutable.
 It binds the exact manifest bytes to canonically ordered source, logical clip,
 and runtime-set records while preserving each set's declared member order.
-Every available source embeds its ordinary one-file output-v15 lint result;
+Every available source embeds its ordinary one-file output-v16 lint result;
 each established logical clip separately carries the existing
 `ClipMeasurements` value selected by raw source take index and exact authored
 take name, then mapped through the loader's observed normalized clip index.
 This duplicate-safe indexed projection does not revise the historical,
-immutable measurements-v15 name-keyed wire contract; collection-output-v7
-embeds measurements-v16 in its nested output-v15 documents. The strict reader
-continues to bind historical collection-output-v6 only to output-v14 and
-historical collection-output-v5 only to output-v13.
+immutable measurements-v15 name-keyed wire contract; collection-output-v8
+embeds measurements-v16 in its nested output-v16 documents. The strict reader
+continues to bind historical collection-output-v7 only to output-v15,
+historical collection-output-v6 only to output-v14, and historical
+collection-output-v5 only to output-v13.
 
 Source input, digest pin, config, loader, take inventory, and document-result
 states stay orthogonal. A readable digest mismatch can therefore retain its
@@ -204,16 +206,21 @@ presentation views; JSON remains the contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v15 with the
-current protocol identity `urn:animsmith:schema:output:15`. The retrievable
-schema is [`output-v15.schema.json`](schemas/output-v15.schema.json); its repository URL
+Validation and comparison JSON commands emit output contract v16 with the
+current protocol identity `urn:animsmith:schema:output:16`. The retrievable
+schema is [`output-v16.schema.json`](schemas/output-v16.schema.json); its repository URL
 is a retrieval location, not the protocol identity. Output-v11 remains immutable
 historical schema evidence; the measurement reader retains its validation path
-for existing reports, while CLI producers emit output-v15.
-`urn:animsmith:schema:output:14`, `urn:animsmith:schema:output:13`,
-`urn:animsmith:schema:output:12`, and
+for existing reports, while CLI producers emit output-v16.
+`urn:animsmith:schema:output:15`, `urn:animsmith:schema:output:14`,
+`urn:animsmith:schema:output:13`, `urn:animsmith:schema:output:12`, and
 `urn:animsmith:schema:output:11` remain immutable historical contracts and are
 never retargeted.
+
+The current CLI emits output-v16. The Bevy revision-3 track-support slice uses
+V5 prediction provenance/readback with the bounded raw animation/channel inventory and gate
+outcomes described below. This does not retarget or invalidate output-v15;
+revision-2/V4 reports remain readable and their behavior remains preserved.
 
 Output-v15 retains the V3 provenance/prediction path for revision-1 profiles
 and adds `prediction-provenance:4`, `engine-profile-facts:2`,
@@ -1271,6 +1278,32 @@ are outside the result. Unsupported matrix ancestry, selector miss/ambiguity,
 incomplete evidence, and exhausted facet work remain typed, unsuppressible
 required-unavailable states; this prediction-only rule emits no content
 findings and authorizes no rescaling.
+
+The current successor adds the narrow Bevy revision-3
+`engine-track-support` prediction through V5 provenance and the output-v16
+contract. Its same-load raw animation inventory is bounded by both animation
+coverage and independent per-animation channel coverage. With a complete
+inventory, the two gate settings produce only negative outcomes for dropped
+animation/channel rows; a dropped row is not a content finding. The compiled
+feature gate takes precedence over `load_animations`. When both gates allow
+loading, the result is a stable required-unavailable runtime-survival facet,
+because this contract does not execute Bevy or claim positive runtime
+survival.
+
+Complete-empty animation inventory is not applicable. Partial or unavailable
+inventory emits exactly one subjectless, unsuppressible inventory
+`required_prediction_unavailable` facet and no retained-prefix prediction;
+bounded N+1 work is therefore distinguishable from a complete inventory.
+The ordinary lifecycle remains explicit: all available work is `complete`, a
+mix of available and unavailable facets is `partial`, and all required-
+unavailable work is `not_evaluated`. V5 readback validates result state,
+facet scope, inventory-row basis, and provenance identity under the same
+bounds before accepting an available result; malformed or contradictory
+serialized claims are rejected rather than repaired into a prediction.
+Extensions, unsupported animation constructs, and other positive runtime
+claims remain outside this revision-3 slice. Output-v15, V4 provenance, and
+revision-2 behavior remain preserved and readable; output-v16 and V5
+provenance are the current CLI contracts.
 
 Resolved engine settings and prediction provenance v3 use explicit bounded
 N+1 work and coverage evidence. A 4,097th clip produces partial settings

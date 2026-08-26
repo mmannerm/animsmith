@@ -46,6 +46,25 @@ numbers, `lint` for the declared contract, `fix` for safe repairs,
 | Export | Which artifact does the engine consume? | Use `convert` for FBX/glTF handoff; keep transformed GLB and any sidecars separate from raw source. |
 | Gate/report | Can reviewers and automation trust the change? | Attach JSON or Markdown lint output to CI, and generate `report` artifacts for visual review. |
 
+### Bevy animation gate
+
+When the target is Bevy 0.19.0's stock `gltf-asset-loader`, the current profile
+revision 3 adds a deliberately narrow gate after source
+inspection. `engine-track-support` binds raw animation rows and independent
+per-animation channel coverage from the same load to the resolved
+`bevy_animation_feature` and `load_animations` settings. The compiled feature
+gate wins when the two settings disagree. A complete inventory reports only
+negative dropped-row outcomes; a complete empty inventory is not applicable.
+
+Partial or unavailable inventory reports exactly one subjectless,
+unsuppressible required-unavailable facet and no retained-prefix prediction,
+including bounded N+1 overflow. If both gates allow loading, the result is
+instead required-unavailable runtime-survival evidence: the pipeline must still
+exercise the actual Bevy application. This slice has no extension/construct
+coverage, no positive runtime-survival claim, and no content finding for a
+dropped row. Its V5 provenance/output-v16 wiring is current; rev1/rev2 and
+output-v15 remain preserved for existing consumers.
+
 ## Shared contract config
 
 Every scenario below becomes much more useful once the team commits an

@@ -102,9 +102,13 @@ plainly what it did not evaluate — not to stamp the whole ladder.
 5. **Runtime integration** — importer behavior, blend-graph
    topology, animation target IDs, masks, sync and reset behavior,
    and the poses your engine actually evaluates. Consumer-owned:
-   animsmith's exact Bevy 0.19.0 profile can predict the canonical
-   `Animation{i}` source-animation selector, but it does not run the engine,
-   prove runtime asset existence, or validate graph wiring or target survival.
+   animsmith's exact Bevy 0.19.0 profiles can predict the canonical
+   `Animation{i}` source-animation selector and, in the current revision 3
+   slice, negative animation/channel gate outcomes. It does not run
+   the engine, prove runtime asset existence, or validate graph wiring, target
+   survival, or positive playback. A dropped source row is prediction evidence,
+   not a content finding; when both gates allow loading, runtime survival is
+   required-unavailable.
    Its measurements come from its own documented sampling model — a model of
    engine samplers, not a reproduction of yours.
 
@@ -642,6 +646,27 @@ rest evidence remains a coverage gap.
 
 The older `[checks.rest-world-scale].node_selectors` field remains a
 compatibility alias. Do not declare it together with `[runtime_nodes]`.
+
+### Bevy animation loading is a separate gate
+
+The current Bevy revision 3 profile pins the stock 0.19.0
+`gltf-asset-loader` path and records the `bevy_animation` feature state and
+`load_animations` setting, including their explicit/default origins. The
+compiled feature gate has precedence: a disabled feature predicts dropped
+animation/channel rows even if `load_animations` is true. A false
+`load_animations` setting predicts the same kind of negative loader outcome
+when the feature is enabled. These outcomes are not content findings and do
+not claim that any positive runtime asset or target survived.
+
+The prediction binds bounded raw animation rows and independent channel
+coverage from the same load. Complete-empty inventory is not applicable. A
+partial or unavailable inventory emits exactly one subjectless,
+unsuppressible required-unavailable inventory facet, with no retained-prefix
+prediction; N+1 overflow is therefore not mistaken for complete coverage. If
+both gates allow loading, the required result is a stable runtime-survival
+`required_prediction_unavailable` facet. Extensions and other animation
+constructs are outside this slice. See the
+[Bevy profile reference](engine-profile-bevy.md#revision-3-animationchannel-gate-support).
 
 Fix an unintended result in the source hierarchy or exporter, then rerun lint
 against the exported asset. AnimSmith does not rescale the file, decide which

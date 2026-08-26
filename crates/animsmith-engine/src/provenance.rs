@@ -1,6 +1,5 @@
 use crate::canonical::{project_resolved_profile, project_resolved_profile_v2};
 use crate::{ResolvedProfile, ResolvedProfileV2};
-use animsmith_core::LoadedSource;
 use animsmith_core::engine_contract::EngineContractError;
 use animsmith_core::prediction::{
     PredictionContractError, PredictionProvenanceV1, PredictionProvenanceV2,
@@ -8,6 +7,7 @@ use animsmith_core::prediction::{
     RawSceneAttachmentBindingV1, RawSceneAttachmentUnavailableReasonV1, RawSourceBindingV1,
     RawSourceBindingV2,
 };
+use animsmith_core::{LoadedSource, PredictionProvenanceV5, RawAnimationChannelInventoryV1};
 
 /// Failure to project already-resolved engine and same-load source evidence.
 #[derive(Debug, thiserror::Error)]
@@ -135,5 +135,19 @@ pub fn project_prediction_provenance_v4(
         raw_scene_attachment,
         source.dependency_closure().clone(),
         PredictionRuleInputsV1::new(runtime_node_selectors)?,
+    )?)
+}
+
+/// Project V5 provenance by binding immutable V4 authority to the bounded
+/// same-load raw animation/channel inventory required by engine-track-support.
+pub fn project_prediction_provenance_v5(
+    profile: &crate::ResolvedProfileSettingsV2,
+    source: &LoadedSource,
+    runtime_node_selectors: Vec<String>,
+) -> Result<PredictionProvenanceV5, PredictionProvenanceProjectionError> {
+    let base = project_prediction_provenance_v4(profile, source, runtime_node_selectors)?;
+    Ok(PredictionProvenanceV5::new(
+        base,
+        RawAnimationChannelInventoryV1::from_source(source.source_facts()),
     )?)
 }

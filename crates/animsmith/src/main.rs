@@ -24,7 +24,7 @@
 #[cfg(feature = "report")]
 use animsmith_core::evaluate_checks;
 use animsmith_core::{
-    Check, CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelope, LintFileReport,
+    Check, CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelopeV16, LintFileReportV16,
     MeasureEnvelope, MeasureFileReport, MeasurementContract, MeasurementFileError,
     MeasurementReportError, MeasurementReportInput, MeasurementReportReadError, MetricGrids,
     RigInfo, Severity, TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES, ToolInfo, ToolSource,
@@ -38,11 +38,11 @@ use animsmith_engine::EngineAddressabilityCheck;
 use animsmith_engine::{
     BakeOrExtract, BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2, ENGINE_CHECK_IDS_V2,
     EngineAddressabilityCheckV3, EngineClipBoundaryCheck, EngineDeclaration, EngineDeclarationV2,
-    EngineImportAdviceStateV1, EngineImportAdviceV1, EngineUnitScaleCheck,
+    EngineImportAdviceStateV1, EngineImportAdviceV1, EngineTrackSupportCheck, EngineUnitScaleCheck,
     GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityV1, ProfileSelection,
     ResolvedProfile, ResolvedProfileSettingsV2, ResolvedProfileV2, SettingMap, SettingMapV2,
     SettingValue, SettingValueV2, StaticResolution, StaticResolutionV2,
-    build_bevy_animation_addressability_adapter_v1,
+    build_bevy_animation_addressability_adapter_v1, lookup_profile_v2,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -275,12 +275,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file current output-v15 or historical output-v14/output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file current output-v16 or historical output-v15/output-v14/output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -979,10 +979,10 @@ fn parse_config(
         selection.is_some() || document_settings.is_some()
     );
 
-    let is_revision_2 = selection
+    let uses_v2_contract = selection
         .as_ref()
-        .is_some_and(|selection| selection.profile_revision() == 2);
-    let engine_declaration = if is_revision_2 {
+        .is_some_and(|selection| lookup_profile_v2(selection).is_ok());
+    let engine_declaration = if uses_v2_contract {
         ParsedEngineDeclaration::V2(EngineDeclarationV2 {
             selection,
             document_settings: document_settings.map(engine_setting_map_v2).transpose()?,
@@ -1195,7 +1195,7 @@ fn validate_check_selection(known: &[&str], select: &[String]) -> Result<(), Str
 }
 
 struct LintAnalysis {
-    report: LintFileReport,
+    report: LintFileReportV16,
     requires_failure: bool,
     indexed_measurements: Vec<animsmith_core::measure::ClipMeasurements>,
 }
@@ -1220,11 +1220,11 @@ fn analyze_loaded_lint(
         .runtime_node_selectors()
         .map(|selectors| selectors.selectors().to_vec())
         .unwrap_or_default();
-    let prediction_provenance_v4 = loaded
+    let prediction_provenance_v5 = loaded
         .engine_v4
         .as_ref()
         .map(|profile| {
-            animsmith_engine::project_prediction_provenance_v4(
+            animsmith_engine::project_prediction_provenance_v5(
                 profile,
                 &loaded.source,
                 runtime_node_selectors,
@@ -1232,7 +1232,7 @@ fn analyze_loaded_lint(
         })
         .transpose()
         .map_err(|error| error.to_string())?;
-    debug_assert!(prediction_provenance_v3.is_none() || prediction_provenance_v4.is_none());
+    debug_assert!(prediction_provenance_v3.is_none() || prediction_provenance_v5.is_none());
     let doc = loaded.document();
     let roles = resolve_configured_roles(&doc.skeleton, &config.config.rig);
     let grids = MetricGrids::new(doc);
@@ -1248,7 +1248,11 @@ fn analyze_loaded_lint(
                 .map_err(|error| error.to_string())?,
         ));
         checks.push(Box::new(
-            EngineUnitScaleCheck::new(&loaded.source, prediction_provenance_v4.as_ref())
+            EngineUnitScaleCheck::new_v5(&loaded.source, prediction_provenance_v5.as_ref())
+                .map_err(|error| error.to_string())?,
+        ));
+        checks.push(Box::new(
+            EngineTrackSupportCheck::new(&loaded.source, prediction_provenance_v5.as_ref())
                 .map_err(|error| error.to_string())?,
         ));
         evaluate_checks_v2(&ctx, &checks, selection).map_err(|error| error.to_string())?
@@ -1267,8 +1271,8 @@ fn analyze_loaded_lint(
     let measurements =
         MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(doc))
             .map_err(|error| error.to_string())?;
-    let report = match prediction_provenance_v4 {
-        Some(provenance) => LintFileReport::new_v4(
+    let report = match prediction_provenance_v5 {
+        Some(provenance) => LintFileReportV16::new_v5(
             path_label,
             input,
             rig,
@@ -1276,7 +1280,7 @@ fn analyze_loaded_lint(
             evaluations,
             measurements,
         ),
-        None => LintFileReport::new(
+        None => LintFileReportV16::new(
             path_label,
             input,
             rig,
@@ -1384,7 +1388,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             match format {
                 PresentationFormat::Json => {
-                    let envelope = LintEnvelope::new(current_tool(), reports)
+                    let envelope = LintEnvelopeV16::new(current_tool(), reports)
                         .map_err(|error| error.to_string())?;
                     render::print_json(&envelope)?;
                 }
@@ -1924,7 +1928,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// current output-v15 or historical output-v14/output-v13 `measure`/`lint` JSON report
+/// current output-v16 or historical output-v15/output-v14/output-v13 `measure`/`lint` JSON report
 /// carrying measurements-v16.
 fn load_measurements(
     path: &Path,
@@ -1945,10 +1949,10 @@ fn load_measurements(
             }
             _ => format!("{} {error}", path.display()),
         })?;
-        // Current output-v15 and historical output-v14/output-v13/output-v12/output-v11 envelopes
+        // Current output-v16 and historical output-v15/output-v14/output-v13/output-v12/output-v11 envelopes
         // are accepted only with their version-matched measurements contract.
         // The V11 route retains its original V1 evidence validation; producers
-        // emit V14.
+        // emit V16.
         let file_count = report.file_count();
         let files = report.into_files().map_err(|error| {
             format!(

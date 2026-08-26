@@ -2510,8 +2510,8 @@ error; it is never guessed, treated as an implementation default, or deferred
 to a coverage gap. The resolved settings record therefore contains one exact
 document value or per-clip value for every applicable setting.
 
-The registry contains the five immutable revision-1 tuples plus one
-revision-2 Bevy tuple:
+The registry contains the five immutable revision-1 tuples plus the preserved
+revision-2 Bevy tuple and the current revision-3 tuple:
 
 | family | revision | engine version | importer | AnimSmith V1 input boundary |
 |---|---:|---|---|---|
@@ -2521,6 +2521,7 @@ revision-2 Bevy tuple:
 | `godot` | 1 | `4.7` | `resource-importer-scene` | glTF JSON, GLB, FBX |
 | `bevy` | 1 | `0.19.0` | `gltf-asset-loader` | glTF JSON, GLB |
 | `bevy` | 2 | `0.19.0` | `gltf-asset-loader` | glTF JSON, GLB |
+| `bevy` | 3 | `0.19.0` | `gltf-asset-loader` | glTF JSON, GLB |
 
 These are exact versions, not ranges. The Godot row is AnimSmith's bounded V1
 profile boundary rather than a claim that Godot cannot import other formats.
@@ -2533,6 +2534,14 @@ rejected. Bevy revision 2 has a separate closed setting vocabulary for exact
 loader coordinate toggles, mesh loading, extension-handler environment,
 animation feature, and animation loading. It materializes version-pinned
 defaults and retains each value's explicit/default origin.
+
+Bevy revision 3 preserves the earlier tuples and adds only the narrow
+animation/channel gate-support fact. It resolves the compiled
+`bevy_animation` feature and `load_animations` with explicit/default origins;
+the compiled feature gate takes precedence. Its raw same-load inventory binds
+animation coverage independently from each animation's channel coverage.
+Extensions, other animation constructs, and positive runtime survival remain
+outside this revision; the latter requires an actual Bevy readback.
 
 The two Unity ids are import modes, not skeleton-name maps. Likewise,
 `unreal`, `godot`, and `bevy` do not imply a mannequin, humanoid bone map, or
@@ -2781,6 +2790,21 @@ out of scope until their own exact source/profile authorities exist.
 enable/disable overrides. Existing checks such as `loop-closure`, `in-place`,
 `foot-slide`, and `root-motion-speed` keep their current behavior under every
 engine profile.
+
+The shipped narrow slice is Bevy revision 3 / 0.19.0 /
+`gltf-asset-loader` `engine-track-support`. It binds a bounded raw animation
+inventory from the same load, with animation coverage and independent
+per-animation channel coverage. A complete inventory can produce only
+negative gate outcomes for rows dropped by the compiled `bevy_animation`
+feature or by `load_animations`; a dropped row is not a content finding. The
+compiled feature gate has precedence over the load setting. A complete-empty
+inventory is not applicable. Partial or unavailable coverage emits exactly one
+subjectless, unsuppressible `required_prediction_unavailable` inventory facet
+and no retained-prefix prediction, including the N+1 boundary. If both gates
+allow loading, the result is a stable required-unavailable runtime-survival
+state. Extensions, other constructs, and positive runtime survival are not
+modeled by this slice. V5 provenance and output-v16 are the current contracts;
+V4/revision-2 and output-v15 remain preserved and readable.
 
 Configuration precedence is consequently:
 

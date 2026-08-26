@@ -16,10 +16,12 @@ use animsmith_core::measure::{
 };
 use animsmith_core::model::Clip;
 use animsmith_core::{
-    Applicability, ConfigurationState, CoverageGap, CoverageGapCode,
+    Applicability, CheckEvaluation, ConfigurationState, CoverageGap, CoverageGapCode,
     DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, Document,
-    EnginePredictionFacetStateV1, EnginePredictionFacetV3, EvaluationState, Finding,
-    LintFileReport, MeasureFileReport, ResolvedRoles, SelectionState, Severity, SourceFormatV1,
+    EnginePredictionFacetStateV1, EnginePredictionFacetV3, EnginePredictionFacetV4,
+    EvaluationScope, EvaluationState, Finding, LintFileReport, LintFileReportV16,
+    MeasureFileReport, PredictionUnavailableReasonV2, ResolvedRoles, SelectionState, Severity,
+    SourceFormatV1,
 };
 use animsmith_engine::{
     EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
@@ -1643,8 +1645,111 @@ pub(crate) fn render_producer_rejected(command: &str, kind: &str, detail: &str) 
     )
 }
 
+pub(crate) trait LintReportView {
+    fn path(&self) -> &str;
+    fn checks(&self) -> &[CheckEvaluation];
+    fn profile_selection(&self) -> Option<ProfileSelectionView<'_>>;
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProfileSelectionView<'a> {
+    family: &'a str,
+    revision: u32,
+    engine_version: &'a str,
+    importer: &'a str,
+}
+
+impl<'a> ProfileSelectionView<'a> {
+    fn family(self) -> &'a str {
+        self.family
+    }
+    fn profile_revision(self) -> u32 {
+        self.revision
+    }
+    fn engine_version(self) -> &'a str {
+        self.engine_version
+    }
+    fn importer(self) -> &'a str {
+        self.importer
+    }
+}
+
+impl LintReportView for LintFileReport {
+    fn path(&self) -> &str {
+        self.path()
+    }
+    fn checks(&self) -> &[CheckEvaluation] {
+        self.checks()
+    }
+    fn profile_selection(&self) -> Option<ProfileSelectionView<'_>> {
+        let selection = self
+            .prediction_provenance()
+            .map(|p| p.profile().selection())
+            .or_else(|| {
+                self.prediction_provenance_v4()
+                    .map(|p| p.profile().selection())
+            })?;
+        Some(ProfileSelectionView {
+            family: selection.family(),
+            revision: selection.profile_revision(),
+            engine_version: selection.engine_version(),
+            importer: selection.importer(),
+        })
+    }
+}
+
+impl LintReportView for LintFileReportV16 {
+    fn path(&self) -> &str {
+        self.path()
+    }
+    fn checks(&self) -> &[CheckEvaluation] {
+        self.checks()
+    }
+    fn profile_selection(&self) -> Option<ProfileSelectionView<'_>> {
+        let selection = self
+            .prediction_provenance_v3()
+            .map(|p| p.profile().selection())
+            .or_else(|| {
+                self.prediction_provenance_v5()
+                    .map(|p| p.base().profile().selection())
+            })?;
+        Some(ProfileSelectionView {
+            family: selection.family(),
+            revision: selection.profile_revision(),
+            engine_version: selection.engine_version(),
+            importer: selection.importer(),
+        })
+    }
+}
+
+enum RenderPredictionFacet<'a> {
+    V3(&'a EnginePredictionFacetV3),
+    V4(&'a EnginePredictionFacetV4),
+}
+
+impl RenderPredictionFacet<'_> {
+    fn scope(&self) -> &EvaluationScope {
+        match self {
+            Self::V3(facet) => facet.scope(),
+            Self::V4(facet) => facet.scope(),
+        }
+    }
+    fn state(&self) -> EnginePredictionFacetStateV1 {
+        match self {
+            Self::V3(facet) => facet.state(),
+            Self::V4(facet) => facet.state(),
+        }
+    }
+    fn reasons(&self) -> &[PredictionUnavailableReasonV2] {
+        match self {
+            Self::V3(facet) => facet.reasons(),
+            Self::V4(facet) => facet.reasons(),
+        }
+    }
+}
+
 /// Render human-readable one-line-per-finding text output for `lint`.
-pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> String {
+pub(crate) fn render_text<R: LintReportView>(reports: &[R], suppressed: &[String]) -> String {
     use std::fmt::Write as _;
 
     let mut out = String::new();
@@ -1662,14 +1767,13 @@ pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> 
         if findings.is_empty()
             && coverage_groups.is_empty()
             && prediction_facets.is_empty()
-            && report.prediction_provenance().is_none()
+            && report.profile_selection().is_none()
         {
             let _ = writeln!(out, "{}: clean", text_atom(report.path()));
             continue;
         }
         let _ = writeln!(out, "{}:", text_atom(report.path()));
-        if let Some(provenance) = report.prediction_provenance() {
-            let selection = provenance.profile().selection();
+        if let Some(selection) = report.profile_selection() {
             let _ = writeln!(
                 out,
                 "  engine profile {} revision {} ({} / {})",
@@ -1809,25 +1913,41 @@ pub(crate) fn render_text(reports: &[LintFileReport], suppressed: &[String]) -> 
     out
 }
 
-fn prediction_facets(report: &LintFileReport) -> Vec<(&str, &EnginePredictionFacetV3)> {
-    report
-        .checks()
-        .iter()
-        .filter_map(|check| {
-            check
-                .engine_prediction_v3()
-                .map(|prediction| (check.check_id(), prediction))
-        })
-        .flat_map(|(check_id, prediction)| {
-            prediction
-                .facets()
-                .iter()
-                .map(move |facet| (check_id, facet))
-        })
-        .collect()
+fn prediction_facets<R: LintReportView>(report: &R) -> Vec<(&str, RenderPredictionFacet<'_>)> {
+    let mut facets = Vec::new();
+    for check in report.checks() {
+        if let Some(prediction) = check.engine_prediction_v3() {
+            facets.extend(
+                prediction
+                    .facets()
+                    .iter()
+                    .map(|facet| (check.check_id(), RenderPredictionFacet::V3(facet))),
+            );
+        }
+        if let Some(prediction) = check.engine_prediction_v4() {
+            facets.extend(
+                prediction
+                    .facets()
+                    .iter()
+                    .map(|facet| (check.check_id(), RenderPredictionFacet::V4(facet))),
+            );
+        }
+        if let Some(prediction) = check.engine_prediction_v5() {
+            facets.extend(
+                prediction
+                    .facets()
+                    .iter()
+                    .map(|facet| (check.check_id(), RenderPredictionFacet::V4(facet))),
+            );
+        }
+    }
+    facets
 }
 
-fn sorted_findings<'a>(report: &'a LintFileReport, suppressed: &[String]) -> Vec<&'a Finding> {
+fn sorted_findings<'a, R: LintReportView>(
+    report: &'a R,
+    suppressed: &[String],
+) -> Vec<&'a Finding> {
     let mut findings: Vec<_> = report
         .checks()
         .iter()
@@ -1871,7 +1991,7 @@ impl CoverageGapGroup<'_> {
     }
 }
 
-fn coverage_gap_groups(report: &LintFileReport) -> Vec<CoverageGapGroup<'_>> {
+fn coverage_gap_groups<R: LintReportView>(report: &R) -> Vec<CoverageGapGroup<'_>> {
     let mut groups: BTreeMap<(&str, CoverageGapCode), Vec<&CoverageGap>> = BTreeMap::new();
     for check in report.checks() {
         for gap in check.gaps() {
@@ -2000,7 +2120,7 @@ const MARKDOWN_COLLAPSE_AT: usize = 10;
 ///
 /// Findings are sorted here before grouping so callers cannot accidentally
 /// emit repeated per-clip headers from an interleaved input slice.
-pub(crate) fn render_markdown(reports: &[LintFileReport], suppressed: &[String]) -> String {
+pub(crate) fn render_markdown<R: LintReportView>(reports: &[R], suppressed: &[String]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     let mut total = FindingSummary::default();
@@ -2018,7 +2138,7 @@ pub(crate) fn render_markdown(reports: &[LintFileReport], suppressed: &[String])
         if findings.is_empty()
             && gap_groups.is_empty()
             && prediction_facets.is_empty()
-            && report.prediction_provenance().is_none()
+            && report.profile_selection().is_none()
         {
             let _ = writeln!(out, "### `{}`\n", md_cell(report.path()));
             let _ = writeln!(out, "✅ Clean — no findings or coverage gaps.\n");
@@ -2037,8 +2157,7 @@ pub(crate) fn render_markdown(reports: &[LintFileReport], suppressed: &[String])
         let _ = writeln!(out, "### `{}`\n", md_cell(report.path()));
         let _ = writeln!(out, "{}\n", severity_line(&file));
 
-        if let Some(provenance) = report.prediction_provenance() {
-            let selection = provenance.profile().selection();
+        if let Some(selection) = report.profile_selection() {
             let _ = writeln!(
                 out,
                 "Engine profile: `{}` revision `{}` (`{}` / `{}`).\n",

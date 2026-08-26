@@ -33,11 +33,11 @@ fn required_settings() -> BTreeMap<String, SettingValueV2> {
 }
 
 #[test]
-fn v2_is_one_exact_sibling_tuple_and_v1_remains_unchanged() {
+fn v2_contract_registry_retains_revision_2_and_adds_exact_revision_3_sibling() {
     validate_registry_v1().unwrap();
     validate_registry_v2().unwrap();
     assert_eq!(profiles_v1().len(), 5);
-    assert_eq!(profiles_v2().len(), 1);
+    assert_eq!(profiles_v2().len(), 2);
 
     let profile = lookup_profile_v2(&selection(2)).unwrap();
     assert_eq!(profile.profile_urn(), "urn:animsmith:engine-profile:bevy:2");
@@ -54,6 +54,18 @@ fn v2_is_one_exact_sibling_tuple_and_v1_remains_unchanged() {
         Err(ResolutionErrorV2::UnknownProfile(selection(1)))
     );
     assert!(lookup_profile(&selection(1)).is_ok());
+
+    let successor = lookup_profile_v2(&selection(3)).unwrap();
+    assert_eq!(
+        successor.profile_urn(),
+        "urn:animsmith:engine-profile:bevy:3"
+    );
+    let projected = project_engine_profile_v2(successor).unwrap();
+    assert_eq!(
+        projected.facts_identity().sha256(),
+        "d532b00621bf06a2db2dedf896c19aae2c07b3b1873a1b05beade2252d7a89c5"
+    );
+    assert_eq!(projected.facts_identity().bytes(), 4_849);
 }
 
 #[test]

@@ -4,14 +4,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:7";
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:15";
+const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:8";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
+const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
+const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const COLLECTION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-output-v7.schema.json");
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v15.schema.json");
+    include_str!("../../../docs/schemas/collection-output-v8.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v16.schema.json");
+const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
+const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_V15_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v15.schema.json");
@@ -40,10 +44,16 @@ fn collection(manifest: &Path) -> Output {
 fn collection_validator() -> Validator {
     let collection: Value = serde_json::from_str(COLLECTION_SCHEMA).unwrap();
     let output: Value = serde_json::from_str(OUTPUT_SCHEMA).unwrap();
+    let output_v14: Value = serde_json::from_str(OUTPUT_V14_SCHEMA).unwrap();
+    let output_v13: Value = serde_json::from_str(OUTPUT_V13_SCHEMA).unwrap();
     let output_v10: Value = serde_json::from_str(OUTPUT_V10_SCHEMA).unwrap();
     let measurements_v15: Value = serde_json::from_str(MEASUREMENTS_V15_SCHEMA).unwrap();
     let measurements: Value = serde_json::from_str(MEASUREMENTS_SCHEMA).unwrap();
     let registry = jsonschema::Registry::new()
+        .add(OUTPUT_V14_SCHEMA_ID, output_v14)
+        .unwrap()
+        .add(OUTPUT_V13_SCHEMA_ID, output_v13)
+        .unwrap()
         .add(OUTPUT_V10_SCHEMA_ID, output_v10)
         .unwrap()
         .add(MEASUREMENTS_V15_SCHEMA_ID, measurements_v15)
@@ -80,14 +90,14 @@ fn retained_spike_emits_exact_deterministic_collection_evidence() {
     let value: Value = serde_json::from_slice(&first.stdout).expect("collection JSON");
     assert_schema(&value);
     assert_eq!(value["schema"], COLLECTION_SCHEMA_ID);
-    assert_eq!(value["schema_version"], 7);
+    assert_eq!(value["schema_version"], 8);
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema"],
         OUTPUT_SCHEMA_ID
     );
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema_version"],
-        15
+        16
     );
     assert_eq!(value["summary"]["sources"], 3);
     assert_eq!(value["summary"]["established_clips"], 4);
