@@ -4995,6 +4995,15 @@ impl PredictionCheckInputV3 {
                 reason: "evaluation does not match completed and missing prediction work",
             });
         }
+        validate_current_engine_clip_boundary_applicability_v3(
+            &self.check_id,
+            self.applicability,
+            provenance,
+        )
+        .map_err(|source| MeasurementFileError::InvalidPrediction {
+            check_index,
+            source,
+        })?;
         let Some(prediction) = &self.prediction else {
             if self
                 .findings
@@ -5326,6 +5335,52 @@ const ENGINE_CLIP_BOUNDARY_PROFILE_REVISION: u32 = 1;
 const ENGINE_CLIP_BOUNDARY_ENGINE_VERSION: &str = "5.8";
 const ENGINE_CLIP_BOUNDARY_IMPORTER: &str = "fbx-importer";
 
+fn current_engine_clip_boundary_profile_matches_v3(provenance: &PredictionProvenanceV3) -> bool {
+    let selection = provenance.profile().selection();
+    provenance.source_format() == SourceFormatV1::Fbx
+        && provenance.raw_source().source_format() == SourceFormatV1::Fbx
+        && selection.family() == ENGINE_CLIP_BOUNDARY_PROFILE_FAMILY
+        && selection.profile_revision() == ENGINE_CLIP_BOUNDARY_PROFILE_REVISION
+        && selection.engine_version() == ENGINE_CLIP_BOUNDARY_ENGINE_VERSION
+        && selection.importer() == ENGINE_CLIP_BOUNDARY_IMPORTER
+        && matches!(
+            provenance
+                .profile()
+                .fact(EngineFactIdV1::WholeEndFrameRequired)
+                .map(|fact| fact.state()),
+            Some(EngineFactStateV1::Known(EngineFactValueV1::Boolean(true)))
+        )
+        && provenance
+            .profile()
+            .source(ENGINE_CLIP_BOUNDARY_SOURCE_ID)
+            .is_some()
+}
+
+fn validate_current_engine_clip_boundary_applicability_v3(
+    check_id: &str,
+    applicability: Applicability,
+    provenance: Option<&PredictionProvenanceV3>,
+) -> Result<(), PredictionContractError> {
+    if check_id != ENGINE_CLIP_BOUNDARY_CHECK_ID {
+        return Ok(());
+    }
+    let expected = match provenance {
+        Some(provenance)
+            if current_engine_clip_boundary_profile_matches_v3(provenance)
+                && !(provenance.raw_source().clips_coverage().state()
+                    == RawSourceSetCoverageStateV1::Complete
+                    && provenance.settings().clips().is_empty()) =>
+        {
+            Applicability::Applicable
+        }
+        _ => Applicability::NotApplicable,
+    };
+    if applicability != expected {
+        return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+    }
+    Ok(())
+}
+
 /// Re-derive the frozen output-v14 clip-boundary rule from embedded V3
 /// provenance. This keeps readback and producer construction from accepting a
 /// merely well-shaped facet whose scope, basis, availability, reason, or
@@ -5341,24 +5396,7 @@ fn validate_current_engine_clip_boundary_prediction_v3(
         return Ok(());
     }
 
-    let selection = provenance.profile().selection();
-    if provenance.source_format() != SourceFormatV1::Fbx
-        || selection.family() != ENGINE_CLIP_BOUNDARY_PROFILE_FAMILY
-        || selection.profile_revision() != ENGINE_CLIP_BOUNDARY_PROFILE_REVISION
-        || selection.engine_version() != ENGINE_CLIP_BOUNDARY_ENGINE_VERSION
-        || selection.importer() != ENGINE_CLIP_BOUNDARY_IMPORTER
-        || !matches!(
-            provenance
-                .profile()
-                .fact(EngineFactIdV1::WholeEndFrameRequired)
-                .map(|fact| fact.state()),
-            Some(EngineFactStateV1::Known(EngineFactValueV1::Boolean(true)))
-        )
-        || provenance
-            .profile()
-            .source(ENGINE_CLIP_BOUNDARY_SOURCE_ID)
-            .is_none()
-    {
+    if !current_engine_clip_boundary_profile_matches_v3(provenance) {
         return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
     }
 
@@ -6612,6 +6650,35 @@ mod measurement_report_input_tests {
             .subject(format!("source_stack:{source_clip_index}"))
     }
 
+    struct InapplicableClipBoundaryCheck;
+
+    impl crate::Check for InapplicableClipBoundaryCheck {
+        fn id(&self) -> &'static str {
+            ENGINE_CLIP_BOUNDARY_CHECK_ID
+        }
+
+        fn applicability(&self, _ctx: &crate::CheckCtx<'_>) -> Applicability {
+            Applicability::NotApplicable
+        }
+
+        fn evaluate(&self, _ctx: &crate::CheckCtx<'_>) -> CheckOutput {
+            panic!("an inapplicable check must not be evaluated")
+        }
+    }
+
+    fn inapplicable_clip_boundary_check() -> CheckEvaluation {
+        let document = Document::default();
+        let grids = crate::MetricGrids::new(&document);
+        let roles = ResolvedRoles::default();
+        let config = crate::Config::default();
+        let context = crate::CheckCtx::new(&grids, &roles, &config);
+        let checks: Vec<Box<dyn crate::Check>> = vec![Box::new(InapplicableClipBoundaryCheck)];
+        crate::evaluate_checks(&context, &checks, crate::CheckSelection::All)
+            .unwrap()
+            .pop()
+            .unwrap()
+    }
+
     fn clip_boundary_check(
         provenance: &PredictionProvenanceV3,
         unavailable_last: bool,
@@ -6772,6 +6839,33 @@ mod measurement_report_input_tests {
             serde_json::json!(["animsmith:source_frame_period_unavailable"]);
         assert_clip_boundary_read_error(
             wrong_reason,
+            PredictionContractError::EngineClipBoundaryFacetMismatch,
+        );
+    }
+
+    #[test]
+    fn clip_boundary_v3_rederives_applicability_for_producer_and_readback() {
+        let provenance = clip_boundary_provenance(false);
+        assert!(matches!(
+            lint_file(&provenance, vec![inapplicable_clip_boundary_check()]),
+            Err(OutputContractError::InvalidPrediction(
+                PredictionContractError::EngineClipBoundaryFacetMismatch
+            ))
+        ));
+
+        let mut wire = clip_boundary_lint_wire(false);
+        let check = wire["files"][0]["checks"][0].as_object_mut().unwrap();
+        check.insert(
+            "applicability".to_owned(),
+            serde_json::json!("not_applicable"),
+        );
+        check.insert("evaluation".to_owned(), serde_json::json!("not_evaluated"));
+        check.insert("findings".to_owned(), serde_json::json!([]));
+        check.remove("evaluated_scopes");
+        check.remove("gaps");
+        check.remove("prediction");
+        assert_clip_boundary_read_error(
+            wire,
             PredictionContractError::EngineClipBoundaryFacetMismatch,
         );
     }
@@ -8556,6 +8650,11 @@ impl LintFileReport {
             if check.engine_prediction().is_some() || check.engine_prediction_v2().is_some() {
                 return Err(OutputContractError::HistoricalPredictionInV2Output);
             }
+            validate_current_engine_clip_boundary_applicability_v3(
+                check.check_id(),
+                check.applicability(),
+                self.prediction_provenance.as_ref(),
+            )?;
             if check.check_id() == ENGINE_CLIP_BOUNDARY_CHECK_ID
                 && check.selection() == SelectionState::Selected
                 && check.configuration() == ConfigurationState::Enabled
