@@ -358,7 +358,7 @@ $ animsmith measure --format json examples/assets/walk.glb
 {
   "schema_version": 13,
   "schema": "urn:animsmith:schema:output:13",
-  "tool": { "name": "animsmith", "version": "0.6.0",
+  "tool": { "name": "animsmith", "version": "0.7.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
   "summary": { "files": 1 },
