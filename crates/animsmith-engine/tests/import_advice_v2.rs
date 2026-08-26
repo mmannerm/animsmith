@@ -8,7 +8,7 @@ use animsmith_engine::{
     EngineImportAdviceRefusalReasonV2, EngineImportAdviceStateV2, EngineImportAdviceV2,
     ProfileSelection, SettingValueV2, resolve_static_v2,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 fn tool() -> ToolInfo {
@@ -92,6 +92,20 @@ fn godot_defaults_project_exact_params_and_round_trip_strictly() {
     );
     let report = EngineImportAdviceV2::from_source(tool(), &source, &resolved).unwrap();
     assert_eq!(report.state(), EngineImportAdviceStateV2::Available);
+    assert_eq!(report.identity().input_identity().bytes(), 1_066);
+    assert_eq!(
+        report.identity().input_identity().sha256(),
+        "d80b40b7726eea07283148a6fef5f697008334f8b0fa8958ee29911529d5564f"
+    );
+    assert_eq!(
+        serde_json::to_value(report.basis().references()).unwrap(),
+        json!([
+            { "contract": "v2", "reference": { "contract": "v1", "reference": { "kind": "primary_source", "source_id": "godot-resource-importer-scene-4.7" } } },
+            { "contract": "v2", "reference": { "contract": "v1", "reference": { "kind": "profile_fact", "fact_id": "import_setting_projection" } } },
+            { "contract": "v2", "reference": { "contract": "v1", "reference": { "kind": "resolved_setting", "location": { "scope": "document" }, "setting_id": "animation_fps" } } },
+            { "contract": "v2", "reference": { "contract": "v1", "reference": { "kind": "resolved_setting", "location": { "scope": "document" }, "setting_id": "animation_trimming" } } }
+        ])
+    );
     let projection = report
         .projection()
         .expect("expected import-setting projection");
@@ -255,6 +269,63 @@ fn strict_readback_rejects_projection_value_mutation() {
     let bytes = serde_json::to_vec(&lifecycle).unwrap();
     let input = EngineImportAdviceInputV2::read_from(bytes.as_slice()).unwrap();
     assert!(input.into_report().is_err());
+}
+
+#[test]
+fn strict_readback_rejects_embedded_authority_and_basis_mutations() {
+    let (source, resolved) = resolved(
+        ProfileSelection::new("godot", 2, "4.7", "resource-importer-scene"),
+        SourceFormatV1::Glb,
+        BTreeMap::new(),
+    );
+    let report = EngineImportAdviceV2::from_source(tool(), &source, &resolved).unwrap();
+    let value: Value = serde_json::from_slice(&serde_json::to_vec(&report).unwrap()).unwrap();
+
+    let mut profile_identity = value.clone();
+    profile_identity["prediction_provenance"]["profile"]["identity"]["bytes"] = Value::from(0);
+    let input = EngineImportAdviceInputV2::read_from(
+        serde_json::to_vec(&profile_identity).unwrap().as_slice(),
+    )
+    .unwrap();
+    assert!(matches!(
+        input.into_report(),
+        Err(animsmith_engine::EngineImportAdviceError::InvalidV2Provenance(_))
+    ));
+
+    let mut fact_identity = value.clone();
+    fact_identity["prediction_provenance"]["profile"]["facts"][0]["state"] = json!("unknown");
+    let input = EngineImportAdviceInputV2::read_from(
+        serde_json::to_vec(&fact_identity).unwrap().as_slice(),
+    )
+    .unwrap();
+    assert!(matches!(
+        input.into_report(),
+        Err(animsmith_engine::EngineImportAdviceError::InvalidV2Provenance(_))
+    ));
+
+    let mut setting_origin = value.clone();
+    setting_origin["prediction_provenance"]["settings"]["document_settings"][0]["value_origin"] =
+        json!("explicit_config");
+    let input = EngineImportAdviceInputV2::read_from(
+        serde_json::to_vec(&setting_origin).unwrap().as_slice(),
+    )
+    .unwrap();
+    assert!(matches!(
+        input.into_report(),
+        Err(animsmith_engine::EngineImportAdviceError::InvalidV2Provenance(_))
+    ));
+
+    let mut basis_reference = value;
+    basis_reference["basis"]["references"][0]["reference"]["reference"]["source_id"] =
+        json!("unknown-source");
+    let input = EngineImportAdviceInputV2::read_from(
+        serde_json::to_vec(&basis_reference).unwrap().as_slice(),
+    )
+    .unwrap();
+    assert!(matches!(
+        input.into_report(),
+        Err(animsmith_engine::EngineImportAdviceError::InvalidV2Prediction(_))
+    ));
 }
 
 #[test]
