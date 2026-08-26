@@ -5,9 +5,9 @@
 
 use crate::{
     DependencyClosureError, DependencyClosureV1, Document, ExactSourceTimingContractError,
-    ExactSourceTimingV1, InputIdentity, RawSceneAttachmentCoverageV1,
-    RawSceneAttachmentInventoryV1, RawSourceSkeletonEvidenceV1, RawTransformPathInventoryV1,
-    SourceSkeletonAssets, SourceSkeletonCoverage,
+    ExactSourceTimingV1, InputIdentity, RawGltfAddressabilityInventoryV1,
+    RawSceneAttachmentCoverageV1, RawSceneAttachmentInventoryV1, RawSourceSkeletonEvidenceV1,
+    RawTransformPathInventoryV1, SourceSkeletonAssets, SourceSkeletonCoverage,
 };
 use serde::Serialize;
 use std::fmt;
@@ -1783,6 +1783,7 @@ impl RawSourceFactsBuilderV1 {
             facts: self.facts,
             dependency_closure,
             exact_source_timing: None,
+            raw_gltf_addressability_inventory: None,
             raw_scene_attachment_inventory: None,
             raw_transform_path_inventory: None,
         })
@@ -1909,6 +1910,7 @@ pub struct LoadedSource {
     facts: RawSourceFactsV1,
     dependency_closure: DependencyClosureV1,
     exact_source_timing: Option<ExactSourceTimingV1>,
+    raw_gltf_addressability_inventory: Option<RawGltfAddressabilityInventoryV1>,
     raw_scene_attachment_inventory: Option<RawSceneAttachmentInventoryV1>,
     raw_transform_path_inventory: Option<RawTransformPathInventoryV1>,
 }
@@ -1921,6 +1923,10 @@ impl fmt::Debug for LoadedSource {
             .field("primary_identity", &self.facts.primary_identity)
             .field("dependency_closure", &self.dependency_closure)
             .field("exact_source_timing", &self.exact_source_timing)
+            .field(
+                "raw_gltf_addressability_inventory",
+                &self.raw_gltf_addressability_inventory,
+            )
             .field(
                 "raw_scene_attachment_inventory",
                 &self.raw_scene_attachment_inventory,
@@ -1981,6 +1987,43 @@ impl LoadedSource {
     /// Sources produced by callers that retain only legacy V1 facts return `None`.
     pub const fn exact_source_timing(&self) -> Option<&ExactSourceTimingV1> {
         self.exact_source_timing.as_ref()
+    }
+
+    /// Attach bounded raw glTF addressability evidence from this exact load.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RawGltfAddressabilityBindingErrorV1`] when the inventory is
+    /// invalid, belongs to a non-glTF source, or disagrees with the exact
+    /// primary input or dependency closure already bound to this source.
+    pub fn with_raw_gltf_addressability_inventory(
+        mut self,
+        inventory: RawGltfAddressabilityInventoryV1,
+    ) -> Result<Self, RawGltfAddressabilityBindingErrorV1> {
+        inventory
+            .validate()
+            .map_err(|_| RawGltfAddressabilityBindingErrorV1::InvalidInventory)?;
+        if !matches!(
+            self.facts.format,
+            SourceFormatV1::GltfJson | SourceFormatV1::Glb
+        ) {
+            return Err(RawGltfAddressabilityBindingErrorV1::UnsupportedSourceFormat);
+        }
+        if inventory.primary_input() != &self.facts.primary_identity {
+            return Err(RawGltfAddressabilityBindingErrorV1::PrimaryIdentityMismatch);
+        }
+        if inventory.dependency_closure() != &self.dependency_closure {
+            return Err(RawGltfAddressabilityBindingErrorV1::DependencyClosureMismatch);
+        }
+        self.raw_gltf_addressability_inventory = Some(inventory);
+        Ok(self)
+    }
+
+    /// Borrow same-load raw glTF scene/node/skin/path evidence when retained.
+    pub const fn raw_gltf_addressability_inventory(
+        &self,
+    ) -> Option<&RawGltfAddressabilityInventoryV1> {
+        self.raw_gltf_addressability_inventory.as_ref()
     }
 
     /// Attach bounded raw scene/attachment evidence from this exact glTF load.
@@ -2086,6 +2129,24 @@ pub enum RawSceneAttachmentBindingError {
         "raw scene/attachment inventory source-skeleton evidence does not match the loaded source"
     )]
     SourceSkeletonMismatch,
+}
+
+/// An attempted raw glTF addressability sidecar did not bind this loaded source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RawGltfAddressabilityBindingErrorV1 {
+    /// Raw glTF addressability inventories require glTF JSON or GLB input.
+    #[error("raw glTF addressability inventory requires a glTF or GLB source")]
+    UnsupportedSourceFormat,
+    /// The standalone inventory failed semantic validation.
+    #[error("raw glTF addressability inventory is invalid")]
+    InvalidInventory,
+    /// The inventory identifies different primary bytes.
+    #[error("raw glTF addressability inventory primary input does not match loaded source")]
+    PrimaryIdentityMismatch,
+    /// The inventory embeds a different dependency-closure record.
+    #[error("raw glTF addressability inventory dependency closure does not match loaded source")]
+    DependencyClosureMismatch,
 }
 
 /// An attempted raw transform-path sidecar did not bind this loaded source.
@@ -2426,6 +2487,68 @@ mod tests {
         assert_eq!(
             loaded.dependency_closure().coverage().reasons(),
             &[crate::DependencyClosureCoverageReasonV1::CaptureUnavailable]
+        );
+    }
+
+    #[test]
+    fn loaded_source_binds_raw_gltf_addressability_to_exact_primary_and_closure() {
+        fn inventory(
+            primary: InputIdentity,
+            closure: DependencyClosureV1,
+        ) -> RawGltfAddressabilityInventoryV1 {
+            RawGltfAddressabilityInventoryV1::new(
+                primary,
+                closure,
+                crate::RawGltfAddressabilityInventoryInputV1 {
+                    default_scene: crate::RawGltfDefaultSceneObservationV1::Absent,
+                    scene_coverage: crate::RawGltfAddressabilityCoverageV1::Complete,
+                    scenes: Vec::new(),
+                    node_coverage: crate::RawGltfAddressabilityCoverageV1::Complete,
+                    nodes: Vec::new(),
+                    skin_coverage: crate::RawGltfAddressabilityCoverageV1::Complete,
+                    skins: Vec::new(),
+                    attachment_coverage: crate::RawGltfAddressabilityCoverageV1::Complete,
+                    attachments: Vec::new(),
+                    path_candidate_coverage: crate::RawGltfAddressabilityCoverageV1::Complete,
+                    path_candidates: Vec::new(),
+                },
+            )
+            .unwrap()
+        }
+
+        let primary = InputIdentity::from_bytes(b"gltf-addressability");
+        let source = RawSourceFactsBuilderV1::new(SourceFormatV1::GltfJson, primary.clone())
+            .finish(Document::default())
+            .unwrap();
+        let exact = inventory(primary.clone(), source.dependency_closure().clone());
+        let source = source
+            .with_raw_gltf_addressability_inventory(exact)
+            .expect("exact sidecar binds");
+        assert!(source.raw_gltf_addressability_inventory().is_some());
+
+        let wrong_primary = InputIdentity::from_bytes(b"other");
+        let wrong = inventory(
+            wrong_primary.clone(),
+            DependencyClosureV1::unavailable(wrong_primary),
+        );
+        assert_eq!(
+            RawSourceFactsBuilderV1::new(SourceFormatV1::GltfJson, primary.clone())
+                .finish(Document::default())
+                .unwrap()
+                .with_raw_gltf_addressability_inventory(wrong)
+                .unwrap_err(),
+            RawGltfAddressabilityBindingErrorV1::PrimaryIdentityMismatch
+        );
+
+        let wrong_closure = DependencyClosureV1::unavailable(primary.clone());
+        let wrong = inventory(primary.clone(), wrong_closure);
+        assert_eq!(
+            RawSourceFactsBuilderV1::new(SourceFormatV1::GltfJson, primary)
+                .finish(Document::default())
+                .unwrap()
+                .with_raw_gltf_addressability_inventory(wrong)
+                .unwrap_err(),
+            RawGltfAddressabilityBindingErrorV1::DependencyClosureMismatch
         );
     }
 

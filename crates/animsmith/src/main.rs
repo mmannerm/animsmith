@@ -42,10 +42,11 @@ use animsmith_engine::{
     EngineAddressabilityCheckV3, EngineClipBoundaryCheck, EngineDeclaration, EngineDeclarationV2,
     EngineImportAdviceStateV1, EngineImportAdviceStateV2, EngineImportAdviceV1,
     EngineImportAdviceV2, EngineRootMotionCheck, EngineTrackSupportCheck, EngineUnitScaleCheck,
-    GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityV1, ProfileSelection,
-    ResolvedProfile, ResolvedProfileSettingsV2, ResolvedProfileV2, SettingMap, SettingMapV2,
-    SettingValue, SettingValueV2, StaticResolution, StaticResolutionV2, UnityAnimationTypeV2,
-    UnityAvatarSetupV2, UnrealSampleRateV2, build_bevy_animation_addressability_adapter_v1,
+    GltfAddressabilityV2, GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityV1,
+    ProfileSelection, ResolvedProfile, ResolvedProfileSettingsV2, ResolvedProfileV2, SettingMap,
+    SettingMapV2, SettingValue, SettingValueV2, StaticResolution, StaticResolutionV2,
+    TargetPointerWidth, UnityAnimationTypeV2, UnityAvatarSetupV2, UnrealSampleRateV2,
+    build_bevy_addressability_adapter_v2, build_bevy_animation_addressability_adapter_v1,
     lookup_profile_v2,
 };
 use animsmith_gltf::fix::Repair;
@@ -376,7 +377,7 @@ enum GenerateCmd {
     },
     /// Inventory glTF animation addressability with an optional exact Bevy adapter.
     #[command(
-        long_about = "Generate one bounded glTF animation-addressability document from the immutable source facts and dependency closure. With the exact supported Bevy profile selected, the same document embeds the existing engine-addressability evaluation; without it, the neutral inventory remains available and the Bevy adapter is null. This command does not claim runtime loading, graph wiring, target survival, or named-map behavior."
+        long_about = "Generate one bounded glTF animation-addressability document from immutable source facts and dependency closure. Without the exact Bevy revision-3 profile, it emits the immutable V1 animation inventory and makes no scene, skin, target-path, UUID, or named-map claims. With that profile, it emits the separate V2 rich scene, skin, path, UUID, and bounded named-map projections beside the preserved V1 inventory, reusing the existing engine-addressability evaluation; --target-pointer-width is required for target UUIDs. Neither contract claims runtime loading, graph wiring, target survival, scene spawning, playback, or cross-file behavior."
     )]
     Addressability {
         /// Input .glb or .gltf file.
@@ -385,6 +386,9 @@ enum GenerateCmd {
         /// Render canonical JSON or a presentation-only text/Markdown view.
         #[arg(long, value_enum, default_value_t = PresentationFormat::Json)]
         format: PresentationFormat,
+        /// Explicit Bevy target pointer width required for exact target UUIDs.
+        #[arg(long, value_enum, value_name = "32|64")]
+        target_pointer_width: Option<TargetPointerWidthArg>,
     },
     /// Project bounded, versioned importer suggestions from one exact engine profile.
     #[command(
@@ -472,6 +476,26 @@ enum PresentationFormat {
     Json,
     Text,
     Markdown,
+}
+
+/// Explicit target-platform pointer width used by Bevy's target-id preimage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum TargetPointerWidthArg {
+    #[value(name = "32")]
+    /// A 32-bit target `usize` encoding.
+    Bits32,
+    #[value(name = "64")]
+    /// A 64-bit target `usize` encoding.
+    Bits64,
+}
+
+impl From<TargetPointerWidthArg> for TargetPointerWidth {
+    fn from(value: TargetPointerWidthArg) -> Self {
+        match value {
+            TargetPointerWidthArg::Bits32 => Self::Bits32,
+            TargetPointerWidthArg::Bits64 => Self::Bits64,
+        }
+    }
 }
 
 #[cfg(feature = "fbx")]
@@ -1378,6 +1402,13 @@ fn is_unity_generic_root_motion_selection(selection: &ProfileSelection) -> bool 
         && selection.importer() == "fbx-model-importer"
 }
 
+fn is_bevy_gltf_addressability_v2_selection(selection: &ProfileSelection) -> bool {
+    selection.family() == "bevy"
+        && selection.profile_revision() == 3
+        && selection.engine_version() == "0.19.0"
+        && selection.importer() == "gltf-asset-loader"
+}
+
 fn is_unity_generic_root_motion_profile(profile: &ResolvedProfileSettingsV2) -> bool {
     is_unity_generic_root_motion_selection(profile.profile().selection())
         && profile.source_format() == animsmith_core::SourceFormatV1::Fbx
@@ -2044,11 +2075,82 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     &loaded_config,
                 )
             }
-            GenerateCmd::Addressability { input, format } => {
+            GenerateCmd::Addressability {
+                input,
+                format,
+                target_pointer_width,
+            } => {
                 // Static profile/configuration validation deliberately precedes
                 // input I/O, matching lint and preserving #464's typed error
                 // boundary for unknown or malformed tuples.
                 let loaded_config = load_config(cli.config.as_deref())?;
+                let rich_bevy = loaded_config
+                    .engine_profile_v2
+                    .as_ref()
+                    .is_some_and(|engine| {
+                        is_bevy_gltf_addressability_v2_selection(engine.profile().selection())
+                    });
+                if target_pointer_width.is_some() && !rich_bevy {
+                    return Err(
+                        "--target-pointer-width is valid only with the exact Bevy revision-3 0.19.0 gltf-asset-loader profile"
+                            .to_owned(),
+                    );
+                }
+                if rich_bevy {
+                    let loaded = load_with_config_v2(&input, &loaded_config)?;
+                    let profile = loaded.engine_v4.as_ref().ok_or_else(|| {
+                        "generate addressability requires the exact supported Bevy revision-3 profile"
+                            .to_owned()
+                    })?;
+                    let raw = loaded
+                        .source
+                        .raw_gltf_addressability_inventory()
+                        .cloned()
+                        .ok_or_else(|| {
+                            "glTF loader did not retain raw addressability inventory".to_owned()
+                        })?;
+                    let animations =
+                        GltfAnimationAddressabilityInventoryV1::from_source(&loaded.source)
+                            .map_err(|error| error.to_string())?;
+                    let provenance = animsmith_engine::project_prediction_provenance_v4(
+                        profile,
+                        &loaded.source,
+                        Vec::new(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let config = &loaded_config.config;
+                    let doc = loaded.document();
+                    let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
+                    let grids = MetricGrids::new(doc);
+                    let ctx = CheckCtx::new(&grids, &roles, config);
+                    let bevy = build_bevy_addressability_adapter_v2(
+                        &loaded.source,
+                        &raw,
+                        &animations,
+                        profile,
+                        provenance,
+                        target_pointer_width.map(Into::into),
+                        &ctx,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let report = GltfAddressabilityV2::new(current_tool(), raw, animations, bevy)
+                        .map_err(|error| error.to_string())?;
+                    let requires_failure = report.has_required_prediction_unavailable();
+                    match format {
+                        PresentationFormat::Json => render::print_json(&report)?,
+                        PresentationFormat::Text => {
+                            publish::emit_text(&render::render_addressability_v2_text(&report));
+                        }
+                        PresentationFormat::Markdown => {
+                            publish::emit_text(&render::render_addressability_v2_markdown(&report));
+                        }
+                    }
+                    return Ok(if requires_failure {
+                        ExitCode::from(EXIT_FINDINGS)
+                    } else {
+                        ExitCode::SUCCESS
+                    });
+                }
                 let loaded = load_with_config(&input, &loaded_config)?;
                 let prediction_provenance = loaded
                     .engine

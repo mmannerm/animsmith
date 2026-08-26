@@ -33,6 +33,35 @@ its unchanged record with same-load provenance and a neutral
 `GltfAnimationAddressabilityInventoryV1`. It returns no adapter for absent or
 non-Bevy provenance and does not add a second check or runtime-existence claim.
 
+`GltfAddressabilityV2` is the separate rich contract
+`urn:animsmith:schema:gltf-addressability:2`. It preserves the V1 inventory and
+adds independently covered raw glTF scene, node, skin, attachment, path,
+default-scene, named-map, and unique-target projections. Complete empty
+coverage proves absence; partial prefixes and unavailable domains do not.
+Explicit `skin.skeleton` remains source evidence only because Bevy ignores it;
+scene-instantiated `SkinnedMesh` attachment is outside this static contract.
+
+Its optional `BevyGltfAddressabilityRulesV1` bundle is pinned to Bevy
+`v0.19.0` commit `c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0`,
+locked `gltf 1.4.1`, and commit-pinned loader, label, path, target-id, feature,
+and root `Cargo.lock` sources. The adapter reuses one `engine-addressability` evaluation and
+the existing `Animation{i}` selector. It predicts `Scene{i}`, an optional
+route from `Gltf.default_scene` to an existing scene, eager
+`Skin{i}/InverseBindMatrices` for every source skin, and conditional `Skin{i}`
+when any source node references it. There is no `DefaultScene` label and no
+fabricated `Scene0`; typed source indices remain authoritative over collected
+map/vector order.
+
+Target UUID prediction requires explicit `TargetPointerWidth::Bits32` or
+`Bits64`, matching Bevy's target-width little-endian hashing; host width is never
+inferred. Incomplete, unreachable, multiply reachable, colliding, or disabled
+target work is required-unavailable. The explicit `target_coverage` projection
+distinguishes a complete (including empty) target domain from
+`target_domain_truncated`; other rich projection budget failures use
+`projection_bounds_exceeded`. V2 has explicit row, reference, text,
+path, and staged-reader bounds and makes no claim that Bevy loaded, spawned,
+retained, wired, or played the asset.
+
 Resolved settings V1 materializes at most 4,096 actual clip rows. Inputs above
 that bound return a typed `ResolutionError::ResolvedSettingsContract`; callers
 must not truncate the clip list and claim complete prediction provenance.

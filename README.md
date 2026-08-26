@@ -341,6 +341,40 @@ positive runtime survival, or a content finding for a dropped row. Its V5
 provenance and output-v17 contract are current; output-v16, revisions 1 and 2,
 and output-v15 remain preserved and readable.
 
+The rich glTF addressability producer is the separate immutable
+`urn:animsmith:schema:gltf-addressability:2` contract. It preserves the V1
+animation inventory and adds independently covered, bounded same-load scenes,
+nodes, skins, attachments, scene paths, default-scene routing, named-map
+winners, and unique animation targets. Complete empty coverage proves absence;
+partial prefixes and unavailable domains do not. It retains explicit
+`skin.skeleton` source evidence but makes no inferred-root claim, and does not
+claim scene-instantiated `SkinnedMesh` attachment.
+
+Its optional exact Bevy adapter uses the existing single
+`engine-addressability` lifecycle and `Animation{i}` primitive. The separately
+versioned rule bundle is pinned to Bevy `v0.19.0`, commit
+`c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0`, locked
+`gltf 1.4.1`, and the loader/label/path/target-id/feature/root-`Cargo.lock`
+sources. It models
+`Scene{i}` and an optional `Gltf.default_scene` route only; there is no
+`DefaultScene` label or fabricated `Scene0`. It eagerly projects
+`Skin{i}/InverseBindMatrices` for every source skin (identity fallback when
+absent) and projects `Skin{i}` when any source node references it. Named maps
+are separate source-order last-write-wins projections.
+
+Exact target UUIDs require an explicitly declared 32- or 64-bit pointer width
+because Bevy hashes path-segment lengths using its target pointer width; width
+is never inferred from the host. Unreachable, multiply reachable, colliding,
+incomplete, or feature-disabled targets are required-unavailable, not guessed. Its explicit
+`target_coverage` projection distinguishes complete (including empty) target
+domains from incomplete raw/animation evidence and `target_domain_truncated`;
+other rich projection budget failures use `projection_bounds_exceeded`. V2 bounds each
+domain at 4,096 rows, references at 65,536, path segments at 1,024 bytes and
+256 segments, retained text at 1 MiB, and staged reports at 256 MiB. It is
+prediction evidence only and never certifies Bevy loading, spawning, target
+survival, graph wiring, or playback. See
+[`gltf-addressability-v2.schema.json`](https://github.com/mmannerm/animsmith/blob/main/docs/schemas/gltf-addressability-v2.schema.json).
+
 The exact Unity Generic revision-2 tuple uses profile id unity-generic,
 revision `2`, engine version `6000.3`, and importer id fbx-model-importer for
 FBX. Its required closed settings are

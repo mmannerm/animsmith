@@ -28,6 +28,7 @@ const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
+const ADDRESSABILITY_V2_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-addressability:2";
 const IMPORT_ADVICE_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:1";
 const IMPORT_ADVICE_V2_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:2";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
@@ -43,6 +44,8 @@ const MEASUREMENTS_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v16.schema.json");
 const ADDRESSABILITY_SCHEMA: &str =
     include_str!("../../../docs/schemas/gltf-animation-addressability-v1.schema.json");
+const ADDRESSABILITY_V2_SCHEMA: &str =
+    include_str!("../../../docs/schemas/gltf-addressability-v2.schema.json");
 const IMPORT_ADVICE_SCHEMA: &str =
     include_str!("../../../docs/schemas/engine-import-advice-v1.schema.json");
 const IMPORT_ADVICE_V2_SCHEMA: &str =
@@ -211,6 +214,38 @@ fn addressability_validator() -> jsonschema::Validator {
         .with_registry(&registry)
         .build(&addressability)
         .expect("addressability schema compiles with reused historical output-v10 definitions")
+}
+
+fn addressability_v2_validator() -> jsonschema::Validator {
+    let output: Value =
+        serde_json::from_str(CURRENT_OUTPUT_SCHEMA).expect("valid current output schema JSON");
+    let output_v10: Value =
+        serde_json::from_str(OUTPUT_V10_SCHEMA).expect("valid historical output schema JSON");
+    let addressability_v1: Value =
+        serde_json::from_str(ADDRESSABILITY_SCHEMA).expect("valid addressability V1 schema JSON");
+    let measurements_v15: Value = serde_json::from_str(MEASUREMENTS_V15_SCHEMA)
+        .expect("valid historical measurement schema JSON");
+    let measurements: Value =
+        serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let addressability: Value = serde_json::from_str(ADDRESSABILITY_V2_SCHEMA)
+        .expect("valid addressability V2 schema JSON");
+    let registry = jsonschema::Registry::new()
+        .add(MEASUREMENTS_V15_SCHEMA_ID, measurements_v15)
+        .expect("valid historical measurement schema identity")
+        .add(MEASUREMENTS_SCHEMA_ID, measurements)
+        .expect("valid measurement schema identity")
+        .add(OUTPUT_V10_SCHEMA_ID, output_v10)
+        .expect("valid historical output schema identity")
+        .add(ADDRESSABILITY_SCHEMA_ID, addressability_v1)
+        .expect("valid addressability V1 schema identity")
+        .add(CURRENT_OUTPUT_SCHEMA_ID, output)
+        .expect("valid current output schema identity")
+        .prepare()
+        .expect("addressability V2 schema registry prepares");
+    jsonschema::options()
+        .with_registry(&registry)
+        .build(&addressability)
+        .expect("addressability V2 schema compiles with output-v17 definitions")
 }
 
 fn assert_addressability_schema_valid(instance: &Value) {
@@ -1026,6 +1061,128 @@ fn write_track_support_gltf(path: &std::path::Path, channels_per_animation: &[us
             "scene": 0
         }),
     );
+}
+
+#[derive(Clone, Copy)]
+enum RichAddressabilityFixture {
+    Reachable,
+    EmptyName,
+    ZeroScenes,
+    NonzeroDefaultScene,
+    OffSceneSkin,
+    NamedMapsAndContributors,
+    DuplicatePath,
+    Unreachable,
+    HostileName,
+}
+
+fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressabilityFixture) {
+    let empty_name = matches!(fixture, RichAddressabilityFixture::EmptyName);
+    let nonzero_default_scene = matches!(fixture, RichAddressabilityFixture::NonzeroDefaultScene);
+    let off_scene_skin = matches!(fixture, RichAddressabilityFixture::OffSceneSkin);
+    let named_maps_and_contributors =
+        matches!(fixture, RichAddressabilityFixture::NamedMapsAndContributors);
+    let target_name = if matches!(fixture, RichAddressabilityFixture::HostileName) {
+        HOSTILE_PRESENTATION_TEXT
+    } else if matches!(fixture, RichAddressabilityFixture::DuplicatePath) {
+        "duplicate"
+    } else {
+        "target"
+    };
+    let duplicate = matches!(fixture, RichAddressabilityFixture::DuplicatePath);
+    let zero_scenes = matches!(fixture, RichAddressabilityFixture::ZeroScenes);
+    let unreachable = matches!(fixture, RichAddressabilityFixture::Unreachable);
+    let root_skin = if named_maps_and_contributors { 1 } else { 0 };
+    let mut nodes = vec![
+        json!({ "name": if empty_name { "" } else { "root" }, "children": if duplicate { vec![1, 2] } else { vec![1] }, "skin": root_skin }),
+        json!({ "name": target_name }),
+        json!({ "name": if duplicate { target_name } else { "detached" } }),
+    ];
+    if off_scene_skin {
+        nodes[2]["skin"] = json!(1);
+    } else if named_maps_and_contributors {
+        // Source node 0 references Skin1 before this off-scene node references
+        // Skin0, making the reversed first-reference order observable.
+        nodes[2]["skin"] = json!(0);
+    }
+    let channels = if zero_scenes {
+        Vec::new()
+    } else if duplicate {
+        vec![
+            json!({ "sampler": 0, "target": { "node": 1, "path": "translation" } }),
+            json!({ "sampler": 0, "target": { "node": 2, "path": "translation" } }),
+        ]
+    } else {
+        vec![json!({
+            "sampler": 0,
+            "target": { "node": if empty_name { 0 } else if unreachable { 2 } else { 1 }, "path": "translation" }
+        })]
+    };
+    let animations = if channels.is_empty() {
+        Vec::new()
+    } else if named_maps_and_contributors {
+        vec![
+            json!({
+                "name": "shared",
+                "samplers": [{ "input": 0, "output": 1 }],
+                "channels": [
+                    json!({ "sampler": 0, "target": { "node": 1, "path": "translation" } }),
+                    json!({ "sampler": 0, "target": { "node": 1, "path": "translation" } }),
+                ]
+            }),
+            json!({
+                "name": "shared",
+                "samplers": [{ "input": 0, "output": 1 }],
+                "channels": [
+                    json!({ "sampler": 0, "target": { "node": 1, "path": "translation" } }),
+                ]
+            }),
+        ]
+    } else {
+        vec![json!({
+            "name": "move",
+            "samplers": [{ "input": 0, "output": 1 }],
+            "channels": channels
+        })]
+    };
+    let scenes = if zero_scenes {
+        Vec::new()
+    } else if nonzero_default_scene {
+        vec![
+            json!({ "name": "first", "nodes": [] }),
+            json!({ "name": "main", "nodes": [0] }),
+        ]
+    } else {
+        vec![json!({ "name": "main", "nodes": [0] })]
+    };
+    let mut document = json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{
+            "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "byteLength": 96
+        }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+            { "buffer": 0, "byteOffset": 8, "byteLength": 24 },
+            { "buffer": 0, "byteOffset": 32, "byteLength": 64 }
+        ],
+        "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0] },
+            { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3" },
+            { "bufferView": 2, "componentType": 5126, "count": 1, "type": "MAT4" }
+        ],
+        "nodes": nodes,
+        "skins": [
+            { "name": if named_maps_and_contributors { "shared" } else { "body" }, "joints": [1], "skeleton": 0, "inverseBindMatrices": 2 },
+            { "name": if named_maps_and_contributors { "shared" } else { "unused" }, "joints": [2] }
+        ],
+        "animations": animations,
+        "scenes": scenes
+    });
+    if !zero_scenes {
+        document["scene"] = json!(if nonzero_default_scene { 1 } else { 0 });
+    }
+    write_json(path, &document);
 }
 
 fn track_support_facets(report: &Value) -> &Vec<Value> {
@@ -2881,6 +3038,787 @@ fn generate_addressability_complete_empty_inventory_keeps_exact_bevy_check_not_a
     );
 }
 
+fn generate_rich_addressability(
+    input: &std::path::Path,
+    config: &std::path::Path,
+    target_pointer_width: Option<&str>,
+    format: Option<&str>,
+) -> Output {
+    let mut command = animsmith();
+    command
+        .arg("--config")
+        .arg(config)
+        .args(["generate", "addressability"]);
+    if let Some(width) = target_pointer_width {
+        command.args(["--target-pointer-width", width]);
+    }
+    if let Some(format) = format {
+        command.args(["--format", format]);
+    }
+    command
+        .arg(input)
+        .output()
+        .expect("runs rich addressability generation")
+}
+
+#[test]
+fn generate_addressability_v2_is_exact_schema_profile_and_projects_scenes_skins_and_ibm() {
+    let dir = unique_temp_dir("generate-addressability-v2-rich");
+    let input = dir.path().join("rich.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::Reachable);
+    let config = write_bevy_v3_track_config(dir.path(), "rich", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    let schema_errors = addressability_v2_validator()
+        .iter_errors(&report)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        schema_errors.is_empty(),
+        "V2 JSON must validate against its public schema:\n{}",
+        schema_errors.join("\n")
+    );
+    assert_eq!(report["schema_version"], 2);
+    assert_eq!(report["schema"], ADDRESSABILITY_V2_SCHEMA_ID);
+    assert_eq!(
+        report["bevy"]["prediction_provenance"]["profile"]["selection"]["profile_revision"],
+        3
+    );
+    assert_eq!(
+        report["inventory"]["raw"]["default_scene"]["state"],
+        "selected"
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["scenes"],
+        json!([{ "source_scene_index": 0, "label": "Scene0" }])
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["default_scene_route"],
+        json!({ "state": "available", "value": "Scene0" })
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][0]["skin_label"],
+        json!({ "state": "available", "value": "Skin0" })
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][0]["explicit_skeleton_root_node_index"],
+        0
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][0]["inverse_bind_matrices_label"],
+        "Skin0/InverseBindMatrices"
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][1]["skin_label"]["state"],
+        "proven_absent"
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["skins"][1]["inverse_bind_matrices_label"],
+        "Skin1/InverseBindMatrices"
+    );
+    let readback = animsmith_engine::GltfAddressabilityV2::read_from(output.stdout.as_slice())
+        .expect("strict V2 readback");
+    assert_eq!(readback.input(), readback.inventory().raw().primary_input());
+    assert!(readback.bevy().is_some());
+}
+
+#[test]
+fn generate_addressability_v2_uses_source_scene_index_for_nonzero_default_route() {
+    let dir = unique_temp_dir("generate-addressability-v2-nonzero-default-scene");
+    let input = dir.path().join("nonzero-default-scene.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::NonzeroDefaultScene);
+    let config = write_bevy_v3_track_config(dir.path(), "nonzero-default-scene", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    assert_eq!(
+        report["bevy"]["projection"]["scenes"],
+        json!([
+            { "source_scene_index": 0, "label": "Scene0" },
+            { "source_scene_index": 1, "label": "Scene1" }
+        ])
+    );
+    assert_eq!(
+        report["inventory"]["raw"]["default_scene"],
+        json!({ "state": "selected", "source_scene_index": 1 })
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["default_scene_route"],
+        json!({ "state": "available", "value": "Scene1" })
+    );
+}
+
+#[test]
+fn generate_addressability_v2_creates_off_scene_skin_handles_from_all_source_nodes() {
+    let dir = unique_temp_dir("generate-addressability-v2-off-scene-skin");
+    let input = dir.path().join("off-scene-skin.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::OffSceneSkin);
+    let config = write_bevy_v3_track_config(dir.path(), "off-scene-skin", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    let skins = report["bevy"]["projection"]["skins"]
+        .as_array()
+        .expect("skin projections");
+    assert_eq!(skins[0]["skin_label"]["state"], "available");
+    assert_eq!(
+        skins[1]["skin_label"],
+        json!({ "state": "available", "value": "Skin1" })
+    );
+    assert_eq!(
+        skins[1]["inverse_bind_matrices_label"],
+        "Skin1/InverseBindMatrices"
+    );
+}
+
+#[test]
+fn generate_addressability_v2_named_maps_are_last_write_wins_and_targets_aggregate_contributors() {
+    let dir = unique_temp_dir("generate-addressability-v2-named-maps");
+    let input = dir.path().join("named-maps.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::NamedMapsAndContributors);
+    let config = write_bevy_v3_track_config(dir.path(), "named-maps", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    let maps = report["bevy"]["projection"]["named_maps"]
+        .as_array()
+        .expect("named map projections");
+    assert!(
+        maps.iter()
+            .all(|map| map["duplicate_policy"] == "last_write_wins")
+    );
+    assert_eq!(
+        maps[1]["winners"],
+        json!({
+            "state": "available",
+            "value": [{ "name": "shared", "source_index": 1, "typed_label": "Animation1" }]
+        })
+    );
+    assert_eq!(
+        maps[2]["winners"],
+        json!({
+            "state": "available",
+            "value": [{ "name": "shared", "source_index": 0, "typed_label": "Skin0" }]
+        })
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["targets"][0]["contributing_channels"],
+        json!([
+            { "source_animation_index": 0, "source_channel_index": 0 },
+            { "source_animation_index": 0, "source_channel_index": 1 },
+            { "source_animation_index": 1, "source_channel_index": 0 }
+        ])
+    );
+}
+
+#[test]
+fn generate_addressability_v2_target_width_controls_uuid_and_missing_width_exits_one() {
+    let dir = unique_temp_dir("generate-addressability-v2-width");
+    let input = dir.path().join("target.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::Reachable);
+    let config = write_bevy_v3_track_config(dir.path(), "width", true, Some(true));
+
+    let bits32 = generate_rich_addressability(&input, &config, Some("32"), None);
+    let bits64 = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(bits32.status.code(), Some(0), "{}", stderr(&bits32));
+    assert_eq!(bits64.status.code(), Some(0), "{}", stderr(&bits64));
+    let bits32: Value = serde_json::from_slice(&bits32.stdout).unwrap();
+    let bits64: Value = serde_json::from_slice(&bits64.stdout).unwrap();
+    let target32 = &bits32["bevy"]["projection"]["targets"][0]["projection"];
+    let target64 = &bits64["bevy"]["projection"]["targets"][0]["projection"];
+    assert_eq!(target32["state"], "available");
+    assert_eq!(target32["value"]["path"], "root/target");
+    assert_eq!(target64["state"], "available");
+    assert_ne!(target32["value"]["uuid"], target64["value"]["uuid"]);
+
+    let missing = generate_rich_addressability(&input, &config, None, None);
+    assert_eq!(missing.status.code(), Some(1), "{}", stderr(&missing));
+    assert!(stderr(&missing).is_empty());
+    let missing: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(
+        missing["bevy"]["projection"]["targets"][0]["projection"],
+        json!({
+            "state": "required_unavailable",
+            "reasons": ["target_pointer_width_missing"]
+        })
+    );
+    assert_eq!(missing["bevy"]["check"]["evaluation"], "partial");
+}
+
+#[test]
+fn generate_addressability_v2_preserves_empty_authored_segment_under_public_schema() {
+    let dir = unique_temp_dir("generate-addressability-v2-empty-name");
+    let input = dir.path().join("empty-name.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::EmptyName);
+    let config = write_bevy_v3_track_config(dir.path(), "empty-name", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    let schema_errors = addressability_v2_validator()
+        .iter_errors(&report)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        schema_errors.is_empty(),
+        "empty authored path segment must satisfy the public schema:\n{}",
+        schema_errors.join("\n")
+    );
+    let value = &report["bevy"]["projection"]["targets"][0]["projection"]["value"];
+    assert_eq!(value["segments"], json!([""]));
+    assert_eq!(value["path"], "");
+    animsmith_engine::GltfAddressabilityV2::read_from(output.stdout.as_slice())
+        .expect("strict V2 readback accepts the empty authored segment");
+}
+
+#[test]
+fn generate_addressability_v2_zero_scenes_never_invents_scene_zero() {
+    let dir = unique_temp_dir("generate-addressability-v2-zero-scenes");
+    let input = dir.path().join("zero-scenes.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::ZeroScenes);
+    let config = write_bevy_v3_track_config(dir.path(), "zero-scenes", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory"]["raw"]["scenes"], json!([]));
+    assert_eq!(report["bevy"]["projection"]["scenes"], json!([]));
+    assert_eq!(
+        report["bevy"]["projection"]["default_scene_route"]["state"],
+        "proven_absent"
+    );
+    assert!(
+        !output
+            .stdout
+            .windows(b"Scene0".len())
+            .any(|window| window == b"Scene0")
+    );
+}
+
+#[test]
+fn generate_addressability_v2_duplicate_and_unreachable_targets_are_unavailable() {
+    let dir = unique_temp_dir("generate-addressability-v2-unavailable-targets");
+    let config = write_bevy_v3_track_config(dir.path(), "unavailable", true, Some(true));
+    for (name, fixture, reason) in [
+        (
+            "duplicate",
+            RichAddressabilityFixture::DuplicatePath,
+            "duplicate_full_path",
+        ),
+        (
+            "unreachable",
+            RichAddressabilityFixture::Unreachable,
+            "unreachable_target",
+        ),
+    ] {
+        let input = dir.path().join(format!("{name}.gltf"));
+        write_rich_addressability_gltf(&input, fixture);
+        let output = generate_rich_addressability(&input, &config, Some("64"), None);
+        assert_eq!(output.status.code(), Some(1), "{name}: {}", stderr(&output));
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let targets = report["bevy"]["projection"]["targets"]
+            .as_array()
+            .expect("target rows");
+        assert!(!targets.is_empty());
+        assert!(targets.iter().all(|target| {
+            target["projection"]["state"] == "required_unavailable"
+                && target["projection"]["reasons"]
+                    .as_array()
+                    .is_some_and(|reasons| reasons.iter().any(|value| value == reason))
+        }));
+    }
+}
+
+fn v2_coverage_text(value: &Value) -> String {
+    let state = value["state"].as_str().expect("coverage state");
+    match state {
+        "complete" => state.to_owned(),
+        _ => format!(
+            "{} ({})",
+            state,
+            value["reason"].as_str().expect("coverage reason")
+        ),
+    }
+}
+
+fn v2_projection_text(value: &Value, available_value: impl FnOnce(&Value) -> String) -> String {
+    match value["state"].as_str().expect("projection state") {
+        "available" => format!("available ({})", available_value(&value["value"])),
+        "proven_absent" => "proven_absent".into(),
+        "required_unavailable" => format!(
+            "required_unavailable ({})",
+            value["reasons"]
+                .as_array()
+                .expect("projection reasons")
+                .iter()
+                .map(|reason| reason.as_str().expect("projection reason"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        state => panic!("unknown projection state {state}"),
+    }
+}
+
+fn v2_named_winners_text(value: &Value, quote_names: bool) -> String {
+    v2_projection_text(value, |winners| {
+        winners
+            .as_array()
+            .expect("named map winners")
+            .iter()
+            .map(|winner| {
+                let name = winner["name"].as_str().expect("winner name");
+                let name = if quote_names {
+                    format!("\"{name}\"")
+                } else {
+                    name.to_owned()
+                };
+                format!(
+                    "{} -> {} {}",
+                    name,
+                    winner["source_index"].as_u64().expect("winner index"),
+                    winner["typed_label"].as_str().expect("winner label")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
+fn assert_v2_render_line(output: &str, expected: String) {
+    assert!(
+        output.lines().any(|line| line == expected),
+        "missing semantic renderer line {expected:?}:\n{output}"
+    );
+}
+
+fn assert_v2_render_semantic_inventory(report: &Value, text: &str, markdown: &str) {
+    let raw = &report["inventory"]["raw"];
+    let input_sha256 = report["input"]["sha256"].as_str().expect("input digest");
+    let input_bytes = report["input"]["bytes"].as_u64().expect("input bytes");
+    let raw_sha256 = raw["identity"]["sha256"]
+        .as_str()
+        .expect("raw inventory digest");
+    let raw_bytes = raw["identity"]["bytes"]
+        .as_u64()
+        .expect("raw inventory canonical bytes");
+    assert_v2_render_line(
+        text,
+        format!("input: sha256={input_sha256} bytes={input_bytes}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("- Input: `{input_sha256}` (`{input_bytes}` bytes)"),
+    );
+    assert_v2_render_line(
+        text,
+        format!("raw inventory: sha256={raw_sha256} canonical-bytes={raw_bytes}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("- Raw inventory: `{raw_sha256}` (`{raw_bytes}` canonical bytes)"),
+    );
+    for (domain, rows_key, coverage_key) in [
+        ("scenes", "scenes", "scene_coverage"),
+        ("nodes", "nodes", "node_coverage"),
+        ("skins", "skins", "skin_coverage"),
+        ("attachments", "attachments", "attachment_coverage"),
+        (
+            "path candidates",
+            "path_candidates",
+            "path_candidate_coverage",
+        ),
+    ] {
+        let coverage = v2_coverage_text(&raw[coverage_key]);
+        let count = raw[rows_key].as_array().expect("raw domain rows").len();
+        assert_v2_render_line(
+            text,
+            format!("{domain}: {coverage} ({count} retained row(s))"),
+        );
+        assert_v2_render_line(markdown, format!("| `{domain}` | `{coverage}` | {count} |"));
+    }
+
+    let animations = &report["inventory"]["animations"]["animations"];
+    let animation_coverage = v2_coverage_text(&animations["coverage"]);
+    let animation_count = animations["rows"].as_array().expect("animation rows").len();
+    assert_v2_render_line(
+        text,
+        format!("animations: {animation_coverage} ({animation_count} retained row(s))"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("- Animations: `{animation_coverage}` (`{animation_count}` retained rows)"),
+    );
+
+    let default_scene = &raw["default_scene"];
+    let default_scene_text = match default_scene["state"]
+        .as_str()
+        .expect("default scene state")
+    {
+        "absent" => "absent".to_owned(),
+        "selected" => format!(
+            "selected ({})",
+            default_scene["source_scene_index"]
+                .as_u64()
+                .expect("default scene index")
+        ),
+        "unavailable" => format!(
+            "unavailable ({})",
+            default_scene["reason"]
+                .as_str()
+                .expect("default scene reason")
+        ),
+        state => panic!("unknown default scene state {state}"),
+    };
+    assert_v2_render_line(
+        text,
+        format!("default scene observation: {default_scene_text}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("Default scene observation: `{default_scene_text}`."),
+    );
+
+    let bevy = &report["bevy"];
+    let selection = &bevy["prediction_provenance"]["profile"]["selection"];
+    let family = selection["family"].as_str().expect("profile family");
+    let revision = selection["profile_revision"]
+        .as_u64()
+        .expect("profile revision");
+    let engine_version = selection["engine_version"]
+        .as_str()
+        .expect("engine version");
+    let importer = selection["importer"].as_str().expect("importer");
+    assert_v2_render_line(
+        text,
+        format!("Bevy adapter: {family} revision {revision} ({engine_version} / {importer})"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("Profile: `{family}` revision `{revision}` (`{engine_version}` / `{importer}`)."),
+    );
+
+    let settings = &bevy["settings"];
+    let feature = settings["bevy_animation_feature"]
+        .as_bool()
+        .expect("animation feature setting");
+    let load_animations = settings["load_animations"]
+        .as_bool()
+        .expect("load animations setting");
+    let pointer_width = match bevy["rules"]["target_pointer_width"].as_str() {
+        Some("bits32") => "32",
+        Some("bits64") => "64",
+        Some(other) => panic!("unknown pointer width {other}"),
+        None => "missing",
+    };
+    assert_v2_render_line(text, format!("  target pointer width: {pointer_width}"));
+    assert_v2_render_line(
+        text,
+        format!("  settings: bevy_animation_feature={feature} load_animations={load_animations}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!(
+            "Target pointer width: `{pointer_width}`. Settings: `bevy_animation_feature={feature}`, `load_animations={load_animations}`."
+        ),
+    );
+
+    let check = &bevy["check"];
+    let check_id = check["check_id"].as_str().expect("check id");
+    let selection = check["selection"].as_str().expect("check selection");
+    let configuration = check["configuration"]
+        .as_str()
+        .expect("check configuration");
+    let applicability = check["applicability"]
+        .as_str()
+        .expect("check applicability");
+    let evaluation = check["evaluation"].as_str().expect("check evaluation");
+    assert_v2_render_line(
+        text,
+        format!(
+            "  check {check_id}: {selection} / {configuration} / {applicability} / {evaluation}"
+        ),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!(
+            "Check `{check_id}`: `{selection}` / `{configuration}` / `{applicability}` / `{evaluation}`."
+        ),
+    );
+
+    let projection = &bevy["projection"];
+    for scene in projection["scenes"].as_array().expect("scene projections") {
+        let index = scene["source_scene_index"].as_u64().expect("scene index");
+        let label = scene["label"].as_str().expect("scene label");
+        assert_v2_render_line(text, format!("  scene label {index}: {label}"));
+        assert_v2_render_line(markdown, format!("| {index} | `{label}` |"));
+    }
+    let route = v2_projection_text(&projection["default_scene_route"], |value| {
+        value.as_str().expect("scene route").to_owned()
+    });
+    assert_v2_render_line(text, format!("  default scene route: {route}"));
+    assert_v2_render_line(markdown, format!("Default scene route: `{route}`."));
+
+    for skin in projection["skins"].as_array().expect("skin projections") {
+        let index = skin["source_skin_index"].as_u64().expect("skin index");
+        let root = skin["explicit_skeleton_root_node_index"]
+            .as_u64()
+            .map_or_else(|| "null".to_owned(), |value| value.to_string());
+        let label = v2_projection_text(&skin["skin_label"], |value| {
+            value.as_str().expect("skin label").to_owned()
+        });
+        let inverse_bind = skin["inverse_bind_matrices_label"]
+            .as_str()
+            .expect("inverse bind label");
+        assert_v2_render_line(
+            text,
+            format!(
+                "  skin label {index}: {label} explicit-skeleton-root={root} inverse-bind-label={inverse_bind}"
+            ),
+        );
+        assert_v2_render_line(
+            markdown,
+            format!("| {index} | `{label}` | `{root}` | `{inverse_bind}` |"),
+        );
+    }
+
+    for map in projection["named_maps"].as_array().expect("named maps") {
+        let kind = map["kind"].as_str().expect("named map kind");
+        let policy = map["duplicate_policy"].as_str().expect("named map policy");
+        let text_winners = v2_named_winners_text(&map["winners"], true);
+        let markdown_winners = v2_named_winners_text(&map["winners"], false);
+        assert_v2_render_line(
+            text,
+            format!("  named {kind} map ({policy}): {text_winners}"),
+        );
+        assert_v2_render_line(
+            markdown,
+            format!("| `{kind}` | `{policy}` | `{markdown_winners}` |"),
+        );
+    }
+
+    let target_coverage = v2_projection_text(&projection["target_coverage"], |_| "complete".into());
+    assert_v2_render_line(
+        text,
+        format!("  animation target coverage: {target_coverage}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("Animation target coverage: `{target_coverage}`."),
+    );
+
+    for target in projection["targets"]
+        .as_array()
+        .expect("target projections")
+    {
+        let index = target["source_node_index"]
+            .as_u64()
+            .expect("target node index");
+        let contributors = target["contributing_channels"]
+            .as_array()
+            .expect("target contributors")
+            .iter()
+            .map(|channel| {
+                format!(
+                    "{}:{}",
+                    channel["source_animation_index"]
+                        .as_u64()
+                        .expect("contributor animation index"),
+                    channel["source_channel_index"]
+                        .as_u64()
+                        .expect("contributor channel index")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let target_projection = &target["projection"];
+        let text_projection = v2_projection_text(target_projection, |value| {
+            format!(
+                "path=\"{}\" uuid={}",
+                value["path"].as_str().expect("target path"),
+                value["uuid"].as_str().expect("target uuid")
+            )
+        });
+        let markdown_projection = v2_projection_text(target_projection, |value| {
+            format!(
+                "path={} uuid={}",
+                value["path"].as_str().expect("target path"),
+                value["uuid"].as_str().expect("target uuid")
+            )
+        });
+        assert_v2_render_line(
+            text,
+            format!("  animation target node {index} channels=[{contributors}]: {text_projection}"),
+        );
+        assert_v2_render_line(
+            markdown,
+            format!("| {index} | `{contributors}` | `{markdown_projection}` |"),
+        );
+    }
+}
+
+#[test]
+fn generate_addressability_v2_flag_profile_validation_precedes_input_io() {
+    let dir = unique_temp_dir("generate-addressability-v2-config-order");
+    let missing = dir.path().join("missing.gltf");
+    let old_bevy = write_bevy_config(dir.path(), "old-profile");
+    let output = generate_rich_addressability(&missing, &old_bevy, Some("64"), None);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(stderr(&output).contains("--target-pointer-width"));
+    assert!(!stderr(&output).contains("failed to read"));
+
+    let bad_profile = write_config(
+        dir.path(),
+        "bad-rich-profile.toml",
+        r#"
+[engine]
+profile = "bevy-next"
+profile_revision = 3
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+"#,
+    );
+    let output = generate_rich_addressability(&missing, &bad_profile, None, None);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).is_empty());
+    assert!(stderr(&output).contains("unknown engine profile"));
+    assert!(!stderr(&output).contains("failed to read"));
+}
+
+#[test]
+fn generate_addressability_v2_text_and_markdown_have_escaped_semantic_parity() {
+    let dir = unique_temp_dir("generate-addressability-v2-renderers");
+    let input = dir.path().join("hostile.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::HostileName);
+    let config = write_bevy_v3_track_config(dir.path(), "renderers", true, Some(true));
+
+    let text = generate_rich_addressability(&input, &config, Some("64"), Some("text"));
+    let markdown = generate_rich_addressability(&input, &config, Some("64"), Some("markdown"));
+    assert_eq!(text.status.code(), Some(0), "{}", stderr(&text));
+    assert_eq!(markdown.status.code(), Some(0), "{}", stderr(&markdown));
+    let text = stdout(&text);
+    let markdown = stdout(&markdown);
+    for expected in [
+        "glTF addressability v2",
+        "Scene0",
+        "Skin0",
+        "Skin0/InverseBindMatrices",
+        "Animation0",
+        "last_write_wins",
+        "root",
+        "pointer width",
+    ] {
+        assert!(text.contains(expected), "text missing {expected}: {text}");
+        assert!(
+            markdown.contains(expected),
+            "Markdown missing {expected}: {markdown}"
+        );
+    }
+    assert!(text.contains("forged\\nline\\u001B"), "{text}");
+    assert!(!text.contains(HOSTILE_PRESENTATION_TEXT), "{text}");
+    assert!(!markdown.contains(HOSTILE_PRESENTATION_TEXT), "{markdown}");
+    assert!(!text.as_bytes().contains(&0x1b));
+    assert!(!markdown.as_bytes().contains(&0x1b));
+
+    for (name, fixture, status, expected) in [
+        (
+            "duplicate-target",
+            RichAddressabilityFixture::DuplicatePath,
+            1,
+            vec![
+                "required_unavailable (duplicate_full_path",
+                "move",
+                "body",
+                "Animation0",
+                "Skin0",
+                "last_write_wins",
+            ],
+        ),
+        (
+            "proven-absent-default-scene",
+            RichAddressabilityFixture::ZeroScenes,
+            0,
+            vec!["proven_absent", "last_write_wins"],
+        ),
+    ] {
+        let input = dir.path().join(format!("{name}.gltf"));
+        write_rich_addressability_gltf(&input, fixture);
+        let text = generate_rich_addressability(&input, &config, Some("64"), Some("text"));
+        let markdown = generate_rich_addressability(&input, &config, Some("64"), Some("markdown"));
+        assert_eq!(
+            text.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&text)
+        );
+        assert_eq!(
+            markdown.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&markdown)
+        );
+        let text = stdout(&text);
+        let markdown = stdout(&markdown);
+        if matches!(fixture, RichAddressabilityFixture::DuplicatePath) {
+            assert!(text.contains("named animation map"), "{text}");
+            assert!(text.contains("named skin map"), "{text}");
+            assert!(markdown.contains("| Named map |"), "{markdown}");
+            assert!(markdown.contains("| `animation` |"), "{markdown}");
+            assert!(markdown.contains("| `skin` |"), "{markdown}");
+        }
+        for expected in expected {
+            assert!(text.contains(expected), "text missing {expected}: {text}");
+            assert!(
+                markdown.contains(expected),
+                "Markdown missing {expected}: {markdown}"
+            );
+        }
+    }
+}
+
+#[test]
+fn generate_addressability_v2_renderers_preserve_every_semantic_row() {
+    let dir = unique_temp_dir("generate-addressability-v2-renderer-inventory");
+    let config = write_bevy_v3_track_config(dir.path(), "renderer-inventory", true, Some(true));
+    for (name, fixture, status) in [
+        ("complete", RichAddressabilityFixture::Reachable, 0),
+        ("unavailable", RichAddressabilityFixture::DuplicatePath, 1),
+        ("proven-absent", RichAddressabilityFixture::ZeroScenes, 0),
+    ] {
+        let input = dir.path().join(format!("{name}.gltf"));
+        write_rich_addressability_gltf(&input, fixture);
+        let json = generate_rich_addressability(&input, &config, Some("64"), None);
+        let text = generate_rich_addressability(&input, &config, Some("64"), Some("text"));
+        let markdown = generate_rich_addressability(&input, &config, Some("64"), Some("markdown"));
+        assert_eq!(
+            json.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&json)
+        );
+        assert_eq!(
+            text.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&text)
+        );
+        assert_eq!(
+            markdown.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&markdown)
+        );
+        let report: Value = serde_json::from_slice(&json.stdout).expect("canonical V2 JSON");
+        assert_v2_render_semantic_inventory(&report, &stdout(&text), &stdout(&markdown));
+    }
+}
+
 #[test]
 fn generate_import_advice_refusal_is_schema_valid_strict_and_exit_one() {
     let dir = unique_temp_dir("generate-import-advice-godot");
@@ -4554,7 +5492,20 @@ fn help_matches_compiled_feature_set() {
         out.contains("[possible values: json, text, markdown]"),
         "{out}"
     );
-    assert!(out.contains("does not claim runtime loading"), "{out}");
+    assert!(
+        out.contains("Without the exact Bevy revision-3 profile"),
+        "{out}"
+    );
+    assert!(out.contains("separate V2 rich"), "{out}");
+    assert!(out.contains("bounded named-map projections"), "{out}");
+    assert!(
+        out.contains("--target-pointer-width is required for target UUIDs"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Neither contract claims runtime loading"),
+        "{out}"
+    );
 
     let generate = animsmith()
         .args(["generate", "import-advice", "--help"])

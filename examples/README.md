@@ -688,6 +688,38 @@ names, raw targets and accessors, and dependency-closure identity. It does not
 infer scenes, skins, named-map winners, target UUIDs, extension support, or
 successful runtime loading.
 
+The richer exact-Bevy path is a separate V2 contract,
+`urn:animsmith:schema:gltf-addressability:2`; see
+[`gltf-addressability-v2.schema.json`](../docs/schemas/gltf-addressability-v2.schema.json).
+It retains bounded same-load scene, node, skin, attachment, root-to-node path,
+default-scene, named-map, and unique-target evidence while preserving this V1
+animation inventory. Complete empty coverage proves absence; partial prefixes
+and unavailable domains do not. Explicit `skin.skeleton` is retained as
+source evidence, not inferred into a Bevy root, and scene-instantiated
+`SkinnedMesh` attachment is not claimed.
+
+The V2 adapter is pinned to Bevy 0.19.0 revision 3 and commit
+`c6f634ca9f406d68ba5109d921247b654cb42c10` (`bevy_gltf 0.19.0`, locked
+`gltf 1.4.1`, and root `Cargo.lock`). It reuses one `engine-addressability` lifecycle and the
+existing `Animation{i}` primitive. `Scene{i}` is emitted for every declared
+scene, and `Gltf.default_scene` routes only to an existing scene; there is no
+`DefaultScene` label or fabricated `Scene0`. Bevy eagerly emits
+`Skin{i}/InverseBindMatrices` for every source skin, including unreferenced
+skins, and emits `Skin{i}` when any source node references it. Named maps are
+separate source-order last-write-wins projections.
+
+Exact target UUIDs require explicitly selecting 32- or 64-bit target pointer
+width because Bevy hashes segment lengths using the target pointer width;
+AnimSmith never infers width from the host. Missing feature/settings,
+incomplete or unreachable targets, multiple paths, and path/UUID collisions are typed
+`required_unavailable`, not guessed. `target_coverage` distinguishes complete
+(including empty) target coverage from incomplete raw/animation evidence and
+`target_domain_truncated`; other rich projection budget failures use
+`projection_bounds_exceeded`. Each V2 domain is capped at 4,096 rows,
+references at 65,536, path segments at 1,024 bytes and 256 segments, retained
+text at 1 MiB, and reports at 256 MiB. This remains prediction evidence only,
+not runtime-load, spawning, target-survival, graph, or playback evidence.
+
 ### Predicting Unity Generic root motion
 
 Select an exact engine profile and fully materialize every required importer

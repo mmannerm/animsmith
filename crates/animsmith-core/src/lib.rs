@@ -141,6 +141,7 @@ pub mod model;
 pub mod prediction;
 pub mod profile;
 pub mod raw_animation_inventory;
+pub mod raw_gltf_addressability;
 pub mod raw_scene_inventory;
 pub mod raw_transform_path_inventory;
 pub mod sample;
@@ -333,6 +334,18 @@ pub use raw_animation_inventory::{
     RAW_ANIMATION_CHANNEL_INVENTORY_V1_ID, RAW_ANIMATION_CHANNEL_INVENTORY_V1_MAX_CANDIDATES,
     RawAnimationChannelInventoryV1, RawAnimationChannelRowV1,
 };
+pub use raw_gltf_addressability::{
+    RAW_GLTF_ADDRESSABILITY_INVENTORY_V1_ID, RAW_GLTF_ADDRESSABILITY_V1_MAX_NAME_BYTES,
+    RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_BYTES, RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS,
+    RAW_GLTF_ADDRESSABILITY_V1_MAX_READER_BYTES, RAW_GLTF_ADDRESSABILITY_V1_MAX_ROWS_PER_DOMAIN,
+    RAW_GLTF_ADDRESSABILITY_V1_MAX_STRUCTURAL_REFERENCES,
+    RAW_GLTF_ADDRESSABILITY_V1_MAX_TEXT_BYTES, RawGltfAddressabilityCoverageReasonV1,
+    RawGltfAddressabilityCoverageV1, RawGltfAddressabilityInventoryErrorV1,
+    RawGltfAddressabilityInventoryInputV1, RawGltfAddressabilityInventoryReadErrorV1,
+    RawGltfAddressabilityInventoryV1, RawGltfDefaultSceneObservationV1,
+    RawGltfInverseBindMatricesObservationV1, RawGltfNodeRowV1, RawGltfScenePathCandidateRowV1,
+    RawGltfSceneRowV1, RawGltfSkinAttachmentRowV1, RawGltfSkinRowV1,
+};
 pub use raw_scene_inventory::{
     RAW_SCENE_ATTACHMENT_INVENTORY_V1_ID, RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS,
     RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_TEXT_BYTES, RawMeshPrimitiveRowV1,
@@ -369,16 +382,17 @@ pub use source_facts::{
     LoadedSource, RAW_SOURCE_FACTS_V1_ID, RAW_SOURCE_V1_MAX_CLIPS, RAW_SOURCE_V1_MAX_OBSERVATIONS,
     RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES, RAW_SOURCE_V1_MAX_TEXT_BYTES,
     RAW_SOURCE_V1_MAX_TOTAL_TEXT_BYTES, RAW_SOURCE_V1_MAX_TRAVERSAL_DEPTH,
-    RawSceneAttachmentBindingError, RawSourceFactsBuilderV1, RawSourceFactsV1,
-    RawTransformPathBindingError, SourceAxisV1, SourceChannelFactV1, SourceChannelPropertyV1,
-    SourceClipFactV1, SourceComponentMaskV1, SourceConstructFactV1, SourceConstructKindV1,
-    SourceCoordinateBasisV1, SourceFactDomainV1, SourceFactSetV1, SourceFactsError,
-    SourceFactsViewV1, SourceFormatV1, SourceFramesPerSecondV1, SourceHandednessV1,
-    SourceInterpolationV1, SourceLinearUnitV1, SourceLoaderDispositionV1, SourceLogicalLocatorV1,
-    SourceObservationStateV1, SourceObservationV1, SourceProjectionWorkV1, SourceProvenanceKindV1,
-    SourceProvenanceV1, SourceRelativeLocatorV1, SourceResourceKindV1, SourceResourceLocatorV1,
-    SourceResourceReferenceV1, SourceSetCoverageStateV1, SourceSetCoverageV1, SourceTargetKindV1,
-    SourceTargetV1, SourceTextV1, SourceTimeRangeV1, SourceUnavailableReasonV1,
+    RawGltfAddressabilityBindingErrorV1, RawSceneAttachmentBindingError, RawSourceFactsBuilderV1,
+    RawSourceFactsV1, RawTransformPathBindingError, SourceAxisV1, SourceChannelFactV1,
+    SourceChannelPropertyV1, SourceClipFactV1, SourceComponentMaskV1, SourceConstructFactV1,
+    SourceConstructKindV1, SourceCoordinateBasisV1, SourceFactDomainV1, SourceFactSetV1,
+    SourceFactsError, SourceFactsViewV1, SourceFormatV1, SourceFramesPerSecondV1,
+    SourceHandednessV1, SourceInterpolationV1, SourceLinearUnitV1, SourceLoaderDispositionV1,
+    SourceLogicalLocatorV1, SourceObservationStateV1, SourceObservationV1, SourceProjectionWorkV1,
+    SourceProvenanceKindV1, SourceProvenanceV1, SourceRelativeLocatorV1, SourceResourceKindV1,
+    SourceResourceLocatorV1, SourceResourceReferenceV1, SourceSetCoverageStateV1,
+    SourceSetCoverageV1, SourceTargetKindV1, SourceTargetV1, SourceTextV1, SourceTimeRangeV1,
+    SourceUnavailableReasonV1,
 };
 pub use source_timing::{
     EXACT_SOURCE_TIMING_V1_ID, EXACT_SOURCE_TIMING_V1_MAX_CLIPS, ExactSourceClipTimeRangeV1,

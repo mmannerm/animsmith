@@ -1,0 +1,518 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:gltf-addressability:2",
+  "title": "animsmith glTF addressability v2",
+  "description": "A bounded same-load glTF scene, node, skin, attachment, path, and animation inventory with an optional exact Bevy 0.19.0 addressability projection. This is prediction evidence only: it does not certify runtime loading, scene spawning, target survival, graph wiring, or playback.",
+  "type": "object",
+  "required": ["schema_version", "schema", "tool", "command", "input", "inventory", "bevy"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "schema": { "const": "urn:animsmith:schema:gltf-addressability:2" },
+    "tool": { "$ref": "urn:animsmith:schema:output:17#/$defs/tool" },
+    "command": { "const": "generate-addressability" },
+    "input": { "$ref": "#/$defs/input_identity" },
+    "inventory": { "$ref": "#/$defs/inventory" },
+    "bevy": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/bevy_adapter" }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "input_identity": {
+      "$ref": "urn:animsmith:schema:output:17#/$defs/input_identity"
+    },
+    "coverage_reason": {
+      "enum": ["projection_budget_exceeded", "parser_unavailable"]
+    },
+    "coverage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state"],
+          "properties": { "state": { "const": "complete" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "const": "partial" },
+            "reason": { "$ref": "#/$defs/coverage_reason" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "const": "unavailable" },
+            "reason": { "$ref": "#/$defs/coverage_reason" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "default_scene": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state"],
+          "properties": { "state": { "const": "absent" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "source_scene_index"],
+          "properties": {
+            "state": { "const": "selected" },
+            "source_scene_index": { "$ref": "#/$defs/u64" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "const": "unavailable" },
+            "reason": { "$ref": "#/$defs/coverage_reason" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "inverse_bind_matrices": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state"],
+          "properties": { "state": { "const": "absent" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "source_accessor_index"],
+          "properties": {
+            "state": { "const": "declared" },
+            "source_accessor_index": { "$ref": "#/$defs/u64" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scene_row": {
+      "type": "object",
+      "required": ["source_scene_index", "name", "root_node_indices"],
+      "properties": {
+        "source_scene_index": { "type": "integer", "minimum": 0, "maximum": 4095 },
+        "name": { "type": ["string", "null"], "maxLength": 1024 },
+        "root_node_indices": {
+          "type": "array", "maxItems": 65536,
+          "items": { "$ref": "#/$defs/u64" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "node_row": {
+      "type": "object",
+      "required": ["source_node_index", "name", "parent_node_index", "child_node_indices"],
+      "properties": {
+        "source_node_index": { "type": "integer", "minimum": 0, "maximum": 4095 },
+        "name": { "type": ["string", "null"], "maxLength": 1024 },
+        "parent_node_index": {
+          "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }]
+        },
+        "child_node_indices": {
+          "type": "array", "maxItems": 65536,
+          "items": { "$ref": "#/$defs/u64" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "skin_row": {
+      "type": "object",
+      "required": ["source_skin_index", "name", "joint_node_indices", "skeleton_root_node_index", "inverse_bind_matrices"],
+      "properties": {
+        "source_skin_index": { "type": "integer", "minimum": 0, "maximum": 4095 },
+        "name": { "type": ["string", "null"], "maxLength": 1024 },
+        "joint_node_indices": {
+          "type": "array", "maxItems": 65536,
+          "items": { "$ref": "#/$defs/u64" }
+        },
+        "skeleton_root_node_index": {
+          "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }]
+        },
+        "inverse_bind_matrices": { "$ref": "#/$defs/inverse_bind_matrices" }
+      },
+      "additionalProperties": false
+    },
+    "attachment_row": {
+      "type": "object",
+      "required": ["source_node_index", "source_skin_index"],
+      "properties": {
+        "source_node_index": { "$ref": "#/$defs/u64" },
+        "source_skin_index": { "$ref": "#/$defs/u64" }
+      },
+      "additionalProperties": false
+    },
+    "path_candidate_row": {
+      "type": "object",
+      "required": ["source_path_candidate_index", "source_scene_index", "source_node_indices"],
+      "properties": {
+        "source_path_candidate_index": { "$ref": "#/$defs/u64" },
+        "source_scene_index": { "$ref": "#/$defs/u64" },
+        "source_node_indices": {
+          "type": "array", "minItems": 1, "maxItems": 256,
+          "items": { "$ref": "#/$defs/u64" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "raw_inventory": {
+      "type": "object",
+      "required": [
+        "schema", "identity", "primary_input", "dependency_closure", "default_scene",
+        "scene_coverage", "scenes", "node_coverage", "nodes", "skin_coverage", "skins",
+        "attachment_coverage", "attachments", "path_candidate_coverage", "path_candidates"
+      ],
+      "properties": {
+        "schema": { "const": "urn:animsmith:raw-gltf-addressability-inventory:1" },
+        "identity": { "$ref": "#/$defs/input_identity" },
+        "primary_input": { "$ref": "#/$defs/input_identity" },
+        "dependency_closure": { "$ref": "urn:animsmith:schema:output:17#/$defs/dependency_closure" },
+        "default_scene": { "$ref": "#/$defs/default_scene" },
+        "scene_coverage": { "$ref": "#/$defs/coverage" },
+        "scenes": {
+          "type": "array", "maxItems": 4096,
+          "items": { "$ref": "#/$defs/scene_row" }
+        },
+        "node_coverage": { "$ref": "#/$defs/coverage" },
+        "nodes": {
+          "type": "array", "maxItems": 4096,
+          "items": { "$ref": "#/$defs/node_row" }
+        },
+        "skin_coverage": { "$ref": "#/$defs/coverage" },
+        "skins": {
+          "type": "array", "maxItems": 4096,
+          "items": { "$ref": "#/$defs/skin_row" }
+        },
+        "attachment_coverage": { "$ref": "#/$defs/coverage" },
+        "attachments": {
+          "type": "array", "maxItems": 4096,
+          "items": { "$ref": "#/$defs/attachment_row" }
+        },
+        "path_candidate_coverage": { "$ref": "#/$defs/coverage" },
+        "path_candidates": {
+          "type": "array", "maxItems": 4096,
+          "items": { "$ref": "#/$defs/path_candidate_row" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "inventory": {
+      "type": "object",
+      "required": ["schema", "raw", "animations"],
+      "properties": {
+        "schema": { "const": "urn:animsmith:schema:gltf-addressability:2" },
+        "raw": { "$ref": "#/$defs/raw_inventory" },
+        "animations": {
+          "$ref": "urn:animsmith:schema:gltf-animation-addressability:1#/$defs/inventory"
+        }
+      },
+      "additionalProperties": false
+    },
+    "projection_reason": {
+      "enum": [
+        "raw_source_incomplete", "dependency_closure_incomplete", "unreachable_target",
+        "multiple_candidate_paths", "duplicate_full_path", "target_id_collision",
+        "target_pointer_width_missing", "bevy_animation_feature_disabled",
+        "load_animations_disabled", "path_bounds_exceeded", "named_map_incomplete",
+        "target_domain_truncated", "projection_bounds_exceeded"
+      ]
+    },
+    "projection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state", "value"],
+          "properties": { "state": { "const": "available" }, "value": {} },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state"],
+          "properties": { "state": { "const": "proven_absent" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "required_unavailable" },
+            "reasons": {
+              "type": "array", "minItems": 1, "uniqueItems": true,
+              "items": { "$ref": "#/$defs/projection_reason" }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scene_projection": {
+      "type": "object",
+      "required": ["source_scene_index", "label"],
+      "properties": {
+        "source_scene_index": { "$ref": "#/$defs/u64" },
+        "label": { "type": "string", "pattern": "^Scene[0-9]+$" }
+      },
+      "additionalProperties": false
+    },
+    "skin_projection": {
+      "type": "object",
+      "required": ["source_skin_index", "explicit_skeleton_root_node_index", "skin_label", "inverse_bind_matrices_label"],
+      "properties": {
+        "source_skin_index": { "$ref": "#/$defs/u64" },
+        "explicit_skeleton_root_node_index": {
+          "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }]
+        },
+        "skin_label": { "$ref": "#/$defs/string_projection" },
+        "inverse_bind_matrices_label": { "type": "string", "pattern": "^Skin[0-9]+/InverseBindMatrices$" }
+      },
+      "additionalProperties": false
+    },
+    "named_map_kind": { "enum": ["scene", "animation", "skin"] },
+    "named_map_winner": {
+      "type": "object",
+      "required": ["name", "source_index", "typed_label"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 1024 },
+        "source_index": { "$ref": "#/$defs/u64" },
+        "typed_label": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      },
+      "additionalProperties": false
+    },
+    "named_map": {
+      "type": "object",
+      "required": ["kind", "duplicate_policy", "winners"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/named_map_kind" },
+        "duplicate_policy": { "const": "last_write_wins" },
+        "winners": { "$ref": "#/$defs/named_map_projection" }
+      },
+      "additionalProperties": false
+    },
+    "target_channel": {
+      "type": "object",
+      "required": ["source_animation_index", "source_channel_index"],
+      "properties": {
+        "source_animation_index": { "$ref": "#/$defs/u64" },
+        "source_channel_index": { "$ref": "#/$defs/u64" }
+      },
+      "additionalProperties": false
+    },
+    "target_value": {
+      "type": "object",
+      "required": ["segments", "path", "uuid"],
+      "properties": {
+        "segments": {
+          "type": "array", "minItems": 1, "maxItems": 256,
+          "items": { "type": "string", "maxLength": 1024 }
+        },
+        "path": { "type": "string", "maxLength": 4096 },
+        "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
+      },
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "required": ["source_node_index", "contributing_channels", "projection"],
+      "properties": {
+        "source_node_index": { "$ref": "#/$defs/u64" },
+        "contributing_channels": {
+          "type": "array", "maxItems": 65536,
+          "items": { "$ref": "#/$defs/target_channel" }
+        },
+        "projection": { "$ref": "#/$defs/target_projection" }
+      },
+      "additionalProperties": false
+    },
+    "bevy_projection": {
+      "type": "object",
+      "required": ["scenes", "default_scene_route", "skins", "named_maps", "target_coverage", "targets"],
+      "properties": {
+        "scenes": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/scene_projection" } },
+        "default_scene_route": { "$ref": "#/$defs/scene_route_projection" },
+        "skins": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/skin_projection" } },
+        "named_maps": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/named_map" } },
+        "target_coverage": { "$ref": "#/$defs/projection" },
+        "targets": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/target" } }
+      },
+      "additionalProperties": false
+    },
+    "pointer_width": { "enum": ["bits32", "bits64"] },
+    "rule_source": {
+      "type": "object",
+      "required": ["id", "url"],
+      "properties": { "id": { "type": "string", "minLength": 1 }, "url": { "type": "string", "format": "uri" } },
+      "additionalProperties": false
+    },
+    "rules": {
+      "type": "object",
+      "required": [
+        "schema", "profile_revision", "bevy_tag", "bevy_commit", "bevy_gltf_crate", "locked_gltf_crate",
+        "bevy_animation_feature_required_for_targets", "load_animations_required_for_targets", "target_pointer_width",
+        "named_scene_policy", "named_animation_policy", "named_skin_policy", "sources"
+      ],
+      "properties": {
+        "schema": { "const": "urn:animsmith:bevy-gltf-addressability-rules:1" },
+        "profile_revision": { "const": 3 },
+        "bevy_tag": { "const": "v0.19.0" },
+        "bevy_commit": { "const": "c6f634ca9f406d68ba5109d921247b654cb42c10" },
+        "bevy_gltf_crate": { "const": "bevy_gltf 0.19.0" },
+        "locked_gltf_crate": { "const": "gltf 1.4.1" },
+        "bevy_animation_feature_required_for_targets": { "const": true },
+        "load_animations_required_for_targets": { "const": true },
+        "target_pointer_width": { "oneOf": [{ "$ref": "#/$defs/pointer_width" }, { "type": "null" }] },
+        "named_scene_policy": { "const": "last_write_wins" },
+        "named_animation_policy": { "const": "last_write_wins" },
+        "named_skin_policy": { "const": "last_write_wins" },
+        "sources": { "type": "array", "minItems": 6, "maxItems": 6, "items": { "$ref": "#/$defs/rule_source" } }
+      },
+      "additionalProperties": false
+    },
+    "setting_origin": { "enum": ["explicit_config", "profile_default"] },
+    "settings": {
+      "type": "object",
+      "required": ["bevy_animation_feature", "bevy_animation_feature_origin", "load_animations", "load_animations_origin"],
+      "properties": {
+        "bevy_animation_feature": { "type": "boolean" },
+        "bevy_animation_feature_origin": { "$ref": "#/$defs/setting_origin" },
+        "load_animations": { "type": "boolean" },
+        "load_animations_origin": { "$ref": "#/$defs/setting_origin" }
+      },
+      "additionalProperties": false
+    },
+    "string_projection": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["state", "value"],
+          "properties": {
+            "state": { "const": "available" },
+            "value": { "type": "string", "maxLength": 4096 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["state"],
+          "properties": { "state": { "const": "proven_absent" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "required_unavailable" },
+            "reasons": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/projection_reason" } }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scene_route_projection": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["state", "value"],
+          "properties": {
+            "state": { "const": "available" },
+            "value": { "type": "string", "pattern": "^Scene[0-9]+$" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["state"],
+          "properties": { "state": { "const": "proven_absent" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "required_unavailable" },
+            "reasons": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/projection_reason" } }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "named_map_projection": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["state", "value"],
+          "properties": {
+            "state": { "const": "available" },
+            "value": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/named_map_winner" } }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "required_unavailable" },
+            "reasons": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/projection_reason" } }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "target_projection": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["state", "value"],
+          "properties": { "state": { "const": "available" }, "value": { "$ref": "#/$defs/target_value" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["state", "reasons"],
+          "properties": {
+            "state": { "const": "required_unavailable" },
+            "reasons": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/projection_reason" } }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "check": {
+      "type": "object",
+      "required": ["check_id", "selection", "configuration", "applicability", "evaluation", "findings"],
+      "properties": {
+        "check_id": { "const": "engine-addressability" },
+        "selection": { "const": "selected" },
+        "configuration": { "const": "enabled" },
+        "applicability": { "const": "applicable" },
+        "evaluation": { "enum": ["complete", "partial", "not_evaluated"] },
+        "findings": { "type": "array", "maxItems": 0 },
+        "evaluated_scopes": { "type": "array", "items": { "$ref": "urn:animsmith:schema:output:17#/$defs/scope" } },
+        "gaps": { "type": "array", "maxItems": 0 },
+        "prediction": { "$ref": "urn:animsmith:schema:output:17#/$defs/engine_prediction_v4" }
+      },
+      "additionalProperties": false
+    },
+    "bevy_adapter": {
+      "type": "object",
+      "required": ["rules", "settings", "prediction_provenance", "check", "projection"],
+      "properties": {
+        "rules": { "$ref": "#/$defs/rules" },
+        "settings": { "$ref": "#/$defs/settings" },
+        "prediction_provenance": { "$ref": "urn:animsmith:schema:output:17#/$defs/prediction_provenance_v4" },
+        "check": { "$ref": "#/$defs/check" },
+        "projection": { "$ref": "#/$defs/bevy_projection" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
