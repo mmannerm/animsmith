@@ -2836,10 +2836,11 @@ Revision 2 of the producer is an independent immutable contract,
 `urn:animsmith:schema:engine-import-advice:2`. It uses output-v15's V4
 prediction-provenance and prediction-basis types by reference and carries one
 optional native `projection`. `available` requires that projection and omits
-`refusal_reason`; `refused` requires a typed reason and no projection. This
-lifecycle keeps incomplete closure, unknown facts,
-missing primary authority, and unavailable settings from being mistaken for
-an importer preset.
+`refusal_reason` when the same-load dependency closure is complete; partial or
+unavailable closure requires `refused`, `dependency_closure_incomplete`, and
+no projection. Unknown tuples, missing settings, and unsupported formats are
+configuration errors, so neither those errors nor incomplete closure can be
+mistaken for an importer preset.
 
 The only V2 advice profiles are exact: Godot `2` / `4.7` /
 `resource-importer-scene` accepts glTF JSON and GLB and projects

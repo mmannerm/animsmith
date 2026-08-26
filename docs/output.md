@@ -214,11 +214,12 @@ The same command also emits the immutable V2 contract
 [`engine-import-advice-v2.schema.json`](schemas/engine-import-advice-v2.schema.json).
 It keeps the output-v15 `tool`, V4 prediction-provenance, and V4 prediction-basis
 types by reference, while adding only the V2 `basis` and optional native
-`projection` fields. The lifecycle is closed: `available` has a projection and
-no `refusal_reason`; `refused` has one typed refusal reason and no projection.
-Incomplete dependency
-closure, unknown profile facts, unavailable primary authority, or unavailable
-settings therefore remain explicit rather than becoming a guessed projection.
+`projection` fields. The lifecycle is closed against the same-load dependency
+closure: complete closure requires `available`, the exact projection, and no
+`refusal_reason`; partial or unavailable closure requires `refused`,
+`dependency_closure_incomplete`, and no projection. Unknown tuples, missing
+settings, and unsupported formats are configuration errors rather than advice
+documents, so they cannot be recast as a guessed projection.
 
 Only these exact profile/input tuples can produce an available V2 projection:
 
