@@ -7,17 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/mmannerm/animsmith/compare/v0.6.0...v0.7.0) - 2026-08-26
+
 ### Added
 
+- *(generate)* emit glTF addressability v2
+- integrate revisioned import advice
+- predict Unity Generic root-motion routing
+- predict Bevy animation import gates
+- *(lint)* predict Bevy unit scale
+- add primitive and image evidence
+- retain raw glTF addressability evidence
+- *(core)* version exact timing prediction contracts
+- *(fbx)* retain exact timing evidence
+- project rich Bevy glTF addressability
+- add standalone engine import advice V2
+- add Godot and Unreal advice profiles
+- *(engine)* add current V3 addressability prediction
+- *(engine)* check exact Unreal clip boundaries
 - add measurements-v16 per-primitive geometry and unsupported-image evidence
-- add output-v13 and collection-output-v5 contracts for measurements-v16
+- add revisioned output-v13 through output-v17 and collection-output-v5 through collection-output-v9 contracts
 - add output-v12 bounded engine prediction provenance and partial settings evidence
 - preserve collection-output-v4 embedding the historical output-v12 lint envelope
 
+### Fixed
+
+- close rich addressability audit gaps
+- close import advice refusal lifecycle
+- bound root-motion evidence projection
+- preserve root-motion N/A in collections
+- close Unity root-motion lifecycle gaps
+- bound overflow prediction evidence
+- *(collection)* bind evidence to dependency closure
+- *(core)* bind clip-boundary provenance
+- *(core)* rederive clip-boundary applicability
+- *(core)* validate exact clip-boundary readback
+- enforce bounded prediction evaluation
+- *(fbx)* fix exact timing test iterator lint
+- use native values for V2 import advice
+- bind import advice projections
+- bind root trajectory display identity
+
 ### Changed
 
-- make measurements-v16/output-v13/collection-output-v5 the current contracts
-- keep output-v12 immutable as the historical measure, lint, and diff envelope
+- make measurements-v16, output-v17, and collection-output-v9 the current contracts
+- retain output-v12 through output-v16 and their collection envelopes as immutable historical contracts
 
 ## [0.6.0](https://github.com/mmannerm/animsmith/compare/v0.5.0...v0.6.0) - 2026-08-25
 
