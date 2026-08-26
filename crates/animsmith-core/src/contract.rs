@@ -5334,6 +5334,9 @@ const ENGINE_CLIP_BOUNDARY_PROFILE_FAMILY: &str = "unreal";
 const ENGINE_CLIP_BOUNDARY_PROFILE_REVISION: u32 = 1;
 const ENGINE_CLIP_BOUNDARY_ENGINE_VERSION: &str = "5.8";
 const ENGINE_CLIP_BOUNDARY_IMPORTER: &str = "fbx-importer";
+const ENGINE_CLIP_BOUNDARY_PROFILE_FACTS_SHA256: &str =
+    "e44ca461aee46312b8265446f08338b988b96abeab0f8f502f560da5f1cdf759";
+const ENGINE_CLIP_BOUNDARY_PROFILE_FACTS_BYTES: u64 = 2_169;
 
 fn current_engine_clip_boundary_profile_matches_v3(provenance: &PredictionProvenanceV3) -> bool {
     let selection = provenance.profile().selection();
@@ -5343,6 +5346,9 @@ fn current_engine_clip_boundary_profile_matches_v3(provenance: &PredictionProven
         && selection.profile_revision() == ENGINE_CLIP_BOUNDARY_PROFILE_REVISION
         && selection.engine_version() == ENGINE_CLIP_BOUNDARY_ENGINE_VERSION
         && selection.importer() == ENGINE_CLIP_BOUNDARY_IMPORTER
+        && provenance.profile().facts_identity().sha256()
+            == ENGINE_CLIP_BOUNDARY_PROFILE_FACTS_SHA256
+        && provenance.profile().facts_identity().bytes() == ENGINE_CLIP_BOUNDARY_PROFILE_FACTS_BYTES
         && matches!(
             provenance
                 .profile()
@@ -5369,7 +5375,10 @@ fn validate_current_engine_clip_boundary_applicability_v3(
             if current_engine_clip_boundary_profile_matches_v3(provenance)
                 && !(provenance.raw_source().clips_coverage().state()
                     == RawSourceSetCoverageStateV1::Complete
-                    && provenance.settings().clips().is_empty()) =>
+                    && provenance
+                        .raw_source()
+                        .exact_source_timing()
+                        .is_some_and(|timing| timing.clips().is_empty())) =>
         {
             Applicability::Applicable
         }
@@ -6138,10 +6147,11 @@ mod measurement_report_input_tests {
 
     use super::*;
     use crate::engine_contract::{
-        EngineClipSettingsV1, EngineFactIdV1, EngineFactStateV1, EngineFactValueV1,
-        EnginePrimarySourceV1, EngineProfileFactV1, EngineProfileSelectionV1,
-        ResolvedEngineProfileV1, ResolvedEngineSettingsCoverageV2, ResolvedEngineSettingsV1,
-        ResolvedEngineSettingsV2, ResolvedEngineSettingsWorkV2,
+        EngineClipSettingsV1, EngineConversionControlV1, EngineCoordinateBasisV1, EngineFactIdV1,
+        EngineFactStateV1, EngineFactValueV1, EngineForwardAxisV1, EngineHandednessV1,
+        EngineLinearUnitV1, EnginePrimarySourceV1, EngineProfileFactV1, EngineProfileSelectionV1,
+        EngineUpAxisV1, ResolvedEngineProfileV1, ResolvedEngineSettingsCoverageV2,
+        ResolvedEngineSettingsV1, ResolvedEngineSettingsV2, ResolvedEngineSettingsWorkV2,
     };
     use crate::evaluation::{CheckOutput, EvaluationScope, EvaluationScopeCode};
     use crate::measure::{
@@ -6484,6 +6494,22 @@ mod measurement_report_input_tests {
                             SourceFormatV1::Fbx,
                         ]))
                     }
+                    EngineFactIdV1::TargetCoordinateBasis => EngineFactStateV1::Known(
+                        EngineFactValueV1::CoordinateBasis(EngineCoordinateBasisV1 {
+                            handedness: EngineHandednessV1::Left,
+                            up_axis: EngineUpAxisV1::Z,
+                            forward_axis: EngineForwardAxisV1::PositiveX,
+                        }),
+                    ),
+                    EngineFactIdV1::TargetLinearUnit => EngineFactStateV1::Known(
+                        EngineFactValueV1::LinearUnit(EngineLinearUnitV1::Centimetre),
+                    ),
+                    EngineFactIdV1::UnitConversionControl
+                    | EngineFactIdV1::AxisConversionControl => {
+                        EngineFactStateV1::Known(EngineFactValueV1::ConversionControl(
+                            EngineConversionControlV1::ImporterOption,
+                        ))
+                    }
                     EngineFactIdV1::WholeEndFrameRequired => {
                         EngineFactStateV1::Known(EngineFactValueV1::Boolean(true))
                     }
@@ -6502,11 +6528,39 @@ mod measurement_report_input_tests {
                     ENGINE_CLIP_BOUNDARY_SOURCE_ID,
                     "5.8",
                     "https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-sequences-in-unreal-engine?application_version=5.8",
-                    "2026-08-25",
+                    "2026-08-20",
+                    vec![EngineFactIdV1::WholeEndFrameRequired],
+                    vec![],
+                )
+                .unwrap(),
+                EnginePrimarySourceV1::new(
+                    "unreal-coordinate-system-5.8",
+                    "5.8",
+                    "https://dev.epicgames.com/documentation/en-us/unreal-engine/coordinate-system-and-spaces-in-unreal-engine?application_version=5.8",
+                    "2026-08-20",
+                    vec![EngineFactIdV1::TargetCoordinateBasis],
+                    vec![],
+                )
+                .unwrap(),
+                EnginePrimarySourceV1::new(
+                    "unreal-fbx-import-options-5.8",
+                    "5.8",
+                    "https://dev.epicgames.com/documentation/en-us/unreal-engine/fbx-import-options-reference-in-unreal-engine?application_version=5.8",
+                    "2026-08-20",
                     vec![
                         EngineFactIdV1::AcceptedInputs,
-                        EngineFactIdV1::WholeEndFrameRequired,
+                        EngineFactIdV1::UnitConversionControl,
+                        EngineFactIdV1::AxisConversionControl,
                     ],
+                    vec![],
+                )
+                .unwrap(),
+                EnginePrimarySourceV1::new(
+                    "unreal-units-5.8",
+                    "5.8",
+                    "https://dev.epicgames.com/documentation/en-us/unreal-engine/units-of-measurement-in-unreal-engine?application_version=5.8",
+                    "2026-08-20",
+                    vec![EngineFactIdV1::TargetLinearUnit],
                     vec![],
                 )
                 .unwrap(),
@@ -6641,6 +6695,64 @@ mod measurement_report_input_tests {
             settings,
             raw.clone(),
             DependencyClosureV1::unavailable(raw.primary_input().clone()),
+        )
+        .unwrap()
+    }
+
+    fn clip_boundary_provenance_with_settings(
+        provenance: &PredictionProvenanceV3,
+        profile: ResolvedEngineProfileV1,
+        clips: Vec<EngineClipSettingsV1>,
+    ) -> PredictionProvenanceV3 {
+        let retained = clips.len();
+        let settings = ResolvedEngineSettingsV2::new(
+            &profile,
+            vec![],
+            clips,
+            ResolvedEngineSettingsCoverageV2::complete(),
+            ResolvedEngineSettingsWorkV2::new(retained, retained, retained),
+        )
+        .unwrap();
+        PredictionProvenanceV3::new(
+            profile,
+            provenance.source_format(),
+            settings,
+            provenance.raw_source().clone(),
+            provenance.dependency_closure().clone(),
+        )
+        .unwrap()
+    }
+
+    fn altered_clip_boundary_source_profile(
+        provenance: &PredictionProvenanceV3,
+    ) -> ResolvedEngineProfileV1 {
+        let sources = provenance
+            .profile()
+            .primary_sources()
+            .iter()
+            .map(|source| {
+                let url = if source.id() == ENGINE_CLIP_BOUNDARY_SOURCE_ID {
+                    format!("{}#altered", source.url())
+                } else {
+                    source.url().to_owned()
+                };
+                EnginePrimarySourceV1::new(
+                    source.id(),
+                    source.target_version(),
+                    url,
+                    source.verified_on(),
+                    source.supported_fact_ids().to_vec(),
+                    source.supported_setting_ids().to_vec(),
+                )
+                .unwrap()
+            })
+            .collect();
+        ResolvedEngineProfileV1::new(
+            provenance.profile().selection().clone(),
+            provenance.profile().fact_bundle_urn(),
+            provenance.profile().facts().to_vec(),
+            provenance.profile().setting_descriptors().to_vec(),
+            sources,
         )
         .unwrap()
     }
@@ -6864,6 +6976,87 @@ mod measurement_report_input_tests {
         check.remove("evaluated_scopes");
         check.remove("gaps");
         check.remove("prediction");
+        assert_clip_boundary_read_error(
+            wire,
+            PredictionContractError::EngineClipBoundaryFacetMismatch,
+        );
+    }
+
+    #[test]
+    fn clip_boundary_v3_applicability_uses_raw_exact_stack_inventory() {
+        let original = clip_boundary_provenance(false);
+        let provenance = clip_boundary_provenance_with_settings(
+            &original,
+            original.profile().clone(),
+            Vec::new(),
+        );
+        assert_eq!(
+            provenance
+                .raw_source()
+                .exact_source_timing()
+                .unwrap()
+                .clips()
+                .len(),
+            3
+        );
+        assert!(provenance.settings().clips().is_empty());
+        assert!(matches!(
+            lint_file(&provenance, vec![inapplicable_clip_boundary_check()]),
+            Err(OutputContractError::InvalidPrediction(
+                PredictionContractError::EngineClipBoundaryFacetMismatch
+            ))
+        ));
+
+        let mut wire = clip_boundary_lint_wire(false);
+        wire["files"][0]["prediction_provenance"] = serde_json::to_value(provenance).unwrap();
+        let check = wire["files"][0]["checks"][0].as_object_mut().unwrap();
+        check.insert(
+            "applicability".to_owned(),
+            serde_json::json!("not_applicable"),
+        );
+        check.insert("evaluation".to_owned(), serde_json::json!("not_evaluated"));
+        check.insert("findings".to_owned(), serde_json::json!([]));
+        check.remove("evaluated_scopes");
+        check.remove("gaps");
+        check.remove("prediction");
+        assert_clip_boundary_read_error(
+            wire,
+            PredictionContractError::EngineClipBoundaryFacetMismatch,
+        );
+    }
+
+    #[test]
+    fn clip_boundary_v3_binds_the_frozen_unreal_profile_identity() {
+        let original = clip_boundary_provenance(false);
+        assert_eq!(
+            original.profile().facts_identity().sha256(),
+            ENGINE_CLIP_BOUNDARY_PROFILE_FACTS_SHA256
+        );
+        assert_eq!(
+            original.profile().facts_identity().bytes(),
+            ENGINE_CLIP_BOUNDARY_PROFILE_FACTS_BYTES
+        );
+        let altered_profile = altered_clip_boundary_source_profile(&original);
+        assert_ne!(
+            altered_profile.facts_identity(),
+            original.profile().facts_identity()
+        );
+        let altered = clip_boundary_provenance_with_settings(
+            &original,
+            altered_profile,
+            original.settings().clips().to_vec(),
+        );
+        let altered_check = clip_boundary_check(&altered, false, None);
+        assert!(matches!(
+            lint_file(&altered, vec![altered_check.clone()]),
+            Err(OutputContractError::InvalidPrediction(
+                PredictionContractError::EngineClipBoundaryFacetMismatch
+            ))
+        ));
+
+        let mut wire = clip_boundary_lint_wire(false);
+        wire["files"][0]["prediction_provenance"] = serde_json::to_value(altered).unwrap();
+        wire["files"][0]["checks"][0] = serde_json::to_value(altered_check).unwrap();
         assert_clip_boundary_read_error(
             wire,
             PredictionContractError::EngineClipBoundaryFacetMismatch,
