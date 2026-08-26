@@ -452,6 +452,15 @@ pub enum PredictionContractError {
     /// canonical source-index prefix.
     #[error("engine-addressability facets are not the canonical source-index prefix")]
     EngineAddressabilityFacetPrefixMismatch,
+    /// The current engine-clip-boundary facets did not match the exact timing
+    /// rows, availability states, reasons, or canonical evidence bases implied
+    /// by V3 provenance.
+    #[error("engine-clip-boundary facets contradict exact FBX timing provenance")]
+    EngineClipBoundaryFacetMismatch,
+    /// The current engine-clip-boundary findings did not identify exactly the
+    /// available source-stack ends outside their exact frame lattice.
+    #[error("engine-clip-boundary findings contradict exact FBX timing provenance")]
+    EngineClipBoundaryFindingMismatch,
     /// A required-unavailable facet scope was also reported as completed.
     #[error("required-unavailable prediction facet scope cannot occur in evaluated_scopes")]
     UnavailableScopeEvaluated,
@@ -2655,6 +2664,12 @@ pub struct ExactFbxFramePeriodWireV1 {
     ticks_per_frame: i64,
 }
 
+impl ExactFbxFramePeriodWireV1 {
+    pub(crate) const fn ticks_per_frame(self) -> i64 {
+        self.ticks_per_frame
+    }
+}
+
 /// Exact parser-projected binary64 bits for a declared custom frame rate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2669,6 +2684,12 @@ pub struct ExactFbxStackTickRangeWireV1 {
     selection: ExactFbxTimeSpanSelectionWireV1,
     begin_ticks: i64,
     end_ticks: i64,
+}
+
+impl ExactFbxStackTickRangeWireV1 {
+    pub(crate) const fn end_ticks(self) -> i64 {
+        self.end_ticks
+    }
 }
 
 /// One canonical exact timing row in the prediction wire.

@@ -15,9 +15,11 @@ use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
 use crate::diff::MetricDelta;
+use crate::engine_contract::{EngineFactIdV1, EngineFactStateV1, EngineFactValueV1};
 use crate::evaluation::{
     Applicability, CheckEvaluation, CheckEvaluationGapRef, CheckEvaluationValidationInput,
-    ConfigurationState, EvaluationState, SelectionState, validate_and_derive_check_evaluation,
+    ConfigurationState, EvaluationScope, EvaluationState, SelectionState,
+    validate_and_derive_check_evaluation,
 };
 use crate::measure::{
     Aabb, AdditionalInfluenceSetMeasurements, AssetMeasurements, ClipMeasurements,
@@ -35,9 +37,11 @@ use crate::model::{
     SourceSkeletonCoverage,
 };
 use crate::prediction::{
-    EnginePredictionFacetStateV1, EnginePredictionV1, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
-    PREDICTION_V1_MAX_FACETS_PER_FILE, PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
-    PredictionContractError, PredictionDecodeError,
+    EnginePredictionBasisV2, EnginePredictionFacetStateV1, EnginePredictionV1,
+    ExactFbxTimingBasisReferenceV1, ExactFbxTimingBindingV1, ExactFbxTimingDomainV1,
+    ExactFbxTimingKeyV1, ExactFbxTimingObservationStateWireV1,
+    PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE, PREDICTION_V1_MAX_FACETS_PER_FILE,
+    PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE, PredictionContractError, PredictionDecodeError,
     decode_engine_prediction_v1_with_measurement_schema, decode_engine_prediction_v2,
     decode_engine_prediction_v2_with_measurement_schema, decode_engine_prediction_v3,
     decode_prediction_provenance_v1_with_measurement_schema, decode_prediction_provenance_v2,
@@ -46,12 +50,13 @@ use crate::prediction::{
     validate_measurement_references_batch_v3,
 };
 use crate::profile::ResolvedRoles;
+use crate::source_facts::SourceFormatV1;
 use crate::{Document, Severity};
 use crate::{
     EnginePredictionV2, EnginePredictionV3, PredictionBasisReferenceV1, PredictionBasisReferenceV2,
     PredictionProvenanceV1, PredictionProvenanceV2, PredictionProvenanceV3,
-    PredictionUnavailableReasonV2, RawSourceDomainV1, RawSourceKeyV1, RawSourceSetCoverageStateV1,
-    ResolvedEngineSettingsCoverageStateV2,
+    PredictionUnavailableReasonV2, RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1,
+    RawSourceSetCoverageStateV1, ResolvedEngineSettingsCoverageStateV2,
 };
 
 /// Current outer result-envelope version.
@@ -5001,6 +5006,16 @@ impl PredictionCheckInputV3 {
                     reason: "finding has prediction_scope without prediction",
                 });
             }
+            if self.check_id == "engine-clip-boundary"
+                && self.selection == SelectionState::Selected
+                && self.configuration == ConfigurationState::Enabled
+                && self.applicability == Applicability::Applicable
+            {
+                return Err(MeasurementFileError::InvalidPrediction {
+                    check_index,
+                    source: PredictionContractError::EngineClipBoundaryFacetMismatch,
+                });
+            }
             return Ok(());
         };
         let provenance =
@@ -5077,6 +5092,22 @@ impl PredictionCheckInputV3 {
                 });
             }
         }
+        let finding_scopes = self
+            .findings
+            .iter()
+            .filter_map(|finding| finding.prediction_scope.as_ref())
+            .collect::<Vec<_>>();
+        validate_current_engine_clip_boundary_prediction_v3(
+            &self.check_id,
+            prediction,
+            provenance,
+            &self.evaluated_scopes,
+            &finding_scopes,
+        )
+        .map_err(|source| MeasurementFileError::InvalidPrediction {
+            check_index,
+            source,
+        })?;
         Ok(())
     }
 }
@@ -5286,6 +5317,345 @@ fn validate_current_engine_addressability_prediction_v3(
         return Err(PredictionContractError::EngineAddressabilityInventoryReasonsMismatch);
     }
     Ok(())
+}
+
+const ENGINE_CLIP_BOUNDARY_CHECK_ID: &str = "engine-clip-boundary";
+const ENGINE_CLIP_BOUNDARY_SOURCE_ID: &str = "unreal-animation-sequences-5.8";
+const ENGINE_CLIP_BOUNDARY_PROFILE_FAMILY: &str = "unreal";
+const ENGINE_CLIP_BOUNDARY_PROFILE_REVISION: u32 = 1;
+const ENGINE_CLIP_BOUNDARY_ENGINE_VERSION: &str = "5.8";
+const ENGINE_CLIP_BOUNDARY_IMPORTER: &str = "fbx-importer";
+
+/// Re-derive the frozen output-v14 clip-boundary rule from embedded V3
+/// provenance. This keeps readback and producer construction from accepting a
+/// merely well-shaped facet whose scope, basis, availability, reason, or
+/// finding disagrees with the retained exact source timing.
+fn validate_current_engine_clip_boundary_prediction_v3(
+    check_id: &str,
+    prediction: &EnginePredictionV3,
+    provenance: &PredictionProvenanceV3,
+    evaluated_scopes: &[EvaluationScope],
+    finding_scopes: &[&EvaluationScope],
+) -> Result<(), PredictionContractError> {
+    if check_id != ENGINE_CLIP_BOUNDARY_CHECK_ID {
+        return Ok(());
+    }
+
+    let selection = provenance.profile().selection();
+    if provenance.source_format() != SourceFormatV1::Fbx
+        || selection.family() != ENGINE_CLIP_BOUNDARY_PROFILE_FAMILY
+        || selection.profile_revision() != ENGINE_CLIP_BOUNDARY_PROFILE_REVISION
+        || selection.engine_version() != ENGINE_CLIP_BOUNDARY_ENGINE_VERSION
+        || selection.importer() != ENGINE_CLIP_BOUNDARY_IMPORTER
+        || !matches!(
+            provenance
+                .profile()
+                .fact(EngineFactIdV1::WholeEndFrameRequired)
+                .map(|fact| fact.state()),
+            Some(EngineFactStateV1::Known(EngineFactValueV1::Boolean(true)))
+        )
+        || provenance
+            .profile()
+            .source(ENGINE_CLIP_BOUNDARY_SOURCE_ID)
+            .is_none()
+    {
+        return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+    }
+
+    let expected_rows = provenance.settings().clips().len();
+    let timing = provenance.raw_source().exact_fbx_timing();
+    if timing.is_some_and(|timing| timing.stacks().len() != expected_rows) {
+        return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+    }
+    let inventory_incomplete =
+        provenance.raw_source().clips_coverage().state() != RawSourceSetCoverageStateV1::Complete;
+    let has_budget_summary = prediction.has_facet_budget_summary();
+    let mut seen_rows = vec![false; expected_rows];
+    let mut row_facets = 0usize;
+    let mut inventory_facets = 0usize;
+    let mut available_scopes = Vec::new();
+    let mut expected_finding_scopes = Vec::new();
+
+    for facet in prediction.facets() {
+        if facet.reasons() == [PredictionUnavailableReasonV2::FacetBudgetExceeded] {
+            if facet.basis() != &engine_clip_boundary_inventory_basis(timing)? {
+                return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+            }
+            continue;
+        }
+        if facet.scope().code.as_str() == "engine_clip_boundary" {
+            let Some(source_stack_index) = facet
+                .scope()
+                .subject
+                .as_deref()
+                .and_then(|subject| subject.strip_prefix("source_stack:"))
+                .and_then(|index| index.parse::<usize>().ok())
+            else {
+                return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+            };
+            if source_stack_index >= expected_rows
+                || std::mem::replace(&mut seen_rows[source_stack_index], true)
+            {
+                return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+            }
+            row_facets += 1;
+            let expected_basis = engine_clip_boundary_stack_basis(timing, source_stack_index)?;
+            if facet.basis() != &expected_basis {
+                return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+            }
+
+            let exact = timing.and_then(|timing| {
+                let declared = matches!(
+                    timing.declared_time_mode().state(),
+                    ExactFbxTimingObservationStateWireV1::Observed(_)
+                );
+                let period = match timing.frame_period().state() {
+                    ExactFbxTimingObservationStateWireV1::Observed(period) => {
+                        Some(period.ticks_per_frame())
+                    }
+                    _ => None,
+                };
+                let end = match timing.stacks()[source_stack_index]
+                    .source_tick_range()
+                    .state()
+                {
+                    ExactFbxTimingObservationStateWireV1::Observed(range) => {
+                        Some(range.end_ticks())
+                    }
+                    _ => None,
+                };
+                declared.then_some(())?;
+                Some((period?, end?))
+            });
+            match exact {
+                Some((period, end)) => {
+                    if facet.state() != EnginePredictionFacetStateV1::Available
+                        || !facet.reasons().is_empty()
+                    {
+                        return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+                    }
+                    available_scopes.push(facet.scope());
+                    if end.rem_euclid(period) != 0 {
+                        expected_finding_scopes.push(facet.scope());
+                    }
+                }
+                None => {
+                    let expected_reasons =
+                        engine_clip_boundary_unavailable_reasons(timing, source_stack_index)?;
+                    if facet.state() != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+                        || facet.reasons() != expected_reasons
+                    {
+                        return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+                    }
+                }
+            }
+        } else if facet.scope().code.as_str() == "engine_clip_boundary_inventory"
+            && facet.scope().subject.is_none()
+        {
+            inventory_facets += 1;
+            if inventory_facets != 1
+                || !inventory_incomplete
+                || facet.state() != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+                || facet.reasons() != [PredictionUnavailableReasonV2::RawSourceIncomplete]
+                || facet.basis() != &engine_clip_boundary_inventory_basis(timing)?
+            {
+                return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+            }
+        } else {
+            return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+        }
+    }
+
+    if seen_rows[..row_facets].iter().any(|seen| !seen)
+        || seen_rows[row_facets..].iter().any(|seen| *seen)
+    {
+        return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+    }
+    let candidate_facets = row_facets + inventory_facets;
+    let expected_demand = expected_rows + usize::from(inventory_incomplete);
+    if has_budget_summary {
+        if candidate_facets >= expected_demand
+            || inventory_facets != usize::from(inventory_incomplete && candidate_facets != 0)
+        {
+            return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+        }
+    } else if row_facets != expected_rows || inventory_facets != usize::from(inventory_incomplete) {
+        return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+    }
+    if evaluated_scopes.len() != available_scopes.len()
+        || evaluated_scopes
+            .iter()
+            .any(|scope| !available_scopes.iter().any(|available| *available == scope))
+    {
+        return Err(PredictionContractError::EngineClipBoundaryFacetMismatch);
+    }
+    if finding_scopes.len() != expected_finding_scopes.len()
+        || expected_finding_scopes.iter().any(|expected| {
+            finding_scopes
+                .iter()
+                .filter(|actual| **actual == *expected)
+                .count()
+                != 1
+        })
+    {
+        return Err(PredictionContractError::EngineClipBoundaryFindingMismatch);
+    }
+    Ok(())
+}
+
+fn engine_clip_boundary_common_basis()
+-> Result<Vec<PredictionBasisReferenceV2>, PredictionContractError> {
+    Ok(vec![
+        PredictionBasisReferenceV2::v1(PredictionBasisReferenceV1::profile_fact(
+            "whole_end_frame_required",
+        )?),
+        PredictionBasisReferenceV2::v1(PredictionBasisReferenceV1::primary_source(
+            ENGINE_CLIP_BOUNDARY_SOURCE_ID,
+        )?),
+    ])
+}
+
+fn engine_clip_boundary_exact_reference(
+    binding: &ExactFbxTimingBindingV1,
+    domain: ExactFbxTimingDomainV1,
+    key: ExactFbxTimingKeyV1,
+    field: &'static str,
+) -> Result<PredictionBasisReferenceV2, PredictionContractError> {
+    Ok(PredictionBasisReferenceV2::exact_fbx_timing(
+        ExactFbxTimingBasisReferenceV1::from_binding(
+            domain,
+            key,
+            RawSourceFieldIdV1::new(field)?,
+            binding,
+        )?,
+    ))
+}
+
+fn engine_clip_boundary_stack_basis(
+    timing: Option<&ExactFbxTimingBindingV1>,
+    source_stack_index: usize,
+) -> Result<EnginePredictionBasisV2, PredictionContractError> {
+    let mut references = engine_clip_boundary_common_basis()?;
+    let Some(timing) = timing else {
+        return EnginePredictionBasisV2::new(references);
+    };
+    let stack_key = ExactFbxTimingKeyV1::Stack {
+        source_stack_index: source_stack_index as u64,
+    };
+    for (domain, key, field) in [
+        (
+            ExactFbxTimingDomainV1::Document,
+            ExactFbxTimingKeyV1::Document,
+            "declared_time_mode.state",
+        ),
+        (
+            ExactFbxTimingDomainV1::Document,
+            ExactFbxTimingKeyV1::Document,
+            "frame_period.state",
+        ),
+        (
+            ExactFbxTimingDomainV1::Stack,
+            stack_key.clone(),
+            "source_tick_range.state",
+        ),
+    ] {
+        references.push(engine_clip_boundary_exact_reference(
+            timing, domain, key, field,
+        )?);
+    }
+    if matches!(
+        timing.declared_time_mode().state(),
+        ExactFbxTimingObservationStateWireV1::Observed(_)
+    ) {
+        references.push(engine_clip_boundary_exact_reference(
+            timing,
+            ExactFbxTimingDomainV1::Document,
+            ExactFbxTimingKeyV1::Document,
+            "declared_time_mode.value.time_mode",
+        )?);
+    }
+    if matches!(
+        timing.frame_period().state(),
+        ExactFbxTimingObservationStateWireV1::Observed(_)
+    ) {
+        references.push(engine_clip_boundary_exact_reference(
+            timing,
+            ExactFbxTimingDomainV1::Document,
+            ExactFbxTimingKeyV1::Document,
+            "frame_period.value.ticks_per_frame",
+        )?);
+    }
+    if matches!(
+        timing.stacks()[source_stack_index]
+            .source_tick_range()
+            .state(),
+        ExactFbxTimingObservationStateWireV1::Observed(_)
+    ) {
+        references.push(engine_clip_boundary_exact_reference(
+            timing,
+            ExactFbxTimingDomainV1::Stack,
+            stack_key,
+            "source_tick_range.value.end_ticks",
+        )?);
+    }
+    EnginePredictionBasisV2::new(references)
+}
+
+fn engine_clip_boundary_inventory_basis(
+    timing: Option<&ExactFbxTimingBindingV1>,
+) -> Result<EnginePredictionBasisV2, PredictionContractError> {
+    let mut references = engine_clip_boundary_common_basis()?;
+    if let Some(timing) = timing {
+        for field in ["stack_coverage.state", "stack_coverage.reason"] {
+            references.push(engine_clip_boundary_exact_reference(
+                timing,
+                ExactFbxTimingDomainV1::Document,
+                ExactFbxTimingKeyV1::Document,
+                field,
+            )?);
+        }
+    }
+    EnginePredictionBasisV2::new(references)
+}
+
+fn engine_clip_boundary_unavailable_reasons(
+    timing: Option<&ExactFbxTimingBindingV1>,
+    source_stack_index: usize,
+) -> Result<Vec<PredictionUnavailableReasonV2>, PredictionContractError> {
+    let Some(timing) = timing else {
+        return Ok(vec![PredictionUnavailableReasonV2::custom(
+            "animsmith:exact_fbx_timing_unavailable",
+        )?]);
+    };
+    let mut reasons = Vec::new();
+    if !matches!(
+        timing.declared_time_mode().state(),
+        ExactFbxTimingObservationStateWireV1::Observed(_)
+    ) {
+        reasons.push(PredictionUnavailableReasonV2::custom(
+            "animsmith:fbx_declared_time_mode_unavailable",
+        )?);
+    }
+    if !matches!(
+        timing.frame_period().state(),
+        ExactFbxTimingObservationStateWireV1::Observed(_)
+    ) {
+        reasons.push(PredictionUnavailableReasonV2::custom(
+            "animsmith:fbx_frame_period_unavailable",
+        )?);
+    }
+    if !matches!(
+        timing.stacks()[source_stack_index]
+            .source_tick_range()
+            .state(),
+        ExactFbxTimingObservationStateWireV1::Observed(_)
+    ) {
+        reasons.push(PredictionUnavailableReasonV2::custom(
+            "animsmith:fbx_stack_tick_range_unavailable",
+        )?);
+    }
+    reasons.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    Ok(reasons)
 }
 
 impl MeasurementReportInput {
@@ -5748,7 +6118,7 @@ mod measurement_report_input_tests {
     };
     use crate::source_facts::SourceFormatV1;
     use crate::{
-        DependencyClosureV1, Document, ImageSourceKind, ImageUnavailableReason,
+        DependencyClosureV1, Document, Finding, ImageSourceKind, ImageUnavailableReason,
         MaterialResourceCoverage, ResolvedRoles,
     };
 
@@ -6048,6 +6418,376 @@ mod measurement_report_input_tests {
     fn lint_read_error(wire: serde_json::Value) -> MeasurementReportError {
         let read: MeasurementReportInput = serde_json::from_value(wire).unwrap();
         read.into_files().expect_err("reader must reject N+1")
+    }
+
+    fn clip_boundary_profile() -> ResolvedEngineProfileV1 {
+        let all_fact_ids = [
+            EngineFactIdV1::AcceptedInputs,
+            EngineFactIdV1::AnimationAddressability,
+            EngineFactIdV1::AnimationChannelHandling,
+            EngineFactIdV1::AnimationTargetAddressability,
+            EngineFactIdV1::AxisConversionControl,
+            EngineFactIdV1::ConstructHandling,
+            EngineFactIdV1::ExactAxisConversion,
+            EngineFactIdV1::ExtensionHandling,
+            EngineFactIdV1::ResultingHierarchyScale,
+            EngineFactIdV1::RootMotionAddressability,
+            EngineFactIdV1::TargetCoordinateBasis,
+            EngineFactIdV1::TargetLinearUnit,
+            EngineFactIdV1::UnitConversionControl,
+            EngineFactIdV1::WholeEndFrameRequired,
+        ];
+        let facts = all_fact_ids
+            .into_iter()
+            .map(|id| {
+                let state = match id {
+                    EngineFactIdV1::AcceptedInputs => {
+                        EngineFactStateV1::Known(EngineFactValueV1::AcceptedFormats(vec![
+                            SourceFormatV1::Fbx,
+                        ]))
+                    }
+                    EngineFactIdV1::WholeEndFrameRequired => {
+                        EngineFactStateV1::Known(EngineFactValueV1::Boolean(true))
+                    }
+                    _ => EngineFactStateV1::Unknown,
+                };
+                EngineProfileFactV1::new(id, state)
+            })
+            .collect();
+        ResolvedEngineProfileV1::new(
+            EngineProfileSelectionV1::new("unreal", 1, "5.8", "fbx-importer").unwrap(),
+            "urn:animsmith:engine-profile:unreal:1",
+            facts,
+            vec![],
+            vec![
+                EnginePrimarySourceV1::new(
+                    ENGINE_CLIP_BOUNDARY_SOURCE_ID,
+                    "5.8",
+                    "https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-sequences-in-unreal-engine?application_version=5.8",
+                    "2026-08-25",
+                    vec![
+                        EngineFactIdV1::AcceptedInputs,
+                        EngineFactIdV1::WholeEndFrameRequired,
+                    ],
+                    vec![],
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn exact_observed(value: serde_json::Value, kind: &'static str) -> serde_json::Value {
+        serde_json::json!({
+            "state": {"kind": "observed", "value": value},
+            "disposition": "preserved",
+            "provenance": {"kind": kind}
+        })
+    }
+
+    fn clip_boundary_raw_wire(unavailable_last: bool) -> serde_json::Value {
+        let last_range = if unavailable_last {
+            serde_json::json!({
+                "state": {"kind": "unavailable", "value": "malformed"},
+                "disposition": "baked",
+                "provenance": null
+            })
+        } else {
+            exact_observed(
+                serde_json::json!({
+                    "selection": "local", "begin_ticks": 0, "end_ticks": 9_408_000
+                }),
+                "parser_projected",
+            )
+        };
+        serde_json::json!({
+            "schema": crate::RAW_SOURCE_FACTS_V2_ID,
+            "source_facts": {
+                "schema": crate::RAW_SOURCE_FACTS_V1_ID,
+                "primary_input": {"sha256": "00".repeat(32), "bytes": 0},
+                "source_format": "fbx",
+                "linear_unit": {
+                    "state": "observed", "value": 0.01, "disposition": "preserved",
+                    "provenance": {"kind": "format_defined"}
+                },
+                "coordinate_basis": {
+                    "state": "observed",
+                    "value": {"right": "positive_x", "up": "positive_y", "forward": "positive_z"},
+                    "disposition": "preserved", "provenance": {"kind": "format_defined"}
+                },
+                "frames_per_second": {
+                    "state": "observed", "value": 30.0, "disposition": "preserved",
+                    "provenance": {"kind": "format_defined"}
+                },
+                "clips_coverage": {"state": "complete"},
+                "constructs_coverage": {"state": "complete"},
+                "resources_coverage": {"state": "unavailable", "reason": "parser_unavailable"},
+                "source_skeleton_coverage": "unavailable",
+                "work": {
+                    "inspected_rows": 3, "retained_rows": 3,
+                    "retained_text_bytes": 0, "max_traversal_depth": 0
+                }
+            },
+            "exact_fbx_timing": {
+                "schema": crate::EXACT_FBX_TIMING_V1_ID,
+                "ktime_basis": exact_observed(
+                    serde_json::json!({"ticks_per_second": 141_120_000}),
+                    "format_defined"
+                ),
+                "declared_time_mode": exact_observed(
+                    serde_json::json!("fps30"), "source_declared"
+                ),
+                "effective_time_mode": exact_observed(
+                    serde_json::json!("fps30"), "parser_projected"
+                ),
+                "declared_custom_frame_rate": exact_observed(
+                    serde_json::json!({"binary64_bits": 30.0_f64.to_bits()}),
+                    "source_declared"
+                ),
+                "frame_period": exact_observed(
+                    serde_json::json!({"ticks_per_frame": 4_704_000}),
+                    "derived_from_source"
+                ),
+                "declared_time_protocol": exact_observed(
+                    serde_json::json!("default"), "source_declared"
+                ),
+                "effective_time_protocol": exact_observed(
+                    serde_json::json!("default"), "parser_projected"
+                ),
+                "stack_coverage": {"state": "complete"},
+                "stacks": [
+                    {
+                        "source_stack_index": 0,
+                        "source_tick_range": exact_observed(
+                            serde_json::json!({
+                                "selection": "local", "begin_ticks": 0,
+                                "end_ticks": 4_704_000
+                            }),
+                            "parser_projected"
+                        )
+                    },
+                    {
+                        "source_stack_index": 1,
+                        "source_tick_range": exact_observed(
+                            serde_json::json!({
+                                "selection": "local", "begin_ticks": 0,
+                                "end_ticks": 4_704_001
+                            }),
+                            "parser_projected"
+                        )
+                    },
+                    {"source_stack_index": 2, "source_tick_range": last_range}
+                ]
+            }
+        })
+    }
+
+    fn clip_boundary_provenance(unavailable_last: bool) -> PredictionProvenanceV3 {
+        let raw: RawSourceBindingV2 =
+            serde_json::from_value(clip_boundary_raw_wire(unavailable_last)).unwrap();
+        let profile = clip_boundary_profile();
+        let clips = (0..3)
+            .map(|index| EngineClipSettingsV1::new(format!("stack-{index}"), vec![]).unwrap())
+            .collect();
+        let settings = ResolvedEngineSettingsV2::new(
+            &profile,
+            vec![],
+            clips,
+            ResolvedEngineSettingsCoverageV2::complete(),
+            ResolvedEngineSettingsWorkV2::new(3, 3, 3),
+        )
+        .unwrap();
+        PredictionProvenanceV3::new(
+            profile,
+            SourceFormatV1::Fbx,
+            settings,
+            raw.clone(),
+            DependencyClosureV1::unavailable(raw.primary_input().clone()),
+        )
+        .unwrap()
+    }
+
+    fn clip_boundary_scope(source_stack_index: usize) -> EvaluationScope {
+        EvaluationScope::new(EvaluationScopeCode::ENGINE_CLIP_BOUNDARY)
+            .subject(format!("source_stack:{source_stack_index}"))
+    }
+
+    fn clip_boundary_check(
+        provenance: &PredictionProvenanceV3,
+        unavailable_last: bool,
+        first_basis: Option<EnginePredictionBasisV2>,
+    ) -> CheckEvaluation {
+        let timing = provenance.raw_source().exact_fbx_timing();
+        let scopes = (0..3).map(clip_boundary_scope).collect::<Vec<_>>();
+        let mut facets = Vec::new();
+        for (index, scope) in scopes.iter().cloned().enumerate() {
+            let basis = if index == 0 {
+                first_basis
+                    .clone()
+                    .unwrap_or_else(|| engine_clip_boundary_stack_basis(timing, index).unwrap())
+            } else {
+                engine_clip_boundary_stack_basis(timing, index).unwrap()
+            };
+            if unavailable_last && index == 2 {
+                facets.push(
+                    EnginePredictionFacetV3::required_unavailable(
+                        scope,
+                        basis,
+                        engine_clip_boundary_unavailable_reasons(timing, index).unwrap(),
+                    )
+                    .unwrap(),
+                );
+            } else {
+                facets.push(EnginePredictionFacetV3::available(scope, basis).unwrap());
+            }
+        }
+        let prediction = EnginePredictionV3::new(provenance.identity().clone(), facets).unwrap();
+        let finding = Finding::new(
+            ENGINE_CLIP_BOUNDARY_CHECK_ID,
+            Severity::Warning,
+            "fractional exact FBX stack end",
+        )
+        .prediction_scope(scopes[1].clone());
+        let evaluated_scopes = if unavailable_last {
+            scopes[..2].to_vec()
+        } else {
+            scopes
+        };
+        CheckEvaluation::evaluated(
+            ENGINE_CLIP_BOUNDARY_CHECK_ID,
+            CheckOutput::from_coverage(vec![finding], evaluated_scopes, vec![])
+                .with_engine_prediction_v3(prediction),
+        )
+        .unwrap()
+    }
+
+    fn clip_boundary_lint_wire(unavailable_last: bool) -> serde_json::Value {
+        let provenance = clip_boundary_provenance(unavailable_last);
+        let check = clip_boundary_check(&provenance, unavailable_last, None);
+        let file = LintFileReport::new(
+            "test.fbx",
+            provenance.raw_source().primary_input().clone(),
+            prediction_test_rig(),
+            Some(provenance),
+            vec![check],
+            prediction_test_measurements(),
+        )
+        .unwrap();
+        let envelope =
+            LintEnvelope::new(ToolInfo::animsmith(ToolSource::new(None, None)), vec![file])
+                .unwrap();
+        let wire = serde_json::to_value(envelope).unwrap();
+        serde_json::from_value::<MeasurementReportInput>(wire.clone())
+            .unwrap()
+            .into_files()
+            .unwrap();
+        wire
+    }
+
+    fn assert_clip_boundary_read_error(wire: serde_json::Value, expected: PredictionContractError) {
+        assert_eq!(
+            lint_read_error(wire),
+            MeasurementReportError::File {
+                file_index: 0,
+                source: MeasurementFileError::InvalidPrediction {
+                    check_index: 0,
+                    source: expected,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn exact_fbx_raw_source_v2_observed_values_round_trip_and_reject_hostile_mutations() {
+        let wire = clip_boundary_raw_wire(false);
+        let binding: RawSourceBindingV2 = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(binding).unwrap(), wire);
+
+        let mut invalid_value = wire.clone();
+        invalid_value["exact_fbx_timing"]["frame_period"]["state"]["value"]["ticks_per_frame"] =
+            serde_json::json!(0);
+        assert_eq!(
+            serde_json::from_value::<RawSourceBindingV2>(invalid_value)
+                .unwrap_err()
+                .to_string(),
+            PredictionContractError::ExactFbxTimingValueMismatch.to_string()
+        );
+
+        let mut invalid_coverage = wire.clone();
+        invalid_coverage["exact_fbx_timing"]["stack_coverage"] = serde_json::json!({
+            "state": "partial", "reason": "projection_budget_exceeded"
+        });
+        assert_eq!(
+            serde_json::from_value::<RawSourceBindingV2>(invalid_coverage)
+                .unwrap_err()
+                .to_string(),
+            PredictionContractError::ExactFbxTimingCoverageMismatch.to_string()
+        );
+
+        let mut invalid_prefix = wire;
+        invalid_prefix["exact_fbx_timing"]["stacks"][1]["source_stack_index"] =
+            serde_json::json!(2);
+        assert_eq!(
+            serde_json::from_value::<RawSourceBindingV2>(invalid_prefix)
+                .unwrap_err()
+                .to_string(),
+            PredictionContractError::ExactFbxTimingStackPrefixMismatch.to_string()
+        );
+    }
+
+    #[test]
+    fn clip_boundary_v3_readback_rejects_scope_basis_reason_and_finding_mutations() {
+        let wire = clip_boundary_lint_wire(false);
+
+        let mut wrong_scope = wire.clone();
+        wrong_scope["files"][0]["checks"][0]["prediction"]["facets"][0]["scope"]["subject"] =
+            serde_json::json!("source_stack:9");
+        wrong_scope["files"][0]["checks"][0]["evaluated_scopes"][0]["subject"] =
+            serde_json::json!("source_stack:9");
+        assert_clip_boundary_read_error(
+            wrong_scope,
+            PredictionContractError::EngineClipBoundaryFacetMismatch,
+        );
+
+        let mut wrong_basis = wire.clone();
+        wrong_basis["files"][0]["checks"][0]["prediction"]["facets"][0]["basis"] =
+            serde_json::to_value(
+                EnginePredictionBasisV2::new(engine_clip_boundary_common_basis().unwrap()).unwrap(),
+            )
+            .unwrap();
+        assert_clip_boundary_read_error(
+            wrong_basis,
+            PredictionContractError::EngineClipBoundaryFacetMismatch,
+        );
+
+        let mut missing_finding = wire;
+        missing_finding["files"][0]["checks"][0]["findings"] = serde_json::json!([]);
+        assert_clip_boundary_read_error(
+            missing_finding,
+            PredictionContractError::EngineClipBoundaryFindingMismatch,
+        );
+
+        let mut wrong_reason = clip_boundary_lint_wire(true);
+        wrong_reason["files"][0]["checks"][0]["prediction"]["facets"][2]["reasons"] =
+            serde_json::json!(["animsmith:fbx_frame_period_unavailable"]);
+        assert_clip_boundary_read_error(
+            wrong_reason,
+            PredictionContractError::EngineClipBoundaryFacetMismatch,
+        );
+    }
+
+    #[test]
+    fn clip_boundary_v3_producer_rejects_incomplete_exact_basis() {
+        let provenance = clip_boundary_provenance(false);
+        let incomplete_basis =
+            EnginePredictionBasisV2::new(engine_clip_boundary_common_basis().unwrap()).unwrap();
+        let check = clip_boundary_check(&provenance, false, Some(incomplete_basis));
+        assert!(matches!(
+            lint_file(&provenance, vec![check]),
+            Err(OutputContractError::InvalidPrediction(
+                PredictionContractError::EngineClipBoundaryFacetMismatch
+            ))
+        ));
     }
 
     fn prediction_with_retained_text(
@@ -7776,6 +8516,16 @@ impl LintFileReport {
             if check.engine_prediction().is_some() || check.engine_prediction_v2().is_some() {
                 return Err(OutputContractError::HistoricalPredictionInV2Output);
             }
+            if check.check_id() == ENGINE_CLIP_BOUNDARY_CHECK_ID
+                && check.selection() == SelectionState::Selected
+                && check.configuration() == ConfigurationState::Enabled
+                && check.applicability() == Applicability::Applicable
+                && check.engine_prediction_v3().is_none()
+            {
+                return Err(OutputContractError::InvalidPrediction(
+                    PredictionContractError::EngineClipBoundaryFacetMismatch,
+                ));
+            }
             if let Some(prediction) = check.engine_prediction_v3() {
                 let provenance = self
                     .prediction_provenance
@@ -7792,6 +8542,18 @@ impl LintFileReport {
                     check.check_id(),
                     prediction,
                     provenance,
+                )?;
+                let finding_scopes = check
+                    .findings()
+                    .iter()
+                    .filter_map(|finding| finding.prediction_scope.as_ref())
+                    .collect::<Vec<_>>();
+                validate_current_engine_clip_boundary_prediction_v3(
+                    check.check_id(),
+                    prediction,
+                    provenance,
+                    check.evaluated_scopes(),
+                    &finding_scopes,
                 )?;
                 has_facet_budget_summary |= prediction.has_facet_budget_summary();
                 facets = facets
