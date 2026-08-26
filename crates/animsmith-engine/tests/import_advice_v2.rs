@@ -1,12 +1,12 @@
+use animsmith_core::ImportSettingProjectionKindV1;
 use animsmith_core::{
     DependencyClosureBuilderV1, Document, InputIdentity, LoadedSource, RawSourceFactsBuilderV1,
     SourceFactDomainV1, SourceFormatV1, ToolInfo, ToolSource,
 };
-use animsmith_core::{EngineMachineResultV1, ImportSettingProjectionKindV1};
 use animsmith_engine::{
-    EngineDeclarationV2, EngineImportAdviceInputV2, EngineImportAdviceRefusalReasonV2,
-    EngineImportAdviceStateV2, EngineImportAdviceV2, ProfileSelection, SettingValueV2,
-    resolve_static_v2,
+    EngineDeclarationV2, EngineImportAdviceInputV2, EngineImportAdviceProjectionValueV2,
+    EngineImportAdviceRefusalReasonV2, EngineImportAdviceStateV2, EngineImportAdviceV2,
+    ProfileSelection, SettingValueV2, resolve_static_v2,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -92,10 +92,9 @@ fn godot_defaults_project_exact_params_and_round_trip_strictly() {
     );
     let report = EngineImportAdviceV2::from_source(tool(), &source, &resolved).unwrap();
     assert_eq!(report.state(), EngineImportAdviceStateV2::Available);
-    let facet = &report.prediction().facets()[0];
-    let Some(EngineMachineResultV1::ImportSettingProjection(projection)) = facet.result() else {
-        panic!("expected import-setting projection")
-    };
+    let projection = report
+        .projection()
+        .expect("expected import-setting projection");
     assert_eq!(
         projection.projection_kind,
         ImportSettingProjectionKindV1::GodotParams
@@ -135,11 +134,9 @@ fn unreal_projection_has_no_hidden_custom_rate_for_default30() {
         )]),
     );
     let report = EngineImportAdviceV2::from_source(tool(), &source, &resolved).unwrap();
-    let Some(EngineMachineResultV1::ImportSettingProjection(projection)) =
-        report.prediction().facets()[0].result()
-    else {
-        panic!("expected import-setting projection")
-    };
+    let projection = report
+        .projection()
+        .expect("expected import-setting projection");
     assert_eq!(
         projection
             .fields
@@ -168,19 +165,19 @@ fn unreal_source_determined_and_custom_rates_are_native_numeric_fields() {
             BTreeMap::from([("sample_rate".into(), SettingValueV2::SampleRate(policy))]),
         );
         let report = EngineImportAdviceV2::from_source(tool(), &source, &resolved).unwrap();
-        let Some(EngineMachineResultV1::ImportSettingProjection(projection)) =
-            report.prediction().facets()[0].result()
-        else {
-            panic!("expected import-setting projection")
-        };
+        let projection = report
+            .projection()
+            .expect("expected import-setting projection");
         assert_eq!(projection.fields.len(), 2);
         assert_eq!(projection.fields[0].key, "CustomSampleRate");
         assert_eq!(projection.fields[1].key, "bUseDefaultSampleRate");
+        let wire = serde_json::to_string(&report).unwrap();
+        if expected_custom == Some(0) {
+            assert!(wire.contains("\"unsigned_integer\":0"));
+        }
         assert_eq!(
             projection.fields[0].value,
-            animsmith_core::engine_contract::EngineSettingValueV2::PositiveInteger(
-                expected_custom.unwrap(),
-            )
+            EngineImportAdviceProjectionValueV2::UnsignedInteger(expected_custom.unwrap())
         );
     }
 }
@@ -218,12 +215,7 @@ fn incomplete_dependency_closure_is_typed_refusal_with_basis() {
         report.refusal_reason(),
         Some(EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete)
     );
-    assert!(
-        !report.prediction().facets()[0]
-            .basis()
-            .references()
-            .is_empty()
-    );
+    assert!(!report.basis().references().is_empty());
 }
 
 #[test]
@@ -238,4 +230,22 @@ fn strict_readback_rejects_unknown_envelope_fields() {
     value["unexpected"] = Value::Bool(true);
     let bytes = serde_json::to_vec(&value).unwrap();
     assert!(EngineImportAdviceInputV2::read_from(bytes.as_slice()).is_err());
+}
+
+#[test]
+fn strict_readback_rejects_projection_value_mutation() {
+    let (source, resolved) = resolved(
+        ProfileSelection::new("unreal", 2, "5.8", "fbx-importer"),
+        SourceFormatV1::Fbx,
+        BTreeMap::from([(
+            "sample_rate".into(),
+            SettingValueV2::SampleRate(animsmith_engine::UnrealSampleRateV2::SourceDetermined),
+        )]),
+    );
+    let report = EngineImportAdviceV2::from_source(tool(), &source, &resolved).unwrap();
+    let mut value: Value = serde_json::from_slice(&serde_json::to_vec(&report).unwrap()).unwrap();
+    value["projection"]["fields"][0]["value"]["unsigned_integer"] = Value::from(1);
+    let bytes = serde_json::to_vec(&value).unwrap();
+    let input = EngineImportAdviceInputV2::read_from(bytes.as_slice()).unwrap();
+    assert!(input.into_report().is_err());
 }

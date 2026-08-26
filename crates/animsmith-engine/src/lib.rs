@@ -105,11 +105,13 @@ pub use import_advice::{
     EngineImportAdviceClipEvidenceV1, EngineImportAdviceClipV1, EngineImportAdviceError,
     EngineImportAdviceIdentityV1, EngineImportAdviceIdentityV2, EngineImportAdviceInput,
     EngineImportAdviceInputV2, EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
-    EngineImportAdviceReadError, EngineImportAdviceReadbackV1, EngineImportAdviceReadbackV2,
-    EngineImportAdviceRefusalReasonV1, EngineImportAdviceRefusalReasonV2,
-    EngineImportAdviceSourceNameV1, EngineImportAdviceSourceUnavailableReasonV1,
-    EngineImportAdviceStateV1, EngineImportAdviceStateV2, EngineImportAdviceToolReadbackV1,
-    EngineImportAdviceV1, EngineImportAdviceV2, UnityClipAdviceV1, UnityDocumentAdviceV1,
+    EngineImportAdviceProjectionFieldV2, EngineImportAdviceProjectionV2,
+    EngineImportAdviceProjectionValueV2, EngineImportAdviceReadError, EngineImportAdviceReadbackV1,
+    EngineImportAdviceReadbackV2, EngineImportAdviceRefusalReasonV1,
+    EngineImportAdviceRefusalReasonV2, EngineImportAdviceSourceNameV1,
+    EngineImportAdviceSourceUnavailableReasonV1, EngineImportAdviceStateV1,
+    EngineImportAdviceStateV2, EngineImportAdviceToolReadbackV1, EngineImportAdviceV1,
+    EngineImportAdviceV2, UnityClipAdviceV1, UnityDocumentAdviceV1,
 };
 pub use prediction::{
     BevyAnimationAssetLabelError, BevyAnimationAssetLabelV1, ENGINE_ADDRESSABILITY_CHECK_ID,

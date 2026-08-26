@@ -1074,6 +1074,14 @@ pub const ENGINE_IMPORT_ADVICE_V2_MAX_REPORT_BYTES: u64 = ENGINE_IMPORT_ADVICE_V
 const ENGINE_IMPORT_ADVICE_V2_IDENTITY_DOMAIN: &str =
     "urn:animsmith:engine-import-advice-preimage:2";
 const IMPORT_SETTING_PROJECTION_SCOPE: &str = "import-setting-projection";
+const GODOT_V2_FACTS: (&str, u64) = (
+    "5911192e94b514bc1a82a3914def9444a45b7f4999e8976585e28af6288833d1",
+    1571,
+);
+const UNREAL_V2_FACTS: (&str, u64) = (
+    "77df5554413b29767fb8d7f4f8d65d199ea54da80ae08e8c006128eb6cf9e329",
+    1393,
+);
 
 /// Whether the exact V2 document projection was emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1099,6 +1107,59 @@ pub enum EngineImportAdviceRefusalReasonV2 {
     SettingUnavailable,
 }
 
+/// Native scalar carried by a V2 importer projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineImportAdviceProjectionValueV2 {
+    /// Native Boolean field.
+    Boolean(bool),
+    /// Native unsigned integer field, including Unreal's source-determined 0.
+    UnsignedInteger(u32),
+}
+
+/// One exact native importer field and its resolved authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineImportAdviceProjectionFieldV2 {
+    /// Engine-native field key.
+    pub key: String,
+    /// Native projected value.
+    pub value: EngineImportAdviceProjectionValueV2,
+    /// Authority for the corresponding resolved setting.
+    pub value_origin: animsmith_core::EngineSettingValueOriginV3,
+}
+
+/// Exact bounded document-level importer projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineImportAdviceProjectionV2 {
+    /// Projection target.
+    pub projection_kind: animsmith_core::ImportSettingProjectionKindV1,
+    /// Canonically key-ordered native fields.
+    #[serde(deserialize_with = "deserialize_v2_projection_fields")]
+    pub fields: Vec<EngineImportAdviceProjectionFieldV2>,
+}
+
+impl EngineImportAdviceProjectionV2 {
+    fn validate(&self) -> Result<(), EngineImportAdviceError> {
+        if self.fields.is_empty() || self.fields.len() > MAX_CLIPS {
+            return Err(EngineImportAdviceError::InvalidV2Projection);
+        }
+        if self
+            .fields
+            .iter()
+            .any(|field| field.key.is_empty() || field.key.len() > MAX_TEXT_BYTES)
+            || self
+                .fields
+                .windows(2)
+                .any(|pair| pair[0].key >= pair[1].key)
+        {
+            return Err(EngineImportAdviceError::InvalidV2Projection);
+        }
+        Ok(())
+    }
+}
+
 /// Domain-separated canonical identity of one V2 advice envelope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -1120,7 +1181,9 @@ pub struct EngineImportAdviceV2 {
     command: &'static str,
     identity: EngineImportAdviceIdentityV2,
     prediction_provenance: animsmith_core::PredictionProvenanceV4,
-    prediction: animsmith_core::EnginePredictionV4,
+    basis: animsmith_core::EnginePredictionBasisV4,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    projection: Option<EngineImportAdviceProjectionV2>,
     state: EngineImportAdviceStateV2,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refusal_reason: Option<EngineImportAdviceRefusalReasonV2>,
@@ -1146,7 +1209,22 @@ impl EngineImportAdviceV2 {
             ),
             _ => return false,
         };
+        let Ok(core) = crate::project_engine_profile_v2(profile) else {
+            return false;
+        };
+        let facts_identity_matches = match expected.1 {
+            "godot_params" => {
+                core.facts_identity().sha256() == GODOT_V2_FACTS.0
+                    && core.facts_identity().bytes() == GODOT_V2_FACTS.1
+            }
+            "unreal_fbx_import_data" => {
+                core.facts_identity().sha256() == UNREAL_V2_FACTS.0
+                    && core.facts_identity().bytes() == UNREAL_V2_FACTS.1
+            }
+            _ => false,
+        };
         profile.profile_urn() == expected.0
+            && facts_identity_matches
             && matches!(
                 profile
                     .facts()
@@ -1176,9 +1254,8 @@ impl EngineImportAdviceV2 {
         let provenance = project_prediction_provenance_v4(profile, source, Vec::new())
             .map_err(|error| EngineImportAdviceError::InvalidV2Provenance(error.to_string()))?;
         let basis = v2_basis(&provenance)?;
-        let (projection_kind, expected_fields) = v2_projection(&provenance)?;
         let authority = v2_authority(&provenance, source);
-        let (state, refusal_reason, facet) = match authority {
+        let (state, refusal_reason, projection) = match authority {
             None => {
                 let reason = if !source.dependency_closure().coverage().is_complete() {
                     EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete
@@ -1193,58 +1270,12 @@ impl EngineImportAdviceV2 {
                         _ => EngineImportAdviceRefusalReasonV2::SettingUnavailable,
                     }
                 };
-                let prediction_facet =
-                    animsmith_core::EnginePredictionFacetV4::required_unavailable(
-                        animsmith_core::EvaluationScope::new(
-                            animsmith_core::EvaluationScopeCode::custom(
-                                IMPORT_SETTING_PROJECTION_SCOPE,
-                            ),
-                        ),
-                        basis,
-                        vec![v2_prediction_reason(reason)],
-                    )
-                    .map_err(|error| {
-                        EngineImportAdviceError::InvalidV2Prediction(error.to_string())
-                    })?;
-                (
-                    EngineImportAdviceStateV2::Refused,
-                    Some(reason),
-                    animsmith_core::EnginePredictionV4::new(
-                        provenance.identity().clone(),
-                        vec![prediction_facet],
-                    )
-                    .map_err(|error| {
-                        EngineImportAdviceError::InvalidV2Prediction(error.to_string())
-                    })?,
-                )
+                (EngineImportAdviceStateV2::Refused, Some(reason), None)
             }
             Some(()) => {
-                let result = animsmith_core::ImportSettingProjectionResultV1::new(
-                    projection_kind,
-                    expected_fields,
-                )
-                .map_err(|error| EngineImportAdviceError::InvalidV2Prediction(error.to_string()))?;
-                let prediction_facet = animsmith_core::EnginePredictionFacetV4::available(
-                    animsmith_core::EvaluationScope::new(
-                        animsmith_core::EvaluationScopeCode::custom(
-                            IMPORT_SETTING_PROJECTION_SCOPE,
-                        ),
-                    ),
-                    basis,
-                    animsmith_core::EngineMachineResultV1::ImportSettingProjection(result),
-                )
-                .map_err(|error| EngineImportAdviceError::InvalidV2Prediction(error.to_string()))?;
-                (
-                    EngineImportAdviceStateV2::Available,
-                    None,
-                    animsmith_core::EnginePredictionV4::new(
-                        provenance.identity().clone(),
-                        vec![prediction_facet],
-                    )
-                    .map_err(|error| {
-                        EngineImportAdviceError::InvalidV2Prediction(error.to_string())
-                    })?,
-                )
+                let projection = v2_projection(&provenance)?;
+                projection.validate()?;
+                (EngineImportAdviceStateV2::Available, None, Some(projection))
             }
         };
         let mut report = Self {
@@ -1254,7 +1285,8 @@ impl EngineImportAdviceV2 {
             command: ENGINE_IMPORT_ADVICE_COMMAND,
             identity: EngineImportAdviceIdentityV2(InputIdentity::from_bytes(&[])),
             prediction_provenance: provenance,
-            prediction: facet,
+            basis,
+            projection,
             state,
             refusal_reason,
         };
@@ -1271,9 +1303,13 @@ impl EngineImportAdviceV2 {
     pub const fn prediction_provenance(&self) -> &animsmith_core::PredictionProvenanceV4 {
         &self.prediction_provenance
     }
-    /// One bounded document-scope prediction facet.
-    pub const fn prediction(&self) -> &animsmith_core::EnginePredictionV4 {
-        &self.prediction
+    /// Canonical prediction basis.
+    pub const fn basis(&self) -> &animsmith_core::EnginePredictionBasisV4 {
+        &self.basis
+    }
+    /// Exact native importer projection, when available.
+    pub const fn projection(&self) -> Option<&EngineImportAdviceProjectionV2> {
+        self.projection.as_ref()
     }
     /// Advice lifecycle state.
     pub const fn state(&self) -> EngineImportAdviceStateV2 {
@@ -1296,7 +1332,8 @@ impl EngineImportAdviceV2 {
             .map_err(|error| EngineImportAdviceError::InvalidV2Provenance(error.to_string()))?;
         validate_v2_semantics(
             &self.prediction_provenance,
-            &self.prediction,
+            &self.basis,
+            self.projection.as_ref(),
             self.state,
             self.refusal_reason,
         )?;
@@ -1310,9 +1347,15 @@ impl EngineImportAdviceV2 {
             self.prediction_provenance.identity().input_identity(),
         );
         encoder.token(
-            &serde_json::to_string(&self.prediction)
-                .expect("V2 prediction serialization is infallible"),
+            &serde_json::to_string(&self.basis).expect("V2 basis serialization is infallible"),
         );
+        encoder.bool(self.projection.is_some());
+        if let Some(projection) = self.projection.as_ref() {
+            encoder.token(
+                &serde_json::to_string(projection)
+                    .expect("V2 projection serialization is infallible"),
+            );
+        }
         encoder.token(match self.state {
             EngineImportAdviceStateV2::Available => "available",
             EngineImportAdviceStateV2::Refused => "refused",
@@ -1335,7 +1378,9 @@ pub struct EngineImportAdviceInputV2 {
     command: String,
     identity: EngineImportAdviceIdentityV2,
     prediction_provenance: Box<RawValue>,
-    prediction: Box<RawValue>,
+    basis: Box<RawValue>,
+    #[serde(default, deserialize_with = "deserialize_present_non_null")]
+    projection: Option<EngineImportAdviceProjectionV2>,
     state: EngineImportAdviceStateV2,
     #[serde(default, deserialize_with = "deserialize_present_non_null")]
     refusal_reason: Option<EngineImportAdviceRefusalReasonV2>,
@@ -1370,9 +1415,8 @@ impl EngineImportAdviceInputV2 {
         let prediction_provenance: animsmith_core::PredictionProvenanceV4 =
             serde_json::from_str(self.prediction_provenance.get())
                 .map_err(|error| EngineImportAdviceError::InvalidV2Provenance(error.to_string()))?;
-        let prediction: animsmith_core::EnginePredictionV4 =
-            serde_json::from_str(self.prediction.get())
-                .map_err(|error| EngineImportAdviceError::InvalidV2Prediction(error.to_string()))?;
+        let basis: animsmith_core::EnginePredictionBasisV4 = serde_json::from_str(self.basis.get())
+            .map_err(|error| EngineImportAdviceError::InvalidV2Prediction(error.to_string()))?;
         let report = EngineImportAdviceReadbackV2 {
             tool: EngineImportAdviceToolReadbackV1 {
                 name: self.tool.name,
@@ -1382,7 +1426,8 @@ impl EngineImportAdviceInputV2 {
             },
             identity: self.identity,
             prediction_provenance,
-            prediction,
+            basis,
+            projection: self.projection,
             state: self.state,
             refusal_reason: self.refusal_reason,
         };
@@ -1397,7 +1442,8 @@ pub struct EngineImportAdviceReadbackV2 {
     tool: EngineImportAdviceToolReadbackV1,
     identity: EngineImportAdviceIdentityV2,
     prediction_provenance: animsmith_core::PredictionProvenanceV4,
-    prediction: animsmith_core::EnginePredictionV4,
+    basis: animsmith_core::EnginePredictionBasisV4,
+    projection: Option<EngineImportAdviceProjectionV2>,
     state: EngineImportAdviceStateV2,
     refusal_reason: Option<EngineImportAdviceRefusalReasonV2>,
 }
@@ -1415,9 +1461,13 @@ impl EngineImportAdviceReadbackV2 {
     pub const fn prediction_provenance(&self) -> &animsmith_core::PredictionProvenanceV4 {
         &self.prediction_provenance
     }
-    /// V4 prediction attachment.
-    pub const fn prediction(&self) -> &animsmith_core::EnginePredictionV4 {
-        &self.prediction
+    /// Canonical prediction basis.
+    pub const fn basis(&self) -> &animsmith_core::EnginePredictionBasisV4 {
+        &self.basis
+    }
+    /// Native importer projection, when available.
+    pub const fn projection(&self) -> Option<&EngineImportAdviceProjectionV2> {
+        self.projection.as_ref()
     }
     /// Advice lifecycle state.
     pub const fn state(&self) -> EngineImportAdviceStateV2 {
@@ -1434,7 +1484,8 @@ impl EngineImportAdviceReadbackV2 {
             .map_err(|error| EngineImportAdviceError::InvalidV2Provenance(error.to_string()))?;
         validate_v2_semantics(
             &self.prediction_provenance,
-            &self.prediction,
+            &self.basis,
+            self.projection.as_ref(),
             self.state,
             self.refusal_reason,
         )?;
@@ -1445,7 +1496,8 @@ impl EngineImportAdviceReadbackV2 {
             command: ENGINE_IMPORT_ADVICE_COMMAND,
             identity: self.identity.clone(),
             prediction_provenance: self.prediction_provenance.clone(),
-            prediction: self.prediction.clone(),
+            basis: self.basis.clone(),
+            projection: self.projection.clone(),
             state: self.state,
             refusal_reason: self.refusal_reason,
         };
@@ -1555,13 +1607,7 @@ fn v2_basis(
 
 fn v2_projection(
     provenance: &animsmith_core::PredictionProvenanceV4,
-) -> Result<
-    (
-        animsmith_core::ImportSettingProjectionKindV1,
-        Vec<animsmith_core::ImportSettingProjectionFieldV1>,
-    ),
-    EngineImportAdviceError,
-> {
+) -> Result<EngineImportAdviceProjectionV2, EngineImportAdviceError> {
     use animsmith_core::{EngineSettingIdV2 as Id, EngineSettingValueV2 as Value};
     let family = provenance.profile().selection().family();
     let expected_token = match family {
@@ -1580,11 +1626,15 @@ fn v2_projection(
     match (
         family,
         provenance.profile().selection().profile_revision(),
+        provenance.profile().selection().engine_version(),
+        provenance.profile().selection().importer(),
         provenance.source_format(),
     ) {
         (
             "godot",
             2,
+            "4.7",
+            "resource-importer-scene",
             animsmith_core::SourceFormatV1::Glb | animsmith_core::SourceFormatV1::GltfJson,
         ) => {
             let fps = provenance
@@ -1601,23 +1651,23 @@ fn v2_projection(
             let Value::Boolean(trimming_value) = trimming.value() else {
                 return Err(EngineImportAdviceError::InvalidV2Settings);
             };
-            fields.push(animsmith_core::ImportSettingProjectionFieldV1 {
+            fields.push(EngineImportAdviceProjectionFieldV2 {
                 key: "animation/fps".into(),
-                value: Value::PositiveInteger(*fps_value),
+                value: EngineImportAdviceProjectionValueV2::UnsignedInteger(*fps_value),
                 value_origin: fps.value_origin(),
             });
-            fields.push(animsmith_core::ImportSettingProjectionFieldV1 {
+            fields.push(EngineImportAdviceProjectionFieldV2 {
                 key: "animation/trimming".into(),
-                value: Value::Boolean(*trimming_value),
+                value: EngineImportAdviceProjectionValueV2::Boolean(*trimming_value),
                 value_origin: trimming.value_origin(),
             });
             fields.sort_by(|left, right| left.key.cmp(&right.key));
-            Ok((
-                animsmith_core::ImportSettingProjectionKindV1::GodotParams,
+            Ok(EngineImportAdviceProjectionV2 {
+                projection_kind: animsmith_core::ImportSettingProjectionKindV1::GodotParams,
                 fields,
-            ))
+            })
         }
-        ("unreal", 2, animsmith_core::SourceFormatV1::Fbx) => {
+        ("unreal", 2, "5.8", "fbx-importer", animsmith_core::SourceFormatV1::Fbx) => {
             let sample_rate = provenance
                 .settings()
                 .document_setting(Id::SampleRate)
@@ -1630,46 +1680,25 @@ fn v2_projection(
                 animsmith_core::EngineSampleRateV2::SourceDetermined => (false, Some(0)),
                 animsmith_core::EngineSampleRateV2::CustomHz(value) => (false, Some(*value)),
             };
-            fields.push(animsmith_core::ImportSettingProjectionFieldV1 {
+            fields.push(EngineImportAdviceProjectionFieldV2 {
                 key: "bUseDefaultSampleRate".into(),
-                value: Value::Boolean(use_default),
+                value: EngineImportAdviceProjectionValueV2::Boolean(use_default),
                 value_origin: sample_rate.value_origin(),
             });
             if let Some(custom) = custom {
-                fields.push(animsmith_core::ImportSettingProjectionFieldV1 {
+                fields.push(EngineImportAdviceProjectionFieldV2 {
                     key: "CustomSampleRate".into(),
-                    value: Value::PositiveInteger(custom),
+                    value: EngineImportAdviceProjectionValueV2::UnsignedInteger(custom),
                     value_origin: sample_rate.value_origin(),
                 });
             }
             fields.sort_by(|left, right| left.key.cmp(&right.key));
-            Ok((
-                animsmith_core::ImportSettingProjectionKindV1::UnrealFbxImportData,
+            Ok(EngineImportAdviceProjectionV2 {
+                projection_kind: animsmith_core::ImportSettingProjectionKindV1::UnrealFbxImportData,
                 fields,
-            ))
+            })
         }
         _ => Err(EngineImportAdviceError::UnsupportedProfileV2),
-    }
-}
-
-fn v2_prediction_reason(
-    reason: EngineImportAdviceRefusalReasonV2,
-) -> animsmith_core::PredictionUnavailableReasonV2 {
-    match reason {
-        EngineImportAdviceRefusalReasonV2::ProfileFactUnknown => {
-            animsmith_core::PredictionUnavailableReasonV2::ProfileFactUnknown
-        }
-        EngineImportAdviceRefusalReasonV2::PrimarySourceUnavailable => {
-            animsmith_core::PredictionUnavailableReasonV2::PrimarySourceUnavailable
-        }
-        EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete => {
-            animsmith_core::PredictionUnavailableReasonV2::DependencyClosureIncomplete
-        }
-        EngineImportAdviceRefusalReasonV2::SettingUnavailable => {
-            animsmith_core::PredictionUnavailableReasonV2::Custom(
-                "animsmith:setting_unavailable".into(),
-            )
-        }
     }
 }
 
@@ -1686,42 +1715,26 @@ fn v2_refusal_name(reason: EngineImportAdviceRefusalReasonV2) -> &'static str {
 
 fn validate_v2_semantics(
     provenance: &animsmith_core::PredictionProvenanceV4,
-    prediction: &animsmith_core::EnginePredictionV4,
+    basis: &animsmith_core::EnginePredictionBasisV4,
+    projection: Option<&EngineImportAdviceProjectionV2>,
     state: EngineImportAdviceStateV2,
     refusal_reason: Option<EngineImportAdviceRefusalReasonV2>,
 ) -> Result<(), EngineImportAdviceError> {
-    prediction
-        .validate_against_provenance(provenance)
-        .map_err(|error| EngineImportAdviceError::InvalidV2Prediction(error.to_string()))?;
-    if prediction.facets().len() != 1
-        || prediction.facets()[0].scope().code.as_str() != IMPORT_SETTING_PROJECTION_SCOPE
-        || prediction.facets()[0].scope().subject.is_some()
-    {
+    validate_v2_profile(provenance)?;
+    validate_v2_basis(provenance, basis)?;
+    if basis != &v2_basis(provenance)? {
+        return Err(EngineImportAdviceError::InvalidV2Projection);
+    }
+    let expected_projection = v2_projection(provenance)?;
+    expected_projection.validate()?;
+    if let Some(projection) = projection {
+        projection.validate()?;
+    }
+    if state == EngineImportAdviceStateV2::Available && projection != Some(&expected_projection) {
+        return Err(EngineImportAdviceError::InvalidV2Projection);
+    }
+    if state == EngineImportAdviceStateV2::Refused && projection.is_some() {
         return Err(EngineImportAdviceError::InvalidV2Lifecycle);
-    }
-    let facet = &prediction.facets()[0];
-    match (state, refusal_reason, facet.state(), facet.result()) {
-        (
-            EngineImportAdviceStateV2::Available,
-            None,
-            animsmith_core::EnginePredictionFacetStateV1::Available,
-            Some(animsmith_core::EngineMachineResultV1::ImportSettingProjection(_)),
-        ) => {}
-        (
-            EngineImportAdviceStateV2::Refused,
-            Some(_),
-            animsmith_core::EnginePredictionFacetStateV1::RequiredPredictionUnavailable,
-            None,
-        ) => {}
-        _ => return Err(EngineImportAdviceError::InvalidV2Lifecycle),
-    }
-    let (kind, fields) = v2_projection(provenance)?;
-    if let Some(animsmith_core::EngineMachineResultV1::ImportSettingProjection(result)) =
-        facet.result()
-    {
-        if result.projection_kind != kind || result.fields != fields {
-            return Err(EngineImportAdviceError::InvalidV2Projection);
-        }
     }
     if state == EngineImportAdviceStateV2::Available
         && (!provenance
@@ -1744,6 +1757,67 @@ fn validate_v2_semantics(
         }
     }
     Ok(())
+}
+
+fn validate_v2_profile(
+    provenance: &animsmith_core::PredictionProvenanceV4,
+) -> Result<(), EngineImportAdviceError> {
+    let selection = provenance.profile().selection();
+    let expected = match (
+        selection.family(),
+        selection.profile_revision(),
+        selection.engine_version(),
+        selection.importer(),
+    ) {
+        ("godot", 2, "4.7", "resource-importer-scene") => (
+            "urn:animsmith:engine-profile:godot:2",
+            GODOT_V2_FACTS,
+            "godot_params",
+        ),
+        ("unreal", 2, "5.8", "fbx-importer") => (
+            "urn:animsmith:engine-profile:unreal:2",
+            UNREAL_V2_FACTS,
+            "unreal_fbx_import_data",
+        ),
+        _ => return Err(EngineImportAdviceError::UnsupportedProfileV2),
+    };
+    if provenance.profile().fact_bundle_urn() != expected.0
+        || provenance.profile().facts_identity().sha256() != expected.1.0
+        || provenance.profile().facts_identity().bytes() != expected.1.1
+        || !matches!(
+            provenance
+                .profile()
+                .fact(animsmith_core::EngineFactIdV2::ImportSettingProjection),
+            Some(fact)
+                if matches!(fact.state(), animsmith_core::EngineFactStateV2::Known(animsmith_core::EngineFactValueV2::Token(token)) if token == expected.2)
+        )
+    {
+        return Err(EngineImportAdviceError::InvalidV2Projection);
+    }
+    Ok(())
+}
+
+fn validate_v2_basis(
+    provenance: &animsmith_core::PredictionProvenanceV4,
+    basis: &animsmith_core::EnginePredictionBasisV4,
+) -> Result<(), EngineImportAdviceError> {
+    // The core V4 validator is also the authoritative cross-contract checker.
+    // A temporary unavailable facet lets us validate references without
+    // serializing or retaining an EnginePredictionV4 in this advice contract.
+    let facet = animsmith_core::EnginePredictionFacetV4::required_unavailable(
+        animsmith_core::EvaluationScope::new(animsmith_core::EvaluationScopeCode::custom(
+            IMPORT_SETTING_PROJECTION_SCOPE,
+        )),
+        basis.clone(),
+        vec![animsmith_core::PredictionUnavailableReasonV2::ProfileFactUnknown],
+    )
+    .map_err(|error| EngineImportAdviceError::InvalidV2Prediction(error.to_string()))?;
+    let prediction =
+        animsmith_core::EnginePredictionV4::new(provenance.identity().clone(), vec![facet])
+            .map_err(|error| EngineImportAdviceError::InvalidV2Prediction(error.to_string()))?;
+    prediction
+        .validate_against_provenance(provenance)
+        .map_err(|error| EngineImportAdviceError::InvalidV2Prediction(error.to_string()))
 }
 
 fn v2_profile_fact_is_known(provenance: &animsmith_core::PredictionProvenanceV4) -> bool {
@@ -2133,6 +2207,15 @@ where
     deserialize_bounded_clips(deserializer)
 }
 fn deserialize_unity_clips<'de, D>(deserializer: D) -> Result<Vec<UnityClipAdviceV1>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_bounded_clips(deserializer)
+}
+
+fn deserialize_v2_projection_fields<'de, D>(
+    deserializer: D,
+) -> Result<Vec<EngineImportAdviceProjectionFieldV2>, D::Error>
 where
     D: Deserializer<'de>,
 {
