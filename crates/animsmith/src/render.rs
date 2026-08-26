@@ -25,8 +25,10 @@ use animsmith_core::{
 };
 use animsmith_engine::{
     EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
-    EngineImportAdviceRefusalReasonV1, EngineImportAdviceSourceNameV1,
-    EngineImportAdviceSourceUnavailableReasonV1, EngineImportAdviceStateV1, EngineImportAdviceV1,
+    EngineImportAdviceProjectionValueV2, EngineImportAdviceRefusalReasonV1,
+    EngineImportAdviceRefusalReasonV2, EngineImportAdviceSourceNameV1,
+    EngineImportAdviceSourceUnavailableReasonV1, EngineImportAdviceStateV1,
+    EngineImportAdviceStateV2, EngineImportAdviceV1, EngineImportAdviceV2,
     GltfAnimationAddressabilityV1, GltfAnimationChannelPropertyV1, GltfAnimationCoverageStateV1,
     GltfAnimationCoverageV1, GltfAnimationObservationV1, GltfAnimationTargetKindV1,
     GltfAnimationUnavailableReasonV1,
@@ -290,6 +292,139 @@ pub(crate) fn render_import_advice_markdown(report: &EngineImportAdviceV1) -> St
         }
         EngineImportAdvicePayloadV1::Unreal => out.push_str("- Unreal settings are unmodeled.\n"),
         EngineImportAdvicePayloadV1::Godot => out.push_str("- Godot settings are unmodeled.\n"),
+    }
+    out
+}
+
+fn import_advice_v2_state(state: EngineImportAdviceStateV2) -> &'static str {
+    match state {
+        EngineImportAdviceStateV2::Available => "available",
+        EngineImportAdviceStateV2::Refused => "refused",
+    }
+}
+
+fn import_advice_v2_refusal(reason: EngineImportAdviceRefusalReasonV2) -> &'static str {
+    match reason {
+        EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete => {
+            "dependency_closure_incomplete"
+        }
+    }
+}
+
+fn import_advice_v2_value(value: EngineImportAdviceProjectionValueV2) -> String {
+    match value {
+        EngineImportAdviceProjectionValueV2::Boolean(value) => value.to_string(),
+        EngineImportAdviceProjectionValueV2::UnsignedInteger(value) => value.to_string(),
+    }
+}
+
+fn import_advice_v2_origin(value: animsmith_core::EngineSettingValueOriginV3) -> &'static str {
+    match value {
+        animsmith_core::EngineSettingValueOriginV3::ExplicitConfig => "explicit_config",
+        animsmith_core::EngineSettingValueOriginV3::ProfileDefault => "profile_default",
+    }
+}
+
+fn import_advice_v2_projection_kind(
+    value: animsmith_core::ImportSettingProjectionKindV1,
+) -> &'static str {
+    match value {
+        animsmith_core::ImportSettingProjectionKindV1::GodotParams => "godot_params",
+        animsmith_core::ImportSettingProjectionKindV1::UnrealFbxImportData => {
+            "unreal_fbx_import_data"
+        }
+    }
+}
+
+/// Render one revision-2 engine-import-advice document as escaped text.
+pub(crate) fn render_import_advice_v2_text(report: &EngineImportAdviceV2) -> String {
+    use std::fmt::Write as _;
+
+    let selection = report.prediction_provenance().profile().selection();
+    let mut out = String::new();
+    let _ = writeln!(out, "engine import advice v2");
+    let _ = writeln!(
+        out,
+        "identity: sha256={} canonical-bytes={}",
+        report.identity().input_identity().sha256(),
+        report.identity().input_identity().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "profile: {} revision {} ({} / {})",
+        text_atom(selection.family()),
+        selection.profile_revision(),
+        text_atom(selection.engine_version()),
+        text_atom(selection.importer()),
+    );
+    let _ = writeln!(out, "state: {}", import_advice_v2_state(report.state()));
+    if let Some(reason) = report.refusal_reason() {
+        let _ = writeln!(out, "refusal: {}", import_advice_v2_refusal(reason));
+    }
+    let _ = writeln!(
+        out,
+        "basis: {} references",
+        report.basis().references().len()
+    );
+    if let Some(projection) = report.projection() {
+        let _ = writeln!(
+            out,
+            "projection: {}",
+            import_advice_v2_projection_kind(projection.projection_kind)
+        );
+        for field in &projection.fields {
+            let _ = writeln!(
+                out,
+                "{}={} ({})",
+                text_atom(&field.key),
+                import_advice_v2_value(field.value),
+                import_advice_v2_origin(field.value_origin),
+            );
+        }
+    }
+    out
+}
+
+/// Render one revision-2 engine-import-advice document as escaped Markdown.
+pub(crate) fn render_import_advice_v2_markdown(report: &EngineImportAdviceV2) -> String {
+    use std::fmt::Write as _;
+
+    let selection = report.prediction_provenance().profile().selection();
+    let mut out = String::from("# Engine import advice v2\n\n");
+    let _ = writeln!(
+        out,
+        "- Identity: `{}` (`{}` canonical bytes)",
+        report.identity().input_identity().sha256(),
+        report.identity().input_identity().bytes()
+    );
+    let _ = writeln!(
+        out,
+        "- Profile: `{}` revision `{}` (`{}` / `{}`)",
+        md_cell(selection.family()),
+        selection.profile_revision(),
+        md_cell(selection.engine_version()),
+        md_cell(selection.importer()),
+    );
+    let _ = writeln!(out, "- State: `{}`", import_advice_v2_state(report.state()));
+    if let Some(reason) = report.refusal_reason() {
+        let _ = writeln!(out, "- Refusal: `{}`", import_advice_v2_refusal(reason));
+    }
+    let _ = writeln!(
+        out,
+        "- Basis references: `{}`",
+        report.basis().references().len()
+    );
+    if let Some(projection) = report.projection() {
+        out.push_str("\n## Importer settings\n\n");
+        for field in &projection.fields {
+            let _ = writeln!(
+                out,
+                "- `{}`: `{}` (`{}`)",
+                md_cell(&field.key),
+                import_advice_v2_value(field.value),
+                import_advice_v2_origin(field.value_origin),
+            );
+        }
     }
     out
 }

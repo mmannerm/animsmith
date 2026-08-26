@@ -21,6 +21,7 @@ use std::process::{Command, Output, Stdio};
 
 const CURRENT_OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:17";
 const OUTPUT_V16_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
+const OUTPUT_V15_SCHEMA_ID: &str = "urn:animsmith:schema:output:15";
 const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
 const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
@@ -28,6 +29,7 @@ const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
 const IMPORT_ADVICE_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:1";
+const IMPORT_ADVICE_V2_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:2";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
 const CURRENT_OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v17.schema.json");
 const OUTPUT_V16_SCHEMA: &str = include_str!("../../../docs/schemas/output-v16.schema.json");
@@ -43,6 +45,8 @@ const ADDRESSABILITY_SCHEMA: &str =
     include_str!("../../../docs/schemas/gltf-animation-addressability-v1.schema.json");
 const IMPORT_ADVICE_SCHEMA: &str =
     include_str!("../../../docs/schemas/engine-import-advice-v1.schema.json");
+const IMPORT_ADVICE_V2_SCHEMA: &str =
+    include_str!("../../../docs/schemas/engine-import-advice-v2.schema.json");
 #[cfg(feature = "fbx")]
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
 const EXPECTED_CHECK_IDS: [&str; 31] = [
@@ -253,6 +257,38 @@ fn assert_import_advice_schema_valid(instance: &Value) {
     assert!(
         errors.is_empty(),
         "import-advice output must satisfy the published V1 schema:\n{}\ninstance: {instance:#}",
+        errors.join("\n")
+    );
+}
+
+fn import_advice_v2_validator() -> jsonschema::Validator {
+    let output: Value =
+        serde_json::from_str(OUTPUT_V15_SCHEMA).expect("valid output-v15 schema JSON");
+    let measurements: Value =
+        serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let advice: Value =
+        serde_json::from_str(IMPORT_ADVICE_V2_SCHEMA).expect("valid import-advice-v2 schema JSON");
+    let registry = jsonschema::Registry::new()
+        .add(MEASUREMENTS_SCHEMA_ID, measurements)
+        .expect("valid measurement schema identity")
+        .add(OUTPUT_V15_SCHEMA_ID, output)
+        .expect("valid output-v15 schema identity")
+        .prepare()
+        .expect("import-advice-v2 schema registry prepares");
+    jsonschema::options()
+        .with_registry(&registry)
+        .build(&advice)
+        .expect("import-advice-v2 schema compiles with reused output-v15 definitions")
+}
+
+fn assert_import_advice_v2_schema_valid(instance: &Value) {
+    let errors: Vec<_> = import_advice_v2_validator()
+        .iter_errors(instance)
+        .map(|error| error.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "import-advice-v2 output must satisfy the published V2 schema:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -812,6 +848,36 @@ fn write_source_animation_inventory_gltf(path: &std::path::Path, names: &[Option
         path,
         &json!({
             "asset": { "version": "2.0" },
+            "nodes": [{ "name": "root" }],
+            "animations": animations,
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }),
+    );
+}
+
+fn write_source_animation_inventory_with_missing_optional_image_gltf(
+    path: &std::path::Path,
+    names: &[Option<&str>],
+) {
+    let animations = names
+        .iter()
+        .map(|name| {
+            let mut animation = serde_json::Map::from_iter([
+                ("samplers".to_owned(), json!([])),
+                ("channels".to_owned(), json!([])),
+            ]);
+            if let Some(name) = name {
+                animation.insert("name".to_owned(), json!(name));
+            }
+            Value::Object(animation)
+        })
+        .collect::<Vec<_>>();
+    write_json(
+        path,
+        &json!({
+            "asset": { "version": "2.0" },
+            "images": [{ "uri": "missing-optional.png" }],
             "nodes": [{ "name": "root" }],
             "animations": animations,
             "scenes": [{ "nodes": [0] }],
@@ -2904,6 +2970,599 @@ fn generate_import_advice_requires_profile_before_input_io_and_rejects_bevy() {
     assert!(!stderr(&unsupported).contains("cannot read"));
 }
 
+#[test]
+fn generate_import_advice_v2_godot_defaults_are_schema_valid_strict_and_rendered() {
+    let dir = unique_temp_dir("generate-import-advice-v2-godot");
+    let input = dir.path().join("animation.gltf");
+    write_source_animation_inventory_gltf(&input, &[Some("walk")]);
+    let config = write_config(
+        dir.path(),
+        "godot-v2-import-advice.toml",
+        r#"
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+"#,
+    );
+    let run = |format: &str| {
+        animsmith()
+            .arg("--config")
+            .arg(&config)
+            .args(["generate", "import-advice"])
+            .arg(&input)
+            .args(["--format", format])
+            .output()
+            .expect("runs Godot revision-2 import advice")
+    };
+
+    let output = run("json");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("Godot V2 advice JSON");
+    assert_import_advice_v2_schema_valid(&json);
+    assert_eq!(json["schema"], IMPORT_ADVICE_V2_SCHEMA_ID);
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["state"], "available");
+    assert_eq!(json["projection"]["projection_kind"], "godot_params");
+    assert_eq!(
+        json["projection"]["fields"],
+        json!([
+            {
+                "key": "animation/fps",
+                "value": { "unsigned_integer": 30 },
+                "value_origin": "profile_default"
+            },
+            {
+                "key": "animation/trimming",
+                "value": { "boolean": false },
+                "value_origin": "profile_default"
+            }
+        ])
+    );
+    let readback = animsmith_engine::EngineImportAdviceInputV2::read_from(output.stdout.as_slice())
+        .expect("reads Godot V2 advice")
+        .into_report()
+        .expect("strictly reads Godot V2 advice");
+    assert_eq!(
+        readback.state(),
+        animsmith_engine::EngineImportAdviceStateV2::Available
+    );
+    assert_eq!(
+        readback.projection().expect("Godot V2 projection").fields,
+        serde_json::from_value::<Vec<animsmith_engine::EngineImportAdviceProjectionFieldV2>>(
+            json["projection"]["fields"].clone(),
+        )
+        .expect("projection fields decode")
+    );
+
+    let mut contradictory_refusal = json.clone();
+    contradictory_refusal["state"] = json!("refused");
+    contradictory_refusal["refusal_reason"] = json!("dependency_closure_incomplete");
+    contradictory_refusal
+        .as_object_mut()
+        .expect("advice envelope must be an object")
+        .remove("projection");
+    assert!(
+        !import_advice_v2_validator().is_valid(&contradictory_refusal),
+        "complete closure cannot claim a refused lifecycle"
+    );
+
+    let text = run("text");
+    assert_eq!(text.status.code(), Some(0), "{}", stderr(&text));
+    assert!(stderr(&text).is_empty());
+    assert!(stdout(&text).contains("engine import advice v2\n"));
+    assert!(stdout(&text).contains("animation/fps=30 (profile_default)"));
+    assert!(stdout(&text).contains("animation/trimming=false (profile_default)"));
+
+    let markdown = run("markdown");
+    assert_eq!(markdown.status.code(), Some(0), "{}", stderr(&markdown));
+    assert!(stderr(&markdown).is_empty());
+    assert!(stdout(&markdown).starts_with("# Engine import advice v2\n\n"));
+    assert!(stdout(&markdown).contains("- `animation/fps`: `30` (`profile_default`)"));
+    assert!(stdout(&markdown).contains("- `animation/trimming`: `false` (`profile_default`)"));
+}
+
+#[test]
+fn generate_import_advice_v2_godot_projects_explicit_settings() {
+    let dir = unique_temp_dir("generate-import-advice-v2-godot-explicit");
+    let input = dir.path().join("animation.gltf");
+    write_source_animation_inventory_gltf(&input, &[Some("walk")]);
+    let config = write_config(
+        dir.path(),
+        "godot-v2-import-advice-explicit.toml",
+        r#"
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+
+[engine.settings]
+animation_fps = 120
+animation_trimming = true
+"#,
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "import-advice", "--format", "json"])
+        .arg(&input)
+        .output()
+        .expect("runs Godot revision-2 import advice with explicit settings");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("Godot V2 advice JSON");
+    assert_import_advice_v2_schema_valid(&json);
+    assert_eq!(json["state"], "available");
+    assert_eq!(
+        json["projection"]["fields"],
+        json!([
+            {
+                "key": "animation/fps",
+                "value": { "unsigned_integer": 120 },
+                "value_origin": "explicit_config"
+            },
+            {
+                "key": "animation/trimming",
+                "value": { "boolean": true },
+                "value_origin": "explicit_config"
+            }
+        ])
+    );
+    let readback = animsmith_engine::EngineImportAdviceInputV2::read_from(output.stdout.as_slice())
+        .expect("reads explicit Godot V2 advice")
+        .into_report()
+        .expect("strictly reads explicit Godot V2 advice");
+    assert_eq!(
+        readback.projection().expect("Godot V2 projection").fields,
+        serde_json::from_value::<Vec<animsmith_engine::EngineImportAdviceProjectionFieldV2>>(
+            json["projection"]["fields"].clone(),
+        )
+        .expect("projection fields decode")
+    );
+
+    // The exact document projection is format-neutral across both accepted
+    // Godot inputs; exercise the GLB loader path with the same explicit
+    // settings as the glTF JSON case above.
+    let glb = dir.path().join("animation.glb");
+    write_clean_glb(&glb);
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "import-advice", "--format", "json"])
+        .arg(&glb)
+        .output()
+        .expect("runs Godot revision-2 import advice for GLB");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("Godot GLB advice JSON");
+    assert_import_advice_v2_schema_valid(&json);
+    assert_eq!(
+        json["projection"]["fields"][0]["value"]["unsigned_integer"],
+        120
+    );
+    assert_eq!(
+        json["projection"]["fields"][0]["value_origin"],
+        "explicit_config"
+    );
+    assert_eq!(json["projection"]["fields"][1]["value"]["boolean"], true);
+    assert_eq!(
+        json["projection"]["fields"][1]["value_origin"],
+        "explicit_config"
+    );
+    animsmith_engine::EngineImportAdviceInputV2::read_from(output.stdout.as_slice())
+        .expect("reads explicit Godot GLB advice")
+        .into_report()
+        .expect("strictly reads explicit Godot GLB advice");
+}
+
+#[test]
+fn generate_import_advice_v2_godot_accepts_fps_boundaries() {
+    for fps in [1, 120] {
+        let dir = unique_temp_dir(&format!("generate-import-advice-v2-godot-fps-{fps}"));
+        let input = dir.path().join("animation.gltf");
+        write_source_animation_inventory_gltf(&input, &[Some("walk")]);
+        let config = write_config(
+            dir.path(),
+            "godot-v2-import-advice-boundary.toml",
+            &format!(
+                r#"
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+
+[engine.settings]
+animation_fps = {fps}
+animation_trimming = false
+"#
+            ),
+        );
+        let output = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .args(["generate", "import-advice", "--format", "json"])
+            .arg(&input)
+            .output()
+            .expect("runs Godot V2 advice at FPS boundary");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "fps={fps}: {}",
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("boundary advice JSON");
+        assert_import_advice_v2_schema_valid(&json);
+        assert_eq!(
+            json["projection"]["fields"][0]["value"]["unsigned_integer"],
+            fps
+        );
+        assert_eq!(
+            json["projection"]["fields"][0]["value_origin"],
+            "explicit_config"
+        );
+    }
+}
+
+#[test]
+fn generate_import_advice_v2_refuses_incomplete_dependency_closure_with_retained_basis() {
+    let dir = unique_temp_dir("generate-import-advice-v2-incomplete-closure");
+    let input = dir.path().join("animation.gltf");
+    write_source_animation_inventory_with_missing_optional_image_gltf(&input, &[Some("walk")]);
+    let config = write_config(
+        dir.path(),
+        "godot-v2-import-advice-incomplete-closure.toml",
+        r#"
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+"#,
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["generate", "import-advice", "--format", "json"])
+        .arg(&input)
+        .output()
+        .expect("runs Godot V2 import advice on partial closure");
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("refusal JSON");
+    assert_import_advice_v2_schema_valid(&json);
+    assert_eq!(json["state"], "refused");
+    assert_eq!(json["refusal_reason"], "dependency_closure_incomplete");
+    assert!(json.get("projection").is_none());
+    assert!(
+        !json["basis"]["references"]
+            .as_array()
+            .expect("retained basis references")
+            .is_empty()
+    );
+    assert_eq!(
+        json["prediction_provenance"]["dependency_closure"]["coverage"]["state"],
+        "partial"
+    );
+
+    let readback = animsmith_engine::EngineImportAdviceInputV2::read_from(output.stdout.as_slice())
+        .expect("reads incomplete-closure refusal")
+        .into_report()
+        .expect("strictly reads incomplete-closure refusal");
+    assert_eq!(
+        readback.state(),
+        animsmith_engine::EngineImportAdviceStateV2::Refused
+    );
+    assert_eq!(
+        readback.refusal_reason(),
+        Some(animsmith_engine::EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete)
+    );
+    assert!(readback.projection().is_none());
+    assert!(!readback.basis().references().is_empty());
+}
+
+#[cfg(feature = "fbx")]
+#[test]
+fn generate_import_advice_v2_unreal_projects_all_sample_rate_policies() {
+    let policies = [
+        (
+            "default_30",
+            json!([
+                {
+                    "key": "bUseDefaultSampleRate",
+                    "value": { "boolean": true },
+                    "value_origin": "explicit_config"
+                }
+            ]),
+        ),
+        (
+            "source_determined",
+            json!([
+                {
+                    "key": "CustomSampleRate",
+                    "value": { "unsigned_integer": 0 },
+                    "value_origin": "explicit_config"
+                },
+                {
+                    "key": "bUseDefaultSampleRate",
+                    "value": { "boolean": false },
+                    "value_origin": "explicit_config"
+                }
+            ]),
+        ),
+        (
+            "custom_hz(1)",
+            json!([
+                {
+                    "key": "CustomSampleRate",
+                    "value": { "unsigned_integer": 1 },
+                    "value_origin": "explicit_config"
+                },
+                {
+                    "key": "bUseDefaultSampleRate",
+                    "value": { "boolean": false },
+                    "value_origin": "explicit_config"
+                }
+            ]),
+        ),
+        (
+            "custom_hz(48000)",
+            json!([
+                {
+                    "key": "CustomSampleRate",
+                    "value": { "unsigned_integer": 48000 },
+                    "value_origin": "explicit_config"
+                },
+                {
+                    "key": "bUseDefaultSampleRate",
+                    "value": { "boolean": false },
+                    "value_origin": "explicit_config"
+                }
+            ]),
+        ),
+    ];
+    for (index, (policy, expected_fields)) in policies.into_iter().enumerate() {
+        let dir = unique_temp_dir(&format!("generate-import-advice-v2-unreal-{index}"));
+        let input = dir.path().join("rigged-triangle.fbx");
+        std::fs::write(&input, RIGGED_TRIANGLE_FBX).unwrap();
+        let config = write_config(
+            dir.path(),
+            "unreal-v2-import-advice.toml",
+            &format!(
+                r#"
+[engine]
+profile = "unreal"
+profile_revision = 2
+engine_version = "5.8"
+importer = "fbx-importer"
+
+[engine.settings]
+sample_rate = "{policy}"
+"#
+            ),
+        );
+        let output = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .args(["generate", "import-advice", "--format", "json"])
+            .arg(&input)
+            .output()
+            .expect("runs Unreal revision-2 import advice");
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        assert!(stderr(&output).is_empty());
+        let json: Value = serde_json::from_slice(&output.stdout).expect("Unreal V2 advice JSON");
+        assert_import_advice_v2_schema_valid(&json);
+        assert_eq!(json["schema"], IMPORT_ADVICE_V2_SCHEMA_ID);
+        assert_eq!(json["state"], "available");
+        assert_eq!(
+            json["projection"]["projection_kind"],
+            "unreal_fbx_import_data"
+        );
+        assert_eq!(json["projection"]["fields"], expected_fields);
+        if policy == "default_30" {
+            assert!(
+                json["projection"]["fields"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|field| field["key"] != "CustomSampleRate")
+            );
+        }
+        let readback =
+            animsmith_engine::EngineImportAdviceInputV2::read_from(output.stdout.as_slice())
+                .expect("reads Unreal V2 advice")
+                .into_report()
+                .expect("strictly reads Unreal V2 advice");
+        assert_eq!(
+            readback.state(),
+            animsmith_engine::EngineImportAdviceStateV2::Available
+        );
+        assert_eq!(
+            readback.projection().expect("Unreal V2 projection").fields,
+            serde_json::from_value::<Vec<animsmith_engine::EngineImportAdviceProjectionFieldV2>>(
+                expected_fields.clone()
+            )
+            .expect("projection fields decode")
+        );
+    }
+}
+
+#[test]
+fn generate_import_advice_v2_rejects_bad_config_and_unsupported_tuples_before_input_io() {
+    let dir = unique_temp_dir("generate-import-advice-v2-errors");
+    let missing = dir.path().join("missing.gltf");
+    let no_profile = animsmith()
+        .args(["generate", "import-advice"])
+        .arg(&missing)
+        .output()
+        .expect("checks V2 profile before input I/O");
+    assert_eq!(no_profile.status.code(), Some(2));
+    assert!(no_profile.stdout.is_empty());
+    assert!(stderr(&no_profile).contains("requires a complete [engine] selection and settings"));
+    assert!(!stderr(&no_profile).contains("cannot read"));
+
+    let cases = [
+        (
+            "invalid",
+            r#"
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+
+[engine.settings]
+animation_fps = "fast"
+"#,
+            "invalid revision-2 engine setting value",
+        ),
+        (
+            "missing-required",
+            r#"
+[engine]
+profile = "unreal"
+profile_revision = 2
+engine_version = "5.8"
+importer = "fbx-importer"
+"#,
+            "missing required V2 engine setting sample_rate",
+        ),
+        (
+            "out-of-range-fps",
+            r#"
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+
+[engine.settings]
+animation_fps = 121
+"#,
+            "invalid value domain for V2 engine setting animation_fps",
+        ),
+        (
+            "zero-fps",
+            r#"
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+
+[engine.settings]
+animation_fps = 0
+"#,
+            "invalid value domain for V2 engine setting animation_fps",
+        ),
+        (
+            "out-of-range-sample-rate",
+            r#"
+[engine]
+profile = "unreal"
+profile_revision = 2
+engine_version = "5.8"
+importer = "fbx-importer"
+
+[engine.settings]
+sample_rate = "custom_hz(48001)"
+"#,
+            "invalid value domain for V2 engine setting sample_rate",
+        ),
+    ];
+    for (name, config_text, expected) in cases {
+        let config = write_config(dir.path(), &format!("{name}.toml"), config_text);
+        let output = animsmith()
+            .arg("--config")
+            .arg(config)
+            .args(["generate", "import-advice"])
+            .arg(&missing)
+            .output()
+            .expect("rejects bad V2 config before input I/O");
+        assert_eq!(output.status.code(), Some(2), "{name}: {}", stderr(&output));
+        assert!(output.stdout.is_empty());
+        assert!(
+            stderr(&output).contains(expected),
+            "{name}: {}",
+            stderr(&output)
+        );
+        assert!(
+            !stderr(&output).contains("cannot read"),
+            "{name}: {}",
+            stderr(&output)
+        );
+    }
+
+    let wrong_tuple = write_config(
+        dir.path(),
+        "wrong-v2-tuple.toml",
+        r#"
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.8"
+importer = "resource-importer-scene"
+"#,
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(wrong_tuple)
+        .args(["generate", "import-advice"])
+        .arg(&missing)
+        .output()
+        .expect("rejects wrong V2 tuple before input I/O");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("unknown engine profile selection"));
+    assert!(!stderr(&output).contains("cannot read"));
+
+    let unsupported = write_bevy_v2_config(dir.path(), "import-advice-v2");
+    let output = animsmith()
+        .arg("--config")
+        .arg(unsupported)
+        .args(["generate", "import-advice"])
+        .arg(&missing)
+        .output()
+        .expect("rejects unsupported V2 tuple before input I/O");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("requires an exact Godot or Unreal V2 profile"));
+    assert!(!stderr(&output).contains("cannot read"));
+
+    let wrong_source = dir.path().join("wrong-source.gltf");
+    write_source_animation_inventory_gltf(&wrong_source, &[Some("walk")]);
+    let unreal = write_config(
+        dir.path(),
+        "unreal-v2-wrong-source.toml",
+        r#"
+[engine]
+profile = "unreal"
+profile_revision = 2
+engine_version = "5.8"
+importer = "fbx-importer"
+
+[engine.settings]
+sample_rate = "default_30"
+"#,
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(unreal)
+        .args(["generate", "import-advice"])
+        .arg(&wrong_source)
+        .output()
+        .expect("rejects loader-derived wrong V2 source format");
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(output.stdout.is_empty());
+    assert!(
+        stderr(&output).contains("input format GltfJson is not accepted by V2 engine profile"),
+        "{}",
+        stderr(&output)
+    );
+}
+
 #[cfg(feature = "fbx")]
 #[test]
 fn generate_import_advice_projects_unity_settings_and_renderer_views() {
@@ -3909,7 +4568,7 @@ fn help_matches_compiled_feature_set() {
         out.contains("[possible values: json, text, markdown]"),
         "{out}"
     );
-    assert!(out.contains("No frame coordinates"), "{out}");
+    assert!(out.contains("No frame ranges"), "{out}");
 }
 
 #[test]

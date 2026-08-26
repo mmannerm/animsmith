@@ -68,6 +68,34 @@ and `generate import-advice` emits `profile_settings_unmodeled`. Configure
 timeline slices, root scale, animation optimization, external animation files,
 BoneMap, and root-motion behavior in Godot or the source DCC.
 
+### Revision 2 import advice
+
+The exact revision-2 advice tuple is `godot` / `2` / `4.7` /
+`resource-importer-scene`. It accepts only glTF JSON and GLB for this
+document-level projection. The closed document setting vocabulary is:
+
+```toml
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+
+[engine.settings]
+animation_fps = 30       # positive integer; 1..120
+animation_trimming = false
+```
+
+`animation_fps` defaults to the verified profile value `30` when omitted and
+`animation_trimming` defaults to `false`; explicit values retain their
+`explicit_config` origin in the advice. The JSON prediction projects exactly
+`animation/fps` and `animation/trimming` under the `godot_params` projection
+kind in `urn:animsmith:schema:engine-import-advice:2`. It does not emit root
+scale, optimization, external-animation, BoneMap,
+timeline-slice, or runtime playback conclusions. Values are proposed importer
+parameters derived from same-load evidence, not a Godot import execution or
+certification.
+
 ## Common failures and fixes
 
 | Symptom | Evidence to inspect | Correct owner |

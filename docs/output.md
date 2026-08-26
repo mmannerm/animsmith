@@ -207,6 +207,37 @@ Available advice exits 0, typed refusal exits 1, and configuration, profile,
 format, input, or serialization errors exit 2. Text and Markdown are escaped
 presentation views; JSON remains the contract.
 
+### Revision-2 import-setting advice
+
+The same command also emits the immutable V2 contract
+`urn:animsmith:schema:engine-import-advice:2`, described by
+[`engine-import-advice-v2.schema.json`](schemas/engine-import-advice-v2.schema.json).
+It keeps the output-v15 `tool`, V4 prediction-provenance, and V4 prediction-basis
+types by reference, while adding only the V2 `basis` and optional native
+`projection` fields. The lifecycle is closed against the same-load dependency
+closure: complete closure requires `available`, the exact projection, and no
+`refusal_reason`; partial or unavailable closure requires `refused`,
+`dependency_closure_incomplete`, and no projection. Unknown tuples, missing
+settings, and unsupported formats are configuration errors rather than advice
+documents, so they cannot be recast as a guessed projection.
+
+Only these exact profile/input tuples can produce an available V2 projection:
+
+| tuple | accepted input | projection |
+|---|---|---|
+| `godot` / `2` / `4.7` / `resource-importer-scene` | glTF JSON or GLB | `godot_params`: `animation/fps` (1..120; default 30) and `animation/trimming` (default false) |
+| `unreal` / `2` / `5.8` / `fbx-importer` | FBX | `unreal_fbx_import_data`: explicit `sample_rate` as `default_30`, `source_determined`, or `custom_hz(1..48000)` |
+
+The projection is bounded to those documented keys and retains each value's
+`explicit_config` or `profile_default` origin. For Unreal, `default_30` maps
+to `bUseDefaultSampleRate=true`; `source_determined` maps to `false` with
+`CustomSampleRate=0`; a custom rate maps to `false` with its explicit hertz.
+This is a deterministic same-load parameter projection only. It does not
+execute an engine importer, read back an imported asset, infer frame ranges,
+units, skeleton/retargeting, compression, root motion, runtime behavior, or
+write project files. The historical V1 contract and its refusal semantics
+remain immutable.
+
 ## Contract identities
 
 Validation and comparison JSON commands emit output contract v17 with the

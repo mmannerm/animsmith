@@ -19,7 +19,9 @@
 //! [`EngineImportAdviceV1`] independently projects exact materialized Unity
 //! importer settings beside same-load provenance and bounded clip evidence;
 //! profiles without modeled settings produce a typed refusal rather than a
-//! guessed preset.
+//! guessed preset. [`EngineImportAdviceV2`] separately projects the exact
+//! Godot and Unreal revision-2 document settings with origin-bearing shared
+//! provenance and an advice-owned native scalar vocabulary.
 //!
 //! # Example
 //!
@@ -100,13 +102,18 @@ pub use error::{
 };
 pub use import_advice::{
     ENGINE_IMPORT_ADVICE_COMMAND, ENGINE_IMPORT_ADVICE_SCHEMA_VERSION, ENGINE_IMPORT_ADVICE_V1_ID,
-    ENGINE_IMPORT_ADVICE_V1_MAX_REPORT_BYTES, EngineImportAdviceClipEvidenceV1,
-    EngineImportAdviceClipV1, EngineImportAdviceError, EngineImportAdviceIdentityV1,
-    EngineImportAdviceInput, EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
-    EngineImportAdviceReadError, EngineImportAdviceReadbackV1, EngineImportAdviceRefusalReasonV1,
-    EngineImportAdviceSourceNameV1, EngineImportAdviceSourceUnavailableReasonV1,
-    EngineImportAdviceStateV1, EngineImportAdviceToolReadbackV1, EngineImportAdviceV1,
-    UnityClipAdviceV1, UnityDocumentAdviceV1,
+    ENGINE_IMPORT_ADVICE_V1_MAX_REPORT_BYTES, ENGINE_IMPORT_ADVICE_V2_ID,
+    ENGINE_IMPORT_ADVICE_V2_MAX_REPORT_BYTES, ENGINE_IMPORT_ADVICE_V2_SCHEMA_VERSION,
+    EngineImportAdviceClipEvidenceV1, EngineImportAdviceClipV1, EngineImportAdviceError,
+    EngineImportAdviceIdentityV1, EngineImportAdviceIdentityV2, EngineImportAdviceInput,
+    EngineImportAdviceInputV2, EngineImportAdviceMovementOwnerV1, EngineImportAdvicePayloadV1,
+    EngineImportAdviceProjectionFieldV2, EngineImportAdviceProjectionV2,
+    EngineImportAdviceProjectionValueV2, EngineImportAdviceReadError, EngineImportAdviceReadbackV1,
+    EngineImportAdviceReadbackV2, EngineImportAdviceRefusalReasonV1,
+    EngineImportAdviceRefusalReasonV2, EngineImportAdviceSourceNameV1,
+    EngineImportAdviceSourceUnavailableReasonV1, EngineImportAdviceStateV1,
+    EngineImportAdviceStateV2, EngineImportAdviceToolReadbackV1, EngineImportAdviceV1,
+    EngineImportAdviceV2, UnityClipAdviceV1, UnityDocumentAdviceV1,
 };
 pub use prediction::{
     BevyAnimationAssetLabelError, BevyAnimationAssetLabelV1, ENGINE_ADDRESSABILITY_CHECK_ID,
@@ -140,7 +147,7 @@ pub use types::{
     ResolvedSettingOriginV2, ResolvedSettingV2, RootMotionAddressability, SettingApplicability,
     SettingDefaultV2, SettingDescriptor, SettingDescriptorV2, SettingDomain, SettingDomainV2,
     SettingId, SettingIdV2, SettingMap, SettingMapV2, SettingScope, SettingValue, SettingValueV2,
-    TargetAddressability, UnityAnimationTypeV2, UnityAvatarSetupV2, UpAxis,
+    TargetAddressability, UnityAnimationTypeV2, UnityAvatarSetupV2, UnrealSampleRateV2, UpAxis,
 };
 pub use unit_scale::{ENGINE_UNIT_SCALE_CHECK_ID, EngineUnitScaleCheck};
 

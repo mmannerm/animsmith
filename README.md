@@ -383,6 +383,15 @@ inventing settings. V1 never guesses frame-number ranges, sample rates, unit
 conversion, or root-motion behavior. See the runnable
 [import-advice example](https://github.com/mmannerm/animsmith/blob/main/examples/README.md#generating-engine-import-advice).
 
+Revision 2 adds the same command's narrow document-setting projection for the
+exact `godot/2/4.7/resource-importer-scene` tuple (glTF JSON or GLB)
+and `unreal/2/5.8/fbx-importer` tuple (FBX). Godot projects only
+`animation/fps` (1..120, default 30) and `animation/trimming` (default false);
+Unreal requires explicit `sample_rate` as `default_30`, `source_determined`,
+or `custom_hz(1..48000)`. These are exact parameter projections, not importer
+execution, readback, runtime, or game-ready claims. The V2 document is
+versioned separately as `urn:animsmith:schema:engine-import-advice:2`.
+
 The four loop-continuity caps may also be declared under a clip name or
 `*`-glob: `max_loop_position_delta_m`, `max_loop_rotation_delta_deg`, and
 `max_loop_velocity_delta_mps`, and `max_loop_angular_velocity_delta_degps`.

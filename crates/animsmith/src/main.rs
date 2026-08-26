@@ -40,12 +40,13 @@ use animsmith_engine::EngineAddressabilityCheck;
 use animsmith_engine::{
     BakeOrExtract, BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2, ENGINE_CHECK_IDS_V2,
     EngineAddressabilityCheckV3, EngineClipBoundaryCheck, EngineDeclaration, EngineDeclarationV2,
-    EngineImportAdviceStateV1, EngineImportAdviceV1, EngineRootMotionCheck,
-    EngineTrackSupportCheck, EngineUnitScaleCheck, GltfAnimationAddressabilityInventoryV1,
-    GltfAnimationAddressabilityV1, ProfileSelection, ResolvedProfile, ResolvedProfileSettingsV2,
-    ResolvedProfileV2, SettingMap, SettingMapV2, SettingValue, SettingValueV2, StaticResolution,
-    StaticResolutionV2, UnityAnimationTypeV2, UnityAvatarSetupV2,
-    build_bevy_animation_addressability_adapter_v1, lookup_profile_v2,
+    EngineImportAdviceStateV1, EngineImportAdviceStateV2, EngineImportAdviceV1,
+    EngineImportAdviceV2, EngineRootMotionCheck, EngineTrackSupportCheck, EngineUnitScaleCheck,
+    GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityV1, ProfileSelection,
+    ResolvedProfile, ResolvedProfileSettingsV2, ResolvedProfileV2, SettingMap, SettingMapV2,
+    SettingValue, SettingValueV2, StaticResolution, StaticResolutionV2, UnityAnimationTypeV2,
+    UnityAvatarSetupV2, UnrealSampleRateV2, build_bevy_animation_addressability_adapter_v1,
+    lookup_profile_v2,
 };
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
@@ -387,7 +388,7 @@ enum GenerateCmd {
     },
     /// Project bounded, versioned importer suggestions from one exact engine profile.
     #[command(
-        long_about = "Generate bounded engine-import advice from one same-load source, its exact resolved engine profile/settings, explicit clip intent, and normalized measurements. Unity 6000.3 Generic/Humanoid emits documented importer properties. Frozen Unreal 5.8 and Godot 4.7 V1 profiles emit a typed refusal because their setting vocabulary is not yet modeled. No frame coordinates, sample rates, root-motion behavior, or unit conversion are guessed."
+        long_about = "Generate bounded engine-import advice from one same-load source and its exact resolved engine profile/settings. Revision-1 Unity 6000.3 Generic/Humanoid emits its documented importer properties; revision-1 Unreal/Godot remains a typed refusal. Revision-2 Godot 4.7 emits only animation/fps and animation/trimming, while revision-2 Unreal 5.8 emits only the explicitly configured sample-rate fields. No frame ranges, per-animation slices, root-motion behavior, unit conversion, engine execution, or readback are inferred."
     )]
     ImportAdvice {
         /// Input .fbx for Unity/Unreal, or .glb/.gltf for Godot.
@@ -815,38 +816,65 @@ struct EngineToml {
 #[serde(untagged)]
 enum EngineSettingToml {
     Boolean(bool),
+    Integer(i64),
     Text(String),
 }
 
-fn engine_setting_value(key: &str, value: EngineSettingToml) -> SettingValue {
+fn engine_setting_value(key: &str, value: EngineSettingToml) -> Result<SettingValue, String> {
     match value {
-        EngineSettingToml::Boolean(value) => SettingValue::Boolean(value),
+        EngineSettingToml::Boolean(value) => Ok(SettingValue::Boolean(value)),
         EngineSettingToml::Text(value) if key == "root_motion_source" => {
-            SettingValue::SourceTransformPath(value)
+            Ok(SettingValue::SourceTransformPath(value))
         }
         EngineSettingToml::Text(value) if value == "bake" => {
-            SettingValue::BakeOrExtract(BakeOrExtract::Bake)
+            Ok(SettingValue::BakeOrExtract(BakeOrExtract::Bake))
         }
         EngineSettingToml::Text(value) if value == "extract" => {
-            SettingValue::BakeOrExtract(BakeOrExtract::Extract)
+            Ok(SettingValue::BakeOrExtract(BakeOrExtract::Extract))
         }
-        EngineSettingToml::Text(value) => SettingValue::SourceTransformPath(value),
+        EngineSettingToml::Text(value) => Ok(SettingValue::SourceTransformPath(value)),
+        EngineSettingToml::Integer(value) => Err(format!(
+            "invalid revision-1 engine setting value {value} for {key:?}"
+        )),
     }
 }
 
-fn engine_setting_map(values: BTreeMap<String, EngineSettingToml>) -> SettingMap {
+fn engine_setting_map(values: BTreeMap<String, EngineSettingToml>) -> Result<SettingMap, String> {
     values
         .into_iter()
         .map(|(key, value)| {
-            let value = engine_setting_value(&key, value);
-            (key, value)
+            let value = engine_setting_value(&key, value)?;
+            Ok((key, value))
         })
         .collect()
+}
+
+fn unreal_sample_rate(value: &str) -> Option<UnrealSampleRateV2> {
+    match value {
+        "default_30" => Some(UnrealSampleRateV2::Default30),
+        "source_determined" => Some(UnrealSampleRateV2::SourceDetermined),
+        _ => value
+            .strip_prefix("custom_hz(")
+            .and_then(|value| value.strip_suffix(')'))
+            .and_then(|value| {
+                let parsed = value.parse::<u32>().ok()?;
+                (value == parsed.to_string()).then_some(parsed)
+            })
+            .map(UnrealSampleRateV2::CustomHz),
+    }
 }
 
 fn engine_setting_value_v2(key: &str, value: EngineSettingToml) -> Result<SettingValueV2, String> {
     match (key, value) {
         (_, EngineSettingToml::Boolean(value)) => Ok(SettingValueV2::Boolean(value)),
+        ("animation_fps", EngineSettingToml::Integer(value)) => u32::try_from(value)
+            .map(SettingValueV2::PositiveInteger)
+            .map_err(|_| format!("invalid revision-2 engine setting value {value} for {key:?}")),
+        ("sample_rate", EngineSettingToml::Text(value)) => unreal_sample_rate(&value)
+            .map(SettingValueV2::SampleRate)
+            .ok_or_else(|| {
+                format!("invalid revision-2 engine setting value {value:?} for {key:?}")
+            }),
         ("load_meshes", EngineSettingToml::Text(value)) if value == "empty" => Ok(
             SettingValueV2::LoadMeshesState(BevyLoadMeshesStateV2::Empty),
         ),
@@ -899,6 +927,9 @@ fn engine_setting_value_v2(key: &str, value: EngineSettingToml) -> Result<Settin
         ) if value == "extract" => Ok(SettingValueV2::BakeOrExtract(BakeOrExtract::Extract)),
         (key, EngineSettingToml::Text(value)) => Err(format!(
             "invalid revision-2 engine setting value {value:?} for {key:?}"
+        )),
+        (key, EngineSettingToml::Integer(value)) => Err(format!(
+            "invalid revision-2 engine setting value {value} for {key:?}"
         )),
     }
 }
@@ -1027,11 +1058,11 @@ fn parse_config(
     } else {
         ParsedEngineDeclaration::V1(EngineDeclaration {
             selection,
-            document_settings: document_settings.map(engine_setting_map),
+            document_settings: document_settings.map(engine_setting_map).transpose()?,
             clip_settings: clip_settings
                 .into_iter()
-                .map(|(selector, settings)| (selector, engine_setting_map(settings)))
-                .collect(),
+                .map(|(selector, settings)| Ok((selector, engine_setting_map(settings)?)))
+                .collect::<Result<_, String>>()?,
         })
     };
 
@@ -2072,36 +2103,67 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 // incomplete or unknown tuple remains an operator error at
                 // the same boundary as lint and addressability.
                 let loaded_config = load_config(cli.config.as_deref())?;
-                let static_profile = loaded_config.engine.as_ref().ok_or_else(|| {
+                if let Some(static_profile) = loaded_config.engine.as_ref() {
+                    if !EngineImportAdviceV1::supports_profile(static_profile.profile()) {
+                        return Err(
+                            animsmith_engine::EngineImportAdviceError::UnsupportedProfile
+                                .to_string(),
+                        );
+                    }
+                    let loaded = load_with_config(&input, &loaded_config)?;
+                    let profile = loaded.engine.as_ref().ok_or_else(|| {
+                        "generate import-advice requires a complete [engine] selection and settings"
+                            .to_owned()
+                    })?;
+                    let report = EngineImportAdviceV1::from_source(
+                        current_tool(),
+                        &loaded.source,
+                        profile,
+                        &loaded_config.config,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    let refused = report.state() == EngineImportAdviceStateV1::Refused;
+                    match format {
+                        PresentationFormat::Json => render::print_json(&report)?,
+                        PresentationFormat::Text => {
+                            publish::emit_text(&render::render_import_advice_text(&report));
+                        }
+                        PresentationFormat::Markdown => {
+                            publish::emit_text(&render::render_import_advice_markdown(&report));
+                        }
+                    }
+                    return Ok(if refused {
+                        ExitCode::from(EXIT_FINDINGS)
+                    } else {
+                        ExitCode::SUCCESS
+                    });
+                }
+
+                let static_profile = loaded_config.engine_profile_v2.as_ref().ok_or_else(|| {
                     "generate import-advice requires a complete [engine] selection and settings"
                         .to_owned()
                 })?;
-                if !EngineImportAdviceV1::supports_profile(static_profile.profile()) {
+                if !EngineImportAdviceV2::supports_profile(static_profile.profile()) {
                     return Err(
-                        animsmith_engine::EngineImportAdviceError::UnsupportedProfile.to_string(),
+                        animsmith_engine::EngineImportAdviceError::UnsupportedProfileV2.to_string(),
                     );
                 }
-                let loaded = load_with_config(&input, &loaded_config)?;
-                let profile = loaded.engine.as_ref().ok_or_else(|| {
-                    "generate import-advice requires a complete [engine] selection and settings"
+                let loaded = load_with_config_v2(&input, &loaded_config)?;
+                let profile = loaded.engine_v4.as_ref().ok_or_else(|| {
+                    "generate import-advice requires a supported revision-2 [engine] selection"
                         .to_owned()
                 })?;
-                let config = &loaded_config.config;
-                let report = EngineImportAdviceV1::from_source(
-                    current_tool(),
-                    &loaded.source,
-                    profile,
-                    config,
-                )
-                .map_err(|error| error.to_string())?;
-                let refused = report.state() == EngineImportAdviceStateV1::Refused;
+                let report =
+                    EngineImportAdviceV2::from_source(current_tool(), &loaded.source, profile)
+                        .map_err(|error| error.to_string())?;
+                let refused = report.state() == EngineImportAdviceStateV2::Refused;
                 match format {
                     PresentationFormat::Json => render::print_json(&report)?,
                     PresentationFormat::Text => {
-                        publish::emit_text(&render::render_import_advice_text(&report));
+                        publish::emit_text(&render::render_import_advice_v2_text(&report));
                     }
                     PresentationFormat::Markdown => {
-                        publish::emit_text(&render::render_import_advice_markdown(&report));
+                        publish::emit_text(&render::render_import_advice_v2_markdown(&report));
                     }
                 }
                 Ok(if refused {
@@ -2807,6 +2869,80 @@ load_meshes = "empty"
                 .unwrap_err()
                 .contains("invalid revision-2 engine setting value")
         );
+    }
+
+    #[test]
+    fn cli_engine_toml_maps_godot_and_unreal_advice_values_without_aliases() {
+        let godot = r#"
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+
+[engine.settings]
+animation_fps = 120
+animation_trimming = true
+"#;
+        let (_, declaration, _) = parse_config(godot.as_bytes()).unwrap();
+        let ParsedEngineDeclaration::V2(declaration) = declaration else {
+            panic!("Godot revision 2 must use the V2 declaration")
+        };
+        let resolved = animsmith_engine::resolve_static_v2(declaration)
+            .unwrap()
+            .unwrap();
+        assert!(
+            resolved
+                .document_settings()
+                .values()
+                .any(|setting| { setting.value() == &SettingValueV2::PositiveInteger(120) })
+        );
+
+        for (spelling, expected) in [
+            ("default_30", UnrealSampleRateV2::Default30),
+            ("source_determined", UnrealSampleRateV2::SourceDetermined),
+            ("custom_hz(48000)", UnrealSampleRateV2::CustomHz(48_000)),
+        ] {
+            let unreal = format!(
+                r#"
+[engine]
+profile = "unreal"
+profile_revision = 2
+engine_version = "5.8"
+importer = "fbx-importer"
+
+[engine.settings]
+sample_rate = "{spelling}"
+"#
+            );
+            let (_, declaration, _) = parse_config(unreal.as_bytes()).unwrap();
+            let ParsedEngineDeclaration::V2(declaration) = declaration else {
+                panic!("Unreal revision 2 must use the V2 declaration")
+            };
+            let resolved = animsmith_engine::resolve_static_v2(declaration)
+                .unwrap()
+                .unwrap();
+            assert!(
+                resolved
+                    .document_settings()
+                    .values()
+                    .any(|setting| { setting.value() == &SettingValueV2::SampleRate(expected) })
+            );
+        }
+
+        for rejected in [
+            "default30",
+            "custom_hz(0",
+            "custom_hz(01)",
+            "custom_hz(+1)",
+            "custom_hz(1)extra",
+            "CUSTOM_HZ(60)",
+        ] {
+            assert!(
+                unreal_sample_rate(rejected).is_none(),
+                "accepted {rejected}"
+            );
+        }
     }
 
     #[test]

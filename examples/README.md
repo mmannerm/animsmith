@@ -758,6 +758,43 @@ Unreal 5.8 and Godot 4.7 revision 1 deliberately exit 1 with
 settings. That command does not guess frame ranges, sample rates, unit
 conversion, or root-motion behavior.
 
+Revision 2 provides the narrow document-setting projection for the exact
+Godot and Unreal tuples:
+
+```toml
+# Godot 4.7 / revision 2 / resource-importer-scene (glTF JSON or GLB)
+[engine]
+profile = "godot"
+profile_revision = 2
+engine_version = "4.7"
+importer = "resource-importer-scene"
+
+[engine.settings]
+animation_fps = 30
+animation_trimming = false
+```
+
+Godot's only projected keys are `animation/fps` (1..120, default 30) and
+`animation/trimming` (default false). Unreal 5.8 / revision 2 / `fbx-importer`
+accepts FBX and requires one explicit document setting:
+
+```toml
+[engine]
+profile = "unreal"
+profile_revision = 2
+engine_version = "5.8"
+importer = "fbx-importer"
+
+[engine.settings]
+sample_rate = "default_30" # or "source_determined" / "custom_hz(60)"
+```
+
+The V2 JSON contract is
+`urn:animsmith:schema:engine-import-advice:2`. It contains one available
+native import-setting projection or one typed refusal; it does not claim importer
+execution, frame ranges, units, skeleton/retargeting, compression, root
+motion, runtime behavior, or project-file changes.
+
 ### Steering a run without a config
 
 You can also shape a run from the command line. `--select` restricts the
