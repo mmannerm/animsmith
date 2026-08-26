@@ -126,6 +126,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
+mod addressability;
+
 /// Errors returned while loading `.gltf` or `.glb` input.
 ///
 /// These are structural or operator errors. Semantic animation defects,
@@ -1418,8 +1420,19 @@ where
     let source = facts
         .finish_with_dependency_closure(doc, dependency_closure)
         .map_err(LoadError::from)?;
+    let addressability_inventory = addressability::project(
+        &gltf.document,
+        &topo,
+        source.source_facts().primary_identity().clone(),
+        source.dependency_closure().clone(),
+    )
+    .map_err(|error| {
+        LoadError::Malformed(format!("raw glTF addressability projection: {error}"))
+    })?;
     let inventory = capability::raw_scene_attachment_inventory_from_bytes(bytes, &source)?;
     source
+        .with_raw_gltf_addressability_inventory(addressability_inventory)
+        .map_err(|error| LoadError::Malformed(format!("raw glTF addressability binding: {error}")))?
         .with_raw_scene_attachment_inventory(inventory)
         .map_err(|error| LoadError::Malformed(format!("raw scene/attachment binding: {error}")))
 }
