@@ -3012,12 +3012,12 @@ mod tests {
         assert!(matches!(
             target_coverage_projection(true, GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS + 1),
             GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
-                if reasons == &[GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated]
+                if reasons == [GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated]
         ));
         assert!(matches!(
             target_coverage_projection(false, GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS + 1),
             GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
-                if reasons == &[
+                if reasons == [
                     GltfAddressabilityUnavailableReasonV2::RawSourceIncomplete,
                     GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated,
                 ]
@@ -3069,7 +3069,7 @@ mod tests {
         assert!(matches!(
             projection,
             GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
-                if reasons == &[GltfAddressabilityUnavailableReasonV2::PathBoundsExceeded]
+                if reasons == [GltfAddressabilityUnavailableReasonV2::PathBoundsExceeded]
         ));
     }
 
@@ -3276,7 +3276,7 @@ mod tests {
         assert!(matches!(
             target,
             GltfAddressabilityProjectionV2::Available { value }
-                if value.segments() == &[String::new()] && value.path().is_empty()
+                if value.segments() == [String::new()] && value.path().is_empty()
         ));
         let encoded = serde_json::to_vec(target).unwrap();
         let decoded: GltfAddressabilityProjectionV2<GltfAddressabilityTargetValueV2> =
