@@ -1,5 +1,17 @@
 use animsmith_core::glam::{Quat, Vec3};
 use animsmith_core::model::*;
+use animsmith_core::{
+    Check, CheckCtx, CheckSelection, Config, DependencyClosureBuilderV1, InputIdentity,
+    LintEnvelope, LintFileReport, MeasurementContract, MetricGrids, RawMeshPrimitiveRowsV1,
+    RawNodeMeshAttachmentRowsV1, RawSceneAttachmentCoverageV1, RawSceneAttachmentInventoryV1,
+    RawSceneRootRowV1, RawSceneRootRowsV1, RawSourceFactsBuilderV1, RawSourceSkeletonEvidenceV1,
+    ResolvedRoles, RigInfo, SourceFactDomainV1, SourceFormatV1, SourceSkeletonCoverage, ToolInfo,
+    ToolSource, evaluate_checks_v2,
+};
+use animsmith_engine::{
+    BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2, EngineDeclarationV2, EngineUnitScaleCheck,
+    ProfileSelection, SettingValueV2, project_prediction_provenance_v4, resolve_static_v2,
+};
 use animsmith_gltf::fix::{FixSession, Repair as GltfRepair};
 use animsmith_testkit::{quats_from_angles, scaled_quat, two_bone_rotation_doc};
 use serde_json::{Value, json};
@@ -7,7 +19,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-const CURRENT_OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
+const CURRENT_OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:15";
+const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
 const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
@@ -15,7 +28,8 @@ const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
 const IMPORT_ADVICE_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:1";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
-const CURRENT_OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
+const CURRENT_OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v15.schema.json");
+const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
 const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_V15_SCHEMA: &str =
@@ -28,7 +42,7 @@ const IMPORT_ADVICE_SCHEMA: &str =
     include_str!("../../../docs/schemas/engine-import-advice-v1.schema.json");
 #[cfg(feature = "fbx")]
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
-const EXPECTED_CHECK_IDS: [&str; 28] = [
+const EXPECTED_CHECK_IDS: [&str; 29] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -57,11 +71,14 @@ const EXPECTED_CHECK_IDS: [&str; 28] = [
     "foot-slide",
     "engine-addressability",
     "engine-clip-boundary",
+    "engine-unit-scale",
 ];
 
 fn output_validator() -> jsonschema::Validator {
     let output: Value =
         serde_json::from_str(CURRENT_OUTPUT_SCHEMA).expect("valid output schema JSON");
+    let output_v14: Value =
+        serde_json::from_str(OUTPUT_V14_SCHEMA).expect("valid historical output schema JSON");
     let output_v13: Value =
         serde_json::from_str(OUTPUT_V13_SCHEMA).expect("valid historical output schema JSON");
     let output_v10: Value =
@@ -71,6 +88,8 @@ fn output_validator() -> jsonschema::Validator {
     let measurements: Value =
         serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
     let registry = jsonschema::Registry::new()
+        .add(OUTPUT_V14_SCHEMA_ID, output_v14)
+        .expect("valid historical output-v14 schema identity")
         .add(OUTPUT_V13_SCHEMA_ID, output_v13)
         .expect("valid historical output-v13 schema identity")
         .add(OUTPUT_V10_SCHEMA_ID, output_v10)
@@ -95,7 +114,7 @@ fn assert_output_schema_valid(instance: &Value) {
         .collect();
     assert!(
         errors.is_empty(),
-        "output must satisfy the published v14 schemas:\n{}\ninstance: {instance:#}",
+        "output must satisfy the published v15 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -797,6 +816,24 @@ importer = "gltf-asset-loader"
     )
 }
 
+fn write_bevy_v2_config(dir: &std::path::Path, suffix: &str) -> PathBuf {
+    write_config(
+        dir,
+        &format!("bevy-v2-{suffix}.toml"),
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 2
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = true
+"#,
+    )
+}
+
 fn lint_check<'a>(json: &'a Value, check_id: &str) -> &'a Value {
     json["files"][0]["checks"]
         .as_array()
@@ -804,6 +841,1196 @@ fn lint_check<'a>(json: &'a Value, check_id: &str) -> &'a Value {
         .iter()
         .find(|check| check["check_id"] == check_id)
         .unwrap_or_else(|| panic!("missing {check_id} record"))
+}
+
+fn lint_check_mut<'a>(json: &'a mut Value, check_id: &str) -> &'a mut Value {
+    json["files"][0]["checks"]
+        .as_array_mut()
+        .expect("checks array")
+        .iter_mut()
+        .find(|check| check["check_id"] == check_id)
+        .unwrap_or_else(|| panic!("missing {check_id} record"))
+}
+
+fn synthetic_selected_unit_scale_lint_report(witness: &str, nodes: Vec<SourceNodeAsset>) -> Value {
+    // JSON glTF cannot spell a non-finite node transform. Build the same
+    // post-loader authority directly, then exercise the real engine producer,
+    // output-v15 constructor, serializer, and CLI reader.
+    let primary = InputIdentity::from_bytes(witness.as_bytes());
+    let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::Glb, primary.clone());
+    for domain in [
+        SourceFactDomainV1::Clips,
+        SourceFactDomainV1::Constructs,
+        SourceFactDomainV1::Resources,
+    ] {
+        facts.mark_complete(domain);
+    }
+    let closure = DependencyClosureBuilderV1::new(
+        primary.clone(),
+        facts.resource_coverage(),
+        facts.resource_rows().len(),
+    )
+    .finish()
+    .expect("complete synthetic dependency closure");
+    let node_count = nodes.len() as u64;
+    let mut document = Document::default();
+    document.assets.source_skeleton.coverage = SourceSkeletonCoverage::Complete;
+    document.assets.source_skeleton.nodes = nodes;
+    let source = facts
+        .finish_with_dependency_closure(document, closure)
+        .expect("valid synthetic loaded source");
+    let inventory = RawSceneAttachmentInventoryV1::new(
+        primary.clone(),
+        RawSourceSkeletonEvidenceV1::new(RawSceneAttachmentCoverageV1::Complete, node_count, 0),
+        RawSceneRootRowsV1::new(
+            RawSceneAttachmentCoverageV1::Complete,
+            vec![RawSceneRootRowV1::new(0, vec![0])],
+        ),
+        RawNodeMeshAttachmentRowsV1::new(RawSceneAttachmentCoverageV1::Complete, Vec::new()),
+        RawMeshPrimitiveRowsV1::new(RawSceneAttachmentCoverageV1::Complete, Vec::new()),
+    )
+    .expect("valid synthetic raw scene inventory");
+    let source = source
+        .with_raw_scene_attachment_inventory(inventory)
+        .expect("same-load inventory attaches");
+    let settings = BTreeMap::from([
+        (
+            "bevy_animation_feature".into(),
+            SettingValueV2::Boolean(true),
+        ),
+        (
+            "extension_handler_environment".into(),
+            SettingValueV2::HandlerEnvironment(BevyGltfHandlerEnvironmentV2::BareEmpty),
+        ),
+        (
+            "load_meshes".into(),
+            SettingValueV2::LoadMeshesState(BevyLoadMeshesStateV2::Empty),
+        ),
+        ("rotate_scene_entity".into(), SettingValueV2::Boolean(false)),
+    ]);
+    let resolved = resolve_static_v2(EngineDeclarationV2 {
+        selection: Some(ProfileSelection::new(
+            "bevy",
+            2,
+            "0.19.0",
+            "gltf-asset-loader",
+        )),
+        document_settings: Some(settings),
+        ..EngineDeclarationV2::default()
+    })
+    .expect("valid frozen Bevy profile")
+    .expect("profile selected")
+    .resolve_input(SourceFormatV1::Glb)
+    .expect("GLB is accepted");
+    let provenance =
+        project_prediction_provenance_v4(&resolved, &source, vec!["Socket".to_owned()])
+            .expect("valid same-load V4 provenance");
+    let mut config = Config::default();
+    config.runtime_nodes.selectors = Some(vec!["Socket".to_owned()]);
+    let roles = ResolvedRoles::default();
+    let grids = MetricGrids::new(source.document());
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let check: Box<dyn Check + '_> =
+        Box::new(EngineUnitScaleCheck::new(&source, Some(&provenance)).unwrap());
+    let evaluations =
+        evaluate_checks_v2(&ctx, &[check], CheckSelection::All).expect("synthetic check evaluates");
+    let measurements = MeasurementContract::new(
+        BTreeMap::new(),
+        animsmith_core::measure::measure_assets(source.document()),
+    )
+    .expect("valid synthetic measurement contract");
+    let rig = RigInfo::from_resolved(source.document(), &roles).expect("valid empty synthetic rig");
+    let file = LintFileReport::new_v4(
+        format!("{witness}.glb"),
+        primary,
+        rig,
+        Some(provenance),
+        evaluations,
+        measurements,
+    )
+    .expect("producer-valid V4 lint file");
+    serde_json::to_value(
+        LintEnvelope::new(ToolInfo::animsmith(ToolSource::new(None, None)), vec![file])
+            .expect("producer-valid V4 lint envelope"),
+    )
+    .expect("serializable V4 lint envelope")
+}
+
+#[test]
+fn bevy_revision_2_lint_emits_correlated_v4_unit_scale_results() {
+    let dir = unique_temp_dir("bevy-v2-unit-scale");
+    let input = dir.path().join("sway.glb");
+    write_clean_glb(&input);
+    let config = write_bevy_v2_config(dir.path(), "unit-scale");
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(config)
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(input)
+        .output()
+        .expect("runs Bevy revision-2 lint");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("lint JSON");
+    assert_output_schema_valid(&json);
+    assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
+    assert_eq!(
+        json["files"][0]["prediction_provenance"]["schema"],
+        "urn:animsmith:prediction-provenance:4"
+    );
+    assert_eq!(
+        json["files"][0]["prediction_provenance"]["rule_inputs"]["runtime_node_selectors"],
+        json!([])
+    );
+    let check = lint_check(&json, "engine-unit-scale");
+    assert_eq!(check["selection"], "selected");
+    assert_eq!(check["configuration"], "enabled");
+    assert_eq!(check["applicability"], "applicable");
+    assert_eq!(check["evaluation"], "complete");
+    assert_eq!(
+        check["prediction"]["schema"],
+        "urn:animsmith:engine-prediction:4"
+    );
+    let file_unit = check["prediction"]["facets"]
+        .as_array()
+        .expect("prediction facets")
+        .iter()
+        .find(|facet| facet["scope"]["code"] == "engine-unit-scale:file-unit")
+        .expect("file-unit facet");
+    assert_eq!(file_unit["state"], "available");
+    assert_eq!(file_unit["result"]["kind"], "unit_mapping");
+    assert_eq!(
+        file_unit["result"]["result"]["exact_target_units_per_source_unit"],
+        json!({ "numerator": 1, "denominator": 1 })
+    );
+    assert_eq!(
+        file_unit["result"]["result"]["application_world_unit_policy"],
+        "unenforced"
+    );
+}
+
+#[test]
+fn bevy_revision_2_readback_rejects_active_unit_scale_with_null_v4_provenance() {
+    let dir = unique_temp_dir("bevy-v2-unit-scale-null-provenance");
+    let input = dir.path().join("sway.glb");
+    write_clean_glb(&input);
+    let config = write_bevy_v2_config(dir.path(), "unit-scale-null-provenance");
+    let output = animsmith()
+        .arg("--config")
+        .arg(config)
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(input)
+        .output()
+        .expect("runs Bevy revision-2 lint");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let mut hostile: Value = serde_json::from_slice(&output.stdout).expect("lint JSON");
+    hostile["files"][0]["prediction_provenance"] = Value::Null;
+    lint_check_mut(&mut hostile, "engine-unit-scale")
+        .as_object_mut()
+        .expect("unit-scale check object")
+        .remove("prediction");
+    assert_output_schema_valid(&hostile);
+
+    let report = dir.path().join("null-provenance.json");
+    write_json(&report, &hostile);
+    let readback = animsmith()
+        .arg("diff")
+        .arg(&report)
+        .arg(&report)
+        .output()
+        .expect("reads hostile V15 report");
+    assert_eq!(readback.status.code(), Some(2), "{}", stderr(&readback));
+    assert!(
+        stderr(&readback).contains("prediction"),
+        "{}",
+        stderr(&readback)
+    );
+}
+
+#[test]
+fn bevy_revision_2_join_work_overflow_round_trips_without_mesh_prefix() {
+    let dir = unique_temp_dir("bevy-v2-join-work-overflow");
+    let input = dir.path().join("unmatched-deep-join.gltf");
+    let nodes = (0..130)
+        .map(|index| {
+            let mut node = json!({});
+            if index < 65 {
+                node["mesh"] = json!(0);
+            }
+            if index < 64 {
+                node["children"] = json!([index + 1]);
+            }
+            node
+        })
+        .collect::<Vec<_>>();
+    let scenes = (0..65)
+        .map(|index| json!({ "nodes": [65 + index] }))
+        .collect::<Vec<_>>();
+    write_json(
+        &input,
+        &json!({
+            "asset": { "version": "2.0" },
+            "nodes": nodes,
+            "scenes": scenes,
+            "scene": 0,
+            "buffers": [{
+                "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "byteLength": 36
+            }],
+            "bufferViews": [{ "buffer": 0, "byteLength": 36 }],
+            "accessors": [{
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [0.0, 0.0, 0.0],
+                "max": [0.0, 0.0, 0.0]
+            }],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }]
+        }),
+    );
+    let config = write_bevy_v2_config(dir.path(), "join-work-overflow");
+
+    let linted = animsmith()
+        .arg("--config")
+        .arg(config)
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(&input)
+        .output()
+        .expect("runs join-work-overflow lint");
+    assert_eq!(linted.status.code(), Some(1), "{}", stderr(&linted));
+    let report: Value = serde_json::from_slice(&linted.stdout).expect("lint JSON");
+    assert_output_schema_valid(&report);
+    let facets = lint_check(&report, "engine-unit-scale")["prediction"]["facets"]
+        .as_array()
+        .expect("prediction facets");
+    assert_eq!(facets.len(), 67);
+    assert!(!facets.iter().any(|facet| {
+        facet["scope"]["code"] == "engine-unit-scale:loader-mesh-primitive"
+            || facet["scope"]["code"] == "engine-unit-scale:facet-budget"
+    }));
+    let overflow = facets
+        .iter()
+        .find(|facet| facet["scope"]["code"] == "engine-unit-scale:mesh-inventory")
+        .expect("mesh join-work unavailable facet");
+    assert_eq!(overflow["state"], "required_prediction_unavailable");
+    assert_eq!(
+        overflow["reasons"],
+        json!(["animsmith:mesh_join_work_budget_exceeded"])
+    );
+
+    let report_path = dir.path().join("join-work-overflow.json");
+    write_json(&report_path, &report);
+    let readback = animsmith()
+        .args(["diff"])
+        .arg(&report_path)
+        .arg(&report_path)
+        .args(["--format", "json"])
+        .output()
+        .expect("reads back join-work-overflow report");
+    assert_eq!(readback.status.code(), Some(0), "{}", stderr(&readback));
+}
+
+#[test]
+fn bevy_revision_2_selected_unavailable_authored_kinds_round_trip_and_reject_swaps() {
+    let dir = unique_temp_dir("bevy-v2-selected-unavailable-kinds");
+    let source_node =
+        |index: usize, parent: Option<usize>, name: &str, local_rest: SourceNodeLocalRest| {
+            let mut node = SourceNodeAsset::new(index, local_rest);
+            node.parent_source_node_index = parent;
+            node.name = Some(name.to_owned());
+            node
+        };
+    let trs = |scale| SourceNodeLocalRest::Trs {
+        translation: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        scale,
+    };
+    let all_trs = synthetic_selected_unit_scale_lint_report(
+        "selected-non-finite-all-trs",
+        vec![
+            source_node(0, None, "Root", trs(Vec3::ONE)),
+            source_node(1, Some(0), "Socket", trs(Vec3::new(f32::NAN, 1.0, 1.0))),
+        ],
+    );
+    let mixed_matrix = synthetic_selected_unit_scale_lint_report(
+        "selected-non-finite-trs-under-matrix",
+        vec![
+            source_node(
+                0,
+                None,
+                "Root",
+                SourceNodeLocalRest::Matrix(animsmith_core::glam::Mat4::IDENTITY),
+            ),
+            source_node(1, Some(0), "Socket", trs(Vec3::new(f32::NAN, 1.0, 1.0))),
+        ],
+    );
+    let selected_subject = "selector:Socket:source_scene:0:source_node:1";
+    let selected_facet = |report: &Value| {
+        lint_check(report, "engine-unit-scale")["prediction"]["facets"]
+            .as_array()
+            .expect("prediction facets")
+            .iter()
+            .find(|facet| {
+                facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                    && facet["scope"]["subject"] == selected_subject
+            })
+            .expect("resolved selected-node facet")
+            .clone()
+    };
+    assert_eq!(
+        selected_facet(&all_trs)["reasons"],
+        json!(["measurement_unavailable"])
+    );
+    assert_eq!(
+        selected_facet(&mixed_matrix)["reasons"],
+        json!(["animsmith:matrix_authored_selected_node_or_ancestry"])
+    );
+
+    let run_diff = |name: &str, report: &Value| {
+        let path = dir.path().join(name);
+        write_json(&path, report);
+        animsmith()
+            .arg("diff")
+            .arg(&path)
+            .arg(&path)
+            .output()
+            .expect("reads synthetic producer lint JSON")
+    };
+    for (name, report) in [
+        ("all-trs.json", &all_trs),
+        ("mixed-matrix.json", &mixed_matrix),
+    ] {
+        assert_output_schema_valid(report);
+        let output = run_diff(name, report);
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    }
+
+    for (name, source, replacement) in [
+        (
+            "all-trs-with-matrix-basis.json",
+            &all_trs,
+            selected_facet(&mixed_matrix)["basis"].clone(),
+        ),
+        (
+            "matrix-with-all-trs-basis.json",
+            &mixed_matrix,
+            selected_facet(&all_trs)["basis"].clone(),
+        ),
+    ] {
+        let mut hostile = source.clone();
+        let facet = lint_check_mut(&mut hostile, "engine-unit-scale")["prediction"]["facets"]
+            .as_array_mut()
+            .expect("prediction facets")
+            .iter_mut()
+            .find(|facet| {
+                facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                    && facet["scope"]["subject"] == selected_subject
+            })
+            .expect("resolved selected-node facet");
+        facet["basis"] = replacement;
+        let output = run_diff(name, &hostile);
+        assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+        assert!(
+            stderr(&output).contains("prediction"),
+            "{}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn bevy_revision_2_missing_runtime_selector_is_unsuppressible() {
+    let dir = unique_temp_dir("bevy-v2-unit-scale-missing-selector");
+    let input = dir.path().join("sway.glb");
+    write_clean_glb(&input);
+    let config = write_config(
+        dir.path(),
+        "bevy-v2-missing.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 2
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = true
+
+[runtime_nodes]
+selectors = ["missing_socket"]
+"#,
+    );
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(config)
+        .args([
+            "lint",
+            "--select",
+            "engine-unit-scale",
+            "--allow",
+            "engine-unit-scale",
+        ])
+        .arg(input)
+        .output()
+        .expect("runs Bevy revision-2 lint");
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let json_output = animsmith()
+        .arg("--config")
+        .arg(dir.path().join("bevy-v2-missing.toml"))
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(dir.path().join("sway.glb"))
+        .output()
+        .expect("runs machine-readable Bevy revision-2 lint");
+    assert_eq!(
+        json_output.status.code(),
+        Some(1),
+        "{}",
+        stderr(&json_output)
+    );
+    let json: Value = serde_json::from_slice(&json_output.stdout).expect("lint JSON");
+    assert_output_schema_valid(&json);
+    assert_eq!(
+        json["files"][0]["prediction_provenance"]["rule_inputs"]["runtime_node_selectors"],
+        json!(["missing_socket"])
+    );
+    let check = lint_check(&json, "engine-unit-scale");
+    let missing = check["prediction"]["facets"]
+        .as_array()
+        .expect("prediction facets")
+        .iter()
+        .find(|facet| facet["scope"]["subject"] == "selector:missing_socket")
+        .expect("missing-selector facet");
+    assert!(
+        missing["reasons"]
+            .as_array()
+            .expect("reasons")
+            .iter()
+            .any(|reason| reason == "source_selector_no_match")
+    );
+    assert_eq!(missing["state"], "required_prediction_unavailable");
+}
+
+#[test]
+fn bevy_revision_2_selected_reachability_planning_stops_at_cumulative_n_plus_one() {
+    let dir = unique_temp_dir("bevy-v2-selected-reachability-planning");
+    let input = dir.path().join("many-selectors.gltf");
+    let selectors = (0..128)
+        .map(|index| format!("target-{index}"))
+        .collect::<Vec<_>>();
+    let selector_toml = selectors
+        .iter()
+        .map(|selector| format!("\"{selector}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let config = write_config(
+        dir.path(),
+        "many-selectors.toml",
+        &format!(
+            r#"
+[engine]
+profile = "bevy"
+profile_revision = 2
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = true
+
+[runtime_nodes]
+selectors = [{selector_toml}]
+"#
+        ),
+    );
+    write_json(
+        &input,
+        &json!({
+            "asset": { "version": "2.0" },
+            "nodes": std::iter::once(json!({
+                "name": "root",
+                "children": (1..=128).collect::<Vec<_>>()
+            }))
+            .chain((0..128).map(|index| json!({ "name": format!("target-{index}") })))
+            .collect::<Vec<_>>(),
+            "scenes": (0..33).map(|_| json!({ "nodes": [0] })).collect::<Vec<_>>(),
+            "scene": 0,
+        }),
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(config)
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(&input)
+        .output()
+        .expect("runs cumulative selected reachability lint");
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("lint JSON");
+    let facets = lint_check(&report, "engine-unit-scale")["prediction"]["facets"]
+        .as_array()
+        .expect("prediction facets");
+    assert_eq!(facets.len(), 4096, "{facets:#?}");
+    let budget_facets = facets
+        .iter()
+        .filter(|facet| facet["scope"]["code"] == "engine-unit-scale:facet-budget")
+        .collect::<Vec<_>>();
+    assert_eq!(budget_facets.len(), 1, "{facets:#?}");
+    assert_eq!(
+        budget_facets[0]["reasons"],
+        json!(["facet_budget_exceeded"])
+    );
+    assert_eq!(
+        facets
+            .iter()
+            .filter(|facet| facet["scope"]["code"] != "engine-unit-scale:facet-budget")
+            .count(),
+        4095,
+        "{facets:#?}"
+    );
+    let report_path = dir.path().join("many-selectors.json");
+    write_json(&report_path, &report);
+    let readback = animsmith()
+        .arg("diff")
+        .arg(&report_path)
+        .arg(&report_path)
+        .output()
+        .expect("reads cumulative selected reachability report");
+    assert_eq!(readback.status.code(), Some(0), "{}", stderr(&readback));
+}
+
+#[test]
+fn bevy_revision_2_unit_scale_readback_rederives_required_facets_results_and_bases() {
+    let dir = unique_temp_dir("bevy-v2-unit-scale-readback");
+    let input = dir.path().join("sway.glb");
+    write_clean_glb(&input);
+    let config = write_bevy_v2_config(dir.path(), "readback");
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(&input)
+        .output()
+        .expect("runs Bevy revision-2 lint");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let valid: Value = serde_json::from_slice(&output.stdout).expect("lint JSON");
+
+    let run_diff = |name: &str, report: &Value| {
+        let path = dir.path().join(name);
+        write_json(&path, report);
+        animsmith()
+            .arg("diff")
+            .arg(&path)
+            .arg(&path)
+            .output()
+            .expect("runs report diff")
+    };
+
+    let mut missing_file_facet = valid.clone();
+    let check = lint_check_mut(&mut missing_file_facet, "engine-unit-scale");
+    check["prediction"]["facets"]
+        .as_array_mut()
+        .expect("prediction facets")
+        .retain(|facet| facet["scope"]["code"] != "engine-unit-scale:file-unit");
+    check["evaluated_scopes"]
+        .as_array_mut()
+        .expect("evaluated scopes")
+        .retain(|scope| scope["code"] != "engine-unit-scale:file-unit");
+    missing_file_facet["summary"]["prediction_facets"]["available"] = json!(2);
+    let output = run_diff("missing-file-facet.json", &missing_file_facet);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("prediction"),
+        "{}",
+        stderr(&output)
+    );
+
+    let mut forged_result = valid.clone();
+    let check = lint_check_mut(&mut forged_result, "engine-unit-scale");
+    let scene_facet = check["prediction"]["facets"]
+        .as_array_mut()
+        .expect("prediction facets")
+        .iter_mut()
+        .find(|facet| facet["scope"]["code"] == "engine-unit-scale:loader-scene-root")
+        .expect("loader-scene-root facet");
+    scene_facet["result"]["result"]["subject_kind"] = json!("loader_mesh_primitive");
+    let output = run_diff("forged-result.json", &forged_result);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("prediction"),
+        "{}",
+        stderr(&output)
+    );
+
+    let selector_config = write_config(
+        dir.path(),
+        "bevy-v2-readback-selector.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 2
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = true
+
+[runtime_nodes]
+selectors = ["missing_socket"]
+"#,
+    );
+    let selector_output = animsmith()
+        .arg("--config")
+        .arg(selector_config)
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(input)
+        .output()
+        .expect("runs missing-selector lint");
+    assert_eq!(
+        selector_output.status.code(),
+        Some(1),
+        "{}",
+        stderr(&selector_output)
+    );
+    let mut substituted_basis: Value =
+        serde_json::from_slice(&selector_output.stdout).expect("selector lint JSON");
+    let check = lint_check_mut(&mut substituted_basis, "engine-unit-scale");
+    let facets = check["prediction"]["facets"]
+        .as_array_mut()
+        .expect("prediction facets");
+    let available_basis = facets
+        .iter()
+        .find(|facet| facet["scope"]["code"] == "engine-unit-scale:file-unit")
+        .expect("file-unit facet")["basis"]
+        .clone();
+    let unavailable = facets
+        .iter_mut()
+        .find(|facet| facet["state"] == "required_prediction_unavailable")
+        .expect("unavailable selector facet");
+    unavailable["basis"] = available_basis;
+    let output = run_diff("substituted-unavailable-basis.json", &substituted_basis);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("prediction"),
+        "{}",
+        stderr(&output)
+    );
+
+    let multi_scene_input = dir.path().join("two-scenes.gltf");
+    write_json(
+        &multi_scene_input,
+        &json!({
+            "asset": { "version": "2.0" },
+            "nodes": [{ "name": "root" }],
+            "scenes": [{ "nodes": [0] }, { "nodes": [0] }],
+            "scene": 0
+        }),
+    );
+    let multi_scene_config = write_config(
+        dir.path(),
+        "bevy-v2-readback-scenes.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 2
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = true
+"#,
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(multi_scene_config)
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(multi_scene_input)
+        .output()
+        .expect("runs multi-scene Bevy revision-2 lint");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let multi_scene: Value = serde_json::from_slice(&output.stdout).expect("multi-scene lint JSON");
+
+    let (name, scope_code) = (
+        "swapped-scene-bases.json",
+        "engine-unit-scale:loader-scene-root",
+    );
+    {
+        let mut swapped = multi_scene.clone();
+        let facets = lint_check_mut(&mut swapped, "engine-unit-scale")["prediction"]["facets"]
+            .as_array_mut()
+            .expect("prediction facets");
+        let indices = facets
+            .iter()
+            .enumerate()
+            .filter_map(|(index, facet)| (facet["scope"]["code"] == scope_code).then_some(index))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            indices.len(),
+            2,
+            "fixture must expose two {scope_code} facets"
+        );
+        let left = facets[indices[0]]["basis"].clone();
+        facets[indices[0]]["basis"] = facets[indices[1]]["basis"].clone();
+        facets[indices[1]]["basis"] = left;
+        let output = run_diff(name, &swapped);
+        assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+        assert!(
+            stderr(&output).contains("prediction"),
+            "{}",
+            stderr(&output)
+        );
+    }
+
+    let multi_mesh_input = dir.path().join("multi-mesh.glb");
+    write_multi_mesh_glb(&multi_mesh_input);
+    let multi_mesh_config = write_config(
+        dir.path(),
+        "bevy-v2-readback-meshes.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 2
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = true
+
+[runtime_nodes]
+selectors = ["body-node", "prop-node"]
+"#,
+    );
+    let multi_mesh_output = animsmith()
+        .arg("--config")
+        .arg(multi_mesh_config)
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(multi_mesh_input)
+        .output()
+        .expect("runs multi-mesh Bevy revision-2 lint");
+    assert_eq!(
+        multi_mesh_output.status.code(),
+        Some(0),
+        "{}",
+        stderr(&multi_mesh_output)
+    );
+    let multi_mesh: Value =
+        serde_json::from_slice(&multi_mesh_output.stdout).expect("multi-mesh lint JSON");
+    for (name, scope_code) in [
+        (
+            "swapped-mesh-bases.json",
+            "engine-unit-scale:loader-mesh-primitive",
+        ),
+        (
+            "swapped-selected-bases.json",
+            "engine-unit-scale:selected-source-node",
+        ),
+    ] {
+        let mut swapped = multi_mesh.clone();
+        let facets = lint_check_mut(&mut swapped, "engine-unit-scale")["prediction"]["facets"]
+            .as_array_mut()
+            .expect("prediction facets");
+        let indices = facets
+            .iter()
+            .enumerate()
+            .filter_map(|(index, facet)| (facet["scope"]["code"] == scope_code).then_some(index))
+            .collect::<Vec<_>>();
+        assert!(
+            indices.len() >= 2,
+            "fixture must expose multiple {scope_code} facets"
+        );
+        let left = facets[indices[0]]["basis"].clone();
+        facets[indices[0]]["basis"] = facets[indices[1]]["basis"].clone();
+        facets[indices[1]]["basis"] = left;
+        let output = run_diff(name, &swapped);
+        assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+        assert!(
+            stderr(&output).contains("prediction"),
+            "{}",
+            stderr(&output)
+        );
+    }
+
+    let raw_selector_config = write_config(
+        dir.path(),
+        "bevy-v2-readback-raw-selector.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 2
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = true
+
+[runtime_nodes]
+selectors = ["target"]
+"#,
+    );
+    let run_unreachable_selector = |name: &str, nodes: Value| {
+        let path = dir.path().join(format!("{name}.gltf"));
+        write_json(
+            &path,
+            &json!({
+                "asset": { "version": "2.0" },
+                "nodes": nodes,
+                "scenes": [{ "nodes": [] }],
+                "scene": 0
+            }),
+        );
+        let output = animsmith()
+            .arg("--config")
+            .arg(&raw_selector_config)
+            .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+            .arg(path)
+            .output()
+            .expect("runs unreachable-selector unit-scale lint");
+        assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+        serde_json::from_slice::<Value>(&output.stdout).expect("unreachable-selector lint JSON")
+    };
+    let trs_unreachable = run_unreachable_selector(
+        "selector-trs-parent-zero",
+        json!([
+            { "name": "root", "children": [1] },
+            { "name": "target" }
+        ]),
+    );
+    let matrix_unreachable = run_unreachable_selector(
+        "selector-matrix-parent-zero",
+        json!([
+            { "name": "root", "children": [1] },
+            {
+                "name": "target",
+                "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                           0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+            }
+        ]),
+    );
+    let alternate_parent = run_unreachable_selector(
+        "selector-trs-parent-two",
+        json!([
+            { "name": "root-a" },
+            { "name": "target" },
+            { "name": "root-b", "children": [1] }
+        ]),
+    );
+    let no_match = run_unreachable_selector("selector-no-match", json!([{ "name": "other" }]));
+    let ambiguous = run_unreachable_selector(
+        "selector-ambiguous",
+        json!([{ "name": "target" }, { "name": "target" }]),
+    );
+    let selected_basis = |report: &Value, subject: &str| {
+        lint_check(report, "engine-unit-scale")["prediction"]["facets"]
+            .as_array()
+            .expect("prediction facets")
+            .iter()
+            .find(|facet| {
+                facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                    && facet["scope"]["subject"] == subject
+            })
+            .expect("selector-only facet")["basis"]
+            .clone()
+    };
+    for (name, source_report, replacement_basis) in [
+        (
+            "omitted-selected-raw-source-basis.json",
+            &trs_unreachable,
+            selected_basis(&no_match, "selector:target"),
+        ),
+        (
+            "omitted-ambiguous-name-witnesses.json",
+            &ambiguous,
+            selected_basis(&no_match, "selector:target"),
+        ),
+        (
+            "substituted-selected-local-kind-basis.json",
+            &matrix_unreachable,
+            selected_basis(&trs_unreachable, "selector:target"),
+        ),
+        (
+            "substituted-selected-parent-basis.json",
+            &trs_unreachable,
+            selected_basis(&alternate_parent, "selector:target"),
+        ),
+    ] {
+        let mut hostile = source_report.clone();
+        let facet = lint_check_mut(&mut hostile, "engine-unit-scale")["prediction"]["facets"]
+            .as_array_mut()
+            .expect("prediction facets")
+            .iter_mut()
+            .find(|facet| {
+                facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                    && facet["scope"]["subject"] == "selector:target"
+            })
+            .expect("selector-only facet");
+        facet["basis"] = replacement_basis;
+        let output = run_diff(name, &hostile);
+        assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+        assert!(
+            stderr(&output).contains("prediction"),
+            "{}",
+            stderr(&output)
+        );
+    }
+
+    let deep_nodes = (0..129)
+        .map(|index| {
+            let mut node = serde_json::Map::new();
+            node.insert(
+                "name".to_owned(),
+                json!(if index == 128 { "target" } else { "chain" }),
+            );
+            if index < 128 {
+                node.insert("children".to_owned(), json!([index + 1]));
+            }
+            Value::Object(node)
+        })
+        .collect::<Vec<_>>();
+    let bounded_nodes = (0..128)
+        .map(|index| {
+            let mut node = serde_json::Map::new();
+            node.insert(
+                "name".to_owned(),
+                json!(if index == 127 { "target" } else { "chain" }),
+            );
+            if index < 127 {
+                node.insert("children".to_owned(), json!([index + 1]));
+            }
+            Value::Object(node)
+        })
+        .collect::<Vec<_>>();
+    let run_reachable_selector = |name: &str, nodes: Vec<Value>, expected_status: i32| {
+        let path = dir.path().join(format!("{name}.gltf"));
+        write_json(
+            &path,
+            &json!({
+                "asset": { "version": "2.0" },
+                "nodes": nodes,
+                "scenes": [{ "nodes": [0] }],
+                "scene": 0
+            }),
+        );
+        let output = animsmith()
+            .arg("--config")
+            .arg(&raw_selector_config)
+            .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+            .arg(path)
+            .output()
+            .expect("runs reachable-selector unit-scale lint");
+        assert_eq!(
+            output.status.code(),
+            Some(expected_status),
+            "{}",
+            stderr(&output)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).expect("reachable-selector lint JSON")
+    };
+    let deep_ancestry = run_reachable_selector("selector-deep-ancestry", deep_nodes, 1);
+    let bounded_ancestry = run_reachable_selector("selector-bounded-ancestry", bounded_nodes, 0);
+    let selected_facets = lint_check(&deep_ancestry, "engine-unit-scale")["prediction"]["facets"]
+        .as_array()
+        .expect("prediction facets");
+    let deep_facet = selected_facets
+        .iter()
+        .find(|facet| {
+            facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                && facet["scope"]["subject"] == "selector:target"
+        })
+        .expect("over-bound reachability has one selector-only facet");
+    assert_eq!(
+        deep_facet["reasons"],
+        json!(["animsmith:selected_node_scene_reachability_unavailable"])
+    );
+    assert!(!selected_facets.iter().any(|facet| {
+        facet["scope"]["subject"] == "selector:target:source_scene:0:source_node:128"
+    }));
+    assert!(
+        lint_check(&bounded_ancestry, "engine-unit-scale")["prediction"]["facets"]
+            .as_array()
+            .expect("prediction facets")
+            .iter()
+            .any(|facet| {
+                facet["scope"]["subject"] == "selector:target:source_scene:0:source_node:127"
+                    && facet["state"] == "available"
+            })
+    );
+
+    let mut substituted_reachability = deep_ancestry.clone();
+    let facet =
+        lint_check_mut(&mut substituted_reachability, "engine-unit-scale")["prediction"]["facets"]
+            .as_array_mut()
+            .expect("prediction facets")
+            .iter_mut()
+            .find(|facet| {
+                facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                    && facet["scope"]["subject"] == "selector:target"
+            })
+            .expect("over-bound selected-node facet");
+    facet["basis"] = selected_basis(&trs_unreachable, "selector:target");
+    let output = run_diff(
+        "substituted-selected-reachability-basis.json",
+        &substituted_reachability,
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("prediction"),
+        "{}",
+        stderr(&output)
+    );
+
+    let aggregate_nodes = (0..128)
+        .map(|index| {
+            let mut node = serde_json::Map::new();
+            node.insert(
+                "name".to_owned(),
+                json!(if index == 127 { "target" } else { "chain" }),
+            );
+            if index < 127 {
+                node.insert("children".to_owned(), json!([index + 1]));
+            }
+            Value::Object(node)
+        })
+        .collect::<Vec<_>>();
+    let run_aggregate_selector = |name: &str, scene_count: u64, expected_status: i32| {
+        let path = dir.path().join(format!("{name}.gltf"));
+        write_json(
+            &path,
+            &json!({
+                "asset": { "version": "2.0" },
+                "nodes": aggregate_nodes.clone(),
+                "scenes": (0..scene_count).map(|_| json!({ "nodes": [0] })).collect::<Vec<_>>(),
+                "scene": 0
+            }),
+        );
+        let output = animsmith()
+            .arg("--config")
+            .arg(&raw_selector_config)
+            .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+            .arg(path)
+            .output()
+            .expect("runs aggregate-reachability lint");
+        assert_eq!(
+            output.status.code(),
+            Some(expected_status),
+            "{}",
+            stderr(&output)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).expect("aggregate-reachability lint JSON")
+    };
+    let aggregate_at_limit = run_aggregate_selector("selector-aggregate-at-limit", 32, 0);
+    let aggregate_over_limit = run_aggregate_selector("selector-aggregate-over-limit", 33, 1);
+    let at_limit_selected =
+        lint_check(&aggregate_at_limit, "engine-unit-scale")["prediction"]["facets"]
+            .as_array()
+            .expect("prediction facets")
+            .iter()
+            .filter(|facet| facet["scope"]["code"] == "engine-unit-scale:selected-source-node")
+            .collect::<Vec<_>>();
+    assert_eq!(at_limit_selected.len(), 32);
+    assert!(
+        at_limit_selected
+            .iter()
+            .all(|facet| facet["state"] == "available")
+    );
+    let unreachable_scene_path = dir.path().join("selector-existing-unreachable.gltf");
+    write_json(
+        &unreachable_scene_path,
+        &json!({
+            "asset": { "version": "2.0" },
+            "nodes": [
+                { "name": "root", "children": [1] },
+                { "name": "target" },
+                { "name": "detached" }
+            ],
+            "scenes": [{ "nodes": [0] }, { "nodes": [2] }],
+            "scene": 0,
+        }),
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(&raw_selector_config)
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(&unreachable_scene_path)
+        .output()
+        .expect("runs existing-unreachable-scene lint");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let mut missing_witness: Value = serde_json::from_slice(&output.stdout).expect("lint JSON");
+    let facet = lint_check_mut(&mut missing_witness, "engine-unit-scale")["prediction"]["facets"]
+        .as_array_mut()
+        .expect("prediction facets")
+        .iter_mut()
+        .find(|facet| {
+            facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                && facet["scope"]["subject"] == "selector:target:source_scene:0:source_node:1"
+        })
+        .expect("cached selected witness facet");
+    facet["scope"]["subject"] = json!("selector:target:source_scene:1:source_node:1");
+    fn mutate_scene_witness(value: &mut Value) {
+        match value {
+            Value::Array(values) => {
+                for value in values {
+                    mutate_scene_witness(value);
+                }
+            }
+            Value::Object(values) => {
+                if values.get("source_scene_index") == Some(&json!(0)) {
+                    values.insert("source_scene_index".to_owned(), json!(1));
+                }
+                if values.contains_key("source_root_ordinal") {
+                    values.insert("source_node_index".to_owned(), json!(2));
+                }
+                for value in values.values_mut() {
+                    mutate_scene_witness(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    mutate_scene_witness(&mut facet["basis"]);
+    let output = run_diff("forged-selected-missing-witness.json", &missing_witness);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    let aggregate_facet =
+        lint_check(&aggregate_over_limit, "engine-unit-scale")["prediction"]["facets"]
+            .as_array()
+            .expect("prediction facets")
+            .iter()
+            .find(|facet| {
+                facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                    && facet["scope"]["subject"] == "selector:target"
+            })
+            .expect("aggregate overflow selector-only facet");
+    assert_eq!(
+        aggregate_facet["reasons"],
+        json!(["animsmith:selected_node_scene_reachability_unavailable"])
+    );
+    let mut substituted_aggregate = aggregate_over_limit.clone();
+    let facet =
+        lint_check_mut(&mut substituted_aggregate, "engine-unit-scale")["prediction"]["facets"]
+            .as_array_mut()
+            .expect("prediction facets")
+            .iter_mut()
+            .find(|facet| {
+                facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                    && facet["scope"]["subject"] == "selector:target"
+            })
+            .expect("aggregate overflow selector-only facet");
+    facet["basis"] = selected_basis(&trs_unreachable, "selector:target");
+    let output = run_diff(
+        "substituted-selected-aggregate-reachability-basis.json",
+        &substituted_aggregate,
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("prediction"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -1790,7 +3017,7 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_eq!(lint_json.status.code(), Some(0));
     let lint_json: Value = serde_json::from_slice(&lint_json.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&lint_json);
-    assert_eq!(lint_json["schema_version"], 14);
+    assert_eq!(lint_json["schema_version"], 15);
     assert_eq!(lint_json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 16);
     assert_eq!(
@@ -2473,7 +3700,7 @@ fn help_matches_compiled_feature_set() {
         .expect("runs diff help");
     assert!(diff.status.success(), "stderr:\n{}", stderr(&diff));
     let out = stdout(&diff);
-    assert!(out.contains("output-v14"), "{out}");
+    assert!(out.contains("output-v15"), "{out}");
     assert!(out.contains("output-v13"), "{out}");
     assert!(out.contains("measurements-v16"), "{out}");
     assert!(!out.contains("v5"), "{out}");
@@ -2678,7 +3905,7 @@ fn measure_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 14);
+    assert_eq!(json["schema_version"], 15);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -3117,7 +4344,7 @@ fn report_text_escapes_its_output_path() {
 }
 
 #[test]
-fn embedded_contract_types_emit_the_published_v14_envelope() {
+fn embedded_contract_types_emit_the_published_v15_envelope() {
     let doc = Document::default();
     let config = animsmith_core::Config::default();
     let roles = animsmith_core::ResolvedRoles::default();
@@ -3159,7 +4386,7 @@ fn embedded_contract_types_emit_the_published_v14_envelope() {
 }
 
 #[test]
-fn published_v14_schema_requires_matching_role_policy_provenance() {
+fn published_v15_schema_requires_matching_role_policy_provenance() {
     let output = animsmith()
         .args([
             "measure",
@@ -3199,13 +4426,13 @@ fn published_v14_schema_requires_matching_role_policy_provenance() {
     ] {
         assert!(
             !validator.is_valid(&invalid),
-            "output-v14 accepted {name}: {invalid:#}"
+            "output-v15 accepted {name}: {invalid:#}"
         );
     }
 }
 
 #[test]
-fn published_v14_schema_accepts_and_distinguishes_every_prediction_facet_lifecycle() {
+fn published_v15_schema_accepts_and_distinguishes_every_prediction_facet_lifecycle() {
     let dir = unique_temp_dir("prediction-schema-lifecycle");
     let input = dir.path().join("sway.glb");
     write_clean_glb(&input);
@@ -3552,7 +4779,7 @@ fn lint_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 14);
+    assert_eq!(json["schema_version"], 15);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -3819,7 +5046,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 14);
+    assert_eq!(json["schema_version"], 15);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
@@ -4275,7 +5502,7 @@ fn diff_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 14);
+    assert_eq!(json["schema_version"], 15);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -4670,7 +5897,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported output version",
             unsupported_output_version,
-            format!("has schema_version 2; this build reads schema_version 14; {remediation}"),
+            format!("has schema_version 2; this build reads schema_version 15; {remediation}"),
         ),
         (
             "missing command",
@@ -5081,7 +6308,7 @@ fn diff_rejects_historical_output_v5_with_v11_measurements() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has schema_version 5; this build reads schema_version 14; regenerate it from the original asset with `animsmith measure --format json <asset>`"
+            "has schema_version 5; this build reads schema_version 15; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)

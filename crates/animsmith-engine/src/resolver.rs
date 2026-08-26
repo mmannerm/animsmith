@@ -1,8 +1,10 @@
 use crate::canonical::{settings_identity, validate_clip_settings};
 use crate::{
-    DefaultStatus, EngineDeclaration, EngineProfile, InvalidSettingReason, ProfileSelection,
-    ResolutionError, SettingApplicability, SettingDomain, SettingId, SettingLocation, SettingMap,
-    SettingScope, SettingValue, profiles_v1,
+    DefaultStatus, EngineDeclaration, EngineDeclarationV2, EngineProfile, EngineProfileV2,
+    InvalidSettingReason, ProfileSelection, ResolutionError, ResolvedSettingOriginV2,
+    ResolvedSettingV2, SettingApplicability, SettingDefaultV2, SettingDomain, SettingDomainV2,
+    SettingId, SettingIdV2, SettingLocation, SettingMap, SettingMapV2, SettingScope, SettingValue,
+    SettingValueV2, profiles_v1, profiles_v2,
 };
 use animsmith_core::{
     ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS, EngineContractError, InputIdentity, SourceFormatV1,
@@ -30,6 +32,270 @@ pub fn lookup_profile(
         .iter()
         .find(|profile| profile.selection() == selection)
         .ok_or_else(|| ResolutionError::UnknownProfile(selection.clone()))
+}
+
+/// Find one exact revision-2 registry tuple without fallback to revision 1.
+///
+/// # Errors
+///
+/// Returns [`ResolutionErrorV2::UnknownProfile`] when no tuple is exactly
+/// equal.
+pub fn lookup_profile_v2(
+    selection: &ProfileSelection,
+) -> Result<&'static EngineProfileV2, ResolutionErrorV2> {
+    profiles_v2()
+        .iter()
+        .find(|profile| profile.selection() == selection)
+        .ok_or_else(|| ResolutionErrorV2::UnknownProfile(selection.clone()))
+}
+
+/// Validate and fully materialize a revision-2 engine declaration.
+///
+/// Verified defaults are inserted with [`ResolvedSettingOriginV2::ProfileDefault`].
+/// Explicit values always retain [`ResolvedSettingOriginV2::ExplicitConfig`].
+/// The initial Bevy revision-2 profile has only document-scoped descriptors;
+/// nonempty clip declarations therefore fail closed during this phase.
+///
+/// # Errors
+///
+/// Returns a typed configuration error for an unknown exact tuple/key, wrong
+/// scope or domain, or a missing required-explicit setting.
+pub fn resolve_static_v2(
+    declaration: EngineDeclarationV2,
+) -> Result<Option<StaticResolutionV2>, ResolutionErrorV2> {
+    let EngineDeclarationV2 {
+        selection,
+        document_settings,
+        clip_settings,
+    } = declaration;
+    let Some(selection) = selection else {
+        if document_settings.is_some() || !clip_settings.is_empty() {
+            return Err(ResolutionErrorV2::SettingsWithoutSelection);
+        }
+        return Ok(None);
+    };
+    let profile = lookup_profile_v2(&selection)?;
+
+    let explicit_document = validate_map_v2(
+        profile,
+        document_settings.unwrap_or_default(),
+        SettingScope::Document,
+        SettingLocation::Document,
+    )?;
+    let mut document_settings = BTreeMap::new();
+    for descriptor in profile.setting_descriptors() {
+        if descriptor.scope() != SettingScope::Document {
+            continue;
+        }
+        if let Some(value) = explicit_document.get(&descriptor.id()) {
+            document_settings.insert(
+                descriptor.id(),
+                ResolvedSettingV2 {
+                    value: value.clone(),
+                    origin: ResolvedSettingOriginV2::ExplicitConfig,
+                },
+            );
+        } else {
+            match descriptor.default() {
+                SettingDefaultV2::RequiredExplicit => {
+                    return Err(ResolutionErrorV2::MissingRequiredSetting {
+                        setting: descriptor.id(),
+                        location: SettingLocation::Document,
+                    });
+                }
+                SettingDefaultV2::Verified(value) => {
+                    document_settings.insert(
+                        descriptor.id(),
+                        ResolvedSettingV2 {
+                            value: value.clone(),
+                            origin: ResolvedSettingOriginV2::ProfileDefault,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    for (selector, settings) in clip_settings {
+        validate_map_v2(
+            profile,
+            settings,
+            SettingScope::Clip,
+            SettingLocation::ClipSelector(selector),
+        )?;
+    }
+
+    Ok(Some(StaticResolutionV2 {
+        profile,
+        document_settings,
+    }))
+}
+
+/// Validated revision-2 profile and fully materialized document settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaticResolutionV2 {
+    profile: &'static EngineProfileV2,
+    document_settings: BTreeMap<SettingIdV2, ResolvedSettingV2>,
+}
+
+impl StaticResolutionV2 {
+    /// Exact immutable selected profile.
+    pub const fn profile(&self) -> &'static EngineProfileV2 {
+        self.profile
+    }
+
+    /// Fully materialized document settings with explicit/default origins.
+    pub const fn document_settings(&self) -> &BTreeMap<SettingIdV2, ResolvedSettingV2> {
+        &self.document_settings
+    }
+
+    /// Validate the authoritative source format against the exact profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResolutionErrorV2::UnacceptedInputFormat`] for any container
+    /// outside the profile's glTF JSON/GLB boundary.
+    pub fn resolve_input(
+        &self,
+        source_format: SourceFormatV1,
+    ) -> Result<ResolvedProfileSettingsV2, ResolutionErrorV2> {
+        if !self.profile.accepted_inputs().contains(&source_format) {
+            return Err(ResolutionErrorV2::UnacceptedInputFormat {
+                selection: self.profile.selection().clone(),
+                format: source_format,
+            });
+        }
+        Ok(ResolvedProfileSettingsV2 {
+            profile: self.profile,
+            source_format,
+            document_settings: self.document_settings.clone(),
+        })
+    }
+}
+
+/// Input-validated revision-2 profile settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProfileSettingsV2 {
+    profile: &'static EngineProfileV2,
+    source_format: SourceFormatV1,
+    document_settings: BTreeMap<SettingIdV2, ResolvedSettingV2>,
+}
+
+impl ResolvedProfileSettingsV2 {
+    /// Exact immutable selected profile.
+    pub const fn profile(&self) -> &'static EngineProfileV2 {
+        self.profile
+    }
+
+    /// Authoritative accepted source format.
+    pub const fn source_format(&self) -> SourceFormatV1 {
+        self.source_format
+    }
+
+    /// Fully materialized document settings with explicit/default origins.
+    pub const fn document_settings(&self) -> &BTreeMap<SettingIdV2, ResolvedSettingV2> {
+        &self.document_settings
+    }
+}
+
+/// Typed failure from revision-2 settings resolution.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ResolutionErrorV2 {
+    /// Settings were declared without selecting an engine profile.
+    #[error("V2 engine settings were declared without an engine profile selection")]
+    SettingsWithoutSelection,
+    /// No exact revision-2 registry tuple matches the selection.
+    #[error("unknown V2 engine profile selection {0:?}")]
+    UnknownProfile(ProfileSelection),
+    /// A setting key is absent from the selected profile.
+    #[error("unknown V2 engine setting {key:?} in {location}")]
+    UnknownSetting {
+        /// Supplied setting key.
+        key: String,
+        /// Declaration location.
+        location: SettingLocation,
+    },
+    /// A known setting was declared in the wrong scope.
+    #[error(
+        "V2 engine setting {setting} has {expected:?} scope but was declared in {found:?} scope"
+    )]
+    WrongScope {
+        /// Stable setting id.
+        setting: SettingIdV2,
+        /// Descriptor scope.
+        expected: SettingScope,
+        /// Supplied scope.
+        found: SettingScope,
+        /// Declaration location.
+        location: SettingLocation,
+    },
+    /// A value variant does not match its descriptor's closed domain.
+    #[error("invalid value domain for V2 engine setting {setting} in {location}")]
+    InvalidSettingValue {
+        /// Stable setting id.
+        setting: SettingIdV2,
+        /// Required descriptor domain.
+        expected: SettingDomainV2,
+        /// Declaration location.
+        location: SettingLocation,
+    },
+    /// One required-explicit setting was not materialized.
+    #[error("missing required V2 engine setting {setting} in {location}")]
+    MissingRequiredSetting {
+        /// Stable setting id.
+        setting: SettingIdV2,
+        /// Document or exact clip location.
+        location: SettingLocation,
+    },
+    /// The authoritative input container is outside the exact profile.
+    #[error("input format {format:?} is not accepted by V2 engine profile {selection:?}")]
+    UnacceptedInputFormat {
+        /// Selected exact profile tuple.
+        selection: ProfileSelection,
+        /// Authoritative source format.
+        format: SourceFormatV1,
+    },
+}
+
+fn validate_map_v2(
+    profile: &EngineProfileV2,
+    settings: SettingMapV2,
+    supplied_scope: SettingScope,
+    location: SettingLocation,
+) -> Result<BTreeMap<SettingIdV2, SettingValueV2>, ResolutionErrorV2> {
+    let mut validated = BTreeMap::new();
+    for (key, value) in settings {
+        let Some(id) = SettingIdV2::from_str_v2(&key) else {
+            return Err(ResolutionErrorV2::UnknownSetting {
+                key,
+                location: location.clone(),
+            });
+        };
+        let Some(descriptor) = profile.setting_descriptor(id) else {
+            return Err(ResolutionErrorV2::UnknownSetting {
+                key,
+                location: location.clone(),
+            });
+        };
+        if descriptor.scope() != supplied_scope {
+            return Err(ResolutionErrorV2::WrongScope {
+                setting: id,
+                expected: descriptor.scope(),
+                found: supplied_scope,
+                location: location.clone(),
+            });
+        }
+        if !value.matches_domain(descriptor.domain()) {
+            return Err(ResolutionErrorV2::InvalidSettingValue {
+                setting: id,
+                expected: descriptor.domain(),
+                location: location.clone(),
+            });
+        }
+        validated.insert(id, value);
+    }
+    Ok(validated)
 }
 
 /// Validate an engine declaration without inspecting an asset.

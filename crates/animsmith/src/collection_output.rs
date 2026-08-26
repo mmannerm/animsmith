@@ -1,5 +1,5 @@
-//! Internal producer and strict reader types for current collection-output V6
-//! and immutable historical V5.
+//! Internal producer and strict reader types for current collection-output V7,
+//! plus immutable historical V6 and V5.
 //!
 //! This is deliberately a CLI-local contract.  Core owns the validated
 //! collection declaration vocabulary; this module owns the command's evidence
@@ -18,8 +18,8 @@ use animsmith_core::{
     CollectionRuntimeSetKindV1, CollectionSourceKeyV1, DependencyClosureCoverageReasonV1,
     DependencyClosureCoverageV1, DependencyClosureIdentityV1, DependencyClosureV1,
     DependencyResourceKeyV1, InputIdentity, LintEnvelope, MeasurementReportInput, OUTPUT_SCHEMA_ID,
-    OUTPUT_SCHEMA_VERSION, OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION, ResourceKeySyntaxV1,
-    ToolInfo,
+    OUTPUT_SCHEMA_VERSION, OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION, OUTPUT_V14_SCHEMA_ID,
+    OUTPUT_V14_SCHEMA_VERSION, ResourceKeySyntaxV1, ToolInfo,
 };
 use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,8 @@ pub(crate) const COLLECTION_OUTPUT_V5_ID: &str = "urn:animsmith:schema:collectio
 pub(crate) const COLLECTION_OUTPUT_V5_SCHEMA_VERSION: u32 = 5;
 pub(crate) const COLLECTION_OUTPUT_V6_ID: &str = "urn:animsmith:schema:collection-output:6";
 pub(crate) const COLLECTION_OUTPUT_V6_SCHEMA_VERSION: u32 = 6;
+pub(crate) const COLLECTION_OUTPUT_V7_ID: &str = "urn:animsmith:schema:collection-output:7";
+pub(crate) const COLLECTION_OUTPUT_V7_SCHEMA_VERSION: u32 = 7;
 pub(crate) const COLLECTION_OUTPUT_BUDGET_V1_ID: &str = "urn:animsmith:collection-output-budget:1";
 pub(crate) const COLLECTION_OUTPUT_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) const COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -849,8 +851,8 @@ impl CollectionOutput {
             serialized_bytes,
         )?;
         let output = Self {
-            schema_version: COLLECTION_OUTPUT_V6_SCHEMA_VERSION,
-            schema: COLLECTION_OUTPUT_V6_ID,
+            schema_version: COLLECTION_OUTPUT_V7_SCHEMA_VERSION,
+            schema: COLLECTION_OUTPUT_V7_ID,
             tool,
             command: "collection lint",
             manifest,
@@ -1093,6 +1095,9 @@ impl CollectionOutputInput {
             }
             (COLLECTION_OUTPUT_V6_SCHEMA_VERSION, COLLECTION_OUTPUT_V6_ID) => {
                 CollectionOutputRevision::V6
+            }
+            (COLLECTION_OUTPUT_V7_SCHEMA_VERSION, COLLECTION_OUTPUT_V7_ID) => {
+                CollectionOutputRevision::V7
             }
             _ => return Err(CollectionOutputError::Malformed),
         };
@@ -1482,13 +1487,15 @@ struct CollectionOutputWire {
 enum CollectionOutputRevision {
     V5,
     V6,
+    V7,
 }
 
 impl CollectionOutputRevision {
     const fn nested_output(self) -> (&'static str, u32) {
         match self {
             Self::V5 => (OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION),
-            Self::V6 => (OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION),
+            Self::V6 => (OUTPUT_V14_SCHEMA_ID, OUTPUT_V14_SCHEMA_VERSION),
+            Self::V7 => (OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION),
         }
     }
 }
@@ -2948,29 +2955,45 @@ mod tests {
     }
 
     #[test]
-    fn strict_reader_preserves_v5_output_v13_and_rejects_crossed_revisions() {
-        let mut historical = json_fixture(false, false);
-        historical["schema_version"] = COLLECTION_OUTPUT_V5_SCHEMA_VERSION.into();
-        historical["schema"] = COLLECTION_OUTPUT_V5_ID.into();
-        historical["sources"][0]["result"]["envelope"]["schema_version"] =
+    fn strict_reader_preserves_historical_nested_output_bindings_and_rejects_crossed_revisions() {
+        let mut historical_v5 = json_fixture(false, false);
+        historical_v5["schema_version"] = COLLECTION_OUTPUT_V5_SCHEMA_VERSION.into();
+        historical_v5["schema"] = COLLECTION_OUTPUT_V5_ID.into();
+        historical_v5["sources"][0]["result"]["envelope"]["schema_version"] =
             OUTPUT_V13_SCHEMA_VERSION.into();
-        historical["sources"][0]["result"]["envelope"]["schema"] = OUTPUT_V13_SCHEMA_ID.into();
-        let historical_bytes = stable_json_bytes(historical.clone());
-        assert!(read_collection_output(&historical_bytes[..]).is_ok());
+        historical_v5["sources"][0]["result"]["envelope"]["schema"] = OUTPUT_V13_SCHEMA_ID.into();
+        let historical_v5_bytes = stable_json_bytes(historical_v5.clone());
+        assert!(read_collection_output(&historical_v5_bytes[..]).is_ok());
 
-        let mut v5_with_current_nested = historical.clone();
+        let mut historical_v6 = json_fixture(false, false);
+        historical_v6["schema_version"] = COLLECTION_OUTPUT_V6_SCHEMA_VERSION.into();
+        historical_v6["schema"] = COLLECTION_OUTPUT_V6_ID.into();
+        historical_v6["sources"][0]["result"]["envelope"]["schema_version"] =
+            OUTPUT_V14_SCHEMA_VERSION.into();
+        historical_v6["sources"][0]["result"]["envelope"]["schema"] = OUTPUT_V14_SCHEMA_ID.into();
+        let historical_v6_bytes = stable_json_bytes(historical_v6.clone());
+        assert!(read_collection_output(&historical_v6_bytes[..]).is_ok());
+
+        let mut v5_with_current_nested = historical_v5.clone();
         v5_with_current_nested["sources"][0]["result"]["envelope"]["schema_version"] =
             OUTPUT_SCHEMA_VERSION.into();
         v5_with_current_nested["sources"][0]["result"]["envelope"]["schema"] =
             OUTPUT_SCHEMA_ID.into();
         rejects(v5_with_current_nested);
 
-        let mut v6_with_historical_nested = json_fixture(false, false);
-        v6_with_historical_nested["sources"][0]["result"]["envelope"]["schema_version"] =
-            OUTPUT_V13_SCHEMA_VERSION.into();
-        v6_with_historical_nested["sources"][0]["result"]["envelope"]["schema"] =
-            OUTPUT_V13_SCHEMA_ID.into();
-        rejects(v6_with_historical_nested);
+        let mut v6_with_current_nested = historical_v6.clone();
+        v6_with_current_nested["sources"][0]["result"]["envelope"]["schema_version"] =
+            OUTPUT_SCHEMA_VERSION.into();
+        v6_with_current_nested["sources"][0]["result"]["envelope"]["schema"] =
+            OUTPUT_SCHEMA_ID.into();
+        rejects(v6_with_current_nested);
+
+        let mut v7_with_historical_nested = json_fixture(false, false);
+        v7_with_historical_nested["sources"][0]["result"]["envelope"]["schema_version"] =
+            OUTPUT_V14_SCHEMA_VERSION.into();
+        v7_with_historical_nested["sources"][0]["result"]["envelope"]["schema"] =
+            OUTPUT_V14_SCHEMA_ID.into();
+        rejects(v7_with_historical_nested);
     }
 
     #[test]

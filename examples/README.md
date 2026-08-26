@@ -631,6 +631,21 @@ prefix. Prediction provenance v1 separately caps actual clip settings at
 4,096, so a 4,097-clip file is a bounded operator error rather than a truncated
 prediction; issue #485 owns a future overflow representation.
 
+Revision 2 uses [`bevy-v2.animsmith.toml`](bevy-v2.animsmith.toml) for the
+unit/effective-scale rule. The example selects the closed empty-handler
+environment, declares the compiled animation feature, and demonstrates shared
+runtime-node selectors:
+
+```console
+$ animsmith --config examples/bevy-v2.animsmith.toml lint \
+    --select engine-unit-scale examples/assets/walk.glb --format json
+```
+
+The available file result is an exact 1:1 glTF-metre to Bevy world-length-unit
+mapping, not a claim that arbitrary application world state uses metres. Scene,
+primitive-child, and selected-node facets remain distinct; incomplete evidence
+is blocking rather than inferred.
+
 Generate a reusable engine-neutral inventory as canonical JSON without a
 profile:
 

@@ -16,7 +16,8 @@ use crate::check::{Check, CheckCtx};
 use crate::config::{ConfigValidationError, SeveritySetting};
 use crate::finding::Finding;
 use crate::prediction::{
-    EnginePredictionV1, EnginePredictionV2, EnginePredictionV3, PredictionContractError,
+    EnginePredictionV1, EnginePredictionV2, EnginePredictionV3, EnginePredictionV4,
+    PredictionContractError,
 };
 
 /// One authoritative built-in evidence-code definition.
@@ -210,7 +211,11 @@ builtin_codes!(
 // Private evidence-vocabulary authority for built-in emitters implemented
 // outside core. Owning crates publish their runnable check catalogs.
 #[cfg(test)]
-const EXTERNAL_BUILTIN_CHECK_IDS: &[&str] = &["engine-addressability", "engine-clip-boundary"];
+const EXTERNAL_BUILTIN_CHECK_IDS: &[&str] = &[
+    "engine-addressability",
+    "engine-clip-boundary",
+    "engine-unit-scale",
+];
 
 impl EvaluationScopeCode {
     const fn from_static(code: &'static str) -> Self {
@@ -383,6 +388,7 @@ enum EnginePredictionEvidence {
     V1(EnginePredictionV1),
     V2(EnginePredictionV2),
     V3(EnginePredictionV3),
+    V4(EnginePredictionV4),
 }
 
 impl EnginePredictionEvidence {
@@ -403,6 +409,11 @@ impl EnginePredictionEvidence {
                 .iter()
                 .map(|facet| facet.scope())
                 .collect(),
+            Self::V4(prediction) => prediction
+                .facets()
+                .iter()
+                .map(|facet| facet.scope())
+                .collect(),
         }
     }
 
@@ -411,6 +422,7 @@ impl EnginePredictionEvidence {
             Self::V1(prediction) => prediction.facets()[index].scope(),
             Self::V2(prediction) => prediction.facets()[index].scope(),
             Self::V3(prediction) => prediction.facets()[index].scope(),
+            Self::V4(prediction) => prediction.facets()[index].scope(),
         }
     }
 }
@@ -455,6 +467,12 @@ impl CheckOutput {
         self
     }
 
+    /// Attach a result-bearing V4 engine-prediction record.
+    pub fn with_engine_prediction_v4(mut self, prediction: EnginePredictionV4) -> Self {
+        self.engine_prediction = Some(EnginePredictionEvidence::V4(prediction));
+        self
+    }
+
     /// Content findings emitted by evaluated work.
     pub fn findings(&self) -> &[Finding] {
         &self.findings
@@ -474,7 +492,12 @@ impl CheckOutput {
     pub const fn engine_prediction(&self) -> Option<&EnginePredictionV1> {
         match self.engine_prediction.as_ref() {
             Some(EnginePredictionEvidence::V1(prediction)) => Some(prediction),
-            Some(EnginePredictionEvidence::V2(_) | EnginePredictionEvidence::V3(_)) | None => None,
+            Some(
+                EnginePredictionEvidence::V2(_)
+                | EnginePredictionEvidence::V3(_)
+                | EnginePredictionEvidence::V4(_),
+            )
+            | None => None,
         }
     }
 
@@ -482,7 +505,12 @@ impl CheckOutput {
     pub const fn engine_prediction_v2(&self) -> Option<&EnginePredictionV2> {
         match self.engine_prediction.as_ref() {
             Some(EnginePredictionEvidence::V2(prediction)) => Some(prediction),
-            Some(EnginePredictionEvidence::V1(_) | EnginePredictionEvidence::V3(_)) | None => None,
+            Some(
+                EnginePredictionEvidence::V1(_)
+                | EnginePredictionEvidence::V3(_)
+                | EnginePredictionEvidence::V4(_),
+            )
+            | None => None,
         }
     }
 
@@ -490,7 +518,25 @@ impl CheckOutput {
     pub const fn engine_prediction_v3(&self) -> Option<&EnginePredictionV3> {
         match self.engine_prediction.as_ref() {
             Some(EnginePredictionEvidence::V3(prediction)) => Some(prediction),
-            Some(EnginePredictionEvidence::V1(_) | EnginePredictionEvidence::V2(_)) | None => None,
+            Some(
+                EnginePredictionEvidence::V1(_)
+                | EnginePredictionEvidence::V2(_)
+                | EnginePredictionEvidence::V4(_),
+            )
+            | None => None,
+        }
+    }
+
+    /// V4 result-bearing prediction attachment.
+    pub const fn engine_prediction_v4(&self) -> Option<&EnginePredictionV4> {
+        match self.engine_prediction.as_ref() {
+            Some(EnginePredictionEvidence::V4(prediction)) => Some(prediction),
+            Some(
+                EnginePredictionEvidence::V1(_)
+                | EnginePredictionEvidence::V2(_)
+                | EnginePredictionEvidence::V3(_),
+            )
+            | None => None,
         }
     }
 
@@ -501,6 +547,7 @@ impl CheckOutput {
                 EnginePredictionEvidence::V1(prediction) => prediction.has_required_unavailable(),
                 EnginePredictionEvidence::V2(prediction) => prediction.has_required_unavailable(),
                 EnginePredictionEvidence::V3(prediction) => prediction.has_required_unavailable(),
+                EnginePredictionEvidence::V4(prediction) => prediction.has_required_unavailable(),
             })
     }
 
@@ -663,7 +710,7 @@ pub(crate) fn validate_and_derive_check_evaluation(
     Ok(derived)
 }
 
-/// Final output-v14 record for one catalog check.
+/// Final output-v15 record for one catalog check.
 #[derive(Debug, Clone)]
 pub struct CheckEvaluation {
     check_id: &'static str,
@@ -802,6 +849,12 @@ impl CheckEvaluation {
                     &output.gaps,
                     &output.findings,
                 )?,
+                EnginePredictionEvidence::V4(prediction) => prediction.validate_for_check(
+                    check_id,
+                    &output.evaluated_scopes,
+                    &output.gaps,
+                    &output.findings,
+                )?,
             }
         } else if output
             .findings
@@ -889,6 +942,11 @@ impl CheckEvaluation {
         self.output.engine_prediction_v3()
     }
 
+    /// V4 result-bearing engine-prediction attachment.
+    pub const fn engine_prediction_v4(&self) -> Option<&EnginePredictionV4> {
+        self.output.engine_prediction_v4()
+    }
+
     /// Whether this check has unavailable prediction work under either
     /// versioned prediction contract.
     pub fn has_required_prediction_unavailable(&self) -> bool {
@@ -955,6 +1013,9 @@ impl Serialize for CheckEvaluation {
                     state.serialize_field("prediction", prediction)?;
                 }
                 EnginePredictionEvidence::V3(prediction) => {
+                    state.serialize_field("prediction", prediction)?;
+                }
+                EnginePredictionEvidence::V4(prediction) => {
                     state.serialize_field("prediction", prediction)?;
                 }
             }
@@ -1220,6 +1281,9 @@ pub fn evaluate_checks_v2(
             .map_or(0, |prediction| prediction.facets().len())
             + output
                 .engine_prediction_v3()
+                .map_or(0, |prediction| prediction.facets().len())
+            + output
+                .engine_prediction_v4()
                 .map_or(0, |prediction| prediction.facets().len());
         if emitted != allocation.emitted_slots() {
             return Err(EvaluationError::PredictionAllocationMismatch {

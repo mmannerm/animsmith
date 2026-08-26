@@ -566,3 +566,315 @@ impl EngineProfile {
         self.settings.iter().find(|descriptor| descriptor.id == id)
     }
 }
+
+/// Stable setting id in the revision-2 engine-profile vocabulary.
+///
+/// This is intentionally distinct from [`SettingId`]: the V1 ids and their
+/// core wire projection are immutable and cannot represent verified defaults
+/// or Bevy's closed load-time environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SettingIdV2 {
+    /// Per-load coordinate conversion of the loader-created scene entity.
+    RotateSceneEntity,
+    /// Per-load coordinate conversion of mesh assets and primitive entities.
+    RotateMeshes,
+    /// Per-load mesh usage flags, represented by their empty/nonempty state.
+    LoadMeshes,
+    /// Exact glTF extension-handler registry installed at load time.
+    ExtensionHandlerEnvironment,
+    /// Whether Bevy was compiled with its `bevy_animation` feature.
+    BevyAnimationFeature,
+    /// Per-load animation loading toggle.
+    LoadAnimations,
+}
+
+impl SettingIdV2 {
+    /// Stable public configuration spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RotateSceneEntity => "rotate_scene_entity",
+            Self::RotateMeshes => "rotate_meshes",
+            Self::LoadMeshes => "load_meshes",
+            Self::ExtensionHandlerEnvironment => "extension_handler_environment",
+            Self::BevyAnimationFeature => "bevy_animation_feature",
+            Self::LoadAnimations => "load_animations",
+        }
+    }
+
+    pub(crate) fn from_str_v2(value: &str) -> Option<Self> {
+        match value {
+            "rotate_scene_entity" => Some(Self::RotateSceneEntity),
+            "rotate_meshes" => Some(Self::RotateMeshes),
+            "load_meshes" => Some(Self::LoadMeshes),
+            "extension_handler_environment" => Some(Self::ExtensionHandlerEnvironment),
+            "bevy_animation_feature" => Some(Self::BevyAnimationFeature),
+            "load_animations" => Some(Self::LoadAnimations),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for SettingIdV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Exact state of Bevy's `RenderAssetUsages` mesh-loading flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BevyLoadMeshesStateV2 {
+    /// No usage flag is enabled, so mesh primitive child entities are skipped;
+    /// the source-node entity is still created when its scene is loaded.
+    Empty,
+    /// At least one usage flag is enabled, so mesh primitive child entities
+    /// are created beneath their source-node entity.
+    Nonempty,
+}
+
+/// Supported version-pinned glTF extension-handler environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BevyGltfHandlerEnvironmentV2 {
+    /// `GltfExtensionHandlers` is empty.
+    BareEmpty,
+    /// The registry contains only Bevy 0.19's stock PBR handler.
+    BevyPbrStock019,
+}
+
+impl BevyGltfHandlerEnvironmentV2 {
+    /// Stable public value spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BareEmpty => "bare_empty",
+            Self::BevyPbrStock019 => "bevy_pbr_stock_0_19",
+        }
+    }
+}
+
+/// Closed value domain for revision-2 settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SettingDomainV2 {
+    /// Boolean value.
+    Boolean,
+    /// Empty/nonempty mesh usage state.
+    LoadMeshesState,
+    /// Exact supported glTF extension-handler environment.
+    HandlerEnvironment,
+}
+
+/// Closed public value vocabulary for revision-2 settings.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SettingValueV2 {
+    /// Boolean setting value.
+    Boolean(bool),
+    /// Empty/nonempty mesh usage state.
+    LoadMeshesState(BevyLoadMeshesStateV2),
+    /// Exact supported extension-handler environment.
+    HandlerEnvironment(BevyGltfHandlerEnvironmentV2),
+}
+
+impl SettingValueV2 {
+    pub(crate) const fn matches_domain(&self, domain: SettingDomainV2) -> bool {
+        matches!(
+            (self, domain),
+            (Self::Boolean(_), SettingDomainV2::Boolean)
+                | (Self::LoadMeshesState(_), SettingDomainV2::LoadMeshesState)
+                | (
+                    Self::HandlerEnvironment(_),
+                    SettingDomainV2::HandlerEnvironment
+                )
+        )
+    }
+}
+
+/// Declaration/default policy for one revision-2 setting.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SettingDefaultV2 {
+    /// The caller must declare a value; no default is claimed.
+    RequiredExplicit,
+    /// The exact profile has a version-pinned verified default.
+    Verified(SettingValueV2),
+}
+
+/// Immutable descriptor for one revision-2 setting.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SettingDescriptorV2 {
+    pub(crate) id: SettingIdV2,
+    pub(crate) scope: SettingScope,
+    pub(crate) domain: SettingDomainV2,
+    pub(crate) default: SettingDefaultV2,
+}
+
+impl SettingDescriptorV2 {
+    pub(crate) const fn new(
+        id: SettingIdV2,
+        scope: SettingScope,
+        domain: SettingDomainV2,
+        default: SettingDefaultV2,
+    ) -> Self {
+        Self {
+            id,
+            scope,
+            domain,
+            default,
+        }
+    }
+
+    /// Stable setting id.
+    pub const fn id(&self) -> SettingIdV2 {
+        self.id
+    }
+
+    /// Required declaration scope.
+    pub const fn scope(&self) -> SettingScope {
+        self.scope
+    }
+
+    /// Closed value domain.
+    pub const fn domain(&self) -> SettingDomainV2 {
+        self.domain
+    }
+
+    /// Exact required/default policy.
+    pub const fn default(&self) -> &SettingDefaultV2 {
+        &self.default
+    }
+}
+
+/// Primary source retained by an immutable revision-2 profile record.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PrimarySourceV2 {
+    pub(crate) id: &'static str,
+    pub(crate) target_version: &'static str,
+    pub(crate) url: &'static str,
+    pub(crate) verified_on: &'static str,
+    pub(crate) supported_facts: Vec<animsmith_core::engine_contract::EngineFactIdV2>,
+    pub(crate) supported_settings: Vec<SettingIdV2>,
+}
+
+impl PrimarySourceV2 {
+    /// Stable source id.
+    pub const fn id(&self) -> &'static str {
+        self.id
+    }
+
+    /// Version of the source's target product/specification.
+    pub const fn target_version(&self) -> &'static str {
+        self.target_version
+    }
+
+    /// Version-pinned primary-source URL.
+    pub const fn url(&self) -> &'static str {
+        self.url
+    }
+
+    /// ISO date on which the source was verified.
+    pub const fn verified_on(&self) -> &'static str {
+        self.verified_on
+    }
+
+    /// Whether this source establishes the accepted input containers.
+    pub fn supports_accepted_inputs(&self) -> bool {
+        self.supported_facts
+            .contains(&animsmith_core::engine_contract::EngineFactIdV2::AcceptedInputs)
+    }
+
+    /// Stable fact ids supported by this source.
+    pub fn supported_facts(&self) -> &[animsmith_core::engine_contract::EngineFactIdV2] {
+        &self.supported_facts
+    }
+
+    /// Stable setting ids supported by this source.
+    pub fn supported_settings(&self) -> &[SettingIdV2] {
+        &self.supported_settings
+    }
+}
+
+/// One immutable revision-2 engine-profile registry record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineProfileV2 {
+    pub(crate) selection: ProfileSelection,
+    pub(crate) profile_urn: &'static str,
+    pub(crate) accepted_inputs: Vec<SourceFormatV1>,
+    pub(crate) facts: Vec<animsmith_core::engine_contract::EngineProfileFactV2>,
+    pub(crate) settings: Vec<SettingDescriptorV2>,
+    pub(crate) sources: Vec<PrimarySourceV2>,
+}
+
+impl EngineProfileV2 {
+    /// Full exact selection tuple retained by this record.
+    pub const fn selection(&self) -> &ProfileSelection {
+        &self.selection
+    }
+
+    /// Stable revisioned profile-record URN.
+    pub const fn profile_urn(&self) -> &'static str {
+        self.profile_urn
+    }
+
+    /// Exact accepted input containers.
+    pub fn accepted_inputs(&self) -> &[SourceFormatV1] {
+        &self.accepted_inputs
+    }
+
+    /// Complete profile-facts V2 inventory in stable-id order.
+    pub fn facts(&self) -> &[animsmith_core::engine_contract::EngineProfileFactV2] {
+        &self.facts
+    }
+
+    /// Complete descriptor inventory in stable-id order.
+    pub fn setting_descriptors(&self) -> &[SettingDescriptorV2] {
+        &self.settings
+    }
+
+    /// Version-pinned primary sources in stable-id order.
+    pub fn sources(&self) -> &[PrimarySourceV2] {
+        &self.sources
+    }
+
+    /// Look up one setting descriptor.
+    pub fn setting_descriptor(&self, id: SettingIdV2) -> Option<&SettingDescriptorV2> {
+        self.settings.iter().find(|descriptor| descriptor.id == id)
+    }
+}
+
+/// String-keyed setting declarations for revision-2 profiles.
+pub type SettingMapV2 = BTreeMap<String, SettingValueV2>;
+
+/// Public input to revision-2 static settings resolution.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EngineDeclarationV2 {
+    /// Exact profile selection, or none for engine-neutral behavior.
+    pub selection: Option<ProfileSelection>,
+    /// Declared document settings. `Some` retains an explicitly empty table.
+    pub document_settings: Option<SettingMapV2>,
+    /// Selector-keyed clip settings reserved for descriptors that use clip scope.
+    pub clip_settings: BTreeMap<String, SettingMapV2>,
+}
+
+/// Origin of one fully materialized revision-2 setting value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ResolvedSettingOriginV2 {
+    /// Supplied explicitly by the caller.
+    ExplicitConfig,
+    /// Materialized from a version-pinned profile default.
+    ProfileDefault,
+}
+
+/// One fully materialized revision-2 setting and its value origin.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ResolvedSettingV2 {
+    pub(crate) value: SettingValueV2,
+    pub(crate) origin: ResolvedSettingOriginV2,
+}
+
+impl ResolvedSettingV2 {
+    /// Closed resolved value.
+    pub const fn value(&self) -> &SettingValueV2 {
+        &self.value
+    }
+
+    /// Explicit/default value origin.
+    pub const fn origin(&self) -> ResolvedSettingOriginV2 {
+        self.origin
+    }
+}

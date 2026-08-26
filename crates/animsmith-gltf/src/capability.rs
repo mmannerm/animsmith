@@ -10,7 +10,13 @@ use crate::{
     has_extension_object, project_extension_facts, project_resource_facts, resolve_buffers,
     source_facts_builder, topology, validate_animations, validate_document, validate_glb_framing,
 };
-use animsmith_core::{Document, LoadedSource, SourceFactsViewV1, SourceSetCoverageStateV1};
+use animsmith_core::{
+    Document, LoadedSource, RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS, RawMeshPrimitiveRowV1,
+    RawMeshPrimitiveRowsV1, RawNodeMeshAttachmentRowV1, RawNodeMeshAttachmentRowsV1,
+    RawPrimitiveTopologyV1, RawSceneAttachmentCoverageV1, RawSceneAttachmentInventoryV1,
+    RawSceneRootRowV1, RawSceneRootRowsV1, RawSourceSkeletonEvidenceV1, SourceFactsViewV1,
+    SourceSetCoverageStateV1, SourceSkeletonCoverage,
+};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -121,6 +127,111 @@ pub struct GltfPrimitiveCapability {
     /// Located morph semantics this scale boundary cannot preserve.
     #[serde(skip)]
     pub unsupported_morph_locations: Vec<String>,
+}
+
+/// Bounded row prefixes captured by the same raw scanner as the capability manifest.
+#[derive(Debug, Default)]
+struct RawSceneAttachmentParts {
+    scenes: Vec<RawSceneRootRowV1>,
+    scene_overflow: bool,
+    attachments: Vec<RawNodeMeshAttachmentRowV1>,
+    attachment_overflow: bool,
+    primitives: Vec<RawMeshPrimitiveRowV1>,
+    primitive_overflow: bool,
+    #[cfg(test)]
+    primitive_decode_attempts: usize,
+}
+
+impl RawSceneAttachmentParts {
+    fn retain_scene(&mut self, scene_index: u64, nodes: &[Value]) {
+        if self.scene_overflow {
+            return;
+        }
+        let Some(cost) = nodes.len().checked_add(1) else {
+            self.scene_overflow = true;
+            return;
+        };
+        if self
+            .retained_rows()
+            .checked_add(cost)
+            .is_none_or(|total| total > RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS)
+        {
+            self.scene_overflow = true;
+            return;
+        }
+        let roots = nodes
+            .iter()
+            .filter_map(|node| as_index(Some(node)).map(|index| index as u64))
+            .collect();
+        self.scenes.push(RawSceneRootRowV1::new(scene_index, roots));
+    }
+
+    fn retain_attachment(&mut self, row: RawNodeMeshAttachmentRowV1) {
+        if self.attachment_overflow {
+            return;
+        }
+        if self.retained_rows() < RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS {
+            self.attachments.push(row);
+        } else {
+            self.attachment_overflow = true;
+        }
+    }
+
+    fn retain_primitive(&mut self, row: RawMeshPrimitiveRowV1) {
+        #[cfg(test)]
+        {
+            self.primitive_decode_attempts = self.primitive_decode_attempts.saturating_add(1);
+        }
+        if self.primitive_overflow {
+            return;
+        }
+        if self.retained_rows() < RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS {
+            self.primitives.push(row);
+        } else {
+            self.primitive_overflow = true;
+        }
+    }
+
+    fn retained_rows(&self) -> usize {
+        self.scenes
+            .iter()
+            .fold(0usize, |total, row| {
+                total
+                    .saturating_add(1)
+                    .saturating_add(row.root_node_indices().len())
+            })
+            .saturating_add(self.attachments.len())
+            .saturating_add(self.primitives.len())
+    }
+
+    fn inventory(self, source: &LoadedSource) -> Result<RawSceneAttachmentInventoryV1, LoadError> {
+        let facts = source.source_facts();
+        let skeleton = facts.source_skeleton();
+        let skeleton_coverage = match skeleton.coverage {
+            SourceSkeletonCoverage::Complete => RawSceneAttachmentCoverageV1::Complete,
+            SourceSkeletonCoverage::Unavailable => RawSceneAttachmentCoverageV1::Unavailable,
+        };
+        RawSceneAttachmentInventoryV1::new(
+            facts.primary_identity().clone(),
+            RawSourceSkeletonEvidenceV1::new(
+                skeleton_coverage,
+                skeleton.nodes.len() as u64,
+                skeleton.skins.len() as u64,
+            ),
+            RawSceneRootRowsV1::new(coverage(self.scene_overflow), self.scenes),
+            RawNodeMeshAttachmentRowsV1::new(coverage(self.attachment_overflow), self.attachments),
+            RawMeshPrimitiveRowsV1::new(coverage(self.primitive_overflow), self.primitives),
+        )
+        .map_err(|error| LoadError::Malformed(format!("raw scene/attachment inventory: {error}")))
+    }
+}
+
+fn coverage(overflow: bool) -> RawSceneAttachmentCoverageV1 {
+    if overflow {
+        RawSceneAttachmentCoverageV1::PrefixOverflow
+    } else {
+        RawSceneAttachmentCoverageV1::Complete
+    }
 }
 
 /// One raw `EXT_mesh_gpu_instancing` declaration and its accessor identities.
@@ -503,7 +614,7 @@ fn capture_source(
     let gltf = gltf::Gltf::from_slice_without_validation(bytes).map_err(LoadError::Gltf)?;
 
     let mut violations = Vec::new();
-    let manifest = inventory(&raw_json, container, &mut violations);
+    let (manifest, _raw_scene_attachment) = inventory(&raw_json, container, &mut violations);
     let accessor_uses = inspect_accessor_uses(&raw_json, &mut violations);
     match validate_document(&gltf.document) {
         Ok(()) => {}
@@ -809,6 +920,24 @@ pub(crate) fn raw_json_bytes(bytes: &[u8]) -> Result<(GltfContainerKind, &[u8]),
     Ok((GltfContainerKind::Glb, json))
 }
 
+/// Project bounded raw scene/attachment evidence from the existing capability scanner.
+///
+/// This is called only after the strict loader has produced its immutable
+/// [`LoadedSource`], so the returned inventory can bind both its primary
+/// identity and canonical source-skeleton evidence without looking at a
+/// normalized mesh asset.
+pub(crate) fn raw_scene_attachment_inventory_from_bytes(
+    bytes: &[u8],
+    source: &LoadedSource,
+) -> Result<RawSceneAttachmentInventoryV1, LoadError> {
+    let (container, json_bytes) = raw_json_bytes(bytes)?;
+    let root: Value = serde_json::from_slice(json_bytes)
+        .map_err(|error| LoadError::Malformed(format!("invalid top-level JSON: {error}")))?;
+    let mut ignored_violations = Vec::new();
+    let (_, parts) = inventory(&root, container, &mut ignored_violations);
+    parts.inventory(source)
+}
+
 fn violation(
     violations: &mut Vec<GltfCapabilityViolation>,
     kind: GltfCapabilityViolationKind,
@@ -828,26 +957,29 @@ fn inventory(
     root: &Value,
     container: GltfContainerKind,
     violations: &mut Vec<GltfCapabilityViolation>,
-) -> GltfCapabilityManifest {
+) -> (GltfCapabilityManifest, RawSceneAttachmentParts) {
     let Some(object) = root.as_object() else {
-        return GltfCapabilityManifest {
-            container,
-            buffers: Vec::new(),
-            buffer_views: Vec::new(),
-            accessors: Vec::new(),
-            nodes: Vec::new(),
-            animation_channels: Vec::new(),
-            primitives: Vec::new(),
-            morph_weight_locations: Vec::new(),
-            instancing: Vec::new(),
-            skins: Vec::new(),
-            camera_count: 0,
-            extensions: Vec::new(),
-            extension_locations: Vec::new(),
-            external_resource_locations: Vec::new(),
-            extras_locations: Vec::new(),
-            unknown_member_locations: Vec::new(),
-        };
+        return (
+            GltfCapabilityManifest {
+                container,
+                buffers: Vec::new(),
+                buffer_views: Vec::new(),
+                accessors: Vec::new(),
+                nodes: Vec::new(),
+                animation_channels: Vec::new(),
+                primitives: Vec::new(),
+                morph_weight_locations: Vec::new(),
+                instancing: Vec::new(),
+                skins: Vec::new(),
+                camera_count: 0,
+                extensions: Vec::new(),
+                extension_locations: Vec::new(),
+                external_resource_locations: Vec::new(),
+                extras_locations: Vec::new(),
+                unknown_member_locations: Vec::new(),
+            },
+            RawSceneAttachmentParts::default(),
+        );
     };
     let mut manifest = GltfCapabilityManifest {
         container,
@@ -875,9 +1007,11 @@ fn inventory(
     inventory_extensions(object, &mut manifest, violations);
     inventory_buffers(object, container, &mut manifest, violations);
     inventory_buffer_views_and_accessors(object, &mut manifest);
-    inventory_nodes(object, &mut manifest, violations);
+    let mut raw_scene_attachment = RawSceneAttachmentParts::default();
+    inventory_scenes(object, &mut raw_scene_attachment);
+    inventory_nodes(object, &mut manifest, violations, &mut raw_scene_attachment);
     inventory_animations(object, &mut manifest, violations);
-    inventory_meshes(object, &mut manifest, violations);
+    inventory_meshes(object, &mut manifest, violations, &mut raw_scene_attachment);
     inventory_skins(object, &mut manifest, violations);
 
     if manifest.camera_count > 0 {
@@ -895,7 +1029,27 @@ fn inventory(
     manifest.unknown_member_locations.dedup();
     manifest.morph_weight_locations.sort();
     manifest.morph_weight_locations.dedup();
-    manifest
+    (manifest, raw_scene_attachment)
+}
+
+fn inventory_scenes(root: &Map<String, Value>, raw: &mut RawSceneAttachmentParts) {
+    let Some(scenes) = root.get("scenes").and_then(Value::as_array) else {
+        return;
+    };
+    for (scene_index, scene) in scenes.iter().enumerate() {
+        if raw.scene_overflow {
+            break;
+        }
+        let Some(scene) = scene.as_object() else {
+            continue;
+        };
+        let roots = scene
+            .get("nodes")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        raw.retain_scene(scene_index as u64, roots);
+    }
 }
 
 fn inventory_extensions(
@@ -1182,6 +1336,7 @@ fn inventory_nodes(
     root: &Map<String, Value>,
     manifest: &mut GltfCapabilityManifest,
     violations: &mut Vec<GltfCapabilityViolation>,
+    raw: &mut RawSceneAttachmentParts,
 ) {
     let Some(nodes) = root.get("nodes").and_then(Value::as_array) else {
         return;
@@ -1229,6 +1384,7 @@ fn inventory_nodes(
                 attributes,
             });
         }
+        let mesh_index = as_index(node.get("mesh"));
         manifest.nodes.push(GltfNodeCapability {
             node_index,
             // A key-based check would report a `"matrix": null` node as
@@ -1238,9 +1394,17 @@ fn inventory_nodes(
             } else {
                 GltfNodeRestKind::Trs
             },
-            mesh_index: as_index(node.get("mesh")),
+            mesh_index,
             skin_index: as_index(node.get("skin")),
         });
+        if !raw.attachment_overflow
+            && let Some(mesh_index) = mesh_index
+        {
+            raw.retain_attachment(RawNodeMeshAttachmentRowV1::new(
+                node_index as u64,
+                mesh_index as u64,
+            ));
+        }
     }
 }
 
@@ -1322,6 +1486,7 @@ fn inventory_meshes(
     root: &Map<String, Value>,
     manifest: &mut GltfCapabilityManifest,
     violations: &mut Vec<GltfCapabilityViolation>,
+    raw: &mut RawSceneAttachmentParts,
 ) {
     let Some(meshes) = root.get("meshes").and_then(Value::as_array) else {
         return;
@@ -1433,6 +1598,14 @@ fn inventory_meshes(
                 morph_position_accessors,
                 unsupported_morph_locations,
             });
+            if !raw.primitive_overflow {
+                raw.retain_primitive(RawMeshPrimitiveRowV1::new(
+                    mesh_index as u64,
+                    primitive_index as u64,
+                    RawPrimitiveTopologyV1::from_gltf_mode(mode),
+                    as_index(primitive.get("indices")).map(|index| index as u64),
+                ));
+            }
         }
     }
 }
@@ -2509,5 +2682,124 @@ mod tests {
         assert_eq!(uses[&2], BTreeSet::from([AccessorUse::ScaleBearing]));
         assert_eq!(uses[&3], BTreeSet::from([AccessorUse::Dimensionless]));
         assert_eq!(uses[&4], BTreeSet::from([AccessorUse::Dimensionless]));
+    }
+
+    #[test]
+    fn raw_scene_attachment_scanner_keeps_non_triangles_shared_and_unreferenced_meshes_separate() {
+        let root = json!({
+            "scenes": [{ "nodes": [1, 0] }],
+            "nodes": [{ "mesh": 0 }, { "mesh": 0 }],
+            "meshes": [
+                { "primitives": [
+                    { "mode": 0, "indices": 7 },
+                    { "mode": 1 }
+                ] },
+                { "primitives": [{ "mode": 4, "indices": 8 }] },
+                { "primitives": [{ "mode": 3, "indices": 9 }] }
+            ]
+        });
+        let mut violations = Vec::new();
+        let (_, parts) = inventory(&root, GltfContainerKind::Gltf, &mut violations);
+
+        assert_eq!(parts.scenes.len(), 1);
+        assert_eq!(parts.scenes[0].root_node_indices(), &[1, 0]);
+        assert_eq!(parts.attachments.len(), 2);
+        assert_eq!(parts.attachments[0].source_mesh_index(), 0);
+        assert_eq!(parts.attachments[1].source_mesh_index(), 0);
+        assert_eq!(parts.primitives.len(), 4);
+        assert_eq!(
+            parts.primitives[0].topology(),
+            RawPrimitiveTopologyV1::Points
+        );
+        assert_eq!(
+            parts.primitives[1].topology(),
+            RawPrimitiveTopologyV1::Lines
+        );
+        assert_eq!(parts.primitives[3].source_mesh_index(), 2);
+        assert_eq!(
+            parts.primitives[3].topology(),
+            RawPrimitiveTopologyV1::LineStrip
+        );
+        assert_eq!(parts.primitives[3].indices_accessor_index(), Some(9));
+    }
+
+    #[test]
+    fn raw_scene_attachment_scanner_marks_empty_domains_complete() {
+        let root = json!({ "asset": { "version": "2.0" } });
+        let (_, parts) = inventory(&root, GltfContainerKind::Gltf, &mut Vec::new());
+        assert!(parts.scenes.is_empty());
+        assert!(parts.attachments.is_empty());
+        assert!(parts.primitives.is_empty());
+        assert_eq!(
+            coverage(parts.scene_overflow),
+            RawSceneAttachmentCoverageV1::Complete
+        );
+        assert_eq!(
+            coverage(parts.attachment_overflow),
+            RawSceneAttachmentCoverageV1::Complete
+        );
+        assert_eq!(
+            coverage(parts.primitive_overflow),
+            RawSceneAttachmentCoverageV1::Complete
+        );
+    }
+
+    #[test]
+    fn normal_load_attaches_raw_empty_mesh_evidence_without_inferring_from_assets() {
+        let bytes = br#"{
+            "asset": { "version": "2.0" },
+            "scenes": [{ "nodes": [0] }],
+            "nodes": [{ "mesh": 0 }, { "mesh": 0 }],
+            "meshes": [{ "primitives": [] }]
+        }"#;
+        let source = crate::load_source_bytes(Path::new("empty-mesh.gltf"), bytes).unwrap();
+        let inventory = source.raw_scene_attachment_inventory().unwrap();
+        assert_eq!(
+            inventory.primary_input(),
+            source.source_facts().primary_identity()
+        );
+        assert_eq!(inventory.scenes().rows()[0].root_node_indices(), &[0]);
+        assert_eq!(inventory.node_mesh_attachments().rows().len(), 2);
+        assert!(inventory.mesh_primitives().rows().is_empty());
+        assert!(inventory.mesh_primitives().coverage().proves_absence());
+    }
+
+    #[test]
+    fn raw_scene_attachment_scanner_retains_a_bounded_primitive_prefix() {
+        let primitives = (0..=RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS)
+            .map(|_| json!({ "mode": 4 }))
+            .collect::<Vec<_>>();
+        let root = json!({ "meshes": [{ "primitives": primitives }] });
+        let (_, parts) = inventory(&root, GltfContainerKind::Gltf, &mut Vec::new());
+        assert_eq!(
+            parts.primitives.len(),
+            RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS
+        );
+        assert!(parts.primitive_overflow);
+        assert_eq!(
+            parts.primitive_decode_attempts,
+            RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS + 1,
+            "the raw sidecar stops decoding after its prefix plus one overflow witness"
+        );
+        assert_eq!(
+            coverage(parts.primitive_overflow),
+            RawSceneAttachmentCoverageV1::PrefixOverflow
+        );
+    }
+
+    #[test]
+    fn raw_scene_attachment_scanner_never_retains_scenes_after_prefix_overflow() {
+        let oversized_roots = (0..RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS)
+            .map(|index| json!(index))
+            .collect::<Vec<_>>();
+        let root = json!({
+            "scenes": [
+                { "nodes": oversized_roots },
+                { "nodes": [] }
+            ]
+        });
+        let (_, parts) = inventory(&root, GltfContainerKind::Gltf, &mut Vec::new());
+        assert!(parts.scenes.is_empty());
+        assert!(parts.scene_overflow);
     }
 }

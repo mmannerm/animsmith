@@ -5,7 +5,9 @@
 
 use crate::{
     DependencyClosureError, DependencyClosureV1, Document, ExactSourceTimingContractError,
-    ExactSourceTimingV1, InputIdentity, SourceSkeletonAssets,
+    ExactSourceTimingV1, InputIdentity, RawSceneAttachmentCoverageV1,
+    RawSceneAttachmentInventoryV1, RawSourceSkeletonEvidenceV1, SourceSkeletonAssets,
+    SourceSkeletonCoverage,
 };
 use serde::Serialize;
 use std::fmt;
@@ -1781,6 +1783,7 @@ impl RawSourceFactsBuilderV1 {
             facts: self.facts,
             dependency_closure,
             exact_source_timing: None,
+            raw_scene_attachment_inventory: None,
         })
     }
 
@@ -1905,6 +1908,7 @@ pub struct LoadedSource {
     facts: RawSourceFactsV1,
     dependency_closure: DependencyClosureV1,
     exact_source_timing: Option<ExactSourceTimingV1>,
+    raw_scene_attachment_inventory: Option<RawSceneAttachmentInventoryV1>,
 }
 
 impl fmt::Debug for LoadedSource {
@@ -1915,6 +1919,10 @@ impl fmt::Debug for LoadedSource {
             .field("primary_identity", &self.facts.primary_identity)
             .field("dependency_closure", &self.dependency_closure)
             .field("exact_source_timing", &self.exact_source_timing)
+            .field(
+                "raw_scene_attachment_inventory",
+                &self.raw_scene_attachment_inventory,
+            )
             .field("work", &self.facts.work)
             .finish_non_exhaustive()
     }
@@ -1969,10 +1977,75 @@ impl LoadedSource {
         self.exact_source_timing.as_ref()
     }
 
+    /// Attach bounded raw scene/attachment evidence from this exact glTF load.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RawSceneAttachmentBindingError`] when the inventory does not
+    /// bind this source's exact primary identity, a glTF container, or the
+    /// canonical source-skeleton evidence retained beside this document.
+    pub fn with_raw_scene_attachment_inventory(
+        mut self,
+        inventory: RawSceneAttachmentInventoryV1,
+    ) -> Result<Self, RawSceneAttachmentBindingError> {
+        if !matches!(
+            self.facts.format,
+            SourceFormatV1::GltfJson | SourceFormatV1::Glb
+        ) {
+            return Err(RawSceneAttachmentBindingError::UnsupportedSourceFormat);
+        }
+        if inventory.primary_input() != &self.facts.primary_identity {
+            return Err(RawSceneAttachmentBindingError::PrimaryIdentityMismatch);
+        }
+        if inventory.source_skeleton()
+            != &source_skeleton_evidence(&self.document.assets.source_skeleton)
+        {
+            return Err(RawSceneAttachmentBindingError::SourceSkeletonMismatch);
+        }
+        self.raw_scene_attachment_inventory = Some(inventory);
+        Ok(self)
+    }
+
+    /// Borrow same-load raw scene/attachment evidence when the loader retained it.
+    ///
+    /// Legacy and non-glTF producers return `None` rather than inferring
+    /// source presence from normalized mesh assets.
+    pub const fn raw_scene_attachment_inventory(&self) -> Option<&RawSceneAttachmentInventoryV1> {
+        self.raw_scene_attachment_inventory.as_ref()
+    }
+
     /// Consume the owner and deliberately discard importer-sensitive source facts.
     pub fn into_document(self) -> Document {
         self.document
     }
+}
+
+fn source_skeleton_evidence(source: &SourceSkeletonAssets) -> RawSourceSkeletonEvidenceV1 {
+    RawSourceSkeletonEvidenceV1::new(
+        match source.coverage {
+            SourceSkeletonCoverage::Complete => RawSceneAttachmentCoverageV1::Complete,
+            SourceSkeletonCoverage::Unavailable => RawSceneAttachmentCoverageV1::Unavailable,
+        },
+        source.nodes.len() as u64,
+        source.skins.len() as u64,
+    )
+}
+
+/// An attempted raw scene/attachment sidecar did not bind this loaded source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RawSceneAttachmentBindingError {
+    /// Raw scene/attachment inventories are currently defined only for glTF and GLB loads.
+    #[error("raw scene/attachment inventory requires a glTF or GLB source")]
+    UnsupportedSourceFormat,
+    /// The inventory was produced from different primary bytes.
+    #[error("raw scene/attachment inventory primary input does not match the loaded source")]
+    PrimaryIdentityMismatch,
+    /// The inventory's source-skeleton evidence does not match this loaded source.
+    #[error(
+        "raw scene/attachment inventory source-skeleton evidence does not match the loaded source"
+    )]
+    SourceSkeletonMismatch,
 }
 
 /// Borrowing view over V1 facts and canonical source skeleton evidence.

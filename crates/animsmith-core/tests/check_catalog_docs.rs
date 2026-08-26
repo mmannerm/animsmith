@@ -11,6 +11,7 @@ const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "animsmith-report",
     "bevy",
     "engine-addressability",
+    "engine-unit-scale",
     "fix",
     "gltf-asset-loader",
     "humanoid",

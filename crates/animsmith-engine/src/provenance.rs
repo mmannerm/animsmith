@@ -4,7 +4,9 @@ use animsmith_core::LoadedSource;
 use animsmith_core::engine_contract::EngineContractError;
 use animsmith_core::prediction::{
     PredictionContractError, PredictionProvenanceV1, PredictionProvenanceV2,
-    PredictionProvenanceV3, RawSourceBindingV1, RawSourceBindingV2,
+    PredictionProvenanceV3, PredictionProvenanceV4, PredictionRuleInputsV1,
+    RawSceneAttachmentBindingV1, RawSceneAttachmentUnavailableReasonV1, RawSourceBindingV1,
+    RawSourceBindingV2,
 };
 
 /// Failure to project already-resolved engine and same-load source evidence.
@@ -88,5 +90,50 @@ pub fn project_prediction_provenance_v3(
         settings_contract,
         raw_source,
         source.dependency_closure().clone(),
+    )?)
+}
+
+/// Project one revision-2 profile resolution, normalized rule inputs, and all
+/// same-load V4 source evidence.
+///
+/// The adapter does not infer scene or primitive presence from normalized
+/// assets. A glTF load that did not retain the raw inventory is represented by
+/// the contract's typed loader-evidence absence.
+///
+/// # Errors
+///
+/// `runtime_node_selectors` must be the complete alias-normalized declaration
+/// used for this lint invocation. Returns [`PredictionProvenanceProjectionError`]
+/// if the profile/settings projection is invalid or the rule inputs, source
+/// identities, format, raw inventory, or dependency closure cannot form one
+/// V4 provenance record.
+pub fn project_prediction_provenance_v4(
+    profile: &crate::ResolvedProfileSettingsV2,
+    source: &LoadedSource,
+    runtime_node_selectors: Vec<String>,
+) -> Result<PredictionProvenanceV4, PredictionProvenanceProjectionError> {
+    let (profile_contract, settings_contract) =
+        crate::canonical::project_resolved_engine_settings_v3(profile)?;
+    let raw_source =
+        RawSourceBindingV2::from_source(source.source_facts(), source.exact_source_timing())?;
+    let raw_scene_attachment = source
+        .raw_scene_attachment_inventory()
+        .cloned()
+        .map_or_else(
+            || {
+                RawSceneAttachmentBindingV1::unavailable(
+                    RawSceneAttachmentUnavailableReasonV1::LoaderEvidenceUnavailable,
+                )
+            },
+            RawSceneAttachmentBindingV1::available,
+        );
+    Ok(PredictionProvenanceV4::new(
+        profile_contract,
+        profile.source_format(),
+        settings_contract,
+        raw_source,
+        raw_scene_attachment,
+        source.dependency_closure().clone(),
+        PredictionRuleInputsV1::new(runtime_node_selectors)?,
     )?)
 }
