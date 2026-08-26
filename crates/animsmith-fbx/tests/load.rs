@@ -247,6 +247,7 @@ fn same_load_raw_transform_paths_preserve_original_identity_and_parent_chain() {
 fn raw_transform_projection_excludes_generated_geometry_helpers() {
     let source = std::fs::read_to_string(fixture())
         .expect("read self-authored fixture")
+        .replace("\r\n", "\n")
         .replacen(
             "P: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n\t\t}\n\t}\n\tDeformer: 4001",
             "P: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n\t\t\tP: \"GeometricTranslation\", \"Vector3D\", \"Vector\", \"\",1,0,0\n\t\t}\n\t}\n\tDeformer: 4001",
