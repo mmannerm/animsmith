@@ -1,0 +1,13 @@
+# Current development example for the narrow Bevy 0.19 animation/channel
+# gate-support prediction. It does not prove runtime asset survival.
+[engine]
+profile = "bevy"
+profile_revision = 3
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+# The compiled feature gate takes precedence over load_animations.
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = true
+load_animations = true

@@ -72,6 +72,7 @@ mod prediction;
 mod provenance;
 mod registry;
 mod resolver;
+mod track_support;
 mod types;
 mod unit_scale;
 
@@ -115,7 +116,7 @@ pub use prediction::{
 pub use provenance::{
     PredictionProvenanceProjectionError, project_prediction_provenance_v1,
     project_prediction_provenance_v2, project_prediction_provenance_v3,
-    project_prediction_provenance_v4,
+    project_prediction_provenance_v4, project_prediction_provenance_v5,
 };
 pub use registry::{
     RegistryValidationErrorV2, profiles_v1, profiles_v2, validate_registry_v1, validate_registry_v2,
@@ -127,6 +128,7 @@ pub use resolver::{
     StaticResolution, StaticResolutionV2, lookup_profile, lookup_profile_v2, resolve_static,
     resolve_static_v2,
 };
+pub use track_support::{ENGINE_TRACK_SUPPORT_CHECK_ID, EngineTrackSupportCheck};
 pub use types::{
     AnimationAddressability, BakeOrExtract, BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2,
     ConversionControl, CoordinateBasis, DefaultStatus, EngineDeclaration, EngineDeclarationV2,

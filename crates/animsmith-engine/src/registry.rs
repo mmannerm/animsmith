@@ -41,13 +41,17 @@ pub fn profiles_v1() -> &'static [EngineProfile] {
     })
 }
 
-/// Enumerate immutable revision-2 profile records in exact tuple order.
+/// Enumerate immutable revision-2-contract profile records in exact tuple order.
 ///
 /// This registry is separate from [`profiles_v1`], whose five records and
 /// canonical identities remain unchanged.
 pub fn profiles_v2() -> &'static [EngineProfileV2] {
     static PROFILES: OnceLock<Vec<EngineProfileV2>> = OnceLock::new();
-    PROFILES.get_or_init(|| vec![bevy_v2()])
+    PROFILES.get_or_init(|| {
+        let mut profiles = vec![bevy_v2(), bevy_v3()];
+        profiles.sort_by(|left, right| left.selection().cmp(right.selection()));
+        profiles
+    })
 }
 
 /// Validate revision-2 registry declarations and source cross-references.
@@ -70,7 +74,7 @@ pub fn validate_registry_v2() -> Result<(), RegistryValidationErrorV2> {
         EngineFactIdV2::TargetLinearUnit,
     ];
     let profiles = profiles_v2();
-    if profiles.len() != 1 {
+    if profiles.len() != 2 {
         return Err(RegistryValidationErrorV2::ProfileCount {
             found: profiles.len(),
         });
@@ -865,6 +869,36 @@ fn bevy_v2() -> EngineProfileV2 {
         settings,
         sources,
     }
+}
+
+/// The successor Bevy record proves only the two materialized animation-loading
+/// gates.  Revision 2 remains byte-for-byte immutable: its aggregate source
+/// disposition stays unknown, so it cannot accidentally gain this later rule.
+fn bevy_v3() -> EngineProfileV2 {
+    use animsmith_core::engine_contract::{EngineFactIdV2, EngineFactStateV2, EngineFactValueV2};
+
+    let mut profile = bevy_v2();
+    profile.selection = ProfileSelection::new("bevy", 3, "0.19.0", "gltf-asset-loader");
+    profile.profile_urn = "urn:animsmith:engine-profile:bevy:3";
+    let disposition = profile
+        .facts
+        .iter_mut()
+        .find(|fact| fact.id() == EngineFactIdV2::SourceImportDisposition)
+        .expect("every V2 profile has source import disposition");
+    *disposition = animsmith_core::engine_contract::EngineProfileFactV2::new(
+        EngineFactIdV2::SourceImportDisposition,
+        EngineFactStateV2::Known(EngineFactValueV2::Token("materialized_import_gates".into())),
+    );
+    let loader = profile
+        .sources
+        .iter_mut()
+        .find(|source| source.id == "bevy-gltf-loader-0.19.0-c6f634ca")
+        .expect("Bevy V2 loader source exists");
+    loader
+        .supported_facts
+        .push(EngineFactIdV2::SourceImportDisposition);
+    loader.supported_facts.sort_by_key(|fact| fact.as_str());
+    profile
 }
 
 fn base_facts(accepted: &[SourceFormatV1], known: Vec<(FactId, FactValue)>) -> Vec<ProfileFact> {

@@ -140,6 +140,7 @@ pub mod metrics;
 pub mod model;
 pub mod prediction;
 pub mod profile;
+pub mod raw_animation_inventory;
 pub mod raw_scene_inventory;
 pub mod sample;
 pub mod scale;
@@ -181,15 +182,16 @@ pub use contact_fragment::{
     ContactPhaseV1, ContactProducerV1, ContactRoleV1,
 };
 pub use contract::{
-    DiffEnvelope, InputIdentity, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
-    MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_V15_SCHEMA_ID, MEASUREMENTS_V15_SCHEMA_VERSION,
-    MeasureEnvelope, MeasureFileReport, MeasurementContract, MeasurementContractError,
-    MeasurementFileError, MeasurementReportError, MeasurementReportFile, MeasurementReportInput,
-    MeasurementReportReadError, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, OUTPUT_V10_SCHEMA_ID,
-    OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES, OUTPUT_V11_MAX_REPORT_BYTES,
-    OUTPUT_V11_SCHEMA_ID, OUTPUT_V11_SCHEMA_VERSION, OUTPUT_V12_SCHEMA_ID,
-    OUTPUT_V12_SCHEMA_VERSION, OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION,
-    OUTPUT_V14_SCHEMA_ID, OUTPUT_V14_SCHEMA_VERSION, OutputContractError, RigInfo, RigInfoError,
+    DiffEnvelope, InputIdentity, LintEnvelope, LintEnvelopeV16, LintFileReport, LintFileReportV16,
+    MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_V15_SCHEMA_ID,
+    MEASUREMENTS_V15_SCHEMA_VERSION, MeasureEnvelope, MeasureFileReport, MeasurementContract,
+    MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
+    MeasurementReportInput, MeasurementReportReadError, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION,
+    OUTPUT_V10_SCHEMA_ID, OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES,
+    OUTPUT_V11_MAX_REPORT_BYTES, OUTPUT_V11_SCHEMA_ID, OUTPUT_V11_SCHEMA_VERSION,
+    OUTPUT_V12_SCHEMA_ID, OUTPUT_V12_SCHEMA_VERSION, OUTPUT_V13_SCHEMA_ID,
+    OUTPUT_V13_SCHEMA_VERSION, OUTPUT_V14_SCHEMA_ID, OUTPUT_V14_SCHEMA_VERSION,
+    OUTPUT_V15_SCHEMA_ID, OUTPUT_V15_SCHEMA_VERSION, OutputContractError, RigInfo, RigInfoError,
     ToolInfo, ToolSource, sha256_hex,
 };
 pub use dependency_closure::{
@@ -273,35 +275,37 @@ pub use model::{
 };
 pub use prediction::{
     ApplicationWorldUnitPolicyV1, ENGINE_PREDICTION_V1_ID, ENGINE_PREDICTION_V2_ID,
-    ENGINE_PREDICTION_V3_ID, ENGINE_PREDICTION_V4_ID, EngineMachineResultV1,
-    EnginePredictionBasisV1, EnginePredictionBasisV2, EnginePredictionBasisV4,
-    EnginePredictionFacetStateV1, EnginePredictionFacetV1, EnginePredictionFacetV2,
-    EnginePredictionFacetV3, EnginePredictionFacetV4, EnginePredictionV1, EnginePredictionV2,
-    EnginePredictionV3, EnginePredictionV4, ExactSourceClipTimeRangeWireV1,
-    ExactSourceClipTimingBindingV1, ExactSourceFramePeriodWireV1, ExactSourceRangeSelectionWireV1,
-    ExactSourceTimeBasisWireV1, ExactSourceTimeDisplayProtocolWireV1,
-    ExactSourceTimelineModeWireV1, ExactSourceTimingBasisReferenceV1, ExactSourceTimingBindingV1,
-    ExactSourceTimingDomainV1, ExactSourceTimingKeyV1, ExactSourceTimingObservationStateWireV1,
+    ENGINE_PREDICTION_V3_ID, ENGINE_PREDICTION_V4_ID, ENGINE_PREDICTION_V5_ID,
+    EngineMachineResultV1, EnginePredictionBasisV1, EnginePredictionBasisV2,
+    EnginePredictionBasisV4, EnginePredictionFacetStateV1, EnginePredictionFacetV1,
+    EnginePredictionFacetV2, EnginePredictionFacetV3, EnginePredictionFacetV4, EnginePredictionV1,
+    EnginePredictionV2, EnginePredictionV3, EnginePredictionV4, EnginePredictionV5,
+    ExactSourceClipTimeRangeWireV1, ExactSourceClipTimingBindingV1, ExactSourceFramePeriodWireV1,
+    ExactSourceRangeSelectionWireV1, ExactSourceTimeBasisWireV1,
+    ExactSourceTimeDisplayProtocolWireV1, ExactSourceTimelineModeWireV1,
+    ExactSourceTimingBasisReferenceV1, ExactSourceTimingBindingV1, ExactSourceTimingDomainV1,
+    ExactSourceTimingKeyV1, ExactSourceTimingObservationStateWireV1,
     ExactSourceTimingObservationWireV1, ExactSourceTimingUnavailableReasonWireV1,
     FinitePredictionNumberV1, ImportSettingProjectionFieldV1, ImportSettingProjectionKindV1,
     ImportSettingProjectionResultV1, ImporterScaleConversionV1, ImporterSubjectCreationV1,
     InventoryCoverageResultV1, MeasurementPointerV1, PREDICTION_PROVENANCE_V1_ID,
     PREDICTION_PROVENANCE_V2_ID, PREDICTION_PROVENANCE_V3_ID, PREDICTION_PROVENANCE_V4_ID,
-    PREDICTION_RULE_INPUTS_V1_ID, PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
-    PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
-    PREDICTION_V1_MAX_FACETS_PER_FILE, PREDICTION_V1_MAX_MEASUREMENT_POINTER_COMPONENTS,
-    PREDICTION_V1_MAX_REASONS_PER_FACET, PREDICTION_V1_MAX_TEXT_BYTES,
-    PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE, PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE,
-    ParserFrameRateProjectionWireV1, PredictionBasisIdentityV1, PredictionBasisIdentityV2,
-    PredictionBasisIdentityV4, PredictionBasisReferenceV1, PredictionBasisReferenceV2,
-    PredictionBasisReferenceV4, PredictionContractError, PredictionFacetDemandV2,
-    PredictionInventoryCoverageStateV1, PredictionInventoryDomainV1,
-    PredictionProvenanceIdentityV1, PredictionProvenanceIdentityV2, PredictionProvenanceIdentityV3,
-    PredictionProvenanceIdentityV4, PredictionProvenanceV1, PredictionProvenanceV2,
-    PredictionProvenanceV3, PredictionProvenanceV4, PredictionRuleAllocationV2,
-    PredictionRuleDemandV2, PredictionRuleInputsV1, PredictionScalarV1,
-    PredictionUnavailableReasonV1, PredictionUnavailableReasonV2, PredictionUnitV1,
-    RAW_SOURCE_FACTS_V2_ID, RawSceneAttachmentBasisDomainV1, RawSceneAttachmentBasisReferenceV1,
+    PREDICTION_PROVENANCE_V5_ID, PREDICTION_RULE_INPUTS_V1_ID,
+    PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+    PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE, PREDICTION_V1_MAX_FACETS_PER_FILE,
+    PREDICTION_V1_MAX_MEASUREMENT_POINTER_COMPONENTS, PREDICTION_V1_MAX_REASONS_PER_FACET,
+    PREDICTION_V1_MAX_TEXT_BYTES, PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+    PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE, ParserFrameRateProjectionWireV1,
+    PredictionBasisIdentityV1, PredictionBasisIdentityV2, PredictionBasisIdentityV4,
+    PredictionBasisReferenceV1, PredictionBasisReferenceV2, PredictionBasisReferenceV4,
+    PredictionContractError, PredictionFacetDemandV2, PredictionInventoryCoverageStateV1,
+    PredictionInventoryDomainV1, PredictionProvenanceIdentityV1, PredictionProvenanceIdentityV2,
+    PredictionProvenanceIdentityV3, PredictionProvenanceIdentityV4, PredictionProvenanceIdentityV5,
+    PredictionProvenanceV1, PredictionProvenanceV2, PredictionProvenanceV3, PredictionProvenanceV4,
+    PredictionProvenanceV5, PredictionRuleAllocationV2, PredictionRuleDemandV2,
+    PredictionRuleInputsV1, PredictionScalarV1, PredictionUnavailableReasonV1,
+    PredictionUnavailableReasonV2, PredictionUnitV1, RAW_SOURCE_FACTS_V2_ID,
+    RawSceneAttachmentBasisDomainV1, RawSceneAttachmentBasisReferenceV1,
     RawSceneAttachmentBindingV1, RawSceneAttachmentUnavailableReasonV1, RawSourceAxisV1,
     RawSourceBasisReferenceV1, RawSourceBindingV1, RawSourceBindingV2, RawSourceCoordinateBasisV1,
     RawSourceDispositionV1, RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1,
@@ -318,6 +322,10 @@ pub use profile::{
     ResolutionOutcome, ResolvedRoles, RigProfile, Role, RoleResolutionPolicy, builtin_profiles,
     detect_profile, detect_profile_detailed, resolve_configured_roles, resolve_named,
     resolve_named_detailed,
+};
+pub use raw_animation_inventory::{
+    RAW_ANIMATION_CHANNEL_INVENTORY_V1_ID, RAW_ANIMATION_CHANNEL_INVENTORY_V1_MAX_CANDIDATES,
+    RawAnimationChannelInventoryV1, RawAnimationChannelRowV1,
 };
 pub use raw_scene_inventory::{
     RAW_SCENE_ATTACHMENT_INVENTORY_V1_ID, RAW_SCENE_ATTACHMENT_INVENTORY_V1_MAX_ROWS,

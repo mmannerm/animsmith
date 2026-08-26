@@ -62,6 +62,7 @@ pub const ENGINE_CHECK_IDS_V2: &[&str] = &[
     ENGINE_ADDRESSABILITY_CHECK_ID,
     crate::clip_boundary::ENGINE_CLIP_BOUNDARY_CHECK_ID,
     crate::unit_scale::ENGINE_UNIT_SCALE_CHECK_ID,
+    crate::track_support::ENGINE_TRACK_SUPPORT_CHECK_ID,
 ];
 
 const BEVY_FAMILY: &str = "bevy";

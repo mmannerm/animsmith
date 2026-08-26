@@ -517,8 +517,8 @@ animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 ## Engine profiles and importer settings
 
 An optional `[engine]` section selects one exact, versioned importer contract.
-There is no generic, automatic, nearest-version, or fallback profile. V1
-accepts only these tuples:
+There is no generic, automatic, nearest-version, or fallback profile. The
+released profile tuples are:
 
 | profile | revision | engine version | importer | accepted source |
 |---|---:|---|---|---|
@@ -528,6 +528,7 @@ accepts only these tuples:
 | `godot` | 1 | `4.7` | `resource-importer-scene` | glTF, GLB, or FBX |
 | `bevy` | 1 | `0.19.0` | `gltf-asset-loader` | glTF or GLB |
 | `bevy` | 2 | `0.19.0` | `gltf-asset-loader` | glTF or GLB |
+| `bevy` | 3 | `0.19.0` | `gltf-asset-loader` | glTF or GLB |
 
 The accepted-source column is AnimSmith's V1 profile boundary, not a claim
 that the named engine supports no other source formats. An absent `[engine]`
@@ -592,10 +593,38 @@ registry, or exactly Bevy 0.19's stock PBR handler. Project/user extension
 handlers are outside the profile. The revision-2 settings are document-scoped;
 clip `engine_settings` are rejected.
 
+The current revision 3 keeps the revision-2 tuple and settings and adds only
+the `engine-track-support` animation/channel gate. That check consumes
+`bevy_animation_feature` and `load_animations`; both retain whether their
+values were explicit or defaulted. The compiled feature gate has precedence:
+if it is disabled, the prediction is a dropped negative outcome regardless of
+the `load_animations` value. This revision uses `load_animations` to model the
+stock loader's animation path, not extensions, other animation constructs, or
+successful runtime survival.
+
+The rule binds a bounded same-load raw animation inventory and independent
+per-animation channel coverage. A complete empty inventory is not applicable.
+Partial or unavailable source inventory emits exactly one subjectless,
+unsuppressible `required_prediction_unavailable` inventory facet and no
+retained-prefix predictions. A complete inventory may emit one negative facet
+per affected animation or channel row when a gate drops it. If complete source
+evidence demands more than the shared facet budget, the allocator-authorized
+prefix remains available and one canonical `facet_budget_exceeded` summary
+records the omitted suffix; this does not relabel the source inventory as
+partial. When both gates allow loading, the required result is instead a stable
+`required_prediction_unavailable` runtime-survival state. Dropped rows are not
+content findings and cannot be suppressed with `--allow`; any required
+unavailable facet still exits 1.
+
+Revision 3 uses the current output-v16 schema and V5 prediction
+provenance/readback. Revision-2/V4 and output-v15 readers and historical
+examples remain preserved.
+
 All statically knowable tuple, setting, value, scope, and applicability errors
 are reported before input I/O. Accepted input format and required per-clip
 materialization are checked after loading. Profile selection never changes
-`measure` values. Output v11 records resolved profile provenance on lint files.
+`measure` values. Current output-v16 records resolved profile provenance on
+lint files.
 
 The first production rule is `engine-addressability` for the exact Bevy
 revision 1 / 0.19.0 / `gltf-asset-loader` tuple. With complete glTF/GLB source
@@ -704,20 +733,21 @@ absent selector field or explicit empty list means no runtime-node policy.
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
 See [output.md](output.md) and the current
-`urn:animsmith:schema:output:15` [`output-v15.schema.json`](schemas/output-v15.schema.json). Nested measurement
+`urn:animsmith:schema:output:16` [`output-v16.schema.json`](schemas/output-v16.schema.json). Nested measurement
 evidence has its own
 `urn:animsmith:schema:measurements:16`
 [`measurements-v16.schema.json`](schemas/measurements-v16.schema.json) contract.
 `urn:animsmith:schema:measurements:15`, `urn:animsmith:schema:output:11`,
-`urn:animsmith:schema:output:12`, `urn:animsmith:schema:output:13`, and
-`urn:animsmith:schema:output:14` remain
+`urn:animsmith:schema:output:12`, `urn:animsmith:schema:output:13`,
+`urn:animsmith:schema:output:14`, and `urn:animsmith:schema:output:15` remain
 historical immutable contracts. `diff`
 retains strict version-matched readers for output-v11/v12 with
 measurements-v15 and output-v13/v14 with measurements-v16; output-v10 and earlier
 reports require regeneration from the original asset.
 
 `collection lint COLLECTION.toml --format json` emits the separate current
-`urn:animsmith:schema:collection-output:7` contract. Historical
+`urn:animsmith:schema:collection-output:8` contract. Historical
+`urn:animsmith:schema:collection-output:7`,
 `urn:animsmith:schema:collection-output:6`,
 `urn:animsmith:schema:collection-output:5`, and
 `urn:animsmith:schema:collection-output:4` remain immutable; the manifest directory is

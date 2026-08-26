@@ -646,6 +646,27 @@ mapping, not a claim that arbitrary application world state uses metres. Scene,
 primitive-child, and selected-node facets remain distinct; incomplete evidence
 is blocking rather than inferred.
 
+Revision 3 is the current example in
+[`bevy-v3.animsmith.toml`](bevy-v3.animsmith.toml). It selects the narrow
+`engine-track-support` gate-support prediction:
+
+```console
+$ animsmith --config examples/bevy-v3.animsmith.toml lint \
+    --select engine-track-support examples/assets/walk.glb --format json
+```
+
+The prediction binds raw animation rows and independent per-animation channel
+coverage from the same load. The compiled `bevy_animation` feature gate takes
+precedence over `load_animations`; a disabled gate yields only negative dropped
+animation/channel outcomes, never a content finding. If both gates allow
+loading, runtime survival is required-unavailable because this contract does
+not run Bevy. Complete-empty inventory is not applicable; partial or
+unavailable inventory yields one subjectless, unsuppressible inventory facet
+and no retained-prefix prediction, including bounded N+1 overflow. Extensions,
+other animation constructs, and positive runtime survival are outside this
+slice. V5 provenance and output-v16 are current; the rev1/rev2 and output-v15
+contracts remain preserved.
+
 Generate a reusable engine-neutral inventory as canonical JSON without a
 profile:
 

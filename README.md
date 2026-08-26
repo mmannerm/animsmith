@@ -325,6 +325,22 @@ world state is metre-authored, include the caller-owned `WorldAssetRoot`, or
 authorize content rewriting. See
 [the Bevy profile](https://github.com/mmannerm/animsmith/blob/main/docs/engine-profile-bevy.md).
 
+The current successor is Bevy profile revision 3, still pinned to
+0.19.0 and `gltf-asset-loader`. Its narrow `engine-track-support` slice covers
+only the feature-gated animation path: `bevy_animation` and `load_animations`
+are resolved with their explicit/default origins, and a disabled feature gate
+takes precedence over `load_animations`. It inventories raw source animation
+and channel rows from the same load, then emits only negative gate outcomes:
+when a gate drops content, the affected animation/channel rows are reported as
+available negative facets; when both gates allow loading, runtime survival is
+required-unavailable because AnimSmith does not run Bevy. Complete-empty input
+is not applicable, while partial or unavailable inventory produces exactly one
+subjectless unsuppressible inventory facet and no retained-prefix prediction.
+This slice does not model extensions, other animation constructs,
+positive runtime survival, or a content finding for a dropped row. Its V5
+provenance and V16 output are the current CLI contracts; revisions 1 and 2 and
+output-v15 remain preserved and readable.
+
 `generate import-advice` is the separate engine-setting projection path. With
 an exact Unity 6000.3 Generic or Humanoid profile, it emits only the documented
 importer properties already materialized by config and binds them to same-load

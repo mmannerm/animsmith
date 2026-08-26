@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-const CURRENT_OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:15";
+const CURRENT_OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
 const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
 const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
@@ -28,7 +28,8 @@ const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
 const IMPORT_ADVICE_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:1";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
-const CURRENT_OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v15.schema.json");
+const CURRENT_OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v16.schema.json");
+const OUTPUT_V15_SCHEMA: &str = include_str!("../../../docs/schemas/output-v15.schema.json");
 const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
 const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
@@ -42,7 +43,7 @@ const IMPORT_ADVICE_SCHEMA: &str =
     include_str!("../../../docs/schemas/engine-import-advice-v1.schema.json");
 #[cfg(feature = "fbx")]
 const RIGGED_TRIANGLE_FBX: &str = include_str!("../../animsmith-fbx/testdata/rigged_triangle.fbx");
-const EXPECTED_CHECK_IDS: [&str; 29] = [
+const EXPECTED_CHECK_IDS: [&str; 30] = [
     "nan",
     "time-monotonic",
     "quat-norm",
@@ -72,6 +73,7 @@ const EXPECTED_CHECK_IDS: [&str; 29] = [
     "engine-addressability",
     "engine-clip-boundary",
     "engine-unit-scale",
+    "engine-track-support",
 ];
 
 fn output_validator() -> jsonschema::Validator {
@@ -114,7 +116,36 @@ fn assert_output_schema_valid(instance: &Value) {
         .collect();
     assert!(
         errors.is_empty(),
-        "output must satisfy the published v15 schemas:\n{}\ninstance: {instance:#}",
+        "output must satisfy the published v16 schemas:\n{}\ninstance: {instance:#}",
+        errors.join("\n")
+    );
+}
+
+fn assert_output_v15_schema_valid(instance: &Value) {
+    let output: Value =
+        serde_json::from_str(OUTPUT_V15_SCHEMA).expect("valid output-v15 schema JSON");
+    let measurements_v15: Value = serde_json::from_str(MEASUREMENTS_V15_SCHEMA)
+        .expect("valid historical measurement schema JSON");
+    let measurements: Value =
+        serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
+    let registry = jsonschema::Registry::new()
+        .add(MEASUREMENTS_V15_SCHEMA_ID, measurements_v15)
+        .expect("valid historical measurement schema identity")
+        .add(MEASUREMENTS_SCHEMA_ID, measurements)
+        .expect("valid measurement schema identity")
+        .prepare()
+        .expect("historical measurement schema registry prepares");
+    let validator = jsonschema::options()
+        .with_registry(&registry)
+        .build(&output)
+        .expect("output-v15 schema compiles with nested measurement contract");
+    let errors: Vec<_> = validator
+        .iter_errors(instance)
+        .map(|error| error.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "output must satisfy the historical v15 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -834,6 +865,74 @@ bevy_animation_feature = true
     )
 }
 
+fn write_bevy_v3_track_config(
+    dir: &std::path::Path,
+    suffix: &str,
+    bevy_animation_feature: bool,
+    load_animations: Option<bool>,
+) -> PathBuf {
+    let load_animations = load_animations
+        .map(|value| format!("\nload_animations = {value}"))
+        .unwrap_or_default();
+    write_config(
+        dir,
+        &format!("bevy-v3-track-{suffix}.toml"),
+        &format!(
+            r#"
+[engine]
+profile = "bevy"
+profile_revision = 3
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = {bevy_animation_feature}{load_animations}
+"#
+        ),
+    )
+}
+
+fn write_track_support_gltf(path: &std::path::Path, channels_per_animation: &[usize]) {
+    let animations = channels_per_animation
+        .iter()
+        .map(|&channel_count| {
+            let channels = (0..channel_count)
+                .map(|_| json!({ "sampler": 0, "target": { "node": 0, "path": "translation" } }))
+                .collect::<Vec<_>>();
+            json!({
+                "samplers": if channel_count == 0 { vec![] } else { vec![json!({ "input": 0, "output": 1 })] },
+                "channels": channels,
+            })
+        })
+        .collect::<Vec<_>>();
+    write_json(
+        path,
+        &json!({
+            "asset": { "version": "2.0" },
+            "buffers": [{
+                "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "byteLength": 24
+            }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 24 }],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0] },
+                { "bufferView": 0, "componentType": 5126, "count": 2, "type": "VEC3" }
+            ],
+            "nodes": [{ "name": "root" }],
+            "animations": animations,
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }),
+    );
+}
+
+fn track_support_facets(report: &Value) -> &Vec<Value> {
+    lint_check(report, "engine-track-support")["prediction"]["prediction"]["facets"]
+        .as_array()
+        .expect("nested V5 track-support facets")
+}
+
 fn lint_check<'a>(json: &'a Value, check_id: &str) -> &'a Value {
     json["files"][0]["checks"]
         .as_array()
@@ -855,7 +954,7 @@ fn lint_check_mut<'a>(json: &'a mut Value, check_id: &str) -> &'a mut Value {
 fn synthetic_selected_unit_scale_lint_report(witness: &str, nodes: Vec<SourceNodeAsset>) -> Value {
     // JSON glTF cannot spell a non-finite node transform. Build the same
     // post-loader authority directly, then exercise the real engine producer,
-    // output-v15 constructor, serializer, and CLI reader.
+    // Historical output-v15 constructor, serializer, and CLI reader.
     let primary = InputIdentity::from_bytes(witness.as_bytes());
     let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::Glb, primary.clone());
     for domain in [
@@ -957,7 +1056,7 @@ fn synthetic_selected_unit_scale_lint_report(witness: &str, nodes: Vec<SourceNod
 }
 
 #[test]
-fn bevy_revision_2_lint_emits_correlated_v4_unit_scale_results() {
+fn bevy_revision_2_lint_emits_correlated_v5_unit_scale_results() {
     let dir = unique_temp_dir("bevy-v2-unit-scale");
     let input = dir.path().join("sway.glb");
     write_clean_glb(&input);
@@ -976,10 +1075,10 @@ fn bevy_revision_2_lint_emits_correlated_v4_unit_scale_results() {
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(
         json["files"][0]["prediction_provenance"]["schema"],
-        "urn:animsmith:prediction-provenance:4"
+        "urn:animsmith:prediction-provenance:5"
     );
     assert_eq!(
-        json["files"][0]["prediction_provenance"]["rule_inputs"]["runtime_node_selectors"],
+        json["files"][0]["prediction_provenance"]["base"]["rule_inputs"]["runtime_node_selectors"],
         json!([])
     );
     let check = lint_check(&json, "engine-unit-scale");
@@ -989,9 +1088,9 @@ fn bevy_revision_2_lint_emits_correlated_v4_unit_scale_results() {
     assert_eq!(check["evaluation"], "complete");
     assert_eq!(
         check["prediction"]["schema"],
-        "urn:animsmith:engine-prediction:4"
+        "urn:animsmith:engine-prediction:5"
     );
-    let file_unit = check["prediction"]["facets"]
+    let file_unit = check["prediction"]["prediction"]["facets"]
         .as_array()
         .expect("prediction facets")
         .iter()
@@ -1007,6 +1106,43 @@ fn bevy_revision_2_lint_emits_correlated_v4_unit_scale_results() {
         file_unit["result"]["result"]["application_world_unit_policy"],
         "unenforced"
     );
+}
+
+#[test]
+fn bevy_revision_3_keeps_engine_unit_scale_applicable_with_v5_facets() {
+    let dir = unique_temp_dir("bevy-v3-unit-scale");
+    let input = dir.path().join("sway.glb");
+    write_clean_glb(&input);
+    let output = animsmith()
+        .arg("--config")
+        .arg(write_bevy_v3_track_config(
+            dir.path(),
+            "unit-scale",
+            true,
+            None,
+        ))
+        .args(["lint", "--select", "engine-unit-scale", "--format", "json"])
+        .arg(input)
+        .output()
+        .expect("runs Bevy revision-3 unit-scale lint");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("revision-3 unit-scale JSON");
+    assert_output_schema_valid(&json);
+    assert_eq!(
+        json["files"][0]["prediction_provenance"]["base"]["profile"]["selection"]["profile_revision"],
+        3
+    );
+    let check = lint_check(&json, "engine-unit-scale");
+    assert_eq!(check["applicability"], "applicable");
+    assert_eq!(check["evaluation"], "complete");
+    let facets = check["prediction"]["prediction"]["facets"]
+        .as_array()
+        .expect("nested unit-scale facets");
+    assert!(facets.iter().any(|facet| {
+        facet["scope"]["code"] == "engine-unit-scale:file-unit"
+            && facet["state"] == "available"
+            && facet["result"]["kind"] == "unit_mapping"
+    }));
 }
 
 #[test]
@@ -1038,7 +1174,7 @@ fn bevy_revision_2_readback_rejects_active_unit_scale_with_null_v4_provenance() 
         .arg(&report)
         .arg(&report)
         .output()
-        .expect("reads hostile V15 report");
+        .expect("reads hostile V16 report");
     assert_eq!(readback.status.code(), Some(2), "{}", stderr(&readback));
     assert!(
         stderr(&readback).contains("prediction"),
@@ -1101,7 +1237,7 @@ fn bevy_revision_2_join_work_overflow_round_trips_without_mesh_prefix() {
     assert_eq!(linted.status.code(), Some(1), "{}", stderr(&linted));
     let report: Value = serde_json::from_slice(&linted.stdout).expect("lint JSON");
     assert_output_schema_valid(&report);
-    let facets = lint_check(&report, "engine-unit-scale")["prediction"]["facets"]
+    let facets = lint_check(&report, "engine-unit-scale")["prediction"]["prediction"]["facets"]
         .as_array()
         .expect("prediction facets");
     assert_eq!(facets.len(), 67);
@@ -1201,7 +1337,7 @@ fn bevy_revision_2_selected_unavailable_authored_kinds_round_trip_and_reject_swa
         ("all-trs.json", &all_trs),
         ("mixed-matrix.json", &mixed_matrix),
     ] {
-        assert_output_schema_valid(report);
+        assert_output_v15_schema_valid(report);
         let output = run_diff(name, report);
         assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     }
@@ -1293,11 +1429,11 @@ selectors = ["missing_socket"]
     let json: Value = serde_json::from_slice(&json_output.stdout).expect("lint JSON");
     assert_output_schema_valid(&json);
     assert_eq!(
-        json["files"][0]["prediction_provenance"]["rule_inputs"]["runtime_node_selectors"],
+        json["files"][0]["prediction_provenance"]["base"]["rule_inputs"]["runtime_node_selectors"],
         json!(["missing_socket"])
     );
     let check = lint_check(&json, "engine-unit-scale");
-    let missing = check["prediction"]["facets"]
+    let missing = check["prediction"]["prediction"]["facets"]
         .as_array()
         .expect("prediction facets")
         .iter()
@@ -1368,7 +1504,7 @@ selectors = [{selector_toml}]
         .expect("runs cumulative selected reachability lint");
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
     let report: Value = serde_json::from_slice(&output.stdout).expect("lint JSON");
-    let facets = lint_check(&report, "engine-unit-scale")["prediction"]["facets"]
+    let facets = lint_check(&report, "engine-unit-scale")["prediction"]["prediction"]["facets"]
         .as_array()
         .expect("prediction facets");
     assert_eq!(facets.len(), 4096, "{facets:#?}");
@@ -1430,7 +1566,7 @@ fn bevy_revision_2_unit_scale_readback_rederives_required_facets_results_and_bas
 
     let mut missing_file_facet = valid.clone();
     let check = lint_check_mut(&mut missing_file_facet, "engine-unit-scale");
-    check["prediction"]["facets"]
+    check["prediction"]["prediction"]["facets"]
         .as_array_mut()
         .expect("prediction facets")
         .retain(|facet| facet["scope"]["code"] != "engine-unit-scale:file-unit");
@@ -1449,7 +1585,7 @@ fn bevy_revision_2_unit_scale_readback_rederives_required_facets_results_and_bas
 
     let mut forged_result = valid.clone();
     let check = lint_check_mut(&mut forged_result, "engine-unit-scale");
-    let scene_facet = check["prediction"]["facets"]
+    let scene_facet = check["prediction"]["prediction"]["facets"]
         .as_array_mut()
         .expect("prediction facets")
         .iter_mut()
@@ -1498,7 +1634,7 @@ selectors = ["missing_socket"]
     let mut substituted_basis: Value =
         serde_json::from_slice(&selector_output.stdout).expect("selector lint JSON");
     let check = lint_check_mut(&mut substituted_basis, "engine-unit-scale");
-    let facets = check["prediction"]["facets"]
+    let facets = check["prediction"]["prediction"]["facets"]
         .as_array_mut()
         .expect("prediction facets");
     let available_basis = facets
@@ -1560,7 +1696,8 @@ bevy_animation_feature = true
     );
     {
         let mut swapped = multi_scene.clone();
-        let facets = lint_check_mut(&mut swapped, "engine-unit-scale")["prediction"]["facets"]
+        let facets = lint_check_mut(&mut swapped, "engine-unit-scale")["prediction"]["prediction"]
+            ["facets"]
             .as_array_mut()
             .expect("prediction facets");
         let indices = facets
@@ -1631,7 +1768,8 @@ selectors = ["body-node", "prop-node"]
         ),
     ] {
         let mut swapped = multi_mesh.clone();
-        let facets = lint_check_mut(&mut swapped, "engine-unit-scale")["prediction"]["facets"]
+        let facets = lint_check_mut(&mut swapped, "engine-unit-scale")["prediction"]["prediction"]
+            ["facets"]
             .as_array_mut()
             .expect("prediction facets");
         let indices = facets
@@ -1726,7 +1864,7 @@ selectors = ["target"]
         json!([{ "name": "target" }, { "name": "target" }]),
     );
     let selected_basis = |report: &Value, subject: &str| {
-        lint_check(report, "engine-unit-scale")["prediction"]["facets"]
+        lint_check(report, "engine-unit-scale")["prediction"]["prediction"]["facets"]
             .as_array()
             .expect("prediction facets")
             .iter()
@@ -1760,15 +1898,16 @@ selectors = ["target"]
         ),
     ] {
         let mut hostile = source_report.clone();
-        let facet = lint_check_mut(&mut hostile, "engine-unit-scale")["prediction"]["facets"]
-            .as_array_mut()
-            .expect("prediction facets")
-            .iter_mut()
-            .find(|facet| {
-                facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
-                    && facet["scope"]["subject"] == "selector:target"
-            })
-            .expect("selector-only facet");
+        let facet =
+            lint_check_mut(&mut hostile, "engine-unit-scale")["prediction"]["prediction"]["facets"]
+                .as_array_mut()
+                .expect("prediction facets")
+                .iter_mut()
+                .find(|facet| {
+                    facet["scope"]["code"] == "engine-unit-scale:selected-source-node"
+                        && facet["scope"]["subject"] == "selector:target"
+                })
+                .expect("selector-only facet");
         facet["basis"] = replacement_basis;
         let output = run_diff(name, &hostile);
         assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
@@ -1833,9 +1972,10 @@ selectors = ["target"]
     };
     let deep_ancestry = run_reachable_selector("selector-deep-ancestry", deep_nodes, 1);
     let bounded_ancestry = run_reachable_selector("selector-bounded-ancestry", bounded_nodes, 0);
-    let selected_facets = lint_check(&deep_ancestry, "engine-unit-scale")["prediction"]["facets"]
-        .as_array()
-        .expect("prediction facets");
+    let selected_facets =
+        lint_check(&deep_ancestry, "engine-unit-scale")["prediction"]["prediction"]["facets"]
+            .as_array()
+            .expect("prediction facets");
     let deep_facet = selected_facets
         .iter()
         .find(|facet| {
@@ -1851,7 +1991,7 @@ selectors = ["target"]
         facet["scope"]["subject"] == "selector:target:source_scene:0:source_node:128"
     }));
     assert!(
-        lint_check(&bounded_ancestry, "engine-unit-scale")["prediction"]["facets"]
+        lint_check(&bounded_ancestry, "engine-unit-scale")["prediction"]["prediction"]["facets"]
             .as_array()
             .expect("prediction facets")
             .iter()
@@ -1863,7 +2003,7 @@ selectors = ["target"]
 
     let mut substituted_reachability = deep_ancestry.clone();
     let facet =
-        lint_check_mut(&mut substituted_reachability, "engine-unit-scale")["prediction"]["facets"]
+        lint_check_mut(&mut substituted_reachability, "engine-unit-scale")["prediction"]["prediction"]["facets"]
             .as_array_mut()
             .expect("prediction facets")
             .iter_mut()
@@ -1926,7 +2066,7 @@ selectors = ["target"]
     let aggregate_at_limit = run_aggregate_selector("selector-aggregate-at-limit", 32, 0);
     let aggregate_over_limit = run_aggregate_selector("selector-aggregate-over-limit", 33, 1);
     let at_limit_selected =
-        lint_check(&aggregate_at_limit, "engine-unit-scale")["prediction"]["facets"]
+        lint_check(&aggregate_at_limit, "engine-unit-scale")["prediction"]["prediction"]["facets"]
             .as_array()
             .expect("prediction facets")
             .iter()
@@ -1961,7 +2101,7 @@ selectors = ["target"]
         .expect("runs existing-unreachable-scene lint");
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let mut missing_witness: Value = serde_json::from_slice(&output.stdout).expect("lint JSON");
-    let facet = lint_check_mut(&mut missing_witness, "engine-unit-scale")["prediction"]["facets"]
+    let facet = lint_check_mut(&mut missing_witness, "engine-unit-scale")["prediction"]["prediction"]["facets"]
         .as_array_mut()
         .expect("prediction facets")
         .iter_mut()
@@ -1996,7 +2136,7 @@ selectors = ["target"]
     let output = run_diff("forged-selected-missing-witness.json", &missing_witness);
     assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
     let aggregate_facet =
-        lint_check(&aggregate_over_limit, "engine-unit-scale")["prediction"]["facets"]
+        lint_check(&aggregate_over_limit, "engine-unit-scale")["prediction"]["prediction"]["facets"]
             .as_array()
             .expect("prediction facets")
             .iter()
@@ -2011,7 +2151,8 @@ selectors = ["target"]
     );
     let mut substituted_aggregate = aggregate_over_limit.clone();
     let facet =
-        lint_check_mut(&mut substituted_aggregate, "engine-unit-scale")["prediction"]["facets"]
+        lint_check_mut(&mut substituted_aggregate, "engine-unit-scale")["prediction"]["prediction"]
+            ["facets"]
             .as_array_mut()
             .expect("prediction facets")
             .iter_mut()
@@ -3017,7 +3158,7 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_eq!(lint_json.status.code(), Some(0));
     let lint_json: Value = serde_json::from_slice(&lint_json.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&lint_json);
-    assert_eq!(lint_json["schema_version"], 15);
+    assert_eq!(lint_json["schema_version"], 16);
     assert_eq!(lint_json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 16);
     assert_eq!(
@@ -3700,6 +3841,7 @@ fn help_matches_compiled_feature_set() {
         .expect("runs diff help");
     assert!(diff.status.success(), "stderr:\n{}", stderr(&diff));
     let out = stdout(&diff);
+    assert!(out.contains("output-v16"), "{out}");
     assert!(out.contains("output-v15"), "{out}");
     assert!(out.contains("output-v13"), "{out}");
     assert!(out.contains("measurements-v16"), "{out}");
@@ -3905,7 +4047,7 @@ fn measure_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 15);
+    assert_eq!(json["schema_version"], 16);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -4344,7 +4486,7 @@ fn report_text_escapes_its_output_path() {
 }
 
 #[test]
-fn embedded_contract_types_emit_the_published_v15_envelope() {
+fn embedded_contract_types_emit_the_published_v16_envelope() {
     let doc = Document::default();
     let config = animsmith_core::Config::default();
     let roles = animsmith_core::ResolvedRoles::default();
@@ -4356,7 +4498,7 @@ fn embedded_contract_types_emit_the_published_v15_envelope() {
         animsmith_core::CheckSelection::All,
     )
     .expect("built-in catalog evaluates");
-    let file = animsmith_core::LintFileReport::new(
+    let file = animsmith_core::LintFileReportV16::new(
         "embedded.glb",
         embedded_input_identity(),
         animsmith_core::RigInfo::from_resolved(&doc, &roles)
@@ -4370,7 +4512,7 @@ fn embedded_contract_types_emit_the_published_v15_envelope() {
         .expect("measured evidence is finite"),
     )
     .expect("bounded lint file");
-    let envelope = animsmith_core::LintEnvelope::new(
+    let envelope = animsmith_core::LintEnvelopeV16::new(
         animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
         vec![file],
     )
@@ -4386,7 +4528,7 @@ fn embedded_contract_types_emit_the_published_v15_envelope() {
 }
 
 #[test]
-fn published_v15_schema_requires_matching_role_policy_provenance() {
+fn published_v16_schema_requires_matching_role_policy_provenance() {
     let output = animsmith()
         .args([
             "measure",
@@ -4426,13 +4568,13 @@ fn published_v15_schema_requires_matching_role_policy_provenance() {
     ] {
         assert!(
             !validator.is_valid(&invalid),
-            "output-v15 accepted {name}: {invalid:#}"
+            "output-v16 accepted {name}: {invalid:#}"
         );
     }
 }
 
 #[test]
-fn published_v15_schema_accepts_and_distinguishes_every_prediction_facet_lifecycle() {
+fn published_v16_schema_accepts_and_distinguishes_every_prediction_facet_lifecycle() {
     let dir = unique_temp_dir("prediction-schema-lifecycle");
     let input = dir.path().join("sway.glb");
     write_clean_glb(&input);
@@ -4593,7 +4735,7 @@ fn published_v15_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
             .with_engine_prediction_v3(wrong_prediction),
     )
     .expect("prediction lifecycle is valid before file measurement binding");
-    let wrong = animsmith_core::LintFileReport::new(
+    let wrong = animsmith_core::LintFileReportV16::new(
         input.display().to_string(),
         source.source_facts().primary_identity().clone(),
         rig.clone(),
@@ -4611,7 +4753,7 @@ fn published_v15_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
             animsmith_core::PredictionContractError::MeasurementValueMismatch(_)
         ))
     ));
-    let file = animsmith_core::LintFileReport::new(
+    let file = animsmith_core::LintFileReportV16::new(
         input.display().to_string(),
         source.source_facts().primary_identity().clone(),
         rig,
@@ -4624,7 +4766,7 @@ fn published_v15_schema_accepts_and_distinguishes_every_prediction_facet_lifecyc
         .expect("empty measurements are valid"),
     )
     .expect("bounded prediction report");
-    let envelope = animsmith_core::LintEnvelope::new(
+    let envelope = animsmith_core::LintEnvelopeV16::new(
         animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
         vec![file],
     )
@@ -4727,10 +4869,10 @@ fn output_schema_rejects_every_empty_custom_check_identifier() {
     .expect("nonempty custom identifiers are valid");
     let doc = Document::default();
     let roles = animsmith_core::ResolvedRoles::default();
-    let envelope = animsmith_core::LintEnvelope::new(
+    let envelope = animsmith_core::LintEnvelopeV16::new(
         animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
         vec![
-            animsmith_core::LintFileReport::new(
+            animsmith_core::LintFileReportV16::new(
                 "embedded.glb",
                 embedded_input_identity(),
                 animsmith_core::RigInfo::from_resolved(&doc, &roles)
@@ -4779,7 +4921,7 @@ fn lint_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 15);
+    assert_eq!(json["schema_version"], 16);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -5046,7 +5188,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 15);
+    assert_eq!(json["schema_version"], 16);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
@@ -5502,7 +5644,7 @@ fn diff_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 15);
+    assert_eq!(json["schema_version"], 16);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -5897,7 +6039,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported output version",
             unsupported_output_version,
-            format!("has schema_version 2; this build reads schema_version 15; {remediation}"),
+            format!("has schema_version 2; this build reads schema_version 16; {remediation}"),
         ),
         (
             "missing command",
@@ -6308,7 +6450,7 @@ fn diff_rejects_historical_output_v5_with_v11_measurements() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has schema_version 5; this build reads schema_version 15; regenerate it from the original asset with `animsmith measure --format json <asset>`"
+            "has schema_version 5; this build reads schema_version 16; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)
@@ -8249,6 +8391,540 @@ importer = "resource-importer-scene"
         profiled_json["files"][0]["measurements"],
         baseline_json["files"][0]["measurements"]
     );
+}
+
+#[test]
+fn bevy_v3_track_support_resolves_before_io_and_observes_gate_outcomes() {
+    let dir = unique_temp_dir("bevy-v3-track-gates");
+    let missing = dir.path().join("missing.gltf");
+    let valid = write_bevy_v3_track_config(dir.path(), "valid", false, None);
+    let output = animsmith()
+        .arg("--config")
+        .arg(&valid)
+        .args(["lint", "--select", "engine-track-support"])
+        .arg(&missing)
+        .output()
+        .expect("runs valid revision-3 configuration before input IO");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains("failed to read"),
+        "{}",
+        stderr(&output)
+    );
+
+    let missing_feature = write_config(
+        dir.path(),
+        "bevy-v3-missing-feature.toml",
+        r#"
+[engine]
+profile = "bevy"
+profile_revision = 3
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+"#,
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(missing_feature)
+        .args(["lint", "--select", "engine-track-support"])
+        .arg(&missing)
+        .output()
+        .expect("rejects incomplete revision-3 configuration before input IO");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains("bevy_animation_feature"),
+        "{}",
+        stderr(&output)
+    );
+
+    let source = dir.path().join("one-animation-one-channel.gltf");
+    write_track_support_gltf(&source, &[1]);
+    let run = |name: &str, feature: bool, load: Option<bool>| {
+        let config = write_bevy_v3_track_config(dir.path(), name, feature, load);
+        let output = animsmith()
+            .arg("--config")
+            .arg(config)
+            .args([
+                "lint",
+                "--select",
+                "engine-track-support",
+                "--format",
+                "json",
+            ])
+            .arg(&source)
+            .output()
+            .expect("runs revision-3 track support lint");
+        assert!(
+            output.status.success() || output.status.code() == Some(1),
+            "stdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("track support JSON");
+        (output, json)
+    };
+
+    let (disabled, disabled_json) = run("feature-disabled", false, None);
+    assert_eq!(disabled.status.code(), Some(0), "{}", stderr(&disabled));
+    assert_output_schema_valid(&disabled_json);
+    let disabled_check = lint_check(&disabled_json, "engine-track-support");
+    assert_eq!(disabled_check["findings"], json!([]));
+    assert_eq!(
+        track_support_facets(&disabled_json)
+            .iter()
+            .map(|facet| facet["scope"]["subject"].as_str().expect("subject"))
+            .collect::<Vec<_>>(),
+        vec!["source_animation:0", "source_animation:0:source_channel:0"]
+    );
+    for (index, facet) in track_support_facets(&disabled_json).iter().enumerate() {
+        assert_eq!(facet["state"], "available");
+        assert_eq!(facet["result"]["kind"], "source_import_disposition");
+        assert_eq!(facet["result"]["result"]["disposition"], "dropped");
+        assert_eq!(
+            facet["result"]["result"]["controlling_gate"],
+            "bevy_animation_feature"
+        );
+        let row_field = if index == 0 {
+            "raw_animation_channel_inventory.animation_row"
+        } else {
+            "raw_animation_channel_inventory.channel_row"
+        };
+        assert!(
+            facet["basis"]["references"]
+                .as_array()
+                .expect("basis references")
+                .iter()
+                .any(|reference| reference.to_string().contains(row_field)),
+            "exact source row {row_field} is retained in {facet:#}"
+        );
+    }
+    let settings = &disabled_json["files"][0]["prediction_provenance"]["base"]["settings"]["document_settings"];
+    assert!(
+        settings
+            .as_array()
+            .expect("settings")
+            .iter()
+            .any(|setting| setting.to_string().contains("load_animations")
+                && setting.to_string().contains("profile_default")),
+        "default-origin load setting: {settings:#}"
+    );
+
+    let (both_disabled, both_disabled_json) = run("both-disabled", false, Some(false));
+    assert_eq!(
+        both_disabled.status.code(),
+        Some(0),
+        "{}",
+        stderr(&both_disabled)
+    );
+    assert!(
+        track_support_facets(&both_disabled_json)
+            .iter()
+            .all(|facet| {
+                facet["result"]["result"]["controlling_gate"] == "bevy_animation_feature"
+            })
+    );
+
+    let (load_disabled, load_disabled_json) = run("load-disabled", true, Some(false));
+    assert_eq!(
+        load_disabled.status.code(),
+        Some(0),
+        "{}",
+        stderr(&load_disabled)
+    );
+    assert!(
+        track_support_facets(&load_disabled_json)
+            .iter()
+            .all(|facet| { facet["result"]["result"]["controlling_gate"] == "load_animations" })
+    );
+
+    let (positive_gates, positive_gates_json) = run("positive-gates", true, Some(true));
+    assert_eq!(
+        positive_gates.status.code(),
+        Some(1),
+        "{}",
+        stderr(&positive_gates)
+    );
+    assert_eq!(
+        lint_check(&positive_gates_json, "engine-track-support")["findings"],
+        json!([])
+    );
+    assert!(
+        track_support_facets(&positive_gates_json)
+            .iter()
+            .all(|facet| {
+                facet["state"] == "required_prediction_unavailable"
+                    && facet["reasons"] == json!(["runtime_animation_survival_unavailable"])
+            })
+    );
+    let output = animsmith()
+        .arg("--config")
+        .arg(write_bevy_v3_track_config(
+            dir.path(),
+            "positive-gates-allow",
+            true,
+            Some(true),
+        ))
+        .args([
+            "lint",
+            "--select",
+            "engine-track-support",
+            "--allow",
+            "engine-track-support",
+        ])
+        .arg(&source)
+        .output()
+        .expect("runs required-unavailable track support lint with allow");
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+
+    let empty = dir.path().join("empty.gltf");
+    write_track_support_gltf(&empty, &[]);
+    let output = animsmith()
+        .arg("--config")
+        .arg(write_bevy_v3_track_config(dir.path(), "empty", false, None))
+        .args([
+            "lint",
+            "--select",
+            "engine-track-support",
+            "--format",
+            "json",
+        ])
+        .arg(empty)
+        .output()
+        .expect("runs complete-empty track support lint");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let empty_json: Value = serde_json::from_slice(&output.stdout).expect("empty JSON");
+    let empty_check = lint_check(&empty_json, "engine-track-support");
+    assert_eq!(empty_check["applicability"], "not_applicable");
+    assert!(empty_check.get("prediction").is_none());
+}
+
+#[test]
+fn bevy_v3_track_support_saturation_has_canonical_prefix_and_one_summary() {
+    let dir = unique_temp_dir("bevy-v3-track-saturation");
+    let source = dir.path().join("saturated.gltf");
+    write_track_support_gltf(&source, &[4_096]);
+    let output = animsmith()
+        .arg("--config")
+        .arg(write_bevy_v3_track_config(
+            dir.path(),
+            "saturated",
+            false,
+            Some(true),
+        ))
+        .args([
+            "lint",
+            "--select",
+            "engine-track-support",
+            "--format",
+            "json",
+        ])
+        .arg(source)
+        .output()
+        .expect("runs saturated track support lint");
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("saturated JSON");
+    let facets = track_support_facets(&json);
+    assert_eq!(facets.len(), 4_096);
+    assert_eq!(facets[0]["scope"]["subject"], "source_animation:0");
+    assert_eq!(
+        facets[4_095]["scope"]["code"],
+        "engine-track-support:facet-budget"
+    );
+    assert_eq!(facets[4_095]["reasons"], json!(["facet_budget_exceeded"]));
+    let subjects = facets[..4_095]
+        .iter()
+        .map(|facet| {
+            facet["scope"]["subject"]
+                .as_str()
+                .expect("candidate subject")
+        })
+        .collect::<Vec<_>>();
+    let mut canonical = subjects.clone();
+    canonical.sort_unstable();
+    assert_eq!(
+        subjects, canonical,
+        "facets retain V4's canonical scope order"
+    );
+    assert!(subjects.contains(&"source_animation:0:source_channel:4093"));
+}
+
+#[test]
+fn bevy_v3_track_support_partial_or_unavailable_saturated_inventory_readbacks() {
+    let dir = unique_temp_dir("bevy-v3-track-partial-saturated");
+    let source_path = dir.path().join("saturated.gltf");
+    write_track_support_gltf(&source_path, &[4_096]);
+    let config = write_bevy_v3_track_config(dir.path(), "partial-saturated", false, Some(true));
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            "--select",
+            "engine-track-support",
+            "--format",
+            "json",
+        ])
+        .arg(&source_path)
+        .output()
+        .expect("produces a saturated complete track report");
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let saturated: Value = serde_json::from_slice(&output.stdout).expect("saturated JSON");
+    let original: animsmith_core::PredictionProvenanceV5 =
+        serde_json::from_value(saturated["files"][0]["prediction_provenance"].clone())
+            .expect("V5 provenance decodes");
+    let source = animsmith_gltf::load_source(&source_path).expect("source reloads");
+    let roles = animsmith_core::ResolvedRoles::default();
+    let rig = animsmith_core::RigInfo::from_resolved(source.document(), &roles)
+        .expect("empty roles match fixture");
+    let measurements = animsmith_core::MeasurementContract::new(
+        BTreeMap::new(),
+        animsmith_core::measure::measure_assets(source.document()),
+    )
+    .expect("fixture measurement contract");
+
+    for (name, coverage) in [
+        (
+            "partial",
+            json!({ "state": "partial", "reason": "projection_budget_exceeded" }),
+        ),
+        (
+            "unavailable",
+            json!({ "state": "unavailable", "reason": "parser_unavailable" }),
+        ),
+    ] {
+        let mut inventory: Value =
+            serde_json::to_value(original.raw_animation_channels()).expect("inventory serializes");
+        inventory["animation_coverage"] = coverage;
+        inventory["source_coverage_complete"] = json!(false);
+        let inventory: animsmith_core::RawAnimationChannelInventoryV1 =
+            serde_json::from_value(inventory).expect("partial saturated inventory is valid");
+        assert!(
+            inventory.candidate_overflow(),
+            "{name} keeps the N+1 sentinel"
+        );
+        assert!(
+            !inventory.source_coverage_complete(),
+            "{name} coverage is incomplete"
+        );
+        let provenance =
+            animsmith_core::PredictionProvenanceV5::new(original.base().clone(), inventory)
+                .expect("successor provenance binds incomplete saturated inventory");
+        let v1 = |reference| {
+            animsmith_core::PredictionBasisReferenceV4::v2(
+                animsmith_core::PredictionBasisReferenceV2::v1(reference),
+            )
+        };
+        let basis = animsmith_core::EnginePredictionBasisV4::new(vec![
+            v1(animsmith_core::PredictionBasisReferenceV1::profile_fact(
+                "source_import_disposition",
+            )
+            .expect("profile fact reference")),
+            v1(animsmith_core::PredictionBasisReferenceV1::primary_source(
+                "bevy-gltf-loader-0.19.0-c6f634ca",
+            )
+            .expect("loader source reference")),
+            v1(animsmith_core::PredictionBasisReferenceV1::primary_source(
+                "bevy-feature-manifest-0.19.0-c6f634ca",
+            )
+            .expect("feature source reference")),
+            v1(
+                animsmith_core::PredictionBasisReferenceV1::resolved_setting(
+                    animsmith_core::ResolvedSettingLocationV1::Document,
+                    "bevy_animation_feature",
+                )
+                .expect("feature setting reference"),
+            ),
+            v1(
+                animsmith_core::PredictionBasisReferenceV1::resolved_setting(
+                    animsmith_core::ResolvedSettingLocationV1::Document,
+                    "load_animations",
+                )
+                .expect("load setting reference"),
+            ),
+            v1(animsmith_core::PredictionBasisReferenceV1::project_field(
+                "raw_animation_channel_inventory.animation_coverage",
+                animsmith_core::PredictionScalarV1::text(name).expect("coverage state token"),
+            )
+            .expect("coverage basis reference")),
+            v1(animsmith_core::PredictionBasisReferenceV1::project_field(
+                "raw_animation_channel_inventory.source_coverage_complete",
+                animsmith_core::PredictionScalarV1::Boolean { value: false },
+            )
+            .expect("aggregate coverage basis reference")),
+        ])
+        .expect("inventory basis");
+        let facet = animsmith_core::EnginePredictionFacetV4::required_unavailable(
+            animsmith_core::EvaluationScope::new(animsmith_core::EvaluationScopeCode::custom(
+                "engine-track-support:inventory",
+            )),
+            basis,
+            vec![animsmith_core::PredictionUnavailableReasonV2::RawSourceIncomplete],
+        )
+        .expect("one inventory facet");
+        let inner = animsmith_core::EnginePredictionV4::new(
+            provenance.base().identity().clone(),
+            vec![facet],
+        )
+        .expect("canonical inventory prediction");
+        let prediction = animsmith_core::EnginePredictionV5::new(&provenance, inner)
+            .expect("V5 inventory prediction");
+        let check = animsmith_core::CheckEvaluation::evaluated(
+            "engine-track-support",
+            animsmith_core::CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
+                .with_engine_prediction_v5(prediction),
+        )
+        .expect("required-unavailable check lifecycle");
+        let file = animsmith_core::LintFileReportV16::new_v5(
+            source_path.display().to_string(),
+            source.source_facts().primary_identity().clone(),
+            rig.clone(),
+            Some(provenance),
+            vec![check],
+            measurements.clone(),
+        )
+        .expect("V16 producer accepts incomplete saturated inventory without budget summary");
+        let report = serde_json::to_value(
+            animsmith_core::LintEnvelopeV16::new(
+                animsmith_core::ToolInfo::animsmith(animsmith_core::ToolSource::new(None, None)),
+                vec![file],
+            )
+            .expect("V16 envelope"),
+        )
+        .expect("report serializes");
+        assert_output_schema_valid(&report);
+        assert_eq!(track_support_facets(&report).len(), 1, "{name}");
+        let path = dir.path().join(format!("{name}-saturated.json"));
+        write_json(&path, &report);
+        let readback = animsmith()
+            .arg("diff")
+            .arg(&path)
+            .arg(&path)
+            .output()
+            .expect("strictly reads incomplete saturated report");
+        assert_eq!(
+            readback.status.code(),
+            Some(0),
+            "{name}: {}",
+            stderr(&readback)
+        );
+    }
+}
+
+#[test]
+fn bevy_v3_track_support_readback_rejects_hostile_sidecars_and_oversized_inventory() {
+    let dir = unique_temp_dir("bevy-v3-track-readback");
+    let source = dir.path().join("one-animation-one-channel.gltf");
+    write_track_support_gltf(&source, &[1]);
+    let output = animsmith()
+        .arg("--config")
+        .arg(write_bevy_v3_track_config(
+            dir.path(),
+            "readback",
+            false,
+            Some(true),
+        ))
+        .args([
+            "lint",
+            "--select",
+            "engine-track-support",
+            "--format",
+            "json",
+        ])
+        .arg(&source)
+        .output()
+        .expect("produces valid revision-3 track report");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let valid: Value = serde_json::from_slice(&output.stdout).expect("valid track report JSON");
+    assert_output_schema_valid(&valid);
+
+    let run_diff = |name: &str, report: &Value| {
+        let path = dir.path().join(name);
+        write_json(&path, report);
+        animsmith()
+            .arg("diff")
+            .arg(&path)
+            .arg(&path)
+            .output()
+            .expect("strictly reads track sidecar")
+    };
+    let reject = |name: &str, report: &Value| {
+        let output = run_diff(name, report);
+        assert_eq!(output.status.code(), Some(2), "{name}: {}", stderr(&output));
+        assert!(stdout(&output).is_empty(), "{name}: {}", stdout(&output));
+    };
+
+    let mut omitted = valid.clone();
+    let facets =
+        lint_check_mut(&mut omitted, "engine-track-support")["prediction"]["prediction"]["facets"]
+            .as_array_mut()
+            .expect("facets");
+    facets.pop();
+    omitted["summary"]["prediction_facets"]["available"] = json!(1);
+    reject("omitted-track-facet.json", &omitted);
+
+    let mut swapped = valid.clone();
+    track_support_facets(&swapped);
+    lint_check_mut(&mut swapped, "engine-track-support")["prediction"]["prediction"]["facets"]
+        .as_array_mut()
+        .expect("facets")
+        .swap(0, 1);
+    reject("swapped-track-facets.json", &swapped);
+
+    let mut forged_scope = valid.clone();
+    lint_check_mut(&mut forged_scope, "engine-track-support")["prediction"]["prediction"]["facets"]
+        [0]["scope"]["subject"] = json!("source_animation:7");
+    reject("forged-track-scope.json", &forged_scope);
+
+    let mut forged_result = valid.clone();
+    lint_check_mut(&mut forged_result, "engine-track-support")["prediction"]["prediction"]["facets"]
+        [0]["result"]["result"]["disposition"] = json!("preserved");
+    reject("forged-track-result.json", &forged_result);
+
+    let mut forged_gate = valid.clone();
+    lint_check_mut(&mut forged_gate, "engine-track-support")["prediction"]["prediction"]["facets"]
+        [0]["result"]["result"]["controlling_gate"] = json!("load_animations");
+    reject("forged-track-gate.json", &forged_gate);
+
+    let mut forged_finding = valid.clone();
+    lint_check_mut(&mut forged_finding, "engine-track-support")["findings"] = json!([{
+        "check_id": "engine-track-support",
+        "severity": "note",
+        "message": "forged finding"
+    }]);
+    forged_finding["summary"]["findings"]["note"] = json!(1);
+    reject("forged-track-finding.json", &forged_finding);
+
+    let mut forged_profile = valid.clone();
+    forged_profile["files"][0]["prediction_provenance"]["base"]["profile"]["identity"]["sha256"] =
+        json!("0".repeat(64));
+    reject("forged-track-profile-identity.json", &forged_profile);
+
+    let mut forged_coverage = valid.clone();
+    forged_coverage["files"][0]["prediction_provenance"]["raw_animation_channels"]["source_coverage_complete"] =
+        json!(false);
+    reject("forged-track-coverage.json", &forged_coverage);
+
+    let mut forged_indices = valid.clone();
+    forged_indices["files"][0]["prediction_provenance"]["raw_animation_channels"]["rows"][1]["source_channel_index"] =
+        json!(1);
+    reject("forged-track-indices.json", &forged_indices);
+
+    let mut forged_contracts = valid.clone();
+    forged_contracts["files"][0]["prediction_provenance"]["consumed_contracts"][0] =
+        json!("urn:animsmith:forged-contract:1");
+    reject("forged-track-consumed-contracts.json", &forged_contracts);
+
+    let mut oversized = valid;
+    let rows = oversized["files"][0]["prediction_provenance"]["raw_animation_channels"]["rows"]
+        .as_array()
+        .expect("rows")
+        .clone();
+    oversized["files"][0]["prediction_provenance"]["raw_animation_channels"]["rows"] =
+        Value::Array((0..4_098).flat_map(|_| rows.clone()).collect());
+    reject("oversized-track-inventory.json", &oversized);
 }
 
 #[test]

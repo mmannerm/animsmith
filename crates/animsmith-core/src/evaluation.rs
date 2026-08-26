@@ -17,7 +17,7 @@ use crate::config::{ConfigValidationError, SeveritySetting};
 use crate::finding::Finding;
 use crate::prediction::{
     EnginePredictionV1, EnginePredictionV2, EnginePredictionV3, EnginePredictionV4,
-    PredictionContractError,
+    EnginePredictionV5, PredictionContractError,
 };
 
 /// One authoritative built-in evidence-code definition.
@@ -389,6 +389,7 @@ enum EnginePredictionEvidence {
     V2(EnginePredictionV2),
     V3(EnginePredictionV3),
     V4(EnginePredictionV4),
+    V5(EnginePredictionV5),
 }
 
 impl EnginePredictionEvidence {
@@ -414,6 +415,11 @@ impl EnginePredictionEvidence {
                 .iter()
                 .map(|facet| facet.scope())
                 .collect(),
+            Self::V5(prediction) => prediction
+                .facets()
+                .iter()
+                .map(|facet| facet.scope())
+                .collect(),
         }
     }
 
@@ -423,6 +429,7 @@ impl EnginePredictionEvidence {
             Self::V2(prediction) => prediction.facets()[index].scope(),
             Self::V3(prediction) => prediction.facets()[index].scope(),
             Self::V4(prediction) => prediction.facets()[index].scope(),
+            Self::V5(prediction) => prediction.facets()[index].scope(),
         }
     }
 }
@@ -473,6 +480,12 @@ impl CheckOutput {
         self
     }
 
+    /// Attach a raw-animation-inventory V5 engine-prediction record.
+    pub fn with_engine_prediction_v5(mut self, prediction: EnginePredictionV5) -> Self {
+        self.engine_prediction = Some(EnginePredictionEvidence::V5(prediction));
+        self
+    }
+
     /// Content findings emitted by evaluated work.
     pub fn findings(&self) -> &[Finding] {
         &self.findings
@@ -495,7 +508,8 @@ impl CheckOutput {
             Some(
                 EnginePredictionEvidence::V2(_)
                 | EnginePredictionEvidence::V3(_)
-                | EnginePredictionEvidence::V4(_),
+                | EnginePredictionEvidence::V4(_)
+                | EnginePredictionEvidence::V5(_),
             )
             | None => None,
         }
@@ -508,7 +522,8 @@ impl CheckOutput {
             Some(
                 EnginePredictionEvidence::V1(_)
                 | EnginePredictionEvidence::V3(_)
-                | EnginePredictionEvidence::V4(_),
+                | EnginePredictionEvidence::V4(_)
+                | EnginePredictionEvidence::V5(_),
             )
             | None => None,
         }
@@ -521,7 +536,8 @@ impl CheckOutput {
             Some(
                 EnginePredictionEvidence::V1(_)
                 | EnginePredictionEvidence::V2(_)
-                | EnginePredictionEvidence::V4(_),
+                | EnginePredictionEvidence::V4(_)
+                | EnginePredictionEvidence::V5(_),
             )
             | None => None,
         }
@@ -534,7 +550,22 @@ impl CheckOutput {
             Some(
                 EnginePredictionEvidence::V1(_)
                 | EnginePredictionEvidence::V2(_)
-                | EnginePredictionEvidence::V3(_),
+                | EnginePredictionEvidence::V3(_)
+                | EnginePredictionEvidence::V5(_),
+            )
+            | None => None,
+        }
+    }
+
+    /// V5 raw-animation-inventory prediction attachment.
+    pub const fn engine_prediction_v5(&self) -> Option<&EnginePredictionV5> {
+        match self.engine_prediction.as_ref() {
+            Some(EnginePredictionEvidence::V5(prediction)) => Some(prediction),
+            Some(
+                EnginePredictionEvidence::V1(_)
+                | EnginePredictionEvidence::V2(_)
+                | EnginePredictionEvidence::V3(_)
+                | EnginePredictionEvidence::V4(_),
             )
             | None => None,
         }
@@ -548,6 +579,7 @@ impl CheckOutput {
                 EnginePredictionEvidence::V2(prediction) => prediction.has_required_unavailable(),
                 EnginePredictionEvidence::V3(prediction) => prediction.has_required_unavailable(),
                 EnginePredictionEvidence::V4(prediction) => prediction.has_required_unavailable(),
+                EnginePredictionEvidence::V5(prediction) => prediction.has_required_unavailable(),
             })
     }
 
@@ -855,6 +887,12 @@ impl CheckEvaluation {
                     &output.gaps,
                     &output.findings,
                 )?,
+                EnginePredictionEvidence::V5(prediction) => prediction.validate_for_check(
+                    check_id,
+                    &output.evaluated_scopes,
+                    &output.gaps,
+                    &output.findings,
+                )?,
             }
         } else if output
             .findings
@@ -947,6 +985,11 @@ impl CheckEvaluation {
         self.output.engine_prediction_v4()
     }
 
+    /// V5 raw-animation-inventory prediction attachment.
+    pub const fn engine_prediction_v5(&self) -> Option<&EnginePredictionV5> {
+        self.output.engine_prediction_v5()
+    }
+
     /// Whether this check has unavailable prediction work under either
     /// versioned prediction contract.
     pub fn has_required_prediction_unavailable(&self) -> bool {
@@ -1016,6 +1059,9 @@ impl Serialize for CheckEvaluation {
                     state.serialize_field("prediction", prediction)?;
                 }
                 EnginePredictionEvidence::V4(prediction) => {
+                    state.serialize_field("prediction", prediction)?;
+                }
+                EnginePredictionEvidence::V5(prediction) => {
                     state.serialize_field("prediction", prediction)?;
                 }
             }
@@ -1284,6 +1330,9 @@ pub fn evaluate_checks_v2(
                 .map_or(0, |prediction| prediction.facets().len())
             + output
                 .engine_prediction_v4()
+                .map_or(0, |prediction| prediction.facets().len())
+            + output
+                .engine_prediction_v5()
                 .map_or(0, |prediction| prediction.facets().len());
         if emitted != allocation.emitted_slots() {
             return Err(EvaluationError::PredictionAllocationMismatch {

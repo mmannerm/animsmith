@@ -3,7 +3,9 @@
 Use this page for the exact `bevy` / `0.19.0` / `gltf-asset-loader`
 profiles. Revision 1 owns animation-label addressability. Revision 2 owns the
 unit/effective-scale prediction substrate and its version-pinned load settings.
-Both accept glTF JSON and GLB only; neither applies to a later Bevy release.
+Revision 3 is the current slice for animation/channel gate support. All three
+accept glTF JSON and GLB only; none applies to a later Bevy
+release.
 
 ## What Bevy expects
 
@@ -25,6 +27,7 @@ asset exists.
 |---|---|---|
 | `engine-addressability` | no numeric tolerance; exactly one `Animation{i}` facet per completely inventoried source animation | Predicts the canonical typed label spelling from source order. Partial inventory produces one unsuppressible required-unavailable inventory facet. |
 | `engine-unit-scale` | exact revision-2 profile facts and settings; no tolerance and no content finding | Emits exact 1:1 glTF-metre to Bevy world-length-unit mapping plus distinct loader-scene, primitive-child, and selected-source-node affine classifications. Missing required evidence is unsuppressible required-unavailable. |
+| `engine-track-support` | exact revision-3 gate settings and bounded same-load animation/channel inventory; no content finding | Emits only negative gate outcomes for source animation/channel rows, or required-unavailable evidence when inventory is incomplete or both gates allow loading. Extensions, other constructs, and positive runtime survival are outside this slice. |
 | `rest-world-scale` | selected node factor `1.0` ± `0.0001` inclusive | Finds authored inherited scale at attachment/IK nodes; it does not predict Bevy's imported result. |
 | `scale-keys` | component range greater than `1e-4` | Finds animated scale before runtime transform propagation. |
 | `non-uniform-scale` | relative spread greater than `1e-4` | Flags possible shear/attachment/physics consequences in composed transforms. |
@@ -106,6 +109,45 @@ The handler environment is closed to an empty registry or exactly Bevy 0.19's
 stock PBR handler. Arbitrary application handlers are not approximated. With
 `load_meshes = "empty"`, the rule reports each otherwise-created primitive
 child as suppressed while retaining the source-node entity semantics.
+
+### Revision 3: animation/channel gate support
+
+Revision 3 preserves the revision-2 Bevy tuple and adds the narrow
+`engine-track-support` check. The only new settings are the document-scoped
+`bevy_animation_feature` and `load_animations`, each recorded with its
+explicit/default origin:
+
+```toml
+[engine]
+profile = "bevy"
+profile_revision = 3
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty" # or "bevy_pbr_stock_0_19"
+bevy_animation_feature = true
+load_animations = true
+```
+
+The compiled `bevy_animation` feature gate has precedence over
+`load_animations`. A disabled feature gate therefore predicts a negative drop
+even when `load_animations = true`; with the feature enabled, a false
+`load_animations` setting predicts the corresponding loader drop. These are
+negative importer outcomes, not content findings. If both gates allow loading,
+the result is a stable required-unavailable runtime-survival state because
+AnimSmith does not execute Bevy or inspect its runtime asset.
+
+The rule inventories raw source animation rows and independent per-animation
+channel rows from the same load. Complete-empty source animation inventory is
+not applicable. Partial or unavailable animation/channel coverage emits
+exactly one subjectless, unsuppressible inventory
+`required_prediction_unavailable` facet and no retained-prefix prediction;
+bounded N+1 evidence is therefore distinguishable from a complete result.
+Extensions, unsupported constructs, target survival, graph wiring, and other
+positive runtime claims remain outside revision 3. Its V5 provenance and
+output-v16 contract are current; the revision-2/V4 and output-v15 contracts
+remain preserved and readable.
 
 ## Common failures and fixes
 
