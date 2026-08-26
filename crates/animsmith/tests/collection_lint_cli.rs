@@ -4,16 +4,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:8";
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
+const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:9";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:17";
 const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
 const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 const COLLECTION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-output-v8.schema.json");
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v16.schema.json");
+    include_str!("../../../docs/schemas/collection-output-v9.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v17.schema.json");
 const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
 const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
@@ -90,14 +90,14 @@ fn retained_spike_emits_exact_deterministic_collection_evidence() {
     let value: Value = serde_json::from_slice(&first.stdout).expect("collection JSON");
     assert_schema(&value);
     assert_eq!(value["schema"], COLLECTION_SCHEMA_ID);
-    assert_eq!(value["schema_version"], 8);
+    assert_eq!(value["schema_version"], 9);
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema"],
         OUTPUT_SCHEMA_ID
     );
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema_version"],
-        16
+        17
     );
     assert_eq!(value["summary"]["sources"], 3);
     assert_eq!(value["summary"]["established_clips"], 4);
@@ -342,6 +342,78 @@ take_name = "Take 001"
         value["sources"][0]["dependency_closure"],
         json!({"state": "unavailable", "reasons": ["capture_unavailable"]})
     );
+}
+
+#[test]
+fn unity_generic_v2_non_fbx_source_keeps_root_motion_not_applicable() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(
+        temp.path().join("source.gltf"),
+        fs::read(spike_path("source/walk-a.gltf")).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("unity-generic-v2.toml"),
+        r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 2
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+animation_type = "generic"
+avatar_setup = "create_from_this_model"
+import_animation = true
+root_motion_source = "root"
+
+[clips."*".engine_settings]
+root_rotation = "bake"
+root_position_y = "bake"
+root_position_xz = "bake"
+"#,
+    )
+    .unwrap();
+    let manifest = temp.path().join("collection.toml");
+    fs::write(
+        &manifest,
+        r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example.unity-generic-v2-non-fbx"
+[[sources]]
+key = "source"
+path = "source.gltf"
+config = "unity-generic-v2.toml"
+[[clips]]
+id = "com.example.unity-generic-v2-non-fbx/take"
+source = "source"
+take_index = 0
+take_name = "Take 001"
+"#,
+    )
+    .unwrap();
+
+    let output = collection(&manifest);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&value);
+    let checks = value["sources"][0]["result"]["envelope"]["files"][0]["checks"]
+        .as_array()
+        .expect("nested lint checks");
+    let root_motion = checks
+        .iter()
+        .find(|check| check["check_id"] == "engine-root-motion")
+        .expect("engine-root-motion check");
+    assert_eq!(root_motion["selection"], "selected");
+    assert_eq!(root_motion["configuration"], "enabled");
+    assert_eq!(root_motion["applicability"], "not_applicable");
+    assert_eq!(root_motion["evaluation"], "not_evaluated");
+    assert!(root_motion.get("prediction").is_none());
 }
 
 #[test]

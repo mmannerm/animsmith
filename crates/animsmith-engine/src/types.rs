@@ -570,10 +570,24 @@ impl EngineProfile {
 /// Stable setting id in the revision-2 engine-profile vocabulary.
 ///
 /// This is intentionally distinct from [`SettingId`]: the V1 ids and their
-/// core wire projection are immutable and cannot represent verified defaults
-/// or Bevy's closed load-time environment.
+/// core wire projection are immutable and cannot represent verified defaults,
+/// Unity's closed import modes, or Bevy's closed load-time environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SettingIdV2 {
+    /// Unity animation import mode.
+    AnimationType,
+    /// Unity avatar construction policy.
+    AvatarSetup,
+    /// Unity animation import toggle.
+    ImportAnimation,
+    /// Unity Generic exact source-transform path.
+    RootMotionSource,
+    /// Unity per-clip root-rotation policy.
+    RootRotation,
+    /// Unity per-clip vertical root-position policy.
+    RootPositionY,
+    /// Unity per-clip horizontal root-position policy.
+    RootPositionXz,
     /// Per-load coordinate conversion of the loader-created scene entity.
     RotateSceneEntity,
     /// Per-load coordinate conversion of mesh assets and primitive entities.
@@ -592,6 +606,13 @@ impl SettingIdV2 {
     /// Stable public configuration spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::AnimationType => "animation_type",
+            Self::AvatarSetup => "avatar_setup",
+            Self::ImportAnimation => "import_animation",
+            Self::RootMotionSource => "root_motion_source",
+            Self::RootRotation => "root_rotation",
+            Self::RootPositionY => "root_position_y",
+            Self::RootPositionXz => "root_position_xz",
             Self::RotateSceneEntity => "rotate_scene_entity",
             Self::RotateMeshes => "rotate_meshes",
             Self::LoadMeshes => "load_meshes",
@@ -603,6 +624,13 @@ impl SettingIdV2 {
 
     pub(crate) fn from_str_v2(value: &str) -> Option<Self> {
         match value {
+            "animation_type" => Some(Self::AnimationType),
+            "avatar_setup" => Some(Self::AvatarSetup),
+            "import_animation" => Some(Self::ImportAnimation),
+            "root_motion_source" => Some(Self::RootMotionSource),
+            "root_rotation" => Some(Self::RootRotation),
+            "root_position_y" => Some(Self::RootPositionY),
+            "root_position_xz" => Some(Self::RootPositionXz),
             "rotate_scene_entity" => Some(Self::RotateSceneEntity),
             "rotate_meshes" => Some(Self::RotateMeshes),
             "load_meshes" => Some(Self::LoadMeshes),
@@ -610,6 +638,47 @@ impl SettingIdV2 {
             "bevy_animation_feature" => Some(Self::BevyAnimationFeature),
             "load_animations" => Some(Self::LoadAnimations),
             _ => None,
+        }
+    }
+}
+
+/// Closed Unity animation-type values supported by the revision-2 profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UnityAnimationTypeV2 {
+    /// Unity's generic transform animation mode.
+    Generic,
+    /// Unity's humanoid avatar animation mode.
+    Humanoid,
+    /// Unity's legacy animation mode.
+    Legacy,
+}
+
+impl UnityAnimationTypeV2 {
+    /// Stable public value spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Generic => "generic",
+            Self::Humanoid => "humanoid",
+            Self::Legacy => "legacy",
+        }
+    }
+}
+
+/// Closed Unity avatar-setup values supported by the revision-2 profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UnityAvatarSetupV2 {
+    /// Build an avatar from the imported model.
+    CreateFromThisModel,
+    /// Reuse a separately supplied avatar.
+    CopyFromOtherAvatar,
+}
+
+impl UnityAvatarSetupV2 {
+    /// Stable public value spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CreateFromThisModel => "create_from_this_model",
+            Self::CopyFromOtherAvatar => "copy_from_other_avatar",
         }
     }
 }
@@ -655,6 +724,14 @@ impl BevyGltfHandlerEnvironmentV2 {
 pub enum SettingDomainV2 {
     /// Boolean value.
     Boolean,
+    /// Bake or extract value.
+    BakeOrExtract,
+    /// Exact source-transform path.
+    SourceTransformPath,
+    /// Unity animation type.
+    AnimationType,
+    /// Unity avatar setup policy.
+    AvatarSetup,
     /// Empty/nonempty mesh usage state.
     LoadMeshesState,
     /// Exact supported glTF extension-handler environment.
@@ -666,6 +743,14 @@ pub enum SettingDomainV2 {
 pub enum SettingValueV2 {
     /// Boolean setting value.
     Boolean(bool),
+    /// Root-component bake/extract policy.
+    BakeOrExtract(BakeOrExtract),
+    /// Exact source-transform path.
+    SourceTransformPath(String),
+    /// Unity animation type.
+    AnimationType(UnityAnimationTypeV2),
+    /// Unity avatar setup policy.
+    AvatarSetup(UnityAvatarSetupV2),
     /// Empty/nonempty mesh usage state.
     LoadMeshesState(BevyLoadMeshesStateV2),
     /// Exact supported extension-handler environment.
@@ -677,6 +762,13 @@ impl SettingValueV2 {
         matches!(
             (self, domain),
             (Self::Boolean(_), SettingDomainV2::Boolean)
+                | (Self::BakeOrExtract(_), SettingDomainV2::BakeOrExtract)
+                | (
+                    Self::SourceTransformPath(_),
+                    SettingDomainV2::SourceTransformPath
+                )
+                | (Self::AnimationType(_), SettingDomainV2::AnimationType)
+                | (Self::AvatarSetup(_), SettingDomainV2::AvatarSetup)
                 | (Self::LoadMeshesState(_), SettingDomainV2::LoadMeshesState)
                 | (
                     Self::HandlerEnvironment(_),

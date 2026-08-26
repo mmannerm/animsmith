@@ -49,22 +49,24 @@ members may span documents but must have one exact normalized skeleton basis.
 ## Collection lint
 
 `animsmith collection lint COLLECTION.toml --format json` emits the separate
-current `urn:animsmith:schema:collection-output:8` envelope described by
-[`collection-output-v8.schema.json`](schemas/collection-output-v8.schema.json).
-Historical `urn:animsmith:schema:collection-output:7`,
+current `urn:animsmith:schema:collection-output:9` envelope. Historical
+`urn:animsmith:schema:collection-output:8` (see
+[`collection-output-v8.schema.json`](schemas/collection-output-v8.schema.json)),
+`urn:animsmith:schema:collection-output:7`,
 `urn:animsmith:schema:collection-output:6`,
 `urn:animsmith:schema:collection-output:5`, and
 `urn:animsmith:schema:collection-output:4` envelopes remain immutable.
 It binds the exact manifest bytes to canonically ordered source, logical clip,
 and runtime-set records while preserving each set's declared member order.
-Every available source embeds its ordinary one-file output-v16 lint result;
+Every available source embeds its ordinary one-file output-v17 lint result;
 each established logical clip separately carries the existing
 `ClipMeasurements` value selected by raw source take index and exact authored
 take name, then mapped through the loader's observed normalized clip index.
 This duplicate-safe indexed projection does not revise the historical,
-immutable measurements-v15 name-keyed wire contract; collection-output-v8
-embeds measurements-v16 in its nested output-v16 documents. The strict reader
-continues to bind historical collection-output-v7 only to output-v15,
+immutable measurements-v15 name-keyed wire contract; collection-output-v9
+embeds measurements-v16 in its nested output-v17 documents. The strict reader
+continues to bind historical collection-output-v8 only to output-v16,
+historical collection-output-v7 only to output-v15,
 historical collection-output-v6 only to output-v14, and historical
 collection-output-v5 only to output-v13.
 
@@ -113,7 +115,8 @@ Set-level `evidence.root_travel` counts only members with every required raw
 fact and is complete only when all declared members are fully measured; it
 never reduces the set or adds direction, ratios, thresholds, or policy.
 The strict reader applies a 256 MiB N+1 cap before JSON decoding, validates
-current nested output-v15 plus historical collection-output-v6/output-v14 and
+current nested output-v17 plus historical collection-output-v8/output-v16,
+collection-output-v7/output-v15, collection-output-v6/output-v14, and
 historical collection-output-v5/output-v13 through their existing reader,
 recomputes all summaries/work/set lifecycles, and rejects
 unknown fields or contradictory identities and states. Producer and reader
@@ -122,9 +125,9 @@ collection-manifest V1 row/member/work limits.
 Derived normalized clip names allow at most 4,101 bytes: the 4,096-byte
 authored-name bound plus `#` and the largest duplicate ordinal permitted by the
 4,096-clip manifest bound. Available nested measurement keys retain
-output-v15's 4,096-byte bound.
+output-v17's 4,096-byte bound.
 If such a derived name cannot fit the immutable 4,096-byte text bound of the
-nested output-v15 contract, indexed clip measurements and physical binding are
+nested output-v17 contract, indexed clip measurements and physical binding are
 retained, but the nested document and its name-addressed check reference are
 `nested_output_unavailable`; the collection exits 1 instead of publishing
 schema-invalid nested JSON.
@@ -206,21 +209,25 @@ presentation views; JSON remains the contract.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v16 with the
-current protocol identity `urn:animsmith:schema:output:16`. The retrievable
-schema is [`output-v16.schema.json`](schemas/output-v16.schema.json); its repository URL
-is a retrieval location, not the protocol identity. Output-v11 remains immutable
-historical schema evidence; the measurement reader retains its validation path
-for existing reports, while CLI producers emit output-v16.
+Validation and comparison JSON commands emit output contract v17 with the
+current protocol identity `urn:animsmith:schema:output:17`. Output-v16 remains
+retrievable historical schema evidence at
+[`output-v16.schema.json`](schemas/output-v16.schema.json); its repository URL
+is a retrieval location, not the protocol identity
+`urn:animsmith:schema:output:16`. Output-v11 remains
+immutable historical schema evidence, and the measurement reader retains its
+validation paths for existing reports while CLI producers emit output-v17.
 `urn:animsmith:schema:output:15`, `urn:animsmith:schema:output:14`,
 `urn:animsmith:schema:output:13`, `urn:animsmith:schema:output:12`, and
 `urn:animsmith:schema:output:11` remain immutable historical contracts and are
 never retargeted.
 
-The current CLI emits output-v16. The Bevy revision-3 track-support slice uses
-V5 prediction provenance/readback with the bounded raw animation/channel inventory and gate
-outcomes described below. This does not retarget or invalidate output-v15;
-revision-2/V4 reports remain readable and their behavior remains preserved.
+The current CLI emits output-v17. The Bevy revision-3 track-support slice
+continues to use V5 prediction provenance/readback with the bounded raw
+animation/channel inventory and gate outcomes described below. Unity Generic
+root-motion uses V6 prediction provenance. This does not retarget or invalidate
+output-v16, output-v15, or output-v9; all historical readers remain readable
+and their behavior remains preserved.
 
 Output-v15 retains the V3 provenance/prediction path for revision-1 profiles
 and adds `prediction-provenance:4`, `engine-profile-facts:2`,
@@ -339,11 +346,12 @@ exclusively; regenerate v1 evidence when a v2 consumer is required.
 [`output-v8`](schemas/output-v8.schema.json),
 [`output-v9`](schemas/output-v9.schema.json), and
 [`output-v10`](schemas/output-v10.schema.json) remain historical immutable
-contracts, as do output-v11 through output-v14. The current CLI emits
-output-v15; `diff` also retains strict version-matched historical readers.
+contracts, as do output-v11 through output-v16. The current CLI emits
+output-v17; `diff` also retains strict version-matched historical readers,
+including output-v9.
 Regenerate an output-v14 report with a historical producer when a
 historical v14 artifact is required.
-Regenerate a current output-v15 report from the original asset with
+Regenerate a current output-v17 report from the original asset with
 `animsmith measure --format json` when a current artifact is required.
 
 ## Contact fragments
@@ -1237,7 +1245,7 @@ same total. `summary.checks.gaps` counts typed gaps, while
 
 ### Engine-prediction provenance and scoped facets
 
-Every output-v15 lint file has required nullable `prediction_provenance`. It is
+Every output-v17 lint file has required nullable `prediction_provenance`. It is
 `null` when no exact engine profile was resolved. Revision-1 profiles carry
 immutable prediction-provenance v3 (`urn:animsmith:prediction-provenance:3`): the typed
 profile facts and sources, authoritative input format, bounded resolved
@@ -1280,7 +1288,7 @@ required-unavailable states; this prediction-only rule emits no content
 findings and authorizes no rescaling.
 
 The current successor adds the narrow Bevy revision-3
-`engine-track-support` prediction through V5 provenance and the output-v16
+`engine-track-support` prediction through V5 provenance and the output-v17
 contract. Its same-load raw animation inventory is bounded by both animation
 coverage and independent per-animation channel coverage. With a complete
 inventory, the two gate settings produce only negative outcomes for dropped
@@ -1301,9 +1309,55 @@ facet scope, inventory-row basis, and provenance identity under the same
 bounds before accepting an available result; malformed or contradictory
 serialized claims are rejected rather than repaired into a prediction.
 Extensions, unsupported animation constructs, and other positive runtime
-claims remain outside this revision-3 slice. Output-v15, V4 provenance, and
-revision-2 behavior remain preserved and readable; output-v16 and V5
-provenance are the current CLI contracts.
+claims remain outside this revision-3 slice. Output-v16 and output-v15, V4
+provenance, and revision-2 behavior remain preserved and readable; output-v17
+and V5 provenance are current for the Bevy slice, while Unity Generic
+root-motion uses V6 provenance.
+
+For the exact Unity Generic revision-2 / 6000.3 / `fbx-model-importer` tuple,
+the `engine-root-motion` check is serialized in output-v17 with immutable
+`urn:animsmith:prediction-provenance:6` and `urn:animsmith:engine-prediction:6`
+identities. V6 extends the same-load V5 evidence with the raw FBX transform-path
+inventory and the normalized per-clip movement-owner intent. Each declared
+clip/axis facet records a `RootMotionRouting` result: `gameplay` must pair with
+`baked_into_pose`, and `animation` must pair with `stored_as_root_motion`.
+Conflicts are ordinary error findings bound to the available facet's
+`prediction_scope`.
+
+The prediction lifecycle is independent of the ordinary measurement checks.
+An all-available run is `complete`; mixed available and unavailable facets are
+`partial`; all required-unavailable facets are `not_evaluated`. Missing or
+ambiguous source-path resolution, a path that does not identify the explicitly
+resolved `Root` role, incomplete raw-path or project-intent coverage, settings
+overflow, duplicate clip names, or unavailable translation/yaw evidence yields
+`required_prediction_unavailable`. Such a facet is not a content finding and
+cannot be suppressed by `--allow`; it makes lint exit 1. A missing `Root` never
+falls back to `Hips` for this rule. The consumer-neutral measurement layer may
+still use `Hips` as its historical fallback, but root-motion prediction
+requires the resolved Root source role.
+
+Project-intent scans retain at most each bounded source/declaration prefix plus
+one overflow witness. An ownerless unmapped tail is represented as `NPlusOne`
+intent work and yields one atomic unavailable summary; only complete evidence
+that no owner is declared preserves the check's not-applicable result. Raw path
+evidence is required once declared work exists.
+
+The numeric root trajectory is evidence, not a routing threshold. Translation
+and yaw availability must be `measured` for the corresponding axis; zero
+travel, nonzero travel, and any other finite magnitude follow the same
+owner-versus-setting comparison. This check performs no Unity editor
+execution, imported-asset readback, runtime playback, or engine certification.
+
+Raw FBX paths use a closed, case-sensitive, byte-exact grammar: `/` is the only
+separator and there is no escaping or Unicode normalization; segments are
+nonempty, with no leading/trailing or doubled separators, `.`/`..`, backslashes,
+controls, or Unicode format characters. Segment/path/depth limits are 1,024
+UTF-8 bytes, 4,096 bytes, and 256 segments. The same input bytes are projected
+through a raw-preserving ufbx load so source identities, parent chains, and
+names remain auditable. The implicit ufbx root and generated geometry/scale
+helpers are retained as evidence but cannot match. Only complete inventory
+coverage makes zero matches a proven `NoMatch`; partial or unavailable
+coverage is `CoverageIncomplete`.
 
 Resolved engine settings and prediction provenance v3 use explicit bounded
 N+1 work and coverage evidence. A 4,097th clip produces partial settings
@@ -1383,13 +1437,13 @@ the same numeric value to a conforming adapter.
 
 ## `diff`
 
-`diff --format json` uses the same output v15 header and emits `inputs`, a
+`diff --format json` uses the current output-v17 header and emits `inputs`, a
 delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 15,
-  "schema": "urn:animsmith:schema:output:15",
+  "schema_version": 17,
+  "schema": "urn:animsmith:schema:output:17",
   "tool": {
     "name": "animsmith",
     "version": "0.6.0",
@@ -1404,9 +1458,11 @@ delta count, and structured metric deltas:
 }
 ```
 
-`diff` accepts asset files, one-file output-v15, output-v14, or output-v13 `measure`/`lint`
-reports with measurements-v16, and version-matched historical output-v11/v12 reports with
-measurements-v15. Output-v10 and earlier reports are rejected with guidance to
+`diff` accepts asset files, current output-v17 or historical output-v16, output-v15,
+output-v14, or output-v13 `measure`/`lint` reports with measurements-v16, and
+version-matched historical output-v11/v12 reports with measurements-v15.
+The output-v9 contract and its measurements-v9 pairing remain immutable
+historical evidence; output-v10 and earlier reports are rejected with guidance to
 regenerate them from the original asset. Multi-file reports and other
 unsupported contract versions are also rejected as operator errors.
 Before extracting the clip metrics it uses,

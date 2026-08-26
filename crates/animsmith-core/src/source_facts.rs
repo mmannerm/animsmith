@@ -6,8 +6,8 @@
 use crate::{
     DependencyClosureError, DependencyClosureV1, Document, ExactSourceTimingContractError,
     ExactSourceTimingV1, InputIdentity, RawSceneAttachmentCoverageV1,
-    RawSceneAttachmentInventoryV1, RawSourceSkeletonEvidenceV1, SourceSkeletonAssets,
-    SourceSkeletonCoverage,
+    RawSceneAttachmentInventoryV1, RawSourceSkeletonEvidenceV1, RawTransformPathInventoryV1,
+    SourceSkeletonAssets, SourceSkeletonCoverage,
 };
 use serde::Serialize;
 use std::fmt;
@@ -1784,6 +1784,7 @@ impl RawSourceFactsBuilderV1 {
             dependency_closure,
             exact_source_timing: None,
             raw_scene_attachment_inventory: None,
+            raw_transform_path_inventory: None,
         })
     }
 
@@ -1909,6 +1910,7 @@ pub struct LoadedSource {
     dependency_closure: DependencyClosureV1,
     exact_source_timing: Option<ExactSourceTimingV1>,
     raw_scene_attachment_inventory: Option<RawSceneAttachmentInventoryV1>,
+    raw_transform_path_inventory: Option<RawTransformPathInventoryV1>,
 }
 
 impl fmt::Debug for LoadedSource {
@@ -1922,6 +1924,10 @@ impl fmt::Debug for LoadedSource {
             .field(
                 "raw_scene_attachment_inventory",
                 &self.raw_scene_attachment_inventory,
+            )
+            .field(
+                "raw_transform_path_inventory",
+                &self.raw_transform_path_inventory,
             )
             .field("work", &self.facts.work)
             .finish_non_exhaustive()
@@ -2014,6 +2020,40 @@ impl LoadedSource {
         self.raw_scene_attachment_inventory.as_ref()
     }
 
+    /// Attach bounded raw FBX transform-path evidence from this exact load.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RawTransformPathBindingError`] when the inventory is invalid,
+    /// was not projected from FBX, identifies different primary bytes, or its
+    /// same-load normalized bone count disagrees with the document.
+    pub fn with_raw_transform_path_inventory(
+        mut self,
+        inventory: RawTransformPathInventoryV1,
+    ) -> Result<Self, RawTransformPathBindingError> {
+        inventory
+            .validate()
+            .map_err(|_| RawTransformPathBindingError::InvalidInventory)?;
+        if self.facts.format != SourceFormatV1::Fbx
+            || inventory.source_format() != SourceFormatV1::Fbx
+        {
+            return Err(RawTransformPathBindingError::UnsupportedSourceFormat);
+        }
+        if inventory.primary_input() != &self.facts.primary_identity {
+            return Err(RawTransformPathBindingError::PrimaryIdentityMismatch);
+        }
+        if inventory.projected_bone_count() != self.document.skeleton.bones.len() as u64 {
+            return Err(RawTransformPathBindingError::ProjectedBoneCountMismatch);
+        }
+        self.raw_transform_path_inventory = Some(inventory);
+        Ok(self)
+    }
+
+    /// Borrow same-load raw FBX transform-path evidence when retained.
+    pub const fn raw_transform_path_inventory(&self) -> Option<&RawTransformPathInventoryV1> {
+        self.raw_transform_path_inventory.as_ref()
+    }
+
     /// Consume the owner and deliberately discard importer-sensitive source facts.
     pub fn into_document(self) -> Document {
         self.document
@@ -2046,6 +2086,24 @@ pub enum RawSceneAttachmentBindingError {
         "raw scene/attachment inventory source-skeleton evidence does not match the loaded source"
     )]
     SourceSkeletonMismatch,
+}
+
+/// An attempted raw transform-path sidecar did not bind this loaded source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RawTransformPathBindingError {
+    /// Raw transform-path inventories V1 are currently defined only for FBX loads.
+    #[error("raw transform-path inventory requires an FBX source")]
+    UnsupportedSourceFormat,
+    /// The inventory failed its standalone semantic validation.
+    #[error("raw transform-path inventory is invalid")]
+    InvalidInventory,
+    /// The inventory was produced from different primary bytes.
+    #[error("raw transform-path inventory primary input does not match the loaded source")]
+    PrimaryIdentityMismatch,
+    /// Same-load normalized bone cardinality does not match the document.
+    #[error("raw transform-path inventory projected bone count does not match the document")]
+    ProjectedBoneCountMismatch,
 }
 
 /// Borrowing view over V1 facts and canonical source skeleton evidence.

@@ -72,6 +72,7 @@ mod prediction;
 mod provenance;
 mod registry;
 mod resolver;
+mod root_motion;
 mod track_support;
 mod types;
 mod unit_scale;
@@ -117,17 +118,19 @@ pub use provenance::{
     PredictionProvenanceProjectionError, project_prediction_provenance_v1,
     project_prediction_provenance_v2, project_prediction_provenance_v3,
     project_prediction_provenance_v4, project_prediction_provenance_v5,
+    project_prediction_provenance_v6,
 };
 pub use registry::{
     RegistryValidationErrorV2, profiles_v1, profiles_v2, validate_registry_v1, validate_registry_v2,
 };
 pub use resolver::{
     RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS, ResolutionErrorV2, ResolvedClipCoverageReasonV2,
-    ResolvedClipCoverageV2, ResolvedClipSettings, ResolvedEngineSettingsWorkV2, ResolvedProfile,
-    ResolvedProfileSettingsV2, ResolvedProfileV2, SOURCE_TRANSFORM_PATH_MAX_BYTES,
-    StaticResolution, StaticResolutionV2, lookup_profile, lookup_profile_v2, resolve_static,
-    resolve_static_v2,
+    ResolvedClipCoverageV2, ResolvedClipSettings, ResolvedClipSettingsV2,
+    ResolvedEngineSettingsWorkV2, ResolvedProfile, ResolvedProfileSettingsV2, ResolvedProfileV2,
+    SOURCE_TRANSFORM_PATH_MAX_BYTES, StaticResolution, StaticResolutionV2, lookup_profile,
+    lookup_profile_v2, resolve_static, resolve_static_v2,
 };
+pub use root_motion::{ENGINE_ROOT_MOTION_CHECK_ID, EngineRootMotionCheck};
 pub use track_support::{ENGINE_TRACK_SUPPORT_CHECK_ID, EngineTrackSupportCheck};
 pub use types::{
     AnimationAddressability, BakeOrExtract, BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2,
@@ -137,7 +140,7 @@ pub use types::{
     ResolvedSettingOriginV2, ResolvedSettingV2, RootMotionAddressability, SettingApplicability,
     SettingDefaultV2, SettingDescriptor, SettingDescriptorV2, SettingDomain, SettingDomainV2,
     SettingId, SettingIdV2, SettingMap, SettingMapV2, SettingScope, SettingValue, SettingValueV2,
-    TargetAddressability, UpAxis,
+    TargetAddressability, UnityAnimationTypeV2, UnityAvatarSetupV2, UpAxis,
 };
 pub use unit_scale::{ENGINE_UNIT_SCALE_CHECK_ID, EngineUnitScaleCheck};
 

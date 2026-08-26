@@ -12,8 +12,9 @@ use animsmith_core::{
     DependencyResourceUnavailableReasonV1, Document, ExactSourceRangeSelectionV1,
     ExactSourceTimingObservationStateV1, ExactSourceTimingUnavailableReasonV1, InputIdentity,
     MeasurementContract, RAW_SOURCE_V1_MAX_RESOURCE_REFERENCES, RAW_SOURCE_V1_MAX_TEXT_BYTES,
-    SourceAxisV1, SourceChannelPropertyV1, SourceConstructKindV1, SourceFormatV1,
-    SourceLoaderDispositionV1, SourceObservationStateV1, SourceProvenanceKindV1,
+    RawTransformPathCoverageV1, RawTransformPathNodeKindV1, RawTransformPathResolutionV1,
+    RawTransformPathV1, SourceAxisV1, SourceChannelPropertyV1, SourceConstructKindV1,
+    SourceFormatV1, SourceLoaderDispositionV1, SourceObservationStateV1, SourceProvenanceKindV1,
     SourceResourceKindV1, SourceResourceLocatorV1, SourceSetCoverageStateV1,
     SourceTimeDisplayProtocolV1, SourceTimelineModeV1, SourceUnavailableReasonV1, TrackValues,
     validate_document_shape,
@@ -210,6 +211,88 @@ fn loads_self_authored_rigged_triangle_fixture() {
     assert_eq!(prim.weights, vec![[1.0, 0.0, 0.0, 0.0]; 3]);
 
     assert_eq!(doc.assets.materials.len(), 0);
+}
+
+#[test]
+fn same_load_raw_transform_paths_preserve_original_identity_and_parent_chain() {
+    let loaded = animsmith_fbx::load_source(&fixture()).expect("FBX source loads");
+    let inventory = loaded
+        .raw_transform_path_inventory()
+        .expect("FBX load retains raw transform paths");
+    assert_eq!(inventory.coverage(), RawTransformPathCoverageV1::Complete);
+    assert_eq!(inventory.projected_bone_count(), 3);
+    assert_eq!(inventory.rows().len(), 3);
+
+    let RawTransformPathResolutionV1::Exact(root) =
+        inventory.resolve(&RawTransformPathV1::parse("root").unwrap())
+    else {
+        panic!("raw root path must resolve exactly");
+    };
+    assert_eq!(root.source_node_index(), 1);
+    assert_eq!(root.projected_bone_index(), Some(1));
+    assert_eq!(root.parent_chain(), &[0]);
+
+    let RawTransformPathResolutionV1::Exact(mesh) =
+        inventory.resolve(&RawTransformPathV1::parse("root/tri").unwrap())
+    else {
+        panic!("raw descendant path must resolve exactly");
+    };
+    assert_eq!(mesh.source_node_index(), 2);
+    assert_eq!(mesh.projected_bone_index(), Some(2));
+    assert_eq!(mesh.parent_chain(), &[0, 1]);
+    inventory.validate().expect("same-load inventory validates");
+}
+
+#[test]
+fn raw_transform_projection_excludes_generated_geometry_helpers() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read self-authored fixture")
+        .replace("\r\n", "\n")
+        .replacen(
+            "P: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n\t\t}\n\t}\n\tDeformer: 4001",
+            "P: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",1,1,1\n\t\t\tP: \"GeometricTranslation\", \"Vector3D\", \"Vector\", \"\",1,0,0\n\t\t}\n\t}\n\tDeformer: 4001",
+            1,
+        );
+    let loaded = animsmith_fbx::load_scale_source_bytes(
+        PathBuf::from("helper.fbx").as_path(),
+        source.as_bytes(),
+    )
+    .expect("self-authored helper fixture loads");
+    assert_eq!(loaded.inventory().generated_geometry_helper_node_count, 1);
+    let inventory = loaded.raw_transform_path_inventory().unwrap();
+    assert!(inventory.rows().iter().any(|row| {
+        row.kind() == RawTransformPathNodeKindV1::GeometryTransformHelper
+            && row.addressable_path().is_none()
+    }));
+    let RawTransformPathResolutionV1::Exact(mesh) =
+        inventory.resolve(&RawTransformPathV1::parse("root/tri").unwrap())
+    else {
+        panic!("original path must ignore the generated helper");
+    };
+    assert_eq!(mesh.source_node_index(), 2);
+    assert_eq!(mesh.projected_bone_index(), Some(2));
+}
+
+#[test]
+fn unescaped_source_slash_makes_raw_path_absence_unprovable() {
+    let source = std::fs::read_to_string(fixture())
+        .expect("read self-authored fixture")
+        .replacen("Model::root", "Model::bad/root", 1);
+    let loaded = animsmith_fbx::load_source_bytes(
+        PathBuf::from("unaddressable.fbx").as_path(),
+        source.as_bytes(),
+    )
+    .expect("self-authored unaddressable-name fixture loads");
+    let inventory = loaded.raw_transform_path_inventory().unwrap();
+    assert!(matches!(
+        inventory.coverage(),
+        RawTransformPathCoverageV1::Partial(_)
+    ));
+    assert_eq!(inventory.rows()[1].source_name(), Some("bad/root"));
+    assert!(matches!(
+        inventory.resolve(&RawTransformPathV1::parse("missing").unwrap()),
+        RawTransformPathResolutionV1::CoverageIncomplete { .. }
+    ));
 }
 
 #[test]

@@ -522,7 +522,7 @@ released profile tuples are:
 
 | profile | revision | engine version | importer | accepted source |
 |---|---:|---|---|---|
-| `unity-generic` | 1 | `6000.3` | `fbx-model-importer` | FBX |
+| `unity-generic` | 2 | `6000.3` | `fbx-model-importer` | FBX |
 | `unity-humanoid` | 1 | `6000.3` | `fbx-model-importer` | FBX |
 | `unreal` | 1 | `5.8` | `fbx-importer` | FBX |
 | `godot` | 1 | `4.7` | `resource-importer-scene` | glTF, GLB, or FBX |
@@ -530,24 +530,25 @@ released profile tuples are:
 | `bevy` | 2 | `0.19.0` | `gltf-asset-loader` | glTF or GLB |
 | `bevy` | 3 | `0.19.0` | `gltf-asset-loader` | glTF or GLB |
 
-The accepted-source column is AnimSmith's V1 profile boundary, not a claim
+The accepted-source column is AnimSmith's bounded profile boundary, not a claim
 that the named engine supports no other source formats. An absent `[engine]`
 keeps the existing engine-neutral behavior.
 
-Unity exposes the only V1 setting vocabulary. Every applicable setting is
-required because the cited Unity 6000.3 documentation does not establish a
-default that AnimSmith can safely materialize:
+Unity Generic revision 2 exposes the current closed setting vocabulary. Every
+applicable setting is required because the cited Unity 6000.3 documentation
+does not establish a default that AnimSmith can safely materialize:
 
 ```toml
 [engine]
 profile = "unity-generic"
-profile_revision = 1
+profile_revision = 2
 engine_version = "6000.3"
 importer = "fbx-model-importer"
 
 [engine.settings]
-convert_units = true
-bake_axis_conversion = true
+animation_type = "generic"
+avatar_setup = "create_from_this_model"
+import_animation = true
 root_motion_source = "Reference/Root"
 
 [clips."locomotion_*".engine_settings]
@@ -562,12 +563,16 @@ root_position_xz = "bake"
 ```
 
 `root_motion_source` is an exact document-scoped source-transform path for
-Unity Generic. It is not applicable to Unity Humanoid. The three
-`bake | extract` choices are clip-scoped for both Unity profiles and resolve
-with the normal field-by-field rule: matching globs in lexical order, then an
-exact clip name last. Every real clip must resolve all three choices. Unreal,
-Godot and Bevy revision 1 expose no V1 settings, so supplying any setting is
-an error. Bevy revision 2 is the exact profile used by `engine-unit-scale`.
+Unity Generic revision 2. It is not applicable to Unity Humanoid. The three
+`bake | extract` choices are clip-scoped and resolve with the normal
+field-by-field rule: matching globs in lexical order, then an exact clip name
+last. Every real Generic clip must resolve all three choices. The frozen
+revision-2 document controls are `animation_type = "generic"`,
+`avatar_setup = "create_from_this_model"`, and `import_animation = true`.
+`convert_units` and `bake_axis_conversion` belong to the preserved revision-1
+advice vocabulary, not this root-motion profile. Unreal, Godot and Bevy
+revision 1 expose no V1 settings, so supplying any setting is an error. Bevy
+revision 2 is the exact profile used by `engine-unit-scale`.
 It requires the load-time extension-handler environment and animation-feature
 state; other loader settings have version-pinned defaults that may be
 overridden explicitly:
@@ -616,14 +621,16 @@ partial. When both gates allow loading, the required result is instead a stable
 content findings and cannot be suppressed with `--allow`; any required
 unavailable facet still exits 1.
 
-Revision 3 uses the current output-v16 schema and V5 prediction
+Revision 3's historical artifacts use output-v16 and V5 prediction
 provenance/readback. Revision-2/V4 and output-v15 readers and historical
-examples remain preserved.
+examples remain preserved. Unity Generic root-motion uses the separate V6
+provenance and current output-v17 contract; output-v9 and every later
+historical reader remain immutable and readable.
 
 All statically knowable tuple, setting, value, scope, and applicability errors
 are reported before input I/O. Accepted input format and required per-clip
 materialization are checked after loading. Profile selection never changes
-`measure` values. Current output-v16 records resolved profile provenance on
+`measure` values. Current output-v17 records resolved profile provenance on
 lint files.
 
 The first production rule is `engine-addressability` for the exact Bevy
@@ -648,6 +655,33 @@ animation order changes.
 Current lint uses prediction provenance v3 with bounded 4,096/N+1 settings
 coverage. A 4,097th clip is retained as typed partial-settings overflow
 evidence, never as a complete prefix.
+
+For the exact Unity Generic revision-2 tuple, `engine-root-motion` uses V6
+provenance. It evaluates each explicitly declared `movement_owner_xz`,
+`movement_owner_y`, and `movement_owner_yaw` against the corresponding clip
+`root_position_xz`, `root_position_y`, and `root_rotation` setting. `bake`
+produces `baked_into_pose`, `extract` produces `stored_as_root_motion`; matching
+project/importer ownership is `compatible`, and a mismatch is an ordinary
+error finding with a scoped prediction facet. No numeric travel threshold is
+used: measured translation/yaw availability is required, while the measured
+magnitude is only evidence.
+
+The path must match the explicitly resolved `Root` role in the raw FBX
+transform inventory. Hips is never a fallback for this engine rule. A missing
+or ambiguous path, Root mismatch, incomplete/unavailable raw inventory,
+incomplete intent/settings, duplicate clip name, or unavailable axis
+measurement emits `required_prediction_unavailable`; this is not a content
+finding, cannot be suppressed with `--allow`, and makes lint exit 1. Complete
+all-available work is `complete`, mixed work is `partial`, and all-unavailable
+work is `not_evaluated`. Raw path matching is case-sensitive and byte-exact;
+the only separator is unescaped `/`, with nonempty segments, no `.`/`..`,
+backslashes, controls, or Unicode format characters, and limits of 1,024 bytes
+per segment, 4,096 bytes per path, and 256 segments. The same-byte raw FBX
+projection retains source identities and parent chains, excludes the implicit
+root and generated helpers from matching, and reports `NoMatch` only under
+complete coverage. AnimSmith does not execute Unity, perform imported-asset
+readback or runtime playback, or certify engine behavior. The checked-in and
+CI fixtures for this slice are self-authored synthetic FBX only.
 
 For the exact Unreal revision 1 / 5.8 / `fbx-importer` tuple, lint also runs
 `engine-clip-boundary`. The FBX adapter's same-load exact timing evidence is
@@ -701,11 +735,11 @@ form selects one exact manifest logical id and reloads its declared
 source/config rather than consuming collection-output evidence. Neither form
 infers physical contact, footsteps, gameplay, IK, or engine behavior.
 
-An output-v15 measure report deliberately has no engine provenance or
+An output-v17 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.
 When its operands are JSON reports, `diff` validates the complete
 version-matched records and compares their decoded version-matched measurements
-(historical v15 or current v16); a selected engine profile does not change
+(historical v15/v16 or current v17); a selected engine profile does not change
 that report meaning. When its operands are source assets, the profile is still
 resolved against each loader-owned source format before measurement.
 
@@ -733,20 +767,25 @@ absent selector field or explicit empty list means no runtime-node policy.
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
 See [output.md](output.md) and the current
-`urn:animsmith:schema:output:16` [`output-v16.schema.json`](schemas/output-v16.schema.json). Nested measurement
+`urn:animsmith:schema:output:17`. Output-v16 remains available as historical
+[`output-v16.schema.json`](schemas/output-v16.schema.json) with immutable
+identity `urn:animsmith:schema:output:16`. Nested measurement
 evidence has its own
 `urn:animsmith:schema:measurements:16`
 [`measurements-v16.schema.json`](schemas/measurements-v16.schema.json) contract.
-`urn:animsmith:schema:measurements:15`, `urn:animsmith:schema:output:11`,
+`urn:animsmith:schema:measurements:15`, `urn:animsmith:schema:output:9`,
+`urn:animsmith:schema:output:11`,
 `urn:animsmith:schema:output:12`, `urn:animsmith:schema:output:13`,
 `urn:animsmith:schema:output:14`, and `urn:animsmith:schema:output:15` remain
-historical immutable contracts. `diff`
+historical immutable contracts alongside output-v16. `diff`
 retains strict version-matched readers for output-v11/v12 with
-measurements-v15 and output-v13/v14 with measurements-v16; output-v10 and earlier
-reports require regeneration from the original asset.
+measurements-v15 and output-v13/v14 with measurements-v16; output-v9 and its
+measurements-v9 pairing remain immutable historical contracts. Output-v10 and
+earlier reports require regeneration from the original asset.
 
 `collection lint COLLECTION.toml --format json` emits the separate current
-`urn:animsmith:schema:collection-output:8` contract. Historical
+`urn:animsmith:schema:collection-output:9` contract. Historical
+`urn:animsmith:schema:collection-output:8`,
 `urn:animsmith:schema:collection-output:7`,
 `urn:animsmith:schema:collection-output:6`,
 `urn:animsmith:schema:collection-output:5`, and
@@ -762,8 +801,9 @@ closure identity can establish that source, one of its clips, or a runtime-set
 member; partial/unavailable reasons remain typed and make the result incomplete
 with exit 1. Each established clip binds an exact source take index/name
 to a normalized clip index and carries duplicate-safe indexed measurements.
-The nested whole-document lint envelope advances to output v15 and measurements
-v16. The strict reader preserves version binding for collection-output-v6 with
+The nested whole-document lint envelope advances to output v17 and measurements
+v16. The strict reader preserves version binding for collection-output-v8 with
+output-v16, collection-output-v7 with output-v15, collection-output-v6 with
 output-v14 and collection-output-v5 with output-v13; older historical
 contracts remain immutable and are not retargeted. Regenerate current collection evidence
 before passing it to collection evaluators.

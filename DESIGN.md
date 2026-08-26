@@ -588,8 +588,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): final output v13, identified by
-  `urn:animsmith:schema:output:13`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): current output v17, identified by
+  `urn:animsmith:schema:output:17`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -621,8 +621,9 @@ learns an embedder's contract schema.
   scoped-facet substrate described in Appendix E. Output v11 retained it and
   added per-role resolution outcome and match-policy provenance. Output v12
   introduced bounded V2 provenance/settings/prediction evidence and
-  catalog-allocated facet summaries; output v13 retains that evidence while
-  advancing its nested measurements to v16. Measurements-v15, output-v12, and
+  catalog-allocated facet summaries; output v17 retains that evidence while
+  advancing its nested measurements to v16 and adding V6 root-motion
+  provenance. Output-v9, measurements-v15, output-v12, and
   collection-output-v4 remain immutable historical contracts.
   Measurements v14 gives every clip fact that is not applicable to every
   clip (loop continuity, loop endpoint mode, frame grid, loop seam ratio,
@@ -643,7 +644,7 @@ learns an embedder's contract schema.
   CLI exit status derives from content severity (warnings block only with
   `--deny-warnings`) plus required-unavailable engine-prediction facets;
   ordinary coverage gaps remain nonblocking evidence.
-  The current output-v13 envelope types and immutable identities live in
+  The current output-v17 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -2427,13 +2428,14 @@ The first configuration surface is deliberately small:
 ```toml
 [engine]
 profile = "unity-generic"
-profile_revision = 1
+profile_revision = 2
 engine_version = "6000.3"
 importer = "fbx-model-importer"
 
 [engine.settings]
-convert_units = true
-bake_axis_conversion = true
+animation_type = "generic"
+avatar_setup = "create_from_this_model"
+import_animation = true
 root_motion_source = "Reference/Root"
 
 [clips."locomotion_*"]
@@ -2510,12 +2512,12 @@ error; it is never guessed, treated as an implementation default, or deferred
 to a coverage gap. The resolved settings record therefore contains one exact
 document value or per-clip value for every applicable setting.
 
-The registry contains the five immutable revision-1 tuples plus the preserved
-revision-2 Bevy tuple and the current revision-3 tuple:
+The registry contains the preserved revision-1 tuples plus the current
+revision-2 Unity Generic and Bevy tuples and the revision-3 Bevy tuple:
 
-| family | revision | engine version | importer | AnimSmith V1 input boundary |
+| family | revision | engine version | importer | AnimSmith input boundary |
 |---|---:|---|---|---|
-| `unity-generic` | 1 | `6000.3` | `fbx-model-importer` | FBX |
+| `unity-generic` | 2 | `6000.3` | `fbx-model-importer` | FBX |
 | `unity-humanoid` | 1 | `6000.3` | `fbx-model-importer` | FBX |
 | `unreal` | 1 | `5.8` | `fbx-importer` | FBX |
 | `godot` | 1 | `4.7` | `resource-importer-scene` | glTF JSON, GLB, FBX |
@@ -2525,12 +2527,16 @@ revision-2 Bevy tuple and the current revision-3 tuple:
 
 These are exact versions, not ranges. The Godot row is AnimSmith's bounded V1
 profile boundary rather than a claim that Godot cannot import other formats.
-The two Unity profiles expose document booleans `convert_units` and
-`bake_axis_conversion`, plus per-clip `root_rotation`, `root_position_y`, and
-`root_position_xz` values in the closed `bake | extract` domain. Only Generic
-also exposes the document-scoped `root_motion_source` path. Unreal, Godot, and
-Bevy revision 1 exposes no V1 setting vocabulary, so every supplied key is
-rejected. Bevy revision 2 has a separate closed setting vocabulary for exact
+The preserved Unity revision-1 advice profiles expose document booleans
+`convert_units` and `bake_axis_conversion`, plus per-clip `root_rotation`,
+`root_position_y`, and `root_position_xz` values in the closed `bake | extract`
+domain. Current Unity Generic revision 2 instead exposes the frozen document
+values `animation_type = "generic"`, `avatar_setup = "create_from_this_model"`,
+`import_animation = true`, and the exact document-scoped
+`root_motion_source`, plus those three per-clip root controls. Only Generic
+also exposes `root_motion_source`; it is not applicable to Humanoid. Unreal,
+Godot, and Bevy revision 1 expose no V1 setting vocabulary, so every supplied
+key is rejected. Bevy revision 2 has a separate closed setting vocabulary for exact
 loader coordinate toggles, mesh loading, extension-handler environment,
 animation feature, and animation loading. It materializes version-pinned
 defaults and retains each value's explicit/default origin.
@@ -2553,7 +2559,7 @@ asset-addressability, and animation-target behavior.
 
 Each built-in resolves its exact `(family, profile_revision, engine_version,
 importer)` tuple to an immutable fact-bundle identity such as
-`urn:animsmith:engine-profile:unity-generic:1`. Its data record contains exact
+`urn:animsmith:engine-profile:unity-generic:2`. Its data record contains exact
 engine version and importer values, accepted input formats, source
 and target coordinate bases, importer/runtime facts, allowed setting
 vocabulary, and primary-source references with a verification date. For every
@@ -2722,6 +2728,43 @@ once per engine. The initial families are:
   scale; and
 - `engine-addressability` for scenes, animations, targets, and runtime labels.
 
+The current `engine-root-motion` slice is the exact Unity Generic revision-2 /
+6000.3 / `fbx-model-importer` FBX tuple. Its V6 provenance binds the V5
+same-load source evidence to a bounded raw transform-path inventory and the
+normalized per-clip movement-owner intent. The rule is applicable only when
+that exact profile is resolved and at least one axis is explicitly declared.
+For each declared `horizontal_xz`, `vertical_y`, or `yaw` axis, it compares
+`movement_owner_xz`, `movement_owner_y`, or `movement_owner_yaw` with
+`root_position_xz`, `root_position_y`, or `root_rotation`. `bake` is
+`baked_into_pose`; `extract` is `stored_as_root_motion`. Gameplay ownership
+matches baking, animation ownership matches extraction, and a mismatch emits
+an ordinary error finding bound to the available prediction facet.
+
+The rule has one explicit lifecycle: all available axis facets are `complete`,
+a mixture of available and required-unavailable facets is `partial`, and all
+required-unavailable work is `not_evaluated`. Missing or ambiguous path
+resolution, a path that does not identify the explicitly resolved `Root` role,
+incomplete raw-path or project-intent coverage, settings overflow, duplicate
+clip names, or unavailable axis-specific translation/yaw evidence emits
+`required_prediction_unavailable`; this state is not a content finding and
+cannot be suppressed by `--allow`. The rule never falls back to `Hips`, even
+though the consumer-neutral root-trajectory measurement still uses Hips when
+Root is unresolved. Measurement availability is required, but numeric
+translation/yaw magnitude is not a threshold and does not affect routing.
+
+Generic's `root_motion_source` is a closed, case-sensitive, byte-exact relative
+path. `/` is the only separator and has no escape syntax. Empty segments,
+leading/trailing or doubled separators, `.`/`..`, backslashes, Unicode control
+or format characters are rejected. The bounds are 1,024 UTF-8 bytes per
+segment, 4,096 bytes per path, and 256 segments. The FBX adapter projects
+source identities, names, and parent chains from the same input bytes with a
+raw-preserving ufbx load. The implicit ufbx root and generated geometry/scale
+helpers remain rows but cannot match. Complete inventory coverage is required
+to prove `NoMatch`; partial or unavailable coverage yields `CoverageIncomplete`.
+This is source evidence only: AnimSmith does not execute Unity, read back an
+imported asset, play runtime clips, or certify engine behavior. Repository and
+CI fixtures for this slice are self-authored synthetic FBX files only.
+
 The selected profile chooses applicable rules within those check ids. The
 file-scoped provenance retains the full resolved profile and source identity;
 each check retains prediction facets keyed by the existing evaluation scope,
@@ -2803,8 +2846,10 @@ subjectless, unsuppressible `required_prediction_unavailable` inventory facet
 and no retained-prefix prediction, including the N+1 boundary. If both gates
 allow loading, the result is a stable required-unavailable runtime-survival
 state. Extensions, other constructs, and positive runtime survival are not
-modeled by this slice. V5 provenance and output-v16 are the current contracts;
-V4/revision-2 and output-v15 remain preserved and readable.
+modeled by this slice. V5 provenance and output-v17 are current for this Bevy
+slice; V4/revision-2 and output-v15 remain preserved and readable. The Unity
+Generic root-motion slice uses V6 provenance in output-v17, while output v9
+and all other historical readers remain immutable.
 
 Configuration precedence is consequently:
 
@@ -2836,8 +2881,9 @@ minimum:
 - scoped required-unavailable reasons for prediction evidence that is missing,
   distinct from ordinary engine-neutral coverage gaps.
 
-Output v10 publishes this record; output v9 remains immutable. Under Appendix
-C, `animsmith-core` owns the outer lint envelope, its URN, and the
+Output v17 publishes this record; output v9 remains immutable historical
+evidence. Under Appendix C, `animsmith-core` owns the outer lint envelope, its
+URN, and the
 registry-independent prediction/provenance
 wire types. `animsmith-engine` constructs those wire records through a one-way
 adapter without making core depend on the engine crate. The exact JSON shape is
@@ -3024,10 +3070,11 @@ The dependency order is:
    prediction behavior (#464);
 6. bounded, rooted dependency-closure capture from the raw resource domain
    (#475);
-7. reproducible output-v10 provenance for the resolved target, facts digest,
-   required-prediction state, and per-check basis (#465);
+7. reproducible output-v17 provenance for the resolved target, facts digest,
+   required-prediction state, and per-check basis (#465 and #482);
 8. per-concern prediction rules, split from umbrella issue #154 into bounded
-   engine/rule slices where their input facts differ;
+   engine/rule slices where their input facts differ, including the Unity
+   Generic V6 root-motion path;
 9. single-document preset advice and separate glTF-inventory/Bevy-adapter
    generation (#155 and #156);
 10. prediction-versus-readback feasibility and harness decisions (#151); and
@@ -3069,10 +3116,11 @@ historical `urn:animsmith:schema:collection-output:3` derives from V2 and adds o
 bounded `dependency_closure` state to every source. A complete state retains the
 loader's exact `DependencyClosureIdentityV1`; partial and unavailable states
 retain a nonempty, sorted, unique sequence from the seven closed
-`DependencyClosureCoverageReasonV1` values. The current `collection-output:5`
-embeds the current output-v13 lint envelope with measurements-v16 while
-preserving collection-output-v4 and its nested output-v12/measurements-v15 as
-immutable historical evidence. Only complete closure coverage can
+`DependencyClosureCoverageReasonV1` values. The current `collection-output:9`
+embeds the current output-v17 lint envelope with measurements-v16 while
+preserving collection-output-v8 and its nested output-v16, and
+collection-output-v4 with its nested output-v12/measurements-v15, as immutable
+historical evidence. Only complete closure coverage can
 establish a source, logical clip, or runtime-set member. This keeps primary
 input identity, optional manifest digest pin, and complete loader-input
 identity separate.

@@ -82,6 +82,7 @@
 
 mod capability;
 mod exact_timing;
+mod raw_transform_paths;
 mod source_facts;
 
 /// FBX/KTime constants used by the exact source-timing projection.
@@ -151,6 +152,9 @@ pub enum LoadError {
     /// Exact FBX/KTime evidence violated its isolated in-memory contract.
     #[error("invalid exact source timing projection: {0}")]
     ExactTiming(String),
+    /// The same-load raw transform-path inventory violated its binding contract.
+    #[error("invalid raw FBX transform-path projection: {0}")]
+    RawTransformPath(#[from] animsmith_core::RawTransformPathBindingError),
 }
 
 fn vec3(v: ufbx::Vec3) -> Vec3 {
@@ -518,6 +522,12 @@ fn load_scale_source_bytes_inner(
 
     let construct_counts = source_facts::construct_counts(&scene);
     let raw_facts = source_facts::project(&scene, construct_counts, bytes);
+    let raw_transform_paths = raw_transform_paths::project(
+        bytes,
+        filename,
+        &scene,
+        raw_facts.primary_identity().clone(),
+    );
     let (dependency_closure, resource_capture) =
         capture_dependency_closure(&scene, &raw_facts, resource_root)?;
     let (assets, conversion) = extract_assets(&scene, &resource_capture);
@@ -541,6 +551,7 @@ fn load_scale_source_bytes_inner(
     let source = source
         .with_exact_source_timing(exact_timing)
         .map_err(|error| LoadError::ExactTiming(error.to_string()))?;
+    let source = source.with_raw_transform_path_inventory(raw_transform_paths)?;
 
     Ok(FbxScaleSource {
         source,

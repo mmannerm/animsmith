@@ -1,5 +1,5 @@
-//! Internal producer and strict reader types for current collection-output V8,
-//! plus immutable historical V7, V6, and V5.
+//! Internal producer and strict reader types for current collection-output V9,
+//! plus immutable historical V8, V7, V6, and V5.
 //!
 //! This is deliberately a CLI-local contract.  Core owns the validated
 //! collection declaration vocabulary; this module owns the command's evidence
@@ -17,10 +17,11 @@ use animsmith_core::{
     CollectionDirectionalSpeedManifestIdentityV1, CollectionIdV1, CollectionLogicalIdV1,
     CollectionRuntimeSetKindV1, CollectionSourceKeyV1, DependencyClosureCoverageReasonV1,
     DependencyClosureCoverageV1, DependencyClosureIdentityV1, DependencyClosureV1,
-    DependencyResourceKeyV1, InputIdentity, LintEnvelopeV16, MeasurementReportInput,
+    DependencyResourceKeyV1, InputIdentity, LintEnvelopeV17, MeasurementReportInput,
     OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION,
     OUTPUT_V14_SCHEMA_ID, OUTPUT_V14_SCHEMA_VERSION, OUTPUT_V15_SCHEMA_ID,
-    OUTPUT_V15_SCHEMA_VERSION, ResourceKeySyntaxV1, ToolInfo,
+    OUTPUT_V15_SCHEMA_VERSION, OUTPUT_V16_SCHEMA_ID, OUTPUT_V16_SCHEMA_VERSION,
+    ResourceKeySyntaxV1, ToolInfo,
 };
 use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,8 @@ pub(crate) const COLLECTION_OUTPUT_V7_ID: &str = "urn:animsmith:schema:collectio
 pub(crate) const COLLECTION_OUTPUT_V7_SCHEMA_VERSION: u32 = 7;
 pub(crate) const COLLECTION_OUTPUT_V8_ID: &str = "urn:animsmith:schema:collection-output:8";
 pub(crate) const COLLECTION_OUTPUT_V8_SCHEMA_VERSION: u32 = 8;
+pub(crate) const COLLECTION_OUTPUT_V9_ID: &str = "urn:animsmith:schema:collection-output:9";
+pub(crate) const COLLECTION_OUTPUT_V9_SCHEMA_VERSION: u32 = 9;
 pub(crate) const COLLECTION_OUTPUT_BUDGET_V1_ID: &str = "urn:animsmith:collection-output-budget:1";
 pub(crate) const COLLECTION_OUTPUT_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) const COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -227,7 +230,7 @@ impl SourceDependencyClosureState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub(crate) enum DocumentResult {
-    Available { envelope: Box<LintEnvelopeV16> },
+    Available { envelope: Box<LintEnvelopeV17> },
     Unavailable { reason: DocumentUnavailableReason },
 }
 
@@ -854,8 +857,8 @@ impl CollectionOutput {
             serialized_bytes,
         )?;
         let output = Self {
-            schema_version: COLLECTION_OUTPUT_V8_SCHEMA_VERSION,
-            schema: COLLECTION_OUTPUT_V8_ID,
+            schema_version: COLLECTION_OUTPUT_V9_SCHEMA_VERSION,
+            schema: COLLECTION_OUTPUT_V9_ID,
             tool,
             command: "collection lint",
             manifest,
@@ -1104,6 +1107,9 @@ impl CollectionOutputInput {
             }
             (COLLECTION_OUTPUT_V8_SCHEMA_VERSION, COLLECTION_OUTPUT_V8_ID) => {
                 CollectionOutputRevision::V8
+            }
+            (COLLECTION_OUTPUT_V9_SCHEMA_VERSION, COLLECTION_OUTPUT_V9_ID) => {
+                CollectionOutputRevision::V9
             }
             _ => return Err(CollectionOutputError::Malformed),
         };
@@ -1495,6 +1501,7 @@ enum CollectionOutputRevision {
     V6,
     V7,
     V8,
+    V9,
 }
 
 impl CollectionOutputRevision {
@@ -1503,7 +1510,8 @@ impl CollectionOutputRevision {
             Self::V5 => (OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION),
             Self::V6 => (OUTPUT_V14_SCHEMA_ID, OUTPUT_V14_SCHEMA_VERSION),
             Self::V7 => (OUTPUT_V15_SCHEMA_ID, OUTPUT_V15_SCHEMA_VERSION),
-            Self::V8 => (OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION),
+            Self::V8 => (OUTPUT_V16_SCHEMA_ID, OUTPUT_V16_SCHEMA_VERSION),
+            Self::V9 => (OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION),
         }
     }
 }
@@ -2618,12 +2626,12 @@ fn summarize_wire(
 mod tests {
     use super::*;
     use animsmith_core::{
-        Clip, Config, DependencyClosureBuilderV1, Document, LintFileReportV16, MeasurementContract,
+        Clip, Config, DependencyClosureBuilderV1, Document, LintFileReportV17, MeasurementContract,
         MetricGrids, ResolvedRoles, RigInfo, SourceSetCoverageV1,
     };
     type JsonValue = serde_json::value::Value;
 
-    fn source_fixture() -> (InputIdentity, LintEnvelopeV16, ClipMeasurements) {
+    fn source_fixture() -> (InputIdentity, LintEnvelopeV17, ClipMeasurements) {
         let input = InputIdentity::from_bytes(b"collection-output-source");
         let mut document = Document::default();
         document.clips.push(Clip {
@@ -2640,7 +2648,7 @@ mod tests {
         )
         .unwrap();
         let clip = measurements.clips()["take"].clone();
-        let report = LintFileReportV16::new(
+        let report = LintFileReportV17::new(
             "safe/source.glb",
             input.clone(),
             RigInfo::from_resolved(&document, &roles).unwrap(),
@@ -2651,7 +2659,7 @@ mod tests {
         .unwrap();
         (
             input,
-            LintEnvelopeV16::new(crate::current_tool(), vec![report]).unwrap(),
+            LintEnvelopeV17::new(crate::current_tool(), vec![report]).unwrap(),
             clip,
         )
     }

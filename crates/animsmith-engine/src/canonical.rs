@@ -18,7 +18,7 @@ use animsmith_core::engine_contract::{
     ResolvedEngineSettingsV2, ResolvedEngineSettingsWorkV2,
 };
 use animsmith_core::engine_contract::{
-    EnginePrimarySourceV2 as CorePrimarySourceV2,
+    EngineClipSettingsV3 as CoreClipSettingsV3, EnginePrimarySourceV2 as CorePrimarySourceV2,
     EngineSettingDescriptorV2 as CoreSettingDescriptorV2,
     EngineSettingDomainV2 as CoreSettingDomainV2, EngineSettingIdV2 as CoreSettingIdV2,
     EngineSettingRowV3, EngineSettingValueOriginV3, EngineSettingValueV2 as CoreSettingValueV2,
@@ -133,6 +133,13 @@ pub fn project_engine_profile_v2(
                     },
                     match descriptor.domain() {
                         SettingDomainV2::Boolean => CoreSettingDomainV2::Boolean,
+                        SettingDomainV2::BakeOrExtract => CoreSettingDomainV2::BakeOrExtract,
+                        SettingDomainV2::SourceTransformPath => {
+                            CoreSettingDomainV2::SourceTransformPath
+                        }
+                        SettingDomainV2::AnimationType | SettingDomainV2::AvatarSetup => {
+                            CoreSettingDomainV2::Token
+                        }
                         SettingDomainV2::LoadMeshesState | SettingDomainV2::HandlerEnvironment => {
                             CoreSettingDomainV2::Token
                         }
@@ -191,13 +198,51 @@ pub fn project_resolved_engine_settings_v3(
             )
         })
         .collect::<Vec<_>>();
+    let clips = resolved
+        .clip_settings()
+        .iter()
+        .map(|clip| {
+            CoreClipSettingsV3::new(
+                clip.clip_ordinal(),
+                clip.clip_name(),
+                clip.settings()
+                    .iter()
+                    .map(|(id, resolved)| {
+                        EngineSettingRowV3::new(
+                            setting_id_v2(*id),
+                            setting_value_v2(resolved.value()),
+                            match resolved.origin() {
+                                ResolvedSettingOriginV2::ExplicitConfig => {
+                                    EngineSettingValueOriginV3::ExplicitConfig
+                                }
+                                ResolvedSettingOriginV2::ProfileDefault => {
+                                    EngineSettingValueOriginV3::ProfileDefault
+                                }
+                            },
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let coverage = match resolved.clip_coverage() {
+        ResolvedClipCoverageV2::Complete => CoreSettingsCoverageV2::complete(),
+        ResolvedClipCoverageV2::Partial { .. } => {
+            CoreSettingsCoverageV2::actual_clip_rows_exceeded()
+        }
+    };
+    let work = resolved.work();
     let settings = CoreSettingsV3::new(
         &profile,
         resolved.source_format(),
         document_settings,
-        vec![],
-        CoreSettingsCoverageV2::complete(),
-        CoreSettingsWorkV2::new(0, 0, 0),
+        clips,
+        coverage,
+        CoreSettingsWorkV2::new(
+            work.actual_clip_rows_inspected(),
+            work.materialized_clip_rows(),
+            work.retained_clip_rows(),
+        ),
     )?;
     Ok((profile, settings))
 }
@@ -440,6 +485,13 @@ const fn setting_id(id: SettingId) -> EngineSettingIdV1 {
 
 const fn setting_id_v2(id: SettingIdV2) -> CoreSettingIdV2 {
     match id {
+        SettingIdV2::AnimationType => CoreSettingIdV2::AnimationType,
+        SettingIdV2::AvatarSetup => CoreSettingIdV2::AvatarSetup,
+        SettingIdV2::ImportAnimation => CoreSettingIdV2::ImportAnimation,
+        SettingIdV2::RootMotionSource => CoreSettingIdV2::RootMotionSource,
+        SettingIdV2::RootRotation => CoreSettingIdV2::RootRotation,
+        SettingIdV2::RootPositionY => CoreSettingIdV2::RootPositionY,
+        SettingIdV2::RootPositionXz => CoreSettingIdV2::RootPositionXz,
         SettingIdV2::RotateSceneEntity => CoreSettingIdV2::RotateSceneEntity,
         SettingIdV2::RotateMeshes => CoreSettingIdV2::RotateMeshes,
         SettingIdV2::LoadMeshes => CoreSettingIdV2::LoadMeshes,
@@ -452,6 +504,19 @@ const fn setting_id_v2(id: SettingIdV2) -> CoreSettingIdV2 {
 fn setting_value_v2(value: &SettingValueV2) -> CoreSettingValueV2 {
     match value {
         SettingValueV2::Boolean(value) => CoreSettingValueV2::Boolean(*value),
+        SettingValueV2::BakeOrExtract(value) => CoreSettingValueV2::BakeOrExtract(match value {
+            crate::BakeOrExtract::Bake => {
+                animsmith_core::engine_contract::EngineBakeOrExtractV1::Bake
+            }
+            crate::BakeOrExtract::Extract => {
+                animsmith_core::engine_contract::EngineBakeOrExtractV1::Extract
+            }
+        }),
+        SettingValueV2::SourceTransformPath(value) => {
+            CoreSettingValueV2::SourceTransformPath(value.clone())
+        }
+        SettingValueV2::AnimationType(value) => CoreSettingValueV2::Token(value.as_str().into()),
+        SettingValueV2::AvatarSetup(value) => CoreSettingValueV2::Token(value.as_str().into()),
         SettingValueV2::LoadMeshesState(value) => CoreSettingValueV2::Token(
             match value {
                 crate::BevyLoadMeshesStateV2::Empty => "empty",

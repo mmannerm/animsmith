@@ -145,9 +145,9 @@ exactly one subjectless, unsuppressible inventory
 `required_prediction_unavailable` facet and no retained-prefix prediction;
 bounded N+1 evidence is therefore distinguishable from a complete result.
 Extensions, unsupported constructs, target survival, graph wiring, and other
-positive runtime claims remain outside revision 3. Its V5 provenance and
-output-v16 contract are current; the revision-2/V4 and output-v15 contracts
-remain preserved and readable.
+positive runtime claims remain outside revision 3. Current output-v17 carries
+its V5 provenance unchanged; the immutable output-v16 V5 reader and the
+revision-2/V4 output-v15 reader remain preserved.
 
 ## Common failures and fixes
 

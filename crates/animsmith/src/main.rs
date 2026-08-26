@@ -24,10 +24,12 @@
 #[cfg(feature = "report")]
 use animsmith_core::evaluate_checks;
 use animsmith_core::{
-    Check, CheckCtx, CheckSelection, Config, DiffEnvelope, LintEnvelopeV16, LintFileReportV16,
-    MeasureEnvelope, MeasureFileReport, MeasurementContract, MeasurementFileError,
-    MeasurementReportError, MeasurementReportInput, MeasurementReportReadError, MetricGrids,
-    RigInfo, Severity, TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES, ToolInfo, ToolSource,
+    Check, CheckCtx, CheckSelection, Config, DiffEnvelope, EngineRootMotionClipIntentInputV1,
+    EngineRootMotionClipMappingStateV1, EngineRootMotionProjectIntentV1, LintEnvelopeV17,
+    LintFileReportV17, MeasureEnvelope, MeasureFileReport, MeasurementContract,
+    MeasurementFileError, MeasurementReportError, MeasurementReportInput,
+    MeasurementReportReadError, MetricGrids, RigInfo, RootMotionProjectOwnerV1, Severity,
+    TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES, ToolInfo, ToolSource,
     TransitionFamilyDeclarationInputV1, TransitionPoseDecisionV1, TransitionPoseStatusV1,
     all_checks, evaluate_checks_v2, evaluate_document_transition_poses_v1,
     resolve_configured_roles,
@@ -38,10 +40,11 @@ use animsmith_engine::EngineAddressabilityCheck;
 use animsmith_engine::{
     BakeOrExtract, BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2, ENGINE_CHECK_IDS_V2,
     EngineAddressabilityCheckV3, EngineClipBoundaryCheck, EngineDeclaration, EngineDeclarationV2,
-    EngineImportAdviceStateV1, EngineImportAdviceV1, EngineTrackSupportCheck, EngineUnitScaleCheck,
-    GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityV1, ProfileSelection,
-    ResolvedProfile, ResolvedProfileSettingsV2, ResolvedProfileV2, SettingMap, SettingMapV2,
-    SettingValue, SettingValueV2, StaticResolution, StaticResolutionV2,
+    EngineImportAdviceStateV1, EngineImportAdviceV1, EngineRootMotionCheck,
+    EngineTrackSupportCheck, EngineUnitScaleCheck, GltfAnimationAddressabilityInventoryV1,
+    GltfAnimationAddressabilityV1, ProfileSelection, ResolvedProfile, ResolvedProfileSettingsV2,
+    ResolvedProfileV2, SettingMap, SettingMapV2, SettingValue, SettingValueV2, StaticResolution,
+    StaticResolutionV2, UnityAnimationTypeV2, UnityAvatarSetupV2,
     build_bevy_animation_addressability_adapter_v1, lookup_profile_v2,
 };
 use animsmith_gltf::fix::Repair;
@@ -275,12 +278,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file current output-v16 or historical output-v15/output-v14/output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file current output-v17 or historical output-v16/output-v15/output-v14/output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -864,6 +867,36 @@ fn engine_setting_value_v2(key: &str, value: EngineSettingToml) -> Result<Settin
                 BevyGltfHandlerEnvironmentV2::BevyPbrStock019,
             ))
         }
+        ("animation_type", EngineSettingToml::Text(value)) if value == "generic" => {
+            Ok(SettingValueV2::AnimationType(UnityAnimationTypeV2::Generic))
+        }
+        ("animation_type", EngineSettingToml::Text(value)) if value == "humanoid" => Ok(
+            SettingValueV2::AnimationType(UnityAnimationTypeV2::Humanoid),
+        ),
+        ("animation_type", EngineSettingToml::Text(value)) if value == "legacy" => {
+            Ok(SettingValueV2::AnimationType(UnityAnimationTypeV2::Legacy))
+        }
+        ("avatar_setup", EngineSettingToml::Text(value)) if value == "create_from_this_model" => {
+            Ok(SettingValueV2::AvatarSetup(
+                UnityAvatarSetupV2::CreateFromThisModel,
+            ))
+        }
+        ("avatar_setup", EngineSettingToml::Text(value)) if value == "copy_from_other_avatar" => {
+            Ok(SettingValueV2::AvatarSetup(
+                UnityAvatarSetupV2::CopyFromOtherAvatar,
+            ))
+        }
+        ("root_motion_source", EngineSettingToml::Text(value)) => {
+            Ok(SettingValueV2::SourceTransformPath(value))
+        }
+        (
+            "root_rotation" | "root_position_y" | "root_position_xz",
+            EngineSettingToml::Text(value),
+        ) if value == "bake" => Ok(SettingValueV2::BakeOrExtract(BakeOrExtract::Bake)),
+        (
+            "root_rotation" | "root_position_y" | "root_position_xz",
+            EngineSettingToml::Text(value),
+        ) if value == "extract" => Ok(SettingValueV2::BakeOrExtract(BakeOrExtract::Extract)),
         (key, EngineSettingToml::Text(value)) => Err(format!(
             "invalid revision-2 engine setting value {value:?} for {key:?}"
         )),
@@ -1145,17 +1178,42 @@ impl LoadedConfig {
     fn resolve_engine_profile_v2_input(
         &self,
         source_format: animsmith_core::SourceFormatV1,
+        document: &Document,
     ) -> Result<Option<ResolvedProfileSettingsV2>, String> {
         let Some(engine) = &self.engine_profile_v2 else {
             return Ok(None);
         };
         engine
-            .resolve_input(source_format)
+            .resolve_input_with_clips_iter(
+                source_format,
+                document.clips.iter().map(|clip| clip.name.as_str()),
+            )
             .map(Some)
             .map_err(|error| match &self.path {
                 Some(path) => format!("bad config {}: {error}", path.display()),
                 None => format!("bad config: {error}"),
             })
+    }
+
+    /// Resolve a V2 profile for lint after configuration admission.
+    ///
+    /// The exact Unity Generic V2 root-motion slice is FBX-only. Its lifecycle
+    /// defines any non-FBX source as no work for the check, so lint must retain
+    /// the static configuration validation but omit source-bound V2 evidence
+    /// instead of surfacing the resolver's unsupported-format operator error.
+    /// Other V2 consumers retain the resolver's strict source-format boundary.
+    fn resolve_engine_profile_v2_lint_input(
+        &self,
+        source_format: animsmith_core::SourceFormatV1,
+        document: &Document,
+    ) -> Result<Option<ResolvedProfileSettingsV2>, String> {
+        if self.engine_profile_v2.as_ref().is_some_and(|engine| {
+            is_unity_generic_root_motion_selection(engine.profile().selection())
+                && source_format != animsmith_core::SourceFormatV1::Fbx
+        }) {
+            return Ok(None);
+        }
+        self.resolve_engine_profile_v2_input(source_format, document)
     }
 }
 
@@ -1194,8 +1252,108 @@ fn validate_check_selection(known: &[&str], select: &[String]) -> Result<(), Str
     Ok(())
 }
 
+fn root_motion_owner(
+    owner: Option<animsmith_core::config::MovementOwner>,
+) -> Option<RootMotionProjectOwnerV1> {
+    owner.map(|owner| match owner {
+        animsmith_core::config::MovementOwner::Gameplay => RootMotionProjectOwnerV1::Gameplay,
+        animsmith_core::config::MovementOwner::Animation => RootMotionProjectOwnerV1::Animation,
+    })
+}
+
+fn root_motion_project_intent(
+    source: &animsmith_core::LoadedSource,
+    config: &Config,
+    resolved_root_bone_index: Option<u64>,
+) -> Result<EngineRootMotionProjectIntentV1, String> {
+    let document = source.document();
+    let mut mapped_clip_indices = BTreeSet::new();
+    let source_intent = source
+        .source_facts()
+        .clips()
+        .rows()
+        .iter()
+        // Keep this producer bounded even when a future loader supplies a
+        // lazy source-row view. The project-intent builder retains the same
+        // prefix plus one overflow witness and never needs the tail.
+        .take(animsmith_core::ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS.saturating_add(1))
+        .map(|source_clip| {
+            let normalized_clip_index = match source_clip.normalized_clip_index().state() {
+                animsmith_core::SourceObservationStateV1::Observed(index) => *index,
+                animsmith_core::SourceObservationStateV1::ProvenAbsent => {
+                    return Ok(EngineRootMotionClipIntentInputV1::new(
+                        EngineRootMotionClipMappingStateV1::ProvenAbsent,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ));
+                }
+                animsmith_core::SourceObservationStateV1::Unavailable(_) => {
+                    return Ok(EngineRootMotionClipIntentInputV1::new(
+                        EngineRootMotionClipMappingStateV1::Unavailable,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ));
+                }
+            };
+            let clip = document
+                .clips
+                .get(normalized_clip_index)
+                .ok_or_else(|| "raw source clip maps outside the normalized document".to_owned())?;
+            mapped_clip_indices.insert(normalized_clip_index);
+            let expectations = config.expectations_for(&clip.name);
+            Ok(EngineRootMotionClipIntentInputV1::new(
+                EngineRootMotionClipMappingStateV1::Observed,
+                Some(u64::try_from(normalized_clip_index).map_err(|_| {
+                    "normalized clip index exceeds the root-motion contract".to_owned()
+                })?),
+                Some(clip.name.clone()),
+                root_motion_owner(expectations.normalized_movement_owner_xz()),
+                root_motion_owner(expectations.movement_owner_y),
+                root_motion_owner(expectations.movement_owner_yaw),
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let unmapped_declarations = document
+        .clips
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !mapped_clip_indices.contains(index))
+        .map(|(_, clip)| {
+            let expectations = config.expectations_for(&clip.name);
+            [
+                root_motion_owner(expectations.normalized_movement_owner_xz()),
+                root_motion_owner(expectations.movement_owner_y),
+                root_motion_owner(expectations.movement_owner_yaw),
+            ]
+        });
+    EngineRootMotionProjectIntentV1::from_clips_with_root_and_unmapped(
+        resolved_root_bone_index,
+        source_intent,
+        unmapped_declarations,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn is_unity_generic_root_motion_selection(selection: &ProfileSelection) -> bool {
+    selection.family() == "unity-generic"
+        && selection.profile_revision() == 2
+        && selection.engine_version() == "6000.3"
+        && selection.importer() == "fbx-model-importer"
+}
+
+fn is_unity_generic_root_motion_profile(profile: &ResolvedProfileSettingsV2) -> bool {
+    is_unity_generic_root_motion_selection(profile.profile().selection())
+        && profile.source_format() == animsmith_core::SourceFormatV1::Fbx
+}
+
 struct LintAnalysis {
-    report: LintFileReportV16,
+    report: LintFileReportV17,
     requires_failure: bool,
     indexed_measurements: Vec<animsmith_core::measure::ClipMeasurements>,
 }
@@ -1209,6 +1367,13 @@ fn analyze_loaded_lint(
     allowed: &BTreeSet<String>,
 ) -> Result<LintAnalysis, String> {
     let input = loaded.input().clone();
+    let doc = loaded.document();
+    let roles = resolve_configured_roles(&doc.skeleton, &config.config.rig);
+    let resolved_root_bone_index = roles
+        .get(animsmith_core::profile::Role::Root)
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| "resolved Root bone index exceeds the root-motion contract".to_owned())?;
     let prediction_provenance_v3 = loaded
         .engine_v2
         .as_ref()
@@ -1220,22 +1385,51 @@ fn analyze_loaded_lint(
         .runtime_node_selectors()
         .map(|selectors| selectors.selectors().to_vec())
         .unwrap_or_default();
+    let prediction_provenance_v6 = loaded
+        .engine_v4
+        .as_ref()
+        .filter(|profile| is_unity_generic_root_motion_profile(profile))
+        .map(|profile| {
+            animsmith_engine::project_prediction_provenance_v6(
+                profile,
+                &loaded.source,
+                runtime_node_selectors.clone(),
+                root_motion_project_intent(
+                    &loaded.source,
+                    &config.config,
+                    resolved_root_bone_index,
+                )?,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .transpose()?;
     let prediction_provenance_v5 = loaded
         .engine_v4
         .as_ref()
+        .filter(|profile| !is_unity_generic_root_motion_profile(profile))
         .map(|profile| {
             animsmith_engine::project_prediction_provenance_v5(
                 profile,
                 &loaded.source,
-                runtime_node_selectors,
+                runtime_node_selectors.clone(),
             )
         })
         .transpose()
         .map_err(|error| error.to_string())?;
-    debug_assert!(prediction_provenance_v3.is_none() || prediction_provenance_v5.is_none());
-    let doc = loaded.document();
-    let roles = resolve_configured_roles(&doc.skeleton, &config.config.rig);
+    debug_assert!(
+        [
+            prediction_provenance_v3.is_some(),
+            prediction_provenance_v5.is_some(),
+            prediction_provenance_v6.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count()
+            <= 1
+    );
     let grids = MetricGrids::new(doc);
+    let indexed_measurements =
+        animsmith_core::measure::measure_document_indexed(&grids, &roles, &config.config);
     let ctx = CheckCtx::new(&grids, &roles, &config.config);
     let evaluations = {
         let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
@@ -1255,12 +1449,19 @@ fn analyze_loaded_lint(
             EngineTrackSupportCheck::new(&loaded.source, prediction_provenance_v5.as_ref())
                 .map_err(|error| error.to_string())?,
         ));
+        checks.push(Box::new(
+            EngineRootMotionCheck::new(
+                &loaded.source,
+                prediction_provenance_v6.as_ref(),
+                &roles,
+                &indexed_measurements,
+            )
+            .map_err(|error| error.to_string())?,
+        ));
         evaluate_checks_v2(&ctx, &checks, selection).map_err(|error| error.to_string())?
     };
     let requires_failure =
         animsmith_core::evaluation::lint_requires_failure(&evaluations, fail_at, allowed);
-    let indexed_measurements =
-        animsmith_core::measure::measure_document_indexed(&grids, &roles, &config.config);
     let measurements = doc
         .clips
         .iter()
@@ -1271,8 +1472,8 @@ fn analyze_loaded_lint(
     let measurements =
         MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(doc))
             .map_err(|error| error.to_string())?;
-    let report = match prediction_provenance_v5 {
-        Some(provenance) => LintFileReportV16::new_v5(
+    let report = match (prediction_provenance_v6, prediction_provenance_v5) {
+        (Some(provenance), None) => LintFileReportV17::new_v6(
             path_label,
             input,
             rig,
@@ -1280,7 +1481,15 @@ fn analyze_loaded_lint(
             evaluations,
             measurements,
         ),
-        None => LintFileReportV16::new(
+        (None, Some(provenance)) => LintFileReportV17::new_v5(
+            path_label,
+            input,
+            rig,
+            Some(provenance),
+            evaluations,
+            measurements,
+        ),
+        (None, None) => LintFileReportV17::new(
             path_label,
             input,
             rig,
@@ -1288,6 +1497,7 @@ fn analyze_loaded_lint(
             evaluations,
             measurements,
         ),
+        (Some(_), Some(_)) => unreachable!("prediction provenance revisions are exclusive"),
     }
     .map_err(|error| error.to_string())?;
     Ok(LintAnalysis {
@@ -1388,7 +1598,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             match format {
                 PresentationFormat::Json => {
-                    let envelope = LintEnvelopeV16::new(current_tool(), reports)
+                    let envelope = LintEnvelopeV17::new(current_tool(), reports)
                         .map_err(|error| error.to_string())?;
                     render::print_json(&envelope)?;
                 }
@@ -1928,7 +2138,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// current output-v16 or historical output-v15/output-v14/output-v13 `measure`/`lint` JSON report
+/// current output-v17 or historical output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report
 /// carrying measurements-v16.
 fn load_measurements(
     path: &Path,
@@ -1949,7 +2159,7 @@ fn load_measurements(
             }
             _ => format!("{} {error}", path.display()),
         })?;
-        // Current output-v16 and historical output-v15/output-v14/output-v13/output-v12/output-v11 envelopes
+        // Current output-v17 and historical output-v16/output-v15/output-v14/output-v13/output-v12/output-v11 envelopes
         // are accepted only with their version-matched measurements contract.
         // The V11 route retains its original V1 evidence validation; producers
         // emit V16.
@@ -2242,7 +2452,8 @@ fn load_with_config_v2(path: &Path, config: &LoadedConfig) -> Result<LoadedInput
     let mut loaded = load_with_identity(path)?;
     let facts = loaded.source.source_facts();
     loaded.engine_v2 = config.resolve_engine_input_v2(facts.format(), loaded.source.document())?;
-    loaded.engine_v4 = config.resolve_engine_profile_v2_input(facts.format())?;
+    loaded.engine_v4 =
+        config.resolve_engine_profile_v2_lint_input(facts.format(), loaded.source.document())?;
     Ok(loaded)
 }
 

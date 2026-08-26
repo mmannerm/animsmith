@@ -102,6 +102,17 @@ pub trait Check {
         true
     }
 
+    /// Whether an explicitly selected and applicable check may be disabled
+    /// with `severity = "off"`.
+    ///
+    /// Most checks may be disabled by configuration. Checks whose evidence is
+    /// required whenever their declared work applies can opt out by returning
+    /// `false`; the evaluation runners then return a typed error instead of
+    /// silently dropping the check.
+    fn allows_severity_off(&self) -> bool {
+        true
+    }
+
     /// Whether this document and configuration declare work for the check.
     ///
     /// The runner calls this cheap predicate even for disabled or unselected

@@ -3,6 +3,128 @@ use serde::{Deserialize, Deserializer};
 use std::fmt;
 use std::marker::PhantomData;
 
+struct CappedStringVisitor {
+    limit: usize,
+}
+
+impl CappedStringVisitor {
+    fn retain<E>(self, value: &str) -> Result<String, E>
+    where
+        E: serde::de::Error,
+    {
+        if value.len() > self.limit {
+            return Err(E::custom(format!(
+                "string exceeds bounded UTF-8 byte limit of {}",
+                self.limit
+            )));
+        }
+        Ok(value.to_owned())
+    }
+
+    fn retain_owned<E>(self, value: String) -> Result<String, E>
+    where
+        E: serde::de::Error,
+    {
+        if value.len() > self.limit {
+            return Err(E::custom(format!(
+                "string exceeds bounded UTF-8 byte limit of {}",
+                self.limit
+            )));
+        }
+        Ok(value)
+    }
+}
+
+impl<'de> Visitor<'de> for CappedStringVisitor {
+    type Value = String;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "a UTF-8 string with at most {} bytes",
+            self.limit
+        )
+    }
+
+    fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.retain(value)
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.retain(value)
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.retain_owned(value)
+    }
+}
+
+pub(crate) fn deserialize_capped_string<'de, D>(
+    deserializer: D,
+    limit: usize,
+) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserializer.deserialize_str(CappedStringVisitor { limit })
+}
+
+pub(crate) fn deserialize_capped_option_string<'de, D>(
+    deserializer: D,
+    limit: usize,
+) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptionalCappedStringVisitor {
+        limit: usize,
+    }
+
+    impl<'de> Visitor<'de> for OptionalCappedStringVisitor {
+        type Value = Option<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                formatter,
+                "null or a UTF-8 string with at most {} bytes",
+                self.limit
+            )
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserialize_capped_string(deserializer, self.limit).map(Some)
+        }
+    }
+
+    deserializer.deserialize_option(OptionalCappedStringVisitor { limit })
+}
+
 #[derive(Debug)]
 pub(crate) struct CappedSequence<T> {
     pub(crate) values: Vec<T>,

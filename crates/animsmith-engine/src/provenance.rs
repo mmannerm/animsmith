@@ -7,7 +7,10 @@ use animsmith_core::prediction::{
     RawSceneAttachmentBindingV1, RawSceneAttachmentUnavailableReasonV1, RawSourceBindingV1,
     RawSourceBindingV2,
 };
-use animsmith_core::{LoadedSource, PredictionProvenanceV5, RawAnimationChannelInventoryV1};
+use animsmith_core::{
+    EngineRootMotionProjectIntentV1, LoadedSource, PredictionProvenanceV5, PredictionProvenanceV6,
+    RawAnimationChannelInventoryV1, RawTransformPathInventoryV1, SourceFormatV1,
+};
 
 /// Failure to project already-resolved engine and same-load source evidence.
 #[derive(Debug, thiserror::Error)]
@@ -121,9 +124,14 @@ pub fn project_prediction_provenance_v4(
         .cloned()
         .map_or_else(
             || {
-                RawSceneAttachmentBindingV1::unavailable(
-                    RawSceneAttachmentUnavailableReasonV1::LoaderEvidenceUnavailable,
-                )
+                RawSceneAttachmentBindingV1::unavailable(match source.source_facts().format() {
+                    SourceFormatV1::Glb | SourceFormatV1::GltfJson => {
+                        RawSceneAttachmentUnavailableReasonV1::LoaderEvidenceUnavailable
+                    }
+                    SourceFormatV1::Fbx => {
+                        RawSceneAttachmentUnavailableReasonV1::UnsupportedSourceFormat
+                    }
+                })
             },
             RawSceneAttachmentBindingV1::available,
         );
@@ -149,5 +157,34 @@ pub fn project_prediction_provenance_v5(
     Ok(PredictionProvenanceV5::new(
         base,
         RawAnimationChannelInventoryV1::from_source(source.source_facts()),
+    )?)
+}
+
+/// Project V6 provenance for the exact Unity Generic root-motion slice.
+///
+/// The raw transform inventory is consumed only from the supplied same-load
+/// source. A loader without that optional sidecar retains a typed unavailable
+/// inventory; this adapter never reopens or reparses the input.
+pub fn project_prediction_provenance_v6(
+    profile: &crate::ResolvedProfileSettingsV2,
+    source: &LoadedSource,
+    runtime_node_selectors: Vec<String>,
+    root_motion_project_intent: EngineRootMotionProjectIntentV1,
+) -> Result<PredictionProvenanceV6, PredictionProvenanceProjectionError> {
+    let base = project_prediction_provenance_v5(profile, source, runtime_node_selectors)?;
+    let raw_transform_paths = source
+        .raw_transform_path_inventory()
+        .cloned()
+        .unwrap_or_else(|| {
+            RawTransformPathInventoryV1::unavailable(
+                source.source_facts().primary_identity().clone(),
+                source.source_facts().format(),
+                source.document().skeleton.bones.len() as u64,
+            )
+        });
+    Ok(PredictionProvenanceV6::new(
+        base,
+        raw_transform_paths,
+        root_motion_project_intent,
     )?)
 }

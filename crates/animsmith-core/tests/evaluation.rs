@@ -7,6 +7,7 @@ use animsmith_core::{
     CheckOutput, CheckSelection, Config, ConfigurationState, CoverageGap, CoverageGapCode,
     Document, EvaluationError, EvaluationScope, EvaluationScopeCode, EvaluationState, Finding,
     MetricGrids, ResolvedRoles, SelectionState, Severity, Value, evaluate_checks,
+    evaluate_checks_v2,
 };
 
 struct Complete;
@@ -130,6 +131,32 @@ impl Check for PoisonCheck {
 
     fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
         panic!("inactive check {} must not evaluate", self.id)
+    }
+}
+
+struct ProtectedCheck {
+    applicable: bool,
+}
+
+impl Check for ProtectedCheck {
+    fn id(&self) -> &'static str {
+        "protected"
+    }
+
+    fn allows_severity_off(&self) -> bool {
+        false
+    }
+
+    fn applicability(&self, _ctx: &CheckCtx) -> Applicability {
+        if self.applicable {
+            Applicability::Applicable
+        } else {
+            Applicability::NotApplicable
+        }
+    }
+
+    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
+        panic!("protected check must remain inactive when not applicable or unselected")
     }
 }
 
@@ -272,6 +299,87 @@ fn disabled_unselected_and_not_applicable_are_independent_and_never_execute() {
             "inactive check emitted coverage gaps"
         );
     }
+}
+
+#[test]
+fn selected_applicable_protected_check_cannot_use_severity_off_in_both_runners() {
+    let doc = Document::default();
+    let roles = ResolvedRoles::default();
+    let config = Config {
+        checks: BTreeMap::from([(
+            "protected".to_owned(),
+            CheckSettings {
+                severity: Some(SeveritySetting::Off),
+                ..CheckSettings::default()
+            },
+        )]),
+        ..Config::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+    let checks: Vec<Box<dyn Check>> = vec![Box::new(ProtectedCheck { applicable: true })];
+    let selected = BTreeSet::from(["protected".to_owned()]);
+
+    let v1 = evaluate_checks(&ctx, &checks, CheckSelection::Only(&selected));
+    assert!(matches!(
+        v1,
+        Err(EvaluationError::SeverityOffNotAllowed {
+            check_id: "protected"
+        })
+    ));
+    let v2 = evaluate_checks_v2(&ctx, &checks, CheckSelection::Only(&selected));
+    assert!(matches!(
+        v2,
+        Err(EvaluationError::SeverityOffNotAllowed {
+            check_id: "protected"
+        })
+    ));
+}
+
+#[test]
+fn protected_check_may_be_off_when_unselected_or_not_applicable() {
+    let doc = Document::default();
+    let roles = ResolvedRoles::default();
+    let config = Config {
+        checks: BTreeMap::from([(
+            "protected".to_owned(),
+            CheckSettings {
+                severity: Some(SeveritySetting::Off),
+                ..CheckSettings::default()
+            },
+        )]),
+        ..Config::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let ctx = CheckCtx::new(&grids, &roles, &config);
+
+    let unselected_checks: Vec<Box<dyn Check>> =
+        vec![Box::new(ProtectedCheck { applicable: true })];
+    let unselected = evaluate_checks(
+        &ctx,
+        &unselected_checks,
+        CheckSelection::Only(&BTreeSet::new()),
+    )
+    .unwrap();
+    assert_eq!(unselected[0].selection(), SelectionState::Unselected);
+    assert_eq!(unselected[0].configuration(), ConfigurationState::Disabled);
+
+    let not_applicable_checks: Vec<Box<dyn Check>> =
+        vec![Box::new(ProtectedCheck { applicable: false })];
+    let not_applicable = evaluate_checks_v2(
+        &ctx,
+        &not_applicable_checks,
+        CheckSelection::Only(&BTreeSet::from(["protected".to_owned()])),
+    )
+    .unwrap();
+    assert_eq!(
+        not_applicable[0].applicability(),
+        Applicability::NotApplicable
+    );
+    assert_eq!(
+        not_applicable[0].configuration(),
+        ConfigurationState::Disabled
+    );
 }
 
 #[test]
