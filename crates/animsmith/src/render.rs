@@ -305,12 +305,9 @@ fn import_advice_v2_state(state: EngineImportAdviceStateV2) -> &'static str {
 
 fn import_advice_v2_refusal(reason: EngineImportAdviceRefusalReasonV2) -> &'static str {
     match reason {
-        EngineImportAdviceRefusalReasonV2::ProfileFactUnknown => "profile_fact_unknown",
-        EngineImportAdviceRefusalReasonV2::PrimarySourceUnavailable => "primary_source_unavailable",
         EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete => {
             "dependency_closure_incomplete"
         }
-        EngineImportAdviceRefusalReasonV2::SettingUnavailable => "setting_unavailable",
     }
 }
 

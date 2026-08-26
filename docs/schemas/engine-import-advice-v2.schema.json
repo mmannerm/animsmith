@@ -15,13 +15,13 @@
     "basis": { "$ref": "urn:animsmith:schema:output:15#/$defs/prediction_basis_v4" },
     "projection": { "$ref": "#/$defs/projection" },
     "state": { "enum": ["available", "refused"] },
-    "refusal_reason": { "enum": ["profile_fact_unknown", "primary_source_unavailable", "dependency_closure_incomplete", "setting_unavailable"] }
+    "refusal_reason": { "const": "dependency_closure_incomplete" }
   },
   "allOf": [
     {
-      "if": { "properties": { "state": { "const": "available" } }, "required": ["state"] },
-      "then": { "required": ["projection"], "not": { "required": ["refusal_reason"] } },
-      "else": { "required": ["refusal_reason"], "not": { "required": ["projection"] } }
+      "if": { "properties": { "prediction_provenance": { "properties": { "dependency_closure": { "properties": { "coverage": { "properties": { "state": { "const": "complete" } }, "required": ["state"] } }, "required": ["coverage"] } }, "required": ["dependency_closure"] } }, "required": ["prediction_provenance"] },
+      "then": { "properties": { "state": { "const": "available" } }, "required": ["projection"], "not": { "required": ["refusal_reason"] } },
+      "else": { "properties": { "state": { "const": "refused" } }, "required": ["refusal_reason"], "not": { "required": ["projection"] } }
     },
     {
       "oneOf": [

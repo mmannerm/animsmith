@@ -1097,14 +1097,8 @@ pub enum EngineImportAdviceStateV2 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineImportAdviceRefusalReasonV2 {
-    /// The profile did not establish the exact import-setting projection fact.
-    ProfileFactUnknown,
-    /// No retained primary source supports the exact fact and settings.
-    PrimarySourceUnavailable,
     /// Same-load dependency closure was not complete.
     DependencyClosureIncomplete,
-    /// A required document setting was not materialized.
-    SettingUnavailable,
 }
 
 /// Native scalar carried by a V2 importer projection.
@@ -1254,30 +1248,18 @@ impl EngineImportAdviceV2 {
         let provenance = project_prediction_provenance_v4(profile, source, Vec::new())
             .map_err(|error| EngineImportAdviceError::InvalidV2Provenance(error.to_string()))?;
         let basis = v2_basis(&provenance)?;
-        let authority = v2_authority(&provenance, source);
-        let (state, refusal_reason, projection) = match authority {
-            None => {
-                let reason = if !source.dependency_closure().coverage().is_complete() {
-                    EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete
-                } else {
-                    match v2_authority_reason(&provenance) {
-                        EngineImportAdviceRefusalReasonV2::ProfileFactUnknown => {
-                            EngineImportAdviceRefusalReasonV2::ProfileFactUnknown
-                        }
-                        EngineImportAdviceRefusalReasonV2::PrimarySourceUnavailable => {
-                            EngineImportAdviceRefusalReasonV2::PrimarySourceUnavailable
-                        }
-                        _ => EngineImportAdviceRefusalReasonV2::SettingUnavailable,
-                    }
-                };
-                (EngineImportAdviceStateV2::Refused, Some(reason), None)
-            }
-            Some(()) => {
+        let (state, refusal_reason, projection) =
+            if source.dependency_closure().coverage().is_complete() {
                 let projection = v2_projection(&provenance)?;
                 projection.validate()?;
                 (EngineImportAdviceStateV2::Available, None, Some(projection))
-            }
-        };
+            } else {
+                (
+                    EngineImportAdviceStateV2::Refused,
+                    Some(EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete),
+                    None,
+                )
+            };
         let mut report = Self {
             schema_version: ENGINE_IMPORT_ADVICE_V2_SCHEMA_VERSION,
             schema: ENGINE_IMPORT_ADVICE_V2_ID,
@@ -1508,51 +1490,6 @@ impl EngineImportAdviceReadbackV2 {
     }
 }
 
-fn v2_authority(
-    provenance: &animsmith_core::PredictionProvenanceV4,
-    source: &LoadedSource,
-) -> Option<()> {
-    if !source.dependency_closure().coverage().is_complete() {
-        return None;
-    }
-    if !matches!(
-        provenance.profile().fact(animsmith_core::EngineFactIdV2::ImportSettingProjection),
-        Some(fact)
-            if matches!(
-                fact.state(),
-                animsmith_core::EngineFactStateV2::Known(
-                    animsmith_core::EngineFactValueV2::Token(_)
-                )
-            )
-    ) {
-        return None;
-    }
-    if !v2_supporting_sources(provenance).is_empty() {
-        Some(())
-    } else {
-        None
-    }
-}
-
-fn v2_authority_reason(
-    provenance: &animsmith_core::PredictionProvenanceV4,
-) -> EngineImportAdviceRefusalReasonV2 {
-    match provenance
-        .profile()
-        .fact(animsmith_core::EngineFactIdV2::ImportSettingProjection)
-        .map(|fact| fact.state())
-    {
-        Some(animsmith_core::EngineFactStateV2::Known(_)) => {
-            if v2_supporting_sources(provenance).is_empty() {
-                EngineImportAdviceRefusalReasonV2::PrimarySourceUnavailable
-            } else {
-                EngineImportAdviceRefusalReasonV2::SettingUnavailable
-            }
-        }
-        _ => EngineImportAdviceRefusalReasonV2::ProfileFactUnknown,
-    }
-}
-
 fn v2_supporting_sources(
     provenance: &animsmith_core::PredictionProvenanceV4,
 ) -> Vec<&animsmith_core::EnginePrimarySourceV2> {
@@ -1704,12 +1641,9 @@ fn v2_projection(
 
 fn v2_refusal_name(reason: EngineImportAdviceRefusalReasonV2) -> &'static str {
     match reason {
-        EngineImportAdviceRefusalReasonV2::ProfileFactUnknown => "profile_fact_unknown",
-        EngineImportAdviceRefusalReasonV2::PrimarySourceUnavailable => "primary_source_unavailable",
         EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete => {
             "dependency_closure_incomplete"
         }
-        EngineImportAdviceRefusalReasonV2::SettingUnavailable => "setting_unavailable",
     }
 }
 
@@ -1730,38 +1664,22 @@ fn validate_v2_semantics(
     if let Some(projection) = projection {
         projection.validate()?;
     }
-    if !matches!(
-        (state, projection.is_some(), refusal_reason.is_some()),
-        (EngineImportAdviceStateV2::Available, true, false)
-            | (EngineImportAdviceStateV2::Refused, false, true)
-    ) {
-        return Err(EngineImportAdviceError::InvalidV2Lifecycle);
-    }
-    if state == EngineImportAdviceStateV2::Available && projection != Some(&expected_projection) {
-        return Err(EngineImportAdviceError::InvalidV2Projection);
-    }
-    if state == EngineImportAdviceStateV2::Refused && projection.is_some() {
-        return Err(EngineImportAdviceError::InvalidV2Lifecycle);
-    }
-    if state == EngineImportAdviceStateV2::Available
-        && (!provenance
-            .profile()
-            .accepts_format(provenance.source_format())
-            || !v2_profile_fact_is_known(provenance)
+    if provenance.dependency_closure().coverage().is_complete() {
+        if state != EngineImportAdviceStateV2::Available
+            || projection != Some(&expected_projection)
+            || refusal_reason.is_some()
+            || !provenance
+                .profile()
+                .accepts_format(provenance.source_format())
             || v2_supporting_sources(provenance).is_empty()
-            || !provenance.dependency_closure().coverage().is_complete())
-    {
-        return Err(EngineImportAdviceError::InvalidV2Projection);
-    }
-    if state == EngineImportAdviceStateV2::Refused {
-        let expected = if !provenance.dependency_closure().coverage().is_complete() {
-            EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete
-        } else {
-            v2_authority_reason(provenance)
-        };
-        if refusal_reason != Some(expected) {
+        {
             return Err(EngineImportAdviceError::InvalidV2Lifecycle);
         }
+    } else if state != EngineImportAdviceStateV2::Refused
+        || projection.is_some()
+        || refusal_reason != Some(EngineImportAdviceRefusalReasonV2::DependencyClosureIncomplete)
+    {
+        return Err(EngineImportAdviceError::InvalidV2Lifecycle);
     }
     Ok(())
 }
@@ -1825,21 +1743,6 @@ fn validate_v2_basis(
     prediction
         .validate_against_provenance(provenance)
         .map_err(|error| EngineImportAdviceError::InvalidV2Prediction(error.to_string()))
-}
-
-fn v2_profile_fact_is_known(provenance: &animsmith_core::PredictionProvenanceV4) -> bool {
-    matches!(
-        provenance
-            .profile()
-            .fact(animsmith_core::EngineFactIdV2::ImportSettingProjection),
-        Some(fact)
-            if matches!(
-                fact.state(),
-                animsmith_core::EngineFactStateV2::Known(
-                    animsmith_core::EngineFactValueV2::Token(_)
-                )
-            )
-    )
 }
 
 fn validate_unity_document_against_provenance(

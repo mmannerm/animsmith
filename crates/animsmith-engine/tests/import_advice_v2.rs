@@ -256,3 +256,27 @@ fn strict_readback_rejects_projection_value_mutation() {
     let input = EngineImportAdviceInputV2::read_from(bytes.as_slice()).unwrap();
     assert!(input.into_report().is_err());
 }
+
+#[test]
+fn strict_readback_rejects_refusal_when_authority_is_complete() {
+    let (source, resolved) = resolved(
+        ProfileSelection::new("godot", 2, "4.7", "resource-importer-scene"),
+        SourceFormatV1::Glb,
+        BTreeMap::new(),
+    );
+    let report = EngineImportAdviceV2::from_source(tool(), &source, &resolved).unwrap();
+    let mut value: Value = serde_json::from_slice(&serde_json::to_vec(&report).unwrap()).unwrap();
+    value["state"] = Value::from("refused");
+    value
+        .as_object_mut()
+        .expect("advice envelope must be an object")
+        .remove("projection");
+    value["refusal_reason"] = Value::from("dependency_closure_incomplete");
+
+    let bytes = serde_json::to_vec(&value).unwrap();
+    let input = EngineImportAdviceInputV2::read_from(bytes.as_slice()).unwrap();
+    assert!(matches!(
+        input.into_report(),
+        Err(animsmith_engine::EngineImportAdviceError::InvalidV2Lifecycle)
+    ));
+}

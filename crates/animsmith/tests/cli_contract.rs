@@ -3007,6 +3007,18 @@ importer = "resource-importer-scene"
         .expect("projection fields decode")
     );
 
+    let mut contradictory_refusal = json.clone();
+    contradictory_refusal["state"] = json!("refused");
+    contradictory_refusal["refusal_reason"] = json!("dependency_closure_incomplete");
+    contradictory_refusal
+        .as_object_mut()
+        .expect("advice envelope must be an object")
+        .remove("projection");
+    assert!(
+        !import_advice_v2_validator().is_valid(&contradictory_refusal),
+        "complete closure cannot claim a refused lifecycle"
+    );
+
     let text = run("text");
     assert_eq!(text.status.code(), Some(0), "{}", stderr(&text));
     assert!(stderr(&text).is_empty());
