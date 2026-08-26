@@ -384,8 +384,8 @@ conversion, or root-motion behavior. See the runnable
 [import-advice example](https://github.com/mmannerm/animsmith/blob/main/examples/README.md#generating-engine-import-advice).
 
 Revision 2 adds the same command's narrow document-setting projection for the
-exact `godot` / `2` / `4.7` / `resource-importer-scene` tuple (glTF JSON or GLB)
-and `unreal` / `2` / `5.8` / `fbx-importer` tuple (FBX). Godot projects only
+exact `godot/2/4.7/resource-importer-scene` tuple (glTF JSON or GLB)
+and `unreal/2/5.8/fbx-importer` tuple (FBX). Godot projects only
 `animation/fps` (1..120, default 30) and `animation/trimming` (default false);
 Unreal requires explicit `sample_rate` as `default_30`, `source_determined`,
 or `custom_hz(1..48000)`. These are exact parameter projections, not importer
