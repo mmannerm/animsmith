@@ -5,11 +5,12 @@ use crate::registry::profiles_v1;
 use animsmith_core::{
     Applicability, Check, CheckCtx, CheckOutput, EngineFactIdV1, EngineFactStateV1,
     EngineFactValueV1, EnginePredictionBasisV2, EnginePredictionFacetV3, EnginePredictionV3,
-    EvaluationScope, EvaluationScopeCode, ExactFbxTimingBasisReferenceV1, ExactFbxTimingDomainV1,
-    ExactFbxTimingKeyV1, ExactFbxTimingObservationStateV1, Finding, LoadedSource,
-    PredictionBasisReferenceV1, PredictionBasisReferenceV2, PredictionFacetDemandV2,
-    PredictionProvenanceV3, PredictionRuleAllocationV2, PredictionUnavailableReasonV2,
-    RawSourceBindingV2, RawSourceFieldIdV1, Severity, SourceFormatV1, SourceSetCoverageStateV1,
+    EvaluationScope, EvaluationScopeCode, ExactSourceTimingBasisReferenceV1,
+    ExactSourceTimingDomainV1, ExactSourceTimingKeyV1, ExactSourceTimingObservationStateV1,
+    Finding, LoadedSource, PredictionBasisReferenceV1, PredictionBasisReferenceV2,
+    PredictionFacetDemandV2, PredictionProvenanceV3, PredictionRuleAllocationV2,
+    PredictionUnavailableReasonV2, RawSourceBindingV2, RawSourceFieldIdV1, Severity,
+    SourceFormatV1, SourceSetCoverageStateV1,
 };
 
 /// Stable id for the exact Unreal FBX animation-stack boundary check.
@@ -38,9 +39,11 @@ impl<'a> EngineClipBoundaryCheck<'a> {
             provenance
                 .validate()
                 .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
-            let raw_source =
-                RawSourceBindingV2::from_source(source.source_facts(), source.exact_fbx_timing())
-                    .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
+            let raw_source = RawSourceBindingV2::from_source(
+                source.source_facts(),
+                source.exact_source_timing(),
+            )
+            .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
             if &raw_source != provenance.raw_source()
                 || source.dependency_closure() != provenance.dependency_closure()
             {
@@ -150,16 +153,16 @@ fn evaluate_allocated(
     let mut facets =
         Vec::with_capacity(candidate_capacity.saturating_add(usize::from(summary_required)));
 
-    let timing = source.exact_fbx_timing();
-    for source_stack_index in 0..source.source_facts().clips().rows().len().min(row_capacity) {
-        let scope = stack_scope(source_stack_index);
-        let row = timing.and_then(|timing| timing.stacks().get(source_stack_index));
+    let timing = source.exact_source_timing();
+    for source_clip_index in 0..source.source_facts().clips().rows().len().min(row_capacity) {
+        let scope = stack_scope(source_clip_index);
+        let row = timing.and_then(|timing| timing.clips().get(source_clip_index));
         let declared_time_mode = timing.map(|timing| timing.declared_time_mode().state());
         let frame_period = timing.map(|timing| timing.frame_period().state());
-        let tick_range = row.map(|row| row.source_tick_range().state());
+        let tick_range = row.map(|row| row.source_time_range().state());
         let basis = stack_basis(
             provenance,
-            source_stack_index,
+            source_clip_index,
             declared_time_mode,
             frame_period,
             tick_range,
@@ -167,24 +170,24 @@ fn evaluate_allocated(
 
         match (declared_time_mode, frame_period, tick_range) {
             (
-                Some(ExactFbxTimingObservationStateV1::Observed(_)),
-                Some(ExactFbxTimingObservationStateV1::Observed(period)),
-                Some(ExactFbxTimingObservationStateV1::Observed(range)),
+                Some(ExactSourceTimingObservationStateV1::Observed(_)),
+                Some(ExactSourceTimingObservationStateV1::Observed(period)),
+                Some(ExactSourceTimingObservationStateV1::Observed(range)),
             ) => {
                 facets.push(
                     EnginePredictionFacetV3::available(scope.clone(), basis)
                         .expect("exact stack evidence forms an available facet"),
                 );
                 evaluated_scopes.push(scope.clone());
-                if range.end_ticks().rem_euclid(period.ticks_per_frame()) != 0 {
+                if range.end_units().rem_euclid(period.units_per_frame()) != 0 {
                     findings.push(
                         Finding::new(
                             ENGINE_CLIP_BOUNDARY_CHECK_ID,
                             Severity::Warning,
                             format!(
-                                "FBX animation stack {source_stack_index} ends at KTime tick {}, which is not on the exact {}-tick frame lattice required by Unreal Engine 5.8",
-                                range.end_ticks(),
-                                period.ticks_per_frame()
+                                "FBX animation stack {source_clip_index} ends at KTime tick {}, which is not on the exact {}-tick frame lattice required by Unreal Engine 5.8",
+                                range.end_units(),
+                                period.units_per_frame()
                             ),
                         )
                         .prediction_scope(scope),
@@ -237,67 +240,67 @@ fn evaluate_allocated(
 
 fn stack_basis<T, U, V>(
     provenance: &PredictionProvenanceV3,
-    source_stack_index: usize,
-    declared_time_mode: Option<&ExactFbxTimingObservationStateV1<T>>,
-    frame_period: Option<&ExactFbxTimingObservationStateV1<U>>,
-    tick_range: Option<&ExactFbxTimingObservationStateV1<V>>,
+    source_clip_index: usize,
+    declared_time_mode: Option<&ExactSourceTimingObservationStateV1<T>>,
+    frame_period: Option<&ExactSourceTimingObservationStateV1<U>>,
+    tick_range: Option<&ExactSourceTimingObservationStateV1<V>>,
 ) -> EnginePredictionBasisV2 {
     let mut references = common_basis();
-    let Some(binding) = provenance.raw_source().exact_fbx_timing() else {
+    let Some(binding) = provenance.raw_source().exact_source_timing() else {
         return EnginePredictionBasisV2::new(references).expect("static basis is valid");
     };
     references.push(exact_reference(
-        ExactFbxTimingDomainV1::Document,
-        ExactFbxTimingKeyV1::Document,
+        ExactSourceTimingDomainV1::Document,
+        ExactSourceTimingKeyV1::Document,
         "declared_time_mode.state",
         binding,
     ));
     references.push(exact_reference(
-        ExactFbxTimingDomainV1::Document,
-        ExactFbxTimingKeyV1::Document,
+        ExactSourceTimingDomainV1::Document,
+        ExactSourceTimingKeyV1::Document,
         "frame_period.state",
         binding,
     ));
     references.push(exact_reference(
-        ExactFbxTimingDomainV1::Stack,
-        ExactFbxTimingKeyV1::Stack {
-            source_stack_index: source_stack_index as u64,
+        ExactSourceTimingDomainV1::Clip,
+        ExactSourceTimingKeyV1::Clip {
+            source_clip_index: source_clip_index as u64,
         },
-        "source_tick_range.state",
+        "source_time_range.state",
         binding,
     ));
     if matches!(
         declared_time_mode,
-        Some(ExactFbxTimingObservationStateV1::Observed(_))
+        Some(ExactSourceTimingObservationStateV1::Observed(_))
     ) {
         references.push(exact_reference(
-            ExactFbxTimingDomainV1::Document,
-            ExactFbxTimingKeyV1::Document,
+            ExactSourceTimingDomainV1::Document,
+            ExactSourceTimingKeyV1::Document,
             "declared_time_mode.value.time_mode",
             binding,
         ));
     }
     if matches!(
         frame_period,
-        Some(ExactFbxTimingObservationStateV1::Observed(_))
+        Some(ExactSourceTimingObservationStateV1::Observed(_))
     ) {
         references.push(exact_reference(
-            ExactFbxTimingDomainV1::Document,
-            ExactFbxTimingKeyV1::Document,
-            "frame_period.value.ticks_per_frame",
+            ExactSourceTimingDomainV1::Document,
+            ExactSourceTimingKeyV1::Document,
+            "frame_period.value.units_per_frame",
             binding,
         ));
     }
     if matches!(
         tick_range,
-        Some(ExactFbxTimingObservationStateV1::Observed(_))
+        Some(ExactSourceTimingObservationStateV1::Observed(_))
     ) {
         references.push(exact_reference(
-            ExactFbxTimingDomainV1::Stack,
-            ExactFbxTimingKeyV1::Stack {
-                source_stack_index: source_stack_index as u64,
+            ExactSourceTimingDomainV1::Clip,
+            ExactSourceTimingKeyV1::Clip {
+                source_clip_index: source_clip_index as u64,
             },
-            "source_tick_range.value.end_ticks",
+            "source_time_range.value.end_units",
             binding,
         ));
     }
@@ -306,17 +309,17 @@ fn stack_basis<T, U, V>(
 
 fn inventory_basis(provenance: &PredictionProvenanceV3) -> EnginePredictionBasisV2 {
     let mut references = common_basis();
-    if let Some(binding) = provenance.raw_source().exact_fbx_timing() {
+    if let Some(binding) = provenance.raw_source().exact_source_timing() {
         references.push(exact_reference(
-            ExactFbxTimingDomainV1::Document,
-            ExactFbxTimingKeyV1::Document,
-            "stack_coverage.state",
+            ExactSourceTimingDomainV1::Document,
+            ExactSourceTimingKeyV1::Document,
+            "clip_coverage.state",
             binding,
         ));
         references.push(exact_reference(
-            ExactFbxTimingDomainV1::Document,
-            ExactFbxTimingKeyV1::Document,
-            "stack_coverage.reason",
+            ExactSourceTimingDomainV1::Document,
+            ExactSourceTimingKeyV1::Document,
+            "clip_coverage.reason",
             binding,
         ));
     }
@@ -337,13 +340,13 @@ fn common_basis() -> Vec<PredictionBasisReferenceV2> {
 }
 
 fn exact_reference(
-    domain: ExactFbxTimingDomainV1,
-    key: ExactFbxTimingKeyV1,
+    domain: ExactSourceTimingDomainV1,
+    key: ExactSourceTimingKeyV1,
     field: &'static str,
-    binding: &animsmith_core::ExactFbxTimingBindingV1,
+    binding: &animsmith_core::ExactSourceTimingBindingV1,
 ) -> PredictionBasisReferenceV2 {
-    PredictionBasisReferenceV2::exact_fbx_timing(
-        ExactFbxTimingBasisReferenceV1::from_binding(
+    PredictionBasisReferenceV2::exact_source_timing(
+        ExactSourceTimingBasisReferenceV1::from_binding(
             domain,
             key,
             RawSourceFieldIdV1::new(field).expect("static exact field id is valid"),
@@ -354,33 +357,35 @@ fn exact_reference(
 }
 
 fn unavailable_reasons<T, U, V>(
-    declared_time_mode: Option<&ExactFbxTimingObservationStateV1<T>>,
-    frame_period: Option<&ExactFbxTimingObservationStateV1<U>>,
-    tick_range: Option<&ExactFbxTimingObservationStateV1<V>>,
+    declared_time_mode: Option<&ExactSourceTimingObservationStateV1<T>>,
+    frame_period: Option<&ExactSourceTimingObservationStateV1<U>>,
+    tick_range: Option<&ExactSourceTimingObservationStateV1<V>>,
 ) -> Vec<PredictionUnavailableReasonV2> {
     if declared_time_mode.is_none() && frame_period.is_none() && tick_range.is_none() {
-        return vec![custom_reason("animsmith:exact_fbx_timing_unavailable")];
+        return vec![custom_reason("animsmith:exact_source_timing_unavailable")];
     }
     let mut reasons = Vec::new();
     if !matches!(
         declared_time_mode,
-        Some(ExactFbxTimingObservationStateV1::Observed(_))
+        Some(ExactSourceTimingObservationStateV1::Observed(_))
     ) {
         reasons.push(custom_reason(
-            "animsmith:fbx_declared_time_mode_unavailable",
+            "animsmith:source_declared_time_mode_unavailable",
         ));
     }
     if !matches!(
         frame_period,
-        Some(ExactFbxTimingObservationStateV1::Observed(_))
+        Some(ExactSourceTimingObservationStateV1::Observed(_))
     ) {
-        reasons.push(custom_reason("animsmith:fbx_frame_period_unavailable"));
+        reasons.push(custom_reason("animsmith:source_frame_period_unavailable"));
     }
     if !matches!(
         tick_range,
-        Some(ExactFbxTimingObservationStateV1::Observed(_))
+        Some(ExactSourceTimingObservationStateV1::Observed(_))
     ) {
-        reasons.push(custom_reason("animsmith:fbx_stack_tick_range_unavailable"));
+        reasons.push(custom_reason(
+            "animsmith:source_clip_time_range_unavailable",
+        ));
     }
     reasons
 }
@@ -389,9 +394,9 @@ fn custom_reason(code: &'static str) -> PredictionUnavailableReasonV2 {
     PredictionUnavailableReasonV2::custom(code).expect("static reason code is valid")
 }
 
-fn stack_scope(source_stack_index: usize) -> EvaluationScope {
+fn stack_scope(source_clip_index: usize) -> EvaluationScope {
     EvaluationScope::new(EvaluationScopeCode::ENGINE_CLIP_BOUNDARY)
-        .subject(format!("source_stack:{source_stack_index}"))
+        .subject(format!("source_stack:{source_clip_index}"))
 }
 
 fn inventory_scope() -> EvaluationScope {

@@ -7377,7 +7377,8 @@ importer = "fbx-importer"
         animsmith_core::RAW_SOURCE_FACTS_V2_ID
     );
     assert!(
-        selected["files"][0]["prediction_provenance"]["raw_source"]["exact_fbx_timing"].is_object()
+        selected["files"][0]["prediction_provenance"]["raw_source"]["exact_source_timing"]
+            .is_object()
     );
     let check = lint_check(&selected, "engine-clip-boundary");
     assert_eq!(check["selection"], "selected");
@@ -7394,7 +7395,7 @@ importer = "fbx-importer"
     );
     assert_eq!(
         check["prediction"]["facets"][0]["reasons"],
-        json!(["animsmith:fbx_declared_time_mode_unavailable"])
+        json!(["animsmith:source_declared_time_mode_unavailable"])
     );
 
     let unselected = animsmith()

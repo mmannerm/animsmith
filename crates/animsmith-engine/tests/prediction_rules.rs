@@ -926,7 +926,7 @@ fn v3_addressability_preserves_v2_rule_and_binds_current_raw_source() {
         provenance_v3.raw_source().contract_id(),
         animsmith_core::RAW_SOURCE_FACTS_V2_ID
     );
-    assert!(provenance_v3.raw_source().exact_fbx_timing().is_none());
+    assert!(provenance_v3.raw_source().exact_source_timing().is_none());
     assert_eq!(
         provenance_v3.raw_source().primary_input(),
         provenance_v2.raw_source().primary_input()

@@ -31,9 +31,18 @@ The normal [check catalog](../README.md#checks) is engine-neutral. Prioritize:
 | `rest-world-scale` | selected node factor `1.0` ± `0.0001` inclusive | Finds inherited socket, attachment, IK, and collision-anchor scale. |
 | `in-place` | XZ speed at least `0.5 m/s` counts as travelling | Cross-checks whether gameplay or animation owns horizontal motion. |
 
-There is currently no `whole-end-frame` engine check. AnimSmith retains FBX
-seconds and FPS, not an authoritative FBX tick/frame coordinate, so it does
-not guess at the documented Unreal rule. `engine-addressability` is Bevy-only.
+For the frozen Unreal revision 1 / 5.8 / `fbx-importer` profile,
+`engine-clip-boundary` evaluates each retained FBX animation stack against the
+documented whole-end-frame requirement. The FBX adapter retains the
+parser-resolved absolute KTime end coordinate and exact frame period; the
+format-neutral core records that evidence without converting it through seconds
+or decimal FPS. A complete selected range whose end coordinate is off that
+integer lattice is a finding. Missing, partial, or unavailable timing evidence
+is a required-unavailable facet, never a guessed frame number. This bounded
+check does not predict Animation Length, Frame Import Range, resampling,
+compression, root-motion, or any other Unreal import setting.
+
+`engine-addressability` remains Bevy-only.
 
 Scale evidence and policy stay separated: [#267](https://github.com/mmannerm/animsmith/issues/267)
 owns the measured scale domains and [#268](https://github.com/mmannerm/animsmith/issues/268)
@@ -69,7 +78,7 @@ settings.
 | Symptom | Evidence to inspect | Correct owner |
 |---|---|---|
 | Animation is the wrong physical size | source units, Unreal `Convert Scene Unit`, `rest-world-scale` | Author centimetre/metre intent in the DCC or choose the importer option explicitly. |
-| Sequence truncates or imports the wrong range | source take range, declared FPS, Unreal Animation Length/Frame Import Range | Fix the exact frame cut in the DCC or importer; AnimSmith V1 does not infer frame numbers. |
+| Sequence truncates or imports the wrong range | source take range, exact end-frame facet, Unreal Animation Length/Frame Import Range | Fix the exact frame cut in the DCC or importer; the bounded Unreal check only tests the source end-frame lattice. |
 | Animation-only import cannot bind | `required-bones`, `missing-bones`, hierarchy and names | Export against the target Skeleton or retarget in Unreal/DCC. |
 | Root motion does not drive the actor | `in-place`, `root-motion-speed`, root role evidence | Ensure a root bone carries the intended motion and configure the Animation Sequence/graph. |
 | Socket, IK, or collision attachment scales incorrectly | `rest-world-scale` source path and ancestry | Repair inherited scale or use supported rest/bind reparameterization, then retest in Unreal. |

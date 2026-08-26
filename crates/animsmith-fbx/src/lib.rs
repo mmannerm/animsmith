@@ -16,7 +16,7 @@
 //! Effective units, signed axes, FPS, take ranges, layer/property bindings,
 //! and component-curve presence are parser-projected from ufbx. Advisory
 //! `OriginalUnitScaleFactor`/`OriginalUpAxis` values are not substituted for
-//! the effective settings. Because animation stacks pass through
+//! the effective settings. Because animation clips pass through
 //! `ufbx::bake_anim`, the sidecar never claims authored interpolation, keys,
 //! or tangents from baked tracks. Resource rows retain bounded relative
 //! declarations only; unsafe spellings are classified and redacted, and no
@@ -84,6 +84,9 @@ mod capability;
 mod exact_timing;
 mod source_facts;
 
+/// FBX/KTime constants used by the exact source-timing projection.
+pub use exact_timing::{FBX_KTIME_LEGACY_UNITS_PER_SECOND, FBX_KTIME_STANDARD_UNITS_PER_SECOND};
+
 pub use capability::{
     FbxBindMatrixProvenance, FbxCoordinateAxis, FbxCoordinateNormalization,
     FbxScaleCapabilityInventory, FbxScaleDomainInventory, FbxScaleDomainStatus, FbxScaleSource,
@@ -146,7 +149,7 @@ pub enum LoadError {
     #[error("invalid FBX source-facts projection: {0}")]
     SourceFacts(#[from] SourceFactsError),
     /// Exact FBX/KTime evidence violated its isolated in-memory contract.
-    #[error("invalid exact FBX timing projection: {0}")]
+    #[error("invalid exact source timing projection: {0}")]
     ExactTiming(String),
 }
 
@@ -536,7 +539,7 @@ fn load_scale_source_bytes_inner(
         exact_timing::project(&scene, source_clips.coverage(), source_clips.rows().len())
             .map_err(|error| LoadError::ExactTiming(error.to_string()))?;
     let source = source
-        .with_exact_fbx_timing(exact_timing)
+        .with_exact_source_timing(exact_timing)
         .map_err(|error| LoadError::ExactTiming(error.to_string()))?;
 
     Ok(FbxScaleSource {

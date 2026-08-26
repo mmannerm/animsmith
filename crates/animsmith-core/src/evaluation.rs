@@ -200,7 +200,7 @@ builtin_codes!(
         meaning = "Complete source-animation inventory required for asset-label prediction was unavailable.",
         emitted_by = ["engine-addressability"],
     ENGINE_CLIP_BOUNDARY => "engine_clip_boundary",
-        meaning = "One source animation stack's exact end-frame boundary was evaluated.",
+        meaning = "One source animation clip's exact end-frame boundary was evaluated.",
         emitted_by = ["engine-clip-boundary"],
     ENGINE_CLIP_BOUNDARY_INVENTORY => "engine_clip_boundary_inventory",
         meaning = "Complete exact source-animation boundary inventory was unavailable.",

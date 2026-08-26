@@ -2101,7 +2101,7 @@
       },
       "additionalProperties": false
     },
-    "exact_fbx_observation": {
+    "exact_source_observation": {
       "type": "object",
       "required": ["state", "disposition", "provenance"],
       "properties": {
@@ -2132,7 +2132,7 @@
                     "malformed",
                     "custom_frame_rate_not_exact",
                     "unsupported_time_mode",
-                    "unsupported_ktime_basis",
+                    "unsupported_time_basis",
                     "parser_unavailable"
                   ]
                 }
@@ -2151,7 +2151,7 @@
       },
       "additionalProperties": false
     },
-    "exact_fbx_time_mode": {
+    "exact_source_time_mode": {
       "enum": [
         "default", "fps120", "fps100", "fps60", "fps50", "fps48",
         "fps30", "fps30_drop", "ntsc_drop_frame", "ntsc_full_frame",
@@ -2159,26 +2159,26 @@
         "fps96", "fps72", "fps59_dot94"
       ]
     },
-    "exact_fbx_time_protocol": {
+    "exact_source_time_protocol": {
       "enum": ["smpte", "frame_count", "default"]
     },
-    "exact_fbx_observed_ktime_basis": {
+    "exact_source_observed_time_basis": {
       "type": "object",
-      "required": ["ticks_per_second"],
+      "required": ["units_per_second"],
       "properties": {
-        "ticks_per_second": { "type": "integer", "minimum": 1 }
+        "units_per_second": { "type": "integer", "minimum": 1 }
       },
       "additionalProperties": false
     },
-    "exact_fbx_observed_frame_period": {
+    "exact_source_observed_frame_period": {
       "type": "object",
-      "required": ["ticks_per_frame"],
+      "required": ["units_per_frame"],
       "properties": {
-        "ticks_per_frame": { "type": "integer", "minimum": 1 }
+        "units_per_frame": { "type": "integer", "minimum": 1 }
       },
       "additionalProperties": false
     },
-    "exact_fbx_observed_custom_rate": {
+    "exact_source_observed_custom_rate": {
       "type": "object",
       "required": ["binary64_bits"],
       "properties": {
@@ -2186,103 +2186,103 @@
       },
       "additionalProperties": false
     },
-    "exact_fbx_observed_stack_range": {
+    "exact_source_observed_clip_range": {
       "type": "object",
-      "required": ["selection", "begin_ticks", "end_ticks"],
+      "required": ["selection", "begin_units", "end_units"],
       "properties": {
-        "selection": { "enum": ["local", "reference"] },
-        "begin_ticks": { "type": "integer" },
-        "end_ticks": { "type": "integer" }
+        "selection": { "enum": ["primary", "fallback"] },
+        "begin_units": { "type": "integer" },
+        "end_units": { "type": "integer" }
       },
       "additionalProperties": false
     },
-    "exact_fbx_timing_binding": {
+    "exact_source_timing_binding": {
       "type": "object",
       "required": [
-        "schema", "ktime_basis", "declared_time_mode", "effective_time_mode",
+        "schema", "time_basis", "declared_time_mode", "effective_time_mode",
         "declared_custom_frame_rate", "frame_period", "declared_time_protocol",
-        "effective_time_protocol", "stack_coverage", "stacks"
+        "effective_time_protocol", "clip_coverage", "clips"
       ],
       "properties": {
-        "schema": { "const": "urn:animsmith:exact-fbx-timing:1" },
-        "ktime_basis": {
+        "schema": { "const": "urn:animsmith:exact-source-timing:1" },
+        "time_basis": {
           "allOf": [
-            { "$ref": "#/$defs/exact_fbx_observation" },
+            { "$ref": "#/$defs/exact_source_observation" },
             {
               "if": { "properties": { "state": { "properties": { "kind": { "const": "observed" } } } } },
-              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_fbx_observed_ktime_basis" } } } } }
+              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_source_observed_time_basis" } } } } }
             }
           ]
         },
         "declared_time_mode": {
           "allOf": [
-            { "$ref": "#/$defs/exact_fbx_observation" },
+            { "$ref": "#/$defs/exact_source_observation" },
             {
               "if": { "properties": { "state": { "properties": { "kind": { "const": "observed" } } } } },
-              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_fbx_time_mode" } } } } }
+              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_source_time_mode" } } } } }
             }
           ]
         },
         "effective_time_mode": {
           "allOf": [
-            { "$ref": "#/$defs/exact_fbx_observation" },
+            { "$ref": "#/$defs/exact_source_observation" },
             {
               "if": { "properties": { "state": { "properties": { "kind": { "const": "observed" } } } } },
-              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_fbx_time_mode" } } } } }
+              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_source_time_mode" } } } } }
             }
           ]
         },
         "declared_custom_frame_rate": {
           "allOf": [
-            { "$ref": "#/$defs/exact_fbx_observation" },
+            { "$ref": "#/$defs/exact_source_observation" },
             {
               "if": { "properties": { "state": { "properties": { "kind": { "const": "observed" } } } } },
-              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_fbx_observed_custom_rate" } } } } }
+              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_source_observed_custom_rate" } } } } }
             }
           ]
         },
         "frame_period": {
           "allOf": [
-            { "$ref": "#/$defs/exact_fbx_observation" },
+            { "$ref": "#/$defs/exact_source_observation" },
             {
               "if": { "properties": { "state": { "properties": { "kind": { "const": "observed" } } } } },
-              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_fbx_observed_frame_period" } } } } }
+              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_source_observed_frame_period" } } } } }
             }
           ]
         },
         "declared_time_protocol": {
           "allOf": [
-            { "$ref": "#/$defs/exact_fbx_observation" },
+            { "$ref": "#/$defs/exact_source_observation" },
             {
               "if": { "properties": { "state": { "properties": { "kind": { "const": "observed" } } } } },
-              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_fbx_time_protocol" } } } } }
+              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_source_time_protocol" } } } } }
             }
           ]
         },
         "effective_time_protocol": {
           "allOf": [
-            { "$ref": "#/$defs/exact_fbx_observation" },
+            { "$ref": "#/$defs/exact_source_observation" },
             {
               "if": { "properties": { "state": { "properties": { "kind": { "const": "observed" } } } } },
-              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_fbx_time_protocol" } } } } }
+              "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_source_time_protocol" } } } } }
             }
           ]
         },
-        "stack_coverage": { "$ref": "#/$defs/source_set_coverage" },
-        "stacks": {
+        "clip_coverage": { "$ref": "#/$defs/source_set_coverage" },
+        "clips": {
           "type": "array",
           "maxItems": 4096,
           "items": {
             "type": "object",
-            "required": ["source_stack_index", "source_tick_range"],
+            "required": ["source_clip_index", "source_time_range"],
             "properties": {
-              "source_stack_index": { "type": "integer", "minimum": 0 },
-              "source_tick_range": {
+              "source_clip_index": { "type": "integer", "minimum": 0 },
+              "source_time_range": {
                 "allOf": [
-                  { "$ref": "#/$defs/exact_fbx_observation" },
+                  { "$ref": "#/$defs/exact_source_observation" },
                   {
                     "if": { "properties": { "state": { "properties": { "kind": { "const": "observed" } } } } },
-                    "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_fbx_observed_stack_range" } } } } }
+                    "then": { "properties": { "state": { "properties": { "value": { "$ref": "#/$defs/exact_source_observed_clip_range" } } } } }
                   }
                 ]
               }
@@ -2295,14 +2295,14 @@
     },
     "raw_source_binding": {
       "type": "object",
-      "required": ["schema", "source_facts", "exact_fbx_timing"],
+      "required": ["schema", "source_facts", "exact_source_timing"],
       "properties": {
         "schema": { "const": "urn:animsmith:raw-source-facts:2" },
         "source_facts": { "$ref": "#/$defs/raw_source_binding_v1" },
-        "exact_fbx_timing": {
+        "exact_source_timing": {
           "oneOf": [
             { "type": "null" },
-            { "$ref": "#/$defs/exact_fbx_timing_binding" }
+            { "$ref": "#/$defs/exact_source_timing_binding" }
           ]
         }
       },
@@ -3052,7 +3052,7 @@
         { "$ref": "#/$defs/primary_source_basis_reference" }
       ]
     },
-    "exact_fbx_timing_key": {
+    "exact_source_timing_key": {
       "oneOf": [
         {
           "type": "object",
@@ -3062,21 +3062,21 @@
         },
         {
           "type": "object",
-          "required": ["kind", "source_stack_index"],
+          "required": ["kind", "source_clip_index"],
           "properties": {
-            "kind": { "const": "stack" },
-            "source_stack_index": { "$ref": "#/$defs/u64" }
+            "kind": { "const": "clip" },
+            "source_clip_index": { "$ref": "#/$defs/u64" }
           },
           "additionalProperties": false
         }
       ]
     },
-    "exact_fbx_timing_basis_reference": {
+    "exact_source_timing_basis_reference": {
       "type": "object",
       "required": ["domain", "key", "field", "value"],
       "properties": {
-        "domain": { "enum": ["document", "stack"] },
-        "key": { "$ref": "#/$defs/exact_fbx_timing_key" },
+        "domain": { "enum": ["document", "clip"] },
+        "key": { "$ref": "#/$defs/exact_source_timing_key" },
         "field": { "$ref": "#/$defs/bounded_id" },
         "value": { "$ref": "#/$defs/scalar" }
       },
@@ -3097,8 +3097,8 @@
           "type": "object",
           "required": ["contract", "reference"],
           "properties": {
-            "contract": { "const": "exact_fbx_timing" },
-            "reference": { "$ref": "#/$defs/exact_fbx_timing_basis_reference" }
+            "contract": { "const": "exact_source_timing" },
+            "reference": { "$ref": "#/$defs/exact_source_timing_basis_reference" }
           },
           "additionalProperties": false
         }
@@ -3250,7 +3250,7 @@
         { "const": "urn:animsmith:schema:output:14" },
         { "const": "urn:animsmith:schema:measurements:16" },
         { "const": "urn:animsmith:raw-source-facts:2" },
-        { "const": "urn:animsmith:exact-fbx-timing:1" },
+        { "const": "urn:animsmith:exact-source-timing:1" },
         { "const": "urn:animsmith:dependency-closure:1" },
         { "const": "urn:animsmith:engine-profile-facts:1" }
       ,

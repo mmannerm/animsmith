@@ -1,16 +1,16 @@
 use animsmith_core::{
     Check, CheckCtx, CheckSelection, DependencyClosureBuilderV1, Document,
-    EnginePredictionFacetStateV1, ExactFbxStackTimingV1, ExactFbxTimingObservationV1,
-    ExactFbxTimingUnavailableReasonV1, ExactFbxTimingV1, FBX_KTIME_LEGACY_TICKS_PER_SECOND,
-    FbxFramePeriodV1, FbxKTimeBasisV1, FbxStackTickRangeV1, FbxTimeModeV1, FbxTimeProtocolV1,
-    FbxTimeSpanSelectionV1, InputIdentity, MetricGrids, RawSourceFactsBuilderV1, ResolvedRoles,
-    SourceClipFactV1, SourceFactDomainV1, SourceFactSetV1, SourceFormatV1,
-    SourceLoaderDispositionV1, SourceObservationV1, SourceProvenanceV1, SourceSetCoverageV1,
-    SourceTextV1, SourceUnavailableReasonV1,
+    EnginePredictionFacetStateV1, ExactSourceClipTimeRangeV1, ExactSourceClipTimingV1,
+    ExactSourceFramePeriodV1, ExactSourceRangeSelectionV1, ExactSourceTimeBasisV1,
+    ExactSourceTimingObservationV1, ExactSourceTimingUnavailableReasonV1, ExactSourceTimingV1,
+    InputIdentity, MetricGrids, RawSourceFactsBuilderV1, ResolvedRoles, SourceClipFactV1,
+    SourceFactDomainV1, SourceFactSetV1, SourceFormatV1, SourceLoaderDispositionV1,
+    SourceObservationV1, SourceProvenanceV1, SourceSetCoverageV1, SourceTextV1,
+    SourceTimeDisplayProtocolV1, SourceTimelineModeV1, SourceUnavailableReasonV1,
 };
 use animsmith_engine::{
-    ENGINE_CLIP_BOUNDARY_CHECK_ID, EngineClipBoundaryCheck, EngineDeclaration, ProfileSelection,
-    project_prediction_provenance_v3, resolve_static,
+    ENGINE_CLIP_BOUNDARY_CHECK_ID, EngineClipBoundaryCheck, EngineDeclaration, PredictionRuleError,
+    ProfileSelection, project_prediction_provenance_v3, resolve_static,
 };
 
 #[derive(Clone, Copy)]
@@ -22,11 +22,23 @@ enum Coverage {
 #[derive(Clone, Copy)]
 enum StackRange {
     Observed { begin: i64, end: i64 },
-    Unavailable(ExactFbxTimingUnavailableReasonV1),
+    Unavailable(ExactSourceTimingUnavailableReasonV1),
 }
 
-fn exact_observed<T>(value: T) -> ExactFbxTimingObservationV1<T> {
-    ExactFbxTimingObservationV1::observed(
+const TEST_SOURCE_UNITS_PER_SECOND: i64 = 46_186_158_000;
+
+fn source_period(mode: SourceTimelineModeV1) -> ExactSourceFramePeriodV1 {
+    let units = match mode {
+        SourceTimelineModeV1::Fps24 => TEST_SOURCE_UNITS_PER_SECOND / 24,
+        SourceTimelineModeV1::Fps30 => TEST_SOURCE_UNITS_PER_SECOND / 30,
+        SourceTimelineModeV1::NtscDropFrame => (TEST_SOURCE_UNITS_PER_SECOND / 30 * 1001) / 1000,
+        _ => TEST_SOURCE_UNITS_PER_SECOND / 30,
+    };
+    ExactSourceFramePeriodV1::new(units).unwrap()
+}
+
+fn exact_observed<T>(value: T) -> ExactSourceTimingObservationV1<T> {
+    ExactSourceTimingObservationV1::observed(
         value,
         SourceProvenanceV1::format_defined(),
         SourceLoaderDispositionV1::Preserved,
@@ -34,26 +46,30 @@ fn exact_observed<T>(value: T) -> ExactFbxTimingObservationV1<T> {
 }
 
 fn exact_unavailable<T>(
-    reason: ExactFbxTimingUnavailableReasonV1,
-) -> ExactFbxTimingObservationV1<T> {
-    ExactFbxTimingObservationV1::unavailable(
+    reason: ExactSourceTimingUnavailableReasonV1,
+) -> ExactSourceTimingObservationV1<T> {
+    ExactSourceTimingObservationV1::unavailable(
         reason,
         Some(SourceProvenanceV1::format_defined()),
         SourceLoaderDispositionV1::Unknown,
     )
 }
 
-fn timing(coverage: Coverage, mode: FbxTimeModeV1, ranges: &[StackRange]) -> ExactFbxTimingV1 {
-    let basis = FbxKTimeBasisV1::new(FBX_KTIME_LEGACY_TICKS_PER_SECOND).unwrap();
-    let period = FbxFramePeriodV1::for_mode(basis, mode).unwrap();
-    ExactFbxTimingV1::new(
+fn timing(
+    coverage: Coverage,
+    mode: SourceTimelineModeV1,
+    ranges: &[StackRange],
+) -> ExactSourceTimingV1 {
+    let basis = ExactSourceTimeBasisV1::new(TEST_SOURCE_UNITS_PER_SECOND).unwrap();
+    let period = source_period(mode);
+    ExactSourceTimingV1::new(
         exact_observed(basis),
         exact_observed(mode),
         exact_observed(mode),
-        ExactFbxTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+        ExactSourceTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
         exact_observed(period),
-        ExactFbxTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
-        exact_observed(FbxTimeProtocolV1::Default),
+        ExactSourceTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+        exact_observed(SourceTimeDisplayProtocolV1::Default),
         match coverage {
             Coverage::Complete => SourceSetCoverageV1::complete(),
             Coverage::Partial => {
@@ -66,35 +82,40 @@ fn timing(coverage: Coverage, mode: FbxTimeModeV1, ranges: &[StackRange]) -> Exa
             .map(|(index, range)| {
                 let range = match *range {
                     StackRange::Observed { begin, end } => exact_observed(
-                        FbxStackTickRangeV1::new(FbxTimeSpanSelectionV1::Local, begin, end)
-                            .unwrap(),
+                        ExactSourceClipTimeRangeV1::new(
+                            ExactSourceRangeSelectionV1::Primary,
+                            begin,
+                            end,
+                        )
+                        .unwrap(),
                     ),
                     StackRange::Unavailable(reason) => exact_unavailable(reason),
                 };
-                ExactFbxStackTimingV1::new(index, range)
+                ExactSourceClipTimingV1::new(index, range)
             })
             .collect(),
     )
     .unwrap()
 }
 
-fn timing_without_declared_mode(end_ticks: i64) -> ExactFbxTimingV1 {
-    let basis = FbxKTimeBasisV1::new(FBX_KTIME_LEGACY_TICKS_PER_SECOND).unwrap();
-    let mode = FbxTimeModeV1::Fps24;
-    let period = FbxFramePeriodV1::for_mode(basis, mode).unwrap();
-    ExactFbxTimingV1::new(
+fn timing_without_declared_mode(end_units: i64) -> ExactSourceTimingV1 {
+    let basis = ExactSourceTimeBasisV1::new(TEST_SOURCE_UNITS_PER_SECOND).unwrap();
+    let mode = SourceTimelineModeV1::Fps24;
+    let period = source_period(mode);
+    ExactSourceTimingV1::new(
         exact_observed(basis),
-        ExactFbxTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+        ExactSourceTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
         exact_observed(mode),
-        ExactFbxTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+        ExactSourceTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
         exact_observed(period),
-        ExactFbxTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
-        exact_observed(FbxTimeProtocolV1::Default),
+        ExactSourceTimingObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+        exact_observed(SourceTimeDisplayProtocolV1::Default),
         SourceSetCoverageV1::complete(),
-        vec![ExactFbxStackTimingV1::new(
+        vec![ExactSourceClipTimingV1::new(
             0,
             exact_observed(
-                FbxStackTickRangeV1::new(FbxTimeSpanSelectionV1::Local, 0, end_ticks).unwrap(),
+                ExactSourceClipTimeRangeV1::new(ExactSourceRangeSelectionV1::Primary, 0, end_units)
+                    .unwrap(),
             ),
         )],
     )
@@ -104,7 +125,7 @@ fn timing_without_declared_mode(end_ticks: i64) -> ExactFbxTimingV1 {
 fn source(
     coverage: Coverage,
     stack_count: usize,
-    exact: Option<ExactFbxTimingV1>,
+    exact: Option<ExactSourceTimingV1>,
 ) -> animsmith_core::LoadedSource {
     let primary = InputIdentity::from_bytes(format!("fbx:{stack_count}").as_bytes());
     let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::Fbx, primary.clone());
@@ -152,7 +173,7 @@ fn source(
         .finish_with_dependency_closure(document, closure)
         .unwrap();
     match exact {
-        Some(exact) => source.with_exact_fbx_timing(exact).unwrap(),
+        Some(exact) => source.with_exact_source_timing(exact).unwrap(),
         None => source,
     }
 }
@@ -186,17 +207,14 @@ fn evaluate(source: &animsmith_core::LoadedSource) -> animsmith_core::CheckOutpu
 }
 
 #[test]
-fn absolute_end_coordinate_uses_exact_integer_ktime_lattice() {
-    let basis = FbxKTimeBasisV1::new(FBX_KTIME_LEGACY_TICKS_PER_SECOND).unwrap();
-    let period = FbxFramePeriodV1::for_mode(basis, FbxTimeModeV1::NtscDropFrame)
-        .unwrap()
-        .ticks_per_frame();
-    let source = source(
+fn absolute_end_coordinate_uses_exact_integer_source_time_lattice() {
+    let period = source_period(SourceTimelineModeV1::NtscDropFrame).units_per_frame();
+    let original = source(
         Coverage::Complete,
         4,
         Some(timing(
             Coverage::Complete,
-            FbxTimeModeV1::NtscDropFrame,
+            SourceTimelineModeV1::NtscDropFrame,
             &[
                 StackRange::Observed {
                     begin: 1,
@@ -217,7 +235,7 @@ fn absolute_end_coordinate_uses_exact_integer_ktime_lattice() {
             ],
         )),
     );
-    let output = evaluate(&source);
+    let output = evaluate(&original);
     let prediction = output.engine_prediction_v3().unwrap();
 
     assert_eq!(prediction.facets().len(), 4);
@@ -255,25 +273,22 @@ fn missing_and_per_row_unavailable_evidence_fail_closed() {
     assert_eq!(prediction.facets().len(), 2);
     assert!(prediction.facets().iter().all(|facet| {
         facet.state() == EnginePredictionFacetStateV1::RequiredPredictionUnavailable
-            && facet.reasons()[0].as_str() == "animsmith:exact_fbx_timing_unavailable"
+            && facet.reasons()[0].as_str() == "animsmith:exact_source_timing_unavailable"
     }));
 
-    let basis = FbxKTimeBasisV1::new(FBX_KTIME_LEGACY_TICKS_PER_SECOND).unwrap();
-    let period = FbxFramePeriodV1::for_mode(basis, FbxTimeModeV1::Fps30)
-        .unwrap()
-        .ticks_per_frame();
+    let period = source_period(SourceTimelineModeV1::Fps30).units_per_frame();
     let partial_row = source(
         Coverage::Complete,
         2,
         Some(timing(
             Coverage::Complete,
-            FbxTimeModeV1::Fps30,
+            SourceTimelineModeV1::Fps30,
             &[
                 StackRange::Observed {
                     begin: 0,
                     end: period,
                 },
-                StackRange::Unavailable(ExactFbxTimingUnavailableReasonV1::Malformed),
+                StackRange::Unavailable(ExactSourceTimingUnavailableReasonV1::Malformed),
             ],
         )),
     );
@@ -286,15 +301,10 @@ fn missing_and_per_row_unavailable_evidence_fail_closed() {
     );
     assert_eq!(
         facets[1].reasons()[0].as_str(),
-        "animsmith:fbx_stack_tick_range_unavailable"
+        "animsmith:source_clip_time_range_unavailable"
     );
 
-    let fallback_period = FbxFramePeriodV1::for_mode(
-        FbxKTimeBasisV1::new(FBX_KTIME_LEGACY_TICKS_PER_SECOND).unwrap(),
-        FbxTimeModeV1::Fps24,
-    )
-    .unwrap()
-    .ticks_per_frame();
+    let fallback_period = source_period(SourceTimelineModeV1::Fps24).units_per_frame();
     let missing_declaration = source(
         Coverage::Complete,
         1,
@@ -309,22 +319,19 @@ fn missing_and_per_row_unavailable_evidence_fail_closed() {
     );
     assert_eq!(
         facet.reasons()[0].as_str(),
-        "animsmith:fbx_declared_time_mode_unavailable"
+        "animsmith:source_declared_time_mode_unavailable"
     );
 }
 
 #[test]
 fn retained_partial_rows_are_emitted_beside_inventory_summary() {
-    let basis = FbxKTimeBasisV1::new(FBX_KTIME_LEGACY_TICKS_PER_SECOND).unwrap();
-    let period = FbxFramePeriodV1::for_mode(basis, FbxTimeModeV1::Fps30)
-        .unwrap()
-        .ticks_per_frame();
+    let period = source_period(SourceTimelineModeV1::Fps30).units_per_frame();
     let source = source(
         Coverage::Partial,
         2,
         Some(timing(
             Coverage::Partial,
-            FbxTimeModeV1::Fps30,
+            SourceTimelineModeV1::Fps30,
             &[
                 StackRange::Observed {
                     begin: 0,
@@ -379,10 +386,7 @@ fn retained_partial_rows_are_emitted_beside_inventory_summary() {
 
 #[test]
 fn partial_inventory_at_row_limit_uses_n_plus_one_and_keeps_both_summaries() {
-    let basis = FbxKTimeBasisV1::new(FBX_KTIME_LEGACY_TICKS_PER_SECOND).unwrap();
-    let period = FbxFramePeriodV1::for_mode(basis, FbxTimeModeV1::Fps30)
-        .unwrap()
-        .ticks_per_frame();
+    let period = source_period(SourceTimelineModeV1::Fps30).units_per_frame();
     let ranges = vec![
         StackRange::Observed {
             begin: 0,
@@ -393,7 +397,11 @@ fn partial_inventory_at_row_limit_uses_n_plus_one_and_keeps_both_summaries() {
     let source = source(
         Coverage::Partial,
         ranges.len(),
-        Some(timing(Coverage::Partial, FbxTimeModeV1::Fps30, &ranges)),
+        Some(timing(
+            Coverage::Partial,
+            SourceTimelineModeV1::Fps30,
+            &ranges,
+        )),
     );
     let provenance = provenance(&source);
     let check = EngineClipBoundaryCheck::new(&source, Some(&provenance)).unwrap();
@@ -445,4 +453,106 @@ fn only_the_frozen_unreal_fbx_profile_is_applicable() {
         animsmith_core::Applicability::Applicable
     );
     assert_eq!(ENGINE_CLIP_BOUNDARY_CHECK_ID, "engine-clip-boundary");
+}
+
+#[test]
+fn non_exact_unreal_tuples_do_not_resolve_the_boundary_profile() {
+    for selection in [
+        ProfileSelection::new("unreal", 2, "5.8", "fbx-importer"),
+        ProfileSelection::new("unreal", 1, "5.7", "fbx-importer"),
+        ProfileSelection::new("unreal", 1, "5.8", "interchange-importer"),
+        ProfileSelection::new("unity", 1, "5.8", "fbx-importer"),
+    ] {
+        assert!(
+            resolve_static(EngineDeclaration {
+                selection: Some(selection),
+                ..EngineDeclaration::default()
+            })
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn construction_rejects_same_load_timing_and_frozen_profile_mismatches() {
+    let period = source_period(SourceTimelineModeV1::Fps24).units_per_frame();
+    let original = source(
+        Coverage::Complete,
+        1,
+        Some(timing(
+            Coverage::Complete,
+            SourceTimelineModeV1::Fps24,
+            &[StackRange::Observed {
+                begin: 0,
+                end: period,
+            }],
+        )),
+    );
+    let provenance = provenance(&original);
+    let changed_timing = source(
+        Coverage::Complete,
+        1,
+        Some(timing(
+            Coverage::Complete,
+            SourceTimelineModeV1::Fps24,
+            &[StackRange::Observed {
+                begin: 0,
+                end: period + 1,
+            }],
+        )),
+    );
+    assert!(matches!(
+        EngineClipBoundaryCheck::new(&changed_timing, Some(&provenance)),
+        Err(PredictionRuleError::SourceProvenanceMismatch)
+    ));
+
+    let altered_sources = provenance
+        .profile()
+        .primary_sources()
+        .iter()
+        .map(|source| {
+            let url = if source.id() == "unreal-animation-sequences-5.8" {
+                format!("{}#altered", source.url())
+            } else {
+                source.url().to_owned()
+            };
+            animsmith_core::EnginePrimarySourceV1::new(
+                source.id(),
+                source.target_version(),
+                url,
+                source.verified_on(),
+                source.supported_fact_ids().to_vec(),
+                source.supported_setting_ids().to_vec(),
+            )
+            .unwrap()
+        })
+        .collect();
+    let altered_profile = animsmith_core::ResolvedEngineProfileV1::new(
+        provenance.profile().selection().clone(),
+        provenance.profile().fact_bundle_urn(),
+        provenance.profile().facts().to_vec(),
+        provenance.profile().setting_descriptors().to_vec(),
+        altered_sources,
+    )
+    .unwrap();
+    let altered_settings = animsmith_core::ResolvedEngineSettingsV2::new(
+        &altered_profile,
+        provenance.settings().document_settings().to_vec(),
+        provenance.settings().clips().to_vec(),
+        provenance.settings().clip_coverage().clone(),
+        *provenance.settings().work(),
+    )
+    .unwrap();
+    let altered_provenance = animsmith_core::PredictionProvenanceV3::new(
+        altered_profile,
+        provenance.source_format(),
+        altered_settings,
+        provenance.raw_source().clone(),
+        provenance.dependency_closure().clone(),
+    )
+    .unwrap();
+    assert!(matches!(
+        EngineClipBoundaryCheck::new(&original, Some(&altered_provenance)),
+        Err(PredictionRuleError::FrozenProfileMismatch)
+    ));
 }

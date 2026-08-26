@@ -132,7 +132,6 @@ pub mod directional_speed_evaluation;
 pub mod directional_speed_policy;
 pub mod engine_contract;
 pub mod evaluation;
-pub mod fbx_timing;
 pub mod finding;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
@@ -145,6 +144,7 @@ pub mod sample;
 pub mod scale;
 pub mod skinned_canonical;
 pub mod source_facts;
+pub mod source_timing;
 pub mod stance_support;
 pub mod static_bake;
 pub mod transform;
@@ -247,13 +247,6 @@ pub use evaluation::{
     EvaluationScope, EvaluationScopeCode, EvaluationState, SelectionState, evaluate_checks,
     evaluate_checks_v2, lint_requires_failure,
 };
-pub use fbx_timing::{
-    EXACT_FBX_TIMING_V1_ID, EXACT_FBX_TIMING_V1_MAX_STACKS, ExactFbxStackTimingV1,
-    ExactFbxTimingContractError, ExactFbxTimingObservationStateV1, ExactFbxTimingObservationV1,
-    ExactFbxTimingUnavailableReasonV1, ExactFbxTimingV1, FBX_KTIME_LEGACY_TICKS_PER_SECOND,
-    FBX_KTIME_STANDARD_TICKS_PER_SECOND, FbxCustomFrameRateV1, FbxFramePeriodV1, FbxKTimeBasisV1,
-    FbxStackTickRangeV1, FbxTimeModeV1, FbxTimeProtocolV1, FbxTimeSpanSelectionV1,
-};
 pub use finding::{Finding, MemberMeasurement, Severity, Value};
 /// Re-export of the exact `glam` version used by animsmith's public math
 /// types, so embedders can construct [`Transform`] values without a
@@ -275,31 +268,31 @@ pub use prediction::{
     ENGINE_PREDICTION_V1_ID, ENGINE_PREDICTION_V2_ID, ENGINE_PREDICTION_V3_ID,
     EnginePredictionBasisV1, EnginePredictionBasisV2, EnginePredictionFacetStateV1,
     EnginePredictionFacetV1, EnginePredictionFacetV2, EnginePredictionFacetV3, EnginePredictionV1,
-    EnginePredictionV2, EnginePredictionV3, ExactFbxCustomFrameRateWireV1,
-    ExactFbxFramePeriodWireV1, ExactFbxKTimeBasisWireV1, ExactFbxStackTickRangeWireV1,
-    ExactFbxStackTimingBindingV1, ExactFbxTimeModeWireV1, ExactFbxTimeProtocolWireV1,
-    ExactFbxTimeSpanSelectionWireV1, ExactFbxTimingBasisReferenceV1, ExactFbxTimingBindingV1,
-    ExactFbxTimingDomainV1, ExactFbxTimingKeyV1, ExactFbxTimingObservationStateWireV1,
-    ExactFbxTimingObservationWireV1, ExactFbxTimingUnavailableReasonWireV1,
+    EnginePredictionV2, EnginePredictionV3, ExactSourceClipTimeRangeWireV1,
+    ExactSourceClipTimingBindingV1, ExactSourceFramePeriodWireV1, ExactSourceRangeSelectionWireV1,
+    ExactSourceTimeBasisWireV1, ExactSourceTimeDisplayProtocolWireV1,
+    ExactSourceTimelineModeWireV1, ExactSourceTimingBasisReferenceV1, ExactSourceTimingBindingV1,
+    ExactSourceTimingDomainV1, ExactSourceTimingKeyV1, ExactSourceTimingObservationStateWireV1,
+    ExactSourceTimingObservationWireV1, ExactSourceTimingUnavailableReasonWireV1,
     FinitePredictionNumberV1, MeasurementPointerV1, PREDICTION_PROVENANCE_V1_ID,
     PREDICTION_PROVENANCE_V2_ID, PREDICTION_PROVENANCE_V3_ID,
     PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
     PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE, PREDICTION_V1_MAX_FACETS_PER_FILE,
     PREDICTION_V1_MAX_MEASUREMENT_POINTER_COMPONENTS, PREDICTION_V1_MAX_REASONS_PER_FACET,
     PREDICTION_V1_MAX_TEXT_BYTES, PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
-    PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE, PredictionBasisIdentityV1,
-    PredictionBasisIdentityV2, PredictionBasisReferenceV1, PredictionBasisReferenceV2,
-    PredictionContractError, PredictionFacetDemandV2, PredictionProvenanceIdentityV1,
-    PredictionProvenanceIdentityV2, PredictionProvenanceIdentityV3, PredictionProvenanceV1,
-    PredictionProvenanceV2, PredictionProvenanceV3, PredictionRuleAllocationV2,
-    PredictionRuleDemandV2, PredictionScalarV1, PredictionUnavailableReasonV1,
-    PredictionUnavailableReasonV2, RAW_SOURCE_FACTS_V2_ID, RawSourceAxisV1,
-    RawSourceBasisReferenceV1, RawSourceBindingV1, RawSourceBindingV2, RawSourceCoordinateBasisV1,
-    RawSourceDispositionV1, RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1,
-    RawSourceObservationStateWireV1, RawSourceObservationWireV1, RawSourceProjectionWorkWireV1,
-    RawSourceProvenanceKindV1, RawSourceProvenanceV1, RawSourceSetCoverageStateV1,
-    RawSourceSetCoverageV1, RawSourceUnavailableReasonV1, ResolvedSettingLocationV1,
-    SourceSkeletonRowKindV1, allocate_prediction_facets_v2,
+    PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE, ParserFrameRateProjectionWireV1,
+    PredictionBasisIdentityV1, PredictionBasisIdentityV2, PredictionBasisReferenceV1,
+    PredictionBasisReferenceV2, PredictionContractError, PredictionFacetDemandV2,
+    PredictionProvenanceIdentityV1, PredictionProvenanceIdentityV2, PredictionProvenanceIdentityV3,
+    PredictionProvenanceV1, PredictionProvenanceV2, PredictionProvenanceV3,
+    PredictionRuleAllocationV2, PredictionRuleDemandV2, PredictionScalarV1,
+    PredictionUnavailableReasonV1, PredictionUnavailableReasonV2, RAW_SOURCE_FACTS_V2_ID,
+    RawSourceAxisV1, RawSourceBasisReferenceV1, RawSourceBindingV1, RawSourceBindingV2,
+    RawSourceCoordinateBasisV1, RawSourceDispositionV1, RawSourceDomainV1, RawSourceFieldIdV1,
+    RawSourceKeyV1, RawSourceObservationStateWireV1, RawSourceObservationWireV1,
+    RawSourceProjectionWorkWireV1, RawSourceProvenanceKindV1, RawSourceProvenanceV1,
+    RawSourceSetCoverageStateV1, RawSourceSetCoverageV1, RawSourceUnavailableReasonV1,
+    ResolvedSettingLocationV1, SourceSkeletonRowKindV1, allocate_prediction_facets_v2,
 };
 pub use profile::{
     ResolutionOutcome, ResolvedRoles, RigProfile, Role, RoleResolutionPolicy, builtin_profiles,
@@ -333,6 +326,13 @@ pub use source_facts::{
     SourceRelativeLocatorV1, SourceResourceKindV1, SourceResourceLocatorV1,
     SourceResourceReferenceV1, SourceSetCoverageStateV1, SourceSetCoverageV1, SourceTargetKindV1,
     SourceTargetV1, SourceTextV1, SourceTimeRangeV1, SourceUnavailableReasonV1,
+};
+pub use source_timing::{
+    EXACT_SOURCE_TIMING_V1_ID, EXACT_SOURCE_TIMING_V1_MAX_CLIPS, ExactSourceClipTimeRangeV1,
+    ExactSourceClipTimingV1, ExactSourceFramePeriodV1, ExactSourceRangeSelectionV1,
+    ExactSourceTimeBasisV1, ExactSourceTimingContractError, ExactSourceTimingObservationStateV1,
+    ExactSourceTimingObservationV1, ExactSourceTimingUnavailableReasonV1, ExactSourceTimingV1,
+    ParserFrameRateProjectionV1, SourceTimeDisplayProtocolV1, SourceTimelineModeV1,
 };
 pub use stance_support::{
     ResolvedStanceSupportV1, StanceSideV1, StanceSupportRunV1, resolve_stance_support_v1,

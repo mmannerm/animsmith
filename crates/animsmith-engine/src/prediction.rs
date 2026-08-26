@@ -56,7 +56,7 @@ pub const ENGINE_CHECK_IDS_V1: &[&str] = &[ENGINE_ADDRESSABILITY_CHECK_ID];
 /// Current engine-owned check ids in immutable catalog order.
 ///
 /// The V1 catalog remains unchanged for historical standalone addressability
-/// artifacts; current lint may additionally register the V3-only exact FBX
+/// artifacts; current lint may additionally register the V3-only exact source
 /// boundary rule.
 pub const ENGINE_CHECK_IDS_V2: &[&str] = &[
     ENGINE_ADDRESSABILITY_CHECK_ID,
@@ -150,9 +150,11 @@ impl<'a> EngineAddressabilityCheckV3<'a> {
             provenance
                 .validate()
                 .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
-            let raw_source =
-                RawSourceBindingV2::from_source(source.source_facts(), source.exact_fbx_timing())
-                    .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
+            let raw_source = RawSourceBindingV2::from_source(
+                source.source_facts(),
+                source.exact_source_timing(),
+            )
+            .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
             if &raw_source != provenance.raw_source()
                 || source.dependency_closure() != provenance.dependency_closure()
             {

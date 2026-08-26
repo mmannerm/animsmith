@@ -98,14 +98,14 @@ if ! jq -e '
     == "urn:animsmith:engine-prediction:3"
   and .["$defs"].raw_source_binding.properties.schema.const
     == "urn:animsmith:raw-source-facts:2"
-  and .["$defs"].exact_fbx_timing_binding.properties.schema.const
-    == "urn:animsmith:exact-fbx-timing:1"
+  and .["$defs"].exact_source_timing_binding.properties.schema.const
+    == "urn:animsmith:exact-source-timing:1"
   and .["$defs"].consumed_contracts.prefixItems
     == [
       {"const":"urn:animsmith:schema:output:14"},
       {"const":"urn:animsmith:schema:measurements:16"},
       {"const":"urn:animsmith:raw-source-facts:2"},
-      {"const":"urn:animsmith:exact-fbx-timing:1"},
+      {"const":"urn:animsmith:exact-source-timing:1"},
       {"const":"urn:animsmith:dependency-closure:1"},
       {"const":"urn:animsmith:engine-profile-facts:1"},
       {"const":"urn:animsmith:resolved-engine-settings:2"}

@@ -590,9 +590,15 @@ that animation loading was enabled, that the runtime asset exists, or that its
 targets and graph wiring are usable. The selector can change when source
 animation order changes.
 
-Current lint uses prediction provenance v2 with bounded 4,096/N+1 settings
+Current lint uses prediction provenance v3 with bounded 4,096/N+1 settings
 coverage. A 4,097th clip is retained as typed partial-settings overflow
 evidence, never as a complete prefix.
+
+For the exact Unreal revision 1 / 5.8 / `fbx-importer` tuple, lint also runs
+`engine-clip-boundary`. The FBX adapter's same-load exact timing evidence is
+checked only for an absolute animation-stack end coordinate on its exact frame
+lattice. Missing or incomplete evidence is a required-unavailable facet; the
+command does not infer import ranges or other Unreal settings.
 
 `generate addressability` packages the same immutable raw-source evidence as a
 standalone, animation-only contract. It emits canonical JSON by default:

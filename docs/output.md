@@ -1203,7 +1203,7 @@ Built-in completed/gap scope codes are:
 | `first_frame_rest_delta` | The named clip's first-frame/rest-pose rotation evidence was evaluated. | `bind-pose` |
 | `animation_asset_label` | One source animation index was projected to the selected engine profile's canonical asset-label selector. | `engine-addressability` |
 | `animation_asset_label_inventory` | Complete source-animation inventory required for asset-label prediction was unavailable. | `engine-addressability` |
-| `engine_clip_boundary` | One source animation stack's exact end-frame boundary was evaluated. | `engine-clip-boundary` |
+| `engine_clip_boundary` | One source animation clip's exact end-frame boundary was evaluated. | `engine-clip-boundary` |
 | `engine_clip_boundary_inventory` | Complete exact source-animation boundary inventory was unavailable. | `engine-clip-boundary` |
 
 The built-in gap and scope declarations in `animsmith_core` are authoritative
@@ -1226,8 +1226,8 @@ Every output-v14 lint file has required nullable `prediction_provenance`. It is
 `null` when no exact engine profile was resolved. Otherwise it carries immutable
 prediction-provenance v3 (`urn:animsmith:prediction-provenance:3`): the typed
 profile facts and sources, authoritative input format, bounded resolved
-document/per-clip settings, V2 raw-source facts including optional exact FBX
-timing observations, the same-load dependency closure, and consumed contract
+document/per-clip settings, V2 raw-source facts including optional exact
+source-timing observations, the same-load dependency closure, and consumed contract
 identities. The header, profile, settings coverage/work, raw evidence, closure, and primary
 input identities are cross-validated; host paths and arbitrary JSON are
 forbidden.
@@ -1243,7 +1243,15 @@ is not applicable. Partial or unavailable inventory emits one subjectless
 `animation_asset_label_inventory` required-unavailable facet and no prefix
 predictions.
 
-Resolved engine settings and prediction provenance v2 use explicit bounded
+Output v14 also carries the bounded `engine-clip-boundary` rule for the exact
+Unreal revision 1 / 5.8 / `fbx-importer` profile. Its FBX adapter supplies the
+parser-resolved absolute animation-stack end coordinate and exact frame period
+as generic exact source-timing evidence. The rule reports only whether that end
+coordinate lies on the exact frame lattice. Missing, partial, or unavailable
+evidence becomes a required-unavailable facet; it does not infer frame ranges,
+resampling, root motion, or other importer behavior.
+
+Resolved engine settings and prediction provenance v3 use explicit bounded
 N+1 work and coverage evidence. A 4,097th clip produces partial settings
 coverage rather than an honest complete prefix; engine facets report the typed
 `resolved_settings_overflow` reason. Current lint allocates the shared 4,096

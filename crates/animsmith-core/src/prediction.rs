@@ -47,13 +47,14 @@ use crate::source_facts::{
     SourceTargetKindV1, SourceUnavailableReasonV1,
 };
 use crate::{
-    DEPENDENCY_CLOSURE_V1_ID, DependencyClosureV1, EXACT_FBX_TIMING_V1_ID, ExactFbxStackTimingV1,
-    ExactFbxTimingObservationStateV1, ExactFbxTimingObservationV1,
-    ExactFbxTimingUnavailableReasonV1, ExactFbxTimingV1, FbxCustomFrameRateV1, FbxFramePeriodV1,
-    FbxKTimeBasisV1, FbxTimeModeV1, FbxTimeProtocolV1, FbxTimeSpanSelectionV1, InputIdentity,
+    DEPENDENCY_CLOSURE_V1_ID, DependencyClosureV1, EXACT_SOURCE_TIMING_V1_ID,
+    ExactSourceClipTimingV1, ExactSourceFramePeriodV1, ExactSourceRangeSelectionV1,
+    ExactSourceTimeBasisV1, ExactSourceTimingObservationStateV1, ExactSourceTimingObservationV1,
+    ExactSourceTimingUnavailableReasonV1, ExactSourceTimingV1, InputIdentity,
     MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_V15_SCHEMA_ID, MeasurementContract, OUTPUT_V10_SCHEMA_ID,
-    OUTPUT_V12_SCHEMA_ID, OUTPUT_V13_SCHEMA_ID, SourceInverseBindAccessorStatus,
-    SourceNodeLocalRest, SourceSkeletonCoverage,
+    OUTPUT_V12_SCHEMA_ID, OUTPUT_V13_SCHEMA_ID, ParserFrameRateProjectionV1,
+    SourceInverseBindAccessorStatus, SourceNodeLocalRest, SourceSkeletonCoverage,
+    SourceTimeDisplayProtocolV1, SourceTimelineModeV1,
 };
 
 /// Immutable prediction-provenance V1 schema identity.
@@ -344,24 +345,21 @@ pub enum PredictionContractError {
     /// The retained raw-source scalar disagrees with same-load facts.
     #[error("raw-source basis scalar disagrees with same-load facts")]
     RawSourceValueMismatch,
-    /// Exact FBX timing evidence was omitted for FBX or attached to another format.
-    #[error("exact FBX timing presence contradicts the raw-source format")]
-    ExactFbxTimingApplicabilityMismatch,
-    /// Exact FBX timing and V1 source-clip coverage disagree.
-    #[error("exact FBX timing stack coverage contradicts raw-source clip coverage")]
-    ExactFbxTimingCoverageMismatch,
-    /// Exact FBX stack rows were not a canonical zero-based retained prefix.
-    #[error("exact FBX timing stack rows are not a canonical source-index prefix")]
-    ExactFbxTimingStackPrefixMismatch,
-    /// One exact FBX timing observation has an invalid state/disposition/provenance combination.
-    #[error("exact FBX timing observation {0:?} has incoherent metadata")]
-    InvalidExactFbxTimingObservation(&'static str),
-    /// An exact FBX timing basis reference names no scalar in the embedded binding.
-    #[error("exact FBX timing basis field {0:?} is not available")]
-    ExactFbxTimingFieldUnavailable(String),
-    /// An exact FBX timing basis scalar disagrees with the embedded binding.
-    #[error("exact FBX timing basis scalar disagrees with prediction provenance")]
-    ExactFbxTimingValueMismatch,
+    /// Exact source timing and V1 source-clip coverage disagree.
+    #[error("exact source timing clip coverage contradicts raw-source clip coverage")]
+    ExactSourceTimingCoverageMismatch,
+    /// Exact source clip rows were not a canonical zero-based retained prefix.
+    #[error("exact source timing clip rows are not a canonical source-index prefix")]
+    ExactSourceTimingClipPrefixMismatch,
+    /// One exact source timing observation has an invalid state/disposition/provenance combination.
+    #[error("exact source timing observation {0:?} has incoherent metadata")]
+    InvalidExactSourceTimingObservation(&'static str),
+    /// An exact source timing basis reference names no scalar in the embedded binding.
+    #[error("exact source timing basis field {0:?} is not available")]
+    ExactSourceTimingFieldUnavailable(String),
+    /// An exact source timing basis scalar disagrees with the embedded binding.
+    #[error("exact source timing basis scalar disagrees with prediction provenance")]
+    ExactSourceTimingValueMismatch,
     /// One facet exceeded the per-facet basis-reference bound.
     #[error("prediction basis has {found} references, exceeding the V1 limit of {limit}")]
     TooManyBasisReferences {
@@ -455,11 +453,11 @@ pub enum PredictionContractError {
     /// The current engine-clip-boundary facets did not match the exact timing
     /// rows, availability states, reasons, or canonical evidence bases implied
     /// by V3 provenance.
-    #[error("engine-clip-boundary facets contradict exact FBX timing provenance")]
+    #[error("engine-clip-boundary facets contradict exact source timing provenance")]
     EngineClipBoundaryFacetMismatch,
     /// The current engine-clip-boundary findings did not identify exactly the
-    /// available source-stack ends outside their exact frame lattice.
-    #[error("engine-clip-boundary findings contradict exact FBX timing provenance")]
+    /// available source-clip ends outside their exact frame lattice.
+    #[error("engine-clip-boundary findings contradict exact source timing provenance")]
     EngineClipBoundaryFindingMismatch,
     /// A required-unavailable facet scope was also reported as completed.
     #[error("required-unavailable prediction facet scope cannot occur in evaluated_scopes")]
@@ -2415,37 +2413,39 @@ impl RawSourceBindingV1 {
     }
 }
 
-/// Exact-FBX unavailability vocabulary retained by the prediction wire.
+/// exact-source unavailability vocabulary retained by the prediction wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExactFbxTimingUnavailableReasonWireV1 {
+pub enum ExactSourceTimingUnavailableReasonWireV1 {
     /// A source property or selected range was malformed.
     Malformed,
     /// A custom rate was exposed only as a floating-point value.
     CustomFrameRateNotExact,
     /// No frozen exact period exists for the time mode.
     UnsupportedTimeMode,
-    /// The KTime basis cannot represent the frozen integer period.
-    UnsupportedKTimeBasis,
+    /// The source-time basis cannot represent the frozen integer period.
+    UnsupportedTimeBasis,
     /// The parser did not expose the exact value.
     ParserUnavailable,
 }
 
-impl From<ExactFbxTimingUnavailableReasonV1> for ExactFbxTimingUnavailableReasonWireV1 {
-    fn from(value: ExactFbxTimingUnavailableReasonV1) -> Self {
+impl From<ExactSourceTimingUnavailableReasonV1> for ExactSourceTimingUnavailableReasonWireV1 {
+    fn from(value: ExactSourceTimingUnavailableReasonV1) -> Self {
         match value {
-            ExactFbxTimingUnavailableReasonV1::Malformed => Self::Malformed,
-            ExactFbxTimingUnavailableReasonV1::CustomFrameRateNotExact => {
+            ExactSourceTimingUnavailableReasonV1::Malformed => Self::Malformed,
+            ExactSourceTimingUnavailableReasonV1::CustomFrameRateNotExact => {
                 Self::CustomFrameRateNotExact
             }
-            ExactFbxTimingUnavailableReasonV1::UnsupportedTimeMode => Self::UnsupportedTimeMode,
-            ExactFbxTimingUnavailableReasonV1::UnsupportedKTimeBasis => Self::UnsupportedKTimeBasis,
-            ExactFbxTimingUnavailableReasonV1::ParserUnavailable => Self::ParserUnavailable,
+            ExactSourceTimingUnavailableReasonV1::UnsupportedTimeMode => Self::UnsupportedTimeMode,
+            ExactSourceTimingUnavailableReasonV1::UnsupportedTimeBasis => {
+                Self::UnsupportedTimeBasis
+            }
+            ExactSourceTimingUnavailableReasonV1::ParserUnavailable => Self::ParserUnavailable,
         }
     }
 }
 
-/// Availability of one exact-FBX timing value in prediction provenance.
+/// Availability of one exact-source timing value in prediction provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -2453,38 +2453,38 @@ impl From<ExactFbxTimingUnavailableReasonV1> for ExactFbxTimingUnavailableReason
     rename_all = "snake_case",
     deny_unknown_fields
 )]
-pub enum ExactFbxTimingObservationStateWireV1<T> {
+pub enum ExactSourceTimingObservationStateWireV1<T> {
     /// Exact observed value.
     Observed(T),
     /// Complete evidence proves that no declaration exists.
     ProvenAbsent,
     /// Exact evidence could not be established.
-    Unavailable(ExactFbxTimingUnavailableReasonWireV1),
+    Unavailable(ExactSourceTimingUnavailableReasonWireV1),
 }
 
-/// One exact-FBX timing observation with its loader treatment and provenance.
+/// One exact-source timing observation with its loader treatment and provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExactFbxTimingObservationWireV1<T> {
-    state: ExactFbxTimingObservationStateWireV1<T>,
+pub struct ExactSourceTimingObservationWireV1<T> {
+    state: ExactSourceTimingObservationStateWireV1<T>,
     disposition: RawSourceDispositionV1,
     provenance: Option<RawSourceProvenanceV1>,
 }
 
-impl<T> ExactFbxTimingObservationWireV1<T> {
+impl<T> ExactSourceTimingObservationWireV1<T> {
     fn from_source<U>(
-        observation: &ExactFbxTimingObservationV1<U>,
+        observation: &ExactSourceTimingObservationV1<U>,
         map: impl FnOnce(&U) -> T,
     ) -> Self {
         let state = match observation.state() {
-            ExactFbxTimingObservationStateV1::Observed(value) => {
-                ExactFbxTimingObservationStateWireV1::Observed(map(value))
+            ExactSourceTimingObservationStateV1::Observed(value) => {
+                ExactSourceTimingObservationStateWireV1::Observed(map(value))
             }
-            ExactFbxTimingObservationStateV1::ProvenAbsent => {
-                ExactFbxTimingObservationStateWireV1::ProvenAbsent
+            ExactSourceTimingObservationStateV1::ProvenAbsent => {
+                ExactSourceTimingObservationStateWireV1::ProvenAbsent
             }
-            ExactFbxTimingObservationStateV1::Unavailable(reason) => {
-                ExactFbxTimingObservationStateWireV1::Unavailable((*reason).into())
+            ExactSourceTimingObservationStateV1::Unavailable(reason) => {
+                ExactSourceTimingObservationStateWireV1::Unavailable((*reason).into())
             }
         };
         Self {
@@ -2497,7 +2497,7 @@ impl<T> ExactFbxTimingObservationWireV1<T> {
     }
 
     /// Availability and exact value state.
-    pub const fn state(&self) -> &ExactFbxTimingObservationStateWireV1<T> {
+    pub const fn state(&self) -> &ExactSourceTimingObservationStateWireV1<T> {
         &self.state
     }
 
@@ -2513,24 +2513,22 @@ impl<T> ExactFbxTimingObservationWireV1<T> {
 
     fn validate(&self, field: &'static str) -> Result<(), PredictionContractError> {
         let coherent = match &self.state {
-            ExactFbxTimingObservationStateWireV1::Observed(_) => self.provenance.is_some(),
-            ExactFbxTimingObservationStateWireV1::ProvenAbsent => {
+            ExactSourceTimingObservationStateWireV1::Observed(_) => self.provenance.is_some(),
+            ExactSourceTimingObservationStateWireV1::ProvenAbsent => {
                 self.provenance.is_some()
                     && self.disposition == RawSourceDispositionV1::NotApplicable
             }
-            ExactFbxTimingObservationStateWireV1::Unavailable(_) => true,
+            ExactSourceTimingObservationStateWireV1::Unavailable(_) => true,
         };
         if !coherent {
-            return Err(PredictionContractError::InvalidExactFbxTimingObservation(
-                field,
-            ));
+            return Err(PredictionContractError::InvalidExactSourceTimingObservation(field));
         }
         if let Some(locator) = self
             .provenance
             .as_ref()
             .and_then(|provenance| provenance.locator.as_deref())
         {
-            bounded_string("exact FBX timing provenance locator", locator)?;
+            bounded_string("exact source timing provenance locator", locator)?;
         }
         Ok(())
     }
@@ -2542,11 +2540,11 @@ impl<T> ExactFbxTimingObservationWireV1<T> {
     }
 }
 
-/// Exact FBX time-mode wire token.
+/// Exact source time-mode wire token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExactFbxTimeModeWireV1 {
-    /// The FBX SDK default time mode.
+pub enum ExactSourceTimelineModeWireV1 {
+    /// The source default time mode.
     Default,
     /// 120 frames per second.
     Fps120,
@@ -2560,7 +2558,7 @@ pub enum ExactFbxTimeModeWireV1 {
     Fps48,
     /// 30 frames per second.
     Fps30,
-    /// FBX 30-fps drop-frame mode.
+    /// source 30-fps drop-frame mode.
     Fps30Drop,
     /// NTSC drop-frame mode.
     NtscDropFrame,
@@ -2584,264 +2582,268 @@ pub enum ExactFbxTimeModeWireV1 {
     Fps59Dot94,
 }
 
-impl From<FbxTimeModeV1> for ExactFbxTimeModeWireV1 {
-    fn from(value: FbxTimeModeV1) -> Self {
+impl From<SourceTimelineModeV1> for ExactSourceTimelineModeWireV1 {
+    fn from(value: SourceTimelineModeV1) -> Self {
         match value {
-            FbxTimeModeV1::Default => Self::Default,
-            FbxTimeModeV1::Fps120 => Self::Fps120,
-            FbxTimeModeV1::Fps100 => Self::Fps100,
-            FbxTimeModeV1::Fps60 => Self::Fps60,
-            FbxTimeModeV1::Fps50 => Self::Fps50,
-            FbxTimeModeV1::Fps48 => Self::Fps48,
-            FbxTimeModeV1::Fps30 => Self::Fps30,
-            FbxTimeModeV1::Fps30Drop => Self::Fps30Drop,
-            FbxTimeModeV1::NtscDropFrame => Self::NtscDropFrame,
-            FbxTimeModeV1::NtscFullFrame => Self::NtscFullFrame,
-            FbxTimeModeV1::Pal => Self::Pal,
-            FbxTimeModeV1::Fps24 => Self::Fps24,
-            FbxTimeModeV1::Fps1000 => Self::Fps1000,
-            FbxTimeModeV1::FilmFullFrame => Self::FilmFullFrame,
-            FbxTimeModeV1::Custom => Self::Custom,
-            FbxTimeModeV1::Fps96 => Self::Fps96,
-            FbxTimeModeV1::Fps72 => Self::Fps72,
-            FbxTimeModeV1::Fps59Dot94 => Self::Fps59Dot94,
+            SourceTimelineModeV1::Default => Self::Default,
+            SourceTimelineModeV1::Fps120 => Self::Fps120,
+            SourceTimelineModeV1::Fps100 => Self::Fps100,
+            SourceTimelineModeV1::Fps60 => Self::Fps60,
+            SourceTimelineModeV1::Fps50 => Self::Fps50,
+            SourceTimelineModeV1::Fps48 => Self::Fps48,
+            SourceTimelineModeV1::Fps30 => Self::Fps30,
+            SourceTimelineModeV1::Fps30Drop => Self::Fps30Drop,
+            SourceTimelineModeV1::NtscDropFrame => Self::NtscDropFrame,
+            SourceTimelineModeV1::NtscFullFrame => Self::NtscFullFrame,
+            SourceTimelineModeV1::Pal => Self::Pal,
+            SourceTimelineModeV1::Fps24 => Self::Fps24,
+            SourceTimelineModeV1::Fps1000 => Self::Fps1000,
+            SourceTimelineModeV1::FilmFullFrame => Self::FilmFullFrame,
+            SourceTimelineModeV1::Custom => Self::Custom,
+            SourceTimelineModeV1::Fps96 => Self::Fps96,
+            SourceTimelineModeV1::Fps72 => Self::Fps72,
+            SourceTimelineModeV1::Fps59Dot94 => Self::Fps59Dot94,
         }
     }
 }
 
-/// Exact FBX timecode-protocol wire token.
+/// Exact source timecode-protocol wire token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExactFbxTimeProtocolWireV1 {
+pub enum ExactSourceTimeDisplayProtocolWireV1 {
     /// SMPTE timecode protocol.
     Smpte,
     /// Absolute frame-count protocol.
     FrameCount,
-    /// The FBX SDK default timecode protocol.
+    /// The source default timecode protocol.
     Default,
 }
 
-impl From<FbxTimeProtocolV1> for ExactFbxTimeProtocolWireV1 {
-    fn from(value: FbxTimeProtocolV1) -> Self {
+impl From<SourceTimeDisplayProtocolV1> for ExactSourceTimeDisplayProtocolWireV1 {
+    fn from(value: SourceTimeDisplayProtocolV1) -> Self {
         match value {
-            FbxTimeProtocolV1::Smpte => Self::Smpte,
-            FbxTimeProtocolV1::FrameCount => Self::FrameCount,
-            FbxTimeProtocolV1::Default => Self::Default,
+            SourceTimeDisplayProtocolV1::Smpte => Self::Smpte,
+            SourceTimeDisplayProtocolV1::FrameCount => Self::FrameCount,
+            SourceTimeDisplayProtocolV1::Default => Self::Default,
         }
     }
 }
 
-/// Parser-selected FBX stack span.
+/// Parser-selected source clip span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExactFbxTimeSpanSelectionWireV1 {
-    /// The stack's local time span was selected.
-    Local,
-    /// The stack's reference time span was selected.
-    Reference,
+pub enum ExactSourceRangeSelectionWireV1 {
+    /// The loader's preferred complete pair was selected.
+    Primary,
+    /// The loader's complete fallback pair was selected.
+    Fallback,
 }
 
-impl From<FbxTimeSpanSelectionV1> for ExactFbxTimeSpanSelectionWireV1 {
-    fn from(value: FbxTimeSpanSelectionV1) -> Self {
+impl From<ExactSourceRangeSelectionV1> for ExactSourceRangeSelectionWireV1 {
+    fn from(value: ExactSourceRangeSelectionV1) -> Self {
         match value {
-            FbxTimeSpanSelectionV1::Local => Self::Local,
-            FbxTimeSpanSelectionV1::Reference => Self::Reference,
+            ExactSourceRangeSelectionV1::Primary => Self::Primary,
+            ExactSourceRangeSelectionV1::Fallback => Self::Fallback,
         }
     }
 }
 
-/// Positive exact KTime ticks-per-second value.
+/// Positive exact source-time ticks-per-second value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExactFbxKTimeBasisWireV1 {
-    ticks_per_second: i64,
+pub struct ExactSourceTimeBasisWireV1 {
+    units_per_second: i64,
 }
 
-/// Positive exact KTime ticks-per-frame value.
+/// Positive exact source-time ticks-per-frame value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExactFbxFramePeriodWireV1 {
-    ticks_per_frame: i64,
+pub struct ExactSourceFramePeriodWireV1 {
+    units_per_frame: i64,
 }
 
-impl ExactFbxFramePeriodWireV1 {
-    pub(crate) const fn ticks_per_frame(self) -> i64 {
-        self.ticks_per_frame
+impl ExactSourceFramePeriodWireV1 {
+    pub(crate) const fn units_per_frame(self) -> i64 {
+        self.units_per_frame
     }
 }
 
 /// Exact parser-projected binary64 bits for a declared custom frame rate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExactFbxCustomFrameRateWireV1 {
+pub struct ParserFrameRateProjectionWireV1 {
     binary64_bits: u64,
 }
 
-/// Exact selected begin/end KTime coordinates for one source stack.
+/// Exact selected begin/end source-time coordinates for one source clip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExactFbxStackTickRangeWireV1 {
-    selection: ExactFbxTimeSpanSelectionWireV1,
-    begin_ticks: i64,
-    end_ticks: i64,
+pub struct ExactSourceClipTimeRangeWireV1 {
+    selection: ExactSourceRangeSelectionWireV1,
+    begin_units: i64,
+    end_units: i64,
 }
 
-impl ExactFbxStackTickRangeWireV1 {
-    pub(crate) const fn end_ticks(self) -> i64 {
-        self.end_ticks
+impl ExactSourceClipTimeRangeWireV1 {
+    pub(crate) const fn end_units(self) -> i64 {
+        self.end_units
     }
 }
 
 /// One canonical exact timing row in the prediction wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExactFbxStackTimingBindingV1 {
-    source_stack_index: u64,
-    source_tick_range: ExactFbxTimingObservationWireV1<ExactFbxStackTickRangeWireV1>,
+pub struct ExactSourceClipTimingBindingV1 {
+    source_clip_index: u64,
+    source_time_range: ExactSourceTimingObservationWireV1<ExactSourceClipTimeRangeWireV1>,
 }
 
-impl ExactFbxStackTimingBindingV1 {
-    fn from_source(value: &ExactFbxStackTimingV1) -> Self {
+impl ExactSourceClipTimingBindingV1 {
+    fn from_source(value: &ExactSourceClipTimingV1) -> Self {
         Self {
-            source_stack_index: value.source_stack_index() as u64,
-            source_tick_range: ExactFbxTimingObservationWireV1::from_source(
-                value.source_tick_range(),
-                |range| ExactFbxStackTickRangeWireV1 {
+            source_clip_index: value.source_clip_index() as u64,
+            source_time_range: ExactSourceTimingObservationWireV1::from_source(
+                value.source_time_range(),
+                |range| ExactSourceClipTimeRangeWireV1 {
                     selection: range.selection().into(),
-                    begin_ticks: range.begin_ticks(),
-                    end_ticks: range.end_ticks(),
+                    begin_units: range.begin_units(),
+                    end_units: range.end_units(),
                 },
             ),
         }
     }
 
-    /// Stable source stack index.
-    pub const fn source_stack_index(&self) -> u64 {
-        self.source_stack_index
+    /// Stable source clip index.
+    pub const fn source_clip_index(&self) -> u64 {
+        self.source_clip_index
     }
 
     /// Exact selected source range observation.
-    pub const fn source_tick_range(
+    pub const fn source_time_range(
         &self,
-    ) -> &ExactFbxTimingObservationWireV1<ExactFbxStackTickRangeWireV1> {
-        &self.source_tick_range
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceClipTimeRangeWireV1> {
+        &self.source_time_range
     }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ExactFbxTimingBindingWireV1 {
+struct ExactSourceTimingBindingWireV1 {
     schema: String,
-    ktime_basis: ExactFbxTimingObservationWireV1<ExactFbxKTimeBasisWireV1>,
-    declared_time_mode: ExactFbxTimingObservationWireV1<ExactFbxTimeModeWireV1>,
-    effective_time_mode: ExactFbxTimingObservationWireV1<ExactFbxTimeModeWireV1>,
-    declared_custom_frame_rate: ExactFbxTimingObservationWireV1<ExactFbxCustomFrameRateWireV1>,
-    frame_period: ExactFbxTimingObservationWireV1<ExactFbxFramePeriodWireV1>,
-    declared_time_protocol: ExactFbxTimingObservationWireV1<ExactFbxTimeProtocolWireV1>,
-    effective_time_protocol: ExactFbxTimingObservationWireV1<ExactFbxTimeProtocolWireV1>,
-    stack_coverage: RawSourceSetCoverageV1,
-    #[serde(deserialize_with = "deserialize_exact_fbx_stack_rows")]
-    stacks: CappedSequence<ExactFbxStackTimingBindingV1>,
+    time_basis: ExactSourceTimingObservationWireV1<ExactSourceTimeBasisWireV1>,
+    declared_time_mode: ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1>,
+    effective_time_mode: ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1>,
+    declared_custom_frame_rate: ExactSourceTimingObservationWireV1<ParserFrameRateProjectionWireV1>,
+    frame_period: ExactSourceTimingObservationWireV1<ExactSourceFramePeriodWireV1>,
+    declared_time_protocol:
+        ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1>,
+    effective_time_protocol:
+        ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1>,
+    clip_coverage: RawSourceSetCoverageV1,
+    #[serde(deserialize_with = "deserialize_exact_source_clip_rows")]
+    clips: CappedSequence<ExactSourceClipTimingBindingV1>,
 }
 
-fn deserialize_exact_fbx_stack_rows<'de, D>(
+fn deserialize_exact_source_clip_rows<'de, D>(
     deserializer: D,
-) -> Result<CappedSequence<ExactFbxStackTimingBindingV1>, D::Error>
+) -> Result<CappedSequence<ExactSourceClipTimingBindingV1>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserialize_capped_sequence(deserializer, crate::EXACT_FBX_TIMING_V1_MAX_STACKS)
+    deserialize_capped_sequence(deserializer, crate::EXACT_SOURCE_TIMING_V1_MAX_CLIPS)
 }
 
-/// Self-contained exact-FBX timing evidence embedded by raw-source binding V2.
+/// Self-contained exact-source timing evidence embedded by raw-source binding V2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ExactFbxTimingBindingV1 {
+pub struct ExactSourceTimingBindingV1 {
     schema: &'static str,
-    ktime_basis: ExactFbxTimingObservationWireV1<ExactFbxKTimeBasisWireV1>,
-    declared_time_mode: ExactFbxTimingObservationWireV1<ExactFbxTimeModeWireV1>,
-    effective_time_mode: ExactFbxTimingObservationWireV1<ExactFbxTimeModeWireV1>,
-    declared_custom_frame_rate: ExactFbxTimingObservationWireV1<ExactFbxCustomFrameRateWireV1>,
-    frame_period: ExactFbxTimingObservationWireV1<ExactFbxFramePeriodWireV1>,
-    declared_time_protocol: ExactFbxTimingObservationWireV1<ExactFbxTimeProtocolWireV1>,
-    effective_time_protocol: ExactFbxTimingObservationWireV1<ExactFbxTimeProtocolWireV1>,
-    stack_coverage: RawSourceSetCoverageV1,
-    stacks: Vec<ExactFbxStackTimingBindingV1>,
+    time_basis: ExactSourceTimingObservationWireV1<ExactSourceTimeBasisWireV1>,
+    declared_time_mode: ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1>,
+    effective_time_mode: ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1>,
+    declared_custom_frame_rate: ExactSourceTimingObservationWireV1<ParserFrameRateProjectionWireV1>,
+    frame_period: ExactSourceTimingObservationWireV1<ExactSourceFramePeriodWireV1>,
+    declared_time_protocol:
+        ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1>,
+    effective_time_protocol:
+        ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1>,
+    clip_coverage: RawSourceSetCoverageV1,
+    clips: Vec<ExactSourceClipTimingBindingV1>,
 }
 
-impl ExactFbxTimingBindingV1 {
-    fn from_source(value: &ExactFbxTimingV1) -> Result<Self, PredictionContractError> {
+impl ExactSourceTimingBindingV1 {
+    fn from_source(value: &ExactSourceTimingV1) -> Result<Self, PredictionContractError> {
         let binding = Self {
-            schema: EXACT_FBX_TIMING_V1_ID,
-            ktime_basis: ExactFbxTimingObservationWireV1::from_source(
-                value.ktime_basis(),
-                |basis: &FbxKTimeBasisV1| ExactFbxKTimeBasisWireV1 {
-                    ticks_per_second: basis.ticks_per_second(),
+            schema: EXACT_SOURCE_TIMING_V1_ID,
+            time_basis: ExactSourceTimingObservationWireV1::from_source(
+                value.time_basis(),
+                |basis: &ExactSourceTimeBasisV1| ExactSourceTimeBasisWireV1 {
+                    units_per_second: basis.units_per_second(),
                 },
             ),
-            declared_time_mode: ExactFbxTimingObservationWireV1::from_source(
+            declared_time_mode: ExactSourceTimingObservationWireV1::from_source(
                 value.declared_time_mode(),
                 |mode| (*mode).into(),
             ),
-            effective_time_mode: ExactFbxTimingObservationWireV1::from_source(
+            effective_time_mode: ExactSourceTimingObservationWireV1::from_source(
                 value.effective_time_mode(),
                 |mode| (*mode).into(),
             ),
-            declared_custom_frame_rate: ExactFbxTimingObservationWireV1::from_source(
+            declared_custom_frame_rate: ExactSourceTimingObservationWireV1::from_source(
                 value.declared_custom_frame_rate(),
-                |rate: &FbxCustomFrameRateV1| ExactFbxCustomFrameRateWireV1 {
+                |rate: &ParserFrameRateProjectionV1| ParserFrameRateProjectionWireV1 {
                     binary64_bits: rate.binary64_bits(),
                 },
             ),
-            frame_period: ExactFbxTimingObservationWireV1::from_source(
+            frame_period: ExactSourceTimingObservationWireV1::from_source(
                 value.frame_period(),
-                |period: &FbxFramePeriodV1| ExactFbxFramePeriodWireV1 {
-                    ticks_per_frame: period.ticks_per_frame(),
+                |period: &ExactSourceFramePeriodV1| ExactSourceFramePeriodWireV1 {
+                    units_per_frame: period.units_per_frame(),
                 },
             ),
-            declared_time_protocol: ExactFbxTimingObservationWireV1::from_source(
+            declared_time_protocol: ExactSourceTimingObservationWireV1::from_source(
                 value.declared_time_protocol(),
                 |protocol| (*protocol).into(),
             ),
-            effective_time_protocol: ExactFbxTimingObservationWireV1::from_source(
+            effective_time_protocol: ExactSourceTimingObservationWireV1::from_source(
                 value.effective_time_protocol(),
                 |protocol| (*protocol).into(),
             ),
-            stack_coverage: value.stack_coverage().into(),
-            stacks: value
-                .stacks()
+            clip_coverage: value.clip_coverage().into(),
+            clips: value
+                .clips()
                 .iter()
-                .map(ExactFbxStackTimingBindingV1::from_source)
+                .map(ExactSourceClipTimingBindingV1::from_source)
                 .collect(),
         };
         binding.validate()?;
         Ok(binding)
     }
 
-    fn from_wire(wire: ExactFbxTimingBindingWireV1) -> Result<Self, PredictionContractError> {
-        if wire.schema != EXACT_FBX_TIMING_V1_ID {
+    fn from_wire(wire: ExactSourceTimingBindingWireV1) -> Result<Self, PredictionContractError> {
+        if wire.schema != EXACT_SOURCE_TIMING_V1_ID {
             return Err(PredictionContractError::InvalidSchema {
-                field: "raw_source.exact_fbx_timing.schema",
-                expected: EXACT_FBX_TIMING_V1_ID,
+                field: "raw_source.exact_source_timing.schema",
+                expected: EXACT_SOURCE_TIMING_V1_ID,
                 found: wire.schema,
             });
         }
-        if wire.stacks.overflowed {
+        if wire.clips.overflowed {
             return Err(PredictionContractError::TooManyAggregateProvenanceRows {
-                found: crate::EXACT_FBX_TIMING_V1_MAX_STACKS + 1,
-                limit: crate::EXACT_FBX_TIMING_V1_MAX_STACKS,
+                found: crate::EXACT_SOURCE_TIMING_V1_MAX_CLIPS + 1,
+                limit: crate::EXACT_SOURCE_TIMING_V1_MAX_CLIPS,
             });
         }
         let binding = Self {
-            schema: EXACT_FBX_TIMING_V1_ID,
-            ktime_basis: wire.ktime_basis,
+            schema: EXACT_SOURCE_TIMING_V1_ID,
+            time_basis: wire.time_basis,
             declared_time_mode: wire.declared_time_mode,
             effective_time_mode: wire.effective_time_mode,
             declared_custom_frame_rate: wire.declared_custom_frame_rate,
             frame_period: wire.frame_period,
             declared_time_protocol: wire.declared_time_protocol,
             effective_time_protocol: wire.effective_time_protocol,
-            stack_coverage: wire.stack_coverage,
-            stacks: wire.stacks.values,
+            clip_coverage: wire.clip_coverage,
+            clips: wire.clips.values,
         };
         binding.validate()?;
         Ok(binding)
@@ -2852,65 +2854,67 @@ impl ExactFbxTimingBindingV1 {
         self.schema
     }
 
-    /// Exact document KTime-basis observation.
-    pub const fn ktime_basis(&self) -> &ExactFbxTimingObservationWireV1<ExactFbxKTimeBasisWireV1> {
-        &self.ktime_basis
+    /// Exact document source-time-basis observation.
+    pub const fn time_basis(
+        &self,
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimeBasisWireV1> {
+        &self.time_basis
     }
 
     /// Document-declared time-mode observation.
     pub const fn declared_time_mode(
         &self,
-    ) -> &ExactFbxTimingObservationWireV1<ExactFbxTimeModeWireV1> {
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1> {
         &self.declared_time_mode
     }
 
     /// Effective time-mode observation used for exact timing.
     pub const fn effective_time_mode(
         &self,
-    ) -> &ExactFbxTimingObservationWireV1<ExactFbxTimeModeWireV1> {
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimelineModeWireV1> {
         &self.effective_time_mode
     }
 
     /// Exact integer frame-period observation.
     pub const fn frame_period(
         &self,
-    ) -> &ExactFbxTimingObservationWireV1<ExactFbxFramePeriodWireV1> {
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceFramePeriodWireV1> {
         &self.frame_period
     }
 
     /// Exact binary64 bits for the declared custom frame rate.
     pub const fn declared_custom_frame_rate(
         &self,
-    ) -> &ExactFbxTimingObservationWireV1<ExactFbxCustomFrameRateWireV1> {
+    ) -> &ExactSourceTimingObservationWireV1<ParserFrameRateProjectionWireV1> {
         &self.declared_custom_frame_rate
     }
 
     /// Document-declared timecode-protocol observation.
     pub const fn declared_time_protocol(
         &self,
-    ) -> &ExactFbxTimingObservationWireV1<ExactFbxTimeProtocolWireV1> {
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1> {
         &self.declared_time_protocol
     }
 
     /// Effective timecode-protocol observation.
     pub const fn effective_time_protocol(
         &self,
-    ) -> &ExactFbxTimingObservationWireV1<ExactFbxTimeProtocolWireV1> {
+    ) -> &ExactSourceTimingObservationWireV1<ExactSourceTimeDisplayProtocolWireV1> {
         &self.effective_time_protocol
     }
 
-    /// Coverage state for retained animation-stack rows.
-    pub const fn stack_coverage(&self) -> RawSourceSetCoverageV1 {
-        self.stack_coverage
+    /// Coverage state for retained animation-clip rows.
+    pub const fn clip_coverage(&self) -> RawSourceSetCoverageV1 {
+        self.clip_coverage
     }
 
-    /// Canonically ordered retained stack timing rows.
-    pub fn stacks(&self) -> &[ExactFbxStackTimingBindingV1] {
-        &self.stacks
+    /// Canonically ordered retained clip timing rows.
+    pub fn clips(&self) -> &[ExactSourceClipTimingBindingV1] {
+        &self.clips
     }
 
     fn validate(&self) -> Result<(), PredictionContractError> {
-        self.ktime_basis.validate("ktime_basis")?;
+        self.time_basis.validate("time_basis")?;
         self.declared_time_mode.validate("declared_time_mode")?;
         self.effective_time_mode.validate("effective_time_mode")?;
         self.declared_custom_frame_rate
@@ -2921,47 +2925,45 @@ impl ExactFbxTimingBindingV1 {
         self.effective_time_protocol
             .validate("effective_time_protocol")?;
         if matches!(
-            &self.ktime_basis.state,
-            ExactFbxTimingObservationStateWireV1::Observed(value) if value.ticks_per_second <= 0
+            &self.time_basis.state,
+            ExactSourceTimingObservationStateWireV1::Observed(value) if value.units_per_second <= 0
         ) || matches!(
             &self.frame_period.state,
-            ExactFbxTimingObservationStateWireV1::Observed(value) if value.ticks_per_frame <= 0
+            ExactSourceTimingObservationStateWireV1::Observed(value) if value.units_per_frame <= 0
         ) || matches!(
             &self.declared_custom_frame_rate.state,
-            ExactFbxTimingObservationStateWireV1::Observed(value)
+            ExactSourceTimingObservationStateWireV1::Observed(value)
                 if !f64::from_bits(value.binary64_bits).is_finite()
                     || f64::from_bits(value.binary64_bits) <= 0.0
         ) {
-            return Err(PredictionContractError::ExactFbxTimingValueMismatch);
+            return Err(PredictionContractError::ExactSourceTimingValueMismatch);
         }
         let coverage_valid = matches!(
-            (self.stack_coverage.state, self.stack_coverage.reason),
+            (self.clip_coverage.state, self.clip_coverage.reason),
             (RawSourceSetCoverageStateV1::Complete, None)
                 | (RawSourceSetCoverageStateV1::Partial, Some(_))
                 | (RawSourceSetCoverageStateV1::Unavailable, Some(_))
         );
         if !coverage_valid {
-            return Err(PredictionContractError::ExactFbxTimingCoverageMismatch);
+            return Err(PredictionContractError::ExactSourceTimingCoverageMismatch);
         }
-        if self.stacks.len() > crate::EXACT_FBX_TIMING_V1_MAX_STACKS
+        if self.clips.len() > crate::EXACT_SOURCE_TIMING_V1_MAX_CLIPS
             || self
-                .stacks
+                .clips
                 .iter()
                 .enumerate()
-                .any(|(index, stack)| u64::try_from(index).ok() != Some(stack.source_stack_index))
+                .any(|(index, clip)| u64::try_from(index).ok() != Some(clip.source_clip_index))
         {
-            return Err(PredictionContractError::ExactFbxTimingStackPrefixMismatch);
+            return Err(PredictionContractError::ExactSourceTimingClipPrefixMismatch);
         }
-        for stack in &self.stacks {
-            stack
-                .source_tick_range
-                .validate("stack.source_tick_range")?;
+        for clip in &self.clips {
+            clip.source_time_range.validate("clip.source_time_range")?;
             if matches!(
-                &stack.source_tick_range.state,
-                ExactFbxTimingObservationStateWireV1::Observed(range)
-                    if range.begin_ticks > range.end_ticks
+                &clip.source_time_range.state,
+                ExactSourceTimingObservationStateWireV1::Observed(range)
+                    if range.begin_units > range.end_units
             ) {
-                return Err(PredictionContractError::ExactFbxTimingValueMismatch);
+                return Err(PredictionContractError::ExactSourceTimingValueMismatch);
             }
         }
         Ok(())
@@ -2969,12 +2971,12 @@ impl ExactFbxTimingBindingV1 {
 
     fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
         checked_sum(
-            "exact FBX timing retained text",
-            self.stacks
+            "exact source timing retained text",
+            self.clips
                 .iter()
-                .map(|stack| stack.source_tick_range.retained_text_bytes())
+                .map(|clip| clip.source_time_range.retained_text_bytes())
                 .chain([
-                    self.ktime_basis.retained_text_bytes(),
+                    self.time_basis.retained_text_bytes(),
                     self.declared_time_mode.retained_text_bytes(),
                     self.effective_time_mode.retained_text_bytes(),
                     self.declared_custom_frame_rate.retained_text_bytes(),
@@ -2991,28 +2993,28 @@ impl ExactFbxTimingBindingV1 {
 struct RawSourceBindingWireV2 {
     schema: String,
     source_facts: RawSourceBindingWireV1,
-    exact_fbx_timing: Option<ExactFbxTimingBindingWireV1>,
+    exact_source_timing: Option<ExactSourceTimingBindingWireV1>,
 }
 
-/// V2 raw-source binding composed from immutable V1 facts and exact FBX timing.
+/// V2 raw-source binding composed from immutable V1 facts and exact source timing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RawSourceBindingV2 {
     schema: &'static str,
     source_facts: RawSourceBindingV1,
-    exact_fbx_timing: Option<ExactFbxTimingBindingV1>,
+    exact_source_timing: Option<ExactSourceTimingBindingV1>,
 }
 
 impl RawSourceBindingV2 {
     /// Project one same-load V1 source view and its attached exact timing sidecar.
     pub fn from_source(
         facts: SourceFactsViewV1<'_>,
-        exact_fbx_timing: Option<&ExactFbxTimingV1>,
+        exact_source_timing: Option<&ExactSourceTimingV1>,
     ) -> Result<Self, PredictionContractError> {
         let binding = Self {
             schema: RAW_SOURCE_FACTS_V2_ID,
             source_facts: RawSourceBindingV1::from_source(facts),
-            exact_fbx_timing: exact_fbx_timing
-                .map(ExactFbxTimingBindingV1::from_source)
+            exact_source_timing: exact_source_timing
+                .map(ExactSourceTimingBindingV1::from_source)
                 .transpose()?,
         };
         binding.validate()?;
@@ -3030,9 +3032,9 @@ impl RawSourceBindingV2 {
         let binding = Self {
             schema: RAW_SOURCE_FACTS_V2_ID,
             source_facts: RawSourceBindingV1::from_wire(wire.source_facts)?,
-            exact_fbx_timing: wire
-                .exact_fbx_timing
-                .map(ExactFbxTimingBindingV1::from_wire)
+            exact_source_timing: wire
+                .exact_source_timing
+                .map(ExactSourceTimingBindingV1::from_wire)
                 .transpose()?,
         };
         binding.validate()?;
@@ -3049,9 +3051,9 @@ impl RawSourceBindingV2 {
         &self.source_facts
     }
 
-    /// Same-load exact FBX timing evidence, when retained.
-    pub const fn exact_fbx_timing(&self) -> Option<&ExactFbxTimingBindingV1> {
-        self.exact_fbx_timing.as_ref()
+    /// Same-load exact source timing evidence, when retained.
+    pub const fn exact_source_timing(&self) -> Option<&ExactSourceTimingBindingV1> {
+        self.exact_source_timing.as_ref()
     }
 
     /// Primary-input identity inherited from V1 raw-source facts.
@@ -3071,18 +3073,11 @@ impl RawSourceBindingV2 {
 
     fn validate(&self) -> Result<(), PredictionContractError> {
         self.source_facts.validate_wire()?;
-        match (self.source_format(), self.exact_fbx_timing.as_ref()) {
-            (SourceFormatV1::Fbx, Some(timing)) => {
-                timing.validate()?;
-                if timing.stack_coverage != self.source_facts.clips_coverage {
-                    return Err(PredictionContractError::ExactFbxTimingCoverageMismatch);
-                }
+        if let Some(timing) = self.exact_source_timing.as_ref() {
+            timing.validate()?;
+            if timing.clip_coverage != self.source_facts.clips_coverage {
+                return Err(PredictionContractError::ExactSourceTimingCoverageMismatch);
             }
-            (SourceFormatV1::Fbx, None) => {}
-            (_, Some(_)) => {
-                return Err(PredictionContractError::ExactFbxTimingApplicabilityMismatch);
-            }
-            (_, None) => {}
         }
         Ok(())
     }
@@ -3092,9 +3087,9 @@ impl RawSourceBindingV2 {
             "raw-source binding V2 retained text",
             [
                 self.source_facts.retained_text_bytes()?,
-                self.exact_fbx_timing
+                self.exact_source_timing
                     .as_ref()
-                    .map(ExactFbxTimingBindingV1::retained_text_bytes)
+                    .map(ExactSourceTimingBindingV1::retained_text_bytes)
                     .transpose()?
                     .unwrap_or(0),
             ],
@@ -3108,9 +3103,9 @@ impl RawSourceBindingV2 {
             "raw-source binding V2 rows",
             [
                 source_rows,
-                self.exact_fbx_timing
+                self.exact_source_timing
                     .as_ref()
-                    .map_or(0, |timing| timing.stacks.len().saturating_add(7)),
+                    .map_or(0, |timing| timing.clips.len().saturating_add(7)),
             ],
         )
     }
@@ -3126,74 +3121,74 @@ impl<'de> Deserialize<'de> for RawSourceBindingV2 {
     }
 }
 
-/// Exact-FBX timing row domain for V2 prediction basis references.
+/// Exact-source timing row domain for V2 prediction basis references.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExactFbxTimingDomainV1 {
-    /// File-level timing settings and stack coverage.
+pub enum ExactSourceTimingDomainV1 {
+    /// File-level timing settings and clip coverage.
     Document,
-    /// One source animation-stack row.
-    Stack,
+    /// One source animation-clip row.
+    Clip,
 }
 
-/// Stable row key inside exact-FBX timing evidence.
+/// Stable row key inside exact-source timing evidence.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ExactFbxTimingKeyV1 {
-    /// File-level timing settings and stack coverage.
+pub enum ExactSourceTimingKeyV1 {
+    /// File-level timing settings and clip coverage.
     Document,
-    /// One stable source stack index.
-    Stack {
-        /// Zero-based source stack index.
-        source_stack_index: u64,
+    /// One stable source clip index.
+    Clip {
+        /// Zero-based source clip index.
+        source_clip_index: u64,
     },
 }
 
-/// One exact scalar retained from the embedded exact-FBX timing binding.
+/// One exact scalar retained from the embedded exact-source timing binding.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-pub struct ExactFbxTimingBasisReferenceV1 {
-    domain: ExactFbxTimingDomainV1,
-    key: ExactFbxTimingKeyV1,
+pub struct ExactSourceTimingBasisReferenceV1 {
+    domain: ExactSourceTimingDomainV1,
+    key: ExactSourceTimingKeyV1,
     field: RawSourceFieldIdV1,
     value: PredictionScalarV1,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ExactFbxTimingBasisReferenceWireV1 {
-    domain: ExactFbxTimingDomainV1,
-    key: ExactFbxTimingKeyV1,
+struct ExactSourceTimingBasisReferenceWireV1 {
+    domain: ExactSourceTimingDomainV1,
+    key: ExactSourceTimingKeyV1,
     field: RawSourceFieldIdV1,
     value: PredictionScalarV1,
 }
 
-impl ExactFbxTimingBasisReferenceV1 {
+impl ExactSourceTimingBasisReferenceV1 {
     /// Construct a reference and capture its authoritative embedded scalar.
     pub fn from_binding(
-        domain: ExactFbxTimingDomainV1,
-        key: ExactFbxTimingKeyV1,
+        domain: ExactSourceTimingDomainV1,
+        key: ExactSourceTimingKeyV1,
         field: RawSourceFieldIdV1,
-        binding: &ExactFbxTimingBindingV1,
+        binding: &ExactSourceTimingBindingV1,
     ) -> Result<Self, PredictionContractError> {
         let mut reference = Self::from_wire(domain, key, field, PredictionScalarV1::Null)?;
-        reference.value = exact_fbx_timing_scalar(&reference, binding)?;
+        reference.value = exact_source_timing_scalar(&reference, binding)?;
         Ok(reference)
     }
 
     fn from_wire(
-        domain: ExactFbxTimingDomainV1,
-        key: ExactFbxTimingKeyV1,
+        domain: ExactSourceTimingDomainV1,
+        key: ExactSourceTimingKeyV1,
         field: RawSourceFieldIdV1,
         value: PredictionScalarV1,
     ) -> Result<Self, PredictionContractError> {
         if !matches!(
             (domain, &key),
             (
-                ExactFbxTimingDomainV1::Document,
-                ExactFbxTimingKeyV1::Document
+                ExactSourceTimingDomainV1::Document,
+                ExactSourceTimingKeyV1::Document
             ) | (
-                ExactFbxTimingDomainV1::Stack,
-                ExactFbxTimingKeyV1::Stack { .. }
+                ExactSourceTimingDomainV1::Clip,
+                ExactSourceTimingKeyV1::Clip { .. }
             )
         ) {
             return Err(PredictionContractError::RawSourceDomainKeyMismatch);
@@ -3207,13 +3202,13 @@ impl ExactFbxTimingBasisReferenceV1 {
         })
     }
 
-    /// Exact-FBX timing row domain.
-    pub const fn domain(&self) -> ExactFbxTimingDomainV1 {
+    /// Exact-source timing row domain.
+    pub const fn domain(&self) -> ExactSourceTimingDomainV1 {
         self.domain
     }
 
-    /// Stable document/stack row key.
-    pub const fn key(&self) -> &ExactFbxTimingKeyV1 {
+    /// Stable document/clip row key.
+    pub const fn key(&self) -> &ExactSourceTimingKeyV1 {
         &self.key
     }
 
@@ -3230,10 +3225,10 @@ impl ExactFbxTimingBasisReferenceV1 {
     /// Revalidate this reference against an embedded exact timing binding.
     pub fn validate_against(
         &self,
-        binding: &ExactFbxTimingBindingV1,
+        binding: &ExactSourceTimingBindingV1,
     ) -> Result<(), PredictionContractError> {
-        if exact_fbx_timing_scalar(self, binding)? != self.value {
-            return Err(PredictionContractError::ExactFbxTimingValueMismatch);
+        if exact_source_timing_scalar(self, binding)? != self.value {
+            return Err(PredictionContractError::ExactSourceTimingValueMismatch);
         }
         Ok(())
     }
@@ -3243,28 +3238,28 @@ impl ExactFbxTimingBasisReferenceV1 {
     }
 }
 
-impl<'de> Deserialize<'de> for ExactFbxTimingBasisReferenceV1 {
+impl<'de> Deserialize<'de> for ExactSourceTimingBasisReferenceV1 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let wire = ExactFbxTimingBasisReferenceWireV1::deserialize(deserializer)?;
+        let wire = ExactSourceTimingBasisReferenceWireV1::deserialize(deserializer)?;
         Self::from_wire(wire.domain, wire.key, wire.field, wire.value).map_err(D::Error::custom)
     }
 }
 
-fn exact_fbx_timing_scalar(
-    reference: &ExactFbxTimingBasisReferenceV1,
-    binding: &ExactFbxTimingBindingV1,
+fn exact_source_timing_scalar(
+    reference: &ExactSourceTimingBasisReferenceV1,
+    binding: &ExactSourceTimingBindingV1,
 ) -> Result<PredictionScalarV1, PredictionContractError> {
     let field = reference.field.as_str();
     match (&reference.key, reference.domain) {
-        (ExactFbxTimingKeyV1::Document, ExactFbxTimingDomainV1::Document) => {
-            if let Some(suffix) = field.strip_prefix("ktime_basis.") {
-                return exact_observation_scalar(&binding.ktime_basis, suffix, |value, field| {
+        (ExactSourceTimingKeyV1::Document, ExactSourceTimingDomainV1::Document) => {
+            if let Some(suffix) = field.strip_prefix("time_basis.") {
+                return exact_observation_scalar(&binding.time_basis, suffix, |value, field| {
                     match field {
-                        "ticks_per_second" => Ok(PredictionScalarV1::SignedInteger {
-                            value: value.ticks_per_second,
+                        "units_per_second" => Ok(PredictionScalarV1::SignedInteger {
+                            value: value.units_per_second,
                         }),
                         _ => Err(exact_field_error(reference)),
                     }
@@ -3305,8 +3300,8 @@ fn exact_fbx_timing_scalar(
             if let Some(suffix) = field.strip_prefix("frame_period.") {
                 return exact_observation_scalar(&binding.frame_period, suffix, |value, field| {
                     match field {
-                        "ticks_per_frame" => Ok(PredictionScalarV1::SignedInteger {
-                            value: value.ticks_per_frame,
+                        "units_per_frame" => Ok(PredictionScalarV1::SignedInteger {
+                            value: value.units_per_frame,
                         }),
                         _ => Err(exact_field_error(reference)),
                     }
@@ -3333,11 +3328,11 @@ fn exact_fbx_timing_scalar(
                 );
             }
             match field {
-                "stack_coverage.state" => Ok(token_scalar(raw_coverage_state_name(
-                    binding.stack_coverage.state,
+                "clip_coverage.state" => Ok(token_scalar(raw_coverage_state_name(
+                    binding.clip_coverage.state,
                 ))),
-                "stack_coverage.reason" => Ok(binding
-                    .stack_coverage
+                "clip_coverage.reason" => Ok(binding
+                    .clip_coverage
                     .reason
                     .map_or(PredictionScalarV1::Null, |reason| {
                         token_scalar(raw_unavailable_reason_name(reason))
@@ -3345,24 +3340,24 @@ fn exact_fbx_timing_scalar(
                 _ => Err(exact_field_error(reference)),
             }
         }
-        (ExactFbxTimingKeyV1::Stack { source_stack_index }, ExactFbxTimingDomainV1::Stack) => {
+        (ExactSourceTimingKeyV1::Clip { source_clip_index }, ExactSourceTimingDomainV1::Clip) => {
             let row = binding
-                .stacks
+                .clips
                 .iter()
-                .find(|row| row.source_stack_index == *source_stack_index)
+                .find(|row| row.source_clip_index == *source_clip_index)
                 .ok_or(PredictionContractError::RawSourceRowNotFound)?;
-            let Some(suffix) = field.strip_prefix("source_tick_range.") else {
+            let Some(suffix) = field.strip_prefix("source_time_range.") else {
                 return Err(exact_field_error(reference));
             };
-            exact_observation_scalar(&row.source_tick_range, suffix, |value, field| match field {
+            exact_observation_scalar(&row.source_time_range, suffix, |value, field| match field {
                 "selection" => Ok(token_scalar(exact_time_span_selection_name(
                     value.selection,
                 ))),
-                "begin_ticks" => Ok(PredictionScalarV1::SignedInteger {
-                    value: value.begin_ticks,
+                "begin_units" => Ok(PredictionScalarV1::SignedInteger {
+                    value: value.begin_units,
                 }),
-                "end_ticks" => Ok(PredictionScalarV1::SignedInteger {
-                    value: value.end_ticks,
+                "end_units" => Ok(PredictionScalarV1::SignedInteger {
+                    value: value.end_units,
                 }),
                 _ => Err(exact_field_error(reference)),
             })
@@ -3372,18 +3367,18 @@ fn exact_fbx_timing_scalar(
 }
 
 fn exact_observation_scalar<T>(
-    observation: &ExactFbxTimingObservationWireV1<T>,
+    observation: &ExactSourceTimingObservationWireV1<T>,
     field: &str,
     value: impl FnOnce(&T, &str) -> Result<PredictionScalarV1, PredictionContractError>,
 ) -> Result<PredictionScalarV1, PredictionContractError> {
     match field {
         "state" => Ok(token_scalar(match observation.state {
-            ExactFbxTimingObservationStateWireV1::Observed(_) => "observed",
-            ExactFbxTimingObservationStateWireV1::ProvenAbsent => "proven_absent",
-            ExactFbxTimingObservationStateWireV1::Unavailable(_) => "unavailable",
+            ExactSourceTimingObservationStateWireV1::Observed(_) => "observed",
+            ExactSourceTimingObservationStateWireV1::ProvenAbsent => "proven_absent",
+            ExactSourceTimingObservationStateWireV1::Unavailable(_) => "unavailable",
         })),
         "reason" => Ok(match observation.state {
-            ExactFbxTimingObservationStateWireV1::Unavailable(reason) => {
+            ExactSourceTimingObservationStateWireV1::Unavailable(reason) => {
                 token_scalar(exact_unavailable_reason_name(reason))
             }
             _ => PredictionScalarV1::Null,
@@ -3401,70 +3396,70 @@ fn exact_observation_scalar<T>(
             .and_then(|provenance| provenance.locator.as_deref())
             .map_or(PredictionScalarV1::Null, text_scalar)),
         value_field if value_field.starts_with("value.") => match &observation.state {
-            ExactFbxTimingObservationStateWireV1::Observed(observed) => {
+            ExactSourceTimingObservationStateWireV1::Observed(observed) => {
                 value(observed, &value_field[6..])
             }
-            _ => Err(PredictionContractError::ExactFbxTimingFieldUnavailable(
+            _ => Err(PredictionContractError::ExactSourceTimingFieldUnavailable(
                 value_field.to_owned(),
             )),
         },
-        _ => Err(PredictionContractError::ExactFbxTimingFieldUnavailable(
+        _ => Err(PredictionContractError::ExactSourceTimingFieldUnavailable(
             field.to_owned(),
         )),
     }
 }
 
-fn exact_field_error(reference: &ExactFbxTimingBasisReferenceV1) -> PredictionContractError {
-    PredictionContractError::ExactFbxTimingFieldUnavailable(reference.field.0.clone())
+fn exact_field_error(reference: &ExactSourceTimingBasisReferenceV1) -> PredictionContractError {
+    PredictionContractError::ExactSourceTimingFieldUnavailable(reference.field.0.clone())
 }
 
-fn exact_time_mode_name(value: ExactFbxTimeModeWireV1) -> &'static str {
+fn exact_time_mode_name(value: ExactSourceTimelineModeWireV1) -> &'static str {
     match value {
-        ExactFbxTimeModeWireV1::Default => "default",
-        ExactFbxTimeModeWireV1::Fps120 => "fps120",
-        ExactFbxTimeModeWireV1::Fps100 => "fps100",
-        ExactFbxTimeModeWireV1::Fps60 => "fps60",
-        ExactFbxTimeModeWireV1::Fps50 => "fps50",
-        ExactFbxTimeModeWireV1::Fps48 => "fps48",
-        ExactFbxTimeModeWireV1::Fps30 => "fps30",
-        ExactFbxTimeModeWireV1::Fps30Drop => "fps30_drop",
-        ExactFbxTimeModeWireV1::NtscDropFrame => "ntsc_drop_frame",
-        ExactFbxTimeModeWireV1::NtscFullFrame => "ntsc_full_frame",
-        ExactFbxTimeModeWireV1::Pal => "pal",
-        ExactFbxTimeModeWireV1::Fps24 => "fps24",
-        ExactFbxTimeModeWireV1::Fps1000 => "fps1000",
-        ExactFbxTimeModeWireV1::FilmFullFrame => "film_full_frame",
-        ExactFbxTimeModeWireV1::Custom => "custom",
-        ExactFbxTimeModeWireV1::Fps96 => "fps96",
-        ExactFbxTimeModeWireV1::Fps72 => "fps72",
-        ExactFbxTimeModeWireV1::Fps59Dot94 => "fps59_dot94",
+        ExactSourceTimelineModeWireV1::Default => "default",
+        ExactSourceTimelineModeWireV1::Fps120 => "fps120",
+        ExactSourceTimelineModeWireV1::Fps100 => "fps100",
+        ExactSourceTimelineModeWireV1::Fps60 => "fps60",
+        ExactSourceTimelineModeWireV1::Fps50 => "fps50",
+        ExactSourceTimelineModeWireV1::Fps48 => "fps48",
+        ExactSourceTimelineModeWireV1::Fps30 => "fps30",
+        ExactSourceTimelineModeWireV1::Fps30Drop => "fps30_drop",
+        ExactSourceTimelineModeWireV1::NtscDropFrame => "ntsc_drop_frame",
+        ExactSourceTimelineModeWireV1::NtscFullFrame => "ntsc_full_frame",
+        ExactSourceTimelineModeWireV1::Pal => "pal",
+        ExactSourceTimelineModeWireV1::Fps24 => "fps24",
+        ExactSourceTimelineModeWireV1::Fps1000 => "fps1000",
+        ExactSourceTimelineModeWireV1::FilmFullFrame => "film_full_frame",
+        ExactSourceTimelineModeWireV1::Custom => "custom",
+        ExactSourceTimelineModeWireV1::Fps96 => "fps96",
+        ExactSourceTimelineModeWireV1::Fps72 => "fps72",
+        ExactSourceTimelineModeWireV1::Fps59Dot94 => "fps59_dot94",
     }
 }
 
-fn exact_time_protocol_name(value: ExactFbxTimeProtocolWireV1) -> &'static str {
+fn exact_time_protocol_name(value: ExactSourceTimeDisplayProtocolWireV1) -> &'static str {
     match value {
-        ExactFbxTimeProtocolWireV1::Smpte => "smpte",
-        ExactFbxTimeProtocolWireV1::FrameCount => "frame_count",
-        ExactFbxTimeProtocolWireV1::Default => "default",
+        ExactSourceTimeDisplayProtocolWireV1::Smpte => "smpte",
+        ExactSourceTimeDisplayProtocolWireV1::FrameCount => "frame_count",
+        ExactSourceTimeDisplayProtocolWireV1::Default => "default",
     }
 }
 
-fn exact_time_span_selection_name(value: ExactFbxTimeSpanSelectionWireV1) -> &'static str {
+fn exact_time_span_selection_name(value: ExactSourceRangeSelectionWireV1) -> &'static str {
     match value {
-        ExactFbxTimeSpanSelectionWireV1::Local => "local",
-        ExactFbxTimeSpanSelectionWireV1::Reference => "reference",
+        ExactSourceRangeSelectionWireV1::Primary => "primary",
+        ExactSourceRangeSelectionWireV1::Fallback => "fallback",
     }
 }
 
-fn exact_unavailable_reason_name(value: ExactFbxTimingUnavailableReasonWireV1) -> &'static str {
+fn exact_unavailable_reason_name(value: ExactSourceTimingUnavailableReasonWireV1) -> &'static str {
     match value {
-        ExactFbxTimingUnavailableReasonWireV1::Malformed => "malformed",
-        ExactFbxTimingUnavailableReasonWireV1::CustomFrameRateNotExact => {
+        ExactSourceTimingUnavailableReasonWireV1::Malformed => "malformed",
+        ExactSourceTimingUnavailableReasonWireV1::CustomFrameRateNotExact => {
             "custom_frame_rate_not_exact"
         }
-        ExactFbxTimingUnavailableReasonWireV1::UnsupportedTimeMode => "unsupported_time_mode",
-        ExactFbxTimingUnavailableReasonWireV1::UnsupportedKTimeBasis => "unsupported_ktime_basis",
-        ExactFbxTimingUnavailableReasonWireV1::ParserUnavailable => "parser_unavailable",
+        ExactSourceTimingUnavailableReasonWireV1::UnsupportedTimeMode => "unsupported_time_mode",
+        ExactSourceTimingUnavailableReasonWireV1::UnsupportedTimeBasis => "unsupported_time_basis",
+        ExactSourceTimingUnavailableReasonWireV1::ParserUnavailable => "parser_unavailable",
     }
 }
 
@@ -3487,8 +3482,8 @@ fn raw_coverage_state_name(value: RawSourceSetCoverageStateV1) -> &'static str {
 pub enum PredictionBasisReferenceV2 {
     /// One immutable V1 profile/settings/project/raw/measurement/source reference.
     V1(PredictionBasisReferenceV1),
-    /// One scalar from the exact-FBX timing binding.
-    ExactFbxTiming(ExactFbxTimingBasisReferenceV1),
+    /// One scalar from the exact-source timing binding.
+    ExactSourceTiming(ExactSourceTimingBasisReferenceV1),
 }
 
 #[derive(Deserialize)]
@@ -3500,7 +3495,7 @@ pub enum PredictionBasisReferenceV2 {
 )]
 enum PredictionBasisReferenceWireV2 {
     V1(Box<RawValue>),
-    ExactFbxTiming(ExactFbxTimingBasisReferenceV1),
+    ExactSourceTiming(ExactSourceTimingBasisReferenceV1),
 }
 
 impl<'de> Deserialize<'de> for PredictionBasisReferenceV2 {
@@ -3519,8 +3514,8 @@ impl<'de> Deserialize<'de> for PredictionBasisReferenceV2 {
                 .map(Self::V1)
                 .map_err(D::Error::custom)
             }
-            PredictionBasisReferenceWireV2::ExactFbxTiming(reference) => {
-                Ok(Self::ExactFbxTiming(reference))
+            PredictionBasisReferenceWireV2::ExactSourceTiming(reference) => {
+                Ok(Self::ExactSourceTiming(reference))
             }
         }
     }
@@ -3532,15 +3527,15 @@ impl PredictionBasisReferenceV2 {
         Self::V1(reference)
     }
 
-    /// Retain an exact-FBX timing reference.
-    pub const fn exact_fbx_timing(reference: ExactFbxTimingBasisReferenceV1) -> Self {
-        Self::ExactFbxTiming(reference)
+    /// Retain an exact-source timing reference.
+    pub const fn exact_source_timing(reference: ExactSourceTimingBasisReferenceV1) -> Self {
+        Self::ExactSourceTiming(reference)
     }
 
     fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
         match self {
             Self::V1(reference) => reference.retained_text_bytes(),
-            Self::ExactFbxTiming(reference) => Ok(reference.retained_text_bytes()),
+            Self::ExactSourceTiming(reference) => Ok(reference.retained_text_bytes()),
         }
     }
 }
@@ -4257,7 +4252,7 @@ where
     deserialize_capped_sequence(deserializer, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET)
 }
 
-/// Canonical V2 basis that can address exact-FBX timing evidence.
+/// Canonical V2 basis that can address exact-source timing evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EnginePredictionBasisV2 {
     identity: PredictionBasisIdentityV2,
@@ -4384,15 +4379,15 @@ fn validate_basis_reference_structure_v2(
         PredictionBasisReferenceV2::V1(reference) => {
             validate_basis_reference_structure(reference, expected_measurement_schema)
         }
-        PredictionBasisReferenceV2::ExactFbxTiming(reference) => {
+        PredictionBasisReferenceV2::ExactSourceTiming(reference) => {
             if !matches!(
                 (reference.domain, &reference.key),
                 (
-                    ExactFbxTimingDomainV1::Document,
-                    ExactFbxTimingKeyV1::Document
+                    ExactSourceTimingDomainV1::Document,
+                    ExactSourceTimingKeyV1::Document
                 ) | (
-                    ExactFbxTimingDomainV1::Stack,
-                    ExactFbxTimingKeyV1::Stack { .. }
+                    ExactSourceTimingDomainV1::Clip,
+                    ExactSourceTimingKeyV1::Clip { .. }
                 )
             ) {
                 return Err(PredictionContractError::RawSourceDomainKeyMismatch);
@@ -4408,7 +4403,7 @@ fn basis_reference_key_v2(reference: &PredictionBasisReferenceV2) -> (u8, Vec<u8
     encode_basis_reference_v2(&mut encoder, reference);
     let variant = match reference {
         PredictionBasisReferenceV2::V1(_) => 0,
-        PredictionBasisReferenceV2::ExactFbxTiming(_) => 1,
+        PredictionBasisReferenceV2::ExactSourceTiming(_) => 1,
     };
     (variant, encoder.into_bytes())
 }
@@ -4432,17 +4427,17 @@ fn encode_basis_reference_v2(
             encoder.token("v1");
             encode_basis_reference(encoder, reference);
         }
-        PredictionBasisReferenceV2::ExactFbxTiming(reference) => {
-            encoder.token("exact_fbx_timing");
+        PredictionBasisReferenceV2::ExactSourceTiming(reference) => {
+            encoder.token("exact_source_timing");
             encoder.token(match reference.domain {
-                ExactFbxTimingDomainV1::Document => "document",
-                ExactFbxTimingDomainV1::Stack => "stack",
+                ExactSourceTimingDomainV1::Document => "document",
+                ExactSourceTimingDomainV1::Clip => "clip",
             });
             match &reference.key {
-                ExactFbxTimingKeyV1::Document => encoder.token("document"),
-                ExactFbxTimingKeyV1::Stack { source_stack_index } => {
-                    encoder.token("stack");
-                    encoder.token(source_stack_index.to_string());
+                ExactSourceTimingKeyV1::Document => encoder.token("document"),
+                ExactSourceTimingKeyV1::Clip { source_clip_index } => {
+                    encoder.token("clip");
+                    encoder.token(source_clip_index.to_string());
                 }
             }
             encoder.token(reference.field.as_str());
@@ -8168,7 +8163,7 @@ const CONSUMED_CONTRACTS_V3: [&str; 7] = [
     "urn:animsmith:schema:output:14",
     MEASUREMENTS_SCHEMA_ID,
     RAW_SOURCE_FACTS_V2_ID,
-    EXACT_FBX_TIMING_V1_ID,
+    EXACT_SOURCE_TIMING_V1_ID,
     DEPENDENCY_CLOSURE_V1_ID,
     ENGINE_PROFILE_FACTS_V1_ID,
     "urn:animsmith:resolved-engine-settings:2",
@@ -8672,13 +8667,15 @@ fn validate_basis_reference_v3(
     expected_measurement_schema: &'static str,
 ) -> Result<(), PredictionContractError> {
     let PredictionBasisReferenceV2::V1(reference) = reference else {
-        let PredictionBasisReferenceV2::ExactFbxTiming(reference) = reference else {
+        let PredictionBasisReferenceV2::ExactSourceTiming(reference) = reference else {
             unreachable!()
         };
         let timing = provenance
             .raw_source()
-            .exact_fbx_timing()
-            .ok_or(PredictionContractError::ExactFbxTimingApplicabilityMismatch)?;
+            .exact_source_timing()
+            .ok_or_else(|| {
+                PredictionContractError::ExactSourceTimingFieldUnavailable("binding".to_owned())
+            })?;
         return reference.validate_against(timing);
     };
     match reference {
@@ -8823,35 +8820,35 @@ fn encode_raw_binding_v2(encoder: &mut CanonicalEncoder, raw: &RawSourceBindingV
     encoder.token(raw.schema);
     encoder.field("source_facts");
     encode_raw_binding(encoder, &raw.source_facts);
-    encoder.field("exact_fbx_timing");
+    encoder.field("exact_source_timing");
     encode_option(
         encoder,
-        raw.exact_fbx_timing.as_ref(),
-        encode_exact_fbx_timing_binding,
+        raw.exact_source_timing.as_ref(),
+        encode_exact_source_timing_binding,
     );
 }
 
-fn encode_exact_fbx_timing_binding(
+fn encode_exact_source_timing_binding(
     encoder: &mut CanonicalEncoder,
-    timing: &ExactFbxTimingBindingV1,
+    timing: &ExactSourceTimingBindingV1,
 ) {
-    encoder.token("animsmith-exact-fbx-timing-binding-v1");
+    encoder.token("animsmith-exact-source-timing-binding-v1");
     encoder.field("schema");
     encoder.token(timing.schema);
-    encoder.field("ktime_basis");
-    encode_exact_fbx_observation(encoder, &timing.ktime_basis, |encoder, value| {
-        encoder.token(value.ticks_per_second.to_string());
+    encoder.field("time_basis");
+    encode_exact_source_observation(encoder, &timing.time_basis, |encoder, value| {
+        encoder.token(value.units_per_second.to_string());
     });
     encoder.field("declared_time_mode");
-    encode_exact_fbx_observation(encoder, &timing.declared_time_mode, |encoder, value| {
+    encode_exact_source_observation(encoder, &timing.declared_time_mode, |encoder, value| {
         encoder.token(exact_time_mode_name(*value));
     });
     encoder.field("effective_time_mode");
-    encode_exact_fbx_observation(encoder, &timing.effective_time_mode, |encoder, value| {
+    encode_exact_source_observation(encoder, &timing.effective_time_mode, |encoder, value| {
         encoder.token(exact_time_mode_name(*value));
     });
     encoder.field("declared_custom_frame_rate");
-    encode_exact_fbx_observation(
+    encode_exact_source_observation(
         encoder,
         &timing.declared_custom_frame_rate,
         |encoder, value| {
@@ -8859,47 +8856,47 @@ fn encode_exact_fbx_timing_binding(
         },
     );
     encoder.field("frame_period");
-    encode_exact_fbx_observation(encoder, &timing.frame_period, |encoder, value| {
-        encoder.token(value.ticks_per_frame.to_string());
+    encode_exact_source_observation(encoder, &timing.frame_period, |encoder, value| {
+        encoder.token(value.units_per_frame.to_string());
     });
     encoder.field("declared_time_protocol");
-    encode_exact_fbx_observation(encoder, &timing.declared_time_protocol, |encoder, value| {
+    encode_exact_source_observation(encoder, &timing.declared_time_protocol, |encoder, value| {
         encoder.token(exact_time_protocol_name(*value));
     });
     encoder.field("effective_time_protocol");
-    encode_exact_fbx_observation(
+    encode_exact_source_observation(
         encoder,
         &timing.effective_time_protocol,
         |encoder, value| {
             encoder.token(exact_time_protocol_name(*value));
         },
     );
-    encoder.field("stack_coverage");
-    encode_raw_coverage(encoder, timing.stack_coverage);
-    encoder.field("stacks");
-    encoder.count(timing.stacks.len());
-    for stack in &timing.stacks {
-        encoder.token(stack.source_stack_index.to_string());
-        encode_exact_fbx_observation(encoder, &stack.source_tick_range, |encoder, range| {
+    encoder.field("clip_coverage");
+    encode_raw_coverage(encoder, timing.clip_coverage);
+    encoder.field("clips");
+    encoder.count(timing.clips.len());
+    for clip in &timing.clips {
+        encoder.token(clip.source_clip_index.to_string());
+        encode_exact_source_observation(encoder, &clip.source_time_range, |encoder, range| {
             encoder.token(exact_time_span_selection_name(range.selection));
-            encoder.token(range.begin_ticks.to_string());
-            encoder.token(range.end_ticks.to_string());
+            encoder.token(range.begin_units.to_string());
+            encoder.token(range.end_units.to_string());
         });
     }
 }
 
-fn encode_exact_fbx_observation<T>(
+fn encode_exact_source_observation<T>(
     encoder: &mut CanonicalEncoder,
-    observation: &ExactFbxTimingObservationWireV1<T>,
+    observation: &ExactSourceTimingObservationWireV1<T>,
     encode_value: impl FnOnce(&mut CanonicalEncoder, &T),
 ) {
     match &observation.state {
-        ExactFbxTimingObservationStateWireV1::Observed(value) => {
+        ExactSourceTimingObservationStateWireV1::Observed(value) => {
             encoder.token("observed");
             encode_value(encoder, value);
         }
-        ExactFbxTimingObservationStateWireV1::ProvenAbsent => encoder.token("proven_absent"),
-        ExactFbxTimingObservationStateWireV1::Unavailable(reason) => {
+        ExactSourceTimingObservationStateWireV1::ProvenAbsent => encoder.token("proven_absent"),
+        ExactSourceTimingObservationStateWireV1::Unavailable(reason) => {
             encoder.token("unavailable");
             encoder.token(exact_unavailable_reason_name(*reason));
         }
@@ -10313,39 +10310,40 @@ mod tests {
     }
 
     #[test]
-    fn raw_source_v2_allows_missing_exact_evidence_only_without_cross_format_attachment() {
+    fn raw_source_v2_allows_missing_or_generic_exact_source_timing() {
         let mut fbx_source = raw_binding_wire();
         fbx_source["source_format"] = json!("fbx");
         let fbx_without_exact = json!({
             "schema": RAW_SOURCE_FACTS_V2_ID,
             "source_facts": fbx_source,
-            "exact_fbx_timing": null
+            "exact_source_timing": null
         });
         let binding: RawSourceBindingV2 = serde_json::from_value(fbx_without_exact.clone())
-            .expect("missing exact FBX evidence remains representable");
+            .expect("missing exact source timing remains representable");
         assert_eq!(serde_json::to_value(binding).unwrap(), fbx_without_exact);
 
         let exact_unavailable = json!({
-            "schema": EXACT_FBX_TIMING_V1_ID,
-            "ktime_basis": unavailable_exact_observation(),
+            "schema": EXACT_SOURCE_TIMING_V1_ID,
+            "time_basis": unavailable_exact_observation(),
             "declared_time_mode": unavailable_exact_observation(),
             "effective_time_mode": unavailable_exact_observation(),
             "declared_custom_frame_rate": unavailable_exact_observation(),
             "frame_period": unavailable_exact_observation(),
             "declared_time_protocol": unavailable_exact_observation(),
             "effective_time_protocol": unavailable_exact_observation(),
-            "stack_coverage": {"state": "complete"},
-            "stacks": []
+            "clip_coverage": {"state": "complete"},
+            "clips": []
         });
-        let non_fbx_with_exact = json!({
+        let generic_source_with_exact = json!({
             "schema": RAW_SOURCE_FACTS_V2_ID,
             "source_facts": raw_binding_wire(),
-            "exact_fbx_timing": exact_unavailable
+            "exact_source_timing": exact_unavailable
         });
-        let error = serde_json::from_value::<RawSourceBindingV2>(non_fbx_with_exact).unwrap_err();
+        let binding: RawSourceBindingV2 = serde_json::from_value(generic_source_with_exact.clone())
+            .expect("exact source timing is format-neutral evidence");
         assert_eq!(
-            error.to_string(),
-            PredictionContractError::ExactFbxTimingApplicabilityMismatch.to_string()
+            serde_json::to_value(binding).unwrap(),
+            generic_source_with_exact
         );
     }
 

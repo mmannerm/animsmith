@@ -73,7 +73,7 @@ pub fn project_prediction_provenance_v2(
 /// evidence into V3 prediction provenance.
 ///
 /// The engine profile and settings remain the immutable V2 contracts. V3
-/// widens only the raw-source binding so engine-owned rules can cite exact FBX
+/// widens only the raw-source binding so engine-owned rules can cite exact source
 /// timing observations without copying or reconstructing them.
 pub fn project_prediction_provenance_v3(
     profile: &ResolvedProfileV2,
@@ -81,7 +81,7 @@ pub fn project_prediction_provenance_v3(
 ) -> Result<PredictionProvenanceV3, PredictionProvenanceProjectionError> {
     let (profile_contract, settings_contract) = project_resolved_profile_v2(profile)?;
     let raw_source =
-        RawSourceBindingV2::from_source(source.source_facts(), source.exact_fbx_timing())?;
+        RawSourceBindingV2::from_source(source.source_facts(), source.exact_source_timing())?;
     Ok(PredictionProvenanceV3::new(
         profile_contract,
         profile.source_format(),
