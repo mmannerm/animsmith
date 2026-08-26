@@ -16,7 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - predict Unity Generic root-motion routing
 - predict Bevy animation import gates
 - *(lint)* predict Bevy unit scale
-- *(cli)* advance output contracts to V14 and V6
 - add primitive and image evidence
 - retain raw glTF addressability evidence
 - *(core)* version exact timing prediction contracts
@@ -26,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add Godot and Unreal advice profiles
 - *(engine)* add current V3 addressability prediction
 - *(engine)* check exact Unreal clip boundaries
+- add measurements-v16 per-primitive geometry and unsupported-image evidence
+- add revisioned output-v13 through output-v17 and collection-output-v5 through collection-output-v9 contracts
+- add output-v12 bounded engine prediction provenance and partial settings evidence
+- preserve collection-output-v4 embedding the historical output-v12 lint envelope
 
 ### Fixed
 
@@ -45,17 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bind import advice projections
 - bind root trajectory display identity
 
-### Added
-
-- add measurements-v16 per-primitive geometry and unsupported-image evidence
-- add output-v13 and collection-output-v5 contracts for measurements-v16
-- add output-v12 bounded engine prediction provenance and partial settings evidence
-- preserve collection-output-v4 embedding the historical output-v12 lint envelope
-
 ### Changed
 
-- make measurements-v16/output-v13/collection-output-v5 the current contracts
-- keep output-v12 immutable as the historical measure, lint, and diff envelope
+- make measurements-v16, output-v17, and collection-output-v9 the current contracts
+- retain output-v12 through output-v16 and their collection envelopes as immutable historical contracts
 
 ## [0.6.0](https://github.com/mmannerm/animsmith/compare/v0.5.0...v0.6.0) - 2026-08-25
 
