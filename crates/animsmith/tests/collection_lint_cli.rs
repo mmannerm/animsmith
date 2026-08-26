@@ -345,6 +345,78 @@ take_name = "Take 001"
 }
 
 #[test]
+fn unity_generic_v2_non_fbx_source_keeps_root_motion_not_applicable() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(
+        temp.path().join("source.gltf"),
+        fs::read(spike_path("source/walk-a.gltf")).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("unity-generic-v2.toml"),
+        r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 2
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+animation_type = "generic"
+avatar_setup = "create_from_this_model"
+import_animation = true
+root_motion_source = "root"
+
+[clips."*".engine_settings]
+root_rotation = "bake"
+root_position_y = "bake"
+root_position_xz = "bake"
+"#,
+    )
+    .unwrap();
+    let manifest = temp.path().join("collection.toml");
+    fs::write(
+        &manifest,
+        r#"schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example.unity-generic-v2-non-fbx"
+[[sources]]
+key = "source"
+path = "source.gltf"
+config = "unity-generic-v2.toml"
+[[clips]]
+id = "com.example.unity-generic-v2-non-fbx/take"
+source = "source"
+take_index = 0
+take_name = "Take 001"
+"#,
+    )
+    .unwrap();
+
+    let output = collection(&manifest);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_schema(&value);
+    let checks = value["sources"][0]["result"]["envelope"]["files"][0]["checks"]
+        .as_array()
+        .expect("nested lint checks");
+    let root_motion = checks
+        .iter()
+        .find(|check| check["check_id"] == "engine-root-motion")
+        .expect("engine-root-motion check");
+    assert_eq!(root_motion["selection"], "selected");
+    assert_eq!(root_motion["configuration"], "enabled");
+    assert_eq!(root_motion["applicability"], "not_applicable");
+    assert_eq!(root_motion["evaluation"], "not_evaluated");
+    assert!(root_motion.get("prediction").is_none());
+}
+
+#[test]
 fn optional_missing_dependency_makes_source_and_clip_incomplete() {
     let temp = tempfile::tempdir().unwrap();
     let mut source: Value =

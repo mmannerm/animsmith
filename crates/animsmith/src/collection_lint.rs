@@ -264,7 +264,7 @@ fn execute_source(
         loaded_source.source_facts().format(),
         loaded_source.document(),
     )?;
-    let engine_v4 = config.loaded.resolve_engine_profile_v2_input(
+    let engine_v4 = config.loaded.resolve_engine_profile_v2_lint_input(
         loaded_source.source_facts().format(),
         loaded_source.document(),
     )?;
