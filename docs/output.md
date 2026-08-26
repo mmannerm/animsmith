@@ -1336,6 +1336,12 @@ falls back to `Hips` for this rule. The consumer-neutral measurement layer may
 still use `Hips` as its historical fallback, but root-motion prediction
 requires the resolved Root source role.
 
+Project-intent scans retain at most each bounded source/declaration prefix plus
+one overflow witness. An ownerless unmapped tail is represented as `NPlusOne`
+intent work and yields one atomic unavailable summary; only complete evidence
+that no owner is declared preserves the check's not-applicable result. Raw path
+evidence is required once declared work exists.
+
 The numeric root trajectory is evidence, not a routing threshold. Translation
 and yaw availability must be `measured` for the corresponding axis; zero
 travel, nonzero travel, and any other finite magnitude follow the same

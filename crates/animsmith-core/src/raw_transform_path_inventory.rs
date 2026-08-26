@@ -1235,6 +1235,44 @@ mod tests {
     }
 
     #[test]
+    fn resolution_is_byte_exact_without_transforming_source_or_configured_segments() {
+        let cases = [
+            ("trimming", &[" Root "][..], "Root"),
+            ("NFC normalization", &["\u{0065}\u{0301}"][..], "\u{00e9}"),
+            ("namespace stripping", &["Armature:Root"][..], "Root"),
+            ("prefix matching", &["Rig", "Rooted"][..], "Rig/Root"),
+        ];
+        for (label, source_segments, configured_path) in cases {
+            let mut nodes = vec![input(
+                0,
+                None,
+                None,
+                RawTransformPathNodeKindV1::ImplicitUfbxRoot,
+            )];
+            for (index, segment) in source_segments.iter().enumerate() {
+                nodes.push(input(
+                    index as u64 + 1,
+                    Some(index as u64),
+                    Some(segment),
+                    RawTransformPathNodeKindV1::Source,
+                ));
+            }
+            let inventory = RawTransformPathInventoryV1::from_nodes(
+                identity(),
+                SourceFormatV1::Fbx,
+                source_segments.len() as u64 + 1,
+                nodes,
+            )
+            .unwrap();
+            assert_eq!(
+                inventory.resolve(&RawTransformPathV1::parse(configured_path).unwrap()),
+                RawTransformPathResolutionV1::NoMatch,
+                "{label} must not turn a non-identical path into a match",
+            );
+        }
+    }
+
+    #[test]
     fn path_deserialization_enforces_byte_bounds_before_retention_for_direct_and_escaped_json() {
         let maximum = path_with_bytes(RAW_TRANSFORM_PATH_V1_MAX_PATH_BYTES);
         let direct = serde_json::to_string(&maximum).unwrap();
@@ -1327,6 +1365,49 @@ mod tests {
             inventory.resolve(&RawTransformPathV1::parse("Good").unwrap()),
             RawTransformPathResolutionV1::Exact(_)
         ));
+    }
+
+    #[test]
+    fn every_forbidden_source_segment_class_makes_coverage_incomplete() {
+        let oversized = "a".repeat(RAW_TRANSFORM_PATH_V1_MAX_SEGMENT_BYTES + 1);
+        let cases = vec![
+            ("empty", Some(String::new())),
+            ("dot", Some(".".to_owned())),
+            ("dot-dot", Some("..".to_owned())),
+            ("slash", Some("bad/name".to_owned())),
+            ("backslash", Some("bad\\name".to_owned())),
+            ("control", Some("bad\nname".to_owned())),
+            ("format", Some("bad\u{200d}name".to_owned())),
+            ("too long", Some(oversized)),
+        ];
+        for (label, source_name) in cases {
+            let inventory = RawTransformPathInventoryV1::from_nodes(
+                identity(),
+                SourceFormatV1::Fbx,
+                2,
+                [
+                    input(0, None, None, RawTransformPathNodeKindV1::ImplicitUfbxRoot),
+                    input(
+                        1,
+                        Some(0),
+                        source_name.as_deref(),
+                        RawTransformPathNodeKindV1::Source,
+                    ),
+                ],
+            )
+            .unwrap();
+            assert_eq!(
+                inventory.coverage(),
+                RawTransformPathCoverageV1::Partial(
+                    RawTransformPathCoverageReasonV1::UnrepresentableSourceSegment
+                ),
+                "{label} source segment must make absence unprovable",
+            );
+            assert!(matches!(
+                inventory.resolve(&RawTransformPathV1::parse("Missing").unwrap()),
+                RawTransformPathResolutionV1::CoverageIncomplete { .. }
+            ));
+        }
     }
 
     #[test]

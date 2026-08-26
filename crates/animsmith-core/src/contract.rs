@@ -7213,15 +7213,7 @@ fn validate_current_engine_root_motion_prediction_v6<F: RootMotionFindingEvidenc
     let active =
         selection == SelectionState::Selected && configuration == ConfigurationState::Enabled;
     let exact = provenance.is_some_and(root_motion_is_exact_unity_v2);
-    let has_work = provenance.is_some_and(|provenance| {
-        match provenance
-            .root_motion_project_intent()
-            .declared_axis_candidates()
-        {
-            crate::EngineRootMotionProjectIntentCountV1::Exact { count } => count != 0,
-            crate::EngineRootMotionProjectIntentCountV1::NPlusOne => true,
-        }
-    });
+    let has_work = provenance.is_some_and(root_motion_has_work);
     let expected_applicability = if exact && has_work {
         Applicability::Applicable
     } else {
@@ -7247,6 +7239,24 @@ fn validate_current_engine_root_motion_prediction_v6<F: RootMotionFindingEvidenc
         "applicable engine-root-motion has no V6 prediction",
     ))?;
     validate_root_motion_facets_v6(prediction, provenance, findings, rig, measurements)
+}
+
+/// An exact profile remains applicable while declaration evidence needed to
+/// prove complete-empty intent is incomplete. This keeps the strict reader
+/// aligned with the producer: an unvisited ownerless tail is unavailable work,
+/// not N/A.
+fn root_motion_has_work(provenance: &PredictionProvenanceV6) -> bool {
+    let intent = provenance.root_motion_project_intent();
+    if intent.clip_coverage() != crate::EngineRootMotionProjectIntentCoverageV1::Complete
+        || provenance.base().base().settings().clip_coverage().state()
+            != ResolvedEngineSettingsCoverageStateV2::Complete
+    {
+        return true;
+    }
+    match intent.declared_axis_candidates() {
+        crate::EngineRootMotionProjectIntentCountV1::Exact { count } => count != 0,
+        crate::EngineRootMotionProjectIntentCountV1::NPlusOne => true,
+    }
 }
 
 fn root_motion_is_exact_unity_v2(provenance: &PredictionProvenanceV6) -> bool {

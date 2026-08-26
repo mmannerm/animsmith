@@ -125,6 +125,13 @@ not a content finding, cannot be suppressed with `--allow`, makes the check
 `not_evaluated` when all work is unavailable (or `partial` when mixed), and
 makes `lint` exit 1.
 
+Project-intent construction is bounded at each retained source/declaration
+prefix plus one overflow witness. An unmapped declaration tail is therefore
+not silently treated as ownerless: `NPlusOne` intent work makes the exact
+profile unavailable and produces one atomic summary. A complete, exhaustively
+observed source/intent inventory with no declared owner remains genuinely not
+applicable; path evidence is required once declared work exists.
+
 The source path must resolve to the explicitly resolved `Root` role. This rule
 does not use the consumer-neutral Hips fallback: a resolved Hips role cannot
 stand in for a missing Root. Root trajectory measurements may be unavailable

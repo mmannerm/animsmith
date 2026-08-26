@@ -185,10 +185,17 @@ impl Check for EngineRootMotionCheck<'_> {
 }
 
 fn has_declared_work(provenance: &PredictionProvenanceV6) -> bool {
-    match provenance
-        .root_motion_project_intent()
-        .declared_axis_candidates()
+    // Incomplete intent or settings evidence is applicable even when the
+    // retained prefix has no owner. Otherwise an unvisited declaration tail
+    // could be mistaken for a complete-empty project and incorrectly be N/A.
+    let intent = provenance.root_motion_project_intent();
+    if intent.clip_coverage() != EngineRootMotionProjectIntentCoverageV1::Complete
+        || provenance.base().base().settings().clip_coverage().state()
+            != ResolvedEngineSettingsCoverageStateV2::Complete
     {
+        return true;
+    }
+    match intent.declared_axis_candidates() {
         EngineRootMotionProjectIntentCountV1::Exact { count } => count != 0,
         EngineRootMotionProjectIntentCountV1::NPlusOne => true,
     }

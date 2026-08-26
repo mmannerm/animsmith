@@ -1273,6 +1273,10 @@ fn root_motion_project_intent(
         .clips()
         .rows()
         .iter()
+        // Keep this producer bounded even when a future loader supplies a
+        // lazy source-row view. The project-intent builder retains the same
+        // prefix plus one overflow witness and never needs the tail.
+        .take(animsmith_core::ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS.saturating_add(1))
         .map(|source_clip| {
             let normalized_clip_index = match source_clip.normalized_clip_index().state() {
                 animsmith_core::SourceObservationStateV1::Observed(index) => *index,

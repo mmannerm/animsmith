@@ -14,7 +14,7 @@ use animsmith_core::{
     ResolvedRoles, RigInfo, Role, RootMotionCompatibilityV1, RootMotionImporterDispositionV1,
     RootMotionProjectOwnerV1, SourceClipFactV1, SourceFactDomainV1, SourceFactSetV1,
     SourceFormatV1, SourceLoaderDispositionV1, SourceObservationV1, SourceProvenanceV1,
-    SourceTextV1, ToolInfo, ToolSource, Track, TrackValues, Transform,
+    SourceTextV1, SourceUnavailableReasonV1, ToolInfo, ToolSource, Track, TrackValues, Transform,
     allocate_prediction_facets_v2,
 };
 use animsmith_engine::{
@@ -22,7 +22,10 @@ use animsmith_engine::{
     PredictionRuleError, ProfileSelection, SettingValueV2, UnityAnimationTypeV2,
     UnityAvatarSetupV2, project_prediction_provenance_v6, resolve_static_v2,
 };
+use std::cell::Cell;
 use std::collections::BTreeMap;
+
+type StrictV17Mutation = (&'static str, fn(&mut serde_json::Value));
 
 #[derive(Clone, Copy)]
 enum PathFixture {
@@ -32,6 +35,7 @@ enum PathFixture {
     MismatchedBone,
     Ambiguous,
     Incomplete,
+    IncompleteRawClips,
     MissingSidecar,
 }
 
@@ -115,7 +119,14 @@ fn source_with_format(
             SourceFactSetV1::complete(Vec::new()),
         )));
     }
-    facts.mark_complete(SourceFactDomainV1::Clips);
+    if matches!(path_fixture, PathFixture::IncompleteRawClips) {
+        facts.mark_partial(
+            SourceFactDomainV1::Clips,
+            SourceUnavailableReasonV1::ProjectionBudgetExceeded,
+        );
+    } else {
+        facts.mark_complete(SourceFactDomainV1::Clips);
+    }
     facts.mark_complete(SourceFactDomainV1::Constructs);
     facts.mark_complete(SourceFactDomainV1::Resources);
     let source = facts.finish(document(names)).unwrap();
@@ -452,6 +463,35 @@ fn first_candidate_references(wire: &mut serde_json::Value) -> &mut Vec<serde_js
         .unwrap()
 }
 
+fn strict_document_setting<'a>(
+    wire: &'a mut serde_json::Value,
+    id: &str,
+) -> &'a mut serde_json::Value {
+    wire["files"][0]["prediction_provenance"]["base"]["base"]["settings"]["document_settings"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|setting| setting["id"] == id)
+        .unwrap()
+}
+
+fn strict_clip_setting<'a>(wire: &'a mut serde_json::Value, id: &str) -> &'a mut serde_json::Value {
+    wire["files"][0]["prediction_provenance"]["base"]["base"]["settings"]["clips"][0]["settings"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|setting| setting["id"] == id)
+        .unwrap()
+}
+
+fn strict_raw_row(wire: &mut serde_json::Value, index: usize) -> &mut serde_json::Value {
+    &mut wire["files"][0]["prediction_provenance"]["raw_transform_paths"]["rows"][index]
+}
+
+fn strict_root_trajectory(wire: &mut serde_json::Value) -> &mut serde_json::Value {
+    &mut wire["files"][0]["measurements"]["clips"]["walk"]["root_trajectory"]
+}
+
 #[test]
 fn bake_extract_truth_table_ignores_zero_measured_magnitudes() {
     use RootMotionProjectOwnerV1::{Animation, Gameplay};
@@ -601,7 +641,7 @@ fn routing_truth_table_covers_every_owner_disposition_and_axis() {
 
 #[test]
 fn no_provenance_or_declared_owner_is_not_applicable() {
-    let fixture = fixture(
+    let ownerless_fixture = fixture(
         "no-owner",
         &["idle"],
         PathFixture::Exact,
@@ -612,23 +652,55 @@ fn no_provenance_or_declared_owner_is_not_applicable() {
             BakeOrExtract::Bake,
         ),
     );
-    let grids = MetricGrids::new(fixture.source.document());
-    let ctx = CheckCtx::new(&grids, &fixture.roles, &fixture.config);
+    let grids = MetricGrids::new(ownerless_fixture.source.document());
+    let ctx = CheckCtx::new(&grids, &ownerless_fixture.roles, &ownerless_fixture.config);
     let no_owner = EngineRootMotionCheck::new(
-        &fixture.source,
-        Some(&fixture.provenance),
-        &fixture.roles,
-        &fixture.measurements,
+        &ownerless_fixture.source,
+        Some(&ownerless_fixture.provenance),
+        &ownerless_fixture.roles,
+        &ownerless_fixture.measurements,
     )
     .unwrap();
     assert_eq!(no_owner.applicability(&ctx), Applicability::NotApplicable);
-    let no_provenance =
-        EngineRootMotionCheck::new(&fixture.source, None, &fixture.roles, &fixture.measurements)
-            .unwrap();
+    let no_provenance = EngineRootMotionCheck::new(
+        &ownerless_fixture.source,
+        None,
+        &ownerless_fixture.roles,
+        &ownerless_fixture.measurements,
+    )
+    .unwrap();
     assert_eq!(
         no_provenance.applicability(&ctx),
         Applicability::NotApplicable
     );
+}
+
+#[test]
+fn ownerless_project_stays_not_applicable_when_raw_evidence_is_incomplete() {
+    for path in [PathFixture::Incomplete, PathFixture::IncompleteRawClips] {
+        let fixture = fixture(
+            "ownerless-incomplete-raw",
+            &["idle"],
+            path,
+            (None, None, None),
+            (
+                BakeOrExtract::Bake,
+                BakeOrExtract::Bake,
+                BakeOrExtract::Bake,
+            ),
+        );
+        let grids = MetricGrids::new(fixture.source.document());
+        let ctx = CheckCtx::new(&grids, &fixture.roles, &fixture.config);
+        let check = EngineRootMotionCheck::new(
+            &fixture.source,
+            Some(&fixture.provenance),
+            &fixture.roles,
+            &fixture.measurements,
+        )
+        .unwrap();
+        assert_eq!(check.applicability(&ctx), Applicability::NotApplicable);
+        assert!(evaluate(&fixture).engine_prediction_v6().is_none());
+    }
 }
 
 #[test]
@@ -764,6 +836,197 @@ fn output_v17_candidate_basis_round_trips_through_the_strict_reader() {
         wire["files"][0]["measurements"]["clips"]["walk"]["root_trajectory"]["translation_availability"] =
             serde_json::json!("unavailable");
     });
+}
+
+#[test]
+fn output_v17_rejects_each_consumed_root_motion_provenance_mutation() {
+    let fixture = fixture(
+        "strict-v17-consumed-provenance",
+        &["walk"],
+        PathFixture::Exact,
+        (
+            Some(RootMotionProjectOwnerV1::Animation),
+            None,
+            Some(RootMotionProjectOwnerV1::Animation),
+        ),
+        (
+            BakeOrExtract::Extract,
+            BakeOrExtract::Bake,
+            BakeOrExtract::Extract,
+        ),
+    );
+    let bytes = strict_v17_bytes(&fixture, evaluate(&fixture));
+
+    let document_mutations: [StrictV17Mutation; 8] = [
+        ("animation_type value", |wire| {
+            strict_document_setting(wire, "animation_type")["value"]["token"] =
+                serde_json::json!("humanoid");
+        }),
+        ("animation_type origin", |wire| {
+            strict_document_setting(wire, "animation_type")["value_origin"] =
+                serde_json::json!("profile_default");
+        }),
+        ("avatar_setup value", |wire| {
+            strict_document_setting(wire, "avatar_setup")["value"]["token"] =
+                serde_json::json!("copy_from_other_avatar");
+        }),
+        ("avatar_setup origin", |wire| {
+            strict_document_setting(wire, "avatar_setup")["value_origin"] =
+                serde_json::json!("profile_default");
+        }),
+        ("import_animation value", |wire| {
+            strict_document_setting(wire, "import_animation")["value"]["boolean"] =
+                serde_json::json!(false);
+        }),
+        ("import_animation origin", |wire| {
+            strict_document_setting(wire, "import_animation")["value_origin"] =
+                serde_json::json!("profile_default");
+        }),
+        ("root_motion_source value", |wire| {
+            strict_document_setting(wire, "root_motion_source")["value"]["source_transform_path"] =
+                serde_json::json!("Reference/Other");
+        }),
+        ("root_motion_source origin", |wire| {
+            strict_document_setting(wire, "root_motion_source")["value_origin"] =
+                serde_json::json!("profile_default");
+        }),
+    ];
+    for (label, mutation) in document_mutations {
+        assert_strict_v17_mutation_rejected(&bytes, label, mutation);
+    }
+
+    let clip_mutations: [StrictV17Mutation; 6] = [
+        ("root_position_xz value", |wire| {
+            strict_clip_setting(wire, "root_position_xz")["value"]["bake_or_extract"] =
+                serde_json::json!("bake");
+        }),
+        ("root_position_xz origin", |wire| {
+            strict_clip_setting(wire, "root_position_xz")["value_origin"] =
+                serde_json::json!("profile_default");
+        }),
+        ("root_position_y value", |wire| {
+            strict_clip_setting(wire, "root_position_y")["value"]["bake_or_extract"] =
+                serde_json::json!("extract");
+        }),
+        ("root_position_y origin", |wire| {
+            strict_clip_setting(wire, "root_position_y")["value_origin"] =
+                serde_json::json!("profile_default");
+        }),
+        ("root_rotation value", |wire| {
+            strict_clip_setting(wire, "root_rotation")["value"]["bake_or_extract"] =
+                serde_json::json!("bake");
+        }),
+        ("root_rotation origin", |wire| {
+            strict_clip_setting(wire, "root_rotation")["value_origin"] =
+                serde_json::json!("profile_default");
+        }),
+    ];
+    for (label, mutation) in clip_mutations {
+        assert_strict_v17_mutation_rejected(&bytes, label, mutation);
+    }
+
+    let raw_mutations: [StrictV17Mutation; 15] = [
+        ("raw inventory schema", |wire| {
+            wire["files"][0]["prediction_provenance"]["raw_transform_paths"]["schema"] =
+                serde_json::json!("urn:animsmith:raw-transform-path-inventory:forged");
+        }),
+        ("raw primary identity digest", |wire| {
+            wire["files"][0]["prediction_provenance"]["raw_transform_paths"]["primary_input"]["sha256"] = serde_json::json!(
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            );
+        }),
+        ("raw primary identity length", |wire| {
+            wire["files"][0]["prediction_provenance"]["raw_transform_paths"]["primary_input"]["bytes"] =
+                serde_json::json!(0);
+        }),
+        ("raw source format", |wire| {
+            wire["files"][0]["prediction_provenance"]["raw_transform_paths"]["source_format"] =
+                serde_json::json!("glb");
+        }),
+        ("raw projected bone count", |wire| {
+            wire["files"][0]["prediction_provenance"]["raw_transform_paths"]["projected_bone_count"] =
+                serde_json::json!(1);
+        }),
+        ("raw coverage", |wire| {
+            wire["files"][0]["prediction_provenance"]["raw_transform_paths"]["coverage"] = serde_json::json!({
+                "state": "partial",
+                "reason": "unrepresentable_source_segment"
+            });
+        }),
+        ("raw node index", |wire| {
+            strict_raw_row(wire, 2)["source_node_index"] = serde_json::json!(3);
+        }),
+        ("raw parent index", |wire| {
+            strict_raw_row(wire, 2)["parent_source_node_index"] = serde_json::json!(0);
+        }),
+        ("raw parent chain", |wire| {
+            strict_raw_row(wire, 2)["parent_chain"] = serde_json::json!([0]);
+        }),
+        ("raw source spelling", |wire| {
+            strict_raw_row(wire, 2)["source_name"] = serde_json::json!("Other");
+        }),
+        ("raw source spelling byte count", |wire| {
+            strict_raw_row(wire, 2)["source_name_utf8_bytes"] = serde_json::json!(5);
+        }),
+        ("raw node kind", |wire| {
+            strict_raw_row(wire, 2)["kind"] = serde_json::json!("scale_compensation_helper");
+        }),
+        ("raw addressability", |wire| {
+            strict_raw_row(wire, 2)["addressability"] =
+                serde_json::json!("unrepresentable_source_segment");
+        }),
+        ("raw exact path", |wire| {
+            strict_raw_row(wire, 2)["addressable_path"] = serde_json::json!("Reference/Other");
+        }),
+        ("raw projected bone", |wire| {
+            strict_raw_row(wire, 2)["projected_bone_index"] = serde_json::json!(1);
+        }),
+    ];
+    for (label, mutation) in raw_mutations {
+        assert_strict_v17_mutation_rejected(&bytes, label, mutation);
+    }
+
+    let root_and_measurement_mutations: [StrictV17Mutation; 10] = [
+        ("resolved Root role", |wire| {
+            wire["files"][0]["rig"]["resolved_roles"]["root"] = serde_json::json!("Other");
+        }),
+        ("resolved Root index", |wire| {
+            wire["files"][0]["prediction_provenance"]["root_motion_project_intent"]["resolved_root_bone_index"] =
+                serde_json::json!(1);
+        }),
+        ("trajectory availability", |wire| {
+            wire["files"][0]["measurements"]["clips"]["walk"]["root_trajectory_availability"] =
+                serde_json::json!("unavailable");
+        }),
+        ("trajectory selected bone index", |wire| {
+            strict_root_trajectory(wire)["bone_index"] = serde_json::json!(1);
+        }),
+        ("trajectory selected bone name", |wire| {
+            strict_root_trajectory(wire)["bone_name"] = serde_json::json!("Other");
+        }),
+        ("trajectory selected role", |wire| {
+            strict_root_trajectory(wire)["source_role"] = serde_json::json!("hips_fallback");
+        }),
+        ("translation measurement availability", |wire| {
+            strict_root_trajectory(wire)["translation_availability"] =
+                serde_json::json!("unavailable");
+        }),
+        ("translation measurement presence", |wire| {
+            strict_root_trajectory(wire)["translation"] = serde_json::Value::Null;
+            strict_root_trajectory(wire)["translation_availability"] =
+                serde_json::json!("unavailable");
+        }),
+        ("yaw measurement availability", |wire| {
+            strict_root_trajectory(wire)["yaw_availability"] = serde_json::json!("unavailable");
+        }),
+        ("yaw measurement presence", |wire| {
+            strict_root_trajectory(wire)["yaw"] = serde_json::Value::Null;
+            strict_root_trajectory(wire)["yaw_availability"] = serde_json::json!("unavailable");
+        }),
+    ];
+    for (label, mutation) in root_and_measurement_mutations {
+        assert_strict_v17_mutation_rejected(&bytes, label, mutation);
+    }
 }
 
 #[test]
@@ -1153,6 +1416,78 @@ fn intent_work_overflow_is_one_atomic_summary_without_prefix() {
     assert_eq!(
         facets[0].scope().code.as_str(),
         "engine-root-motion:inventory"
+    );
+}
+
+#[test]
+fn ownerless_unmapped_tail_is_bounded_and_forces_atomic_summary() {
+    let mut fixture = fixture(
+        "unmapped-ownerless-tail",
+        &["idle"],
+        PathFixture::Exact,
+        (None, None, None),
+        (
+            BakeOrExtract::Extract,
+            BakeOrExtract::Extract,
+            BakeOrExtract::Extract,
+        ),
+    );
+    let calls = Cell::new(0);
+    let mut remaining = PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE + 100;
+    let calls_ref = &calls;
+    let unmapped = std::iter::from_fn(move || {
+        if remaining == 0 {
+            None
+        } else {
+            remaining -= 1;
+            calls_ref.set(calls_ref.get() + 1);
+            Some([None, None, None])
+        }
+    });
+    let intent = EngineRootMotionProjectIntentV1::from_clips_with_root_and_unmapped(
+        Some(0),
+        [EngineRootMotionClipIntentInputV1::new(
+            EngineRootMotionClipMappingStateV1::Observed,
+            Some(0),
+            Some("idle".to_owned()),
+            None,
+            None,
+            None,
+        )],
+        unmapped,
+    )
+    .unwrap();
+    assert_eq!(
+        calls.get(),
+        PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE + 1,
+        "root-motion provenance must not visit the unmapped tail"
+    );
+    fixture.provenance = animsmith_core::PredictionProvenanceV6::new(
+        fixture.provenance.base().clone(),
+        fixture.provenance.raw_transform_paths().clone(),
+        intent,
+    )
+    .unwrap();
+
+    let record = evaluate(&fixture);
+    let facets = record.engine_prediction_v6().unwrap().facets();
+    assert_eq!(facets.len(), 1);
+    assert_eq!(
+        facets[0].state(),
+        EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+    );
+    assert!(
+        facets[0]
+            .reasons()
+            .contains(&PredictionUnavailableReasonV2::ProjectIntentUnavailable)
+    );
+    assert!(
+        facets[0].reasons().contains(
+            &PredictionUnavailableReasonV2::custom(
+                "animsmith:root_motion_intent_work_budget_exceeded"
+            )
+            .unwrap()
+        )
     );
 }
 

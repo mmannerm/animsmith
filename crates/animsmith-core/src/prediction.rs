@@ -12875,6 +12875,11 @@ pub enum EngineRootMotionProjectIntentCoverageV1 {
 }
 
 /// A bounded exact count or the first witness beyond its domain cap.
+///
+/// For unmapped declarations, `NPlusOne` also records that declaration
+/// traversal itself reached the first row beyond the bounded work window.
+/// This is deliberately conservative: an ownerless tail cannot be treated as
+/// a complete proof that no declaration exists without visiting that tail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum EngineRootMotionProjectIntentCountV1 {
@@ -12883,7 +12888,8 @@ pub enum EngineRootMotionProjectIntentCountV1 {
         /// Exact observed count.
         count: u64,
     },
-    /// Counting reached the first element after the relevant cap.
+    /// Counting or bounded declaration traversal reached the first element
+    /// after the relevant cap.
     NPlusOne,
 }
 
@@ -12971,7 +12977,14 @@ impl EngineRootMotionProjectIntentV1 {
         let mut candidate_overflow = false;
         let mut unmapped_candidates = 0usize;
         let mut unmapped_overflow = false;
-        for clip in clips {
+        // The source iterator is caller-owned and may be backed by a lazy
+        // parser. Consume at most the retained prefix plus one witness; once
+        // that witness is seen, no malformed or expensive source tail can be
+        // pulled merely to finish a count.
+        for clip in clips
+            .into_iter()
+            .take(ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS.saturating_add(1))
+        {
             if observed_source_clips < ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS {
                 retained.push(EngineRootMotionClipIntentV1::new(
                     observed_source_clips as u64,
@@ -12998,14 +13011,31 @@ impl EngineRootMotionProjectIntentV1 {
                 }
             }
         }
-        for owners in unmapped_declarations {
+        // An unmapped declaration with no owner is still meaningful work: an
+        // unvisited tail must not become a false complete-empty/N/A result.
+        // Candidate overflow can stop immediately, otherwise inspect only
+        // the bounded declaration prefix plus one row to establish whether
+        // the declaration inventory is complete.
+        for (declaration_index, owners) in unmapped_declarations
+            .into_iter()
+            .take(PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE.saturating_add(1))
+            .enumerate()
+        {
+            if declaration_index >= PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE {
+                unmapped_overflow = true;
+                candidate_overflow = true;
+                break;
+            }
             let candidates = owners.into_iter().filter(Option::is_some).count();
             if !unmapped_overflow {
                 match unmapped_candidates.checked_add(candidates) {
                     Some(total) if total <= PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE => {
                         unmapped_candidates = total;
                     }
-                    _ => unmapped_overflow = true,
+                    _ => {
+                        unmapped_overflow = true;
+                        candidate_overflow = true;
+                    }
                 }
             }
             if !candidate_overflow {
@@ -13013,8 +13043,14 @@ impl EngineRootMotionProjectIntentV1 {
                     Some(total) if total <= PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE => {
                         declared_axis_candidates = total;
                     }
-                    _ => candidate_overflow = true,
+                    _ => {
+                        candidate_overflow = true;
+                        unmapped_overflow = true;
+                    }
                 }
+            }
+            if candidate_overflow {
+                break;
             }
         }
         let clip_coverage = if source_overflow {
@@ -13122,7 +13158,11 @@ impl EngineRootMotionProjectIntentV1 {
         self.declared_axis_candidates
     }
 
-    /// Declared document axes which could not be bound to a source row.
+    /// Declared document-axis work which could not be bound to a source row.
+    ///
+    /// `NPlusOne` means either that the candidate bound was exceeded or that
+    /// the bounded unmapped-declaration scan found an unvisited tail. The
+    /// latter is intentionally not an exact zero-owner claim.
     pub const fn unmapped_declared_axis_candidates(&self) -> EngineRootMotionProjectIntentCountV1 {
         self.unmapped_declared_axis_candidates
     }
@@ -13534,6 +13574,7 @@ impl EnginePredictionV6 {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeMap;
 
     use serde_json::json;
@@ -13549,6 +13590,25 @@ mod tests {
     use crate::{
         DependencyClosureBuilderV1, ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS, EngineClipSettingsV1,
     };
+
+    struct CountingRootMotionInputs<'a, T> {
+        remaining: usize,
+        calls: &'a Cell<usize>,
+        value: T,
+    }
+
+    impl<T: Clone> Iterator for CountingRootMotionInputs<'_, T> {
+        type Item = T;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.remaining == 0 {
+                return None;
+            }
+            self.remaining -= 1;
+            self.calls.set(self.calls.get() + 1);
+            Some(self.value.clone())
+        }
+    }
 
     fn test_identity() -> PredictionProvenanceIdentityV1 {
         PredictionProvenanceIdentityV1::from_input_identity(InputIdentity::from_bytes(b"profile"))
@@ -13598,6 +13658,67 @@ mod tests {
         assert_eq!(
             intent.clips().last().unwrap().source_clip_index(),
             (ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS - 1) as u64
+        );
+    }
+
+    #[test]
+    fn root_motion_intent_source_builder_does_not_pull_an_arbitrary_tail() {
+        let calls = Cell::new(0);
+        let input = EngineRootMotionClipIntentInputV1::new(
+            EngineRootMotionClipMappingStateV1::ProvenAbsent,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let intent = EngineRootMotionProjectIntentV1::from_clips(CountingRootMotionInputs {
+            remaining: ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS + 100,
+            calls: &calls,
+            value: input,
+        })
+        .unwrap();
+
+        assert_eq!(
+            calls.get(),
+            ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS + 1,
+            "source intent must stop at the first N+1 row"
+        );
+        assert_eq!(
+            intent.observed_source_clips(),
+            EngineRootMotionProjectIntentCountV1::NPlusOne
+        );
+        assert_eq!(
+            intent.declared_axis_candidates(),
+            EngineRootMotionProjectIntentCountV1::Exact { count: 0 }
+        );
+    }
+
+    #[test]
+    fn root_motion_intent_unmapped_ownerless_tail_is_bounded_and_not_empty_proof() {
+        let calls = Cell::new(0);
+        let intent = EngineRootMotionProjectIntentV1::from_clips_and_unmapped(
+            std::iter::empty(),
+            CountingRootMotionInputs {
+                remaining: PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE + 100,
+                calls: &calls,
+                value: [None, None, None],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            calls.get(),
+            PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE + 1,
+            "unmapped intent must stop at the first declaration beyond its bound"
+        );
+        assert_eq!(
+            intent.unmapped_declared_axis_candidates(),
+            EngineRootMotionProjectIntentCountV1::NPlusOne
+        );
+        assert_eq!(
+            intent.declared_axis_candidates(),
+            EngineRootMotionProjectIntentCountV1::NPlusOne
         );
     }
 
