@@ -53,7 +53,7 @@ fabricated `Scene0`; typed source indices remain authoritative over collected
 map/vector order.
 
 Target UUID prediction requires explicit `TargetPointerWidth::Bits32` or
-`Bits64`, matching Bevy's `usize::to_le_bytes()` hashing; host width is never
+`Bits64`, matching Bevy's target-width little-endian hashing; host width is never
 inferred. Incomplete, unreachable, multiply reachable, colliding, or disabled
 target work is required-unavailable. The explicit `target_coverage` projection
 distinguishes a complete (including empty) target domain from

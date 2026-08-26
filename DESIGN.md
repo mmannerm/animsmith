@@ -2859,8 +2859,8 @@ settings, and collision evidence. Unreachable or multiply reachable targets,
 duplicate paths, UUID collisions, disabled/missing `bevy_animation`, disabled
 `load_animations`, missing target pointer width, and incomplete evidence are
 typed required-unavailable states. Exact target IDs require explicitly pinned
-32- or 64-bit pointer width because Bevy hashes segment lengths with
-`usize::to_le_bytes()`; the host width is never inferred.
+32- or 64-bit pointer width because Bevy hashes segment lengths with the target
+pointer width's little-endian encoding; the host width is never inferred.
 
 The projection carries explicit `target_coverage` separate from retained
 target rows. It is complete, including for an empty target domain, or is

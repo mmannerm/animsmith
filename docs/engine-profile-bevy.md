@@ -165,9 +165,9 @@ second lifecycle.
 The separately versioned authority pins Bevy tag `v0.19.0`, commit
 `c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0`, locked
 `gltf 1.4.1`, and the label, loader, node-path, `AnimationTargetId`, feature,
-and root `Cargo.lock` sources. It requires explicit target pointer width (`bits32` or
-`bits64`) because Bevy hashes path segment lengths with `usize`; AnimSmith
-never uses the host width. Missing `bevy_animation` or disabled
+and root `Cargo.lock` sources. It requires explicit target pointer width
+(`bits32` or `bits64`) because Bevy hashes path segment lengths using the target
+pointer width; AnimSmith never uses the host width. Missing `bevy_animation` or disabled
 `load_animations` is typed unavailable, not runtime success.
 
 `Scene{i}` is emitted for every declared source scene. `Gltf.default_scene`

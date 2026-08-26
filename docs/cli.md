@@ -763,7 +763,8 @@ disabled `load_animations`, unreachable or multiply reachable targets,
 duplicate paths, UUID collisions, missing pointer width, and incomplete
 evidence are typed required-unavailable states. Target UUID reproduction
 requires explicitly declared 32- or 64-bit pointer width because Bevy hashes
-segment lengths using `usize::to_le_bytes()`; host width is never inferred.
+segment lengths using the target pointer width's little-endian encoding; host
+width is never inferred.
 
 Each new rich V2 projection domain is bounded at 4,096 rows, with aggregate
 projection structural references at 65,536 and dynamic projection text at

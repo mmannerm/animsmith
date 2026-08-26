@@ -218,8 +218,8 @@ scene candidates, target-ID collision, unreachable target, missing
 `bevy_animation`, disabled `load_animations`, missing pointer width, or
 incomplete evidence is typed `required_unavailable`; no guessed path or UUID
 is published. Bevy's target-ID reproduction requires an explicit 32- or
-64-bit pointer width because its segment lengths use `usize::to_le_bytes()`;
-the host width is never inferred.
+64-bit pointer width because its segment lengths use target-width little-endian
+encoding; the host width is never inferred.
 
 The projection also carries `target_coverage`, independently of the retained
 target rows. A complete target domain may be empty; a domain beyond the 4,096

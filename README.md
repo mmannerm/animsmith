@@ -363,8 +363,8 @@ absent) and projects `Skin{i}` when any source node references it. Named maps
 are separate source-order last-write-wins projections.
 
 Exact target UUIDs require an explicitly declared 32- or 64-bit pointer width
-because Bevy hashes path-segment lengths as `usize`; width is never inferred
-from the host. Unreachable, multiply reachable, colliding, incomplete, or
+because Bevy hashes path-segment lengths using its target pointer width; width
+is never inferred from the host. Unreachable, multiply reachable, colliding, incomplete, or
 feature-disabled targets are required-unavailable, not guessed. Its explicit
 `target_coverage` projection distinguishes complete (including empty) target
 domains from `target_domain_truncated`; other rich projection budget failures

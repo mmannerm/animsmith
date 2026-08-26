@@ -709,8 +709,8 @@ skins, and emits `Skin{i}` when any source node references it. Named maps are
 separate source-order last-write-wins projections.
 
 Exact target UUIDs require explicitly selecting 32- or 64-bit target pointer
-width because Bevy hashes segment lengths with `usize`; AnimSmith never infers
-width from the host. Missing feature/settings, incomplete or unreachable
+width because Bevy hashes segment lengths using the target pointer width;
+AnimSmith never infers width from the host. Missing feature/settings, incomplete or unreachable
 targets, multiple paths, and path/UUID collisions are typed
 `required_unavailable`, not guessed. `target_coverage` distinguishes complete
 (including empty) target coverage from `target_domain_truncated`; other rich
