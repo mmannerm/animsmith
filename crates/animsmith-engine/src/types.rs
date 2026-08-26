@@ -600,6 +600,12 @@ pub enum SettingIdV2 {
     BevyAnimationFeature,
     /// Per-load animation loading toggle.
     LoadAnimations,
+    /// Godot scene-import animation bake frequency.
+    AnimationFps,
+    /// Godot scene-import animation trimming toggle.
+    AnimationTrimming,
+    /// Unreal FBX importer sample-rate policy.
+    SampleRate,
 }
 
 impl SettingIdV2 {
@@ -619,6 +625,9 @@ impl SettingIdV2 {
             Self::ExtensionHandlerEnvironment => "extension_handler_environment",
             Self::BevyAnimationFeature => "bevy_animation_feature",
             Self::LoadAnimations => "load_animations",
+            Self::AnimationFps => "animation_fps",
+            Self::AnimationTrimming => "animation_trimming",
+            Self::SampleRate => "sample_rate",
         }
     }
 
@@ -637,9 +646,23 @@ impl SettingIdV2 {
             "extension_handler_environment" => Some(Self::ExtensionHandlerEnvironment),
             "bevy_animation_feature" => Some(Self::BevyAnimationFeature),
             "load_animations" => Some(Self::LoadAnimations),
+            "animation_fps" => Some(Self::AnimationFps),
+            "animation_trimming" => Some(Self::AnimationTrimming),
+            "sample_rate" => Some(Self::SampleRate),
             _ => None,
         }
     }
+}
+
+/// Exact Unreal FBX animation sample-rate policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum UnrealSampleRateV2 {
+    /// `bUseDefaultSampleRate=true` with no custom-rate value.
+    Default30,
+    /// `bUseDefaultSampleRate=false, CustomSampleRate=0`.
+    SourceDetermined,
+    /// `bUseDefaultSampleRate=false, CustomSampleRate=<hertz>`.
+    CustomHz(u32),
 }
 
 /// Closed Unity animation-type values supported by the revision-2 profile.
@@ -736,6 +759,10 @@ pub enum SettingDomainV2 {
     LoadMeshesState,
     /// Exact supported glTF extension-handler environment.
     HandlerEnvironment,
+    /// Positive bounded integer.
+    PositiveInteger,
+    /// Exact Unreal FBX sample-rate policy.
+    SampleRate,
 }
 
 /// Closed public value vocabulary for revision-2 settings.
@@ -755,6 +782,10 @@ pub enum SettingValueV2 {
     LoadMeshesState(BevyLoadMeshesStateV2),
     /// Exact supported extension-handler environment.
     HandlerEnvironment(BevyGltfHandlerEnvironmentV2),
+    /// Positive bounded integer.
+    PositiveInteger(u32),
+    /// Exact Unreal FBX sample-rate policy.
+    SampleRate(UnrealSampleRateV2),
 }
 
 impl SettingValueV2 {
@@ -773,6 +804,20 @@ impl SettingValueV2 {
                 | (
                     Self::HandlerEnvironment(_),
                     SettingDomainV2::HandlerEnvironment
+                )
+                | (
+                    Self::PositiveInteger(1..=120),
+                    SettingDomainV2::PositiveInteger
+                )
+                | (
+                    Self::SampleRate(
+                        UnrealSampleRateV2::Default30 | UnrealSampleRateV2::SourceDetermined
+                    ),
+                    SettingDomainV2::SampleRate
+                )
+                | (
+                    Self::SampleRate(UnrealSampleRateV2::CustomHz(1..=48_000)),
+                    SettingDomainV2::SampleRate
                 )
         )
     }

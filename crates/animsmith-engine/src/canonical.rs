@@ -1,3 +1,4 @@
+use crate::types::UnrealSampleRateV2;
 use crate::{
     AnimationAddressability, BakeOrExtract, ConversionControl, DefaultStatus, EngineProfile,
     EngineProfileV2, FactState, FactValue, ForwardAxis, Handedness, ImportHandling, LinearUnit,
@@ -19,7 +20,7 @@ use animsmith_core::engine_contract::{
 };
 use animsmith_core::engine_contract::{
     EngineClipSettingsV3 as CoreClipSettingsV3, EnginePrimarySourceV2 as CorePrimarySourceV2,
-    EngineSettingDescriptorV2 as CoreSettingDescriptorV2,
+    EngineSampleRateV2 as CoreSampleRateV2, EngineSettingDescriptorV2 as CoreSettingDescriptorV2,
     EngineSettingDomainV2 as CoreSettingDomainV2, EngineSettingIdV2 as CoreSettingIdV2,
     EngineSettingRowV3, EngineSettingValueOriginV3, EngineSettingValueV2 as CoreSettingValueV2,
     ResolvedEngineProfileV2 as CoreEngineProfileV2,
@@ -143,6 +144,8 @@ pub fn project_engine_profile_v2(
                         SettingDomainV2::LoadMeshesState | SettingDomainV2::HandlerEnvironment => {
                             CoreSettingDomainV2::Token
                         }
+                        SettingDomainV2::PositiveInteger => CoreSettingDomainV2::PositiveInteger,
+                        SettingDomainV2::SampleRate => CoreSettingDomainV2::SampleRate,
                     },
                     profile.accepted_inputs().to_vec(),
                     match descriptor.default() {
@@ -498,6 +501,9 @@ const fn setting_id_v2(id: SettingIdV2) -> CoreSettingIdV2 {
         SettingIdV2::ExtensionHandlerEnvironment => CoreSettingIdV2::ExtensionHandlerEnvironment,
         SettingIdV2::BevyAnimationFeature => CoreSettingIdV2::BevyAnimationFeature,
         SettingIdV2::LoadAnimations => CoreSettingIdV2::LoadAnimations,
+        SettingIdV2::AnimationFps => CoreSettingIdV2::AnimationFps,
+        SettingIdV2::AnimationTrimming => CoreSettingIdV2::AnimationTrimming,
+        SettingIdV2::SampleRate => CoreSettingIdV2::SampleRate,
     }
 }
 
@@ -527,6 +533,12 @@ fn setting_value_v2(value: &SettingValueV2) -> CoreSettingValueV2 {
         SettingValueV2::HandlerEnvironment(value) => {
             CoreSettingValueV2::Token(value.as_str().into())
         }
+        SettingValueV2::PositiveInteger(value) => CoreSettingValueV2::PositiveInteger(*value),
+        SettingValueV2::SampleRate(value) => CoreSettingValueV2::SampleRate(match value {
+            UnrealSampleRateV2::Default30 => CoreSampleRateV2::Default30,
+            UnrealSampleRateV2::SourceDetermined => CoreSampleRateV2::SourceDetermined,
+            UnrealSampleRateV2::CustomHz(value) => CoreSampleRateV2::CustomHz(*value),
+        }),
     }
 }
 
@@ -541,7 +553,47 @@ pub(crate) const fn format_name(format: SourceFormatV1) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FactId, ProfileFact, SettingDescriptor};
+    use crate::{
+        FactId, ProfileFact, SettingDescriptor, SettingDomainV2, SettingValueV2,
+        types::UnrealSampleRateV2,
+    };
+
+    #[test]
+    fn advice_setting_values_map_to_the_closed_core_vocabulary_and_bounds() {
+        assert_eq!(
+            setting_value_v2(&SettingValueV2::PositiveInteger(120)),
+            CoreSettingValueV2::PositiveInteger(120)
+        );
+        assert!(
+            !SettingValueV2::PositiveInteger(0).matches_domain(SettingDomainV2::PositiveInteger)
+        );
+        assert!(
+            !SettingValueV2::PositiveInteger(121).matches_domain(SettingDomainV2::PositiveInteger)
+        );
+        for (public, core) in [
+            (UnrealSampleRateV2::Default30, CoreSampleRateV2::Default30),
+            (
+                UnrealSampleRateV2::SourceDetermined,
+                CoreSampleRateV2::SourceDetermined,
+            ),
+            (
+                UnrealSampleRateV2::CustomHz(48_000),
+                CoreSampleRateV2::CustomHz(48_000),
+            ),
+        ] {
+            assert!(SettingValueV2::SampleRate(public).matches_domain(SettingDomainV2::SampleRate));
+            assert_eq!(
+                setting_value_v2(&SettingValueV2::SampleRate(public)),
+                CoreSettingValueV2::SampleRate(core)
+            );
+        }
+        for invalid in [0, 48_001] {
+            assert!(
+                !SettingValueV2::SampleRate(UnrealSampleRateV2::CustomHz(invalid))
+                    .matches_domain(SettingDomainV2::SampleRate)
+            );
+        }
+    }
 
     #[test]
     fn facts_encoding_sorts_every_repeated_stable_id() {

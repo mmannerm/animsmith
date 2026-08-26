@@ -13,6 +13,7 @@ use std::sync::OnceLock;
 
 const VERIFIED_ON: &str = "2026-08-20";
 const UNITY_GENERIC_V2_VERIFIED_ON: &str = "2026-08-26";
+const IMPORT_ADVICE_V2_VERIFIED_ON: &str = "2026-08-26";
 const BEVY_V2_VERIFIED_ON: &str = "2026-08-25";
 const BEVY_0_19_COMMIT: &str = "c6f634ca9f406d68ba5109d921247b654cb42c10";
 const ALL_FACT_IDS: [FactId; 14] = [
@@ -49,7 +50,13 @@ pub fn profiles_v1() -> &'static [EngineProfile] {
 pub fn profiles_v2() -> &'static [EngineProfileV2] {
     static PROFILES: OnceLock<Vec<EngineProfileV2>> = OnceLock::new();
     PROFILES.get_or_init(|| {
-        let mut profiles = vec![unity_generic_v2(), bevy_v2(), bevy_v3()];
+        let mut profiles = vec![
+            unity_generic_v2(),
+            unreal_v2(),
+            godot_v2(),
+            bevy_v2(),
+            bevy_v3(),
+        ];
         profiles.sort_by(|left, right| left.selection().cmp(right.selection()));
         profiles
     })
@@ -75,7 +82,7 @@ pub fn validate_registry_v2() -> Result<(), RegistryValidationErrorV2> {
         EngineFactIdV2::TargetLinearUnit,
     ];
     let profiles = profiles_v2();
-    if profiles.len() != 3 {
+    if profiles.len() != 5 {
         return Err(RegistryValidationErrorV2::ProfileCount {
             found: profiles.len(),
         });
@@ -797,6 +804,129 @@ fn unity_generic_v2() -> EngineProfileV2 {
         settings,
         sources,
     }
+}
+
+/// Frozen Unreal revision-2 profile for document-level FBX sample-rate advice.
+fn unreal_v2() -> EngineProfileV2 {
+    use SettingDefaultV2::RequiredExplicit;
+    use SettingDomainV2::SampleRate;
+    use SettingIdV2::SampleRate as SampleRateId;
+    use animsmith_core::engine_contract::EngineFactIdV2;
+
+    let settings = vec![SettingDescriptorV2::new(
+        SampleRateId,
+        SettingScope::Document,
+        SampleRate,
+        RequiredExplicit,
+    )];
+    let sources = vec![PrimarySourceV2 {
+        id: "unreal-fbx-import-options-5.8",
+        target_version: "5.8",
+        url: "https://dev.epicgames.com/documentation/en-us/unreal-engine/fbx-import-options-reference-in-unreal-engine?application_version=5.8",
+        verified_on: IMPORT_ADVICE_V2_VERIFIED_ON,
+        supported_facts: vec![EngineFactIdV2::AcceptedInputs],
+        supported_settings: vec![SampleRateId],
+    }];
+
+    EngineProfileV2 {
+        selection: ProfileSelection::new("unreal", 2, "5.8", "fbx-importer"),
+        profile_urn: "urn:animsmith:engine-profile:unreal:2",
+        accepted_inputs: vec![SourceFormatV1::Fbx],
+        facts: document_advice_facts_v2(vec![SourceFormatV1::Fbx]),
+        settings,
+        sources,
+    }
+}
+
+/// Frozen Godot revision-2 profile for document-level scene-import advice.
+fn godot_v2() -> EngineProfileV2 {
+    use SettingDefaultV2::Verified;
+    use SettingDomainV2::{Boolean, PositiveInteger};
+    use SettingIdV2::{AnimationFps, AnimationTrimming};
+    use animsmith_core::engine_contract::EngineFactIdV2;
+
+    let mut settings = vec![
+        SettingDescriptorV2::new(
+            AnimationFps,
+            SettingScope::Document,
+            PositiveInteger,
+            Verified(SettingValueV2::PositiveInteger(30)),
+        ),
+        SettingDescriptorV2::new(
+            AnimationTrimming,
+            SettingScope::Document,
+            Boolean,
+            Verified(SettingValueV2::Boolean(false)),
+        ),
+    ];
+    settings.sort_by_key(|descriptor| descriptor.id().as_str());
+
+    let sources = vec![PrimarySourceV2 {
+        id: "godot-resource-importer-scene-4.7",
+        target_version: "4.7",
+        url: "https://docs.godotengine.org/en/4.7/classes/class_resourceimporterscene.html",
+        verified_on: IMPORT_ADVICE_V2_VERIFIED_ON,
+        supported_facts: vec![EngineFactIdV2::AcceptedInputs],
+        supported_settings: vec![AnimationFps, AnimationTrimming],
+    }];
+
+    let accepted_inputs = vec![SourceFormatV1::Glb, SourceFormatV1::GltfJson];
+    EngineProfileV2 {
+        selection: ProfileSelection::new("godot", 2, "4.7", "resource-importer-scene"),
+        profile_urn: "urn:animsmith:engine-profile:godot:2",
+        facts: document_advice_facts_v2(accepted_inputs.clone()),
+        accepted_inputs,
+        settings,
+        sources,
+    }
+}
+
+fn document_advice_facts_v2(
+    accepted_inputs: Vec<SourceFormatV1>,
+) -> Vec<animsmith_core::engine_contract::EngineProfileFactV2> {
+    use animsmith_core::engine_contract::{
+        EngineFactIdV2, EngineFactStateV2, EngineFactValueV2, EngineProfileFactV2,
+    };
+
+    vec![
+        EngineProfileFactV2::new(
+            EngineFactIdV2::AcceptedInputs,
+            EngineFactStateV2::Known(EngineFactValueV2::AcceptedFormats(accepted_inputs)),
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ApplicationWorldUnitPolicy,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ImportSettingProjection,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ImporterScaleConversion,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::PhysicalDimensionsPreserved,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ResultingTransformScale,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::RootMotionAddressability,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::SourceImportDisposition,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::SourceToTargetUnitMapping,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(EngineFactIdV2::TargetLinearUnit, EngineFactStateV2::Unknown),
+    ]
 }
 
 fn bevy_v2() -> EngineProfileV2 {

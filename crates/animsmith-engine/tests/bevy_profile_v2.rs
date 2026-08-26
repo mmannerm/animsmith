@@ -37,7 +37,7 @@ fn v2_contract_registry_retains_revision_2_and_adds_exact_revision_3_sibling() {
     validate_registry_v1().unwrap();
     validate_registry_v2().unwrap();
     assert_eq!(profiles_v1().len(), 5);
-    assert_eq!(profiles_v2().len(), 3);
+    assert_eq!(profiles_v2().len(), 5);
 
     let profile = lookup_profile_v2(&selection(2)).unwrap();
     assert_eq!(profile.profile_urn(), "urn:animsmith:engine-profile:bevy:2");

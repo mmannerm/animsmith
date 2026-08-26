@@ -61,7 +61,7 @@ fn exact_unity_generic_v2_sibling_preserves_v1_registry() {
     validate_registry_v1().unwrap();
     validate_registry_v2().unwrap();
     assert_eq!(profiles_v1().len(), 5);
-    assert_eq!(profiles_v2().len(), 3);
+    assert_eq!(profiles_v2().len(), 5);
     assert!(
         lookup_profile(&ProfileSelection::new(
             "unity-generic",
