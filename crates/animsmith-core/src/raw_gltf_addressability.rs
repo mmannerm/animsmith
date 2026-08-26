@@ -1229,6 +1229,167 @@ mod tests {
     }
 
     #[test]
+    fn every_row_domain_accepts_n_and_strict_readback_rejects_n_plus_one() {
+        fn build(input: RawGltfAddressabilityInventoryInputV1) -> RawGltfAddressabilityInventoryV1 {
+            let primary = InputIdentity::from_bytes(b"all-row-domains");
+            RawGltfAddressabilityInventoryV1::new(
+                primary.clone(),
+                DependencyClosureV1::unavailable(primary),
+                input,
+            )
+            .expect("the exact row ceiling is valid")
+        }
+
+        fn assert_appended_row_is_rejected(
+            inventory: &RawGltfAddressabilityInventoryV1,
+            field: &str,
+            row: serde_json::Value,
+        ) {
+            let mut value = serde_json::to_value(inventory).unwrap();
+            value[field].as_array_mut().unwrap().push(row);
+            assert!(
+                serde_json::from_value::<RawGltfAddressabilityInventoryV1>(value).is_err(),
+                "{field} must reject N+1 before accepting an over-limit contract"
+            );
+        }
+
+        let unavailable = RawGltfAddressabilityCoverageV1::Unavailable {
+            reason: RawGltfAddressabilityCoverageReasonV1::ParserUnavailable,
+        };
+        let partial = RawGltfAddressabilityCoverageV1::budget_exceeded();
+        let limit = RAW_GLTF_ADDRESSABILITY_V1_MAX_ROWS_PER_DOMAIN;
+
+        let scenes = build(RawGltfAddressabilityInventoryInputV1 {
+            default_scene: RawGltfDefaultSceneObservationV1::Absent,
+            scene_coverage: RawGltfAddressabilityCoverageV1::Complete,
+            scenes: (0..limit)
+                .map(|index| RawGltfSceneRowV1::new(index as u64, None, Vec::new()))
+                .collect(),
+            node_coverage: unavailable,
+            nodes: Vec::new(),
+            skin_coverage: unavailable,
+            skins: Vec::new(),
+            attachment_coverage: unavailable,
+            attachments: Vec::new(),
+            path_candidate_coverage: unavailable,
+            path_candidates: Vec::new(),
+        });
+        assert_appended_row_is_rejected(
+            &scenes,
+            "scenes",
+            serde_json::to_value(RawGltfSceneRowV1::new(limit as u64, None, Vec::new())).unwrap(),
+        );
+
+        let nodes = build(RawGltfAddressabilityInventoryInputV1 {
+            default_scene: RawGltfDefaultSceneObservationV1::Absent,
+            scene_coverage: unavailable,
+            scenes: Vec::new(),
+            node_coverage: RawGltfAddressabilityCoverageV1::Complete,
+            nodes: (0..limit)
+                .map(|index| RawGltfNodeRowV1::new(index as u64, None, None, Vec::new()))
+                .collect(),
+            skin_coverage: unavailable,
+            skins: Vec::new(),
+            attachment_coverage: unavailable,
+            attachments: Vec::new(),
+            path_candidate_coverage: unavailable,
+            path_candidates: Vec::new(),
+        });
+        assert_appended_row_is_rejected(
+            &nodes,
+            "nodes",
+            serde_json::to_value(RawGltfNodeRowV1::new(limit as u64, None, None, Vec::new()))
+                .unwrap(),
+        );
+
+        let skins = build(RawGltfAddressabilityInventoryInputV1 {
+            default_scene: RawGltfDefaultSceneObservationV1::Absent,
+            scene_coverage: unavailable,
+            scenes: Vec::new(),
+            node_coverage: unavailable,
+            nodes: Vec::new(),
+            skin_coverage: RawGltfAddressabilityCoverageV1::Complete,
+            skins: (0..limit)
+                .map(|index| {
+                    RawGltfSkinRowV1::new(
+                        index as u64,
+                        None,
+                        Vec::new(),
+                        None,
+                        RawGltfInverseBindMatricesObservationV1::Absent,
+                    )
+                })
+                .collect(),
+            attachment_coverage: unavailable,
+            attachments: Vec::new(),
+            path_candidate_coverage: unavailable,
+            path_candidates: Vec::new(),
+        });
+        assert_appended_row_is_rejected(
+            &skins,
+            "skins",
+            serde_json::to_value(RawGltfSkinRowV1::new(
+                limit as u64,
+                None,
+                Vec::new(),
+                None,
+                RawGltfInverseBindMatricesObservationV1::Absent,
+            ))
+            .unwrap(),
+        );
+
+        let attachments = build(RawGltfAddressabilityInventoryInputV1 {
+            default_scene: RawGltfDefaultSceneObservationV1::Absent,
+            scene_coverage: unavailable,
+            scenes: Vec::new(),
+            node_coverage: unavailable,
+            nodes: Vec::new(),
+            skin_coverage: unavailable,
+            skins: Vec::new(),
+            attachment_coverage: partial,
+            attachments: (0..limit)
+                .map(|index| RawGltfSkinAttachmentRowV1::new(index as u64, index as u64))
+                .collect(),
+            path_candidate_coverage: unavailable,
+            path_candidates: Vec::new(),
+        });
+        assert_appended_row_is_rejected(
+            &attachments,
+            "attachments",
+            serde_json::to_value(RawGltfSkinAttachmentRowV1::new(limit as u64, limit as u64))
+                .unwrap(),
+        );
+
+        let paths = build(RawGltfAddressabilityInventoryInputV1 {
+            default_scene: RawGltfDefaultSceneObservationV1::Absent,
+            scene_coverage: unavailable,
+            scenes: Vec::new(),
+            node_coverage: unavailable,
+            nodes: Vec::new(),
+            skin_coverage: unavailable,
+            skins: Vec::new(),
+            attachment_coverage: unavailable,
+            attachments: Vec::new(),
+            path_candidate_coverage: partial,
+            path_candidates: (0..limit)
+                .map(|index| {
+                    RawGltfScenePathCandidateRowV1::new(index as u64, 0, vec![index as u64])
+                })
+                .collect(),
+        });
+        assert_appended_row_is_rejected(
+            &paths,
+            "path_candidates",
+            serde_json::to_value(RawGltfScenePathCandidateRowV1::new(
+                limit as u64,
+                0,
+                vec![limit as u64],
+            ))
+            .unwrap(),
+        );
+    }
+
+    #[test]
     fn source_and_closure_mutations_are_rejected() {
         let inventory = empty();
         let mut value = serde_json::to_value(&inventory).unwrap();
