@@ -1184,19 +1184,36 @@ impl LoadedConfig {
             return Ok(None);
         };
         engine
-            .resolve_input_with_clips(
+            .resolve_input_with_clips_iter(
                 source_format,
-                &document
-                    .clips
-                    .iter()
-                    .map(|clip| clip.name.clone())
-                    .collect::<Vec<_>>(),
+                document.clips.iter().map(|clip| clip.name.as_str()),
             )
             .map(Some)
             .map_err(|error| match &self.path {
                 Some(path) => format!("bad config {}: {error}", path.display()),
                 None => format!("bad config: {error}"),
             })
+    }
+
+    /// Resolve a V2 profile for lint after configuration admission.
+    ///
+    /// The exact Unity Generic V2 root-motion slice is FBX-only. Its lifecycle
+    /// defines any non-FBX source as no work for the check, so lint must retain
+    /// the static configuration validation but omit source-bound V2 evidence
+    /// instead of surfacing the resolver's unsupported-format operator error.
+    /// Other V2 consumers retain the resolver's strict source-format boundary.
+    fn resolve_engine_profile_v2_lint_input(
+        &self,
+        source_format: animsmith_core::SourceFormatV1,
+        document: &Document,
+    ) -> Result<Option<ResolvedProfileSettingsV2>, String> {
+        if self.engine_profile_v2.as_ref().is_some_and(|engine| {
+            is_unity_generic_root_motion_selection(engine.profile().selection())
+                && source_format != animsmith_core::SourceFormatV1::Fbx
+        }) {
+            return Ok(None);
+        }
+        self.resolve_engine_profile_v2_input(source_format, document)
     }
 }
 
@@ -1319,12 +1336,15 @@ fn root_motion_project_intent(
     .map_err(|error| error.to_string())
 }
 
-fn is_unity_generic_root_motion_profile(profile: &ResolvedProfileSettingsV2) -> bool {
-    let selection = profile.profile().selection();
+fn is_unity_generic_root_motion_selection(selection: &ProfileSelection) -> bool {
     selection.family() == "unity-generic"
         && selection.profile_revision() == 2
         && selection.engine_version() == "6000.3"
         && selection.importer() == "fbx-model-importer"
+}
+
+fn is_unity_generic_root_motion_profile(profile: &ResolvedProfileSettingsV2) -> bool {
+    is_unity_generic_root_motion_selection(profile.profile().selection())
         && profile.source_format() == animsmith_core::SourceFormatV1::Fbx
 }
 
@@ -2429,7 +2449,7 @@ fn load_with_config_v2(path: &Path, config: &LoadedConfig) -> Result<LoadedInput
     let facts = loaded.source.source_facts();
     loaded.engine_v2 = config.resolve_engine_input_v2(facts.format(), loaded.source.document())?;
     loaded.engine_v4 =
-        config.resolve_engine_profile_v2_input(facts.format(), loaded.source.document())?;
+        config.resolve_engine_profile_v2_lint_input(facts.format(), loaded.source.document())?;
     Ok(loaded)
 }
 

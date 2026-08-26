@@ -5254,6 +5254,58 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
 }
 
 #[test]
+fn unity_generic_v2_non_fbx_input_keeps_root_motion_not_applicable() {
+    let dir = unique_temp_dir("unity-generic-v2-non-fbx-root-motion");
+    let config = write_config(
+        dir.path(),
+        "unity-generic-v2.toml",
+        r#"
+[engine]
+profile = "unity-generic"
+profile_revision = 2
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+
+[engine.settings]
+animation_type = "generic"
+avatar_setup = "create_from_this_model"
+import_animation = true
+root_motion_source = "root"
+
+[clips."*".engine_settings]
+root_rotation = "bake"
+root_position_y = "bake"
+root_position_xz = "bake"
+"#,
+    );
+
+    let output = animsmith()
+        .arg("--config")
+        .arg(&config)
+        .args([
+            "lint",
+            fixture("rig.gltf").to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json",
+            "--select",
+            "engine-root-motion",
+        ])
+        .output()
+        .expect("runs animsmith");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_output_schema_valid(&json);
+    let root_motion = lint_check(&json, "engine-root-motion");
+    assert_eq!(root_motion["selection"], "selected");
+    assert_eq!(root_motion["configuration"], "enabled");
+    assert_eq!(root_motion["applicability"], "not_applicable");
+    assert_eq!(root_motion["evaluation"], "not_evaluated");
+    assert!(root_motion.get("prediction").is_none());
+    assert_evaluation_summary_matches_checks(&json);
+}
+
+#[test]
 fn lint_json_keeps_disabled_distinct_from_unselected() {
     let dir = unique_temp_dir("v2-disabled");
     let config = write_config(

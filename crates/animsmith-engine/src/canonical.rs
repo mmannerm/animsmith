@@ -225,16 +225,23 @@ pub fn project_resolved_engine_settings_v3(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let coverage = match resolved.clip_coverage() {
+        ResolvedClipCoverageV2::Complete => CoreSettingsCoverageV2::complete(),
+        ResolvedClipCoverageV2::Partial { .. } => {
+            CoreSettingsCoverageV2::actual_clip_rows_exceeded()
+        }
+    };
+    let work = resolved.work();
     let settings = CoreSettingsV3::new(
         &profile,
         resolved.source_format(),
         document_settings,
         clips,
-        CoreSettingsCoverageV2::complete(),
+        coverage,
         CoreSettingsWorkV2::new(
-            resolved.clip_settings().len(),
-            resolved.clip_settings().len(),
-            resolved.clip_settings().len(),
+            work.actual_clip_rows_inspected(),
+            work.materialized_clip_rows(),
+            work.retained_clip_rows(),
         ),
     )?;
     Ok((profile, settings))

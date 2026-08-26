@@ -179,18 +179,41 @@ impl StaticResolutionV2 {
             source_format,
             document_settings: self.document_settings.clone(),
             clips: Vec::new(),
+            clip_coverage: ResolvedClipCoverageV2::Complete,
+            work: ResolvedEngineSettingsWorkV2 {
+                actual_clip_rows_inspected: 0,
+                materialized_clip_rows: 0,
+                retained_clip_rows: 0,
+            },
         })
     }
 
-    /// Resolve the authoritative input format and materialize clip settings.
+    /// Resolve the authoritative input format into bounded clip settings.
     ///
     /// Selector overlays use the same lexical-glob then exact-name precedence
     /// as the historical V1 resolver. Duplicate clip names remain distinct
-    /// rows in source order.
+    /// rows by source ordinal. At most 4,096 source-order rows are materialized;
+    /// a larger exact input produces partial coverage with N+1 work evidence,
+    /// and no tail name or setting is cloned, resolved, or canonicalized.
+    /// Retained rows are returned in canonical `(clip_name, source_ordinal)`
+    /// order.
     pub fn resolve_input_with_clips(
         &self,
         source_format: SourceFormatV1,
         clip_names: &[String],
+    ) -> Result<ResolvedProfileSettingsV2, ResolutionErrorV2> {
+        self.resolve_input_with_clips_iter(source_format, clip_names.iter().map(String::as_str))
+    }
+
+    /// Resolve an exact-size clip-name iterator without cloning its tail.
+    ///
+    /// This is the allocation-safe entry point for loaded documents. The
+    /// iterator length supplies complete versus N+1 coverage, and only the
+    /// bounded retained prefix is visited.
+    pub fn resolve_input_with_clips_iter<'a>(
+        &self,
+        source_format: SourceFormatV1,
+        clip_names: impl ExactSizeIterator<Item = &'a str>,
     ) -> Result<ResolvedProfileSettingsV2, ResolutionErrorV2> {
         if !self.profile.accepted_inputs().contains(&source_format) {
             return Err(ResolutionErrorV2::UnacceptedInputFormat {
@@ -210,8 +233,11 @@ impl StaticResolutionV2 {
         {
             return self.resolve_input(source_format);
         }
-        let mut clips = Vec::with_capacity(clip_names.len());
-        for clip_name in clip_names {
+        let actual_clip_rows = clip_names.len();
+        let retained_clip_rows = actual_clip_rows.min(RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS);
+        let overflowed = actual_clip_rows > RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS;
+        let mut clips = Vec::with_capacity(retained_clip_rows);
+        for (clip_ordinal, clip_name) in (0_u64..).zip(clip_names.take(retained_clip_rows)) {
             let mut values = BTreeMap::new();
             for (selector, settings) in &self.clip_overlays {
                 if selector != clip_name && animsmith_core::config::glob_match(selector, clip_name)
@@ -240,7 +266,7 @@ impl StaticResolutionV2 {
                         SettingDefaultV2::RequiredExplicit => {
                             return Err(ResolutionErrorV2::MissingRequiredSetting {
                                 setting: descriptor.id(),
-                                location: SettingLocation::ClipSelector(clip_name.clone()),
+                                location: SettingLocation::ClipSelector(clip_name.to_owned()),
                             });
                         }
                         SettingDefaultV2::Verified(value) => {
@@ -256,8 +282,8 @@ impl StaticResolutionV2 {
                 }
             }
             clips.push(ResolvedClipSettingsV2 {
-                clip_ordinal: clips.len() as u64,
-                clip_name: clip_name.clone(),
+                clip_ordinal,
+                clip_name: clip_name.to_owned(),
                 settings: resolved,
             });
         }
@@ -270,6 +296,19 @@ impl StaticResolutionV2 {
             source_format,
             document_settings: self.document_settings.clone(),
             clips,
+            clip_coverage: if overflowed {
+                ResolvedClipCoverageV2::Partial {
+                    reason: ResolvedClipCoverageReasonV2::ActualClipRowsExceeded,
+                }
+            } else {
+                ResolvedClipCoverageV2::Complete
+            },
+            work: ResolvedEngineSettingsWorkV2 {
+                actual_clip_rows_inspected: actual_clip_rows
+                    .min(RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS.saturating_add(1)),
+                materialized_clip_rows: retained_clip_rows,
+                retained_clip_rows,
+            },
         })
     }
 }
@@ -281,6 +320,8 @@ pub struct ResolvedProfileSettingsV2 {
     source_format: SourceFormatV1,
     document_settings: BTreeMap<SettingIdV2, ResolvedSettingV2>,
     clips: Vec<ResolvedClipSettingsV2>,
+    clip_coverage: ResolvedClipCoverageV2,
+    work: ResolvedEngineSettingsWorkV2,
 }
 
 impl ResolvedProfileSettingsV2 {
@@ -299,7 +340,10 @@ impl ResolvedProfileSettingsV2 {
         &self.document_settings
     }
 
-    /// Fully materialized clip-scoped settings in lexical clip-name order.
+    /// Materialized clip-scoped prefix in canonical name/ordinal order.
+    ///
+    /// Consult [`Self::clip_coverage`] before interpreting this slice as a
+    /// complete inventory.
     pub fn clip_settings(&self) -> &[ResolvedClipSettingsV2] {
         &self.clips
     }
@@ -309,6 +353,16 @@ impl ResolvedProfileSettingsV2 {
         self.clips
             .iter()
             .find(|clip| clip.clip_ordinal == ordinal && clip.clip_name == name)
+    }
+
+    /// Complete or bounded-partial coverage of actual clip settings.
+    pub const fn clip_coverage(&self) -> ResolvedClipCoverageV2 {
+        self.clip_coverage
+    }
+
+    /// Bounded clip-resolution work counters.
+    pub const fn work(&self) -> ResolvedEngineSettingsWorkV2 {
+        self.work
     }
 }
 

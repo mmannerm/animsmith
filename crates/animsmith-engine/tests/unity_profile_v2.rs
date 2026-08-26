@@ -1,14 +1,17 @@
 use animsmith_core::SourceFormatV1;
 use animsmith_core::engine_contract::{
     EngineSettingIdV2 as CoreSettingIdV2, EngineSettingValueV2 as CoreSettingValueV2,
+    ResolvedEngineSettingsCoverageReasonV2, ResolvedEngineSettingsCoverageStateV2,
 };
 use animsmith_engine::{
-    BakeOrExtract, EngineDeclarationV2, ProfileSelection, ResolutionError, ResolutionErrorV2,
+    BakeOrExtract, EngineDeclarationV2, ProfileSelection, RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS,
+    ResolutionError, ResolutionErrorV2, ResolvedClipCoverageReasonV2, ResolvedClipCoverageV2,
     ResolvedSettingOriginV2, SettingDefaultV2, SettingIdV2, SettingLocation, SettingValueV2,
     UnityAnimationTypeV2, UnityAvatarSetupV2, lookup_profile, lookup_profile_v2, profiles_v1,
     profiles_v2, project_engine_profile_v2, project_resolved_engine_settings_v3, resolve_static_v2,
     validate_registry_v1, validate_registry_v2,
 };
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn selection() -> ProfileSelection {
@@ -233,6 +236,41 @@ fn unity_generic_v2_rejects_non_frozen_import_modes() {
 }
 
 #[test]
+fn unity_generic_v2_rejects_invalid_path_and_missing_materialized_clip_setting() {
+    let mut invalid_path = declaration();
+    invalid_path.document_settings.as_mut().unwrap().insert(
+        "root_motion_source".into(),
+        SettingValueV2::SourceTransformPath("Reference//Root".into()),
+    );
+    assert!(matches!(
+        resolve_static_v2(invalid_path),
+        Err(ResolutionErrorV2::InvalidSettingValue {
+            setting: SettingIdV2::RootMotionSource,
+            location: SettingLocation::Document,
+            ..
+        })
+    ));
+
+    let mut missing_clip_setting = declaration();
+    missing_clip_setting
+        .clip_settings
+        .get_mut("locomotion_*")
+        .unwrap()
+        .remove("root_position_xz");
+    let static_resolution = resolve_static_v2(missing_clip_setting).unwrap().unwrap();
+    assert!(matches!(
+        static_resolution.resolve_input_with_clips(
+            SourceFormatV1::Fbx,
+            &["locomotion_run".into()],
+        ),
+        Err(ResolutionErrorV2::MissingRequiredSetting {
+            setting: SettingIdV2::RootPositionXz,
+            location: SettingLocation::ClipSelector(name),
+        }) if name == "locomotion_run"
+    ));
+}
+
+#[test]
 fn unity_generic_v2_preserves_duplicate_clip_ordinals_through_sorting() {
     let static_resolution = resolve_static_v2(declaration()).unwrap().unwrap();
     let resolved = static_resolution
@@ -259,5 +297,89 @@ fn unity_generic_v2_preserves_duplicate_clip_ordinals_through_sorting() {
             .unwrap()
             .clip_ordinal(),
         1
+    );
+}
+
+#[test]
+fn unity_generic_v2_settings_projection_is_bounded_and_retains_n_plus_one() {
+    let static_resolution = resolve_static_v2(declaration()).unwrap().unwrap();
+    let mut names = (0..RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS)
+        .map(|index| format!("locomotion_{index:04}"))
+        .collect::<Vec<_>>();
+    names.push("a".repeat(RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS + 1));
+
+    let visited = Cell::new(0);
+    let partial = static_resolution
+        .resolve_input_with_clips_iter(
+            SourceFormatV1::Fbx,
+            names.iter().map(|name| {
+                visited.set(visited.get() + 1);
+                name.as_str()
+            }),
+        )
+        .unwrap();
+    assert_eq!(visited.get(), RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS);
+    assert_eq!(
+        partial.clip_settings().len(),
+        RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS
+    );
+    assert!(
+        partial
+            .clip_settings()
+            .iter()
+            .all(|clip| clip.clip_ordinal() < RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS as u64)
+    );
+    assert_eq!(
+        partial.clip_coverage(),
+        ResolvedClipCoverageV2::Partial {
+            reason: ResolvedClipCoverageReasonV2::ActualClipRowsExceeded,
+        }
+    );
+    assert_eq!(
+        partial.work().actual_clip_rows_inspected(),
+        RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS + 1
+    );
+    assert_eq!(
+        partial.work().materialized_clip_rows(),
+        RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS
+    );
+    assert_eq!(
+        partial.work().retained_clip_rows(),
+        RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS
+    );
+
+    let (_, projected) = project_resolved_engine_settings_v3(&partial).unwrap();
+    assert_eq!(
+        projected.clip_coverage().state(),
+        ResolvedEngineSettingsCoverageStateV2::Partial
+    );
+    assert_eq!(
+        projected.clip_coverage().reason(),
+        Some(ResolvedEngineSettingsCoverageReasonV2::ActualClipRowsExceeded)
+    );
+    assert_eq!(
+        projected.work().actual_clip_rows_inspected(),
+        RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS + 1
+    );
+    assert_eq!(
+        projected.clips().len(),
+        RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS
+    );
+
+    let exact = static_resolution
+        .resolve_input_with_clips(
+            SourceFormatV1::Fbx,
+            &names[..RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS],
+        )
+        .unwrap();
+    assert_eq!(exact.clip_coverage(), ResolvedClipCoverageV2::Complete);
+    let (_, exact_projected) = project_resolved_engine_settings_v3(&exact).unwrap();
+    assert_eq!(
+        exact_projected.clip_coverage().state(),
+        ResolvedEngineSettingsCoverageStateV2::Complete
+    );
+    assert_eq!(
+        exact_projected.work().actual_clip_rows_inspected(),
+        RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS
     );
 }

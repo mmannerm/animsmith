@@ -13146,14 +13146,6 @@ impl EngineRootMotionProjectIntentV1 {
                 "too many source clip rows",
             ));
         }
-        if self
-            .resolved_root_bone_index
-            .is_some_and(|index| index >= ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS as u64)
-        {
-            return Err(PredictionContractError::InvalidProjectIntent(
-                "resolved Root bone index exceeds its V1 bound",
-            ));
-        }
         for clip in &self.clips {
             clip.validate()?;
         }
@@ -13259,6 +13251,21 @@ impl EngineRootMotionProjectIntentV1 {
         Ok(())
     }
 
+    fn validate_against_projected_bone_count(
+        &self,
+        projected_bone_count: u64,
+    ) -> Result<(), PredictionContractError> {
+        if self
+            .resolved_root_bone_index
+            .is_some_and(|index| index >= projected_bone_count)
+        {
+            return Err(PredictionContractError::InvalidProjectIntent(
+                "resolved Root bone index exceeds same-load skeleton bound",
+            ));
+        }
+        Ok(())
+    }
+
     fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
         checked_sum(
             "root-motion project intent retained text",
@@ -13356,6 +13363,10 @@ impl PredictionProvenanceV6 {
             .validate()
             .map_err(|_| PredictionContractError::InvalidRawTransformPathInventory)?;
         self.root_motion_project_intent.validate()?;
+        self.root_motion_project_intent
+            .validate_against_projected_bone_count(
+                self.raw_transform_paths.projected_bone_count(),
+            )?;
         if self.raw_transform_paths.primary_input()
             != self.base.raw_animation_channels().primary_input()
             || self.raw_transform_paths.source_format()
@@ -13609,6 +13620,29 @@ mod tests {
         assert!(matches!(
             decoded.validate(),
             Err(PredictionContractError::InvalidProjectIntent(_))
+        ));
+    }
+
+    #[test]
+    fn root_motion_root_index_uses_same_load_skeleton_bound() {
+        let root_index = ENGINE_ROOT_MOTION_PROJECT_INTENT_V1_MAX_CLIPS as u64;
+        let intent = EngineRootMotionProjectIntentV1::new_with_root(
+            Some(root_index),
+            Vec::new(),
+            EngineRootMotionProjectIntentCoverageV1::Complete,
+            EngineRootMotionProjectIntentCountV1::Exact { count: 0 },
+            EngineRootMotionProjectIntentCountV1::Exact { count: 0 },
+            EngineRootMotionProjectIntentCountV1::Exact { count: 0 },
+        )
+        .expect("root index is independent of the clip-row bound");
+
+        intent
+            .validate_against_projected_bone_count(root_index + 1)
+            .expect("root index within same-load skeleton bound");
+        assert!(matches!(
+            intent.validate_against_projected_bone_count(root_index),
+            Err(PredictionContractError::InvalidProjectIntent(message))
+                if message == "resolved Root bone index exceeds same-load skeleton bound"
         ));
     }
 

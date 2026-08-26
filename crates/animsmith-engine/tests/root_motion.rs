@@ -522,6 +522,7 @@ fn bake_extract_truth_table_ignores_zero_measured_magnitudes() {
 
 #[test]
 fn routing_truth_table_covers_every_owner_disposition_and_axis() {
+    assert_eq!(ENGINE_ROOT_MOTION_CHECK_ID, "engine-root-motion");
     for axis in [
         animsmith_core::RootMotionAxisV1::HorizontalXz,
         animsmith_core::RootMotionAxisV1::VerticalY,
@@ -556,7 +557,9 @@ fn routing_truth_table_covers_every_owner_disposition_and_axis() {
                     settings,
                 );
                 let record = evaluate(&fixture);
-                let facet = &record.engine_prediction_v6().unwrap().facets()[0];
+                let facets = record.engine_prediction_v6().unwrap().facets();
+                assert_eq!(facets.len(), 1);
+                let facet = &facets[0];
                 let EngineMachineResultV1::RootMotionRouting(result) = facet.result().unwrap()
                 else {
                     panic!("unexpected machine result")
@@ -997,6 +1000,54 @@ fn incomplete_path_inventory_is_one_atomic_summary_without_prefix() {
     assert_eq!(
         facets[0].reasons(),
         &[PredictionUnavailableReasonV2::RawSourceIncomplete]
+    );
+}
+
+#[test]
+fn partial_settings_are_one_atomic_summary_without_prefix() {
+    let mut fixture = fixture(
+        "partial-settings",
+        &["walk"],
+        PathFixture::Exact,
+        (Some(RootMotionProjectOwnerV1::Gameplay), None, None),
+        (
+            BakeOrExtract::Bake,
+            BakeOrExtract::Bake,
+            BakeOrExtract::Bake,
+        ),
+    );
+    let mut names = (0..=animsmith_engine::RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS)
+        .map(|index| format!("clip-{index:04}"))
+        .collect::<Vec<_>>();
+    names[0] = "walk".to_owned();
+    let borrowed = names.iter().map(String::as_str).collect::<Vec<_>>();
+    let resolved = declaration(
+        &borrowed,
+        BakeOrExtract::Bake,
+        BakeOrExtract::Bake,
+        BakeOrExtract::Bake,
+    );
+    fixture.provenance = project_prediction_provenance_v6(
+        &resolved,
+        &fixture.source,
+        Vec::new(),
+        intent(
+            &["walk"],
+            (Some(RootMotionProjectOwnerV1::Gameplay), None, None),
+        ),
+    )
+    .unwrap();
+
+    let record = evaluate(&fixture);
+    let facets = record.engine_prediction_v6().unwrap().facets();
+    assert_eq!(facets.len(), 1);
+    assert_eq!(
+        facets[0].scope().code.as_str(),
+        "engine-root-motion:inventory"
+    );
+    assert_eq!(
+        facets[0].reasons(),
+        &[PredictionUnavailableReasonV2::ResolvedSettingsOverflow]
     );
 }
 
