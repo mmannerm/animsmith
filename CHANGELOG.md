@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/mmannerm/animsmith/compare/v0.6.0...v0.7.0) - 2026-08-26
+
+### Added
+
+- *(generate)* emit glTF addressability v2
+- integrate revisioned import advice
+- predict Unity Generic root-motion routing
+- predict Bevy animation import gates
+- *(lint)* predict Bevy unit scale
+- *(cli)* advance output contracts to V14 and V6
+- add primitive and image evidence
+- retain raw glTF addressability evidence
+- *(core)* version exact timing prediction contracts
+- *(fbx)* retain exact timing evidence
+- project rich Bevy glTF addressability
+- add standalone engine import advice V2
+- add Godot and Unreal advice profiles
+- *(engine)* add current V3 addressability prediction
+- *(engine)* check exact Unreal clip boundaries
+
+### Fixed
+
+- close rich addressability audit gaps
+- close import advice refusal lifecycle
+- bound root-motion evidence projection
+- preserve root-motion N/A in collections
+- close Unity root-motion lifecycle gaps
+- bound overflow prediction evidence
+- *(collection)* bind evidence to dependency closure
+- *(core)* bind clip-boundary provenance
+- *(core)* rederive clip-boundary applicability
+- *(core)* validate exact clip-boundary readback
+- enforce bounded prediction evaluation
+- *(fbx)* fix exact timing test iterator lint
+- use native values for V2 import advice
+- bind import advice projections
+- bind root trajectory display identity
+
 ### Added
 
 - add measurements-v16 per-primitive geometry and unsupported-image evidence
