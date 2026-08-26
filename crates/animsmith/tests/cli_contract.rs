@@ -3335,6 +3335,309 @@ fn generate_addressability_v2_duplicate_and_unreachable_targets_are_unavailable(
     }
 }
 
+fn v2_coverage_text(value: &Value) -> String {
+    let state = value["state"].as_str().expect("coverage state");
+    match state {
+        "complete" => state.to_owned(),
+        _ => format!(
+            "{} ({})",
+            state,
+            value["reason"].as_str().expect("coverage reason")
+        ),
+    }
+}
+
+fn v2_projection_text(value: &Value, available_value: impl FnOnce(&Value) -> String) -> String {
+    match value["state"].as_str().expect("projection state") {
+        "available" => format!("available ({})", available_value(&value["value"])),
+        "proven_absent" => "proven_absent".into(),
+        "required_unavailable" => format!(
+            "required_unavailable ({})",
+            value["reasons"]
+                .as_array()
+                .expect("projection reasons")
+                .iter()
+                .map(|reason| reason.as_str().expect("projection reason"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        state => panic!("unknown projection state {state}"),
+    }
+}
+
+fn v2_named_winners_text(value: &Value, quote_names: bool) -> String {
+    v2_projection_text(value, |winners| {
+        winners
+            .as_array()
+            .expect("named map winners")
+            .iter()
+            .map(|winner| {
+                let name = winner["name"].as_str().expect("winner name");
+                let name = if quote_names {
+                    format!("\"{name}\"")
+                } else {
+                    name.to_owned()
+                };
+                format!(
+                    "{} -> {} {}",
+                    name,
+                    winner["source_index"].as_u64().expect("winner index"),
+                    winner["typed_label"].as_str().expect("winner label")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
+fn assert_v2_render_line(output: &str, expected: String) {
+    assert!(
+        output.lines().any(|line| line == expected),
+        "missing semantic renderer line {expected:?}:\n{output}"
+    );
+}
+
+fn assert_v2_render_semantic_inventory(report: &Value, text: &str, markdown: &str) {
+    let raw = &report["inventory"]["raw"];
+    for (domain, rows_key, coverage_key) in [
+        ("scenes", "scenes", "scene_coverage"),
+        ("nodes", "nodes", "node_coverage"),
+        ("skins", "skins", "skin_coverage"),
+        ("attachments", "attachments", "attachment_coverage"),
+        (
+            "path candidates",
+            "path_candidates",
+            "path_candidate_coverage",
+        ),
+    ] {
+        let coverage = v2_coverage_text(&raw[coverage_key]);
+        let count = raw[rows_key].as_array().expect("raw domain rows").len();
+        assert_v2_render_line(
+            text,
+            format!("{domain}: {coverage} ({count} retained row(s))"),
+        );
+        assert_v2_render_line(markdown, format!("| `{domain}` | `{coverage}` | {count} |"));
+    }
+
+    let animations = &report["inventory"]["animations"]["animations"];
+    let animation_coverage = v2_coverage_text(&animations["coverage"]);
+    let animation_count = animations["rows"].as_array().expect("animation rows").len();
+    assert_v2_render_line(
+        text,
+        format!("animations: {animation_coverage} ({animation_count} retained row(s))"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("- Animations: `{animation_coverage}` (`{animation_count}` retained rows)"),
+    );
+
+    let default_scene = &raw["default_scene"];
+    let default_scene_text = match default_scene["state"]
+        .as_str()
+        .expect("default scene state")
+    {
+        "absent" => "absent".to_owned(),
+        "selected" => format!(
+            "selected ({})",
+            default_scene["source_scene_index"]
+                .as_u64()
+                .expect("default scene index")
+        ),
+        "unavailable" => format!(
+            "unavailable ({})",
+            default_scene["reason"]
+                .as_str()
+                .expect("default scene reason")
+        ),
+        state => panic!("unknown default scene state {state}"),
+    };
+    assert_v2_render_line(
+        text,
+        format!("default scene observation: {default_scene_text}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("Default scene observation: `{default_scene_text}`."),
+    );
+
+    let bevy = &report["bevy"];
+    let selection = &bevy["prediction_provenance"]["profile"]["selection"];
+    let family = selection["family"].as_str().expect("profile family");
+    let revision = selection["profile_revision"]
+        .as_u64()
+        .expect("profile revision");
+    let engine_version = selection["engine_version"]
+        .as_str()
+        .expect("engine version");
+    let importer = selection["importer"].as_str().expect("importer");
+    assert_v2_render_line(
+        text,
+        format!("Bevy adapter: {family} revision {revision} ({engine_version} / {importer})"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("Profile: `{family}` revision `{revision}` (`{engine_version}` / `{importer}`)."),
+    );
+
+    let settings = &bevy["settings"];
+    let feature = settings["bevy_animation_feature"]
+        .as_bool()
+        .expect("animation feature setting");
+    let load_animations = settings["load_animations"]
+        .as_bool()
+        .expect("load animations setting");
+    let pointer_width = match bevy["rules"]["target_pointer_width"].as_str() {
+        Some("bits32") => "32",
+        Some("bits64") => "64",
+        Some(other) => panic!("unknown pointer width {other}"),
+        None => "missing",
+    };
+    assert_v2_render_line(text, format!("  target pointer width: {pointer_width}"));
+    assert_v2_render_line(
+        text,
+        format!("  settings: bevy_animation_feature={feature} load_animations={load_animations}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!(
+            "Target pointer width: `{pointer_width}`. Settings: `bevy_animation_feature={feature}`, `load_animations={load_animations}`."
+        ),
+    );
+
+    let check = &bevy["check"];
+    let check_id = check["check_id"].as_str().expect("check id");
+    let selection = check["selection"].as_str().expect("check selection");
+    let configuration = check["configuration"]
+        .as_str()
+        .expect("check configuration");
+    let applicability = check["applicability"]
+        .as_str()
+        .expect("check applicability");
+    let evaluation = check["evaluation"].as_str().expect("check evaluation");
+    assert_v2_render_line(
+        text,
+        format!(
+            "  check {check_id}: {selection} / {configuration} / {applicability} / {evaluation}"
+        ),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!(
+            "Check `{check_id}`: `{selection}` / `{configuration}` / `{applicability}` / `{evaluation}`."
+        ),
+    );
+
+    let projection = &bevy["projection"];
+    for scene in projection["scenes"].as_array().expect("scene projections") {
+        let index = scene["source_scene_index"].as_u64().expect("scene index");
+        let label = scene["label"].as_str().expect("scene label");
+        assert_v2_render_line(text, format!("  scene label {index}: {label}"));
+        assert_v2_render_line(markdown, format!("| {index} | `{label}` |"));
+    }
+    let route = v2_projection_text(&projection["default_scene_route"], |value| {
+        value.as_str().expect("scene route").to_owned()
+    });
+    assert_v2_render_line(text, format!("  default scene route: {route}"));
+    assert_v2_render_line(markdown, format!("Default scene route: `{route}`."));
+
+    for skin in projection["skins"].as_array().expect("skin projections") {
+        let index = skin["source_skin_index"].as_u64().expect("skin index");
+        let root = skin["explicit_skeleton_root_node_index"]
+            .as_u64()
+            .map_or_else(|| "null".to_owned(), |value| value.to_string());
+        let label = v2_projection_text(&skin["skin_label"], |value| {
+            value.as_str().expect("skin label").to_owned()
+        });
+        let inverse_bind = skin["inverse_bind_matrices_label"]
+            .as_str()
+            .expect("inverse bind label");
+        assert_v2_render_line(
+            text,
+            format!(
+                "  skin label {index}: {label} explicit-skeleton-root={root} inverse-bind-label={inverse_bind}"
+            ),
+        );
+        assert_v2_render_line(
+            markdown,
+            format!("| {index} | `{label}` | `{root}` | `{inverse_bind}` |"),
+        );
+    }
+
+    for map in projection["named_maps"].as_array().expect("named maps") {
+        let kind = map["kind"].as_str().expect("named map kind");
+        let policy = map["duplicate_policy"].as_str().expect("named map policy");
+        let text_winners = v2_named_winners_text(&map["winners"], true);
+        let markdown_winners = v2_named_winners_text(&map["winners"], false);
+        assert_v2_render_line(
+            text,
+            format!("  named {kind} map ({policy}): {text_winners}"),
+        );
+        assert_v2_render_line(
+            markdown,
+            format!("| `{kind}` | `{policy}` | `{markdown_winners}` |"),
+        );
+    }
+
+    let target_coverage = v2_projection_text(&projection["target_coverage"], |_| "complete".into());
+    assert_v2_render_line(
+        text,
+        format!("  animation target coverage: {target_coverage}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("Animation target coverage: `{target_coverage}`."),
+    );
+
+    for target in projection["targets"]
+        .as_array()
+        .expect("target projections")
+    {
+        let index = target["source_node_index"]
+            .as_u64()
+            .expect("target node index");
+        let contributors = target["contributing_channels"]
+            .as_array()
+            .expect("target contributors")
+            .iter()
+            .map(|channel| {
+                format!(
+                    "{}:{}",
+                    channel["source_animation_index"]
+                        .as_u64()
+                        .expect("contributor animation index"),
+                    channel["source_channel_index"]
+                        .as_u64()
+                        .expect("contributor channel index")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let target_projection = &target["projection"];
+        let text_projection = v2_projection_text(target_projection, |value| {
+            format!(
+                "path=\"{}\" uuid={}",
+                value["path"].as_str().expect("target path"),
+                value["uuid"].as_str().expect("target uuid")
+            )
+        });
+        let markdown_projection = v2_projection_text(target_projection, |value| {
+            format!(
+                "path={} uuid={}",
+                value["path"].as_str().expect("target path"),
+                value["uuid"].as_str().expect("target uuid")
+            )
+        });
+        assert_v2_render_line(
+            text,
+            format!("  animation target node {index} channels=[{contributors}]: {text_projection}"),
+        );
+        assert_v2_render_line(
+            markdown,
+            format!("| {index} | `{contributors}` | `{markdown_projection}` |"),
+        );
+    }
+}
+
 #[test]
 fn generate_addressability_v2_flag_profile_validation_precedes_input_io() {
     let dir = unique_temp_dir("generate-addressability-v2-config-order");
@@ -3452,6 +3755,43 @@ fn generate_addressability_v2_text_and_markdown_have_escaped_semantic_parity() {
                 "Markdown missing {expected}: {markdown}"
             );
         }
+    }
+}
+
+#[test]
+fn generate_addressability_v2_renderers_preserve_every_semantic_row() {
+    let dir = unique_temp_dir("generate-addressability-v2-renderer-inventory");
+    let config = write_bevy_v3_track_config(dir.path(), "renderer-inventory", true, Some(true));
+    for (name, fixture, status) in [
+        ("complete", RichAddressabilityFixture::Reachable, 0),
+        ("unavailable", RichAddressabilityFixture::DuplicatePath, 1),
+        ("proven-absent", RichAddressabilityFixture::ZeroScenes, 0),
+    ] {
+        let input = dir.path().join(format!("{name}.gltf"));
+        write_rich_addressability_gltf(&input, fixture);
+        let json = generate_rich_addressability(&input, &config, Some("64"), None);
+        let text = generate_rich_addressability(&input, &config, Some("64"), Some("text"));
+        let markdown = generate_rich_addressability(&input, &config, Some("64"), Some("markdown"));
+        assert_eq!(
+            json.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&json)
+        );
+        assert_eq!(
+            text.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&text)
+        );
+        assert_eq!(
+            markdown.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&markdown)
+        );
+        let report: Value = serde_json::from_slice(&json.stdout).expect("canonical V2 JSON");
+        assert_v2_render_semantic_inventory(&report, &stdout(&text), &stdout(&markdown));
     }
 }
 

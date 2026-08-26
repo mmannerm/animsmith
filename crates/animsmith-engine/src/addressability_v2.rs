@@ -1411,6 +1411,16 @@ fn validate_facet_states(
         .collect::<Vec<_>>();
     let actual_facets = prediction.map_or(&[][..], EnginePredictionV4::facets);
     let compacted = expected_unavailable.len() > PREDICTION_V1_MAX_FACETS_PER_FILE;
+    let evaluated_set = evaluated_scopes.iter().collect::<BTreeSet<_>>();
+    let expected_available_set = expected_available
+        .iter()
+        .map(|facet| &facet.scope)
+        .collect::<BTreeSet<_>>();
+    if evaluated_set.len() != evaluated_scopes.len()
+        || expected_available_set.len() != expected_available.len()
+    {
+        return Err(GltfAddressabilityV2Error::InvalidCheckEvaluation);
+    }
 
     if compacted {
         if actual_facets.len() != 1
@@ -1420,13 +1430,7 @@ fn validate_facet_states(
                 != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
             || actual_facets[0].result().is_some()
             || actual_facets[0].reasons() != [PredictionUnavailableReasonV2::FacetBudgetExceeded]
-            || evaluated_scopes.len() != expected_available.len()
-            || evaluated_scopes.iter().enumerate().any(|(index, scope)| {
-                evaluated_scopes[..index].contains(scope)
-                    || !expected_available
-                        .iter()
-                        .any(|expected| expected.scope == *scope)
-            })
+            || evaluated_set != expected_available_set
         {
             return Err(GltfAddressabilityV2Error::InvalidCheckEvaluation);
         }
@@ -1442,38 +1446,28 @@ fn validate_facet_states(
         };
     }
 
-    if evaluated_scopes.len() != expected_available.len()
-        || actual_facets.len() != expected_unavailable.len()
-        || evaluated_scopes
-            .iter()
-            .enumerate()
-            .any(|(index, scope)| evaluated_scopes[..index].contains(scope))
-        || evaluated_scopes
-            .iter()
-            .any(|scope| actual_facets.iter().any(|facet| facet.scope() == scope))
+    let expected_unavailable_set = expected_unavailable
+        .iter()
+        .map(|facet| &facet.scope)
+        .collect::<BTreeSet<_>>();
+    let actual_by_scope = actual_facets
+        .iter()
+        .map(|facet| (facet.scope(), facet))
+        .collect::<BTreeMap<_, _>>();
+    if expected_unavailable_set.len() != expected_unavailable.len()
+        || actual_by_scope.len() != actual_facets.len()
+        || evaluated_set != expected_available_set
+        || actual_by_scope.keys().copied().collect::<BTreeSet<_>>() != expected_unavailable_set
+        || !evaluated_set.is_disjoint(&expected_unavailable_set)
     {
         return Err(GltfAddressabilityV2Error::InvalidCheckEvaluation);
     }
 
-    for expected in &expected_available {
-        if evaluated_scopes
-            .iter()
-            .filter(|scope| *scope == &expected.scope)
-            .count()
-            != 1
-        {
-            return Err(GltfAddressabilityV2Error::InvalidCheckEvaluation);
-        }
-    }
     for expected in &expected_unavailable {
-        let mut matching = actual_facets
-            .iter()
-            .filter(|facet| facet.scope() == &expected.scope);
-        let Some(actual) = matching.next() else {
+        let Some(actual) = actual_by_scope.get(&expected.scope) else {
             return Err(GltfAddressabilityV2Error::InvalidCheckEvaluation);
         };
-        if matching.next().is_some()
-            || actual.state() != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+        if actual.state() != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
             || actual.result().is_some()
             || actual.reasons() != expected.reasons
         {
@@ -1481,14 +1475,9 @@ fn validate_facet_states(
         }
     }
 
-    if actual_facets.iter().any(|facet| {
-        facet.state() != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
-            || !expected
-                .iter()
-                .any(|expected| expected.scope == *facet.scope())
-    }) || evaluated_scopes
+    if actual_facets
         .iter()
-        .any(|scope| !expected.iter().any(|expected| expected.scope == *scope))
+        .any(|facet| facet.state() != EnginePredictionFacetStateV1::RequiredPredictionUnavailable)
     {
         return Err(GltfAddressabilityV2Error::InvalidCheckEvaluation);
     }
@@ -2581,6 +2570,14 @@ mod tests {
         target_node_indices: impl IntoIterator<Item = u64>,
         channels_complete: bool,
     ) -> LoadedSource {
+        loaded_source_with_targets_and_closure(target_node_indices, channels_complete, true)
+    }
+
+    fn loaded_source_with_targets_and_closure(
+        target_node_indices: impl IntoIterator<Item = u64>,
+        channels_complete: bool,
+        closure_complete: bool,
+    ) -> LoadedSource {
         let primary = InputIdentity::from_bytes(b"rich-addressability-targets");
         let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::GltfJson, primary.clone());
         let channels = target_node_indices
@@ -2629,19 +2626,21 @@ mod tests {
         )
         .finish()
         .unwrap();
-        facts
-            .finish_with_dependency_closure(
-                Document {
-                    clips: vec![Clip {
-                        name: "clip-0".into(),
-                        duration_s: 0.0,
-                        tracks: Vec::new(),
-                    }],
-                    ..Document::default()
-                },
-                closure,
-            )
-            .unwrap()
+        let document = Document {
+            clips: vec![Clip {
+                name: "clip-0".into(),
+                duration_s: 0.0,
+                tracks: Vec::new(),
+            }],
+            ..Document::default()
+        };
+        if closure_complete {
+            facts
+                .finish_with_dependency_closure(document, closure)
+                .unwrap()
+        } else {
+            facts.finish(document).unwrap()
+        }
     }
 
     fn raw_for_graph(
@@ -2685,6 +2684,37 @@ mod tests {
             RawGltfAddressabilityCoverageV1::Complete,
             vec![RawGltfScenePathCandidateRowV1::new(0, 0, vec![0])],
             RawGltfAddressabilityCoverageV1::Complete,
+        )
+    }
+
+    fn wide_target_raw(
+        source: &LoadedSource,
+        retained_target_count: usize,
+        target_domain_complete: bool,
+    ) -> RawGltfAddressabilityInventoryV1 {
+        let retained_indices = (0..retained_target_count as u64).collect::<Vec<_>>();
+        let target_coverage = if target_domain_complete {
+            RawGltfAddressabilityCoverageV1::Complete
+        } else {
+            RawGltfAddressabilityCoverageV1::budget_exceeded()
+        };
+        raw_for_graph(
+            source,
+            vec![RawGltfSceneRowV1::new(0, None, retained_indices.clone())],
+            RawGltfAddressabilityCoverageV1::Complete,
+            retained_indices
+                .iter()
+                .map(|index| RawGltfNodeRowV1::new(*index, None, None, Vec::new()))
+                .collect(),
+            target_coverage,
+            retained_indices
+                .iter()
+                .enumerate()
+                .map(|(ordinal, index)| {
+                    RawGltfScenePathCandidateRowV1::new(ordinal as u64, 0, vec![*index])
+                })
+                .collect(),
+            target_coverage,
         )
     }
 
@@ -2743,6 +2773,14 @@ mod tests {
         let bytes = serde_json::to_vec(&report).unwrap();
         GltfAddressabilityV2::read_from(Cursor::new(&bytes)).unwrap();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    fn prediction_provenance_fixture() -> PredictionProvenanceV4 {
+        serde_json::from_value(
+            adapter_report_json(Some(TargetPointerWidth::Bits64))["bevy"]["prediction_provenance"]
+                .clone(),
+        )
+        .unwrap()
     }
 
     fn analytic_raw(source: &LoadedSource) -> RawGltfAddressabilityInventoryV1 {
@@ -3084,6 +3122,305 @@ mod tests {
                     GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated,
                 ]
         ));
+    }
+
+    #[test]
+    fn production_target_projection_retains_exact_n_and_truncates_n_plus_one() {
+        let exact_count = GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS;
+        let exact_source = loaded_source_with_targets(0..exact_count as u64, true);
+        let exact_raw = wide_target_raw(&exact_source, exact_count, true);
+        let exact_animations =
+            GltfAnimationAddressabilityInventoryV1::from_source(&exact_source).unwrap();
+        let exact = BevyGltfAddressabilityProjectionV2::from_inventories(
+            &exact_raw,
+            &exact_animations,
+            true,
+            true,
+            Some(TargetPointerWidth::Bits64),
+        )
+        .unwrap();
+        assert!(matches!(
+            exact.target_coverage(),
+            GltfAddressabilityProjectionV2::Available { .. }
+        ));
+        assert_eq!(exact.targets().len(), exact_count);
+        assert_eq!(
+            exact
+                .targets()
+                .iter()
+                .map(GltfAddressabilityTargetV2::source_node_index)
+                .collect::<Vec<_>>(),
+            (0..exact_count as u64).collect::<Vec<_>>()
+        );
+        assert!(exact.targets().iter().all(|target| matches!(
+            target.projection(),
+            GltfAddressabilityProjectionV2::Available { .. }
+        )));
+
+        let over_count = exact_count + 1;
+        let over_source = loaded_source_with_targets(0..over_count as u64, true);
+        // The raw sidecar retains its canonical prefix and marks the omitted
+        // target-domain evidence partial. `project_targets` must independently
+        // count the complete animation contributors and exercise its `.take(N)`.
+        let over_raw = wide_target_raw(&over_source, exact_count, false);
+        let over_animations =
+            GltfAnimationAddressabilityInventoryV1::from_source(&over_source).unwrap();
+        let over = BevyGltfAddressabilityProjectionV2::from_inventories(
+            &over_raw,
+            &over_animations,
+            true,
+            true,
+            Some(TargetPointerWidth::Bits64),
+        )
+        .unwrap();
+        assert_eq!(over.targets().len(), exact_count);
+        assert_eq!(
+            over.targets()
+                .iter()
+                .map(GltfAddressabilityTargetV2::source_node_index)
+                .collect::<Vec<_>>(),
+            (0..exact_count as u64).collect::<Vec<_>>()
+        );
+        let expected_reasons = [
+            GltfAddressabilityUnavailableReasonV2::RawSourceIncomplete,
+            GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated,
+        ];
+        assert!(matches!(
+            over.target_coverage(),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons.as_slice() == expected_reasons
+        ));
+        assert!(over.targets().iter().all(|target| matches!(
+            target.projection(),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons.as_slice() == expected_reasons
+        )));
+        assert_eq!(
+            over.targets().last().unwrap().contributing_channels(),
+            &[GltfAddressabilityTargetChannelV2 {
+                source_animation_index: 0,
+                source_channel_index: (exact_count - 1) as u64,
+            }]
+        );
+    }
+
+    #[test]
+    fn unnamed_target_nodes_use_bevys_exact_source_index_fallback() {
+        let source = loaded_source_with_targets([7], true);
+        let raw = raw_for_graph(
+            &source,
+            vec![RawGltfSceneRowV1::new(0, None, vec![7])],
+            RawGltfAddressabilityCoverageV1::Complete,
+            (0..=7)
+                .map(|index| RawGltfNodeRowV1::new(index, None, None, Vec::new()))
+                .collect(),
+            RawGltfAddressabilityCoverageV1::Complete,
+            vec![RawGltfScenePathCandidateRowV1::new(0, 0, vec![7])],
+            RawGltfAddressabilityCoverageV1::Complete,
+        );
+        let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+        let projection = BevyGltfAddressabilityProjectionV2::from_inventories(
+            &raw,
+            &animations,
+            true,
+            true,
+            Some(TargetPointerWidth::Bits64),
+        )
+        .unwrap();
+        let GltfAddressabilityProjectionV2::Available { value } =
+            projection.targets()[0].projection()
+        else {
+            panic!("complete unnamed target must be exactly projectable");
+        };
+        assert_eq!(value.segments(), ["GltfNode7"]);
+        assert_eq!(value.path(), "GltfNode7");
+        assert_eq!(
+            value.uuid(),
+            bevy_animation_target_id_v1(["GltfNode7"], TargetPointerWidth::Bits64).unwrap()
+        );
+    }
+
+    #[test]
+    fn each_raw_target_domain_and_dependency_closure_fail_closed_with_causal_reason() {
+        for partial_domain in ["scene", "node", "path"] {
+            let source = loaded_source_with_targets([0], true);
+            let partial = RawGltfAddressabilityCoverageV1::budget_exceeded();
+            let complete = RawGltfAddressabilityCoverageV1::Complete;
+            let raw = raw_for_graph(
+                &source,
+                vec![RawGltfSceneRowV1::new(0, None, vec![0])],
+                if partial_domain == "scene" {
+                    partial
+                } else {
+                    complete
+                },
+                vec![RawGltfNodeRowV1::new(
+                    0,
+                    Some("target".into()),
+                    None,
+                    Vec::new(),
+                )],
+                if partial_domain == "node" {
+                    partial
+                } else {
+                    complete
+                },
+                vec![RawGltfScenePathCandidateRowV1::new(0, 0, vec![0])],
+                if partial_domain == "path" {
+                    partial
+                } else {
+                    complete
+                },
+            );
+            let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+            let projection = BevyGltfAddressabilityProjectionV2::from_inventories(
+                &raw,
+                &animations,
+                true,
+                true,
+                Some(TargetPointerWidth::Bits64),
+            )
+            .unwrap();
+            assert!(
+                matches!(
+                projection.target_coverage(),
+                GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                    if reasons.as_slice()
+                        == [GltfAddressabilityUnavailableReasonV2::RawSourceIncomplete]
+                ),
+                "partial {partial_domain} coverage must invalidate target coverage"
+            );
+            assert!(
+                matches!(
+                projection.targets()[0].projection(),
+                GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                    if reasons.as_slice()
+                        == [GltfAddressabilityUnavailableReasonV2::RawSourceIncomplete]
+                ),
+                "partial {partial_domain} coverage must invalidate every target row"
+            );
+        }
+
+        let source = loaded_source_with_targets_and_closure([0], true, false);
+        assert!(!source.dependency_closure().coverage().is_complete());
+        let raw = simple_target_raw(&source, Some("target".into()));
+        let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+        let projection = BevyGltfAddressabilityProjectionV2::from_inventories(
+            &raw,
+            &animations,
+            true,
+            true,
+            Some(TargetPointerWidth::Bits64),
+        )
+        .unwrap();
+        assert!(matches!(
+            projection.target_coverage(),
+            GltfAddressabilityProjectionV2::Available { .. }
+        ));
+        assert!(matches!(
+            projection.targets()[0].projection(),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons.as_slice() == [
+                    GltfAddressabilityUnavailableReasonV2::DependencyClosureIncomplete,
+                ]
+        ));
+    }
+
+    #[test]
+    fn rich_unavailable_facets_compact_only_after_the_exact_file_limit() {
+        let source = loaded_source_with_targets([0], true);
+        let raw = simple_target_raw(&source, Some("target".into()));
+        let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+        let provenance = prediction_provenance_fixture();
+        let inventory =
+            GltfAddressabilityInventoryV2::new(raw.clone(), animations.clone()).unwrap();
+        let base = BevyGltfAddressabilityProjectionV2::from_inventories(
+            &raw,
+            &animations,
+            true,
+            true,
+            Some(TargetPointerWidth::Bits64),
+        )
+        .unwrap();
+
+        for count in [
+            PREDICTION_V1_MAX_FACETS_PER_FILE,
+            PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
+        ] {
+            let mut projection = base.clone();
+            projection.targets = (0..count as u64)
+                .map(|source_node_index| GltfAddressabilityTargetV2 {
+                    source_node_index,
+                    contributing_channels: vec![GltfAddressabilityTargetChannelV2 {
+                        source_animation_index: 0,
+                        source_channel_index: source_node_index,
+                    }],
+                    projection: GltfAddressabilityProjectionV2::unavailable(vec![
+                        GltfAddressabilityUnavailableReasonV2::TargetPointerWidthMissing,
+                    ]),
+                })
+                .collect();
+            let output =
+                build_check_output(&source, &raw, &animations, &provenance, &projection).unwrap();
+            let check =
+                CheckEvaluation::evaluated(crate::ENGINE_ADDRESSABILITY_CHECK_ID, output).unwrap();
+            let expected = expected_facet_specs(&inventory, &projection);
+            validate_facet_states(
+                check.engine_prediction_v4(),
+                check.evaluated_scopes(),
+                check.evaluation(),
+                &expected,
+            )
+            .unwrap();
+
+            let facets = check.engine_prediction_v4().unwrap().facets();
+            if count == PREDICTION_V1_MAX_FACETS_PER_FILE {
+                assert_eq!(facets.len(), PREDICTION_V1_MAX_FACETS_PER_FILE);
+                assert!(facets.iter().all(|facet| {
+                    facet.scope().code == EvaluationScopeCode::ANIMATION_TARGET_ID
+                        && facet.reasons()
+                            == [PredictionUnavailableReasonV2::ProjectIntentUnavailable]
+                }));
+            } else {
+                assert_eq!(facets.len(), 1);
+                assert_eq!(facets[0].scope().code.as_str(), FACET_BUDGET_SCOPE);
+                assert!(facets[0].scope().subject.is_none());
+                assert_eq!(
+                    facets[0].reasons(),
+                    [PredictionUnavailableReasonV2::FacetBudgetExceeded]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn evaluated_scope_guard_accepts_exact_n_and_rejects_n_plus_one() {
+        let scopes = (0..=GLTF_ADDRESSABILITY_V2_MAX_EVALUATED_SCOPES)
+            .map(|index| {
+                EvaluationScope::new(EvaluationScopeCode::SCENE_ASSET_LABEL)
+                    .subject(format!("Scene{index}"))
+            })
+            .collect::<Vec<_>>();
+        let expected = scopes
+            .iter()
+            .cloned()
+            .map(|scope| ExpectedFacetV2 {
+                scope,
+                state: EnginePredictionFacetStateV1::Available,
+                reasons: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        validate_facet_states(
+            None,
+            &scopes[..GLTF_ADDRESSABILITY_V2_MAX_EVALUATED_SCOPES],
+            EvaluationState::Complete,
+            &expected[..GLTF_ADDRESSABILITY_V2_MAX_EVALUATED_SCOPES],
+        )
+        .unwrap();
+        assert_eq!(
+            validate_facet_states(None, &scopes, EvaluationState::Complete, &expected),
+            Err(GltfAddressabilityV2Error::InvalidCheckEvaluation)
+        );
     }
 
     #[test]
