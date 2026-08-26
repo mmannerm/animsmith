@@ -2551,6 +2551,9 @@ the compiled feature gate takes precedence. Its raw same-load inventory binds
 animation coverage independently from each animation's channel coverage.
 Extensions, other animation constructs, and positive runtime survival remain
 outside this revision; the latter requires an actual Bevy readback.
+The separately versioned `bevy-gltf-addressability-rules:1` bundle paired with
+this immutable profile owns the richer scene, skin, named-map, and target-path
+projection; it does not mutate profile revisions 1--3.
 
 The two Unity ids are import modes, not skeleton-name maps. Likewise,
 `unreal`, `godot`, and `bevy` do not imply a mannequin, humanoid bone map, or
@@ -2817,6 +2820,64 @@ so it creates neither a second selector rule nor a second check lifecycle.
 Absent and repeated source names remain metadata. Scene/default-scene, skin,
 target path or UUID, named-map-winner, and extension-handling claims require
 new raw facts and a later profile revision and are outside this V1.
+
+Issue #488 adds those rich facts as a separate immutable producer contract,
+`urn:animsmith:schema:gltf-addressability:2`; the historical V1 root and
+readers remain unchanged. V2 preserves the V1 animation inventory and adds
+bounded same-load raw glTF scene, node, skin, node-to-skin attachment,
+scene-path, default-scene, named-map, and unique animation-target evidence.
+Coverage is independent for every domain: complete empty coverage proves
+absence, while a retained prefix or unavailable domain never does. Rows retain
+source-array indices, authored names, parent/child order, scene roots, ordered
+skin joints, explicit `skin.skeleton`, and the dependency-closure identity.
+The explicit skeleton member remains source evidence only because Bevy ignores
+it; V2 makes no inferred-root claim and does not claim scene-instantiated
+`SkinnedMesh` attachment.
+
+The optional exact-Bevy adapter is paired with the existing one
+`engine-addressability` evaluation and reuses the exact `Animation{i}`
+primitive, without creating a second check lifecycle. Its separately
+versioned rule bundle accompanies immutable Bevy profile revision 3 and pins
+tag `v0.19.0`, commit
+`c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0`, locked
+`gltf 1.4.1`, and the label, loader, node-path, target-id, feature, and root
+`Cargo.lock` sources.
+`Scene{i}` is emitted for every declared scene; `Gltf.default_scene` is only a
+route to an existing scene handle, with no `DefaultScene` label and no
+fabricated `Scene0`. `Skin{i}/InverseBindMatrices` is eager for every source
+skin, including unreferenced skins, using Bevy's identity fallback for an
+absent accessor. `Skin{i}` is created when any source node references the skin
+during the all-source-node construction pass. Source indices, not collected
+vector order, are identity. Named maps are separate, source-order
+last-write-wins projections; skin winners follow lazy first-reference order.
+
+Target rows are per unique source animation target node and retain their
+animation/channel contributors. Authored names or `GltfNode{source_index}`
+fallbacks form the path, excluding the scene world-root. A path/UUID is
+published only with complete hierarchy, reachability, closure, feature,
+settings, and collision evidence. Unreachable or multiply reachable targets,
+duplicate paths, UUID collisions, disabled/missing `bevy_animation`, disabled
+`load_animations`, missing target pointer width, and incomplete evidence are
+typed required-unavailable states. Exact target IDs require explicitly pinned
+32- or 64-bit pointer width because Bevy hashes segment lengths with
+`usize::to_le_bytes()`; the host width is never inferred.
+
+The projection carries explicit `target_coverage` separate from retained
+target rows. It is complete, including for an empty target domain, or is
+required-unavailable with `target_domain_truncated` at the 4,096-target row
+ceiling. Other new-rich-projection bound failures use
+`projection_bounds_exceeded`. Each new scene/node/skin/attachment/path/target/
+map domain is bounded at 4,096 rows, with aggregate structural references at
+65,536 and dynamic projection text at 1 MiB; the sealed V1 animation inventory
+and `CheckEvaluation` scopes retain their own bounds. Names and path segments
+are capped at 1,024 UTF-8 bytes, paths at 4,096 bytes and 256 segments, and
+staged reports at 256 MiB. Overflow retains an independent canonical prefix;
+strict readback rejects N+1 collections and contradictory states. A bounded second parse of already captured primary bytes is permitted
+within the same loader invocation; reopening the primary or dependencies is
+not. V2 is prediction evidence only and never certifies runtime loading,
+scene spawning, target survival, graph wiring, or playback. Required-
+unavailable prediction retains exit 1; malformed tuple/config/input remains
+exit 2.
 
 The second bounded 0.4.0 standalone producer is `generate import-advice`.
 `animsmith-engine` owns its independent V1 envelope, canonical identity, and

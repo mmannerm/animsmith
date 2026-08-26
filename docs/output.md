@@ -169,6 +169,87 @@ target-survival, or animation-graph claim. JSON is canonical; `--format text`
 and `--format markdown` escape and render the same typed value without adding
 conclusions.
 
+### Rich glTF addressability v2
+
+The richer producer is a separate immutable contract,
+`urn:animsmith:schema:gltf-addressability:2`; its schema is
+[`gltf-addressability-v2.schema.json`](schemas/gltf-addressability-v2.schema.json).
+It preserves the V1 animation inventory and adds bounded same-load scene,
+node, skin, attachment, scene-path, default-scene, named-map, and animation-
+target evidence. V1 readers and the V1 Bevy revision-1 profile remain
+unchanged; selecting the richer exact Bevy path selects V2 rather than widening
+the historical root.
+
+The raw inventory has independent coverage for scenes, nodes, skins,
+attachments, and path candidates. Complete empty domains prove absence;
+partial prefixes and unavailable domains never prove absence. Rows retain
+source-array indices, authored names, parents and child order, ordered scene
+roots, ordered skin joints, node-to-skin attachments, and all-scene
+root-to-node path candidates. An authored `skin.skeleton` is retained as an
+explicit source observation. Bevy 0.19 ignores that member, so V2 does not
+replace it with an inferred Bevy root. The report does not claim scene
+instantiation or `SkinnedMesh` attachment.
+
+The exact Bevy adapter is paired with the existing one `engine-addressability`
+evaluation and reuses the V1 `Animation{i}` selector primitive. It is pinned
+to profile revision 3, Bevy `v0.19.0`, commit
+`c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0`, locked
+`gltf 1.4.1`, and commit-pinned label, loader, path, animation-target, feature,
+and root `Cargo.lock` sources. `Scene{i}` is emitted for each declared source
+scene;
+`Gltf.default_scene` is only a route to an existing `Scene{i}`. There is no
+`DefaultScene` label and no fabricated `Scene0`.
+
+Bevy creates `Skin{i}/InverseBindMatrices` eagerly for every declared source
+skin, including unreferenced skins; an absent inverse-bind accessor uses the
+identity fallback. `Skin{i}` is materialized when any source node references
+the skin during Bevy's all-source-node construction pass. Source skin indices,
+not the order of Bevy's collected skin values, are identity. Named scene,
+animation, and skin maps are separate from typed labels and use source-order
+last-write-wins semantics (the skin map follows lazily created skins in first-
+reference order).
+
+Target projections are per unique source animation target node and retain
+contributing animation/channel identities. Paths use authored node names or
+`GltfNode{source_index}` fallbacks, exclude the scene world-root name, and are
+projected only when reachability, hierarchy, dependency closure, feature
+settings, and collision checks are complete. A duplicate full path, multiple
+scene candidates, target-ID collision, unreachable target, missing
+`bevy_animation`, disabled `load_animations`, missing pointer width, or
+incomplete evidence is typed `required_unavailable`; no guessed path or UUID
+is published. Bevy's target-ID reproduction requires an explicit 32- or
+64-bit pointer width because its segment lengths use `usize::to_le_bytes()`;
+the host width is never inferred.
+
+The projection also carries `target_coverage`, independently of the retained
+target rows. A complete target domain may be empty; a domain beyond the 4,096
+row limit is `required_unavailable` with `target_domain_truncated`, and an
+aggregate rich-projection limit uses `projection_bounds_exceeded`. This keeps
+positive-prefix target rows from being mistaken for proof of complete,
+collision-free coverage.
+
+Each new rich projection domain is capped at 4,096 rows. Its aggregate
+structural references are capped at 65,536 and its dynamic projection text at
+1 MiB; the sealed embedded V1 animation inventory and `CheckEvaluation` scopes
+retain their own bounds. Names and path segments are capped at 1,024 UTF-8
+bytes, paths at 4,096 bytes and 256 segments, and the staged report reader at
+256 MiB. Target coverage is an explicit projection: a retained canonical
+prefix is `target_domain_truncated`, while any new rich projection bound
+overflow is `projection_bounds_exceeded`; no retained target is treated as
+collision-free after truncation. Strict readback rejects N+1 collections and contradictory identities or states. A second
+bounded parse of already captured primary bytes is allowed within the same
+loader invocation, but no primary/dependency reopen is allowed. V2 remains
+prediction evidence only: it does not certify runtime loading, target
+survival, graph wiring, scene spawning, or playback. Required-unavailable
+prediction retains the existing exit-1 convention; malformed tuple,
+configuration, or input errors remain exit 2.
+
+If the resulting single-check prediction would exceed core's per-file facet
+budget, the adapter compacts its unavailable facets to one subjectless
+`engine-addressability:facet-budget` scope with `facet_budget_exceeded`. This
+is a user-visible compaction marker, not a new check or a claim that omitted
+facets were available.
+
 ## Engine import advice
 
 `animsmith generate import-advice INPUT` emits a separate one-file V1
@@ -1257,6 +1338,13 @@ Built-in completed/gap scope codes are:
 | `first_frame_rest_delta` | The named clip's first-frame/rest-pose rotation evidence was evaluated. | `bind-pose` |
 | `animation_asset_label` | One source animation index was projected to the selected engine profile's canonical asset-label selector. | `engine-addressability` |
 | `animation_asset_label_inventory` | Complete source-animation inventory required for asset-label prediction was unavailable. | `engine-addressability` |
+| `scene_asset_label` | One source scene index was projected to the selected engine profile's canonical asset-label selector. | `engine-addressability` |
+| `default_scene_route` | The source default-scene observation was projected to the selected engine profile's route to an existing scene asset. | `engine-addressability` |
+| `skin_asset_label` | One source skin index was projected to the selected engine profile's conditional canonical skin asset-label selector. | `engine-addressability` |
+| `inverse_bind_matrices_asset_label` | One source skin index was projected to the selected engine profile's canonical inverse-bind-matrices asset-label selector. | `engine-addressability` |
+| `named_addressability_map` | One selected engine profile named-addressability map and its duplicate-name policy were evaluated. | `engine-addressability` |
+| `animation_target_id` | One unique source animation target node's exact path and target identifier were evaluated. | `engine-addressability` |
+| `gltf_addressability_inventory` | Complete raw glTF scene, node, skin, attachment, and path evidence required for rich addressability prediction was unavailable. | `engine-addressability` |
 | `engine_clip_boundary` | One source animation clip's exact end-frame boundary was evaluated. | `engine-clip-boundary` |
 | `engine_clip_boundary_inventory` | Complete exact source-animation boundary inventory was unavailable. | `engine-clip-boundary` |
 

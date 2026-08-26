@@ -3,7 +3,8 @@
 Use this page for the exact `bevy` / `0.19.0` / `gltf-asset-loader`
 profiles. Revision 1 owns animation-label addressability. Revision 2 owns the
 unit/effective-scale prediction substrate and its version-pinned load settings.
-Revision 3 is the current slice for animation/channel gate support. All three
+Revision 3 is the current slice for animation/channel gate support and the
+separately versioned rich addressability-rule bundle. All three
 accept glTF JSON and GLB only; none applies to a later Bevy
 release.
 
@@ -17,9 +18,10 @@ animation feature/settings, loaded assets, an `AnimationPlayer`, targets, and
 an animation graph or equivalent application setup.
 
 The frozen profile also records that animation target ids are derived from
-name paths. AnimSmith does not yet emit those ids, named-animation map winners,
-scene/skin labels, graph templates, extension support, or proof that a runtime
-asset exists.
+name paths. Revision 3's separately versioned rich addressability bundle emits
+bounded predictions for those paths, named-map winners, scene/skin labels, and
+the optional default-scene route. It does not emit graph templates, extension
+support, or proof that a runtime asset exists.
 
 ## AnimSmith checks and thresholds
 
@@ -28,6 +30,7 @@ asset exists.
 | `engine-addressability` | no numeric tolerance; exactly one `Animation{i}` facet per completely inventoried source animation | Predicts the canonical typed label spelling from source order. Partial inventory produces one unsuppressible required-unavailable inventory facet. |
 | `engine-unit-scale` | exact revision-2 profile facts and settings; no tolerance and no content finding | Emits exact 1:1 glTF-metre to Bevy world-length-unit mapping plus distinct loader-scene, primitive-child, and selected-source-node affine classifications. Missing required evidence is unsuppressible required-unavailable. |
 | `engine-track-support` | exact revision-3 gate settings and bounded same-load animation/channel inventory; no content finding | Emits only negative gate outcomes for source animation/channel rows, or required-unavailable evidence when inventory is incomplete or both gates allow loading. Extensions, other constructs, and positive runtime survival are outside this slice. |
+| `engine-addressability` (rich V2) | exact revision-3 Bevy addressability-rule bundle; no numeric tolerance or content finding | Emits typed scene, default-scene, skin/IBM, named-map, and target path/UUID projections beside the unchanged `Animation{i}` facets. Incomplete, unreachable, multiply reachable, feature-disabled, or colliding work is required-unavailable. |
 | `rest-world-scale` | selected node factor `1.0` ± `0.0001` inclusive | Finds authored inherited scale at attachment/IK nodes; it does not predict Bevy's imported result. |
 | `scale-keys` | component range greater than `1e-4` | Finds animated scale before runtime transform propagation. |
 | `non-uniform-scale` | relative spread greater than `1e-4` | Flags possible shear/attachment/physics consequences in composed transforms. |
@@ -148,6 +151,66 @@ Extensions, unsupported constructs, target survival, graph wiring, and other
 positive runtime claims remain outside revision 3. Current output-v17 carries
 its V5 provenance unchanged; the immutable output-v16 V5 reader and the
 revision-2/V4 output-v15 reader remain preserved.
+
+### Revision 3 rich addressability
+
+The rich standalone contract is the immutable
+`urn:animsmith:schema:gltf-addressability:2`; see
+[`gltf-addressability-v2.schema.json`](schemas/gltf-addressability-v2.schema.json).
+It is selected only for the exact revision-3 tuple and preserves the V1
+`gltf-animation-addressability:1` inventory as a nested animation domain.
+The adapter runs one `engine-addressability` evaluation and does not create a
+second lifecycle.
+
+The separately versioned authority pins Bevy tag `v0.19.0`, commit
+`c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0`, locked
+`gltf 1.4.1`, and the label, loader, node-path, `AnimationTargetId`, feature,
+and root `Cargo.lock` sources. It requires explicit target pointer width (`bits32` or
+`bits64`) because Bevy hashes path segment lengths with `usize`; AnimSmith
+never uses the host width. Missing `bevy_animation` or disabled
+`load_animations` is typed unavailable, not runtime success.
+
+`Scene{i}` is emitted for every declared source scene. `Gltf.default_scene`
+is only a route to the selected existing `Scene{i}`: there is no
+`DefaultScene` label and no fabricated `Scene0`. Every source skin eagerly
+gets `Skin{i}/InverseBindMatrices`, including unreferenced skins, with Bevy's
+identity fallback when inverse-bind data is absent. `Skin{i}` is created when
+any source node references it during the all-source-node construction pass;
+source skin indices, never collected-vector position, are authoritative.
+Explicit `skin.skeleton` remains source evidence only because Bevy ignores it;
+scene-instantiated `SkinnedMesh` attachment is outside this static slice.
+
+Named scene/animation/skin maps are separate from typed labels and are
+source-order last-write-wins; skin winners follow lazily created skins in
+first-reference order. Target rows are per unique source animation target node
+with contributing animation/channel identities. Authored names or
+`GltfNode{source_index}` fallbacks form the path, excluding the scene
+world-root. A target path/UUID is published only when complete hierarchy,
+reachability, closure, feature/settings, and collision evidence exists.
+
+The report carries an independent `target_coverage` projection alongside the
+retained target rows. It is complete when the unique-target domain is
+exhaustively represented, including an empty domain; it becomes
+`required_unavailable` with `target_domain_truncated` when more than 4,096
+targets exist, or with `projection_bounds_exceeded` when a new rich projection
+exceeds its aggregate structural/text budget.
+
+Each new rich projection scene/node/skin/attachment/path/target/map domain is
+capped at 4,096 rows, with aggregate projection structural references at
+65,536 and dynamic projection text at 1 MiB. The sealed V1 animation
+inventory and `CheckEvaluation` scopes retain their own bounds. One name/path
+segment is capped at 1,024 UTF-8 bytes, a path at 4,096 bytes and 256
+segments, and a report at 256 MiB. The explicit target-coverage projection
+reports `target_domain_truncated` at the target row ceiling and
+`projection_bounds_exceeded` for other rich-projection budget exhaustion;
+readback rejects N+1 collections and contradictory states. This is prediction
+evidence only and does not certify Bevy loading, spawning, target survival,
+graph wiring, or playback.
+
+If the shared check's core per-file facet budget would be exceeded, V2 exposes
+one subjectless `engine-addressability:facet-budget` scope with
+`facet_budget_exceeded` rather than a misleading retained-facet prefix. This
+is compaction within the same check lifecycle, not an additional check.
 
 ## Common failures and fixes
 

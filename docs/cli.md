@@ -722,6 +722,69 @@ named-map winners, or extension support, and it does not certify a runtime
 load. Consumers using the strict staged reader must also keep each report at or
 below 256 MiB; the reader enforces this byte cap before UTF-8 or JSON decoding.
 
+The richer exact-Bevy path emits the separate V2 contract
+`urn:animsmith:schema:gltf-addressability:2`, documented by
+[`gltf-addressability-v2.schema.json`](schemas/gltf-addressability-v2.schema.json).
+It is selected only with the exact Bevy revision-3 profile/settings and keeps
+the V1 command contract and readers immutable. The same one
+`engine-addressability` evaluation is reused; rich rows do not introduce a
+second check lifecycle. Required-unavailable rich facets retain exit 1,
+complete or neutral output exits 0, and malformed tuple/config/input errors
+exit 2.
+
+V2's raw inventory independently covers scenes, nodes, skins, node-to-skin
+attachments, and scene-root path candidates. It retains source indices, names,
+parents/children, ordered roots/joints, explicit `skin.skeleton`, and exact
+same-load primary/dependency-closure identity. Complete empty coverage proves
+absence; partial prefixes and unavailable domains do not. The explicit
+`skin.skeleton` member is source evidence only: Bevy ignores it and V2 makes no
+inferred-root claim. Scene-instantiated `SkinnedMesh` attachment is outside
+this static projection.
+
+The pinned Bevy authority is tag `v0.19.0`, commit
+`c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0` with locked
+`gltf 1.4.1`, plus commit-pinned label, loader, node-path,
+`AnimationTargetId`, feature, and root `Cargo.lock` sources. `Scene{i}` exists
+for each declared scene; `Gltf.default_scene` routes only to an existing scene handle, with no
+`DefaultScene` label and no fabricated `Scene0`. Bevy eagerly creates
+`Skin{i}/InverseBindMatrices` for every source skin, including unreferenced
+skins, using identity fallback when inverse-bind data is absent. `Skin{i}` is
+created when any source node references it during the all-source-node pass;
+source skin indices, never collected-vector position, are identity.
+
+Named scene/animation/skin maps are separate from typed labels and use
+source-order last-write-wins (skin winners follow lazily created skins in
+first-reference order). Target rows are per unique source animation target
+node and retain contributing animation/channel identities. Paths use authored
+names or `GltfNode{source_index}`, exclude the scene world-root name, and
+publish a path/UUID only when hierarchy, reachability, closure, feature
+settings, and collision evidence are complete. Missing `bevy_animation`,
+disabled `load_animations`, unreachable or multiply reachable targets,
+duplicate paths, UUID collisions, missing pointer width, and incomplete
+evidence are typed required-unavailable states. Target UUID reproduction
+requires explicitly declared 32- or 64-bit pointer width because Bevy hashes
+segment lengths using `usize::to_le_bytes()`; host width is never inferred.
+
+Each new rich V2 projection domain is bounded at 4,096 rows, with aggregate
+projection structural references at 65,536 and dynamic projection text at
+1 MiB. The sealed embedded V1 animation inventory and `CheckEvaluation` scopes
+retain their own bounds. Names/path segments are capped at 1,024 UTF-8 bytes,
+paths at 4,096 bytes and 256 segments, and staged reports at 256 MiB. The
+explicit `target_coverage` projection reports `target_domain_truncated` at its
+row ceiling; other new-projection budget exhaustion reports
+`projection_bounds_exceeded`. No retained prefix is treated as collision-free.
+Strict readback rejects N+1 collections and contradictory states. A bounded second parse of already
+captured primary bytes is allowed within the same loader invocation; reopening
+the input or dependencies is not. V2 is prediction evidence only and does not
+claim runtime load success, target survival, scene spawning, graph wiring, or
+playback.
+
+When the one shared check would exceed core's per-file facet budget, its rich
+prediction is compacted to one subjectless
+`engine-addressability:facet-budget` scope with `facet_budget_exceeded`.
+This preserves the existing one-lifecycle contract and does not turn omitted
+facets into positive evidence.
+
 `generate contact-fragment` publishes canonical `contact-fragment:1` bytes to
 `--output`. It selects one exact unique clip, samples the existing
 longest-authored-channel metric grid, and records only finite bilateral
@@ -839,7 +902,10 @@ inference mode. See
 `urn:animsmith:schema:gltf-animation-addressability:1`; see
 [output.md](output.md#gltf-animation-addressability) and
 [`gltf-animation-addressability-v1.schema.json`](schemas/gltf-animation-addressability-v1.schema.json).
-It is not output-v11 and cannot be used as a `diff` measurement operand.
+The richer exact-Bevy path additionally has immutable contract
+`urn:animsmith:schema:gltf-addressability:2`; see
+[`gltf-addressability-v2.schema.json`](schemas/gltf-addressability-v2.schema.json).
+Neither is output-v11 or a `diff` measurement operand.
 
 `generate contact-fragment` is also outside output-v11: it writes the strict
 `urn:animsmith:schema:contact-fragment:1` sidecar. Its exit-1 JSON refusal
