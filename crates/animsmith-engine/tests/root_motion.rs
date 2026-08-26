@@ -1,6 +1,9 @@
 use animsmith_core::config::CheckSettings;
 use animsmith_core::glam::{Quat, Vec3};
-use animsmith_core::measure::{MeasurementAvailability, measure_document_indexed};
+use animsmith_core::measure::{
+    MeasurementAvailability, RootTrajectoryMeasurement, RootTrajectorySourceRole,
+    measure_document_indexed,
+};
 use animsmith_core::{
     Applicability, Bone, Check, CheckCtx, CheckEvaluation, CheckSelection, Clip, Config,
     EngineMachineResultV1, EnginePredictionBasisV4, EnginePredictionFacetStateV1,
@@ -26,6 +29,7 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 
 type StrictV17Mutation = (&'static str, fn(&mut serde_json::Value));
+type RootTrajectoryMutation = (&'static str, fn(&mut RootTrajectoryMeasurement));
 
 #[derive(Clone, Copy)]
 enum PathFixture {
@@ -1234,6 +1238,47 @@ fn path_failures_and_explicit_root_identity_fail_closed() {
         missing_record.engine_prediction_v6().unwrap().facets()[0].reasons()[0].as_str(),
         "animsmith:root_motion_source_not_explicit_root"
     );
+}
+
+#[test]
+fn producer_and_reader_agree_on_stale_root_trajectory_identity() {
+    let mutations: [RootTrajectoryMutation; 3] = [
+        ("bone name", |trajectory| {
+            trajectory.bone_name = "StaleRoot".to_owned();
+        }),
+        ("bone index", |trajectory| {
+            trajectory.bone_index = 1;
+        }),
+        ("source role", |trajectory| {
+            trajectory.source_role = RootTrajectorySourceRole::HipsFallback;
+        }),
+    ];
+    for (label, mutation) in mutations {
+        let mut fixture = fixture(
+            "stale-root-trajectory",
+            &["walk"],
+            PathFixture::Exact,
+            (Some(RootMotionProjectOwnerV1::Gameplay), None, None),
+            (
+                BakeOrExtract::Bake,
+                BakeOrExtract::Bake,
+                BakeOrExtract::Bake,
+            ),
+        );
+        mutation(fixture.measurements[0].root_trajectory.as_mut().unwrap());
+        let record = evaluate(&fixture);
+        let facet = &record.engine_prediction_v6().unwrap().facets()[0];
+        assert_eq!(
+            facet.reasons()[0].as_str(),
+            "animsmith:root_motion_source_not_explicit_root",
+            "producer mismatch for {label}"
+        );
+        let bytes = strict_v17_bytes(&fixture, record);
+        MeasurementReportInput::read_from(&bytes[..])
+            .unwrap()
+            .into_files()
+            .unwrap_or_else(|error| panic!("strict reader rejected producer {label}: {error}"));
+    }
 }
 
 #[test]

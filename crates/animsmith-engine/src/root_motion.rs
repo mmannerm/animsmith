@@ -283,6 +283,10 @@ fn evaluate_allocated(
         let explicit_root = provenance
             .root_motion_project_intent()
             .resolved_root_bone_index();
+        let explicit_root_name = explicit_root
+            .and_then(|index| usize::try_from(index).ok())
+            .and_then(|index| source.document().skeleton.bones.get(index))
+            .map(|bone| bone.name.as_str());
 
         'clips: for clip in provenance.root_motion_project_intent().clips() {
             for (axis, owner) in declared_axes(clip) {
@@ -324,10 +328,10 @@ fn evaluate_allocated(
                 );
 
                 let reason = facet_unavailable_reason(
-                    clip_name,
-                    &duplicate_names,
+                    duplicate_name_count,
                     path_resolution.as_ref(),
                     explicit_root,
+                    explicit_root_name,
                     measurement,
                     clip_setting.map(|setting| setting.value()),
                     axis,
@@ -410,15 +414,15 @@ fn configured_path(provenance: &PredictionProvenanceV6) -> Option<RawTransformPa
 }
 
 fn facet_unavailable_reason(
-    clip_name: &str,
-    duplicate_names: &BTreeMap<&str, usize>,
+    duplicate_name_count: usize,
     path_resolution: Option<&RawTransformPathResolutionV1>,
     explicit_root: Option<u64>,
+    explicit_root_name: Option<&str>,
     measurement: Option<&ClipMeasurements>,
     setting: Option<&EngineSettingValueV2>,
     axis: RootMotionAxisV1,
 ) -> Option<PredictionUnavailableReasonV2> {
-    if duplicate_names.get(clip_name).copied().unwrap_or(0) > 1 {
+    if duplicate_name_count > 1 {
         return Some(PredictionUnavailableReasonV2::MeasurementUnavailable);
     }
     match path_resolution {
@@ -443,12 +447,15 @@ fn facet_unavailable_reason(
             measurement.root_trajectory_availability == MeasurementAvailability::Measured
         })
         .and_then(|measurement| measurement.root_trajectory.as_ref());
-    let Some(trajectory) = trajectory.filter(|trajectory| {
-        trajectory.source_role == RootTrajectorySourceRole::Root
-            && Some(u64::from(trajectory.bone_index)) == explicit_root
-    }) else {
+    let Some(trajectory) = trajectory else {
         return Some(PredictionUnavailableReasonV2::MeasurementUnavailable);
     };
+    if trajectory.source_role != RootTrajectorySourceRole::Root
+        || Some(u64::from(trajectory.bone_index)) != explicit_root
+        || Some(trajectory.bone_name.as_str()) != explicit_root_name
+    {
+        return Some(custom_reason(ROOT_SOURCE_MISMATCH_REASON));
+    }
     let measured = match axis {
         RootMotionAxisV1::HorizontalXz | RootMotionAxisV1::VerticalY => {
             trajectory.translation_availability == MeasurementAvailability::Measured
