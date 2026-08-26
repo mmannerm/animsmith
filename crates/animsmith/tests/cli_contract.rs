@@ -3399,6 +3399,30 @@ fn assert_v2_render_line(output: &str, expected: String) {
 
 fn assert_v2_render_semantic_inventory(report: &Value, text: &str, markdown: &str) {
     let raw = &report["inventory"]["raw"];
+    let input_sha256 = report["input"]["sha256"].as_str().expect("input digest");
+    let input_bytes = report["input"]["bytes"].as_u64().expect("input bytes");
+    let raw_sha256 = raw["identity"]["sha256"]
+        .as_str()
+        .expect("raw inventory digest");
+    let raw_bytes = raw["identity"]["bytes"]
+        .as_u64()
+        .expect("raw inventory canonical bytes");
+    assert_v2_render_line(
+        text,
+        format!("input: sha256={input_sha256} bytes={input_bytes}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("- Input: `{input_sha256}` (`{input_bytes}` bytes)"),
+    );
+    assert_v2_render_line(
+        text,
+        format!("raw inventory: sha256={raw_sha256} canonical-bytes={raw_bytes}"),
+    );
+    assert_v2_render_line(
+        markdown,
+        format!("- Raw inventory: `{raw_sha256}` (`{raw_bytes}` canonical bytes)"),
+    );
     for (domain, rows_key, coverage_key) in [
         ("scenes", "scenes", "scene_coverage"),
         ("nodes", "nodes", "node_coverage"),
