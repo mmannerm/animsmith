@@ -173,6 +173,11 @@ fn exact_primary_bytes_and_closure_bind_identity_without_reopening_path() {
     let second = animsmith_gltf::load_source_bytes(missing, &second_bytes).unwrap();
     let first_inventory = first.raw_gltf_addressability_inventory().unwrap();
     let second_inventory = second.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(
+        first_inventory.identity().sha256(),
+        "73a8c4453b39851f83dc5c88aeb68cdd0e64bea17cd72e4617aee89065805e9e"
+    );
+    assert_eq!(first_inventory.identity().bytes(), 1_454);
 
     assert_eq!(
         first_inventory.primary_input(),
@@ -213,8 +218,300 @@ fn per_domain_row_bound_retains_exact_n_and_marks_n_plus_one_partial() {
     let overflow = overflow.raw_gltf_addressability_inventory().unwrap();
     assert_eq!(overflow.scenes().len(), 4_096);
     assert_eq!(
+        overflow.scenes(),
+        exact.scenes(),
+        "scene overflow retains the exact canonical source prefix"
+    );
+    assert_eq!(
         overflow.scene_coverage(),
         RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+}
+
+#[test]
+fn node_skin_and_attachment_row_bounds_retain_independent_canonical_prefixes() {
+    let row_limit = animsmith_core::RAW_GLTF_ADDRESSABILITY_V1_MAX_ROWS_PER_DOMAIN;
+
+    let exact_nodes = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": (0..row_limit).map(|_| json!({})).collect::<Vec<_>>()
+    }));
+    let exact_nodes = exact_nodes.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(exact_nodes.nodes().len(), row_limit);
+    assert_eq!(
+        exact_nodes.node_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+    let overflow_nodes = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": (0..=row_limit).map(|_| json!({})).collect::<Vec<_>>()
+    }));
+    let overflow_nodes = overflow_nodes.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(overflow_nodes.nodes(), exact_nodes.nodes());
+    assert_eq!(
+        overflow_nodes.node_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+    assert_eq!(
+        overflow_nodes.skin_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete,
+        "node overflow does not contaminate independent skin coverage"
+    );
+
+    let skins = |count| {
+        (0..count)
+            .map(|_| json!({ "joints": [0] }))
+            .collect::<Vec<_>>()
+    };
+    let exact_skins = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": [{}],
+        "skins": skins(row_limit)
+    }));
+    let exact_skins = exact_skins.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(exact_skins.skins().len(), row_limit);
+    assert_eq!(
+        exact_skins.skin_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+    let overflow_skins = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": [{}],
+        "skins": skins(row_limit + 1)
+    }));
+    let overflow_skins = overflow_skins.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(overflow_skins.skins(), exact_skins.skins());
+    assert_eq!(
+        overflow_skins.skin_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+    assert_eq!(
+        overflow_skins.node_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete,
+        "skin overflow does not contaminate independent node coverage"
+    );
+
+    let attached_nodes = |count| (0..count).map(|_| json!({ "skin": 0 })).collect::<Vec<_>>();
+    let exact_attachments = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": attached_nodes(row_limit),
+        "skins": [{ "joints": [0] }]
+    }));
+    let exact_attachments = exact_attachments
+        .raw_gltf_addressability_inventory()
+        .unwrap();
+    assert_eq!(exact_attachments.attachments().len(), row_limit);
+    assert_eq!(
+        exact_attachments.attachment_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+    let overflow_attachments = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": attached_nodes(row_limit + 1),
+        "skins": [{ "joints": [0] }]
+    }));
+    let overflow_attachments = overflow_attachments
+        .raw_gltf_addressability_inventory()
+        .unwrap();
+    assert_eq!(
+        overflow_attachments.attachments(),
+        exact_attachments.attachments()
+    );
+    assert_eq!(
+        overflow_attachments.attachment_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+    assert_eq!(
+        overflow_attachments.skin_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete,
+        "attachment overflow does not contaminate independent skin coverage"
+    );
+}
+
+#[test]
+fn path_candidate_row_bound_retains_the_exact_scene_dfs_prefix() {
+    let row_limit = animsmith_core::RAW_GLTF_ADDRESSABILITY_V1_MAX_ROWS_PER_DOMAIN;
+    let flat_scene = |count| {
+        json!({
+            "asset": { "version": "2.0" },
+            "nodes": (0..count).map(|_| json!({})).collect::<Vec<_>>(),
+            "scenes": [{ "nodes": (0..count).collect::<Vec<_>>() }]
+        })
+    };
+    let exact = load(flat_scene(row_limit));
+    let exact = exact.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(exact.path_candidates().len(), row_limit);
+    assert_eq!(
+        exact.path_candidate_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+
+    let overflow = load(flat_scene(row_limit + 1));
+    let overflow = overflow.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(overflow.path_candidates(), exact.path_candidates());
+    assert_eq!(
+        overflow.path_candidate_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+}
+
+#[test]
+fn per_name_bound_is_independent_for_scenes_nodes_and_skins() {
+    let exact_name = "x".repeat(animsmith_core::RAW_GLTF_ADDRESSABILITY_V1_MAX_NAME_BYTES);
+    let oversized_name = format!("{exact_name}x");
+    let exact = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": [{ "name": exact_name }, { "name": "joint" }],
+        "skins": [{ "name": "skin-prefix", "joints": [1] }, { "name": exact_name, "joints": [1] }],
+        "scenes": [{ "name": "scene-prefix", "nodes": [] }, { "name": exact_name, "nodes": [] }]
+    }));
+    let exact = exact.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(
+        exact.scene_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+    assert_eq!(
+        exact.node_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+    assert_eq!(
+        exact.skin_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+
+    let scene_overflow = load(json!({
+        "asset": { "version": "2.0" },
+        "scenes": [{ "name": "scene-prefix", "nodes": [] }, { "name": oversized_name, "nodes": [] }]
+    }));
+    let scene_overflow = scene_overflow.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(scene_overflow.scenes().len(), 1);
+    assert_eq!(scene_overflow.scenes()[0].name(), Some("scene-prefix"));
+    assert_eq!(
+        scene_overflow.scene_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+    assert_eq!(
+        scene_overflow.node_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+
+    let node_overflow = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": [{ "name": "node-prefix" }, { "name": oversized_name }]
+    }));
+    let node_overflow = node_overflow.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(node_overflow.nodes().len(), 1);
+    assert_eq!(node_overflow.nodes()[0].name(), Some("node-prefix"));
+    assert_eq!(
+        node_overflow.node_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+    assert_eq!(
+        node_overflow.scene_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+
+    let skin_overflow = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": [{}],
+        "skins": [
+            { "name": "skin-prefix", "joints": [0] },
+            { "name": oversized_name, "joints": [0] }
+        ]
+    }));
+    let skin_overflow = skin_overflow.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(skin_overflow.skins().len(), 1);
+    assert_eq!(skin_overflow.skins()[0].name(), Some("skin-prefix"));
+    assert_eq!(
+        skin_overflow.skin_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+    assert_eq!(
+        skin_overflow.node_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+}
+
+#[test]
+fn aggregate_structural_reference_bound_is_atomic_and_prefix_preserving() {
+    let reference_limit = animsmith_core::RAW_GLTF_ADDRESSABILITY_V1_MAX_STRUCTURAL_REFERENCES;
+    let joints = |count| std::iter::repeat_n(0, count).collect::<Vec<_>>();
+    let exact = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": [{}],
+        "skins": [
+            { "name": "prefix", "joints": joints(reference_limit / 2) },
+            { "name": "tail", "joints": joints(reference_limit / 2) }
+        ]
+    }));
+    let exact = exact.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(exact.skins().len(), 2);
+    assert_eq!(
+        exact.skin_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+
+    let overflow = load(json!({
+        "asset": { "version": "2.0" },
+        "nodes": [{}],
+        "skins": [
+            { "name": "prefix", "joints": joints(reference_limit / 2) },
+            { "name": "tail", "joints": joints(reference_limit / 2 + 1) }
+        ]
+    }));
+    let overflow = overflow.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(overflow.skins(), &exact.skins()[..1]);
+    assert_eq!(
+        overflow.skin_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+    assert_eq!(
+        overflow.node_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete,
+        "the structural budget refusal is isolated to the consuming domain"
+    );
+}
+
+#[test]
+fn aggregate_text_bound_accepts_one_mib_and_rejects_the_next_byte_atomically() {
+    let name_limit = animsmith_core::RAW_GLTF_ADDRESSABILITY_V1_MAX_NAME_BYTES;
+    let text_limit = animsmith_core::RAW_GLTF_ADDRESSABILITY_V1_MAX_TEXT_BYTES;
+    let exact_row_count = text_limit / name_limit;
+    let name = "x".repeat(name_limit);
+    let scenes = |extra: bool| {
+        let mut rows = (0..exact_row_count)
+            .map(|_| json!({ "name": name, "nodes": [] }))
+            .collect::<Vec<_>>();
+        if extra {
+            rows.push(json!({ "name": "x", "nodes": [] }));
+        }
+        rows
+    };
+    let exact = load(json!({
+        "asset": { "version": "2.0" },
+        "scenes": scenes(false)
+    }));
+    let exact = exact.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(exact.scenes().len(), exact_row_count);
+    assert_eq!(
+        exact.scene_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+
+    let overflow = load(json!({
+        "asset": { "version": "2.0" },
+        "scenes": scenes(true)
+    }));
+    let overflow = overflow.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(overflow.scenes(), exact.scenes());
+    assert_eq!(
+        overflow.scene_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+    assert_eq!(
+        overflow.node_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete,
+        "the aggregate text refusal is isolated to scene projection"
     );
 }
 

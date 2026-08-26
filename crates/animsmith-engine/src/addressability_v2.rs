@@ -957,15 +957,20 @@ impl GltfAddressabilityV2 {
     pub fn read_from(
         reader: impl Read,
     ) -> Result<GltfAddressabilityReadbackV2, GltfAddressabilityReadErrorV2> {
-        let mut bounded = reader.take(GLTF_ADDRESSABILITY_V2_MAX_REPORT_BYTES + 1);
+        Self::read_from_with_limit(reader, GLTF_ADDRESSABILITY_V2_MAX_REPORT_BYTES)
+    }
+
+    fn read_from_with_limit(
+        reader: impl Read,
+        limit: u64,
+    ) -> Result<GltfAddressabilityReadbackV2, GltfAddressabilityReadErrorV2> {
+        let mut bounded = reader.take(limit + 1);
         let mut bytes = Vec::new();
         bounded
             .read_to_end(&mut bytes)
             .map_err(|source| GltfAddressabilityReadErrorV2::Io { source })?;
-        if bytes.len() as u64 > GLTF_ADDRESSABILITY_V2_MAX_REPORT_BYTES {
-            return Err(GltfAddressabilityReadErrorV2::ReportTooLarge {
-                limit: GLTF_ADDRESSABILITY_V2_MAX_REPORT_BYTES,
-            });
+        if bytes.len() as u64 > limit {
+            return Err(GltfAddressabilityReadErrorV2::ReportTooLarge { limit });
         }
         let wire: GltfAddressabilityWireV2 = serde_json::from_slice(&bytes)
             .map_err(|source| GltfAddressabilityReadErrorV2::InvalidJson { source })?;
@@ -2546,13 +2551,13 @@ pub enum GltfAddressabilityV2Error {
 mod tests {
     use super::*;
     use animsmith_core::{
-        Clip, DependencyClosureBuilderV1, Document, RawGltfAddressabilityCoverageV1,
-        RawGltfAddressabilityInventoryInputV1, RawGltfInverseBindMatricesObservationV1,
-        RawGltfNodeRowV1, RawGltfScenePathCandidateRowV1, RawGltfSceneRowV1,
-        RawGltfSkinAttachmentRowV1, RawGltfSkinRowV1, RawSourceFactsBuilderV1, SourceFactDomainV1,
-        SourceFactSetV1, SourceFormatV1, SourceLoaderDispositionV1, SourceObservationV1,
-        SourceProvenanceV1, SourceTargetKindV1, SourceTargetV1, SourceUnavailableReasonV1,
-        ToolSource,
+        Clip, Config, DependencyClosureBuilderV1, Document, MetricGrids,
+        RawGltfAddressabilityCoverageV1, RawGltfAddressabilityInventoryInputV1,
+        RawGltfInverseBindMatricesObservationV1, RawGltfNodeRowV1, RawGltfScenePathCandidateRowV1,
+        RawGltfSceneRowV1, RawGltfSkinAttachmentRowV1, RawGltfSkinRowV1, RawSourceFactsBuilderV1,
+        ResolvedRoles, SourceFactDomainV1, SourceFactSetV1, SourceFormatV1,
+        SourceLoaderDispositionV1, SourceObservationV1, SourceProvenanceV1, SourceTargetKindV1,
+        SourceTargetV1, SourceUnavailableReasonV1, ToolSource,
     };
     use std::io::Cursor;
 
@@ -2681,6 +2686,63 @@ mod tests {
             vec![RawGltfScenePathCandidateRowV1::new(0, 0, vec![0])],
             RawGltfAddressabilityCoverageV1::Complete,
         )
+    }
+
+    fn adapter_report_json(pointer_width: Option<TargetPointerWidth>) -> serde_json::Value {
+        let source = loaded_source_with_targets([0], true);
+        let raw = simple_target_raw(&source, Some("target".into()));
+        let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+        let resolved = crate::resolve_static_v2(crate::EngineDeclarationV2 {
+            selection: Some(crate::ProfileSelection::new(
+                "bevy",
+                3,
+                "0.19.0",
+                "gltf-asset-loader",
+            )),
+            document_settings: Some(BTreeMap::from([
+                (
+                    "bevy_animation_feature".into(),
+                    crate::SettingValueV2::Boolean(true),
+                ),
+                (
+                    "extension_handler_environment".into(),
+                    crate::SettingValueV2::HandlerEnvironment(
+                        crate::BevyGltfHandlerEnvironmentV2::BareEmpty,
+                    ),
+                ),
+            ])),
+            ..crate::EngineDeclarationV2::default()
+        })
+        .unwrap()
+        .unwrap()
+        .resolve_input(SourceFormatV1::GltfJson)
+        .unwrap();
+        let provenance =
+            crate::project_prediction_provenance_v4(&resolved, &source, Vec::new()).unwrap();
+        let grids = MetricGrids::new(source.document());
+        let roles = ResolvedRoles::default();
+        let config = Config::default();
+        let adapter = build_bevy_addressability_adapter_v2(
+            &source,
+            &raw,
+            &animations,
+            &resolved,
+            provenance,
+            pointer_width,
+            &CheckCtx::new(&grids, &roles, &config),
+        )
+        .unwrap()
+        .unwrap();
+        let report = GltfAddressabilityV2::new(
+            ToolInfo::animsmith(ToolSource::new(None, None)),
+            raw,
+            animations,
+            Some(adapter),
+        )
+        .unwrap();
+        let bytes = serde_json::to_vec(&report).unwrap();
+        GltfAddressabilityV2::read_from(Cursor::new(&bytes)).unwrap();
+        serde_json::from_slice(&bytes).unwrap()
     }
 
     fn analytic_raw(source: &LoadedSource) -> RawGltfAddressabilityInventoryV1 {
@@ -3260,6 +3322,53 @@ mod tests {
     }
 
     #[test]
+    fn rich_projection_dynamic_text_accepts_one_mib_and_refuses_one_mib_plus_one() {
+        let projection_with_first_name = |first_name_bytes: usize| {
+            let winners = (0..1024)
+                .map(|index| GltfAddressabilityNamedMapWinnerV2 {
+                    name: "x".repeat(if index == 0 { first_name_bytes } else { 1023 }),
+                    source_index: index,
+                    typed_label: "x".into(),
+                })
+                .collect();
+            BevyGltfAddressabilityProjectionV2 {
+                scenes: Vec::new(),
+                default_scene_route: GltfAddressabilityProjectionV2::ProvenAbsent,
+                skins: Vec::new(),
+                named_maps: vec![GltfAddressabilityNamedMapV2 {
+                    kind: GltfAddressabilityNamedMapKindV2::Scene,
+                    duplicate_policy: BevyNamedMapDuplicatePolicyV1::LastWriteWins,
+                    winners: GltfAddressabilityProjectionV2::Available { value: winners },
+                }],
+                target_coverage: GltfAddressabilityProjectionV2::Available { value: () },
+                targets: Vec::new(),
+            }
+        };
+        let mut exact = projection_with_first_name(1023);
+        assert_eq!(
+            projection_text_bytes(&exact),
+            GLTF_ADDRESSABILITY_V2_MAX_TOTAL_TEXT_BYTES
+        );
+        normalize_projection_bounds(&mut exact);
+        assert!(matches!(
+            exact.named_maps()[0].winners(),
+            GltfAddressabilityProjectionV2::Available { .. }
+        ));
+
+        let mut over = projection_with_first_name(1024);
+        assert_eq!(
+            projection_text_bytes(&over),
+            GLTF_ADDRESSABILITY_V2_MAX_TOTAL_TEXT_BYTES + 1
+        );
+        normalize_projection_bounds(&mut over);
+        assert!(matches!(
+            over.named_maps()[0].winners(),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons == &[GltfAddressabilityUnavailableReasonV2::ProjectionBoundsExceeded]
+        ));
+    }
+
+    #[test]
     fn empty_authored_node_name_is_an_exact_bevy_segment_and_round_trips() {
         let source = loaded_source_with_targets([0], true);
         let raw = simple_target_raw(&source, Some(String::new()));
@@ -3333,5 +3442,101 @@ mod tests {
             ))
             .is_err()
         );
+    }
+
+    #[test]
+    fn adapter_strict_readback_rejects_each_authority_projection_and_check_mutation() {
+        let complete = adapter_report_json(Some(TargetPointerWidth::Bits64));
+        let reject = |value: serde_json::Value| {
+            let bytes = serde_json::to_vec(&value).unwrap();
+            assert!(GltfAddressabilityV2::read_from(Cursor::new(bytes)).is_err());
+        };
+
+        let mut rules = complete.clone();
+        rules["bevy"]["rules"]["bevy_commit"] = serde_json::json!("0".repeat(40));
+        reject(rules);
+
+        let mut setting_value = complete.clone();
+        setting_value["bevy"]["settings"]["load_animations"] = serde_json::json!(false);
+        reject(setting_value);
+
+        let mut setting_origin = complete.clone();
+        setting_origin["bevy"]["settings"]["bevy_animation_feature_origin"] =
+            serde_json::json!("profile_default");
+        reject(setting_origin);
+
+        let mut provenance = complete.clone();
+        provenance["bevy"]["prediction_provenance"]["identity"]["bytes"] = serde_json::json!(1);
+        reject(provenance);
+
+        let mut projection = complete.clone();
+        projection["bevy"]["projection"]["targets"][0]["projection"]["value"]["path"] =
+            serde_json::json!("mutated");
+        reject(projection);
+
+        let mut scopes = complete.clone();
+        let duplicate = scopes["bevy"]["check"]["evaluated_scopes"][0].clone();
+        scopes["bevy"]["check"]["evaluated_scopes"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate);
+        reject(scopes);
+
+        let mut evaluation = complete;
+        evaluation["bevy"]["check"]["evaluation"] = serde_json::json!("partial");
+        reject(evaluation);
+
+        let mut reasons = adapter_report_json(None);
+        let target_facet = reasons["bevy"]["check"]["prediction"]["facets"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|facet| facet["scope"]["code"] == "animation_target_id")
+            .unwrap();
+        target_facet["reasons"] = serde_json::json!(["raw_source_incomplete"]);
+        reject(reasons);
+    }
+
+    #[test]
+    fn staged_v2_reader_accepts_n_and_rejects_n_plus_one_before_json_decode() {
+        assert_eq!(GLTF_ADDRESSABILITY_V2_MAX_REPORT_BYTES, 256 * 1024 * 1024);
+        let exact = GltfAddressabilityV2::read_from_with_limit(Cursor::new(b"null"), 4);
+        assert!(matches!(
+            exact,
+            Err(GltfAddressabilityReadErrorV2::InvalidJson { .. })
+                | Err(GltfAddressabilityReadErrorV2::Contract(_))
+        ));
+        let over = GltfAddressabilityV2::read_from_with_limit(Cursor::new(b"null "), 4);
+        assert!(matches!(
+            over,
+            Err(GltfAddressabilityReadErrorV2::ReportTooLarge { limit: 4 })
+        ));
+    }
+
+    #[test]
+    fn public_schema_caps_each_raw_path_candidate_at_256_segments() {
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/schemas/gltf-addressability-v2.schema.json"
+        ))
+        .unwrap();
+        let candidate_schema =
+            schema["$defs"]["path_candidate_row"]["properties"]["source_node_indices"].clone();
+        assert_eq!(candidate_schema["maxItems"], 256);
+        let standalone = serde_json::json!({
+            "$defs": {"u64": schema["$defs"]["u64"].clone()},
+            "allOf": [candidate_schema.clone()]
+        });
+        let validator = jsonschema::options().build(&standalone).unwrap();
+        assert!(validator.is_valid(&serde_json::json!(vec![0; 256])));
+        assert!(!validator.is_valid(&serde_json::json!(vec![0; 257])));
+
+        let mut weakened = candidate_schema;
+        weakened["maxItems"] = serde_json::json!(257);
+        let weakened = serde_json::json!({
+            "$defs": {"u64": schema["$defs"]["u64"].clone()},
+            "allOf": [weakened]
+        });
+        let weakened = jsonschema::options().build(&weakened).unwrap();
+        assert!(weakened.is_valid(&serde_json::json!(vec![0; 257])));
     }
 }

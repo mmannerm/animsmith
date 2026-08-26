@@ -1068,6 +1068,9 @@ enum RichAddressabilityFixture {
     Reachable,
     EmptyName,
     ZeroScenes,
+    NonzeroDefaultScene,
+    OffSceneSkin,
+    NamedMapsAndContributors,
     DuplicatePath,
     Unreachable,
     HostileName,
@@ -1075,6 +1078,10 @@ enum RichAddressabilityFixture {
 
 fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressabilityFixture) {
     let empty_name = matches!(fixture, RichAddressabilityFixture::EmptyName);
+    let nonzero_default_scene = matches!(fixture, RichAddressabilityFixture::NonzeroDefaultScene);
+    let off_scene_skin = matches!(fixture, RichAddressabilityFixture::OffSceneSkin);
+    let named_maps_and_contributors =
+        matches!(fixture, RichAddressabilityFixture::NamedMapsAndContributors);
     let target_name = if matches!(fixture, RichAddressabilityFixture::HostileName) {
         HOSTILE_PRESENTATION_TEXT
     } else if matches!(fixture, RichAddressabilityFixture::DuplicatePath) {
@@ -1085,11 +1092,19 @@ fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressab
     let duplicate = matches!(fixture, RichAddressabilityFixture::DuplicatePath);
     let zero_scenes = matches!(fixture, RichAddressabilityFixture::ZeroScenes);
     let unreachable = matches!(fixture, RichAddressabilityFixture::Unreachable);
-    let nodes = vec![
-        json!({ "name": if empty_name { "" } else { "root" }, "children": if duplicate { vec![1, 2] } else { vec![1] }, "skin": 0 }),
+    let root_skin = if named_maps_and_contributors { 1 } else { 0 };
+    let mut nodes = vec![
+        json!({ "name": if empty_name { "" } else { "root" }, "children": if duplicate { vec![1, 2] } else { vec![1] }, "skin": root_skin }),
         json!({ "name": target_name }),
         json!({ "name": if duplicate { target_name } else { "detached" } }),
     ];
+    if off_scene_skin {
+        nodes[2]["skin"] = json!(1);
+    } else if named_maps_and_contributors {
+        // Source node 0 references Skin1 before this off-scene node references
+        // Skin0, making the reversed first-reference order observable.
+        nodes[2]["skin"] = json!(0);
+    }
     let channels = if zero_scenes {
         Vec::new()
     } else if duplicate {
@@ -1105,6 +1120,24 @@ fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressab
     };
     let animations = if channels.is_empty() {
         Vec::new()
+    } else if named_maps_and_contributors {
+        vec![
+            json!({
+                "name": "shared",
+                "samplers": [{ "input": 0, "output": 1 }],
+                "channels": [
+                    json!({ "sampler": 0, "target": { "node": 1, "path": "translation" } }),
+                    json!({ "sampler": 0, "target": { "node": 1, "path": "translation" } }),
+                ]
+            }),
+            json!({
+                "name": "shared",
+                "samplers": [{ "input": 0, "output": 1 }],
+                "channels": [
+                    json!({ "sampler": 0, "target": { "node": 1, "path": "translation" } }),
+                ]
+            }),
+        ]
     } else {
         vec![json!({
             "name": "move",
@@ -1114,6 +1147,11 @@ fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressab
     };
     let scenes = if zero_scenes {
         Vec::new()
+    } else if nonzero_default_scene {
+        vec![
+            json!({ "name": "first", "nodes": [] }),
+            json!({ "name": "main", "nodes": [0] }),
+        ]
     } else {
         vec![json!({ "name": "main", "nodes": [0] })]
     };
@@ -1135,14 +1173,14 @@ fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressab
         ],
         "nodes": nodes,
         "skins": [
-            { "name": "body", "joints": [1], "skeleton": 0, "inverseBindMatrices": 2 },
-            { "name": "unused", "joints": [2] }
+            { "name": if named_maps_and_contributors { "shared" } else { "body" }, "joints": [1], "skeleton": 0, "inverseBindMatrices": 2 },
+            { "name": if named_maps_and_contributors { "shared" } else { "unused" }, "joints": [2] }
         ],
         "animations": animations,
         "scenes": scenes
     });
     if !zero_scenes {
-        document["scene"] = json!(0);
+        document["scene"] = json!(if nonzero_default_scene { 1 } else { 0 });
     }
     write_json(path, &document);
 }
@@ -3088,6 +3126,98 @@ fn generate_addressability_v2_is_exact_schema_profile_and_projects_scenes_skins_
 }
 
 #[test]
+fn generate_addressability_v2_uses_source_scene_index_for_nonzero_default_route() {
+    let dir = unique_temp_dir("generate-addressability-v2-nonzero-default-scene");
+    let input = dir.path().join("nonzero-default-scene.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::NonzeroDefaultScene);
+    let config = write_bevy_v3_track_config(dir.path(), "nonzero-default-scene", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    assert_eq!(
+        report["bevy"]["projection"]["scenes"],
+        json!([
+            { "source_scene_index": 0, "label": "Scene0" },
+            { "source_scene_index": 1, "label": "Scene1" }
+        ])
+    );
+    assert_eq!(
+        report["inventory"]["raw"]["default_scene"],
+        json!({ "state": "selected", "source_scene_index": 1 })
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["default_scene_route"],
+        json!({ "state": "available", "value": "Scene1" })
+    );
+}
+
+#[test]
+fn generate_addressability_v2_creates_off_scene_skin_handles_from_all_source_nodes() {
+    let dir = unique_temp_dir("generate-addressability-v2-off-scene-skin");
+    let input = dir.path().join("off-scene-skin.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::OffSceneSkin);
+    let config = write_bevy_v3_track_config(dir.path(), "off-scene-skin", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    let skins = report["bevy"]["projection"]["skins"]
+        .as_array()
+        .expect("skin projections");
+    assert_eq!(skins[0]["skin_label"]["state"], "available");
+    assert_eq!(
+        skins[1]["skin_label"],
+        json!({ "state": "available", "value": "Skin1" })
+    );
+    assert_eq!(
+        skins[1]["inverse_bind_matrices_label"],
+        "Skin1/InverseBindMatrices"
+    );
+}
+
+#[test]
+fn generate_addressability_v2_named_maps_are_last_write_wins_and_targets_aggregate_contributors() {
+    let dir = unique_temp_dir("generate-addressability-v2-named-maps");
+    let input = dir.path().join("named-maps.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::NamedMapsAndContributors);
+    let config = write_bevy_v3_track_config(dir.path(), "named-maps", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    let maps = report["bevy"]["projection"]["named_maps"]
+        .as_array()
+        .expect("named map projections");
+    assert!(
+        maps.iter()
+            .all(|map| map["duplicate_policy"] == "last_write_wins")
+    );
+    assert_eq!(
+        maps[1]["winners"],
+        json!({
+            "state": "available",
+            "value": [{ "name": "shared", "source_index": 1, "typed_label": "Animation1" }]
+        })
+    );
+    assert_eq!(
+        maps[2]["winners"],
+        json!({
+            "state": "available",
+            "value": [{ "name": "shared", "source_index": 0, "typed_label": "Skin0" }]
+        })
+    );
+    assert_eq!(
+        report["bevy"]["projection"]["targets"][0]["contributing_channels"],
+        json!([
+            { "source_animation_index": 0, "source_channel_index": 0 },
+            { "source_animation_index": 0, "source_channel_index": 1 },
+            { "source_animation_index": 1, "source_channel_index": 0 }
+        ])
+    );
+}
+
+#[test]
 fn generate_addressability_v2_target_width_controls_uuid_and_missing_width_exits_one() {
     let dir = unique_temp_dir("generate-addressability-v2-width");
     let input = dir.path().join("target.gltf");
@@ -3252,6 +3382,8 @@ fn generate_addressability_v2_text_and_markdown_have_escaped_semantic_parity() {
         "Scene0",
         "Skin0",
         "Skin0/InverseBindMatrices",
+        "Animation0",
+        "last_write_wins",
         "root",
         "pointer width",
     ] {
@@ -3266,6 +3398,61 @@ fn generate_addressability_v2_text_and_markdown_have_escaped_semantic_parity() {
     assert!(!markdown.contains(HOSTILE_PRESENTATION_TEXT), "{markdown}");
     assert!(!text.as_bytes().contains(&0x1b));
     assert!(!markdown.as_bytes().contains(&0x1b));
+
+    for (name, fixture, status, expected) in [
+        (
+            "duplicate-target",
+            RichAddressabilityFixture::DuplicatePath,
+            1,
+            vec![
+                "required_unavailable (duplicate_full_path",
+                "move",
+                "body",
+                "Animation0",
+                "Skin0",
+                "last_write_wins",
+            ],
+        ),
+        (
+            "proven-absent-default-scene",
+            RichAddressabilityFixture::ZeroScenes,
+            0,
+            vec!["proven_absent", "last_write_wins"],
+        ),
+    ] {
+        let input = dir.path().join(format!("{name}.gltf"));
+        write_rich_addressability_gltf(&input, fixture);
+        let text = generate_rich_addressability(&input, &config, Some("64"), Some("text"));
+        let markdown = generate_rich_addressability(&input, &config, Some("64"), Some("markdown"));
+        assert_eq!(
+            text.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&text)
+        );
+        assert_eq!(
+            markdown.status.code(),
+            Some(status),
+            "{name}: {}",
+            stderr(&markdown)
+        );
+        let text = stdout(&text);
+        let markdown = stdout(&markdown);
+        if matches!(fixture, RichAddressabilityFixture::DuplicatePath) {
+            assert!(text.contains("named animation map"), "{text}");
+            assert!(text.contains("named skin map"), "{text}");
+            assert!(markdown.contains("| Named map |"), "{markdown}");
+            assert!(markdown.contains("| `animation` |"), "{markdown}");
+            assert!(markdown.contains("| `skin` |"), "{markdown}");
+        }
+        for expected in expected {
+            assert!(text.contains(expected), "text missing {expected}: {text}");
+            assert!(
+                markdown.contains(expected),
+                "Markdown missing {expected}: {markdown}"
+            );
+        }
+    }
 }
 
 #[test]

@@ -79,6 +79,7 @@ version = "0.6.0"
 dependencies = [
  "animsmith-core",
  "blake3",
+ "jsonschema",
  "serde",
  "serde_json",
  "thiserror",

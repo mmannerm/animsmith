@@ -169,7 +169,7 @@
         "source_path_candidate_index": { "$ref": "#/$defs/u64" },
         "source_scene_index": { "$ref": "#/$defs/u64" },
         "source_node_indices": {
-          "type": "array", "minItems": 1, "maxItems": 65536,
+          "type": "array", "minItems": 1, "maxItems": 256,
           "items": { "$ref": "#/$defs/u64" }
         }
       },
