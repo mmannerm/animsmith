@@ -710,11 +710,12 @@ separate source-order last-write-wins projections.
 
 Exact target UUIDs require explicitly selecting 32- or 64-bit target pointer
 width because Bevy hashes segment lengths using the target pointer width;
-AnimSmith never infers width from the host. Missing feature/settings, incomplete or unreachable
-targets, multiple paths, and path/UUID collisions are typed
+AnimSmith never infers width from the host. Missing feature/settings,
+incomplete or unreachable targets, multiple paths, and path/UUID collisions are typed
 `required_unavailable`, not guessed. `target_coverage` distinguishes complete
-(including empty) target coverage from `target_domain_truncated`; other rich
-projection budget failures use `projection_bounds_exceeded`. Each V2 domain is capped at 4,096 rows,
+(including empty) target coverage from incomplete raw/animation evidence and
+`target_domain_truncated`; other rich projection budget failures use
+`projection_bounds_exceeded`. Each V2 domain is capped at 4,096 rows,
 references at 65,536, path segments at 1,024 bytes and 256 segments, retained
 text at 1 MiB, and reports at 256 MiB. This remains prediction evidence only,
 not runtime-load, spawning, target-survival, graph, or playback evidence.

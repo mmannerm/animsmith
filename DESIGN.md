@@ -2864,7 +2864,8 @@ pointer width's little-endian encoding; the host width is never inferred.
 
 The projection carries explicit `target_coverage` separate from retained
 target rows. It is complete, including for an empty target domain, or is
-required-unavailable with `target_domain_truncated` at the 4,096-target row
+required-unavailable when raw node/scene/path or animation/channel evidence is
+incomplete, and with `target_domain_truncated` at the 4,096-target row
 ceiling. Other new-rich-projection bound failures use
 `projection_bounds_exceeded`. Each new scene/node/skin/attachment/path/target/
 map domain is bounded at 4,096 rows, with aggregate structural references at

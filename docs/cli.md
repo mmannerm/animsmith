@@ -689,8 +689,9 @@ checked only for an absolute animation-stack end coordinate on its exact frame
 lattice. Missing or incomplete evidence is a required-unavailable facet; the
 command does not infer import ranges or other Unreal settings.
 
-`generate addressability` packages the same immutable raw-source evidence as a
-standalone, animation-only contract. It emits canonical JSON by default:
+`generate addressability` emits the immutable V1 animation-only contract by
+default and whenever no exact Bevy revision-3 profile is selected. It emits
+canonical JSON by default:
 
 ```console
 animsmith generate addressability examples/assets/walk.glb \
@@ -701,9 +702,9 @@ The neutral inventory retains source-order animation and channel indices,
 optional non-unique source names, channel targets and accessor indices, the
 primary-file identity, and the full dependency closure. Its identity covers
 only those neutral fields. Without an engine profile, or with a supported
-profile other than the exact Bevy tuple above, the root `bevy` field is null.
-With the exact Bevy profile, it embeds same-load prediction provenance and the
-unchanged `engine-addressability` evaluation:
+profile other than the historical exact Bevy revision-1 tuple above, the root
+`bevy` field is null. With that historical profile, it embeds same-load
+prediction provenance and the unchanged `engine-addressability` evaluation:
 
 ```console
 animsmith --config examples/bevy.animsmith.toml generate addressability \
@@ -772,10 +773,12 @@ projection structural references at 65,536 and dynamic projection text at
 retain their own bounds. Names/path segments are capped at 1,024 UTF-8 bytes,
 paths at 4,096 bytes and 256 segments, and staged reports at 256 MiB. The
 explicit `target_coverage` projection reports `target_domain_truncated` at its
-row ceiling; other new-projection budget exhaustion reports
-`projection_bounds_exceeded`. No retained prefix is treated as collision-free.
-Strict readback rejects N+1 collections and contradictory states. A bounded second parse of already
-captured primary bytes is allowed within the same loader invocation; reopening
+row ceiling and is also required-unavailable whenever raw or animation/channel
+target-domain evidence is incomplete; other new-projection budget exhaustion
+reports `projection_bounds_exceeded`. No retained prefix is treated as
+collision-free. Strict readback rejects N+1 collections and contradictory
+states. A bounded second parse of already captured primary bytes is allowed
+within the same loader invocation; reopening
 the input or dependencies is not. V2 is prediction evidence only and does not
 claim runtime load success, target survival, scene spawning, graph wiring, or
 playback.

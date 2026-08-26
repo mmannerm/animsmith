@@ -210,7 +210,8 @@ last-write-wins semantics (the skin map follows lazily created skins in first-
 reference order).
 
 Target projections are per unique source animation target node and retain
-contributing animation/channel identities. Paths use authored node names or
+contributing animation/channel identities. Paths use authored node names,
+including an authored empty string exactly, or
 `GltfNode{source_index}` fallbacks, exclude the scene world-root name, and are
 projected only when reachability, hierarchy, dependency closure, feature
 settings, and collision checks are complete. A duplicate full path, multiple
@@ -222,8 +223,10 @@ is published. Bevy's target-ID reproduction requires an explicit 32- or
 encoding; the host width is never inferred.
 
 The projection also carries `target_coverage`, independently of the retained
-target rows. A complete target domain may be empty; a domain beyond the 4,096
-row limit is `required_unavailable` with `target_domain_truncated`, and an
+target rows. A target domain is complete, including when empty, only when the
+raw node/scene/path and animation/channel inventories are exhaustive. Partial
+or unavailable evidence makes coverage `required_unavailable`; a domain beyond
+the 4,096 row limit additionally reports `target_domain_truncated`, and an
 aggregate rich-projection limit uses `projection_bounds_exceeded`. This keeps
 positive-prefix target rows from being mistaken for proof of complete,
 collision-free coverage.

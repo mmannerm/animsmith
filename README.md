@@ -364,11 +364,11 @@ are separate source-order last-write-wins projections.
 
 Exact target UUIDs require an explicitly declared 32- or 64-bit pointer width
 because Bevy hashes path-segment lengths using its target pointer width; width
-is never inferred from the host. Unreachable, multiply reachable, colliding, incomplete, or
-feature-disabled targets are required-unavailable, not guessed. Its explicit
+is never inferred from the host. Unreachable, multiply reachable, colliding,
+incomplete, or feature-disabled targets are required-unavailable, not guessed. Its explicit
 `target_coverage` projection distinguishes complete (including empty) target
-domains from `target_domain_truncated`; other rich projection budget failures
-use `projection_bounds_exceeded`. V2 bounds each
+domains from incomplete raw/animation evidence and `target_domain_truncated`;
+other rich projection budget failures use `projection_bounds_exceeded`. V2 bounds each
 domain at 4,096 rows, references at 65,536, path segments at 1,024 bytes and
 256 segments, retained text at 1 MiB, and staged reports at 256 MiB. It is
 prediction evidence only and never certifies Bevy loading, spawning, target

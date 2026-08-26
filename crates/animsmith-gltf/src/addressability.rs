@@ -3,6 +3,7 @@
 use super::Topology;
 use animsmith_core::{
     DependencyClosureV1, InputIdentity, RAW_GLTF_ADDRESSABILITY_V1_MAX_NAME_BYTES,
+    RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_BYTES, RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS,
     RAW_GLTF_ADDRESSABILITY_V1_MAX_ROWS_PER_DOMAIN,
     RAW_GLTF_ADDRESSABILITY_V1_MAX_STRUCTURAL_REFERENCES,
     RAW_GLTF_ADDRESSABILITY_V1_MAX_TEXT_BYTES, RawGltfAddressabilityCoverageV1,
@@ -180,7 +181,9 @@ pub(super) fn project(
                 paths_stopped = true;
                 break 'scenes;
             };
-            if !budget.admit_references(1 + path.len()) {
+            if !projected_path_within_bounds(&path, &source_nodes)
+                || !budget.admit_references(1 + path.len())
+            {
                 paths_stopped = true;
                 break 'scenes;
             }
@@ -215,6 +218,34 @@ pub(super) fn project(
             path_candidates,
         },
     )
+}
+
+fn projected_path_within_bounds(path: &[usize], nodes: &[gltf::Node<'_>]) -> bool {
+    if path.len() > RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS {
+        return false;
+    }
+    let mut bytes = 0usize;
+    for (position, &node_index) in path.iter().enumerate() {
+        let Some(node) = nodes.get(node_index) else {
+            return false;
+        };
+        let segment_bytes = node
+            .name()
+            .map_or_else(|| format!("GltfNode{node_index}").len(), str::len);
+        let Some(next) = bytes
+            .checked_add(usize::from(position > 0))
+            .and_then(|value| value.checked_add(segment_bytes))
+        else {
+            return false;
+        };
+        if segment_bytes > RAW_GLTF_ADDRESSABILITY_V1_MAX_NAME_BYTES
+            || next > RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_BYTES
+        {
+            return false;
+        }
+        bytes = next;
+    }
+    true
 }
 
 fn path_from_scene_root(

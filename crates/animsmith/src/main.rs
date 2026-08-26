@@ -377,7 +377,7 @@ enum GenerateCmd {
     },
     /// Inventory glTF animation addressability with an optional exact Bevy adapter.
     #[command(
-        long_about = "Generate one bounded glTF animation-addressability document from the immutable source facts and dependency closure. With the exact supported Bevy profile selected, the same document embeds the existing engine-addressability evaluation; without it, the neutral inventory remains available and the Bevy adapter is null. This command does not claim runtime loading, graph wiring, target survival, or named-map behavior."
+        long_about = "Generate one bounded glTF animation-addressability document from immutable source facts and dependency closure. Without the exact Bevy revision-3 profile, it emits the immutable V1 animation inventory and makes no scene, skin, target-path, UUID, or named-map claims. With that profile, it emits the separate V2 rich scene, skin, path, UUID, and bounded named-map projections beside the preserved V1 inventory, reusing the existing engine-addressability evaluation; --target-pointer-width is required for target UUIDs. Neither contract claims runtime loading, graph wiring, target survival, scene spawning, playback, or cross-file behavior."
     )]
     Addressability {
         /// Input .glb or .gltf file.

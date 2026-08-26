@@ -2200,7 +2200,9 @@ fn project_targets(
                 });
         }
     }
-    let truncated = contributors.len() > GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS;
+    let contributor_count = contributors.len();
+    let truncated = contributor_count > GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS;
+    let target_domain_complete = target_domain_evidence_complete(raw, animations);
     let mut candidate_paths = BTreeMap::<u64, BTreeSet<Vec<u64>>>::new();
     for candidate in raw.path_candidates() {
         if let Some(target) = candidate.target_node_index() {
@@ -2222,6 +2224,17 @@ fn project_targets(
         load_animations,
         pointer_width,
     );
+    let collision_index = if base_reasons.is_empty() {
+        let contributing_nodes = contributors.keys().copied().collect::<BTreeSet<_>>();
+        Some(build_candidate_collision_index(
+            &candidate_paths,
+            &contributing_nodes,
+            &nodes,
+            pointer_width.expect("complete target prerequisites include pointer width"),
+        )?)
+    } else {
+        None
+    };
     let mut targets = Vec::with_capacity(
         contributors
             .len()
@@ -2258,20 +2271,8 @@ fn project_targets(
                         .ok_or(GltfAddressabilityV2Error::InventoryBindingMismatch)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let path = segments.join("/");
             let width = pointer_width.expect("width is present without base reason");
-            match bevy_animation_target_id_v1(segments.iter().map(String::as_str), width) {
-                Ok(uuid) => GltfAddressabilityProjectionV2::Available {
-                    value: GltfAddressabilityTargetValueV2 {
-                        segments,
-                        path,
-                        uuid,
-                    },
-                },
-                Err(_) => GltfAddressabilityProjectionV2::unavailable(vec![
-                    GltfAddressabilityUnavailableReasonV2::PathBoundsExceeded,
-                ]),
-            }
+            project_target_segments(segments, width)
         } else {
             GltfAddressabilityProjectionV2::unavailable(reasons)
         };
@@ -2286,17 +2287,16 @@ fn project_targets(
         // tail is omitted, no retained path/UUID is exact even if it is unique
         // within the retained prefix.
         for target in &mut targets {
-            target.projection = GltfAddressabilityProjectionV2::unavailable(vec![
-                GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated,
-            ]);
+            let mut reasons = vec![GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated];
+            if !target_domain_complete {
+                reasons.push(GltfAddressabilityUnavailableReasonV2::RawSourceIncomplete);
+            }
+            target.projection = GltfAddressabilityProjectionV2::unavailable(reasons);
         }
-    } else if targets.iter().any(|target| {
-        matches!(
-            &target.projection,
-            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
-                if reasons.contains(&GltfAddressabilityUnavailableReasonV2::PathBoundsExceeded)
-        )
-    }) {
+    } else if collision_index
+        .as_ref()
+        .is_some_and(|index| !index.complete)
+    {
         // A path outside this contract's hashing bound can still participate
         // in Bevy's global UUID domain, so collision freedom is unavailable
         // for every otherwise exact retained target.
@@ -2311,16 +2311,59 @@ fn project_targets(
             }
         }
     } else {
-        invalidate_target_collisions(&mut targets);
+        if let Some(index) = &collision_index {
+            invalidate_target_collisions_with_index(&mut targets, index);
+        }
     }
-    let coverage = if truncated {
-        GltfAddressabilityProjectionV2::unavailable(vec![
-            GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated,
-        ])
-    } else {
-        GltfAddressabilityProjectionV2::Available { value: () }
-    };
+    let coverage = target_coverage_projection(target_domain_complete, contributor_count);
     Ok((coverage, targets))
+}
+
+fn project_target_segments(
+    segments: Vec<String>,
+    pointer_width: TargetPointerWidth,
+) -> GltfAddressabilityProjectionV2<GltfAddressabilityTargetValueV2> {
+    let path = segments.join("/");
+    match bevy_animation_target_id_v1(segments.iter().map(String::as_str), pointer_width) {
+        Ok(uuid) => GltfAddressabilityProjectionV2::Available {
+            value: GltfAddressabilityTargetValueV2 {
+                segments,
+                path,
+                uuid,
+            },
+        },
+        Err(_) => GltfAddressabilityProjectionV2::unavailable(vec![
+            GltfAddressabilityUnavailableReasonV2::PathBoundsExceeded,
+        ]),
+    }
+}
+
+fn target_coverage_projection(
+    target_domain_complete: bool,
+    contributor_count: usize,
+) -> GltfAddressabilityProjectionV2<()> {
+    let mut coverage_reasons = Vec::new();
+    if !target_domain_complete {
+        coverage_reasons.push(GltfAddressabilityUnavailableReasonV2::RawSourceIncomplete);
+    }
+    if contributor_count > GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS {
+        coverage_reasons.push(GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated);
+    }
+    if coverage_reasons.is_empty() {
+        GltfAddressabilityProjectionV2::Available { value: () }
+    } else {
+        GltfAddressabilityProjectionV2::unavailable(coverage_reasons)
+    }
+}
+
+fn target_domain_evidence_complete(
+    raw: &RawGltfAddressabilityInventoryV1,
+    animations: &GltfAnimationAddressabilityInventoryV1,
+) -> bool {
+    raw.node_coverage().is_complete()
+        && raw.scene_coverage().is_complete()
+        && raw.path_candidate_coverage().is_complete()
+        && !animation_inventory_incomplete(animations)
 }
 
 fn target_base_reasons(
@@ -2362,31 +2405,105 @@ fn target_base_reasons(
     reasons
 }
 
-fn invalidate_target_collisions(targets: &mut [GltfAddressabilityTargetV2]) {
-    let mut paths = BTreeMap::<Vec<String>, Vec<usize>>::new();
-    let mut uuids = BTreeMap::<String, Vec<usize>>::new();
-    for (index, target) in targets.iter().enumerate() {
-        if let GltfAddressabilityProjectionV2::Available { value } = &target.projection {
-            paths.entry(value.segments.clone()).or_default().push(index);
-            uuids.entry(value.uuid.clone()).or_default().push(index);
+struct CandidateCollisionIndexV2 {
+    paths: BTreeMap<Vec<String>, BTreeSet<u64>>,
+    uuids: BTreeMap<String, BTreeSet<u64>>,
+    complete: bool,
+}
+
+fn build_candidate_collision_index(
+    candidate_paths: &BTreeMap<u64, BTreeSet<Vec<u64>>>,
+    contributing_nodes: &BTreeSet<u64>,
+    nodes: &BTreeMap<u64, &animsmith_core::RawGltfNodeRowV1>,
+    pointer_width: TargetPointerWidth,
+) -> Result<CandidateCollisionIndexV2, GltfAddressabilityV2Error> {
+    let mut index = CandidateCollisionIndexV2 {
+        paths: BTreeMap::new(),
+        uuids: BTreeMap::new(),
+        complete: true,
+    };
+    for source_node_index in contributing_nodes {
+        let Some(paths) = candidate_paths.get(source_node_index) else {
+            continue;
+        };
+        for node_path in paths {
+            let segments = node_path
+                .iter()
+                .map(|node_index| {
+                    nodes
+                        .get(node_index)
+                        .map(|node| {
+                            node.name()
+                                .map_or_else(|| format!("GltfNode{node_index}"), str::to_owned)
+                        })
+                        .ok_or(GltfAddressabilityV2Error::InventoryBindingMismatch)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            match bevy_animation_target_id_v1(segments.iter().map(String::as_str), pointer_width) {
+                Ok(uuid) => {
+                    index
+                        .paths
+                        .entry(segments)
+                        .or_default()
+                        .insert(*source_node_index);
+                    index
+                        .uuids
+                        .entry(uuid)
+                        .or_default()
+                        .insert(*source_node_index);
+                }
+                Err(_) => index.complete = false,
+            }
         }
     }
-    let duplicate_paths = paths
-        .into_values()
-        .filter(|indices| indices.len() > 1)
-        .flatten()
-        .collect::<BTreeSet<_>>();
-    let uuid_collisions = uuids
-        .into_values()
-        .filter(|indices| indices.len() > 1)
-        .flatten()
-        .collect::<BTreeSet<_>>();
-    for (index, target) in targets.iter_mut().enumerate() {
+    Ok(index)
+}
+
+#[cfg(test)]
+fn invalidate_target_collisions(targets: &mut [GltfAddressabilityTargetV2]) {
+    let mut index = CandidateCollisionIndexV2 {
+        paths: BTreeMap::new(),
+        uuids: BTreeMap::new(),
+        complete: true,
+    };
+    for target in targets.iter() {
+        if let GltfAddressabilityProjectionV2::Available { value } = &target.projection {
+            index
+                .paths
+                .entry(value.segments.clone())
+                .or_default()
+                .insert(target.source_node_index);
+            index
+                .uuids
+                .entry(value.uuid.clone())
+                .or_default()
+                .insert(target.source_node_index);
+        }
+    }
+    invalidate_target_collisions_with_index(targets, &index);
+}
+
+fn invalidate_target_collisions_with_index(
+    targets: &mut [GltfAddressabilityTargetV2],
+    index: &CandidateCollisionIndexV2,
+) {
+    for target in targets.iter_mut() {
+        let GltfAddressabilityProjectionV2::Available { value } = &target.projection else {
+            continue;
+        };
         let mut reasons = Vec::new();
-        if duplicate_paths.contains(&index) {
+        if index
+            .paths
+            .get(&value.segments)
+            .is_some_and(|owners| owners.len() > 1)
+        {
             reasons.push(GltfAddressabilityUnavailableReasonV2::DuplicateFullPath);
         }
-        if uuid_collisions.contains(&index) {
+        if index
+            .uuids
+            .get(&value.uuid)
+            .is_some_and(|owners| owners.len() > 1)
+        {
             reasons.push(GltfAddressabilityUnavailableReasonV2::TargetIdCollision);
         }
         if !reasons.is_empty() {
@@ -2429,11 +2546,13 @@ pub enum GltfAddressabilityV2Error {
 mod tests {
     use super::*;
     use animsmith_core::{
-        DependencyClosureBuilderV1, Document, RawGltfAddressabilityCoverageV1,
+        Clip, DependencyClosureBuilderV1, Document, RawGltfAddressabilityCoverageV1,
         RawGltfAddressabilityInventoryInputV1, RawGltfInverseBindMatricesObservationV1,
         RawGltfNodeRowV1, RawGltfScenePathCandidateRowV1, RawGltfSceneRowV1,
         RawGltfSkinAttachmentRowV1, RawGltfSkinRowV1, RawSourceFactsBuilderV1, SourceFactDomainV1,
-        SourceFormatV1, ToolSource,
+        SourceFactSetV1, SourceFormatV1, SourceLoaderDispositionV1, SourceObservationV1,
+        SourceProvenanceV1, SourceTargetKindV1, SourceTargetV1, SourceUnavailableReasonV1,
+        ToolSource,
     };
     use std::io::Cursor;
 
@@ -2451,6 +2570,117 @@ mod tests {
         facts
             .finish_with_dependency_closure(Document::default(), closure)
             .unwrap()
+    }
+
+    fn loaded_source_with_targets(
+        target_node_indices: impl IntoIterator<Item = u64>,
+        channels_complete: bool,
+    ) -> LoadedSource {
+        let primary = InputIdentity::from_bytes(b"rich-addressability-targets");
+        let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::GltfJson, primary.clone());
+        let channels = target_node_indices
+            .into_iter()
+            .enumerate()
+            .map(|(channel_index, target_node_index)| {
+                animsmith_core::SourceChannelFactV1::new(
+                    channel_index,
+                    SourceTargetV1::new(SourceTargetKindV1::Node, target_node_index),
+                    animsmith_core::SourceChannelPropertyV1::Translation,
+                    animsmith_core::SourceComponentMaskV1::new(true, true, true),
+                    SourceObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+                    SourceLoaderDispositionV1::Preserved,
+                    SourceProvenanceV1::format_defined(),
+                )
+                .with_accessors(channel_index * 2, channel_index * 2 + 1)
+            })
+            .collect::<Vec<_>>();
+        let channel_set = if channels_complete {
+            SourceFactSetV1::complete(channels)
+        } else {
+            SourceFactSetV1::partial(
+                channels,
+                SourceUnavailableReasonV1::ProjectionBudgetExceeded,
+            )
+        };
+        assert!(facts.push_clip(animsmith_core::SourceClipFactV1::new(
+            0,
+            SourceObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+            SourceObservationV1::observed(
+                0,
+                SourceProvenanceV1::format_defined(),
+                SourceLoaderDispositionV1::Normalized,
+            ),
+            SourceObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+            SourceObservationV1::proven_absent(SourceProvenanceV1::format_defined()),
+            channel_set,
+        )));
+        facts.mark_complete(SourceFactDomainV1::Clips);
+        facts.mark_complete(SourceFactDomainV1::Constructs);
+        facts.mark_complete(SourceFactDomainV1::Resources);
+        let closure = DependencyClosureBuilderV1::new(
+            primary,
+            facts.resource_coverage(),
+            facts.resource_rows().len(),
+        )
+        .finish()
+        .unwrap();
+        facts
+            .finish_with_dependency_closure(
+                Document {
+                    clips: vec![Clip {
+                        name: "clip-0".into(),
+                        duration_s: 0.0,
+                        tracks: Vec::new(),
+                    }],
+                    ..Document::default()
+                },
+                closure,
+            )
+            .unwrap()
+    }
+
+    fn raw_for_graph(
+        source: &LoadedSource,
+        scenes: Vec<RawGltfSceneRowV1>,
+        scene_coverage: RawGltfAddressabilityCoverageV1,
+        nodes: Vec<RawGltfNodeRowV1>,
+        node_coverage: RawGltfAddressabilityCoverageV1,
+        path_candidates: Vec<RawGltfScenePathCandidateRowV1>,
+        path_coverage: RawGltfAddressabilityCoverageV1,
+    ) -> RawGltfAddressabilityInventoryV1 {
+        RawGltfAddressabilityInventoryV1::new(
+            source.source_facts().primary_identity().clone(),
+            source.dependency_closure().clone(),
+            RawGltfAddressabilityInventoryInputV1 {
+                default_scene: RawGltfDefaultSceneObservationV1::Absent,
+                scene_coverage,
+                scenes,
+                node_coverage,
+                nodes,
+                skin_coverage: RawGltfAddressabilityCoverageV1::Complete,
+                skins: Vec::new(),
+                attachment_coverage: RawGltfAddressabilityCoverageV1::Complete,
+                attachments: Vec::new(),
+                path_candidate_coverage: path_coverage,
+                path_candidates,
+            },
+        )
+        .unwrap()
+    }
+
+    fn simple_target_raw(
+        source: &LoadedSource,
+        target_name: Option<String>,
+    ) -> RawGltfAddressabilityInventoryV1 {
+        raw_for_graph(
+            source,
+            vec![RawGltfSceneRowV1::new(0, None, vec![0])],
+            RawGltfAddressabilityCoverageV1::Complete,
+            vec![RawGltfNodeRowV1::new(0, target_name, None, Vec::new())],
+            RawGltfAddressabilityCoverageV1::Complete,
+            vec![RawGltfScenePathCandidateRowV1::new(0, 0, vec![0])],
+            RawGltfAddressabilityCoverageV1::Complete,
+        )
     }
 
     fn analytic_raw(source: &LoadedSource) -> RawGltfAddressabilityInventoryV1 {
@@ -2570,6 +2800,53 @@ mod tests {
         assert!(matches!(
             bevy_animation_target_id_v1([over_segment.as_str()], TargetPointerWidth::Bits64),
             Err(BevyAnimationTargetIdError::SegmentTooLong { .. })
+        ));
+
+        let at_path_limit = [
+            "a".repeat(1024),
+            "b".repeat(1024),
+            "c".repeat(1024),
+            "d".repeat(1021),
+        ];
+        assert!(
+            bevy_animation_target_id_v1(
+                at_path_limit.iter().map(String::as_str),
+                TargetPointerWidth::Bits64,
+            )
+            .is_ok()
+        );
+        let over_path_limit = [
+            "a".repeat(1024),
+            "b".repeat(1024),
+            "c".repeat(1024),
+            "d".repeat(1022),
+        ];
+        assert!(matches!(
+            bevy_animation_target_id_v1(
+                over_path_limit.iter().map(String::as_str),
+                TargetPointerWidth::Bits64,
+            ),
+            Err(BevyAnimationTargetIdError::PathTooLong {
+                found: 4097,
+                limit: 4096
+            })
+        ));
+        assert!(
+            bevy_animation_target_id_v1(
+                std::iter::repeat_n("", GLTF_ADDRESSABILITY_V2_MAX_PATH_SEGMENTS),
+                TargetPointerWidth::Bits64,
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            bevy_animation_target_id_v1(
+                std::iter::repeat_n("", GLTF_ADDRESSABILITY_V2_MAX_PATH_SEGMENTS + 1),
+                TargetPointerWidth::Bits64,
+            ),
+            Err(BevyAnimationTargetIdError::TooManySegments {
+                found: 257,
+                limit: 256
+            })
         ));
     }
 
@@ -2692,6 +2969,111 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_target_evidence_never_proves_complete_empty_or_prefix_coverage() {
+        for targets in [Vec::new(), vec![0]] {
+            let source = loaded_source_with_targets(targets, false);
+            let raw = if source.source_facts().clips().rows()[0]
+                .channels()
+                .rows()
+                .is_empty()
+            {
+                raw_for_graph(
+                    &source,
+                    Vec::new(),
+                    RawGltfAddressabilityCoverageV1::Complete,
+                    Vec::new(),
+                    RawGltfAddressabilityCoverageV1::Complete,
+                    Vec::new(),
+                    RawGltfAddressabilityCoverageV1::Complete,
+                )
+            } else {
+                simple_target_raw(&source, Some("target".into()))
+            };
+            let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+            let projection = BevyGltfAddressabilityProjectionV2::from_inventories(
+                &raw,
+                &animations,
+                true,
+                true,
+                Some(TargetPointerWidth::Bits64),
+            )
+            .unwrap();
+            assert!(matches!(
+                projection.target_coverage(),
+                GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                    if reasons == &[GltfAddressabilityUnavailableReasonV2::RawSourceIncomplete]
+            ));
+        }
+
+        assert!(matches!(
+            target_coverage_projection(true, GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS),
+            GltfAddressabilityProjectionV2::Available { .. }
+        ));
+        assert!(matches!(
+            target_coverage_projection(true, GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS + 1),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons == &[GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated]
+        ));
+        assert!(matches!(
+            target_coverage_projection(false, GLTF_ADDRESSABILITY_V2_MAX_DOMAIN_ROWS + 1),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons == &[
+                    GltfAddressabilityUnavailableReasonV2::RawSourceIncomplete,
+                    GltfAddressabilityUnavailableReasonV2::TargetDomainTruncated,
+                ]
+        ));
+    }
+
+    #[test]
+    fn feature_and_loader_settings_are_independently_required_for_targets() {
+        let source = loaded_source_with_targets([0], true);
+        let raw = simple_target_raw(&source, Some("target".into()));
+        let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+        for (feature, load, expected) in [
+            (
+                false,
+                true,
+                GltfAddressabilityUnavailableReasonV2::BevyAnimationFeatureDisabled,
+            ),
+            (
+                true,
+                false,
+                GltfAddressabilityUnavailableReasonV2::LoadAnimationsDisabled,
+            ),
+        ] {
+            let projection = BevyGltfAddressabilityProjectionV2::from_inventories(
+                &raw,
+                &animations,
+                feature,
+                load,
+                Some(TargetPointerWidth::Bits64),
+            )
+            .unwrap();
+            assert!(matches!(
+                projection.targets()[0].projection(),
+                GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                    if reasons.contains(&expected)
+            ));
+        }
+    }
+
+    #[test]
+    fn overlong_runtime_path_maps_to_typed_unavailable_after_the_exact_boundary() {
+        let segments = vec![
+            "a".repeat(1024),
+            "b".repeat(1024),
+            "c".repeat(1024),
+            "d".repeat(1022),
+        ];
+        let projection = project_target_segments(segments, TargetPointerWidth::Bits64);
+        assert!(matches!(
+            projection,
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons == &[GltfAddressabilityUnavailableReasonV2::PathBoundsExceeded]
+        ));
+    }
+
+    #[test]
     fn slash_joined_display_paths_do_not_alias_segment_vectors() {
         let target = |source_node_index, segments: Vec<&str>, width| {
             let owned = segments
@@ -2722,6 +3104,196 @@ mod tests {
             target.projection(),
             GltfAddressabilityProjectionV2::Available { .. }
         )));
+    }
+
+    #[test]
+    fn multi_path_candidates_participate_in_global_collision_analysis() {
+        let source = loaded_source_with_targets([1, 3], true);
+        let raw = raw_for_graph(
+            &source,
+            vec![
+                RawGltfSceneRowV1::new(0, None, vec![0]),
+                RawGltfSceneRowV1::new(1, None, vec![1]),
+                RawGltfSceneRowV1::new(2, None, vec![2]),
+            ],
+            RawGltfAddressabilityCoverageV1::Complete,
+            vec![
+                RawGltfNodeRowV1::new(0, Some("a".into()), None, vec![1]),
+                RawGltfNodeRowV1::new(1, Some("b".into()), Some(0), Vec::new()),
+                RawGltfNodeRowV1::new(2, Some("a".into()), None, vec![3]),
+                RawGltfNodeRowV1::new(3, Some("b".into()), Some(2), Vec::new()),
+            ],
+            RawGltfAddressabilityCoverageV1::Complete,
+            vec![
+                RawGltfScenePathCandidateRowV1::new(0, 0, vec![0]),
+                RawGltfScenePathCandidateRowV1::new(1, 0, vec![0, 1]),
+                RawGltfScenePathCandidateRowV1::new(2, 1, vec![1]),
+                RawGltfScenePathCandidateRowV1::new(3, 2, vec![2]),
+                RawGltfScenePathCandidateRowV1::new(4, 2, vec![2, 3]),
+            ],
+            RawGltfAddressabilityCoverageV1::Complete,
+        );
+        let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+        let projection = BevyGltfAddressabilityProjectionV2::from_inventories(
+            &raw,
+            &animations,
+            true,
+            true,
+            Some(TargetPointerWidth::Bits64),
+        )
+        .unwrap();
+        assert!(matches!(
+            projection.targets()[0].projection(),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons.contains(&GltfAddressabilityUnavailableReasonV2::MultipleCandidatePaths)
+        ));
+        assert!(matches!(
+            projection.targets()[1].projection(),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons.contains(&GltfAddressabilityUnavailableReasonV2::DuplicateFullPath)
+                    && reasons.contains(&GltfAddressabilityUnavailableReasonV2::TargetIdCollision)
+        ));
+    }
+
+    #[test]
+    fn target_id_collision_helper_invalidates_distinct_paths() {
+        let mut targets = vec![
+            GltfAddressabilityTargetV2 {
+                source_node_index: 0,
+                contributing_channels: Vec::new(),
+                projection: GltfAddressabilityProjectionV2::Available {
+                    value: GltfAddressabilityTargetValueV2 {
+                        segments: vec!["left".into()],
+                        path: "left".into(),
+                        uuid: "00000000-0000-5000-8000-000000000000".into(),
+                    },
+                },
+            },
+            GltfAddressabilityTargetV2 {
+                source_node_index: 1,
+                contributing_channels: Vec::new(),
+                projection: GltfAddressabilityProjectionV2::Available {
+                    value: GltfAddressabilityTargetValueV2 {
+                        segments: vec!["right".into()],
+                        path: "right".into(),
+                        uuid: "00000000-0000-5000-8000-000000000000".into(),
+                    },
+                },
+            },
+        ];
+        invalidate_target_collisions(&mut targets);
+        assert!(targets.iter().all(|target| matches!(
+            target.projection(),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons == &[GltfAddressabilityUnavailableReasonV2::TargetIdCollision]
+        )));
+    }
+
+    #[test]
+    fn named_map_incomplete_and_projection_reference_bounds_are_typed() {
+        let source = empty_loaded_source();
+        let raw = raw_for_graph(
+            &source,
+            vec![RawGltfSceneRowV1::new(
+                0,
+                Some("retained".into()),
+                Vec::new(),
+            )],
+            RawGltfAddressabilityCoverageV1::budget_exceeded(),
+            Vec::new(),
+            RawGltfAddressabilityCoverageV1::Complete,
+            Vec::new(),
+            RawGltfAddressabilityCoverageV1::Complete,
+        );
+        let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+        let projection = BevyGltfAddressabilityProjectionV2::from_inventories(
+            &raw,
+            &animations,
+            true,
+            true,
+            Some(TargetPointerWidth::Bits64),
+        )
+        .unwrap();
+        assert!(matches!(
+            projection.named_maps()[0].winners(),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons == &[GltfAddressabilityUnavailableReasonV2::NamedMapIncomplete]
+        ));
+
+        let bounded_projection = |channel_count| BevyGltfAddressabilityProjectionV2 {
+            scenes: Vec::new(),
+            default_scene_route: GltfAddressabilityProjectionV2::ProvenAbsent,
+            skins: Vec::new(),
+            named_maps: Vec::new(),
+            target_coverage: GltfAddressabilityProjectionV2::Available { value: () },
+            targets: vec![GltfAddressabilityTargetV2 {
+                source_node_index: 0,
+                contributing_channels: vec![
+                    GltfAddressabilityTargetChannelV2 {
+                        source_animation_index: 0,
+                        source_channel_index: 0,
+                    };
+                    channel_count
+                ],
+                projection: GltfAddressabilityProjectionV2::Available {
+                    value: GltfAddressabilityTargetValueV2 {
+                        segments: vec!["target".into()],
+                        path: "target".into(),
+                        uuid: "00000000-0000-5000-8000-000000000000".into(),
+                    },
+                },
+            }],
+        };
+        let mut exact = bounded_projection(GLTF_ADDRESSABILITY_V2_MAX_STRUCTURAL_REFERENCES - 1);
+        normalize_projection_bounds(&mut exact);
+        assert!(matches!(
+            exact.targets()[0].projection(),
+            GltfAddressabilityProjectionV2::Available { .. }
+        ));
+        let mut over = bounded_projection(GLTF_ADDRESSABILITY_V2_MAX_STRUCTURAL_REFERENCES);
+        normalize_projection_bounds(&mut over);
+        assert!(matches!(
+            over.target_coverage(),
+            GltfAddressabilityProjectionV2::RequiredUnavailable { reasons }
+                if reasons == &[GltfAddressabilityUnavailableReasonV2::ProjectionBoundsExceeded]
+        ));
+    }
+
+    #[test]
+    fn empty_authored_node_name_is_an_exact_bevy_segment_and_round_trips() {
+        let source = loaded_source_with_targets([0], true);
+        let raw = simple_target_raw(&source, Some(String::new()));
+        let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
+        let projection = BevyGltfAddressabilityProjectionV2::from_inventories(
+            &raw,
+            &animations,
+            true,
+            true,
+            Some(TargetPointerWidth::Bits64),
+        )
+        .unwrap();
+        let target = projection.targets()[0].projection();
+        assert!(matches!(
+            target,
+            GltfAddressabilityProjectionV2::Available { value }
+                if value.segments() == &[String::new()] && value.path().is_empty()
+        ));
+        let encoded = serde_json::to_vec(target).unwrap();
+        let decoded: GltfAddressabilityProjectionV2<GltfAddressabilityTargetValueV2> =
+            serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(&decoded, target);
+        let mut non_strict = serde_json::to_value(target).unwrap();
+        non_strict["value"]["invented"] = serde_json::json!(true);
+        assert!(
+            serde_json::from_value::<
+                GltfAddressabilityProjectionV2<GltfAddressabilityTargetValueV2>,
+            >(non_strict)
+            .is_err()
+        );
+        assert_ne!(
+            bevy_animation_target_id_v1([""], TargetPointerWidth::Bits64).unwrap(),
+            bevy_animation_target_id_v1(std::iter::empty(), TargetPointerWidth::Bits64).unwrap()
+        );
     }
 
     #[test]

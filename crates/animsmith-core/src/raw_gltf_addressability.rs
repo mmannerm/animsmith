@@ -23,6 +23,10 @@ pub const RAW_GLTF_ADDRESSABILITY_V1_MAX_ROWS_PER_DOMAIN: usize = 4_096;
 pub const RAW_GLTF_ADDRESSABILITY_V1_MAX_STRUCTURAL_REFERENCES: usize = 65_536;
 /// Maximum UTF-8 bytes in one retained source name.
 pub const RAW_GLTF_ADDRESSABILITY_V1_MAX_NAME_BYTES: usize = 1_024;
+/// Maximum node-index segments in one retained scene path candidate.
+pub const RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS: usize = 256;
+/// Maximum UTF-8 bytes in one slash-delimited authored-or-fallback path.
+pub const RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_BYTES: usize = 4_096;
 /// Maximum aggregate UTF-8 bytes retained in source names.
 pub const RAW_GLTF_ADDRESSABILITY_V1_MAX_TEXT_BYTES: usize = 1024 * 1024;
 /// Maximum serialized inventory bytes accepted by [`RawGltfAddressabilityInventoryV1::read_from`].
@@ -103,6 +107,20 @@ where
         ));
     }
     Ok(references.values)
+}
+
+fn deserialize_path_segments<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let segments: CappedSequence<u64> =
+        deserialize_capped_sequence(deserializer, RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS)?;
+    if segments.overflowed {
+        return Err(D::Error::custom(
+            "raw glTF addressability path exceeded its segment bound",
+        ));
+    }
+    Ok(segments.values)
 }
 
 /// Terminal reason for incomplete raw glTF projection coverage.
@@ -356,7 +374,7 @@ impl RawGltfSkinAttachmentRowV1 {
 pub struct RawGltfScenePathCandidateRowV1 {
     source_path_candidate_index: u64,
     source_scene_index: u64,
-    #[serde(deserialize_with = "deserialize_structural_references")]
+    #[serde(deserialize_with = "deserialize_path_segments")]
     source_node_indices: Vec<u64>,
 }
 
@@ -681,6 +699,9 @@ impl RawGltfAddressabilityInventoryV1 {
                     domain: "path_candidates",
                 });
             }
+            if row.source_node_indices.len() > RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS {
+                return Err(RawGltfAddressabilityInventoryErrorV1::TooManyPathSegments);
+            }
         }
 
         let mut text_bytes = 0usize;
@@ -700,6 +721,33 @@ impl RawGltfAddressabilityInventoryV1 {
         }
         if text_bytes > RAW_GLTF_ADDRESSABILITY_V1_MAX_TEXT_BYTES {
             return Err(RawGltfAddressabilityInventoryErrorV1::TooMuchText);
+        }
+        for path in &self.path_candidates {
+            let mut projected_bytes = 0usize;
+            let mut observable = true;
+            for (position, &node_index) in path.source_node_indices.iter().enumerate() {
+                let Some(node) = usize::try_from(node_index)
+                    .ok()
+                    .and_then(|index| self.nodes.get(index))
+                else {
+                    observable = false;
+                    break;
+                };
+                if node.source_node_index != node_index {
+                    observable = false;
+                    break;
+                }
+                let segment_bytes = node
+                    .name
+                    .as_ref()
+                    .map_or_else(|| format!("GltfNode{node_index}").len(), String::len);
+                projected_bytes = projected_bytes
+                    .saturating_add(usize::from(position > 0))
+                    .saturating_add(segment_bytes);
+            }
+            if observable && projected_bytes > RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_BYTES {
+                return Err(RawGltfAddressabilityInventoryErrorV1::ProjectedPathTooLong);
+            }
         }
 
         let mut references = usize::from(matches!(
@@ -995,6 +1043,12 @@ pub enum RawGltfAddressabilityInventoryErrorV1 {
     /// Aggregate retained text exceeded the V1 ceiling.
     #[error("raw glTF addressability retained too much text")]
     TooMuchText,
+    /// One retained path exceeded the per-candidate segment ceiling.
+    #[error("raw glTF addressability scene path exceeded its segment bound")]
+    TooManyPathSegments,
+    /// One observable authored-or-fallback path exceeded the UTF-8 byte ceiling.
+    #[error("raw glTF addressability projected scene path exceeded its UTF-8 byte bound")]
+    ProjectedPathTooLong,
     /// Aggregate structural references exceeded the V1 ceiling.
     #[error("raw glTF addressability retained too many structural references")]
     TooManyStructuralReferences,
@@ -1225,6 +1279,119 @@ mod tests {
             RawGltfAddressabilityInventoryV1::new(primary, closure, text_input(over_text_rows),)
                 .unwrap_err(),
             RawGltfAddressabilityInventoryErrorV1::TooMuchText
+        );
+    }
+
+    #[test]
+    fn path_segment_and_projected_byte_bounds_accept_n_and_reject_n_plus_one() {
+        let primary = InputIdentity::from_bytes(b"path-bounds");
+        let closure = DependencyClosureV1::unavailable(primary.clone());
+        let partial = RawGltfAddressabilityCoverageV1::budget_exceeded();
+        let path_input = |segments| RawGltfAddressabilityInventoryInputV1 {
+            default_scene: RawGltfDefaultSceneObservationV1::Absent,
+            scene_coverage: RawGltfAddressabilityCoverageV1::Unavailable {
+                reason: RawGltfAddressabilityCoverageReasonV1::ParserUnavailable,
+            },
+            scenes: Vec::new(),
+            node_coverage: RawGltfAddressabilityCoverageV1::Unavailable {
+                reason: RawGltfAddressabilityCoverageReasonV1::ParserUnavailable,
+            },
+            nodes: Vec::new(),
+            skin_coverage: RawGltfAddressabilityCoverageV1::Complete,
+            skins: Vec::new(),
+            attachment_coverage: RawGltfAddressabilityCoverageV1::Complete,
+            attachments: Vec::new(),
+            path_candidate_coverage: partial,
+            path_candidates: vec![RawGltfScenePathCandidateRowV1::new(0, 0, segments)],
+        };
+        let exact_segments = (0..RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS as u64).collect();
+        let exact = RawGltfAddressabilityInventoryV1::new(
+            primary.clone(),
+            closure.clone(),
+            path_input(exact_segments),
+        )
+        .expect("the exact path-segment ceiling is valid");
+        let mut serialized = serde_json::to_value(&exact).unwrap();
+        serialized["path_candidates"][0]["source_node_indices"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!(
+                RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS
+            ));
+        assert!(
+            serde_json::from_value::<RawGltfAddressabilityInventoryV1>(serialized).is_err(),
+            "strict readback must reject the 257th segment"
+        );
+        assert_eq!(
+            RawGltfAddressabilityInventoryV1::new(
+                primary.clone(),
+                closure.clone(),
+                path_input((0..=RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS as u64).collect()),
+            )
+            .unwrap_err(),
+            RawGltfAddressabilityInventoryErrorV1::TooManyPathSegments
+        );
+
+        let chain_input = |names: Vec<String>| {
+            let count = names.len();
+            RawGltfAddressabilityInventoryInputV1 {
+                default_scene: RawGltfDefaultSceneObservationV1::Selected {
+                    source_scene_index: 0,
+                },
+                scene_coverage: RawGltfAddressabilityCoverageV1::Complete,
+                scenes: vec![RawGltfSceneRowV1::new(0, None, vec![0])],
+                node_coverage: RawGltfAddressabilityCoverageV1::Complete,
+                nodes: names
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, name)| {
+                        RawGltfNodeRowV1::new(
+                            index as u64,
+                            Some(name),
+                            index.checked_sub(1).map(|parent| parent as u64),
+                            (index + 1 < count)
+                                .then_some(vec![(index + 1) as u64])
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect(),
+                skin_coverage: RawGltfAddressabilityCoverageV1::Complete,
+                skins: Vec::new(),
+                attachment_coverage: RawGltfAddressabilityCoverageV1::Complete,
+                attachments: Vec::new(),
+                path_candidate_coverage: RawGltfAddressabilityCoverageV1::Complete,
+                path_candidates: (0..count)
+                    .map(|index| {
+                        RawGltfScenePathCandidateRowV1::new(
+                            index as u64,
+                            0,
+                            (0..=index as u64).collect(),
+                        )
+                    })
+                    .collect(),
+            }
+        };
+        let exact_names = vec![
+            "a".repeat(1_023),
+            "b".repeat(1_023),
+            "c".repeat(1_023),
+            "d".repeat(1_024),
+        ];
+        assert!(
+            RawGltfAddressabilityInventoryV1::new(
+                primary.clone(),
+                closure.clone(),
+                chain_input(exact_names.clone()),
+            )
+            .is_ok(),
+            "4,096 projected bytes are valid"
+        );
+        let mut over_names = exact_names;
+        over_names.push(String::new());
+        assert_eq!(
+            RawGltfAddressabilityInventoryV1::new(primary, closure, chain_input(over_names),)
+                .unwrap_err(),
+            RawGltfAddressabilityInventoryErrorV1::ProjectedPathTooLong
         );
     }
 

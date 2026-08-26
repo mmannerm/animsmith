@@ -1066,6 +1066,7 @@ fn write_track_support_gltf(path: &std::path::Path, channels_per_animation: &[us
 #[derive(Clone, Copy)]
 enum RichAddressabilityFixture {
     Reachable,
+    EmptyName,
     ZeroScenes,
     DuplicatePath,
     Unreachable,
@@ -1073,6 +1074,7 @@ enum RichAddressabilityFixture {
 }
 
 fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressabilityFixture) {
+    let empty_name = matches!(fixture, RichAddressabilityFixture::EmptyName);
     let target_name = if matches!(fixture, RichAddressabilityFixture::HostileName) {
         HOSTILE_PRESENTATION_TEXT
     } else if matches!(fixture, RichAddressabilityFixture::DuplicatePath) {
@@ -1084,7 +1086,7 @@ fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressab
     let zero_scenes = matches!(fixture, RichAddressabilityFixture::ZeroScenes);
     let unreachable = matches!(fixture, RichAddressabilityFixture::Unreachable);
     let nodes = vec![
-        json!({ "name": "root", "children": if duplicate { vec![1, 2] } else { vec![1] }, "skin": 0 }),
+        json!({ "name": if empty_name { "" } else { "root" }, "children": if duplicate { vec![1, 2] } else { vec![1] }, "skin": 0 }),
         json!({ "name": target_name }),
         json!({ "name": if duplicate { target_name } else { "detached" } }),
     ];
@@ -1098,7 +1100,7 @@ fn write_rich_addressability_gltf(path: &std::path::Path, fixture: RichAddressab
     } else {
         vec![json!({
             "sampler": 0,
-            "target": { "node": if unreachable { 2 } else { 1 }, "path": "translation" }
+            "target": { "node": if empty_name { 0 } else if unreachable { 2 } else { 1 }, "path": "translation" }
         })]
     };
     let animations = if channels.is_empty() {
@@ -3120,6 +3122,32 @@ fn generate_addressability_v2_target_width_controls_uuid_and_missing_width_exits
 }
 
 #[test]
+fn generate_addressability_v2_preserves_empty_authored_segment_under_public_schema() {
+    let dir = unique_temp_dir("generate-addressability-v2-empty-name");
+    let input = dir.path().join("empty-name.gltf");
+    write_rich_addressability_gltf(&input, RichAddressabilityFixture::EmptyName);
+    let config = write_bevy_v3_track_config(dir.path(), "empty-name", true, Some(true));
+
+    let output = generate_rich_addressability(&input, &config, Some("64"), None);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("canonical V2 JSON");
+    let schema_errors = addressability_v2_validator()
+        .iter_errors(&report)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        schema_errors.is_empty(),
+        "empty authored path segment must satisfy the public schema:\n{}",
+        schema_errors.join("\n")
+    );
+    let value = &report["bevy"]["projection"]["targets"][0]["projection"]["value"];
+    assert_eq!(value["segments"], json!([""]));
+    assert_eq!(value["path"], "");
+    animsmith_engine::GltfAddressabilityV2::read_from(output.stdout.as_slice())
+        .expect("strict V2 readback accepts the empty authored segment");
+}
+
+#[test]
 fn generate_addressability_v2_zero_scenes_never_invents_scene_zero() {
     let dir = unique_temp_dir("generate-addressability-v2-zero-scenes");
     let input = dir.path().join("zero-scenes.gltf");
@@ -4913,7 +4941,20 @@ fn help_matches_compiled_feature_set() {
         out.contains("[possible values: json, text, markdown]"),
         "{out}"
     );
-    assert!(out.contains("does not claim runtime loading"), "{out}");
+    assert!(
+        out.contains("Without the exact Bevy revision-3 profile"),
+        "{out}"
+    );
+    assert!(out.contains("separate V2 rich"), "{out}");
+    assert!(out.contains("bounded named-map projections"), "{out}");
+    assert!(
+        out.contains("--target-pointer-width is required for target UUIDs"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Neither contract claims runtime loading"),
+        "{out}"
+    );
 
     let generate = animsmith()
         .args(["generate", "import-advice", "--help"])

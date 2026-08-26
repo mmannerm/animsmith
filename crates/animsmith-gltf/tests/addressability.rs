@@ -1,8 +1,9 @@
 //! Analytic coverage for immutable same-load raw glTF addressability evidence.
 
 use animsmith_core::{
-    InputIdentity, RawGltfAddressabilityCoverageV1, RawGltfDefaultSceneObservationV1,
-    RawGltfInverseBindMatricesObservationV1,
+    InputIdentity, RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_BYTES,
+    RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS, RawGltfAddressabilityCoverageV1,
+    RawGltfDefaultSceneObservationV1, RawGltfInverseBindMatricesObservationV1,
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -12,6 +13,28 @@ fn load(value: Value) -> animsmith_core::LoadedSource {
     let bytes = serde_json::to_vec(&value).expect("serialize analytic glTF");
     animsmith_gltf::load_source_bytes(Path::new("addressability.gltf"), &bytes)
         .expect("analytic glTF loads")
+}
+
+fn chain(names: impl IntoIterator<Item = String>) -> Value {
+    let names = names.into_iter().collect::<Vec<_>>();
+    let node_count = names.len();
+    let nodes = names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let mut node = json!({ "name": name });
+            if index + 1 < node_count {
+                node["children"] = json!([index + 1]);
+            }
+            node
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "asset": { "version": "2.0" },
+        "nodes": nodes,
+        "scenes": [{ "nodes": [0] }],
+        "scene": 0
+    })
 }
 
 #[test]
@@ -191,6 +214,79 @@ fn per_domain_row_bound_retains_exact_n_and_marks_n_plus_one_partial() {
     assert_eq!(overflow.scenes().len(), 4_096);
     assert_eq!(
         overflow.scene_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+}
+
+#[test]
+fn path_segment_ceiling_accepts_256_and_retains_the_canonical_prefix_at_257() {
+    let exact = load(chain(
+        (0..RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS).map(|index| format!("n{index}")),
+    ));
+    let exact = exact.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(
+        exact.path_candidates().len(),
+        RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS
+    );
+    assert_eq!(
+        exact.path_candidate_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+    assert_eq!(
+        exact
+            .path_candidates()
+            .last()
+            .unwrap()
+            .source_node_indices(),
+        &(0..RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS as u64).collect::<Vec<_>>()
+    );
+
+    let overflow = load(chain(
+        (0..=RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_SEGMENTS).map(|index| format!("n{index}")),
+    ));
+    let overflow = overflow.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(
+        overflow.path_candidates(),
+        exact.path_candidates(),
+        "overflow retains the exact deterministic DFS prefix"
+    );
+    assert_eq!(
+        overflow.path_candidate_coverage(),
+        RawGltfAddressabilityCoverageV1::budget_exceeded()
+    );
+}
+
+#[test]
+fn projected_path_byte_ceiling_accepts_4096_and_stops_before_4097() {
+    let exact_names = vec![
+        "a".repeat(1_023),
+        "b".repeat(1_023),
+        "c".repeat(1_023),
+        "d".repeat(1_024),
+    ];
+    assert_eq!(
+        exact_names.iter().map(String::len).sum::<usize>() + exact_names.len() - 1,
+        RAW_GLTF_ADDRESSABILITY_V1_MAX_PATH_BYTES
+    );
+    let exact = load(chain(exact_names.clone()));
+    let exact = exact.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(exact.path_candidates().len(), exact_names.len());
+    assert_eq!(
+        exact.path_candidate_coverage(),
+        RawGltfAddressabilityCoverageV1::Complete
+    );
+
+    let mut overflow_names = exact_names;
+    overflow_names.push(String::new());
+    let overflow = load(chain(overflow_names));
+    let overflow = overflow.raw_gltf_addressability_inventory().unwrap();
+    assert_eq!(
+        overflow.path_candidates(),
+        exact.path_candidates(),
+        "the first over-byte path is excluded without disturbing its canonical prefix"
+    );
+    assert_eq!(
+        overflow.path_candidate_coverage(),
         RawGltfAddressabilityCoverageV1::budget_exceeded()
     );
 }

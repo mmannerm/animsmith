@@ -190,7 +190,9 @@ reachability, closure, feature/settings, and collision evidence exists.
 
 The report carries an independent `target_coverage` projection alongside the
 retained target rows. It is complete when the unique-target domain is
-exhaustively represented, including an empty domain; it becomes
+exhaustively represented by complete raw node/scene/path and animation/channel
+evidence, including an empty domain; incomplete evidence makes it
+`required_unavailable`. It also becomes
 `required_unavailable` with `target_domain_truncated` when more than 4,096
 targets exist, or with `projection_bounds_exceeded` when a new rich projection
 exceeds its aggregate structural/text budget.
