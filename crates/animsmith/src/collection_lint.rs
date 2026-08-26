@@ -264,10 +264,14 @@ fn execute_source(
         loaded_source.source_facts().format(),
         loaded_source.document(),
     )?;
+    let engine_v4 = config
+        .loaded
+        .resolve_engine_profile_v2_input(loaded_source.source_facts().format())?;
     let loaded = LoadedInput {
         source: loaded_source,
         engine: None,
         engine_v2,
+        engine_v4,
     };
     let dependency_closure =
         SourceDependencyClosureState::from_closure(loaded.dependency_closure(), &input)
@@ -633,13 +637,26 @@ fn prepare_config(resolution: CollectionConfigResolution) -> Result<PreparedConf
             config
                 .validate()
                 .map_err(|_| "collection control error (config-invalid)".to_owned())?;
-            let engine = animsmith_engine::resolve_static(declaration)
-                .map_err(|_| "collection control error (config-engine-invalid)".to_owned())?;
+            let (engine, engine_profile_v2) = match declaration {
+                super::ParsedEngineDeclaration::V1(declaration) => (
+                    animsmith_engine::resolve_static(declaration).map_err(|_| {
+                        "collection control error (config-engine-invalid)".to_owned()
+                    })?,
+                    None,
+                ),
+                super::ParsedEngineDeclaration::V2(declaration) => (
+                    None,
+                    animsmith_engine::resolve_static_v2(declaration).map_err(|_| {
+                        "collection control error (config-engine-invalid)".to_owned()
+                    })?,
+                ),
+            };
             let input = InputIdentity::from_bytes(&bytes);
             Ok(PreparedConfig {
                 loaded: LoadedConfig {
                     config,
                     engine,
+                    engine_profile_v2,
                     transition_families: Some(transition_families),
                     path: Some(PathBuf::from(path.declared())),
                     control_input: Some(path.path().to_path_buf()),

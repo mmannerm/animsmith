@@ -1,8 +1,10 @@
 use crate::{
     AnimationAddressability, BakeOrExtract, ConversionControl, DefaultStatus, EngineProfile,
-    FactState, FactValue, ForwardAxis, Handedness, ImportHandling, LinearUnit,
-    ResolvedClipCoverageV2, ResolvedProfile, ResolvedProfileV2, RootMotionAddressability,
-    SettingApplicability, SettingId, SettingScope, SettingValue, TargetAddressability, UpAxis,
+    EngineProfileV2, FactState, FactValue, ForwardAxis, Handedness, ImportHandling, LinearUnit,
+    ResolvedClipCoverageV2, ResolvedProfile, ResolvedProfileSettingsV2, ResolvedProfileV2,
+    ResolvedSettingOriginV2, RootMotionAddressability, SettingApplicability, SettingDefaultV2,
+    SettingDomainV2, SettingId, SettingIdV2, SettingScope, SettingValue, SettingValueV2,
+    TargetAddressability, UpAxis,
 };
 use animsmith_core::engine_contract::{
     EngineAnimationAddressabilityV1, EngineBakeOrExtractV1, EngineClipSettingsV1,
@@ -14,6 +16,15 @@ use animsmith_core::engine_contract::{
     EngineSettingScopeV1, EngineSettingValueV1, EngineTargetAddressabilityV1, EngineUpAxisV1,
     ResolvedEngineProfileV1, ResolvedEngineSettingsCoverageV2, ResolvedEngineSettingsV1,
     ResolvedEngineSettingsV2, ResolvedEngineSettingsWorkV2,
+};
+use animsmith_core::engine_contract::{
+    EnginePrimarySourceV2 as CorePrimarySourceV2,
+    EngineSettingDescriptorV2 as CoreSettingDescriptorV2,
+    EngineSettingDomainV2 as CoreSettingDomainV2, EngineSettingIdV2 as CoreSettingIdV2,
+    EngineSettingRowV3, EngineSettingValueOriginV3, EngineSettingValueV2 as CoreSettingValueV2,
+    ResolvedEngineProfileV2 as CoreEngineProfileV2,
+    ResolvedEngineSettingsCoverageV2 as CoreSettingsCoverageV2,
+    ResolvedEngineSettingsV3 as CoreSettingsV3, ResolvedEngineSettingsWorkV2 as CoreSettingsWorkV2,
 };
 use animsmith_core::{InputIdentity, SourceFormatV1};
 use std::collections::BTreeMap;
@@ -91,6 +102,102 @@ pub(crate) fn project_resolved_profile_v2(
             work.materialized_clip_rows(),
             work.retained_clip_rows(),
         ),
+    )?;
+    Ok((profile, settings))
+}
+
+/// Project one engine-owned revision-2 profile into the core-owned V2 wire
+/// contract without changing the historical V1 projection.
+pub fn project_engine_profile_v2(
+    profile: &EngineProfileV2,
+) -> Result<CoreEngineProfileV2, EngineContractError> {
+    let selection = profile.selection();
+    CoreEngineProfileV2::new(
+        EngineProfileSelectionV1::new(
+            selection.family(),
+            selection.profile_revision(),
+            selection.engine_version(),
+            selection.importer(),
+        )?,
+        profile.profile_urn(),
+        profile.facts().to_vec(),
+        profile
+            .setting_descriptors()
+            .iter()
+            .map(|descriptor| {
+                CoreSettingDescriptorV2::new(
+                    setting_id_v2(descriptor.id()),
+                    match descriptor.scope() {
+                        SettingScope::Document => EngineSettingScopeV1::Document,
+                        SettingScope::Clip => EngineSettingScopeV1::Clip,
+                    },
+                    match descriptor.domain() {
+                        SettingDomainV2::Boolean => CoreSettingDomainV2::Boolean,
+                        SettingDomainV2::LoadMeshesState | SettingDomainV2::HandlerEnvironment => {
+                            CoreSettingDomainV2::Token
+                        }
+                    },
+                    profile.accepted_inputs().to_vec(),
+                    match descriptor.default() {
+                        SettingDefaultV2::RequiredExplicit => None,
+                        SettingDefaultV2::Verified(value) => Some(setting_value_v2(value)),
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        profile
+            .sources()
+            .iter()
+            .map(|source| {
+                CorePrimarySourceV2::new(
+                    source.id(),
+                    source.target_version(),
+                    source.url(),
+                    source.verified_on(),
+                    source.supported_facts().to_vec(),
+                    source
+                        .supported_settings()
+                        .iter()
+                        .copied()
+                        .map(setting_id_v2)
+                        .collect(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    )
+}
+
+/// Project input-validated revision-2 settings into the core-owned V3
+/// origin-bearing contract.
+pub fn project_resolved_engine_settings_v3(
+    resolved: &ResolvedProfileSettingsV2,
+) -> Result<(CoreEngineProfileV2, CoreSettingsV3), EngineContractError> {
+    let profile = project_engine_profile_v2(resolved.profile())?;
+    let document_settings = resolved
+        .document_settings()
+        .iter()
+        .map(|(id, resolved)| {
+            EngineSettingRowV3::new(
+                setting_id_v2(*id),
+                setting_value_v2(resolved.value()),
+                match resolved.origin() {
+                    ResolvedSettingOriginV2::ExplicitConfig => {
+                        EngineSettingValueOriginV3::ExplicitConfig
+                    }
+                    ResolvedSettingOriginV2::ProfileDefault => {
+                        EngineSettingValueOriginV3::ProfileDefault
+                    }
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let settings = CoreSettingsV3::new(
+        &profile,
+        resolved.source_format(),
+        document_settings,
+        vec![],
+        CoreSettingsCoverageV2::complete(),
+        CoreSettingsWorkV2::new(0, 0, 0),
     )?;
     Ok((profile, settings))
 }
@@ -328,6 +435,33 @@ const fn setting_id(id: SettingId) -> EngineSettingIdV1 {
         SettingId::RootRotation => EngineSettingIdV1::RootRotation,
         SettingId::RootPositionY => EngineSettingIdV1::RootPositionY,
         SettingId::RootPositionXz => EngineSettingIdV1::RootPositionXz,
+    }
+}
+
+const fn setting_id_v2(id: SettingIdV2) -> CoreSettingIdV2 {
+    match id {
+        SettingIdV2::RotateSceneEntity => CoreSettingIdV2::RotateSceneEntity,
+        SettingIdV2::RotateMeshes => CoreSettingIdV2::RotateMeshes,
+        SettingIdV2::LoadMeshes => CoreSettingIdV2::LoadMeshes,
+        SettingIdV2::ExtensionHandlerEnvironment => CoreSettingIdV2::ExtensionHandlerEnvironment,
+        SettingIdV2::BevyAnimationFeature => CoreSettingIdV2::BevyAnimationFeature,
+        SettingIdV2::LoadAnimations => CoreSettingIdV2::LoadAnimations,
+    }
+}
+
+fn setting_value_v2(value: &SettingValueV2) -> CoreSettingValueV2 {
+    match value {
+        SettingValueV2::Boolean(value) => CoreSettingValueV2::Boolean(*value),
+        SettingValueV2::LoadMeshesState(value) => CoreSettingValueV2::Token(
+            match value {
+                crate::BevyLoadMeshesStateV2::Empty => "empty",
+                crate::BevyLoadMeshesStateV2::Nonempty => "nonempty",
+            }
+            .into(),
+        ),
+        SettingValueV2::HandlerEnvironment(value) => {
+            CoreSettingValueV2::Token(value.as_str().into())
+        }
     }
 }
 

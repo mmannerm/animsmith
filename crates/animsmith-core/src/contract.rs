@@ -14,8 +14,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
+use crate::dependency_closure::DependencyClosureCoverageV1;
 use crate::diff::MetricDelta;
-use crate::engine_contract::{EngineFactIdV1, EngineFactStateV1, EngineFactValueV1};
+use crate::engine_contract::{
+    EngineFactIdV1, EngineFactStateV1, EngineFactValueV1, EngineSettingIdV2, EngineSettingValueV2,
+};
 use crate::evaluation::{
     Applicability, CheckEvaluation, CheckEvaluationGapRef, CheckEvaluationValidationInput,
     ConfigurationState, EvaluationScope, EvaluationState, SelectionState,
@@ -37,32 +40,40 @@ use crate::model::{
     SourceSkeletonCoverage,
 };
 use crate::prediction::{
-    EnginePredictionBasisV2, EnginePredictionFacetStateV1, EnginePredictionV1,
+    EngineMachineResultV1, EnginePredictionBasisV2, EnginePredictionBasisV4,
+    EnginePredictionFacetStateV1, EnginePredictionV1, EnginePredictionV4,
     ExactSourceTimingBasisReferenceV1, ExactSourceTimingBindingV1, ExactSourceTimingDomainV1,
     ExactSourceTimingKeyV1, ExactSourceTimingObservationStateWireV1,
     PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE, PREDICTION_V1_MAX_FACETS_PER_FILE,
-    PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE, PredictionContractError, PredictionDecodeError,
+    PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE, PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE,
+    PredictionBasisReferenceV4, PredictionContractError, PredictionDecodeError,
+    PredictionProvenanceV4, PredictionScalarV1, RawSceneAttachmentBasisDomainV1,
+    RawSceneAttachmentBasisReferenceV1, RawSourceBasisReferenceV1, TransformScaleDomainV1,
+    TransformScaleResultV1, TransformScaleSubjectKindV1, UnitMappingResultV1,
     decode_engine_prediction_v1_with_measurement_schema, decode_engine_prediction_v2,
     decode_engine_prediction_v2_with_measurement_schema, decode_engine_prediction_v3,
-    decode_prediction_provenance_v1_with_measurement_schema, decode_prediction_provenance_v2,
-    decode_prediction_provenance_v2_with_measurement_schema, decode_prediction_provenance_v3,
+    decode_engine_prediction_v4, decode_prediction_provenance_v1_with_measurement_schema,
+    decode_prediction_provenance_v2, decode_prediction_provenance_v2_with_measurement_schema,
+    decode_prediction_provenance_v3, decode_prediction_provenance_v4,
     validate_measurement_references_batch, validate_measurement_references_batch_v2,
-    validate_measurement_references_batch_v3,
+    validate_measurement_references_batch_v3, validate_measurement_references_batch_v4,
 };
 use crate::profile::ResolvedRoles;
 use crate::source_facts::SourceFormatV1;
 use crate::{Document, Severity};
 use crate::{
-    EnginePredictionV2, EnginePredictionV3, PredictionBasisReferenceV1, PredictionBasisReferenceV2,
-    PredictionProvenanceV1, PredictionProvenanceV2, PredictionProvenanceV3,
-    PredictionUnavailableReasonV2, RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1,
-    RawSourceSetCoverageStateV1, ResolvedEngineSettingsCoverageStateV2,
+    EnginePredictionV2, EnginePredictionV3, ImporterSubjectCreationV1, InventoryCoverageResultV1,
+    PredictionBasisReferenceV1, PredictionBasisReferenceV2, PredictionInventoryCoverageStateV1,
+    PredictionInventoryDomainV1, PredictionProvenanceV1, PredictionProvenanceV2,
+    PredictionProvenanceV3, PredictionUnavailableReasonV2, RawSceneAttachmentCoverageV1,
+    RawSourceDomainV1, RawSourceFieldIdV1, RawSourceKeyV1, RawSourceSetCoverageStateV1,
+    ResolvedEngineSettingsCoverageStateV2, SourceSkeletonRowKindV1,
 };
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 14;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 15;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:15";
 /// Immutable output-v10 identity retained by V1 dependent contracts.
 pub const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 /// Immutable output-v11 identity retained as historical schema evidence.
@@ -77,6 +88,10 @@ pub const OUTPUT_V12_SCHEMA_VERSION: u32 = 12;
 pub const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 /// Schema version of output-v13.
 pub const OUTPUT_V13_SCHEMA_VERSION: u32 = 13;
+/// Immutable output-v14 identity retained for historical V3 prediction evidence.
+pub const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
+/// Schema version of output-v14.
+pub const OUTPUT_V14_SCHEMA_VERSION: u32 = 14;
 /// Maximum serialized bytes accepted by the output-v11 report reader.
 pub const OUTPUT_V11_MAX_REPORT_BYTES: u64 = 256 * 1024 * 1024;
 /// Maximum file records carried by one output-v11 envelope.
@@ -2147,6 +2162,8 @@ struct MeasurementFileInput {
     legacy_checks: Option<Vec<LegacyPredictionCheckInput>>,
     prediction_provenance_v3: RequiredNullable<PredictionProvenanceV3>,
     checks_v3: Option<Vec<PredictionCheckInputV3>>,
+    prediction_provenance_v4: RequiredNullable<PredictionProvenanceV4>,
+    checks_v4: Option<Vec<PredictionCheckInputV4>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2268,6 +2285,19 @@ struct PredictionCheckInputV3 {
     evaluated_scopes: Vec<crate::evaluation::EvaluationScope>,
     gaps: Vec<PredictionGapInput>,
     prediction: Option<EnginePredictionV3>,
+}
+
+#[derive(Debug)]
+struct PredictionCheckInputV4 {
+    check_id: String,
+    selection: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    evaluation: EvaluationState,
+    findings: Vec<PredictionFindingInput>,
+    evaluated_scopes: Vec<crate::evaluation::EvaluationScope>,
+    gaps: Vec<PredictionGapInput>,
+    prediction: Option<EnginePredictionV4>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3372,6 +3402,8 @@ fn decode_prediction_phase_file(
             legacy_checks: None,
             prediction_provenance_v3: RequiredNullable::Missing,
             checks_v3: None,
+            prediction_provenance_v4: RequiredNullable::Missing,
+            checks_v4: None,
         });
     }
 
@@ -3636,6 +3668,8 @@ fn decode_prediction_phase_file(
         legacy_checks: None,
         prediction_provenance_v3: RequiredNullable::Missing,
         checks_v3: None,
+        prediction_provenance_v4: RequiredNullable::Missing,
+        checks_v4: None,
     })
 }
 
@@ -3675,6 +3709,8 @@ fn decode_prediction_phase_file_v14(
             legacy_checks: None,
             prediction_provenance_v3: RequiredNullable::Missing,
             checks_v3: None,
+            prediction_provenance_v4: RequiredNullable::Missing,
+            checks_v4: None,
         });
     }
     if wire
@@ -3893,6 +3929,248 @@ fn decode_prediction_phase_file_v14(
         legacy_checks: None,
         prediction_provenance_v3,
         checks_v3,
+        prediction_provenance_v4: RequiredNullable::Missing,
+        checks_v4: None,
+    })
+}
+
+fn decode_prediction_phase_file_v15(
+    command: &str,
+    file_index: usize,
+    raw: &RawValue,
+) -> Result<MeasurementFileInput, MeasurementReportError> {
+    #[derive(Deserialize)]
+    struct SchemaProbe {
+        schema: String,
+    }
+
+    let probe: MeasurementFileWireInput = serde_json::from_str(raw.get()).map_err(|source| {
+        prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidFileShape {
+                reason: source.to_string(),
+            },
+        )
+    })?;
+    if command == "measure"
+        || matches!(probe.prediction_provenance, RequiredNullable::Present(None))
+    {
+        return decode_prediction_phase_file_v14(command, file_index, raw);
+    }
+    let RequiredNullable::Present(Some(provenance_raw)) = &probe.prediction_provenance else {
+        return decode_prediction_phase_file_v14(command, file_index, raw);
+    };
+    let schema = serde_json::from_str::<SchemaProbe>(provenance_raw.get()).map_err(|source| {
+        prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidPredictionProvenanceShape {
+                reason: source.to_string(),
+            },
+        )
+    })?;
+    if schema.schema == crate::prediction::PREDICTION_PROVENANCE_V3_ID {
+        return decode_prediction_phase_file_v14(command, file_index, raw);
+    }
+    if schema.schema != crate::prediction::PREDICTION_PROVENANCE_V4_ID {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidPredictionProvenance {
+                source: PredictionContractError::InvalidSchema {
+                    field: "prediction provenance.schema",
+                    expected: crate::prediction::PREDICTION_PROVENANCE_V4_ID,
+                    found: schema.schema,
+                },
+            },
+        ));
+    }
+
+    let MeasurementFileWireInput {
+        path,
+        input,
+        measurements,
+        prediction_provenance,
+        checks,
+        ..
+    } = probe;
+    if checks
+        .as_ref()
+        .is_some_and(|checks| checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE)
+    {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyChecks {
+                found: checks.as_ref().map_or(0, Vec::len),
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
+            },
+        ));
+    }
+    let RequiredNullable::Present(Some(provenance_raw)) = prediction_provenance else {
+        unreachable!("V4 provenance was probed above")
+    };
+    let provenance = decode_prediction_provenance_v4(provenance_raw.get()).map_err(|error| {
+        let source = match error {
+            PredictionDecodeError::Shape(source) => {
+                MeasurementFileError::InvalidPredictionProvenanceShape {
+                    reason: source.to_string(),
+                }
+            }
+            PredictionDecodeError::Semantic(source) => {
+                MeasurementFileError::InvalidPredictionProvenance { source }
+            }
+            PredictionDecodeError::TooManyFileFacets
+            | PredictionDecodeError::TooManyFileBasisReferences => unreachable!(),
+        };
+        prediction_file_error(file_index, source)
+    })?;
+    let mut decoded_facets = 0usize;
+    let mut decoded_references = 0usize;
+    let mut decoded_text = provenance.retained_text_bytes().map_err(|source| {
+        prediction_file_error(
+            file_index,
+            MeasurementFileError::InvalidPredictionProvenance { source },
+        )
+    })?;
+    let checks_v4 = checks
+        .map(|raw_checks| {
+            let mut decoded = Vec::with_capacity(raw_checks.len());
+            for (check_index, raw_check) in raw_checks.into_iter().enumerate() {
+                let wire: PredictionCheckWireInput = serde_json::from_str(raw_check.get())
+                    .map_err(|source| {
+                        prediction_file_error(
+                            file_index,
+                            MeasurementFileError::InvalidPredictionShape {
+                                check_index,
+                                reason: source.to_string(),
+                            },
+                        )
+                    })?;
+                if (wire.selection == SelectionState::Unselected
+                    || wire.configuration == ConfigurationState::Disabled
+                    || wire.applicability == Applicability::NotApplicable)
+                    && wire.prediction.is_some()
+                {
+                    return Err(prediction_file_error(
+                        file_index,
+                        MeasurementFileError::InvalidPredictionLifecycle {
+                            check_index,
+                            reason: "inactive check must have empty output",
+                        },
+                    ));
+                }
+                let prediction = wire
+                    .prediction
+                    .map(|prediction_raw| {
+                        decode_engine_prediction_v4(
+                            prediction_raw.get(),
+                            PREDICTION_V1_MAX_FACETS_PER_FILE.saturating_sub(decoded_facets),
+                            PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE
+                                .saturating_sub(decoded_references),
+                        )
+                        .map_err(|error| {
+                            let source = match error {
+                                PredictionDecodeError::Shape(source) => {
+                                    MeasurementFileError::InvalidPredictionShape {
+                                        check_index,
+                                        reason: source.to_string(),
+                                    }
+                                }
+                                PredictionDecodeError::Semantic(source) => {
+                                    MeasurementFileError::InvalidPrediction {
+                                        check_index,
+                                        source,
+                                    }
+                                }
+                                PredictionDecodeError::TooManyFileFacets => {
+                                    MeasurementFileError::TooManyPredictionFacets {
+                                        found: PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
+                                        limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+                                    }
+                                }
+                                PredictionDecodeError::TooManyFileBasisReferences => {
+                                    MeasurementFileError::TooManyPredictionBasisReferences {
+                                        found: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE + 1,
+                                        limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+                                    }
+                                }
+                            };
+                            prediction_file_error(file_index, source)
+                        })
+                    })
+                    .transpose()?;
+                let check = PredictionCheckInputV4 {
+                    check_id: wire.check_id,
+                    selection: wire.selection,
+                    configuration: wire.configuration,
+                    applicability: wire.applicability,
+                    evaluation: wire.evaluation,
+                    findings: wire.findings,
+                    evaluated_scopes: wire.evaluated_scopes,
+                    gaps: wire.gaps,
+                    prediction,
+                };
+                check
+                    .validate(check_index, Some(&provenance))
+                    .map_err(|source| prediction_file_error(file_index, source))?;
+                if let Some(prediction) = &check.prediction {
+                    decoded_facets = decoded_facets
+                        .checked_add(prediction.facets().len())
+                        .ok_or_else(|| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::PredictionAccountingOverflow,
+                            )
+                        })?;
+                    decoded_references = decoded_references
+                        .checked_add(prediction.basis_reference_count())
+                        .ok_or_else(|| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::PredictionAccountingOverflow,
+                            )
+                        })?;
+                    decoded_text = decoded_text
+                        .checked_add(prediction.retained_text_bytes().map_err(|source| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::InvalidPrediction {
+                                    check_index,
+                                    source,
+                                },
+                            )
+                        })?)
+                        .ok_or_else(|| {
+                            prediction_file_error(
+                                file_index,
+                                MeasurementFileError::PredictionAccountingOverflow,
+                            )
+                        })?;
+                    if decoded_text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+                        return Err(prediction_file_error(
+                            file_index,
+                            MeasurementFileError::TooMuchPredictionText {
+                                found: decoded_text,
+                                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+                            },
+                        ));
+                    }
+                }
+                decoded.push(check);
+            }
+            Ok(decoded)
+        })
+        .transpose()?;
+    Ok(MeasurementFileInput {
+        path,
+        input,
+        measurements,
+        prediction_provenance: RequiredNullable::Missing,
+        checks: None,
+        legacy_prediction_provenance: RequiredNullable::Missing,
+        legacy_checks: None,
+        prediction_provenance_v3: RequiredNullable::Missing,
+        checks_v3: None,
+        prediction_provenance_v4: RequiredNullable::Present(Some(provenance)),
+        checks_v4,
     })
 }
 
@@ -3935,6 +4213,8 @@ fn decode_legacy_v11_file(
             legacy_checks: None,
             prediction_provenance_v3: RequiredNullable::Missing,
             checks_v3: None,
+            prediction_provenance_v4: RequiredNullable::Missing,
+            checks_v4: None,
         });
     }
 
@@ -4174,6 +4454,8 @@ fn decode_legacy_v11_file(
         legacy_checks,
         prediction_provenance_v3: RequiredNullable::Missing,
         checks_v3: None,
+        prediction_provenance_v4: RequiredNullable::Missing,
+        checks_v4: None,
     })
 }
 
@@ -4760,6 +5042,148 @@ fn validate_prediction_phase_file_v14(
     Ok((available, unavailable))
 }
 
+fn validate_prediction_phase_file_v15(
+    command: &str,
+    file_index: usize,
+    file: &MeasurementFileInput,
+) -> Result<(usize, usize), MeasurementReportError> {
+    if matches!(file.prediction_provenance_v4, RequiredNullable::Missing) {
+        return validate_prediction_phase_file_v14(command, file_index, file);
+    }
+    if command == "measure" {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::UnexpectedPredictionProvenance,
+        ));
+    }
+    let provenance = match &file.prediction_provenance_v4 {
+        RequiredNullable::Present(provenance) => provenance.as_ref(),
+        RequiredNullable::Missing => unreachable!(),
+    };
+    let checks = file
+        .checks_v4
+        .as_ref()
+        .ok_or_else(|| prediction_file_error(file_index, MeasurementFileError::MissingChecks))?;
+    if let Some(provenance) = provenance {
+        provenance.validate().map_err(|source| {
+            prediction_file_error(
+                file_index,
+                MeasurementFileError::InvalidPredictionProvenance { source },
+            )
+        })?;
+        let input = file
+            .input
+            .as_ref()
+            .ok_or_else(|| prediction_file_error(file_index, MeasurementFileError::MissingInput))?;
+        if input.sha256.as_deref() != Some(provenance.raw_source().primary_input().sha256())
+            || input.bytes != Some(provenance.raw_source().primary_input().bytes())
+        {
+            return Err(prediction_file_error(
+                file_index,
+                MeasurementFileError::PredictionPrimaryInputMismatch,
+            ));
+        }
+    }
+    let mut available = 0usize;
+    let mut unavailable = 0usize;
+    let mut has_facet_budget_summary = false;
+    let mut facets = 0usize;
+    let mut references = 0usize;
+    let mut text = provenance
+        .map(PredictionProvenanceV4::retained_text_bytes)
+        .transpose()
+        .map_err(|source| {
+            prediction_file_error(
+                file_index,
+                MeasurementFileError::InvalidPredictionProvenance { source },
+            )
+        })?
+        .unwrap_or(0);
+    for (check_index, check) in checks.iter().enumerate() {
+        check
+            .validate(check_index, provenance)
+            .map_err(|source| prediction_file_error(file_index, source))?;
+        if let Some(prediction) = &check.prediction {
+            has_facet_budget_summary |= prediction.has_facet_budget_summary();
+            facets = facets
+                .checked_add(prediction.facets().len())
+                .ok_or_else(|| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionAccountingOverflow,
+                    )
+                })?;
+            references = references
+                .checked_add(prediction.basis_reference_count())
+                .ok_or_else(|| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionAccountingOverflow,
+                    )
+                })?;
+            text = text
+                .checked_add(prediction.retained_text_bytes().map_err(|source| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::InvalidPrediction {
+                            check_index,
+                            source,
+                        },
+                    )
+                })?)
+                .ok_or_else(|| {
+                    prediction_file_error(
+                        file_index,
+                        MeasurementFileError::PredictionAccountingOverflow,
+                    )
+                })?;
+            for facet in prediction.facets() {
+                match facet.state() {
+                    EnginePredictionFacetStateV1::Available => available += 1,
+                    EnginePredictionFacetStateV1::RequiredPredictionUnavailable => unavailable += 1,
+                }
+            }
+        }
+    }
+    if facets > PREDICTION_V1_MAX_FACETS_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyPredictionFacets {
+                found: facets,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            },
+        ));
+    }
+    if has_facet_budget_summary && facets != PREDICTION_V1_MAX_FACETS_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::FacetBudgetSummaryWithoutExhaustedFileBudget {
+                found: facets,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            },
+        ));
+    }
+    if references > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooManyPredictionBasisReferences {
+                found: references,
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE,
+            },
+        ));
+    }
+    if text > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+        return Err(prediction_file_error(
+            file_index,
+            MeasurementFileError::TooMuchPredictionText {
+                found: text,
+                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+            },
+        ));
+    }
+    Ok((available, unavailable))
+}
+
 fn validate_prediction_summary(
     command: &str,
     summary: Option<&MeasurementReportSummaryInput>,
@@ -5121,6 +5545,139 @@ impl PredictionCheckInputV3 {
     }
 }
 
+impl PredictionCheckInputV4 {
+    fn validate(
+        &self,
+        check_index: usize,
+        provenance: Option<&PredictionProvenanceV4>,
+    ) -> Result<(), MeasurementFileError> {
+        let gap_refs = self
+            .gaps
+            .iter()
+            .map(|gap| CheckEvaluationGapRef {
+                code: &gap.code,
+                scope: gap.scope.as_ref(),
+            })
+            .collect::<Vec<_>>();
+        let finding_check_ids = self
+            .findings
+            .iter()
+            .map(|finding| finding.check_id.as_str())
+            .collect::<Vec<_>>();
+        let prediction_scopes = self
+            .prediction
+            .as_ref()
+            .into_iter()
+            .flat_map(EnginePredictionV4::facets)
+            .map(|facet| facet.scope())
+            .collect::<Vec<_>>();
+        let derived = validate_and_derive_check_evaluation(CheckEvaluationValidationInput {
+            check_id: &self.check_id,
+            selection: self.selection,
+            configuration: self.configuration,
+            applicability: self.applicability,
+            finding_check_ids: &finding_check_ids,
+            evaluated_scopes: &self.evaluated_scopes,
+            gaps: &gap_refs,
+            prediction_scopes: &prediction_scopes,
+            has_prediction: self.prediction.is_some(),
+            prediction_has_required_unavailable: self
+                .prediction
+                .as_ref()
+                .is_some_and(EnginePredictionV4::has_required_unavailable),
+        })
+        .map_err(|error| MeasurementFileError::InvalidPredictionLifecycle {
+            check_index,
+            reason: error.reason(),
+        })?;
+        if self.evaluation != derived {
+            return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                check_index,
+                reason: "evaluation does not match completed and missing prediction work",
+            });
+        }
+        let Some(prediction) = &self.prediction else {
+            if self
+                .findings
+                .iter()
+                .any(|finding| finding.prediction_scope.is_some())
+            {
+                return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                    check_index,
+                    reason: "finding has prediction_scope without prediction",
+                });
+            }
+            return Ok(());
+        };
+        let provenance =
+            provenance.ok_or(MeasurementFileError::PredictionWithoutProvenance { check_index })?;
+        prediction
+            .validate_against_provenance(provenance)
+            .map_err(|source| MeasurementFileError::InvalidPrediction {
+                check_index,
+                source,
+            })?;
+        prediction
+            .validate_facet_budget_summary_for_check(&self.check_id)
+            .map_err(|source| MeasurementFileError::InvalidPrediction {
+                check_index,
+                source,
+            })?;
+        for facet in prediction.facets() {
+            let evaluated = self
+                .evaluated_scopes
+                .iter()
+                .filter(|scope| *scope == facet.scope())
+                .count();
+            let duplicated_gap = self
+                .gaps
+                .iter()
+                .any(|gap| gap.scope.as_ref() == Some(facet.scope()));
+            match facet.state() {
+                EnginePredictionFacetStateV1::Available if evaluated != 1 => {
+                    return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                        check_index,
+                        reason: "available facet scope must occur exactly once in evaluated_scopes",
+                    });
+                }
+                EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+                    if evaluated != 0 || duplicated_gap =>
+                {
+                    return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                        check_index,
+                        reason: "required-unavailable facet scope must be absent from evaluated_scopes and gaps",
+                    });
+                }
+                _ => {}
+            }
+        }
+        for finding in &self.findings {
+            let Some(scope) = &finding.prediction_scope else {
+                return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                    check_index,
+                    reason: "prediction-backed finding must carry prediction_scope",
+                });
+            };
+            if prediction
+                .facets()
+                .iter()
+                .filter(|facet| {
+                    facet.scope() == scope
+                        && facet.state() == EnginePredictionFacetStateV1::Available
+                })
+                .count()
+                != 1
+            {
+                return Err(MeasurementFileError::InvalidPredictionLifecycle {
+                    check_index,
+                    reason: "finding prediction_scope must name one available facet",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Validate the frozen current-lint addressability inventory contract.  This
 /// is deliberately output-facing: standalone V1 engine artifacts retain their
 /// historic provenance and reason vocabulary.
@@ -5228,7 +5785,7 @@ fn validate_current_engine_addressability_prediction_v2(
     Ok(())
 }
 
-/// Validate the current V14/V3 addressability inventory without retargeting
+/// Validate the frozen V14/V3 addressability inventory without retargeting
 /// the immutable V13/V2 contract.
 fn validate_current_engine_addressability_prediction_v3(
     check_id: &str,
@@ -5324,6 +5881,1547 @@ fn validate_current_engine_addressability_prediction_v3(
             || inventory.reasons() != expected)
     {
         return Err(PredictionContractError::EngineAddressabilityInventoryReasonsMismatch);
+    }
+    Ok(())
+}
+
+const ENGINE_UNIT_SCALE_CHECK_ID: &str = "engine-unit-scale";
+const ENGINE_UNIT_SCALE_FILE_SCOPE: &str = "engine-unit-scale:file-unit";
+const ENGINE_UNIT_SCALE_SCENE_SCOPE: &str = "engine-unit-scale:loader-scene-root";
+const ENGINE_UNIT_SCALE_SCENE_INVENTORY_SCOPE: &str = "engine-unit-scale:scene-inventory";
+const ENGINE_UNIT_SCALE_MESH_SCOPE: &str = "engine-unit-scale:loader-mesh-primitive";
+const ENGINE_UNIT_SCALE_MESH_INVENTORY_SCOPE: &str = "engine-unit-scale:mesh-inventory";
+const ENGINE_UNIT_SCALE_SELECTED_SCOPE: &str = "engine-unit-scale:selected-source-node";
+const ENGINE_UNIT_SCALE_BUDGET_SCOPE: &str = "engine-unit-scale:facet-budget";
+const ENGINE_UNIT_SCALE_SELECTED_REACHABILITY_UNAVAILABLE_REASON: &str =
+    "animsmith:selected_node_scene_reachability_unavailable";
+const ENGINE_UNIT_SCALE_SELECTED_MAX_REACHABILITY_NODES: usize = 128;
+
+#[derive(Clone, PartialEq, Eq)]
+struct ExpectedUnitScaleFacet {
+    scope: EvaluationScope,
+    result: Option<EngineMachineResultV1>,
+    reasons: Vec<PredictionUnavailableReasonV2>,
+}
+
+fn unit_scale_scope(code: &'static str, subject: Option<String>) -> EvaluationScope {
+    let scope = EvaluationScope::new(crate::evaluation::EvaluationScopeCode::custom(code));
+    subject.map_or(scope.clone(), |subject| scope.subject(subject))
+}
+
+fn unit_scale_unavailable_reasons(
+    reason: PredictionUnavailableReasonV2,
+    dependency_complete: bool,
+) -> Vec<PredictionUnavailableReasonV2> {
+    let mut reasons = vec![reason];
+    if !dependency_complete {
+        reasons.push(PredictionUnavailableReasonV2::DependencyClosureIncomplete);
+    }
+    reasons.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    reasons
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UnitScaleSelectedReachability {
+    Reachable(u64, u64),
+    Unreachable,
+    Unavailable,
+    WorkBudgetExceeded,
+}
+
+enum UnitScaleSelectedReachabilityPlan {
+    Complete {
+        node_index: u64,
+        scene_witnesses: BTreeMap<u64, (u64, u64)>,
+    },
+    Refused {
+        node_index: u64,
+    },
+}
+
+enum UnitScaleSelectedReachabilityPlans {
+    Complete {
+        plans: BTreeMap<String, UnitScaleSelectedReachabilityPlan>,
+        selected_facet_count: usize,
+    },
+    Overflow {
+        plans: BTreeMap<String, UnitScaleSelectedReachabilityPlan>,
+    },
+}
+
+impl UnitScaleSelectedReachabilityPlans {
+    fn get(&self, selector: &str) -> Option<&UnitScaleSelectedReachabilityPlan> {
+        match self {
+            Self::Complete { plans, .. } | Self::Overflow { plans } => plans.get(selector),
+        }
+    }
+
+    const fn selected_facet_count(&self) -> usize {
+        match self {
+            Self::Complete {
+                selected_facet_count,
+                ..
+            } => *selected_facet_count,
+            Self::Overflow { .. } => PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE + 1,
+        }
+    }
+}
+
+impl UnitScaleSelectedReachabilityPlan {
+    const fn node_index(&self) -> u64 {
+        match self {
+            Self::Complete { node_index, .. } | Self::Refused { node_index } => *node_index,
+        }
+    }
+}
+
+fn unit_scale_selected_reachability_budget_exceeded(work: &mut usize) -> bool {
+    *work = work.saturating_add(1);
+    *work > PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE
+}
+
+fn unit_scale_selected_reachability(
+    nodes: &BTreeMap<usize, &crate::measure::SkeletonNodeMeasurements>,
+    start: u64,
+    roots: &[u64],
+    work: &mut usize,
+) -> UnitScaleSelectedReachability {
+    let Ok(start) = usize::try_from(start) else {
+        return UnitScaleSelectedReachability::Unavailable;
+    };
+    if *work >= PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE {
+        return UnitScaleSelectedReachability::WorkBudgetExceeded;
+    }
+    let roots = roots
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(ordinal, node)| (node, ordinal as u64))
+        .collect::<BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    let mut current = Some(start);
+    for _ in 0..ENGINE_UNIT_SCALE_SELECTED_MAX_REACHABILITY_NODES {
+        let Some(index) = current else {
+            return UnitScaleSelectedReachability::Unreachable;
+        };
+        if unit_scale_selected_reachability_budget_exceeded(work) {
+            return UnitScaleSelectedReachability::WorkBudgetExceeded;
+        }
+        if let Some(ordinal) = roots.get(&(index as u64)) {
+            return UnitScaleSelectedReachability::Reachable(*ordinal, index as u64);
+        }
+        if !seen.insert(index) {
+            return UnitScaleSelectedReachability::Unavailable;
+        }
+        current = match nodes.get(&index) {
+            Some(node) => node.parent_node_index,
+            None => return UnitScaleSelectedReachability::Unavailable,
+        };
+    }
+    match current {
+        Some(_) => UnitScaleSelectedReachability::Unavailable,
+        None => UnitScaleSelectedReachability::Unreachable,
+    }
+}
+
+fn unit_scale_selected_reachability_plans(
+    provenance: &PredictionProvenanceV4,
+    measurements: &MeasurementContract,
+) -> UnitScaleSelectedReachabilityPlans {
+    let assets = measurements.assets();
+    let inventory = provenance
+        .raw_scene_attachment()
+        .inventory()
+        .filter(|inventory| {
+            assets.skeleton_source_coverage == SourceSkeletonCoverage::Complete
+                && inventory.scenes().coverage() == RawSceneAttachmentCoverageV1::Complete
+                && inventory.source_skeleton().coverage() == RawSceneAttachmentCoverageV1::Complete
+        });
+    let nodes = assets
+        .skeleton_nodes
+        .iter()
+        .map(|node| (node.node_index, node))
+        .collect::<BTreeMap<_, _>>();
+    let mut plans = BTreeMap::new();
+    let mut selected_facet_count = 0usize;
+    for selector in provenance.rule_inputs().runtime_node_selectors() {
+        let Some(inventory) = inventory else {
+            selected_facet_count = selected_facet_count.saturating_add(1);
+            if selected_facet_count > PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE {
+                return UnitScaleSelectedReachabilityPlans::Overflow { plans };
+            }
+            continue;
+        };
+        let mut matches = assets.skeleton_nodes.iter().filter(|node| {
+            node.name
+                .as_deref()
+                .is_some_and(|name| crate::config::glob_match(selector, name))
+        });
+        let Some(node) = matches.next() else {
+            selected_facet_count = selected_facet_count.saturating_add(1);
+            if selected_facet_count > PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE {
+                return UnitScaleSelectedReachabilityPlans::Overflow { plans };
+            }
+            continue;
+        };
+        if matches.next().is_some() {
+            selected_facet_count = selected_facet_count.saturating_add(1);
+            if selected_facet_count > PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE {
+                return UnitScaleSelectedReachabilityPlans::Overflow { plans };
+            }
+            continue;
+        }
+        let node_index = node.node_index as u64;
+        let mut work = 0usize;
+        let remaining_capacity =
+            PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE.saturating_sub(selected_facet_count);
+        let mut would_overflow = false;
+        let mut plan = UnitScaleSelectedReachabilityPlan::Complete {
+            node_index,
+            scene_witnesses: BTreeMap::new(),
+        };
+        for scene in inventory.scenes().rows() {
+            match unit_scale_selected_reachability(
+                &nodes,
+                node_index,
+                scene.root_node_indices(),
+                &mut work,
+            ) {
+                UnitScaleSelectedReachability::Reachable(root_ordinal, root_node_index) => {
+                    let UnitScaleSelectedReachabilityPlan::Complete {
+                        scene_witnesses, ..
+                    } = &mut plan
+                    else {
+                        unreachable!("a reachable scene cannot follow a refusal");
+                    };
+                    if scene_witnesses.len() < remaining_capacity {
+                        scene_witnesses
+                            .insert(scene.source_scene_index(), (root_ordinal, root_node_index));
+                    } else {
+                        would_overflow = true;
+                    }
+                }
+                UnitScaleSelectedReachability::Unreachable => {}
+                UnitScaleSelectedReachability::Unavailable
+                | UnitScaleSelectedReachability::WorkBudgetExceeded => {
+                    plan = UnitScaleSelectedReachabilityPlan::Refused { node_index };
+                    break;
+                }
+            }
+        }
+        if matches!(&plan, UnitScaleSelectedReachabilityPlan::Complete { .. }) && would_overflow {
+            return UnitScaleSelectedReachabilityPlans::Overflow { plans };
+        }
+        let facets = match &plan {
+            UnitScaleSelectedReachabilityPlan::Complete {
+                scene_witnesses, ..
+            } => scene_witnesses.len().max(1),
+            UnitScaleSelectedReachabilityPlan::Refused { .. } => 1,
+        };
+        selected_facet_count = selected_facet_count.saturating_add(facets);
+        if selected_facet_count > PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE {
+            return UnitScaleSelectedReachabilityPlans::Overflow { plans };
+        }
+        plans.insert(selector.clone(), plan);
+    }
+    UnitScaleSelectedReachabilityPlans::Complete {
+        plans,
+        selected_facet_count,
+    }
+}
+
+fn unit_scale_selected_ancestry_reason(
+    nodes: &BTreeMap<usize, &crate::measure::SkeletonNodeMeasurements>,
+    start: usize,
+) -> Option<PredictionUnavailableReasonV2> {
+    let mut current = start;
+    let mut seen = BTreeSet::new();
+    for _ in 0..128 {
+        if !seen.insert(current) {
+            return Some(
+                PredictionUnavailableReasonV2::custom(
+                    "animsmith:selected_node_ancestry_unavailable",
+                )
+                .expect("static reason is valid"),
+            );
+        }
+        let Some(node) = nodes.get(&current) else {
+            return Some(
+                PredictionUnavailableReasonV2::custom(
+                    "animsmith:selected_node_ancestry_unavailable",
+                )
+                .expect("static reason is valid"),
+            );
+        };
+        match node.local_rest {
+            SkeletonNodeLocalRestMeasurements::Matrix { .. } => {
+                return Some(
+                    PredictionUnavailableReasonV2::custom(
+                        "animsmith:matrix_authored_selected_node_or_ancestry",
+                    )
+                    .expect("static reason is valid"),
+                );
+            }
+            SkeletonNodeLocalRestMeasurements::Unavailable { .. } => {
+                return Some(
+                    PredictionUnavailableReasonV2::custom(
+                        "animsmith:selected_node_ancestry_unavailable",
+                    )
+                    .expect("static reason is valid"),
+                );
+            }
+            SkeletonNodeLocalRestMeasurements::Trs { .. } => {}
+        }
+        let parent = node.parent_node_index?;
+        current = parent;
+    }
+    Some(
+        PredictionUnavailableReasonV2::custom("animsmith:selected_node_ancestry_unavailable")
+            .expect("static reason is valid"),
+    )
+}
+
+#[derive(Clone, Copy)]
+struct CurrentUnitScaleMeshRow {
+    source_scene_index: u64,
+    source_root_ordinal: u64,
+    root_node_index: u64,
+    source_node_index: u64,
+    source_mesh_index: u64,
+    source_primitive_index: u64,
+}
+
+enum CurrentUnitScaleMeshPlan {
+    Detailed(Vec<CurrentUnitScaleMeshRow>),
+    CompleteEmpty,
+    Incomplete,
+    JoinOverflow,
+}
+
+fn unit_scale_join_budget_exceeded(work: &mut usize) -> bool {
+    *work = work.saturating_add(1);
+    *work > PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE
+}
+
+fn unit_scale_reachable_root_indexed(
+    start: u64,
+    roots: &BTreeMap<u64, u64>,
+    parents: &BTreeMap<u64, Option<u64>>,
+    work: &mut usize,
+) -> Result<Option<(u64, u64)>, ()> {
+    let mut seen = BTreeSet::new();
+    let mut current = Some(start);
+    while let Some(index) = current {
+        if unit_scale_join_budget_exceeded(work) {
+            return Err(());
+        }
+        if let Some(ordinal) = roots.get(&index) {
+            return Ok(Some((*ordinal, index)));
+        }
+        if !seen.insert(index) {
+            return Ok(None);
+        }
+        current = match parents.get(&index) {
+            Some(parent) => *parent,
+            None => return Ok(None),
+        };
+    }
+    Ok(None)
+}
+
+fn current_unit_scale_mesh_plan(
+    provenance: &PredictionProvenanceV4,
+    measurements: &MeasurementContract,
+) -> CurrentUnitScaleMeshPlan {
+    let Some(inventory) = provenance.raw_scene_attachment().inventory() else {
+        return CurrentUnitScaleMeshPlan::Incomplete;
+    };
+    if inventory.scenes().coverage() != RawSceneAttachmentCoverageV1::Complete
+        || inventory.node_mesh_attachments().coverage() != RawSceneAttachmentCoverageV1::Complete
+        || inventory.mesh_primitives().coverage() != RawSceneAttachmentCoverageV1::Complete
+        || inventory.source_skeleton().coverage() != RawSceneAttachmentCoverageV1::Complete
+        || measurements.assets().skeleton_source_coverage != SourceSkeletonCoverage::Complete
+    {
+        return CurrentUnitScaleMeshPlan::Incomplete;
+    }
+    let parents = measurements
+        .assets()
+        .skeleton_nodes
+        .iter()
+        .map(|node| {
+            (
+                node.node_index as u64,
+                node.parent_node_index.map(|parent| parent as u64),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let scene_roots = inventory
+        .scenes()
+        .rows()
+        .iter()
+        .map(|scene| {
+            (
+                scene.source_scene_index(),
+                scene
+                    .root_node_indices()
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(ordinal, node)| (node, ordinal as u64))
+                    .collect::<BTreeMap<_, _>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let primitives_by_mesh = inventory.mesh_primitives().rows().iter().fold(
+        BTreeMap::<u64, Vec<u64>>::new(),
+        |mut grouped, primitive| {
+            grouped
+                .entry(primitive.source_mesh_index())
+                .or_default()
+                .push(primitive.source_primitive_index());
+            grouped
+        },
+    );
+    let mut work = 0usize;
+    let mut rows = Vec::new();
+    for (source_scene_index, roots) in scene_roots {
+        for attachment in inventory.node_mesh_attachments().rows() {
+            if unit_scale_join_budget_exceeded(&mut work) {
+                return CurrentUnitScaleMeshPlan::JoinOverflow;
+            }
+            let Ok(reachable) = unit_scale_reachable_root_indexed(
+                attachment.source_node_index(),
+                &roots,
+                &parents,
+                &mut work,
+            ) else {
+                return CurrentUnitScaleMeshPlan::JoinOverflow;
+            };
+            let Some((source_root_ordinal, root_node_index)) = reachable else {
+                continue;
+            };
+            for &source_primitive_index in primitives_by_mesh
+                .get(&attachment.source_mesh_index())
+                .into_iter()
+                .flatten()
+            {
+                if unit_scale_join_budget_exceeded(&mut work) {
+                    return CurrentUnitScaleMeshPlan::JoinOverflow;
+                }
+                rows.push(CurrentUnitScaleMeshRow {
+                    source_scene_index,
+                    source_root_ordinal,
+                    root_node_index,
+                    source_node_index: attachment.source_node_index(),
+                    source_mesh_index: attachment.source_mesh_index(),
+                    source_primitive_index,
+                });
+            }
+        }
+    }
+    if rows.is_empty() {
+        CurrentUnitScaleMeshPlan::CompleteEmpty
+    } else {
+        CurrentUnitScaleMeshPlan::Detailed(rows)
+    }
+}
+
+fn current_unit_scale_selected_facet_count(
+    reachability_plans: &UnitScaleSelectedReachabilityPlans,
+) -> usize {
+    reachability_plans.selected_facet_count()
+}
+
+fn expected_current_engine_unit_scale_facets(
+    provenance: &PredictionProvenanceV4,
+    measurements: &MeasurementContract,
+    mesh_plan: &CurrentUnitScaleMeshPlan,
+    candidate_capacity: usize,
+    reachability_plans: &UnitScaleSelectedReachabilityPlans,
+) -> Option<Vec<ExpectedUnitScaleFacet>> {
+    let dependency_complete = matches!(
+        provenance.dependency_closure().coverage(),
+        DependencyClosureCoverageV1::Complete
+    );
+    let available = |scope, result| ExpectedUnitScaleFacet {
+        scope,
+        result: Some(result),
+        reasons: vec![],
+    };
+    let unavailable = |scope, reasons| ExpectedUnitScaleFacet {
+        scope,
+        result: None,
+        reasons,
+    };
+    let mut expected = Vec::with_capacity(candidate_capacity);
+    if expected.len() < candidate_capacity {
+        expected.push(if dependency_complete {
+            available(
+                unit_scale_scope(ENGINE_UNIT_SCALE_FILE_SCOPE, None),
+                EngineMachineResultV1::UnitMapping(
+                    UnitMappingResultV1::gltf_to_engine_world_length_unit(),
+                ),
+            )
+        } else {
+            unavailable(
+                unit_scale_scope(ENGINE_UNIT_SCALE_FILE_SCOPE, None),
+                vec![PredictionUnavailableReasonV2::DependencyClosureIncomplete],
+            )
+        });
+    }
+
+    let inventory = provenance.raw_scene_attachment().inventory();
+    match inventory
+        .filter(|inventory| inventory.scenes().coverage() == RawSceneAttachmentCoverageV1::Complete)
+    {
+        Some(inventory) => {
+            for scene in inventory.scenes().rows() {
+                if expected.len() >= candidate_capacity {
+                    break;
+                }
+                let scope = unit_scale_scope(
+                    ENGINE_UNIT_SCALE_SCENE_SCOPE,
+                    Some(format!("source_scene:{}", scene.source_scene_index())),
+                );
+                expected.push(if dependency_complete {
+                    available(
+                        scope,
+                        EngineMachineResultV1::TransformScale(TransformScaleResultV1 {
+                            subject_kind: TransformScaleSubjectKindV1::LoaderSceneEntity,
+                            creation: ImporterSubjectCreationV1::Created,
+                            domain: TransformScaleDomainV1::Local,
+                            classification: Some(LinearTransformClassification::UnitOrthonormal),
+                        }),
+                    )
+                } else {
+                    unavailable(
+                        scope,
+                        vec![PredictionUnavailableReasonV2::DependencyClosureIncomplete],
+                    )
+                });
+            }
+        }
+        None if expected.len() < candidate_capacity => expected.push(unavailable(
+            unit_scale_scope(ENGINE_UNIT_SCALE_SCENE_INVENTORY_SCOPE, None),
+            unit_scale_unavailable_reasons(
+                PredictionUnavailableReasonV2::RawSourceIncomplete,
+                dependency_complete,
+            ),
+        )),
+        None => {}
+    }
+
+    let assets = measurements.assets();
+    let nodes = assets
+        .skeleton_nodes
+        .iter()
+        .map(|node| (node.node_index, node))
+        .collect::<BTreeMap<_, _>>();
+    if expected.len() < candidate_capacity {
+        match mesh_plan {
+            CurrentUnitScaleMeshPlan::Incomplete => expected.push(unavailable(
+                unit_scale_scope(ENGINE_UNIT_SCALE_MESH_INVENTORY_SCOPE, None),
+                unit_scale_unavailable_reasons(
+                    PredictionUnavailableReasonV2::RawSourceIncomplete,
+                    dependency_complete,
+                ),
+            )),
+            CurrentUnitScaleMeshPlan::JoinOverflow => expected.push(unavailable(
+                unit_scale_scope(ENGINE_UNIT_SCALE_MESH_INVENTORY_SCOPE, None),
+                vec![
+                    PredictionUnavailableReasonV2::custom(
+                        "animsmith:mesh_join_work_budget_exceeded",
+                    )
+                    .expect("static reason is valid"),
+                ],
+            )),
+            CurrentUnitScaleMeshPlan::CompleteEmpty => expected.push(if dependency_complete {
+                available(
+                    unit_scale_scope(ENGINE_UNIT_SCALE_MESH_INVENTORY_SCOPE, None),
+                    EngineMachineResultV1::InventoryCoverage(InventoryCoverageResultV1 {
+                        domain: PredictionInventoryDomainV1::LoaderMeshPrimitiveSubjects,
+                        coverage: PredictionInventoryCoverageStateV1::Complete,
+                        retained_rows: 0,
+                    }),
+                )
+            } else {
+                unavailable(
+                    unit_scale_scope(ENGINE_UNIT_SCALE_MESH_INVENTORY_SCOPE, None),
+                    vec![PredictionUnavailableReasonV2::DependencyClosureIncomplete],
+                )
+            }),
+            CurrentUnitScaleMeshPlan::Detailed(rows) => {
+                let load_meshes = matches!(
+                    provenance
+                        .settings()
+                        .document_setting(EngineSettingIdV2::LoadMeshes)
+                        .map(|setting| setting.value()),
+                    Some(EngineSettingValueV2::Token(value)) if value == "nonempty"
+                );
+                for row in rows {
+                    if expected.len() >= candidate_capacity {
+                        break;
+                    }
+                    let scope = unit_scale_scope(
+                        ENGINE_UNIT_SCALE_MESH_SCOPE,
+                        Some(format!(
+                            "source_scene:{}:source_node:{}:source_mesh:{}:source_primitive:{}",
+                            row.source_scene_index,
+                            row.source_node_index,
+                            row.source_mesh_index,
+                            row.source_primitive_index,
+                        )),
+                    );
+                    expected.push(if dependency_complete {
+                        available(
+                            scope,
+                            EngineMachineResultV1::TransformScale(TransformScaleResultV1 {
+                                subject_kind:
+                                    TransformScaleSubjectKindV1::LoaderMeshPrimitiveEntity,
+                                creation: if load_meshes {
+                                    ImporterSubjectCreationV1::Created
+                                } else {
+                                    ImporterSubjectCreationV1::SuppressedBySetting
+                                },
+                                domain: TransformScaleDomainV1::Local,
+                                classification: load_meshes
+                                    .then_some(LinearTransformClassification::UnitOrthonormal),
+                            }),
+                        )
+                    } else {
+                        unavailable(
+                            scope,
+                            vec![PredictionUnavailableReasonV2::DependencyClosureIncomplete],
+                        )
+                    });
+                }
+            }
+        }
+    }
+
+    for selector in provenance.rule_inputs().runtime_node_selectors() {
+        if expected.len() >= candidate_capacity {
+            break;
+        }
+        if assets.skeleton_source_coverage != SourceSkeletonCoverage::Complete
+            || !inventory.is_some_and(|inventory| {
+                inventory.source_skeleton().coverage() == RawSceneAttachmentCoverageV1::Complete
+                    && inventory.scenes().coverage() == RawSceneAttachmentCoverageV1::Complete
+            })
+        {
+            expected.push(unavailable(
+                unit_scale_scope(
+                    ENGINE_UNIT_SCALE_SELECTED_SCOPE,
+                    Some(format!("selector:{selector}")),
+                ),
+                unit_scale_unavailable_reasons(
+                    PredictionUnavailableReasonV2::RawSourceIncomplete,
+                    dependency_complete,
+                ),
+            ));
+            continue;
+        }
+        let mut matches = assets.skeleton_nodes.iter().filter(|node| {
+            node.name
+                .as_deref()
+                .is_some_and(|name| crate::config::glob_match(selector, name))
+        });
+        let first = matches.next();
+        let second = matches.next();
+        if first.is_none() || second.is_some() {
+            expected.push(unavailable(
+                unit_scale_scope(
+                    ENGINE_UNIT_SCALE_SELECTED_SCOPE,
+                    Some(format!("selector:{selector}")),
+                ),
+                unit_scale_unavailable_reasons(
+                    if first.is_none() {
+                        PredictionUnavailableReasonV2::SourceSelectorNoMatch
+                    } else {
+                        PredictionUnavailableReasonV2::SourceSelectorAmbiguous
+                    },
+                    dependency_complete,
+                ),
+            ));
+            continue;
+        }
+        let node = first.expect("one selected source node was established");
+        let inventory = inventory.expect("selected inventory was proven complete");
+        let mut reachable_scenes = Vec::new();
+        let plan = reachability_plans.get(selector)?;
+        let reachability_unavailable =
+            match plan {
+                UnitScaleSelectedReachabilityPlan::Refused {
+                    node_index: cached_node_index,
+                } if *cached_node_index == node.node_index as u64 => true,
+                UnitScaleSelectedReachabilityPlan::Complete {
+                    node_index: cached_node_index,
+                    scene_witnesses,
+                } if *cached_node_index == node.node_index as u64 => {
+                    reachable_scenes.extend(
+                        inventory.scenes().rows().iter().filter(|scene| {
+                            scene_witnesses.contains_key(&scene.source_scene_index())
+                        }),
+                    );
+                    false
+                }
+                UnitScaleSelectedReachabilityPlan::Refused { .. }
+                | UnitScaleSelectedReachabilityPlan::Complete { .. } => return None,
+            };
+        if reachability_unavailable {
+            expected.push(unavailable(
+                unit_scale_scope(
+                    ENGINE_UNIT_SCALE_SELECTED_SCOPE,
+                    Some(format!("selector:{selector}")),
+                ),
+                unit_scale_unavailable_reasons(
+                    PredictionUnavailableReasonV2::custom(
+                        ENGINE_UNIT_SCALE_SELECTED_REACHABILITY_UNAVAILABLE_REASON,
+                    )
+                    .expect("static reason is valid"),
+                    dependency_complete,
+                ),
+            ));
+            continue;
+        }
+        let reason = unit_scale_selected_ancestry_reason(&nodes, node.node_index).or_else(|| {
+            (node.rest_world_linear.classification == LinearTransformClassification::NonFinite
+                || node.rest_world_matrix.is_none())
+            .then_some(PredictionUnavailableReasonV2::MeasurementUnavailable)
+        });
+        let mut reachable_found = false;
+        for scene in reachable_scenes {
+            reachable_found = true;
+            if expected.len() >= candidate_capacity {
+                break;
+            }
+            let scope = unit_scale_scope(
+                ENGINE_UNIT_SCALE_SELECTED_SCOPE,
+                Some(format!(
+                    "selector:{selector}:source_scene:{}:source_node:{}",
+                    scene.source_scene_index(),
+                    node.node_index,
+                )),
+            );
+            expected.push(if let Some(reason) = reason.clone() {
+                unavailable(
+                    scope,
+                    unit_scale_unavailable_reasons(reason, dependency_complete),
+                )
+            } else if dependency_complete {
+                available(
+                    scope,
+                    EngineMachineResultV1::TransformScale(TransformScaleResultV1 {
+                        subject_kind: TransformScaleSubjectKindV1::SelectedSourceNode,
+                        creation: ImporterSubjectCreationV1::Created,
+                        domain: TransformScaleDomainV1::LoaderRootToSubject,
+                        classification: Some(node.rest_world_linear.classification),
+                    }),
+                )
+            } else {
+                unavailable(
+                    scope,
+                    vec![PredictionUnavailableReasonV2::DependencyClosureIncomplete],
+                )
+            });
+        }
+        if !reachable_found && expected.len() < candidate_capacity {
+            expected.push(unavailable(
+                unit_scale_scope(
+                    ENGINE_UNIT_SCALE_SELECTED_SCOPE,
+                    Some(format!("selector:{selector}")),
+                ),
+                unit_scale_unavailable_reasons(
+                    PredictionUnavailableReasonV2::custom("animsmith:selected_node_unreachable")
+                        .expect("static reason is valid"),
+                    dependency_complete,
+                ),
+            ));
+        }
+    }
+    Some(expected)
+}
+
+fn unit_scale_exact_raw_row_references(
+    basis: &EnginePredictionBasisV4,
+    expected: &[RawSceneAttachmentBasisReferenceV1],
+) -> bool {
+    let actual = basis
+        .references()
+        .iter()
+        .filter_map(|reference| match reference {
+            PredictionBasisReferenceV4::RawSceneAttachment(reference)
+                if !matches!(
+                    reference,
+                    RawSceneAttachmentBasisReferenceV1::Coverage { .. }
+                ) =>
+            {
+                Some(reference)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    actual.len() == expected.len() && actual.iter().all(|reference| expected.contains(reference))
+}
+
+fn unit_scale_mesh_scope_keys(subject: &str) -> Option<(u64, u64, u64, u64)> {
+    let values = subject
+        .strip_prefix("source_scene:")?
+        .split(':')
+        .collect::<Vec<_>>();
+    if values.len() != 7
+        || values[1] != "source_node"
+        || values[3] != "source_mesh"
+        || values[5] != "source_primitive"
+    {
+        return None;
+    }
+    Some((
+        values[0].parse().ok()?,
+        values[2].parse().ok()?,
+        values[4].parse().ok()?,
+        values[6].parse().ok()?,
+    ))
+}
+
+fn unit_scale_expected_mesh_raw_rows(
+    subject: &str,
+    mesh_plan: &CurrentUnitScaleMeshPlan,
+) -> Option<Vec<RawSceneAttachmentBasisReferenceV1>> {
+    let (source_scene_index, source_node_index, source_mesh_index, source_primitive_index) =
+        unit_scale_mesh_scope_keys(subject)?;
+    let CurrentUnitScaleMeshPlan::Detailed(rows) = mesh_plan else {
+        return None;
+    };
+    let row = rows.iter().find(|row| {
+        row.source_scene_index == source_scene_index
+            && row.source_node_index == source_node_index
+            && row.source_mesh_index == source_mesh_index
+            && row.source_primitive_index == source_primitive_index
+    })?;
+    Some(vec![
+        RawSceneAttachmentBasisReferenceV1::SceneRow { source_scene_index },
+        RawSceneAttachmentBasisReferenceV1::SceneRoot {
+            source_scene_index,
+            source_root_ordinal: row.source_root_ordinal,
+            source_node_index: row.root_node_index,
+        },
+        RawSceneAttachmentBasisReferenceV1::NodeMeshAttachmentRow {
+            source_node_index,
+            source_mesh_index,
+        },
+        RawSceneAttachmentBasisReferenceV1::MeshPrimitiveRow {
+            source_mesh_index,
+            source_primitive_index,
+        },
+    ])
+}
+
+fn unit_scale_selected_scope_keys<'a>(
+    subject: &str,
+    selectors: &'a [String],
+) -> Option<(&'a str, Option<(u64, u64)>)> {
+    for selector in selectors {
+        let prefix = format!("selector:{selector}");
+        if subject == prefix {
+            return Some((selector, None));
+        }
+        let Some(values) = subject
+            .strip_prefix(&prefix)
+            .and_then(|suffix| suffix.strip_prefix(":source_scene:"))
+        else {
+            continue;
+        };
+        let values = values.split(':').collect::<Vec<_>>();
+        if values.len() == 3 && values[1] == "source_node" {
+            return Some((
+                selector,
+                Some((values[0].parse().ok()?, values[2].parse().ok()?)),
+            ));
+        }
+    }
+    None
+}
+
+fn unit_scale_classification_name(value: LinearTransformClassification) -> &'static str {
+    match value {
+        LinearTransformClassification::UnitOrthonormal => "unit_orthonormal",
+        LinearTransformClassification::UniformScaled => "uniform_scaled",
+        LinearTransformClassification::NonUniform => "non_uniform",
+        LinearTransformClassification::Sheared => "sheared",
+        LinearTransformClassification::Reflected => "reflected",
+        LinearTransformClassification::Singular => "singular",
+        LinearTransformClassification::NonFinite => "non_finite",
+    }
+}
+
+fn unit_scale_raw_source_node_reference(
+    source_index: u64,
+    field: &str,
+    value: PredictionScalarV1,
+) -> Option<RawSourceBasisReferenceV1> {
+    RawSourceBasisReferenceV1::from_wire(
+        RawSourceDomainV1::SourceNode,
+        RawSourceKeyV1::SourceSkeleton {
+            row_kind: SourceSkeletonRowKindV1::SourceNode,
+            source_index,
+        },
+        RawSourceFieldIdV1::new(field).ok()?,
+        value,
+    )
+    .ok()
+}
+
+fn unit_scale_exact_raw_source_references(
+    basis: &EnginePredictionBasisV4,
+    expected: &[RawSourceBasisReferenceV1],
+) -> bool {
+    let actual = basis
+        .references()
+        .iter()
+        .filter_map(|reference| match reference {
+            PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+                PredictionBasisReferenceV1::RawSource { reference },
+            )) => Some(reference),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    actual.len() == expected.len() && actual.iter().all(|reference| expected.contains(reference))
+}
+
+fn unit_scale_selected_authored_kind(
+    basis: &EnginePredictionBasisV4,
+    source_index: u64,
+) -> Option<&str> {
+    let mut values = basis.references().iter().filter_map(|reference| {
+        let PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+            PredictionBasisReferenceV1::RawSource { reference },
+        )) = reference
+        else {
+            return None;
+        };
+        if reference.domain() != RawSourceDomainV1::SourceNode
+            || reference.key()
+                != &(RawSourceKeyV1::SourceSkeleton {
+                    row_kind: SourceSkeletonRowKindV1::SourceNode,
+                    source_index,
+                })
+            || reference.field().as_str() != "local_rest.kind"
+        {
+            return None;
+        }
+        match reference.value() {
+            PredictionScalarV1::Token { value } if matches!(value.as_str(), "trs" | "matrix") => {
+                Some(value.as_str())
+            }
+            _ => None,
+        }
+    });
+    let value = values.next()?;
+    values.next().is_none().then_some(value)
+}
+
+fn unit_scale_selected_expected_reasons(
+    primary: Option<PredictionUnavailableReasonV2>,
+    dependency_complete: bool,
+) -> Vec<PredictionUnavailableReasonV2> {
+    match primary {
+        Some(reason) => unit_scale_unavailable_reasons(reason, dependency_complete),
+        None if dependency_complete => Vec::new(),
+        None => vec![PredictionUnavailableReasonV2::DependencyClosureIncomplete],
+    }
+}
+
+struct CurrentUnitScaleSelectedEvidence {
+    raw_source_references: Vec<RawSourceBasisReferenceV1>,
+    reasons: Vec<PredictionUnavailableReasonV2>,
+}
+
+fn unit_scale_expected_selected_raw_source_references(
+    selector: &str,
+    keys: Option<(u64, u64)>,
+    basis: &EnginePredictionBasisV4,
+    provenance: &PredictionProvenanceV4,
+    measurements: &MeasurementContract,
+    reachability_plans: &UnitScaleSelectedReachabilityPlans,
+) -> Option<CurrentUnitScaleSelectedEvidence> {
+    let assets = measurements.assets();
+    let dependency_complete = matches!(
+        provenance.dependency_closure().coverage(),
+        DependencyClosureCoverageV1::Complete
+    );
+    let inventory = provenance.raw_scene_attachment().inventory();
+    let inventory_complete = inventory.is_some_and(|inventory| {
+        inventory.scenes().coverage() == RawSceneAttachmentCoverageV1::Complete
+            && inventory.source_skeleton().coverage() == RawSceneAttachmentCoverageV1::Complete
+    });
+    if assets.skeleton_source_coverage != SourceSkeletonCoverage::Complete || !inventory_complete {
+        return Some(CurrentUnitScaleSelectedEvidence {
+            raw_source_references: Vec::new(),
+            reasons: unit_scale_selected_expected_reasons(
+                Some(PredictionUnavailableReasonV2::RawSourceIncomplete),
+                dependency_complete,
+            ),
+        });
+    }
+    let mut matches = assets.skeleton_nodes.iter().filter(|node| {
+        node.name
+            .as_deref()
+            .is_some_and(|name| crate::config::glob_match(selector, name))
+    });
+    let first = matches.next();
+    let second = matches.next();
+    let name_reference = |node: &crate::measure::SkeletonNodeMeasurements| {
+        unit_scale_raw_source_node_reference(
+            node.node_index as u64,
+            "name",
+            node.name.as_ref().map_or(PredictionScalarV1::Null, |name| {
+                PredictionScalarV1::text(name).expect("retained measurement text is bounded")
+            }),
+        )
+    };
+    if first.is_none() {
+        return keys.is_none().then(|| CurrentUnitScaleSelectedEvidence {
+            raw_source_references: Vec::new(),
+            reasons: unit_scale_selected_expected_reasons(
+                Some(PredictionUnavailableReasonV2::SourceSelectorNoMatch),
+                dependency_complete,
+            ),
+        });
+    }
+    if let Some(second) = second {
+        if keys.is_some() {
+            return None;
+        }
+        return Some(CurrentUnitScaleSelectedEvidence {
+            raw_source_references: vec![name_reference(first?)?, name_reference(second)?],
+            reasons: unit_scale_selected_expected_reasons(
+                Some(PredictionUnavailableReasonV2::SourceSelectorAmbiguous),
+                dependency_complete,
+            ),
+        });
+    }
+    let node = first?;
+    if keys.is_some_and(|(_, source_node_index)| source_node_index != node.node_index as u64) {
+        return None;
+    }
+    let mut expected = vec![name_reference(node)?];
+    let nodes = assets
+        .skeleton_nodes
+        .iter()
+        .map(|node| (node.node_index, node))
+        .collect::<BTreeMap<_, _>>();
+    let plan = reachability_plans.get(selector)?;
+    let reachability_unavailable = match plan {
+        UnitScaleSelectedReachabilityPlan::Refused {
+            node_index: cached_node_index,
+        } if *cached_node_index == node.node_index as u64 => true,
+        UnitScaleSelectedReachabilityPlan::Complete {
+            node_index: cached_node_index,
+            ..
+        } if *cached_node_index == node.node_index as u64 => false,
+        UnitScaleSelectedReachabilityPlan::Refused { .. }
+        | UnitScaleSelectedReachabilityPlan::Complete { .. } => return None,
+    };
+    if reachability_unavailable {
+        if keys.is_some() {
+            return None;
+        }
+        return Some(CurrentUnitScaleSelectedEvidence {
+            raw_source_references: expected,
+            reasons: unit_scale_selected_expected_reasons(
+                Some(
+                    PredictionUnavailableReasonV2::custom(
+                        ENGINE_UNIT_SCALE_SELECTED_REACHABILITY_UNAVAILABLE_REASON,
+                    )
+                    .expect("static reason is valid"),
+                ),
+                dependency_complete,
+            ),
+        });
+    }
+    let mut current = node.node_index;
+    let mut seen = BTreeSet::new();
+    let mut ancestry_reason = None;
+    let mut ancestry_complete = false;
+    for _ in 0..128 {
+        if !seen.insert(current) {
+            ancestry_reason = Some(
+                PredictionUnavailableReasonV2::custom(
+                    "animsmith:selected_node_ancestry_unavailable",
+                )
+                .expect("static reason is valid"),
+            );
+            break;
+        }
+        let Some(ancestry_node) = nodes.get(&current).copied() else {
+            ancestry_reason = Some(
+                PredictionUnavailableReasonV2::custom(
+                    "animsmith:selected_node_ancestry_unavailable",
+                )
+                .expect("static reason is valid"),
+            );
+            break;
+        };
+        // The normalized measurement deliberately erases whether a non-finite
+        // local rest was authored as TRS or as a matrix. The exact same-load
+        // raw-source scalar in the basis retains that distinction per row.
+        let retained_kind = unit_scale_selected_authored_kind(basis, current as u64)?;
+        let local_kind = match ancestry_node.local_rest {
+            SkeletonNodeLocalRestMeasurements::Trs { .. } if retained_kind == "trs" => "trs",
+            SkeletonNodeLocalRestMeasurements::Matrix { .. } if retained_kind == "matrix" => {
+                "matrix"
+            }
+            SkeletonNodeLocalRestMeasurements::Unavailable { .. } => retained_kind,
+            _ => return None,
+        };
+        expected.push(unit_scale_raw_source_node_reference(
+            current as u64,
+            "local_rest.kind",
+            PredictionScalarV1::token(local_kind).ok()?,
+        )?);
+        expected.push(unit_scale_raw_source_node_reference(
+            current as u64,
+            "parent_source_node_index",
+            ancestry_node
+                .parent_node_index
+                .map_or(PredictionScalarV1::Null, |parent| {
+                    PredictionScalarV1::UnsignedInteger {
+                        value: parent as u64,
+                    }
+                }),
+        )?);
+        if local_kind == "matrix" {
+            ancestry_reason = Some(
+                PredictionUnavailableReasonV2::custom(
+                    "animsmith:matrix_authored_selected_node_or_ancestry",
+                )
+                .expect("static reason is valid"),
+            );
+            break;
+        }
+        let Some(parent) = ancestry_node.parent_node_index else {
+            ancestry_complete = true;
+            break;
+        };
+        current = parent;
+    }
+    if ancestry_reason.is_none() && !ancestry_complete {
+        ancestry_reason = Some(
+            PredictionUnavailableReasonV2::custom("animsmith:selected_node_ancestry_unavailable")
+                .expect("static reason is valid"),
+        );
+    }
+    let primary_reason = if keys.is_none() {
+        Some(
+            PredictionUnavailableReasonV2::custom("animsmith:selected_node_unreachable")
+                .expect("static reason is valid"),
+        )
+    } else {
+        ancestry_reason.or_else(|| {
+            (node.rest_world_linear.classification == LinearTransformClassification::NonFinite
+                || node.rest_world_matrix.is_none())
+            .then_some(PredictionUnavailableReasonV2::MeasurementUnavailable)
+        })
+    };
+    Some(CurrentUnitScaleSelectedEvidence {
+        raw_source_references: expected,
+        reasons: unit_scale_selected_expected_reasons(primary_reason, dependency_complete),
+    })
+}
+
+fn unit_scale_exact_selected_evidence(
+    selector: &str,
+    keys: Option<(u64, u64)>,
+    reasons: &[PredictionUnavailableReasonV2],
+    basis: &EnginePredictionBasisV4,
+    provenance: &PredictionProvenanceV4,
+    measurements: &MeasurementContract,
+    reachability_plans: &UnitScaleSelectedReachabilityPlans,
+) -> bool {
+    let Some(expected) = unit_scale_expected_selected_raw_source_references(
+        selector,
+        keys,
+        basis,
+        provenance,
+        measurements,
+        reachability_plans,
+    ) else {
+        return false;
+    };
+    if reasons != expected.reasons
+        || !unit_scale_exact_raw_source_references(basis, &expected.raw_source_references)
+    {
+        return false;
+    }
+    let measurement_references = basis
+        .references()
+        .iter()
+        .filter_map(|reference| match reference {
+            PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+                PredictionBasisReferenceV1::Measurement {
+                    schema,
+                    pointer,
+                    value,
+                },
+            )) => Some((*schema, pointer.as_str(), value)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let Some((source_scene_index, source_node_index)) = keys else {
+        return unit_scale_exact_raw_row_references(basis, &[])
+            && measurement_references.is_empty();
+    };
+    let Some(inventory) = provenance.raw_scene_attachment().inventory() else {
+        return false;
+    };
+    let Some(_scene) = inventory
+        .scenes()
+        .rows()
+        .iter()
+        .find(|scene| scene.source_scene_index() == source_scene_index)
+    else {
+        return false;
+    };
+    let witness = reachability_plans
+        .get(selector)
+        .filter(|plan| plan.node_index() == source_node_index)
+        .and_then(|plan| match plan {
+            UnitScaleSelectedReachabilityPlan::Complete {
+                scene_witnesses, ..
+            } => scene_witnesses.get(&source_scene_index).copied(),
+            UnitScaleSelectedReachabilityPlan::Refused { .. } => None,
+        });
+    let Some((source_root_ordinal, source_node_index_at_root)) = witness else {
+        return false;
+    };
+    if !unit_scale_exact_raw_row_references(
+        basis,
+        &[
+            RawSceneAttachmentBasisReferenceV1::SceneRow { source_scene_index },
+            RawSceneAttachmentBasisReferenceV1::SceneRoot {
+                source_scene_index,
+                source_root_ordinal,
+                source_node_index: source_node_index_at_root,
+            },
+        ],
+    ) {
+        return false;
+    }
+    let Some((ordinal, node)) = measurements
+        .assets()
+        .skeleton_nodes
+        .iter()
+        .enumerate()
+        .find(|(_, node)| node.node_index as u64 == source_node_index)
+    else {
+        return measurement_references.is_empty();
+    };
+    let pointer =
+        format!("/measurements/skeleton_nodes/{ordinal}/rest_world_linear/classification");
+    matches!(
+        measurement_references.as_slice(),
+        [(
+            MEASUREMENTS_SCHEMA_ID,
+            actual_pointer,
+            PredictionScalarV1::Token { value },
+        )] if *actual_pointer == pointer
+            && value == unit_scale_classification_name(node.rest_world_linear.classification)
+    )
+}
+
+fn validate_current_engine_unit_scale_basis(
+    scope: &EvaluationScope,
+    basis: &EnginePredictionBasisV4,
+    reasons: &[PredictionUnavailableReasonV2],
+    provenance: &PredictionProvenanceV4,
+    measurements: &MeasurementContract,
+    mesh_plan: &CurrentUnitScaleMeshPlan,
+    reachability_plans: &UnitScaleSelectedReachabilityPlans,
+) -> bool {
+    let v1 = |predicate: &dyn Fn(&PredictionBasisReferenceV1) -> bool| {
+        basis.references().iter().any(|reference| {
+            matches!(
+                reference,
+                PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(reference))
+                    if predicate(reference)
+            )
+        })
+    };
+    let fact = |expected: &str| {
+        v1(
+            &|reference| matches!(reference, PredictionBasisReferenceV1::ProfileFact { fact_id } if fact_id == expected),
+        )
+    };
+    let setting = |expected: &str| {
+        v1(
+            &|reference| matches!(reference, PredictionBasisReferenceV1::ResolvedSetting { setting_id, .. } if setting_id == expected),
+        )
+    };
+    let source = |expected: &str| {
+        v1(
+            &|reference| matches!(reference, PredictionBasisReferenceV1::PrimarySource { source_id } if source_id == expected),
+        )
+    };
+    let raw_coverage = |expected: RawSceneAttachmentBasisDomainV1| {
+        basis.references().iter().any(|reference| {
+            matches!(
+                reference,
+                PredictionBasisReferenceV4::RawSceneAttachment(
+                    RawSceneAttachmentBasisReferenceV1::Coverage { domain }
+                ) if *domain == expected
+            )
+        })
+    };
+    let common_transform = source("bevy-gltf-loader-0.19.0-c6f634ca")
+        && source("bevy-gltf-coordinate-conversion-0.19.0-c6f634ca")
+        && fact("resulting_transform_scale")
+        && setting("extension_handler_environment");
+    match scope.code.as_str() {
+        ENGINE_UNIT_SCALE_FILE_SCOPE => {
+            unit_scale_exact_raw_row_references(basis, &[])
+                && [
+                    "application_world_unit_policy",
+                    "importer_scale_conversion",
+                    "physical_dimensions_preserved",
+                    "source_to_target_unit_mapping",
+                    "target_linear_unit",
+                ]
+                .into_iter()
+                .all(fact)
+                && [
+                    "bevy-gltf-loader-0.19.0-c6f634ca",
+                    "bevy-gltf-coordinate-conversion-0.19.0-c6f634ca",
+                    "khronos-gltf-2.0-coordinate-units",
+                ]
+                .into_iter()
+                .all(source)
+        }
+        ENGINE_UNIT_SCALE_SCENE_SCOPE | ENGINE_UNIT_SCALE_SCENE_INVENTORY_SCOPE => {
+            let expected_rows = if scope.code.as_str() == ENGINE_UNIT_SCALE_SCENE_INVENTORY_SCOPE {
+                Some(Vec::new())
+            } else {
+                scope
+                    .subject
+                    .as_deref()
+                    .and_then(|subject| subject.strip_prefix("source_scene:"))
+                    .and_then(|index| index.parse::<u64>().ok())
+                    .filter(|index| {
+                        scope.subject.as_deref() == Some(&format!("source_scene:{index}"))
+                    })
+                    .map(|source_scene_index| {
+                        vec![RawSceneAttachmentBasisReferenceV1::SceneRow { source_scene_index }]
+                    })
+            };
+            expected_rows.as_deref().is_some_and(|expected_rows| {
+                unit_scale_exact_raw_row_references(basis, expected_rows)
+            }) && common_transform
+                && setting("rotate_scene_entity")
+                && (provenance.raw_scene_attachment().inventory().is_none()
+                    || raw_coverage(RawSceneAttachmentBasisDomainV1::Scenes))
+        }
+        ENGINE_UNIT_SCALE_MESH_SCOPE | ENGINE_UNIT_SCALE_MESH_INVENTORY_SCOPE => {
+            let expected_rows = if scope.code.as_str() == ENGINE_UNIT_SCALE_MESH_INVENTORY_SCOPE {
+                Some(Vec::new())
+            } else {
+                scope
+                    .subject
+                    .as_deref()
+                    .and_then(|subject| unit_scale_expected_mesh_raw_rows(subject, mesh_plan))
+            };
+            expected_rows.as_deref().is_some_and(|expected_rows| {
+                unit_scale_exact_raw_row_references(basis, expected_rows)
+            }) && common_transform
+                && source("bevy-render-asset-usages-0.19.0-c6f634ca")
+                && setting("load_meshes")
+                && setting("rotate_meshes")
+                && (provenance.raw_scene_attachment().inventory().is_none()
+                    || [
+                        RawSceneAttachmentBasisDomainV1::SourceSkeleton,
+                        RawSceneAttachmentBasisDomainV1::Scenes,
+                        RawSceneAttachmentBasisDomainV1::NodeMeshAttachments,
+                        RawSceneAttachmentBasisDomainV1::MeshPrimitives,
+                    ]
+                    .into_iter()
+                    .all(raw_coverage))
+        }
+        ENGINE_UNIT_SCALE_SELECTED_SCOPE => {
+            let selected = scope.subject.as_deref().and_then(|subject| {
+                unit_scale_selected_scope_keys(
+                    subject,
+                    provenance.rule_inputs().runtime_node_selectors(),
+                )
+            });
+            let selector = selected.map(|(selector, _)| selector);
+            common_transform
+                && setting("rotate_scene_entity")
+                && selected.is_some_and(|(selector, keys)| {
+                    unit_scale_exact_selected_evidence(
+                        selector,
+                        keys,
+                        reasons,
+                        basis,
+                        provenance,
+                        measurements,
+                        reachability_plans,
+                    )
+                })
+                && selector.is_some_and(|selector| {
+                    v1(&|reference| {
+                        matches!(
+                            reference,
+                            PredictionBasisReferenceV1::ProjectField {
+                                field_id,
+                                value: PredictionScalarV1::Text { value }
+                            } if field_id == "runtime_nodes.selector" && value == selector
+                        )
+                    })
+                })
+                && (provenance.raw_scene_attachment().inventory().is_none()
+                    || (raw_coverage(RawSceneAttachmentBasisDomainV1::SourceSkeleton)
+                        && raw_coverage(RawSceneAttachmentBasisDomainV1::Scenes)))
+        }
+        ENGINE_UNIT_SCALE_BUDGET_SCOPE => {
+            unit_scale_exact_raw_row_references(basis, &[])
+                && source("bevy-gltf-loader-0.19.0-c6f634ca")
+        }
+        _ => false,
+    }
+}
+
+fn validate_current_engine_unit_scale_prediction_v4(
+    check_id: &str,
+    selection: SelectionState,
+    configuration: ConfigurationState,
+    applicability: Applicability,
+    prediction: Option<&EnginePredictionV4>,
+    provenance: Option<&PredictionProvenanceV4>,
+    measurements: &MeasurementContract,
+) -> Result<(), PredictionContractError> {
+    if check_id != ENGINE_UNIT_SCALE_CHECK_ID {
+        return Ok(());
+    }
+    let exact_profile = provenance.is_some_and(|provenance| {
+        let selection = provenance.profile().selection();
+        selection.family() == "bevy"
+            && selection.profile_revision() == 2
+            && selection.engine_version() == "0.19.0"
+            && selection.importer() == "gltf-asset-loader"
+            && provenance.profile().fact_bundle_urn() == "urn:animsmith:engine-profile:bevy:2"
+            && provenance.profile().facts_identity().sha256()
+                == "bcd663e891b25029ecdf17e942f6fa93f71a8d0598fc8cb02bc7634749c34597"
+            && provenance.profile().facts_identity().bytes() == 4_783
+            && matches!(
+                provenance.source_format(),
+                SourceFormatV1::GltfJson | SourceFormatV1::Glb
+            )
+    });
+    if applicability
+        != if exact_profile {
+            Applicability::Applicable
+        } else {
+            Applicability::NotApplicable
+        }
+    {
+        return Err(PredictionContractError::EngineUnitScaleFacetMismatch);
+    }
+    if !exact_profile {
+        return if prediction.is_none() {
+            Ok(())
+        } else {
+            Err(PredictionContractError::EngineUnitScaleFacetMismatch)
+        };
+    }
+    if selection != SelectionState::Selected || configuration != ConfigurationState::Enabled {
+        return if prediction.is_none() {
+            Ok(())
+        } else {
+            Err(PredictionContractError::EngineUnitScaleFacetMismatch)
+        };
+    }
+    let provenance = provenance.ok_or(PredictionContractError::EngineUnitScaleFacetMismatch)?;
+    let prediction = prediction.ok_or(PredictionContractError::EngineUnitScaleFacetMismatch)?;
+    let mesh_plan = current_unit_scale_mesh_plan(provenance, measurements);
+    let reachability_plans = unit_scale_selected_reachability_plans(provenance, measurements);
+    if prediction.facets().iter().any(|facet| {
+        !validate_current_engine_unit_scale_basis(
+            facet.scope(),
+            facet.basis(),
+            facet.reasons(),
+            provenance,
+            measurements,
+            &mesh_plan,
+            &reachability_plans,
+        )
+    }) {
+        return Err(PredictionContractError::EngineUnitScaleFacetMismatch);
+    }
+    let has_summary = prediction.facets().iter().any(|facet| {
+        facet.scope().code.as_str() == ENGINE_UNIT_SCALE_BUDGET_SCOPE
+            && facet.reasons() == [PredictionUnavailableReasonV2::FacetBudgetExceeded]
+    });
+    let retained = prediction
+        .facets()
+        .iter()
+        .filter(|facet| facet.scope().code.as_str() != ENGINE_UNIT_SCALE_BUDGET_SCOPE)
+        .collect::<Vec<_>>();
+    let scene_facets = provenance
+        .raw_scene_attachment()
+        .inventory()
+        .filter(|inventory| inventory.scenes().coverage() == RawSceneAttachmentCoverageV1::Complete)
+        .map_or(1, |inventory| inventory.scenes().rows().len());
+    let mesh_facets = match &mesh_plan {
+        CurrentUnitScaleMeshPlan::Detailed(rows) => rows.len(),
+        CurrentUnitScaleMeshPlan::CompleteEmpty
+        | CurrentUnitScaleMeshPlan::Incomplete
+        | CurrentUnitScaleMeshPlan::JoinOverflow => 1,
+    };
+    let selected_facets = current_unit_scale_selected_facet_count(&reachability_plans);
+    let expected_count = 1usize
+        .checked_add(scene_facets)
+        .and_then(|count| count.checked_add(mesh_facets))
+        .and_then(|count| count.checked_add(selected_facets))
+        .ok_or(PredictionContractError::EngineUnitScaleFacetMismatch)?;
+    if (!has_summary && expected_count > PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE)
+        || (has_summary && retained.len() >= expected_count)
+    {
+        return Err(PredictionContractError::EngineUnitScaleFacetMismatch);
+    }
+    let candidate_capacity = if has_summary {
+        retained.len()
+    } else {
+        expected_count
+    };
+    let mut expected_retained = expected_current_engine_unit_scale_facets(
+        provenance,
+        measurements,
+        &mesh_plan,
+        candidate_capacity,
+        &reachability_plans,
+    )
+    .ok_or(PredictionContractError::EngineUnitScaleFacetMismatch)?;
+    if expected_retained.len() != candidate_capacity {
+        return Err(PredictionContractError::EngineUnitScaleFacetMismatch);
+    }
+    expected_retained.sort_by(|left, right| {
+        left.scope
+            .code
+            .as_str()
+            .cmp(right.scope.code.as_str())
+            .then_with(|| left.scope.subject.cmp(&right.scope.subject))
+    });
+    if retained.len() != expected_retained.len()
+        || retained
+            .iter()
+            .zip(&expected_retained)
+            .any(|(actual, expected)| {
+                actual.scope() != &expected.scope
+                    || actual.result() != expected.result.as_ref()
+                    || (actual.scope().code.as_str() != ENGINE_UNIT_SCALE_SELECTED_SCOPE
+                        && actual.reasons() != expected.reasons)
+            })
+    {
+        return Err(PredictionContractError::EngineUnitScaleFacetMismatch);
     }
     Ok(())
 }
@@ -5763,13 +7861,15 @@ impl MeasurementReportInput {
             V12,
             V13,
             V14,
+            V15,
         }
 
         let revision = match self.schema_version {
             Some(OUTPUT_V11_SCHEMA_VERSION) => ReaderRevision::V11,
             Some(OUTPUT_V12_SCHEMA_VERSION) => ReaderRevision::V12,
             Some(OUTPUT_V13_SCHEMA_VERSION) => ReaderRevision::V13,
-            Some(OUTPUT_SCHEMA_VERSION) => ReaderRevision::V14,
+            Some(OUTPUT_V14_SCHEMA_VERSION) => ReaderRevision::V14,
+            Some(OUTPUT_SCHEMA_VERSION) => ReaderRevision::V15,
             Some(found) => {
                 return Err(MeasurementReportError::UnsupportedOutputVersion { found });
             }
@@ -5779,7 +7879,8 @@ impl MeasurementReportInput {
             ReaderRevision::V11 => OUTPUT_V11_SCHEMA_ID,
             ReaderRevision::V12 => OUTPUT_V12_SCHEMA_ID,
             ReaderRevision::V13 => OUTPUT_V13_SCHEMA_ID,
-            ReaderRevision::V14 => OUTPUT_SCHEMA_ID,
+            ReaderRevision::V14 => OUTPUT_V14_SCHEMA_ID,
+            ReaderRevision::V15 => OUTPUT_SCHEMA_ID,
         };
         if self.schema.as_deref() != Some(expected_schema) {
             return Err(MeasurementReportError::WrongOutputIdentity);
@@ -5830,6 +7931,17 @@ impl MeasurementReportInput {
                 let file = decode_prediction_phase_file_v14(command, file_index, &raw)?;
                 let (file_available, file_unavailable) =
                     validate_prediction_phase_file_v14(command, file_index, &file)?;
+                available = available
+                    .checked_add(file_available)
+                    .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                unavailable = unavailable
+                    .checked_add(file_unavailable)
+                    .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
+                file
+            } else if revision == ReaderRevision::V15 {
+                let file = decode_prediction_phase_file_v15(command, file_index, &raw)?;
+                let (file_available, file_unavailable) =
+                    validate_prediction_phase_file_v15(command, file_index, &file)?;
                 available = available
                     .checked_add(file_available)
                     .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
@@ -5900,7 +8012,10 @@ impl MeasurementReportInput {
                 })?;
                 let measurements = decode_measurement_payload(
                     &measurements,
-                    matches!(revision, ReaderRevision::V13 | ReaderRevision::V14),
+                    matches!(
+                        revision,
+                        ReaderRevision::V13 | ReaderRevision::V14 | ReaderRevision::V15
+                    ),
                 )
                 .map_err(|source| {
                     MeasurementReportError::file(
@@ -5914,7 +8029,7 @@ impl MeasurementReportInput {
                     ReaderRevision::V11 | ReaderRevision::V12 => {
                         (MEASUREMENTS_V15_SCHEMA_VERSION, MEASUREMENTS_V15_SCHEMA_ID)
                     }
-                    ReaderRevision::V13 | ReaderRevision::V14 => {
+                    ReaderRevision::V13 | ReaderRevision::V14 | ReaderRevision::V15 => {
                         (MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_SCHEMA_ID)
                     }
                 };
@@ -6045,7 +8160,7 @@ impl MeasurementReportInput {
                     ReaderRevision::V11 | ReaderRevision::V12 => {
                         MeasurementContract::historical_v15(clips, assets)
                     }
-                    ReaderRevision::V13 | ReaderRevision::V14 => {
+                    ReaderRevision::V13 | ReaderRevision::V14 | ReaderRevision::V15 => {
                         MeasurementContract::new(clips, assets)
                     }
                 }
@@ -6055,6 +8170,61 @@ impl MeasurementReportInput {
                         MeasurementFileError::InvalidMeasurements { source },
                     )
                 })?;
+                if revision == ReaderRevision::V15 {
+                    let provenance = file.prediction_provenance_v4.as_present();
+                    for (check_index, check) in file
+                        .checks_v3
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .enumerate()
+                    {
+                        validate_current_engine_unit_scale_prediction_v4(
+                            &check.check_id,
+                            check.selection,
+                            check.configuration,
+                            check.applicability,
+                            None,
+                            None,
+                            &measurements,
+                        )
+                        .map_err(|source| {
+                            MeasurementReportError::file(
+                                file_index,
+                                MeasurementFileError::InvalidPrediction {
+                                    check_index,
+                                    source,
+                                },
+                            )
+                        })?;
+                    }
+                    for (check_index, check) in file
+                        .checks_v4
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .enumerate()
+                    {
+                        validate_current_engine_unit_scale_prediction_v4(
+                            &check.check_id,
+                            check.selection,
+                            check.configuration,
+                            check.applicability,
+                            check.prediction.as_ref(),
+                            provenance,
+                            &measurements,
+                        )
+                        .map_err(|source| {
+                            MeasurementReportError::file(
+                                file_index,
+                                MeasurementFileError::InvalidPrediction {
+                                    check_index,
+                                    source,
+                                },
+                            )
+                        })?;
+                    }
+                }
                 Ok((
                     MeasurementReportFile {
                         path,
@@ -6065,6 +8235,7 @@ impl MeasurementReportInput {
                         file.checks.unwrap_or_default(),
                         file.legacy_checks.unwrap_or_default(),
                         file.checks_v3.unwrap_or_default(),
+                        file.checks_v4.unwrap_or_default(),
                     ),
                 ))
             })
@@ -6072,7 +8243,30 @@ impl MeasurementReportInput {
 
         // Measurement-dependent basis pointers are deliberately resolved only
         // after every file's complete, version-routed measurements contract has passed.
-        for (file_index, (file, (checks, legacy_checks, checks_v3))) in parsed.iter().enumerate() {
+        for (file_index, (file, (checks, legacy_checks, checks_v3, checks_v4))) in
+            parsed.iter().enumerate()
+        {
+            validate_measurement_references_batch_v4(
+                &file.measurements,
+                checks_v4
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(check_index, check)| {
+                        check
+                            .prediction
+                            .as_ref()
+                            .map(|prediction| (check_index, prediction))
+                    }),
+            )
+            .map_err(|error| {
+                MeasurementReportError::file(
+                    file_index,
+                    MeasurementFileError::InvalidPrediction {
+                        check_index: error.prediction_index,
+                        source: error.source,
+                    },
+                )
+            })?;
             validate_measurement_references_batch_v3(
                 &file.measurements,
                 checks_v3
@@ -6158,11 +8352,13 @@ mod measurement_report_input_tests {
         AssetMeasurements, ImageMeasurements, MeshDefinitionMeasurements, PrimitiveMeasurements,
     };
     use crate::prediction::{
-        EnginePredictionBasisV1, EnginePredictionBasisV2, EnginePredictionFacetV1,
-        EnginePredictionFacetV2, EnginePredictionFacetV3, EnginePredictionV1, EnginePredictionV2,
-        EnginePredictionV3, PredictionBasisReferenceV1, PredictionBasisReferenceV2,
+        EngineMachineResultV1, EnginePredictionBasisV1, EnginePredictionBasisV2,
+        EnginePredictionBasisV4, EnginePredictionFacetV1, EnginePredictionFacetV2,
+        EnginePredictionFacetV3, EnginePredictionFacetV4, EnginePredictionV1, EnginePredictionV2,
+        EnginePredictionV3, EnginePredictionV4, PredictionBasisReferenceV1,
+        PredictionBasisReferenceV2, PredictionBasisReferenceV4, PredictionProvenanceIdentityV4,
         PredictionScalarV1, PredictionUnavailableReasonV1, PredictionUnavailableReasonV2,
-        RawSourceBindingV1, RawSourceBindingV2,
+        RawSourceBindingV1, RawSourceBindingV2, UnitMappingResultV1,
     };
     use crate::source_facts::SourceFormatV1;
     use crate::{
@@ -6447,6 +8643,86 @@ mod measurement_report_input_tests {
             checks,
             prediction_test_measurements(),
         )
+    }
+
+    #[test]
+    fn output_v15_rejects_mixed_v3_provenance_and_v4_predictions() {
+        let provenance = prediction_test_provenance();
+        let identity: PredictionProvenanceIdentityV4 =
+            serde_json::from_value(serde_json::to_value(provenance.identity()).unwrap()).unwrap();
+        let basis = EnginePredictionBasisV4::new(vec![PredictionBasisReferenceV4::v2(
+            PredictionBasisReferenceV2::v1(
+                PredictionBasisReferenceV1::profile_fact("accepted_inputs").unwrap(),
+            ),
+        )])
+        .unwrap();
+        let scope = EvaluationScope::new(EvaluationScopeCode::custom("acme:v4-mixed"));
+        let facet = EnginePredictionFacetV4::available(
+            scope.clone(),
+            basis,
+            EngineMachineResultV1::UnitMapping(
+                UnitMappingResultV1::gltf_to_engine_world_length_unit(),
+            ),
+        )
+        .unwrap();
+        let prediction = EnginePredictionV4::new(identity, vec![facet]).unwrap();
+        let check = CheckEvaluation::evaluated(
+            "acme-v4-mixed",
+            CheckOutput::from_coverage(vec![], vec![scope], vec![])
+                .with_engine_prediction_v4(prediction),
+        )
+        .unwrap();
+        assert!(matches!(
+            lint_file(&provenance, vec![check]),
+            Err(OutputContractError::PredictionRevisionMismatch)
+        ));
+    }
+
+    #[test]
+    fn output_v15_preserves_prediction_without_provenance_error_precedence() {
+        let provenance = prediction_test_provenance();
+        let check = unavailable_check(
+            "acme-v3-without-provenance",
+            &provenance,
+            vec![unavailable_facet(
+                "row".to_owned(),
+                EnginePredictionBasisV1::new(Vec::new()).unwrap(),
+            )],
+        );
+        let error = LintFileReport::new(
+            "without-provenance.glb",
+            provenance.raw_source().primary_input().clone(),
+            prediction_test_rig(),
+            None,
+            vec![check],
+            prediction_test_measurements(),
+        )
+        .unwrap_err();
+        assert_eq!(error, OutputContractError::PredictionWithoutProvenance);
+    }
+
+    #[test]
+    fn output_v15_rejects_active_unit_scale_without_v4_provenance() {
+        let check = CheckEvaluation::evaluated(
+            ENGINE_UNIT_SCALE_CHECK_ID,
+            CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new()),
+        )
+        .unwrap();
+        let error = LintFileReport::new_v4(
+            "unit-scale-without-provenance.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            vec![check],
+            prediction_test_measurements(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            OutputContractError::InvalidPrediction(
+                PredictionContractError::EngineUnitScaleFacetMismatch
+            )
+        );
     }
 
     fn validated_lint_wire(
@@ -8599,9 +10875,14 @@ pub enum OutputContractError {
     /// A check carried prediction evidence without its file-scoped authority.
     #[error("engine prediction requires non-null file prediction_provenance")]
     PredictionWithoutProvenance,
-    /// A current output-v14 lint record attempted to attach historical prediction evidence.
-    #[error("output-v14 lint cannot carry historical engine-prediction evidence")]
+    /// A current output-v15 lint record attempted to attach historical prediction evidence.
+    #[error("output-v15 lint cannot carry historical engine-prediction evidence")]
     HistoricalPredictionInV2Output,
+    /// File provenance and check prediction used different contract revisions.
+    #[error(
+        "output-v15 prediction provenance and check attachments must use one correlated revision"
+    )]
+    PredictionRevisionMismatch,
     /// File and provenance primary-input identities differed.
     #[error("prediction provenance primary input does not match the lint file input")]
     PredictionPrimaryInputMismatch,
@@ -8764,17 +11045,28 @@ impl MeasureEnvelope {
     }
 }
 
-/// Current output-v14 lint file evidence with V3 prediction provenance.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the internal correlated revision enum preserves value ownership for both immutable wire types"
+)]
+enum CurrentPredictionProvenance {
+    V3(PredictionProvenanceV3),
+    V4(PredictionProvenanceV4),
+}
+
+/// Current output-v15 lint file evidence with correlated V3 or V4 prediction provenance.
 #[derive(Debug, Clone, Serialize)]
 pub struct LintFileReport {
     #[serde(flatten)]
     evidence: FileEvidence,
-    prediction_provenance: Option<PredictionProvenanceV3>,
+    prediction_provenance: Option<CurrentPredictionProvenance>,
     checks: Vec<CheckEvaluation>,
 }
 
 impl LintFileReport {
-    /// Construct a V3 lint file report.
+    /// Construct a legacy-V3 lint file report inside output-v15.
     pub fn new(
         path: impl Into<String>,
         input: InputIdentity,
@@ -8791,7 +11083,7 @@ impl LintFileReport {
         }
         let report = Self {
             evidence: FileEvidence::new(path, input, rig, measurements),
-            prediction_provenance,
+            prediction_provenance: prediction_provenance.map(CurrentPredictionProvenance::V3),
             checks,
         };
         report.validate()?;
@@ -8800,7 +11092,42 @@ impl LintFileReport {
 
     /// V3 prediction provenance, or `None` for engine-neutral lint.
     pub const fn prediction_provenance(&self) -> Option<&PredictionProvenanceV3> {
-        self.prediction_provenance.as_ref()
+        match self.prediction_provenance.as_ref() {
+            Some(CurrentPredictionProvenance::V3(provenance)) => Some(provenance),
+            Some(CurrentPredictionProvenance::V4(_)) | None => None,
+        }
+    }
+
+    /// Construct a result-bearing V4 lint file report.
+    pub fn new_v4(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        prediction_provenance: Option<PredictionProvenanceV4>,
+        checks: Vec<CheckEvaluation>,
+        measurements: MeasurementContract,
+    ) -> Result<Self, OutputContractError> {
+        if checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE {
+            return Err(OutputContractError::TooManyChecks {
+                found: checks.len(),
+                limit: OUTPUT_V11_MAX_CHECKS_PER_FILE,
+            });
+        }
+        let report = Self {
+            evidence: FileEvidence::new(path, input, rig, measurements),
+            prediction_provenance: prediction_provenance.map(CurrentPredictionProvenance::V4),
+            checks,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+
+    /// V4 prediction provenance, when this file uses revision 4.
+    pub const fn prediction_provenance_v4(&self) -> Option<&PredictionProvenanceV4> {
+        match self.prediction_provenance.as_ref() {
+            Some(CurrentPredictionProvenance::V4(provenance)) => Some(provenance),
+            Some(CurrentPredictionProvenance::V3(_)) | None => None,
+        }
     }
 
     /// Display path supplied by the producer.
@@ -8825,8 +11152,17 @@ impl LintFileReport {
 
     fn validate(&self) -> Result<(), OutputContractError> {
         if let Some(provenance) = &self.prediction_provenance {
-            provenance.validate()?;
-            if provenance.raw_source().primary_input() != &self.evidence.input {
+            let primary_input = match provenance {
+                CurrentPredictionProvenance::V3(provenance) => {
+                    provenance.validate()?;
+                    provenance.raw_source().primary_input()
+                }
+                CurrentPredictionProvenance::V4(provenance) => {
+                    provenance.validate()?;
+                    provenance.raw_source().primary_input()
+                }
+            };
+            if primary_input != &self.evidence.input {
                 return Err(OutputContractError::PredictionPrimaryInputMismatch);
             }
         }
@@ -8836,18 +11172,49 @@ impl LintFileReport {
         let mut text = self
             .prediction_provenance
             .as_ref()
-            .map(PredictionProvenanceV3::retained_text_bytes)
+            .map(|provenance| match provenance {
+                CurrentPredictionProvenance::V3(provenance) => provenance.retained_text_bytes(),
+                CurrentPredictionProvenance::V4(provenance) => provenance.retained_text_bytes(),
+            })
             .transpose()?
             .unwrap_or(0);
         for check in &self.checks {
             if check.engine_prediction().is_some() || check.engine_prediction_v2().is_some() {
                 return Err(OutputContractError::HistoricalPredictionInV2Output);
             }
-            validate_current_engine_clip_boundary_applicability_v3(
-                check.check_id(),
-                check.applicability(),
+            let provenance_revision_matches = matches!(
+                (
+                    &self.prediction_provenance,
+                    check.engine_prediction_v3(),
+                    check.engine_prediction_v4()
+                ),
+                (Some(CurrentPredictionProvenance::V3(_)), Some(_), None)
+                    | (Some(CurrentPredictionProvenance::V4(_)), None, Some(_))
+                    | (_, None, None)
+            );
+            if !provenance_revision_matches {
+                if self.prediction_provenance.is_none()
+                    && (check.engine_prediction_v3().is_some()
+                        || check.engine_prediction_v4().is_some())
+                {
+                    return Err(OutputContractError::PredictionWithoutProvenance);
+                }
+                return Err(OutputContractError::PredictionRevisionMismatch);
+            }
+            let legacy_v3_provenance = match self.prediction_provenance.as_ref() {
+                Some(CurrentPredictionProvenance::V3(provenance)) => Some(provenance),
+                Some(CurrentPredictionProvenance::V4(_)) | None => None,
+            };
+            if !matches!(
                 self.prediction_provenance.as_ref(),
-            )?;
+                Some(CurrentPredictionProvenance::V4(_))
+            ) {
+                validate_current_engine_clip_boundary_applicability_v3(
+                    check.check_id(),
+                    check.applicability(),
+                    legacy_v3_provenance,
+                )?;
+            }
             if check.check_id() == ENGINE_CLIP_BOUNDARY_CHECK_ID
                 && check.selection() == SelectionState::Selected
                 && check.configuration() == ConfigurationState::Enabled
@@ -8858,11 +11225,25 @@ impl LintFileReport {
                     PredictionContractError::EngineClipBoundaryFacetMismatch,
                 ));
             }
+            let current_v4_provenance = match self.prediction_provenance.as_ref() {
+                Some(CurrentPredictionProvenance::V4(provenance)) => Some(provenance),
+                Some(CurrentPredictionProvenance::V3(_)) | None => None,
+            };
+            validate_current_engine_unit_scale_prediction_v4(
+                check.check_id(),
+                check.selection(),
+                check.configuration(),
+                check.applicability(),
+                check.engine_prediction_v4(),
+                current_v4_provenance,
+                &self.evidence.measurements,
+            )?;
             if let Some(prediction) = check.engine_prediction_v3() {
-                let provenance = self
-                    .prediction_provenance
-                    .as_ref()
-                    .ok_or(OutputContractError::PredictionWithoutProvenance)?;
+                let Some(CurrentPredictionProvenance::V3(provenance)) =
+                    self.prediction_provenance.as_ref()
+                else {
+                    return Err(OutputContractError::PredictionRevisionMismatch);
+                };
                 prediction.validate_against_provenance(provenance)?;
                 prediction.validate_for_check(
                     check.check_id(),
@@ -8886,6 +11267,30 @@ impl LintFileReport {
                     provenance,
                     check.evaluated_scopes(),
                     &finding_scopes,
+                )?;
+                has_facet_budget_summary |= prediction.has_facet_budget_summary();
+                facets = facets
+                    .checked_add(prediction.facets().len())
+                    .ok_or(OutputContractError::ArithmeticOverflow)?;
+                references = references
+                    .checked_add(prediction.basis_reference_count())
+                    .ok_or(OutputContractError::ArithmeticOverflow)?;
+                text = text
+                    .checked_add(prediction.retained_text_bytes()?)
+                    .ok_or(OutputContractError::ArithmeticOverflow)?;
+            }
+            if let Some(prediction) = check.engine_prediction_v4() {
+                let Some(CurrentPredictionProvenance::V4(provenance)) =
+                    self.prediction_provenance.as_ref()
+                else {
+                    return Err(OutputContractError::PredictionRevisionMismatch);
+                };
+                prediction.validate_against_provenance(provenance)?;
+                prediction.validate_for_check(
+                    check.check_id(),
+                    check.evaluated_scopes(),
+                    check.gaps(),
+                    check.findings(),
                 )?;
                 has_facet_budget_summary |= prediction.has_facet_budget_summary();
                 facets = facets
@@ -8937,6 +11342,18 @@ impl LintFileReport {
                 }),
         )
         .map_err(|error| OutputContractError::InvalidPrediction(error.source))?;
+        validate_measurement_references_batch_v4(
+            &self.evidence.measurements,
+            self.checks
+                .iter()
+                .enumerate()
+                .filter_map(|(check_index, check)| {
+                    check
+                        .engine_prediction_v4()
+                        .map(|prediction| (check_index, prediction))
+                }),
+        )
+        .map_err(|error| OutputContractError::InvalidPrediction(error.source))?;
         Ok(())
     }
 }
@@ -8949,7 +11366,7 @@ struct EnvelopeHeaderV2 {
     command: &'static str,
 }
 
-/// Current output-v14 lint envelope.
+/// Current output-v15 lint envelope.
 #[derive(Debug, Clone, Serialize)]
 pub struct LintEnvelope {
     #[serde(flatten)]
@@ -8996,6 +11413,18 @@ impl LintEnvelope {
                 }
                 checks.gaps += check.gaps().len();
                 if let Some(prediction) = check.engine_prediction_v3() {
+                    for facet in prediction.facets() {
+                        match facet.state() {
+                            EnginePredictionFacetStateV1::Available => {
+                                prediction_facets.available += 1;
+                            }
+                            EnginePredictionFacetStateV1::RequiredPredictionUnavailable => {
+                                prediction_facets.required_prediction_unavailable += 1;
+                            }
+                        }
+                    }
+                }
+                if let Some(prediction) = check.engine_prediction_v4() {
                     for facet in prediction.facets() {
                         match facet.state() {
                             EnginePredictionFacetStateV1::Available => {

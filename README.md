@@ -315,6 +315,16 @@ selector evidence, not proof that Bevy loaded the asset, retained its targets,
 or connected an animation graph. See the runnable
 [Bevy example](https://github.com/mmannerm/animsmith/blob/main/examples/README.md#predicting-a-bevy-animation-selector).
 
+For `bevy` revision 2 with the same exact engine/importer tuple,
+`engine-unit-scale` emits machine-readable importer predictions for the glTF
+metre-to-world-length mapping, loader-created scene entities, raw-inventory
+mesh primitive children, and configured runtime-node selectors. The profile
+requires an exact supported extension-handler environment and the
+`bevy_animation` feature state. It does not claim that arbitrary application
+world state is metre-authored, include the caller-owned `WorldAssetRoot`, or
+authorize content rewriting. See
+[the Bevy profile](https://github.com/mmannerm/animsmith/blob/main/docs/engine-profile-bevy.md).
+
 `generate import-advice` is the separate engine-setting projection path. With
 an exact Unity 6000.3 Generic or Humanoid profile, it emits only the documented
 importer properties already materialized by config and binds them to same-load

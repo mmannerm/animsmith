@@ -1,15 +1,19 @@
 use crate::canonical::facts_identity;
 use crate::{
     AnimationAddressability, ConversionControl, CoordinateBasis, DefaultStatus, EngineProfile,
-    FactId, FactState, FactValue, ForwardAxis, Handedness, LinearUnit, PrimarySource, ProfileFact,
-    ProfileSelection, RegistryValidationError, RootMotionAddressability, SettingApplicability,
-    SettingDescriptor, SettingDomain, SettingId, SettingScope, TargetAddressability, UpAxis,
+    EngineProfileV2, FactId, FactState, FactValue, ForwardAxis, Handedness, LinearUnit,
+    PrimarySource, PrimarySourceV2, ProfileFact, ProfileSelection, RegistryValidationError,
+    RootMotionAddressability, SettingApplicability, SettingDefaultV2, SettingDescriptor,
+    SettingDescriptorV2, SettingDomain, SettingDomainV2, SettingId, SettingIdV2, SettingScope,
+    SettingValueV2, TargetAddressability, UpAxis,
 };
 use animsmith_core::{InputIdentity, SourceFormatV1};
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 const VERIFIED_ON: &str = "2026-08-20";
+const BEVY_V2_VERIFIED_ON: &str = "2026-08-25";
+const BEVY_0_19_COMMIT: &str = "c6f634ca9f406d68ba5109d921247b654cb42c10";
 const ALL_FACT_IDS: [FactId; 14] = [
     FactId::AcceptedInputs,
     FactId::AnimationAddressability,
@@ -35,6 +39,257 @@ pub fn profiles_v1() -> &'static [EngineProfile] {
         profiles.sort_by(|left, right| left.selection.cmp(&right.selection));
         profiles
     })
+}
+
+/// Enumerate immutable revision-2 profile records in exact tuple order.
+///
+/// This registry is separate from [`profiles_v1`], whose five records and
+/// canonical identities remain unchanged.
+pub fn profiles_v2() -> &'static [EngineProfileV2] {
+    static PROFILES: OnceLock<Vec<EngineProfileV2>> = OnceLock::new();
+    PROFILES.get_or_init(|| vec![bevy_v2()])
+}
+
+/// Validate revision-2 registry declarations and source cross-references.
+///
+/// # Errors
+///
+/// Returns a typed invariant error naming the affected profile or setting.
+pub fn validate_registry_v2() -> Result<(), RegistryValidationErrorV2> {
+    use animsmith_core::engine_contract::{EngineFactIdV2, EngineFactStateV2};
+    const FACT_IDS: [EngineFactIdV2; 10] = [
+        EngineFactIdV2::AcceptedInputs,
+        EngineFactIdV2::ApplicationWorldUnitPolicy,
+        EngineFactIdV2::ImporterScaleConversion,
+        EngineFactIdV2::ImportSettingProjection,
+        EngineFactIdV2::PhysicalDimensionsPreserved,
+        EngineFactIdV2::ResultingTransformScale,
+        EngineFactIdV2::RootMotionAddressability,
+        EngineFactIdV2::SourceImportDisposition,
+        EngineFactIdV2::SourceToTargetUnitMapping,
+        EngineFactIdV2::TargetLinearUnit,
+    ];
+    let profiles = profiles_v2();
+    if profiles.len() != 1 {
+        return Err(RegistryValidationErrorV2::ProfileCount {
+            found: profiles.len(),
+        });
+    }
+    let mut selections = BTreeSet::new();
+    let mut urns = BTreeSet::new();
+    for profile in profiles {
+        if !selections.insert(profile.selection().clone()) {
+            return Err(RegistryValidationErrorV2::DuplicateSelection {
+                selection: profile.selection().clone(),
+            });
+        }
+        if !urns.insert(profile.profile_urn()) {
+            return Err(RegistryValidationErrorV2::DuplicateProfileUrn {
+                urn: profile.profile_urn(),
+            });
+        }
+        if profile.accepted_inputs().is_empty()
+            || !profile.accepted_inputs().windows(2).all(|pair| {
+                crate::canonical::format_name(pair[0]) < crate::canonical::format_name(pair[1])
+            })
+        {
+            return Err(RegistryValidationErrorV2::InvalidAcceptedInputs {
+                selection: profile.selection().clone(),
+            });
+        }
+        let fact_ids: BTreeSet<_> = profile.facts().iter().map(|fact| fact.id()).collect();
+        if fact_ids.len() != profile.facts().len()
+            || fact_ids != FACT_IDS.into_iter().collect::<BTreeSet<_>>()
+        {
+            return Err(RegistryValidationErrorV2::InvalidFactInventory {
+                selection: profile.selection().clone(),
+            });
+        }
+
+        let setting_ids: BTreeSet<_> = profile
+            .setting_descriptors()
+            .iter()
+            .map(SettingDescriptorV2::id)
+            .collect();
+        if setting_ids.len() != profile.setting_descriptors().len() {
+            return Err(RegistryValidationErrorV2::DuplicateSettingDescriptor {
+                selection: profile.selection().clone(),
+            });
+        }
+        for descriptor in profile.setting_descriptors() {
+            if let SettingDefaultV2::Verified(value) = descriptor.default()
+                && !value.matches_domain(descriptor.domain())
+            {
+                return Err(RegistryValidationErrorV2::InvalidVerifiedDefault {
+                    selection: profile.selection().clone(),
+                    setting: descriptor.id(),
+                });
+            }
+        }
+
+        let mut source_ids = BTreeSet::new();
+        let mut supported_settings = BTreeSet::new();
+        let mut supported_facts = BTreeSet::new();
+        let mut accepted_inputs_supported = false;
+        for source in profile.sources() {
+            if !source_ids.insert(source.id()) {
+                return Err(RegistryValidationErrorV2::DuplicateSourceId {
+                    selection: profile.selection().clone(),
+                    source_id: source.id(),
+                });
+            }
+            accepted_inputs_supported |= source.supports_accepted_inputs();
+            for fact in source.supported_facts() {
+                let state = profile
+                    .facts()
+                    .iter()
+                    .find(|row| row.id() == *fact)
+                    .map(|row| row.state());
+                if !matches!(state, Some(EngineFactStateV2::Known(_))) {
+                    return Err(RegistryValidationErrorV2::UnknownSourceFact {
+                        selection: profile.selection().clone(),
+                        source_id: source.id(),
+                        fact: *fact,
+                    });
+                }
+                supported_facts.insert(*fact);
+            }
+            for setting in source.supported_settings() {
+                if !setting_ids.contains(setting) {
+                    return Err(RegistryValidationErrorV2::UnknownSourceSetting {
+                        selection: profile.selection().clone(),
+                        source_id: source.id(),
+                        setting: *setting,
+                    });
+                }
+                supported_settings.insert(*setting);
+            }
+        }
+        if !accepted_inputs_supported {
+            return Err(RegistryValidationErrorV2::UnreferencedAcceptedInputs {
+                selection: profile.selection().clone(),
+            });
+        }
+        if let Some(fact) = profile
+            .facts()
+            .iter()
+            .filter(|row| matches!(row.state(), EngineFactStateV2::Known(_)))
+            .map(|row| row.id())
+            .find(|fact| !supported_facts.contains(fact))
+        {
+            return Err(RegistryValidationErrorV2::UnreferencedFact {
+                selection: profile.selection().clone(),
+                fact,
+            });
+        }
+        if let Some(setting) = setting_ids.difference(&supported_settings).next() {
+            return Err(RegistryValidationErrorV2::UnreferencedSetting {
+                selection: profile.selection().clone(),
+                setting: *setting,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Author-owned invariant failure in the revision-2 registry.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RegistryValidationErrorV2 {
+    /// The initial registry does not contain exactly the one authorized tuple.
+    #[error("V2 registry contains {found} profiles rather than one")]
+    ProfileCount {
+        /// Actual profile count.
+        found: usize,
+    },
+    /// Two records use the same exact tuple.
+    #[error("duplicate V2 profile selection {selection:?}")]
+    DuplicateSelection {
+        /// Repeated selection.
+        selection: ProfileSelection,
+    },
+    /// Two records use the same stable record URN.
+    #[error("duplicate V2 profile URN {urn}")]
+    DuplicateProfileUrn {
+        /// Repeated URN.
+        urn: &'static str,
+    },
+    /// Accepted inputs are empty, repeated, or not canonically sorted.
+    #[error("invalid V2 accepted inputs for {selection:?}")]
+    InvalidAcceptedInputs {
+        /// Affected selection.
+        selection: ProfileSelection,
+    },
+    /// The record does not contain every V2 fact exactly once.
+    #[error("invalid V2 fact inventory for {selection:?}")]
+    InvalidFactInventory {
+        /// Affected selection.
+        selection: ProfileSelection,
+    },
+    /// A setting descriptor id is repeated.
+    #[error("duplicate V2 setting descriptor for {selection:?}")]
+    DuplicateSettingDescriptor {
+        /// Affected selection.
+        selection: ProfileSelection,
+    },
+    /// A verified default does not match its descriptor domain.
+    #[error("invalid V2 verified default for {setting:?} in {selection:?}")]
+    InvalidVerifiedDefault {
+        /// Affected selection.
+        selection: ProfileSelection,
+        /// Affected setting.
+        setting: SettingIdV2,
+    },
+    /// A primary-source id is repeated within one profile.
+    #[error("duplicate V2 source id {source_id} in {selection:?}")]
+    DuplicateSourceId {
+        /// Affected selection.
+        selection: ProfileSelection,
+        /// Repeated source id.
+        source_id: &'static str,
+    },
+    /// A source references a setting absent from the record.
+    #[error("V2 source {source_id} references unknown setting {setting:?} in {selection:?}")]
+    UnknownSourceSetting {
+        /// Affected selection.
+        selection: ProfileSelection,
+        /// Source id.
+        source_id: &'static str,
+        /// Missing setting id.
+        setting: SettingIdV2,
+    },
+    /// A source references an absent or non-known fact.
+    #[error("V2 source {source_id} references unavailable fact {fact:?} in {selection:?}")]
+    UnknownSourceFact {
+        /// Affected selection.
+        selection: ProfileSelection,
+        /// Source id.
+        source_id: &'static str,
+        /// Missing or non-known fact.
+        fact: animsmith_core::engine_contract::EngineFactIdV2,
+    },
+    /// Accepted inputs have no primary authority.
+    #[error("V2 accepted inputs have no source reference in {selection:?}")]
+    UnreferencedAcceptedInputs {
+        /// Affected selection.
+        selection: ProfileSelection,
+    },
+    /// A known fact has no supporting primary authority.
+    #[error("V2 fact {fact:?} has no source reference in {selection:?}")]
+    UnreferencedFact {
+        /// Affected selection.
+        selection: ProfileSelection,
+        /// Unsupported known fact.
+        fact: animsmith_core::engine_contract::EngineFactIdV2,
+    },
+    /// A descriptor has no supporting primary authority.
+    #[error("V2 setting {setting:?} has no source reference in {selection:?}")]
+    UnreferencedSetting {
+        /// Affected selection.
+        selection: ProfileSelection,
+        /// Unsupported descriptor.
+        setting: SettingIdV2,
+    },
 }
 
 /// Validate all author-owned registry declarations and cross references.
@@ -384,6 +639,232 @@ fn bevy() -> EngineProfile {
             ),
         ],
     )
+}
+
+fn bevy_v2() -> EngineProfileV2 {
+    use SettingDefaultV2::{RequiredExplicit, Verified};
+    use SettingDomainV2::{Boolean, HandlerEnvironment, LoadMeshesState};
+    use SettingIdV2::{
+        BevyAnimationFeature, ExtensionHandlerEnvironment, LoadAnimations, LoadMeshes,
+        RotateMeshes, RotateSceneEntity,
+    };
+    use animsmith_core::engine_contract::{
+        EngineFactIdV2, EngineFactStateV2, EngineFactValueV2, EngineLinearUnitV2,
+        EngineProfileFactV2, ReducedRatioV1,
+    };
+
+    let mut settings = vec![
+        SettingDescriptorV2::new(
+            RotateSceneEntity,
+            SettingScope::Document,
+            Boolean,
+            Verified(SettingValueV2::Boolean(false)),
+        ),
+        SettingDescriptorV2::new(
+            RotateMeshes,
+            SettingScope::Document,
+            Boolean,
+            Verified(SettingValueV2::Boolean(false)),
+        ),
+        SettingDescriptorV2::new(
+            LoadMeshes,
+            SettingScope::Document,
+            LoadMeshesState,
+            Verified(SettingValueV2::LoadMeshesState(
+                crate::BevyLoadMeshesStateV2::Nonempty,
+            )),
+        ),
+        SettingDescriptorV2::new(
+            ExtensionHandlerEnvironment,
+            SettingScope::Document,
+            HandlerEnvironment,
+            RequiredExplicit,
+        ),
+        // These two settings are frozen now so #483 can consume the same
+        // profile/settings contract without another incompatible profile
+        // revision. This ticket attaches no prediction behavior to them.
+        SettingDescriptorV2::new(
+            BevyAnimationFeature,
+            SettingScope::Document,
+            Boolean,
+            RequiredExplicit,
+        ),
+        SettingDescriptorV2::new(
+            LoadAnimations,
+            SettingScope::Document,
+            Boolean,
+            Verified(SettingValueV2::Boolean(true)),
+        ),
+    ];
+    settings.sort_by_key(|descriptor| descriptor.id().as_str());
+
+    let facts = vec![
+        EngineProfileFactV2::new(
+            EngineFactIdV2::AcceptedInputs,
+            EngineFactStateV2::Known(EngineFactValueV2::AcceptedFormats(vec![
+                SourceFormatV1::Glb,
+                SourceFormatV1::GltfJson,
+            ])),
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ApplicationWorldUnitPolicy,
+            EngineFactStateV2::Known(EngineFactValueV2::Boolean(false)),
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ImporterScaleConversion,
+            EngineFactStateV2::Known(EngineFactValueV2::Token("none".into())),
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ImportSettingProjection,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::PhysicalDimensionsPreserved,
+            EngineFactStateV2::Known(EngineFactValueV2::Boolean(true)),
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::ResultingTransformScale,
+            EngineFactStateV2::Known(EngineFactValueV2::Token(
+                "loader_entities_unit_orthonormal_trs_nodes_passthrough_matrix_nodes_decomposed"
+                    .into(),
+            )),
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::RootMotionAddressability,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::SourceImportDisposition,
+            EngineFactStateV2::Unknown,
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::SourceToTargetUnitMapping,
+            EngineFactStateV2::Known(EngineFactValueV2::UnitRatio(
+                ReducedRatioV1::new(1, 1).expect("one-to-one is a reduced positive ratio"),
+            )),
+        ),
+        EngineProfileFactV2::new(
+            EngineFactIdV2::TargetLinearUnit,
+            EngineFactStateV2::Known(EngineFactValueV2::LinearUnit(
+                EngineLinearUnitV2::EngineWorldLengthUnit,
+            )),
+        ),
+    ];
+
+    let pinned = |path: &'static str| -> &'static str {
+        match path {
+            "loader" => {
+                "https://github.com/bevyengine/bevy/blob/c6f634ca9f406d68ba5109d921247b654cb42c10/crates/bevy_gltf/src/loader/mod.rs"
+            }
+            "coordinates" => {
+                "https://github.com/bevyengine/bevy/blob/c6f634ca9f406d68ba5109d921247b654cb42c10/crates/bevy_gltf/src/convert_coordinates.rs"
+            }
+            "handlers" => {
+                "https://github.com/bevyengine/bevy/blob/c6f634ca9f406d68ba5109d921247b654cb42c10/crates/bevy_gltf/src/loader/extensions/mod.rs"
+            }
+            "pbr" => {
+                "https://github.com/bevyengine/bevy/blob/c6f634ca9f406d68ba5109d921247b654cb42c10/crates/bevy_pbr/src/gltf.rs"
+            }
+            "render_asset" => {
+                "https://github.com/bevyengine/bevy/blob/c6f634ca9f406d68ba5109d921247b654cb42c10/crates/bevy_asset/src/render_asset.rs"
+            }
+            "cargo" => {
+                "https://github.com/bevyengine/bevy/blob/c6f634ca9f406d68ba5109d921247b654cb42c10/Cargo.toml"
+            }
+            _ => unreachable!("closed Bevy source path"),
+        }
+    };
+    let mut sources = vec![
+        PrimarySourceV2 {
+            id: "bevy-gltf-loader-0.19.0-c6f634ca",
+            target_version: BEVY_0_19_COMMIT,
+            url: pinned("loader"),
+            verified_on: BEVY_V2_VERIFIED_ON,
+            supported_facts: vec![
+                EngineFactIdV2::AcceptedInputs,
+                EngineFactIdV2::ApplicationWorldUnitPolicy,
+                EngineFactIdV2::ImporterScaleConversion,
+                EngineFactIdV2::PhysicalDimensionsPreserved,
+                EngineFactIdV2::ResultingTransformScale,
+                EngineFactIdV2::SourceToTargetUnitMapping,
+                EngineFactIdV2::TargetLinearUnit,
+            ],
+            supported_settings: vec![LoadAnimations, LoadMeshes, RotateMeshes, RotateSceneEntity],
+        },
+        PrimarySourceV2 {
+            id: "bevy-gltf-coordinate-conversion-0.19.0-c6f634ca",
+            target_version: BEVY_0_19_COMMIT,
+            url: pinned("coordinates"),
+            verified_on: BEVY_V2_VERIFIED_ON,
+            supported_facts: vec![
+                EngineFactIdV2::ImporterScaleConversion,
+                EngineFactIdV2::PhysicalDimensionsPreserved,
+                EngineFactIdV2::ResultingTransformScale,
+                EngineFactIdV2::SourceToTargetUnitMapping,
+            ],
+            supported_settings: vec![RotateMeshes, RotateSceneEntity],
+        },
+        PrimarySourceV2 {
+            id: "bevy-gltf-extension-registry-0.19.0-c6f634ca",
+            target_version: BEVY_0_19_COMMIT,
+            url: pinned("handlers"),
+            verified_on: BEVY_V2_VERIFIED_ON,
+            supported_facts: vec![],
+            supported_settings: vec![ExtensionHandlerEnvironment],
+        },
+        PrimarySourceV2 {
+            id: "bevy-pbr-gltf-handler-0.19.0-c6f634ca",
+            target_version: BEVY_0_19_COMMIT,
+            url: pinned("pbr"),
+            verified_on: BEVY_V2_VERIFIED_ON,
+            supported_facts: vec![],
+            supported_settings: vec![ExtensionHandlerEnvironment],
+        },
+        PrimarySourceV2 {
+            id: "bevy-render-asset-usages-0.19.0-c6f634ca",
+            target_version: BEVY_0_19_COMMIT,
+            url: pinned("render_asset"),
+            verified_on: BEVY_V2_VERIFIED_ON,
+            supported_facts: vec![],
+            supported_settings: vec![LoadMeshes],
+        },
+        PrimarySourceV2 {
+            id: "bevy-feature-manifest-0.19.0-c6f634ca",
+            target_version: BEVY_0_19_COMMIT,
+            url: pinned("cargo"),
+            verified_on: BEVY_V2_VERIFIED_ON,
+            supported_facts: vec![],
+            supported_settings: vec![BevyAnimationFeature],
+        },
+        PrimarySourceV2 {
+            id: "khronos-gltf-2.0-coordinate-units",
+            target_version: "2.0",
+            url: "https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#coordinate-system-and-units",
+            verified_on: BEVY_V2_VERIFIED_ON,
+            supported_facts: vec![
+                EngineFactIdV2::AcceptedInputs,
+                EngineFactIdV2::PhysicalDimensionsPreserved,
+                EngineFactIdV2::SourceToTargetUnitMapping,
+            ],
+            supported_settings: vec![],
+        },
+    ];
+    for source in &mut sources {
+        source.supported_facts.sort_by_key(|fact| fact.as_str());
+        source
+            .supported_settings
+            .sort_by_key(|setting| setting.as_str());
+    }
+    sources.sort_by_key(|source| source.id());
+
+    EngineProfileV2 {
+        selection: ProfileSelection::new("bevy", 2, "0.19.0", "gltf-asset-loader"),
+        profile_urn: "urn:animsmith:engine-profile:bevy:2",
+        accepted_inputs: vec![SourceFormatV1::Glb, SourceFormatV1::GltfJson],
+        facts,
+        settings,
+        sources,
+    }
 }
 
 fn base_facts(accepted: &[SourceFormatV1], known: Vec<(FactId, FactValue)>) -> Vec<ProfileFact> {

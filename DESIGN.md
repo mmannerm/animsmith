@@ -2510,7 +2510,8 @@ error; it is never guessed, treated as an implementation default, or deferred
 to a coverage gap. The resolved settings record therefore contains one exact
 document value or per-clip value for every applicable setting.
 
-The initial registry contains exactly five singleton tuples:
+The registry contains the five immutable revision-1 tuples plus one
+revision-2 Bevy tuple:
 
 | family | revision | engine version | importer | AnimSmith V1 input boundary |
 |---|---:|---|---|---|
@@ -2519,6 +2520,7 @@ The initial registry contains exactly five singleton tuples:
 | `unreal` | 1 | `5.8` | `fbx-importer` | FBX |
 | `godot` | 1 | `4.7` | `resource-importer-scene` | glTF JSON, GLB, FBX |
 | `bevy` | 1 | `0.19.0` | `gltf-asset-loader` | glTF JSON, GLB |
+| `bevy` | 2 | `0.19.0` | `gltf-asset-loader` | glTF JSON, GLB |
 
 These are exact versions, not ranges. The Godot row is AnimSmith's bounded V1
 profile boundary rather than a claim that Godot cannot import other formats.
@@ -2526,7 +2528,11 @@ The two Unity profiles expose document booleans `convert_units` and
 `bake_axis_conversion`, plus per-clip `root_rotation`, `root_position_y`, and
 `root_position_xz` values in the closed `bake | extract` domain. Only Generic
 also exposes the document-scoped `root_motion_source` path. Unreal, Godot, and
-Bevy expose no V1 setting vocabulary, so every supplied key is rejected.
+Bevy revision 1 exposes no V1 setting vocabulary, so every supplied key is
+rejected. Bevy revision 2 has a separate closed setting vocabulary for exact
+loader coordinate toggles, mesh loading, extension-handler environment,
+animation feature, and animation loading. It materializes version-pinned
+defaults and retains each value's explicit/default origin.
 
 The two Unity ids are import modes, not skeleton-name maps. Likewise,
 `unreal`, `godot`, and `bevy` do not imply a mannequin, humanoid bone map, or

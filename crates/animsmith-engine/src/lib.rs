@@ -73,6 +73,9 @@ mod provenance;
 mod registry;
 mod resolver;
 mod types;
+mod unit_scale;
+
+pub use canonical::{project_engine_profile_v2, project_resolved_engine_settings_v3};
 
 pub use addressability::{
     GLTF_ANIMATION_ADDRESSABILITY_COMMAND, GLTF_ANIMATION_ADDRESSABILITY_SCHEMA_VERSION,
@@ -112,20 +115,29 @@ pub use prediction::{
 pub use provenance::{
     PredictionProvenanceProjectionError, project_prediction_provenance_v1,
     project_prediction_provenance_v2, project_prediction_provenance_v3,
+    project_prediction_provenance_v4,
 };
-pub use registry::{profiles_v1, validate_registry_v1};
+pub use registry::{
+    RegistryValidationErrorV2, profiles_v1, profiles_v2, validate_registry_v1, validate_registry_v2,
+};
 pub use resolver::{
-    RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS, ResolvedClipCoverageReasonV2, ResolvedClipCoverageV2,
-    ResolvedClipSettings, ResolvedEngineSettingsWorkV2, ResolvedProfile, ResolvedProfileV2,
-    SOURCE_TRANSFORM_PATH_MAX_BYTES, StaticResolution, lookup_profile, resolve_static,
+    RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS, ResolutionErrorV2, ResolvedClipCoverageReasonV2,
+    ResolvedClipCoverageV2, ResolvedClipSettings, ResolvedEngineSettingsWorkV2, ResolvedProfile,
+    ResolvedProfileSettingsV2, ResolvedProfileV2, SOURCE_TRANSFORM_PATH_MAX_BYTES,
+    StaticResolution, StaticResolutionV2, lookup_profile, lookup_profile_v2, resolve_static,
+    resolve_static_v2,
 };
 pub use types::{
-    AnimationAddressability, BakeOrExtract, ConversionControl, CoordinateBasis, DefaultStatus,
-    EngineDeclaration, EngineProfile, FactId, FactState, FactValue, ForwardAxis, Handedness,
-    ImportHandling, LinearUnit, PrimarySource, ProfileFact, ProfileSelection,
-    RootMotionAddressability, SettingApplicability, SettingDescriptor, SettingDomain, SettingId,
-    SettingMap, SettingScope, SettingValue, TargetAddressability, UpAxis,
+    AnimationAddressability, BakeOrExtract, BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2,
+    ConversionControl, CoordinateBasis, DefaultStatus, EngineDeclaration, EngineDeclarationV2,
+    EngineProfile, EngineProfileV2, FactId, FactState, FactValue, ForwardAxis, Handedness,
+    ImportHandling, LinearUnit, PrimarySource, PrimarySourceV2, ProfileFact, ProfileSelection,
+    ResolvedSettingOriginV2, ResolvedSettingV2, RootMotionAddressability, SettingApplicability,
+    SettingDefaultV2, SettingDescriptor, SettingDescriptorV2, SettingDomain, SettingDomainV2,
+    SettingId, SettingIdV2, SettingMap, SettingMapV2, SettingScope, SettingValue, SettingValueV2,
+    TargetAddressability, UpAxis,
 };
+pub use unit_scale::{ENGINE_UNIT_SCALE_CHECK_ID, EngineUnitScaleCheck};
 
 /// Runtime kind of one closed [`SettingValue`] variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -36,10 +36,12 @@ use animsmith_core::{Document, InputIdentity};
 #[cfg(feature = "report")]
 use animsmith_engine::EngineAddressabilityCheck;
 use animsmith_engine::{
-    BakeOrExtract, ENGINE_CHECK_IDS_V2, EngineAddressabilityCheckV3, EngineClipBoundaryCheck,
-    EngineDeclaration, EngineImportAdviceStateV1, EngineImportAdviceV1,
+    BakeOrExtract, BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2, ENGINE_CHECK_IDS_V2,
+    EngineAddressabilityCheckV3, EngineClipBoundaryCheck, EngineDeclaration, EngineDeclarationV2,
+    EngineImportAdviceStateV1, EngineImportAdviceV1, EngineUnitScaleCheck,
     GltfAnimationAddressabilityInventoryV1, GltfAnimationAddressabilityV1, ProfileSelection,
-    ResolvedProfile, ResolvedProfileV2, SettingMap, SettingValue, StaticResolution,
+    ResolvedProfile, ResolvedProfileSettingsV2, ResolvedProfileV2, SettingMap, SettingMapV2,
+    SettingValue, SettingValueV2, StaticResolution, StaticResolutionV2,
     build_bevy_animation_addressability_adapter_v1,
 };
 use animsmith_gltf::fix::Repair;
@@ -273,12 +275,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file current output-v14 or historical output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files or one-file current output-v15 or historical output-v14/output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v14/output-v13 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v14/output-v13 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -773,6 +775,7 @@ fn finish_run_with(result: Result<ExitCode, String>, emit_error: impl FnOnce(&st
 struct LoadedConfig {
     config: Config,
     engine: Option<StaticResolution>,
+    engine_profile_v2: Option<StaticResolutionV2>,
     /// Strictly decoded document declaration bound to the exact complete
     /// config source. It is retained for the later transition-pose command,
     /// but this admission slice does not evaluate it.
@@ -838,6 +841,53 @@ fn engine_setting_map(values: BTreeMap<String, EngineSettingToml>) -> SettingMap
         .collect()
 }
 
+fn engine_setting_value_v2(key: &str, value: EngineSettingToml) -> Result<SettingValueV2, String> {
+    match (key, value) {
+        (_, EngineSettingToml::Boolean(value)) => Ok(SettingValueV2::Boolean(value)),
+        ("load_meshes", EngineSettingToml::Text(value)) if value == "empty" => Ok(
+            SettingValueV2::LoadMeshesState(BevyLoadMeshesStateV2::Empty),
+        ),
+        ("load_meshes", EngineSettingToml::Text(value)) if value == "nonempty" => Ok(
+            SettingValueV2::LoadMeshesState(BevyLoadMeshesStateV2::Nonempty),
+        ),
+        ("extension_handler_environment", EngineSettingToml::Text(value))
+            if value == "bare_empty" =>
+        {
+            Ok(SettingValueV2::HandlerEnvironment(
+                BevyGltfHandlerEnvironmentV2::BareEmpty,
+            ))
+        }
+        ("extension_handler_environment", EngineSettingToml::Text(value))
+            if value == "bevy_pbr_stock_0_19" =>
+        {
+            Ok(SettingValueV2::HandlerEnvironment(
+                BevyGltfHandlerEnvironmentV2::BevyPbrStock019,
+            ))
+        }
+        (key, EngineSettingToml::Text(value)) => Err(format!(
+            "invalid revision-2 engine setting value {value:?} for {key:?}"
+        )),
+    }
+}
+
+fn engine_setting_map_v2(
+    values: BTreeMap<String, EngineSettingToml>,
+) -> Result<SettingMapV2, String> {
+    values
+        .into_iter()
+        .map(|(key, value)| {
+            let value = engine_setting_value_v2(&key, value)?;
+            Ok((key, value))
+        })
+        .collect()
+}
+
+#[derive(Debug)]
+enum ParsedEngineDeclaration {
+    V1(EngineDeclaration),
+    V2(EngineDeclarationV2),
+}
+
 fn engine_selection(config: &EngineToml) -> Result<Option<ProfileSelection>, String> {
     let fields_present = [
         config.profile.is_some(),
@@ -866,7 +916,7 @@ fn parse_config(
 ) -> Result<
     (
         Config,
-        EngineDeclaration,
+        ParsedEngineDeclaration,
         TransitionFamilyDeclarationInputV1,
     ),
     String,
@@ -907,7 +957,7 @@ fn parse_config(
             let settings = settings
                 .try_into::<BTreeMap<String, EngineSettingToml>>()
                 .map_err(|error| error.to_string())?;
-            clip_settings.insert(selector.clone(), engine_setting_map(settings));
+            clip_settings.insert(selector.clone(), settings);
         }
     }
 
@@ -920,7 +970,7 @@ fn parse_config(
                         .into(),
                 );
             }
-            (selection, engine.settings.map(engine_setting_map))
+            (selection, engine.settings)
         }
         None => (None, None),
     };
@@ -929,18 +979,33 @@ fn parse_config(
         selection.is_some() || document_settings.is_some()
     );
 
+    let is_revision_2 = selection
+        .as_ref()
+        .is_some_and(|selection| selection.profile_revision() == 2);
+    let engine_declaration = if is_revision_2 {
+        ParsedEngineDeclaration::V2(EngineDeclarationV2 {
+            selection,
+            document_settings: document_settings.map(engine_setting_map_v2).transpose()?,
+            clip_settings: clip_settings
+                .into_iter()
+                .map(|(selector, settings)| Ok((selector, engine_setting_map_v2(settings)?)))
+                .collect::<Result<_, String>>()?,
+        })
+    } else {
+        ParsedEngineDeclaration::V1(EngineDeclaration {
+            selection,
+            document_settings: document_settings.map(engine_setting_map),
+            clip_settings: clip_settings
+                .into_iter()
+                .map(|(selector, settings)| (selector, engine_setting_map(settings)))
+                .collect(),
+        })
+    };
+
     let config = toml::Value::Table(root)
         .try_into::<Config>()
         .map_err(|error| error.to_string())?;
-    Ok((
-        config,
-        EngineDeclaration {
-            selection,
-            document_settings,
-            clip_settings,
-        },
-        transition_families,
-    ))
+    Ok((config, engine_declaration, transition_families))
 }
 
 fn load_config(explicit: Option<&Path>) -> Result<LoadedConfig, String> {
@@ -965,11 +1030,22 @@ fn load_config_with_source(explicit: Option<&Path>) -> Result<LoadedConfig, Stri
     config
         .validate()
         .map_err(|e| format!("bad config {}: {e}", path.display()))?;
-    let engine = animsmith_engine::resolve_static(declaration)
-        .map_err(|error| format!("bad config {}: {error}", path.display()))?;
+    let (engine, engine_profile_v2) = match declaration {
+        ParsedEngineDeclaration::V1(declaration) => (
+            animsmith_engine::resolve_static(declaration)
+                .map_err(|error| format!("bad config {}: {error}", path.display()))?,
+            None,
+        ),
+        ParsedEngineDeclaration::V2(declaration) => (
+            None,
+            animsmith_engine::resolve_static_v2(declaration)
+                .map_err(|error| format!("bad config {}: {error}", path.display()))?,
+        ),
+    };
     Ok(LoadedConfig {
         config,
         engine,
+        engine_profile_v2,
         transition_families: Some(transition_families),
         path: Some(path.clone()),
         control_input: Some(path.clone()),
@@ -994,6 +1070,7 @@ impl LoadedConfig {
         Self {
             config: Config::default(),
             engine: None,
+            engine_profile_v2: None,
             transition_families: None,
             path: None,
             control_input: None,
@@ -1064,6 +1141,22 @@ impl LoadedConfig {
                 None => format!("bad config: {error}"),
             })
     }
+
+    fn resolve_engine_profile_v2_input(
+        &self,
+        source_format: animsmith_core::SourceFormatV1,
+    ) -> Result<Option<ResolvedProfileSettingsV2>, String> {
+        let Some(engine) = &self.engine_profile_v2 else {
+            return Ok(None);
+        };
+        engine
+            .resolve_input(source_format)
+            .map(Some)
+            .map_err(|error| match &self.path {
+                Some(path) => format!("bad config {}: {error}", path.display()),
+                None => format!("bad config: {error}"),
+            })
+    }
 }
 
 fn full_check_ids() -> Result<Vec<&'static str>, String> {
@@ -1116,12 +1209,30 @@ fn analyze_loaded_lint(
     allowed: &BTreeSet<String>,
 ) -> Result<LintAnalysis, String> {
     let input = loaded.input().clone();
-    let prediction_provenance = loaded
+    let prediction_provenance_v3 = loaded
         .engine_v2
         .as_ref()
         .map(|profile| animsmith_engine::project_prediction_provenance_v3(profile, &loaded.source))
         .transpose()
         .map_err(|error| error.to_string())?;
+    let runtime_node_selectors = config
+        .config
+        .runtime_node_selectors()
+        .map(|selectors| selectors.selectors().to_vec())
+        .unwrap_or_default();
+    let prediction_provenance_v4 = loaded
+        .engine_v4
+        .as_ref()
+        .map(|profile| {
+            animsmith_engine::project_prediction_provenance_v4(
+                profile,
+                &loaded.source,
+                runtime_node_selectors,
+            )
+        })
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    debug_assert!(prediction_provenance_v3.is_none() || prediction_provenance_v4.is_none());
     let doc = loaded.document();
     let roles = resolve_configured_roles(&doc.skeleton, &config.config.rig);
     let grids = MetricGrids::new(doc);
@@ -1129,11 +1240,15 @@ fn analyze_loaded_lint(
     let evaluations = {
         let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
         checks.push(Box::new(
-            EngineAddressabilityCheckV3::new(&loaded.source, prediction_provenance.as_ref())
+            EngineAddressabilityCheckV3::new(&loaded.source, prediction_provenance_v3.as_ref())
                 .map_err(|error| error.to_string())?,
         ));
         checks.push(Box::new(
-            EngineClipBoundaryCheck::new(&loaded.source, prediction_provenance.as_ref())
+            EngineClipBoundaryCheck::new(&loaded.source, prediction_provenance_v3.as_ref())
+                .map_err(|error| error.to_string())?,
+        ));
+        checks.push(Box::new(
+            EngineUnitScaleCheck::new(&loaded.source, prediction_provenance_v4.as_ref())
                 .map_err(|error| error.to_string())?,
         ));
         evaluate_checks_v2(&ctx, &checks, selection).map_err(|error| error.to_string())?
@@ -1148,15 +1263,28 @@ fn analyze_loaded_lint(
         .map(|clip| clip.name.clone())
         .zip(indexed_measurements.iter().cloned())
         .collect();
-    let report = LintFileReport::new(
-        path_label,
-        input,
-        RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?,
-        prediction_provenance,
-        evaluations,
+    let rig = RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?;
+    let measurements =
         MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(doc))
-            .map_err(|error| error.to_string())?,
-    )
+            .map_err(|error| error.to_string())?;
+    let report = match prediction_provenance_v4 {
+        Some(provenance) => LintFileReport::new_v4(
+            path_label,
+            input,
+            rig,
+            Some(provenance),
+            evaluations,
+            measurements,
+        ),
+        None => LintFileReport::new(
+            path_label,
+            input,
+            rig,
+            prediction_provenance_v3,
+            evaluations,
+            measurements,
+        ),
+    }
     .map_err(|error| error.to_string())?;
     Ok(LintAnalysis {
         report,
@@ -1796,7 +1924,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// current output-v14 or historical output-v13 `measure`/`lint` JSON report
+/// current output-v15 or historical output-v14/output-v13 `measure`/`lint` JSON report
 /// carrying measurements-v16.
 fn load_measurements(
     path: &Path,
@@ -1817,7 +1945,7 @@ fn load_measurements(
             }
             _ => format!("{} {error}", path.display()),
         })?;
-        // Current output-v14 and historical output-v13/output-v12/output-v11 envelopes
+        // Current output-v15 and historical output-v14/output-v13/output-v12/output-v11 envelopes
         // are accepted only with their version-matched measurements contract.
         // The V11 route retains its original V1 evidence validation; producers
         // emit V14.
@@ -2056,6 +2184,7 @@ struct LoadedInput {
     source: animsmith_core::LoadedSource,
     engine: Option<ResolvedProfile>,
     engine_v2: Option<ResolvedProfileV2>,
+    engine_v4: Option<ResolvedProfileSettingsV2>,
 }
 
 impl LoadedInput {
@@ -2091,6 +2220,7 @@ fn load_with_identity(path: &Path) -> Result<LoadedInput, String> {
         source,
         engine: None,
         engine_v2: None,
+        engine_v4: None,
     })
 }
 
@@ -2108,6 +2238,7 @@ fn load_with_config_v2(path: &Path, config: &LoadedConfig) -> Result<LoadedInput
     let mut loaded = load_with_identity(path)?;
     let facts = loaded.source.source_facts();
     loaded.engine_v2 = config.resolve_engine_input_v2(facts.format(), loaded.source.document())?;
+    loaded.engine_v4 = config.resolve_engine_profile_v2_input(facts.format())?;
     Ok(loaded)
 }
 
@@ -2129,6 +2260,7 @@ fn load_with_config_for_producer(
         source,
         engine,
         engine_v2: None,
+        engine_v4: None,
     })
 }
 
@@ -2199,7 +2331,13 @@ selectors = ["root"]
         let (config, engine, transition_families) = parse_config(source.as_bytes()).unwrap();
         assert!(config.clips.contains_key("walk"));
         assert!(config.runtime_node_selectors().is_some());
-        assert!(engine.selection.is_some());
+        assert!(matches!(
+            engine,
+            ParsedEngineDeclaration::V1(EngineDeclaration {
+                selection: Some(_),
+                ..
+            })
+        ));
         assert_eq!(
             transition_families.source_identity(),
             &InputIdentity::from_bytes(source.as_bytes())
@@ -2339,6 +2477,9 @@ root_position_y = "extract"
             core.clips.keys().map(String::as_str).collect::<Vec<_>>(),
             vec!["*", "walk*", "walk_forward"]
         );
+        let ParsedEngineDeclaration::V1(declaration) = declaration else {
+            panic!("revision 1 config must use the V1 declaration")
+        };
         let from_cli = animsmith_engine::resolve_static(declaration)
             .unwrap()
             .unwrap()
@@ -2409,6 +2550,51 @@ root_position_y = "extract"
     }
 
     #[test]
+    fn cli_engine_toml_maps_revision_2_values_to_the_closed_public_resolver() {
+        let text = r#"
+[engine]
+profile = "bevy"
+profile_revision = 2
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bevy_pbr_stock_0_19"
+bevy_animation_feature = true
+load_meshes = "empty"
+"#;
+        let (_, declaration, _) = parse_config(text.as_bytes()).unwrap();
+        let ParsedEngineDeclaration::V2(declaration) = declaration else {
+            panic!("revision 2 config must use the V2 declaration")
+        };
+        let resolved = animsmith_engine::resolve_static_v2(declaration)
+            .unwrap()
+            .unwrap()
+            .resolve_input(animsmith_core::SourceFormatV1::Glb)
+            .unwrap();
+        assert_eq!(resolved.profile().selection().profile_revision(), 2);
+        assert!(resolved.document_settings().values().any(|setting| {
+            setting.value()
+                == &SettingValueV2::HandlerEnvironment(
+                    BevyGltfHandlerEnvironmentV2::BevyPbrStock019,
+                )
+        }));
+        assert!(resolved.document_settings().values().any(|setting| {
+            setting.value() == &SettingValueV2::LoadMeshesState(BevyLoadMeshesStateV2::Empty)
+        }));
+
+        let bad = text.replace(
+            "bevy_pbr_stock_0_19",
+            "unbounded_application_handler_registry",
+        );
+        assert!(
+            parse_config(bad.as_bytes())
+                .unwrap_err()
+                .contains("invalid revision-2 engine setting value")
+        );
+    }
+
+    #[test]
     fn cli_engine_toml_rejects_incomplete_selection_and_source_unit_escape_hatch() {
         let incomplete = parse_config(
             r#"
@@ -2435,6 +2621,9 @@ root_rotation = "bake"
             .as_bytes(),
         )
         .unwrap();
+        let ParsedEngineDeclaration::V1(declaration) = declaration else {
+            panic!("settings without a selection retain the V1 error boundary")
+        };
         assert_eq!(
             animsmith_engine::resolve_static(declaration),
             Err(animsmith_engine::ResolutionError::SettingsWithoutSelection)

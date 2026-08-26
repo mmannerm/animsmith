@@ -1415,9 +1415,13 @@ where
     doc.assets.scenes = extract_scenes(&gltf.document, &topo.bone_of_node);
     doc.assets.default_scene = gltf.document.default_scene().map(|scene| scene.index());
     doc.assets.source_skeleton = source_skeleton;
-    facts
+    let source = facts
         .finish_with_dependency_closure(doc, dependency_closure)
-        .map_err(LoadError::from)
+        .map_err(LoadError::from)?;
+    let inventory = capability::raw_scene_attachment_inventory_from_bytes(bytes, &source)?;
+    source
+        .with_raw_scene_attachment_inventory(inventory)
+        .map_err(|error| LoadError::Malformed(format!("raw scene/attachment binding: {error}")))
 }
 
 fn source_facts_builder(primary_bytes: &[u8]) -> Result<RawSourceFactsBuilderV1, SourceFactsError> {

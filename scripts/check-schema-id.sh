@@ -45,6 +45,7 @@ check_schema docs/schemas/output-v11.schema.json urn:animsmith:schema:output:11 
 check_schema docs/schemas/output-v12.schema.json urn:animsmith:schema:output:12 crates/animsmith-core/src/contract.rs docs/output.md docs/cli.md
 check_schema docs/schemas/output-v13.schema.json urn:animsmith:schema:output:13 crates/animsmith-core/src/contract.rs docs/output.md docs/cli.md
 check_schema docs/schemas/output-v14.schema.json urn:animsmith:schema:output:14 crates/animsmith-core/src/contract.rs docs/output.md docs/cli.md
+check_schema docs/schemas/output-v15.schema.json urn:animsmith:schema:output:15 crates/animsmith-core/src/contract.rs docs/output.md docs/cli.md
 check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8
 check_schema docs/schemas/measurements-v9.schema.json urn:animsmith:schema:measurements:9
 check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:measurements:10
@@ -53,7 +54,7 @@ check_schema docs/schemas/measurements-v12.schema.json urn:animsmith:schema:meas
 check_schema docs/schemas/measurements-v13.schema.json urn:animsmith:schema:measurements:13 docs/schemas/output-v7.schema.json
 check_schema docs/schemas/measurements-v14.schema.json urn:animsmith:schema:measurements:14 docs/schemas/output-v8.schema.json
 check_schema docs/schemas/measurements-v15.schema.json urn:animsmith:schema:measurements:15 crates/animsmith-core/src/contract.rs docs/schemas/output-v9.schema.json docs/schemas/output-v10.schema.json docs/output.md
-check_schema docs/schemas/measurements-v16.schema.json urn:animsmith:schema:measurements:16 crates/animsmith-core/src/contract.rs docs/schemas/output-v13.schema.json docs/schemas/output-v14.schema.json docs/output.md docs/cli.md
+check_schema docs/schemas/measurements-v16.schema.json urn:animsmith:schema:measurements:16 crates/animsmith-core/src/contract.rs docs/schemas/output-v13.schema.json docs/schemas/output-v14.schema.json docs/schemas/output-v15.schema.json docs/output.md docs/cli.md
 for historical_output in docs/schemas/output-v4.schema.json docs/schemas/output-v5.schema.json; do
   jq -e --arg expected 'urn:animsmith:schema:measurements:11' \
     '.["$defs"].file_report.properties.measurements["$ref"] == $expected' \
@@ -112,6 +113,36 @@ if ! jq -e '
     ]
 ' docs/schemas/output-v14.schema.json >/dev/null; then
   fail 'output-v14 must bind the exact V3 prediction contract graph'
+fi
+if ! jq -e '
+  .["$defs"].prediction_provenance.properties.schema.const
+    == "urn:animsmith:prediction-provenance:3"
+  and .["$defs"].engine_prediction.properties.schema.const
+    == "urn:animsmith:engine-prediction:3"
+  and .["$defs"].prediction_provenance_v4.properties.schema.const
+    == "urn:animsmith:prediction-provenance:4"
+  and .["$defs"].engine_prediction_v4.properties.schema.const
+    == "urn:animsmith:engine-prediction:4"
+  and .["$defs"].resolved_engine_profile_v2.properties.schema.const
+    == "urn:animsmith:engine-profile-facts:2"
+  and .["$defs"].resolved_engine_settings_v3.properties.schema.const
+    == "urn:animsmith:resolved-engine-settings:3"
+  and .["$defs"].consumed_contracts.prefixItems[0].const
+    == "urn:animsmith:schema:output:14"
+  and .["$defs"].consumed_contracts_v4.prefixItems
+    == [
+      {"const":"urn:animsmith:schema:output:15"},
+      {"const":"urn:animsmith:schema:measurements:16"},
+      {"const":"urn:animsmith:raw-source-facts:2"},
+      {"const":"urn:animsmith:exact-source-timing:1"},
+      {"const":"urn:animsmith:dependency-closure:1"},
+      {"const":"urn:animsmith:engine-profile-facts:2"},
+      {"const":"urn:animsmith:resolved-engine-settings:3"},
+      {"const":"urn:animsmith:raw-scene-attachment-inventory:1"},
+      {"const":"urn:animsmith:prediction-rule-inputs:1"}
+    ]
+' docs/schemas/output-v15.schema.json >/dev/null; then
+  fail 'output-v15 must correlate legacy V3 and result-bearing V4 prediction graphs'
 fi
 if ! cmp -s docs/schemas/output-v13.schema.json <(
   sed \
@@ -180,6 +211,7 @@ check_schema docs/schemas/collection-output-v3.schema.json urn:animsmith:schema:
 check_schema docs/schemas/collection-output-v4.schema.json urn:animsmith:schema:collection-output:4 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-output-v5.schema.json urn:animsmith:schema:collection-output:5 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-output-v6.schema.json urn:animsmith:schema:collection-output:6 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
+check_schema docs/schemas/collection-output-v7.schema.json urn:animsmith:schema:collection-output:7 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 jq -e '
   any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:output:12")
   and any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:measurements:15#/$defs/clip_measurements")
@@ -195,11 +227,27 @@ jq -e '
   and any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:measurements:16#/$defs/clip_measurements")
 ' docs/schemas/collection-output-v6.schema.json >/dev/null \
   || fail 'collection-output-v6 must reference output-v14 and measurements-v16'
+jq -e '
+  any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:output:15")
+  and any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:measurements:16#/$defs/clip_measurements")
+' docs/schemas/collection-output-v7.schema.json >/dev/null \
+  || fail 'collection-output-v7 must reference output-v15 and measurements-v16'
 jq -e --slurp '
   .[0]["$defs"].budget.properties == .[1]["$defs"].budget.properties
 ' docs/schemas/collection-output-v4.schema.json \
   docs/schemas/collection-output-v5.schema.json >/dev/null \
   || fail 'collection-output-v5 must retain the immutable collection budget values'
+if ! cmp -s docs/schemas/collection-output-v6.schema.json <(
+  sed \
+    -e 's/urn:animsmith:schema:collection-output:7/urn:animsmith:schema:collection-output:6/g' \
+    -e 's/animsmith collection output v7/animsmith collection output v6/' \
+    -e 's/"const": 7 }/"const": 6 }/' \
+    -e 's/current output-v15/current output-v14/' \
+    -e 's/urn:animsmith:schema:output:15/urn:animsmith:schema:output:14/g' \
+    docs/schemas/collection-output-v7.schema.json
+); then
+  fail 'collection-output-v7 must differ from immutable collection-output-v6 only by identity and nested output identity'
+fi
 check_schema docs/schemas/contact-fragment-v1.schema.json urn:animsmith:schema:contact-fragment:1 crates/animsmith-core/src/contact_fragment.rs docs/output.md DESIGN.md
 check_schema docs/schemas/transition-pose-evaluation-v1.schema.json urn:animsmith:schema:transition-pose-evaluation:1 crates/animsmith-core/src/transition_pose_evaluation.rs DESIGN.md docs/collection-contracts.md
 check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2
@@ -442,10 +490,10 @@ done
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer
 # contract when it advances.
-grep -Fq 'Final output-v14 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
-  || fail 'CheckEvaluation documentation does not identify output v14'
-grep -Fq 'Regenerate a current output-v14 report from the original' docs/output.md \
-  || fail 'report migration documentation does not identify output v14'
+grep -Fq 'Final output-v15 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
+  || fail 'CheckEvaluation documentation does not identify output v15'
+grep -Fq 'Regenerate a current output-v15 report from the original' docs/output.md \
+  || fail 'report migration documentation does not identify output v15'
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \

@@ -18,10 +18,14 @@ use std::marker::PhantomData;
 
 /// Semantic contract for a self-contained V1 engine profile record.
 pub const ENGINE_PROFILE_FACTS_V1_ID: &str = "urn:animsmith:engine-profile-facts:1";
+/// Semantic contract for the extended immutable engine-profile vocabulary.
+pub const ENGINE_PROFILE_FACTS_V2_ID: &str = "urn:animsmith:engine-profile-facts:2";
 /// Semantic contract for fully materialized V1 engine settings.
 pub const RESOLVED_ENGINE_SETTINGS_V1_ID: &str = "urn:animsmith:resolved-engine-settings:1";
 /// Semantic contract for bounded, explicitly partial V2 engine settings.
 pub const RESOLVED_ENGINE_SETTINGS_V2_ID: &str = "urn:animsmith:resolved-engine-settings:2";
+/// Semantic contract for origin-bearing resolved engine settings.
+pub const RESOLVED_ENGINE_SETTINGS_V3_ID: &str = "urn:animsmith:resolved-engine-settings:3";
 /// Maximum rows in any individual V1 profile or resolved-settings collection.
 pub const ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS: usize = 4_096;
 /// Maximum aggregate profile and materialized-setting rows retained by one lint file.
@@ -33,6 +37,8 @@ pub const ENGINE_CONTRACT_V1_MAX_TOTAL_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
 const ENGINE_FACTS_PREIMAGE_DOMAIN: &str = "animsmith-engine-facts-v1";
 const ENGINE_SETTINGS_PREIMAGE_DOMAIN: &str = "animsmith-engine-settings-v1";
+const ENGINE_FACTS_V2_PREIMAGE_DOMAIN: &str = "animsmith-engine-facts-v2";
+const ENGINE_SETTINGS_V3_PREIMAGE_DOMAIN: &str = "animsmith-engine-settings-v3";
 
 fn deserialize_collection_rows<'de, D, T>(deserializer: D) -> Result<CappedSequence<T>, D::Error>
 where
@@ -40,6 +46,20 @@ where
     T: Deserialize<'de>,
 {
     deserialize_capped_sequence(deserializer, ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS)
+}
+
+fn deserialize_collection_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let values = deserialize_capped_sequence(deserializer, ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS)?;
+    if values.overflowed {
+        return Err(D::Error::custom(
+            "engine-contract collection exceeds 4096 rows",
+        ));
+    }
+    Ok(values.values)
 }
 
 #[derive(Debug)]
@@ -510,7 +530,7 @@ pub enum EngineRootMotionAddressabilityV1 {
 #[serde(rename_all = "snake_case")]
 pub enum EngineFactValueV1 {
     /// Exact accepted input formats.
-    AcceptedFormats(Vec<SourceFormatV1>),
+    AcceptedFormats(#[serde(deserialize_with = "deserialize_collection_vec")] Vec<SourceFormatV1>),
     /// Animation-asset addressability.
     AnimationAddressability(EngineAnimationAddressabilityV1),
     /// Target coordinate basis.
@@ -3223,6 +3243,1471 @@ pub(crate) fn decode_resolved_engine_settings_v2_with_provenance_limit(
     Ok(settings)
 }
 
+/// Positive reduced rational used where binary floating point would change an
+/// exact importer contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "ReducedRatioWireV1")]
+pub struct ReducedRatioV1 {
+    numerator: u64,
+    denominator: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReducedRatioWireV1 {
+    numerator: u64,
+    denominator: u64,
+}
+
+impl ReducedRatioV1 {
+    /// Construct a positive ratio in lowest terms.
+    pub fn new(numerator: u64, denominator: u64) -> Result<Self, EngineContractError> {
+        let ratio = Self {
+            numerator,
+            denominator,
+        };
+        ratio.validate()?;
+        Ok(ratio)
+    }
+
+    /// Reduced numerator.
+    pub const fn numerator(self) -> u64 {
+        self.numerator
+    }
+
+    /// Reduced nonzero denominator.
+    pub const fn denominator(self) -> u64 {
+        self.denominator
+    }
+
+    fn validate(self) -> Result<(), EngineContractError> {
+        if self.numerator == 0
+            || self.denominator == 0
+            || greatest_common_divisor(self.numerator, self.denominator) != 1
+        {
+            return Err(EngineContractError::InvalidReducedRatio {
+                numerator: self.numerator,
+                denominator: self.denominator,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<ReducedRatioWireV1> for ReducedRatioV1 {
+    type Error = EngineContractError;
+
+    fn try_from(wire: ReducedRatioWireV1) -> Result<Self, Self::Error> {
+        Self::new(wire.numerator, wire.denominator)
+    }
+}
+
+const fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
+}
+
+/// Closed V2 fact vocabulary shared by prediction and advice profiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineFactIdV2 {
+    /// Accepted source containers.
+    AcceptedInputs,
+    /// Target world-length convention, without claiming application enforcement.
+    TargetLinearUnit,
+    /// Exact source numeric-unit mapping.
+    SourceToTargetUnitMapping,
+    /// Whether numeric physical dimensions survive importer conversion.
+    PhysicalDimensionsPreserved,
+    /// Importer scale-conversion behavior.
+    ImporterScaleConversion,
+    /// Whether the engine enforces an application-wide world-unit policy.
+    ApplicationWorldUnitPolicy,
+    /// Effective static/default-rest transform behavior.
+    ResultingTransformScale,
+    /// Root-motion source/addressability semantics.
+    RootMotionAddressability,
+    /// Import handling for source animation/channel subjects.
+    SourceImportDisposition,
+    /// Exact import-setting projection semantics.
+    ImportSettingProjection,
+}
+
+impl EngineFactIdV2 {
+    /// Stable wire spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AcceptedInputs => "accepted_inputs",
+            Self::TargetLinearUnit => "target_linear_unit",
+            Self::SourceToTargetUnitMapping => "source_to_target_unit_mapping",
+            Self::PhysicalDimensionsPreserved => "physical_dimensions_preserved",
+            Self::ImporterScaleConversion => "importer_scale_conversion",
+            Self::ApplicationWorldUnitPolicy => "application_world_unit_policy",
+            Self::ResultingTransformScale => "resulting_transform_scale",
+            Self::RootMotionAddressability => "root_motion_addressability",
+            Self::SourceImportDisposition => "source_import_disposition",
+            Self::ImportSettingProjection => "import_setting_projection",
+        }
+    }
+}
+
+const ALL_FACT_IDS_V2: [EngineFactIdV2; 10] = [
+    EngineFactIdV2::AcceptedInputs,
+    EngineFactIdV2::ApplicationWorldUnitPolicy,
+    EngineFactIdV2::ImportSettingProjection,
+    EngineFactIdV2::ImporterScaleConversion,
+    EngineFactIdV2::PhysicalDimensionsPreserved,
+    EngineFactIdV2::ResultingTransformScale,
+    EngineFactIdV2::RootMotionAddressability,
+    EngineFactIdV2::SourceImportDisposition,
+    EngineFactIdV2::SourceToTargetUnitMapping,
+    EngineFactIdV2::TargetLinearUnit,
+];
+
+/// Closed unit vocabulary for exact importer prediction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineLinearUnitV2 {
+    /// glTF metre-per-unit semantics.
+    Metre,
+    /// Centimetre-authored numeric units.
+    Centimetre,
+    /// One engine world-space length unit, without a physical-unit guarantee.
+    EngineWorldLengthUnit,
+}
+
+/// Closed V2 fact value vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineFactValueV2 {
+    /// Exact accepted formats.
+    AcceptedFormats(Vec<SourceFormatV1>),
+    /// A unit convention.
+    LinearUnit(EngineLinearUnitV2),
+    /// Exact target units per source unit.
+    UnitRatio(ReducedRatioV1),
+    /// Boolean fact.
+    Boolean(bool),
+    /// A closed semantic token whose vocabulary is owned by the fact id.
+    Token(String),
+    /// Root-motion addressability from the historical closed vocabulary.
+    RootMotionAddressability(EngineRootMotionAddressabilityV1),
+}
+
+/// Evidence state of one V2 profile fact.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineFactStateV2 {
+    /// Supported exact value.
+    Known(EngineFactValueV2),
+    /// Primary evidence does not establish a value.
+    Unknown,
+    /// The domain genuinely does not apply.
+    NotApplicable,
+}
+
+/// One immutable V2 fact row.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineProfileFactV2 {
+    id: EngineFactIdV2,
+    state: EngineFactStateV2,
+}
+
+impl EngineProfileFactV2 {
+    /// Construct one fact row.
+    pub const fn new(id: EngineFactIdV2, state: EngineFactStateV2) -> Self {
+        Self { id, state }
+    }
+
+    /// Stable fact id.
+    pub const fn id(&self) -> EngineFactIdV2 {
+        self.id
+    }
+
+    /// Explicit evidence state.
+    pub const fn state(&self) -> &EngineFactStateV2 {
+        &self.state
+    }
+}
+
+/// Closed setting ids required by the coordinated V2 profile migration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineSettingIdV2 {
+    /// Historical unit conversion toggle.
+    ConvertUnits,
+    /// Historical axis conversion toggle.
+    BakeAxisConversion,
+    /// Exact root-motion source path.
+    RootMotionSource,
+    /// Yaw bake/extract policy.
+    RootRotation,
+    /// Vertical bake/extract policy.
+    RootPositionY,
+    /// Horizontal bake/extract policy.
+    RootPositionXz,
+    /// Unity animation type.
+    AnimationType,
+    /// Unity avatar construction policy.
+    AvatarSetup,
+    /// Unity animation import gate.
+    ImportAnimation,
+    /// Bevy scene-entity coordinate rotation.
+    RotateSceneEntity,
+    /// Bevy mesh coordinate rotation.
+    RotateMeshes,
+    /// Bevy mesh-name load filter.
+    LoadMeshes,
+    /// Exact Bevy extension-handler environment.
+    ExtensionHandlerEnvironment,
+    /// Compile-time Bevy animation feature.
+    BevyAnimationFeature,
+    /// Per-load Bevy animation gate.
+    LoadAnimations,
+    /// Godot animation bake frequency.
+    AnimationFps,
+    /// Godot animation trimming toggle.
+    AnimationTrimming,
+    /// Unreal sample-rate policy.
+    SampleRate,
+}
+
+impl EngineSettingIdV2 {
+    /// Stable wire spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ConvertUnits => "convert_units",
+            Self::BakeAxisConversion => "bake_axis_conversion",
+            Self::RootMotionSource => "root_motion_source",
+            Self::RootRotation => "root_rotation",
+            Self::RootPositionY => "root_position_y",
+            Self::RootPositionXz => "root_position_xz",
+            Self::AnimationType => "animation_type",
+            Self::AvatarSetup => "avatar_setup",
+            Self::ImportAnimation => "import_animation",
+            Self::RotateSceneEntity => "rotate_scene_entity",
+            Self::RotateMeshes => "rotate_meshes",
+            Self::LoadMeshes => "load_meshes",
+            Self::ExtensionHandlerEnvironment => "extension_handler_environment",
+            Self::BevyAnimationFeature => "bevy_animation_feature",
+            Self::LoadAnimations => "load_animations",
+            Self::AnimationFps => "animation_fps",
+            Self::AnimationTrimming => "animation_trimming",
+            Self::SampleRate => "sample_rate",
+        }
+    }
+}
+
+/// Closed V2 setting value domains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineSettingDomainV2 {
+    /// Boolean.
+    Boolean,
+    /// Positive bounded integer.
+    PositiveInteger,
+    /// Bake or extract.
+    BakeOrExtract,
+    /// Exact source-transform path.
+    SourceTransformPath,
+    /// Bounded ordered text list.
+    TextList,
+    /// Closed semantic token.
+    Token,
+    /// Unreal sample-rate selection.
+    SampleRate,
+}
+
+/// Unreal sample-rate selection without hidden compound values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineSampleRateV2 {
+    /// `bUseDefaultSampleRate=true` and no hidden custom rate.
+    Default30,
+    /// `bUseDefaultSampleRate=false, CustomSampleRate=0`.
+    SourceDetermined,
+    /// Explicit custom rate in hertz.
+    CustomHz(u32),
+}
+
+/// Closed materialized setting values.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineSettingValueV2 {
+    /// Boolean value.
+    Boolean(bool),
+    /// Positive integer value.
+    PositiveInteger(u32),
+    /// Bake/extract value.
+    BakeOrExtract(EngineBakeOrExtractV1),
+    /// Exact case-sensitive source path.
+    SourceTransformPath(String),
+    /// Ordered bounded text list.
+    TextList(#[serde(deserialize_with = "deserialize_collection_vec")] Vec<String>),
+    /// Closed semantic token.
+    Token(String),
+    /// Unreal sample-rate policy.
+    SampleRate(EngineSampleRateV2),
+}
+
+impl EngineSettingValueV2 {
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, EngineContractError> {
+        match self {
+            Self::SourceTransformPath(value) | Self::Token(value) => Ok(value.len()),
+            Self::TextList(values) => checked_sum(
+                "V2 setting value retained text",
+                values.iter().map(String::len),
+            ),
+            Self::Boolean(_)
+            | Self::PositiveInteger(_)
+            | Self::BakeOrExtract(_)
+            | Self::SampleRate(_) => Ok(0),
+        }
+    }
+}
+
+/// Immutable V2 setting descriptor with exact source applicability and default.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineSettingDescriptorV2 {
+    id: EngineSettingIdV2,
+    scope: EngineSettingScopeV1,
+    domain: EngineSettingDomainV2,
+    #[serde(deserialize_with = "deserialize_collection_vec")]
+    applicable_source_formats: Vec<SourceFormatV1>,
+    default_value: Option<EngineSettingValueV2>,
+}
+
+impl EngineSettingDescriptorV2 {
+    /// Construct one descriptor. An empty format set means not applicable.
+    pub fn new(
+        id: EngineSettingIdV2,
+        scope: EngineSettingScopeV1,
+        domain: EngineSettingDomainV2,
+        mut applicable_source_formats: Vec<SourceFormatV1>,
+        default_value: Option<EngineSettingValueV2>,
+    ) -> Result<Self, EngineContractError> {
+        applicable_source_formats.sort_by_key(|format| source_format_name(*format));
+        applicable_source_formats.dedup();
+        let descriptor = Self {
+            id,
+            scope,
+            domain,
+            applicable_source_formats,
+            default_value,
+        };
+        descriptor.validate()?;
+        Ok(descriptor)
+    }
+
+    /// Stable setting id.
+    pub const fn id(&self) -> EngineSettingIdV2 {
+        self.id
+    }
+
+    /// Materialization scope.
+    pub const fn scope(&self) -> EngineSettingScopeV1 {
+        self.scope
+    }
+
+    /// Closed value domain.
+    pub const fn domain(&self) -> EngineSettingDomainV2 {
+        self.domain
+    }
+
+    /// Exact source-format applicability.
+    pub fn applicable_source_formats(&self) -> &[SourceFormatV1] {
+        &self.applicable_source_formats
+    }
+
+    /// Verified profile default, if one exists.
+    pub const fn default_value(&self) -> Option<&EngineSettingValueV2> {
+        self.default_value.as_ref()
+    }
+
+    fn validate(&self) -> Result<(), EngineContractError> {
+        validate_collection_len(
+            "V2 descriptor.applicable_source_formats",
+            self.applicable_source_formats.len(),
+        )?;
+        validate_unique_order(
+            "V2 descriptor.applicable_source_formats",
+            &self.applicable_source_formats,
+            |format| source_format_name(*format),
+            true,
+        )?;
+        if self.applicable_source_formats.is_empty() && self.default_value.is_some() {
+            return Err(EngineContractError::InvalidV2DescriptorDefault { setting: self.id });
+        }
+        if let Some(value) = &self.default_value {
+            validate_setting_value_v2(self.id, self.domain, value)?;
+        }
+        Ok(())
+    }
+}
+
+/// One primary source for V2 facts and settings.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnginePrimarySourceV2 {
+    id: String,
+    target_version: String,
+    url: String,
+    verified_on: String,
+    #[serde(deserialize_with = "deserialize_collection_vec")]
+    supported_fact_ids: Vec<EngineFactIdV2>,
+    #[serde(deserialize_with = "deserialize_collection_vec")]
+    supported_setting_ids: Vec<EngineSettingIdV2>,
+}
+
+impl EnginePrimarySourceV2 {
+    /// Construct one primary-source support row.
+    pub fn new(
+        id: impl Into<String>,
+        target_version: impl Into<String>,
+        url: impl Into<String>,
+        verified_on: impl Into<String>,
+        mut supported_fact_ids: Vec<EngineFactIdV2>,
+        mut supported_setting_ids: Vec<EngineSettingIdV2>,
+    ) -> Result<Self, EngineContractError> {
+        supported_fact_ids.sort_by_key(|id| id.as_str());
+        supported_fact_ids.dedup();
+        supported_setting_ids.sort_by_key(|id| id.as_str());
+        supported_setting_ids.dedup();
+        let source = Self {
+            id: id.into(),
+            target_version: target_version.into(),
+            url: url.into(),
+            verified_on: verified_on.into(),
+            supported_fact_ids,
+            supported_setting_ids,
+        };
+        source.validate()?;
+        Ok(source)
+    }
+
+    /// Stable source id.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Fact ids supported by this source.
+    pub fn supported_fact_ids(&self) -> &[EngineFactIdV2] {
+        &self.supported_fact_ids
+    }
+
+    /// Setting ids supported by this source.
+    pub fn supported_setting_ids(&self) -> &[EngineSettingIdV2] {
+        &self.supported_setting_ids
+    }
+
+    fn validate(&self) -> Result<(), EngineContractError> {
+        for (field, value) in [
+            ("V2 primary source.id", self.id.as_str()),
+            (
+                "V2 primary source.target_version",
+                self.target_version.as_str(),
+            ),
+            ("V2 primary source.url", self.url.as_str()),
+            ("V2 primary source.verified_on", self.verified_on.as_str()),
+        ] {
+            validate_required_text(field, value)?;
+        }
+        validate_collection_len(
+            "V2 primary source.supported_fact_ids",
+            self.supported_fact_ids.len(),
+        )?;
+        validate_collection_len(
+            "V2 primary source.supported_setting_ids",
+            self.supported_setting_ids.len(),
+        )?;
+        validate_unique_order(
+            "V2 primary source.supported_fact_ids",
+            &self.supported_fact_ids,
+            |id| id.as_str(),
+            true,
+        )?;
+        validate_unique_order(
+            "V2 primary source.supported_setting_ids",
+            &self.supported_setting_ids,
+            |id| id.as_str(),
+            true,
+        )
+    }
+}
+
+/// Self-contained immutable V2 engine profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResolvedEngineProfileV2 {
+    schema: &'static str,
+    selection: EngineProfileSelectionV1,
+    fact_bundle_urn: String,
+    identity: InputIdentity,
+    facts: Vec<EngineProfileFactV2>,
+    setting_descriptors: Vec<EngineSettingDescriptorV2>,
+    primary_sources: Vec<EnginePrimarySourceV2>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolvedEngineProfileWireV2 {
+    schema: String,
+    selection: EngineProfileSelectionV1,
+    fact_bundle_urn: String,
+    identity: InputIdentity,
+    #[serde(deserialize_with = "deserialize_collection_rows")]
+    facts: CappedSequence<EngineProfileFactV2>,
+    #[serde(deserialize_with = "deserialize_collection_rows")]
+    setting_descriptors: CappedSequence<EngineSettingDescriptorV2>,
+    #[serde(deserialize_with = "deserialize_collection_rows")]
+    primary_sources: CappedSequence<EnginePrimarySourceV2>,
+}
+
+impl ResolvedEngineProfileV2 {
+    /// Construct and canonically order one V2 profile.
+    pub fn new(
+        selection: EngineProfileSelectionV1,
+        fact_bundle_urn: impl Into<String>,
+        mut facts: Vec<EngineProfileFactV2>,
+        mut setting_descriptors: Vec<EngineSettingDescriptorV2>,
+        mut primary_sources: Vec<EnginePrimarySourceV2>,
+    ) -> Result<Self, EngineContractError> {
+        for fact in &mut facts {
+            if let EngineFactStateV2::Known(EngineFactValueV2::AcceptedFormats(formats)) =
+                &mut fact.state
+            {
+                formats.sort_by_key(|format| source_format_name(*format));
+                formats.dedup();
+            }
+        }
+        facts.sort_by_key(|fact| fact.id.as_str());
+        setting_descriptors.sort_by_key(|descriptor| descriptor.id.as_str());
+        primary_sources.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut profile = Self {
+            schema: ENGINE_PROFILE_FACTS_V2_ID,
+            selection,
+            fact_bundle_urn: fact_bundle_urn.into(),
+            identity: InputIdentity::from_bytes(&[]),
+            facts,
+            setting_descriptors,
+            primary_sources,
+        };
+        profile.validate_semantics(false)?;
+        profile.identity = profile.computed_identity();
+        Ok(profile)
+    }
+
+    /// Immutable contract id.
+    pub const fn contract_id(&self) -> &'static str {
+        self.schema
+    }
+
+    /// Exact selected tuple.
+    pub const fn selection(&self) -> &EngineProfileSelectionV1 {
+        &self.selection
+    }
+
+    /// Fact bundle URN.
+    pub fn fact_bundle_urn(&self) -> &str {
+        &self.fact_bundle_urn
+    }
+
+    /// Canonical profile identity.
+    pub const fn facts_identity(&self) -> &InputIdentity {
+        &self.identity
+    }
+
+    /// Canonically ordered complete fact inventory.
+    pub fn facts(&self) -> &[EngineProfileFactV2] {
+        &self.facts
+    }
+
+    /// Canonically ordered setting descriptors.
+    pub fn setting_descriptors(&self) -> &[EngineSettingDescriptorV2] {
+        &self.setting_descriptors
+    }
+
+    /// Canonically ordered primary sources.
+    pub fn primary_sources(&self) -> &[EnginePrimarySourceV2] {
+        &self.primary_sources
+    }
+
+    /// Look up one fact.
+    pub fn fact(&self, id: EngineFactIdV2) -> Option<&EngineProfileFactV2> {
+        self.facts.iter().find(|fact| fact.id == id)
+    }
+
+    /// Look up one descriptor.
+    pub fn setting_descriptor(&self, id: EngineSettingIdV2) -> Option<&EngineSettingDescriptorV2> {
+        self.setting_descriptors.iter().find(|row| row.id == id)
+    }
+
+    /// Look up one primary source.
+    pub fn source(&self, id: &str) -> Option<&EnginePrimarySourceV2> {
+        self.primary_sources.iter().find(|source| source.id == id)
+    }
+
+    /// Whether the exact accepted-inputs fact admits a format.
+    pub fn accepts_format(&self, format: SourceFormatV1) -> bool {
+        matches!(
+            self.fact(EngineFactIdV2::AcceptedInputs).map(|fact| fact.state()),
+            Some(EngineFactStateV2::Known(EngineFactValueV2::AcceptedFormats(formats)))
+                if formats.contains(&format)
+        )
+    }
+
+    /// Revalidate canonical form and identity.
+    pub fn validate(&self) -> Result<(), EngineContractError> {
+        self.validate_semantics(true)
+    }
+
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, EngineContractError> {
+        let fact_text = self.facts.iter().map(|fact| match fact.state() {
+            EngineFactStateV2::Known(EngineFactValueV2::Token(value)) => value.len(),
+            _ => 0,
+        });
+        let descriptor_text = self.setting_descriptors.iter().map(|descriptor| {
+            descriptor
+                .default_value()
+                .map_or(Ok(0), EngineSettingValueV2::retained_text_bytes)
+        });
+        let source_text = self.primary_sources.iter().map(|source| {
+            checked_sum(
+                "V2 primary-source retained text",
+                [
+                    source.id.len(),
+                    source.target_version.len(),
+                    source.url.len(),
+                    source.verified_on.len(),
+                ],
+            )
+        });
+        checked_sum(
+            "V2 profile retained text",
+            [
+                self.selection.retained_text_bytes()?,
+                self.fact_bundle_urn.len(),
+                checked_sum("V2 fact retained text", fact_text)?,
+                checked_sum(
+                    "V2 descriptor retained text",
+                    descriptor_text.collect::<Result<Vec<_>, _>>()?,
+                )?,
+                checked_sum(
+                    "V2 source retained text",
+                    source_text.collect::<Result<Vec<_>, _>>()?,
+                )?,
+            ],
+        )
+    }
+
+    pub(crate) fn encode_preimage(&self, encoder: &mut CanonicalEncoder) {
+        encoder.token(ENGINE_FACTS_V2_PREIMAGE_DOMAIN);
+        encode_profile_key(encoder, &self.selection);
+        encoder.field("fact_bundle_urn");
+        encoder.token(&self.fact_bundle_urn);
+        encode_json_rows(encoder, "facts", &self.facts);
+        encode_json_rows(encoder, "setting_descriptors", &self.setting_descriptors);
+        encode_json_rows(encoder, "primary_sources", &self.primary_sources);
+    }
+
+    fn computed_identity(&self) -> InputIdentity {
+        let mut encoder = CanonicalEncoder::default();
+        self.encode_preimage(&mut encoder);
+        encoder.identity()
+    }
+
+    fn validate_semantics(&self, verify_identity: bool) -> Result<(), EngineContractError> {
+        validate_schema("V2 profile.schema", self.schema, ENGINE_PROFILE_FACTS_V2_ID)?;
+        self.selection.validate()?;
+        validate_required_text("V2 profile.fact_bundle_urn", &self.fact_bundle_urn)?;
+        for (field, len) in [
+            ("V2 profile.facts", self.facts.len()),
+            (
+                "V2 profile.setting_descriptors",
+                self.setting_descriptors.len(),
+            ),
+            ("V2 profile.primary_sources", self.primary_sources.len()),
+        ] {
+            validate_collection_len(field, len)?;
+        }
+        validate_unique_order("V2 profile.facts", &self.facts, |row| row.id.as_str(), true)?;
+        if self.facts.len() != ALL_FACT_IDS_V2.len()
+            || !self
+                .facts
+                .iter()
+                .zip(ALL_FACT_IDS_V2)
+                .all(|(row, expected)| row.id == expected)
+        {
+            return Err(EngineContractError::InvalidV2FactInventory);
+        }
+        for fact in &self.facts {
+            validate_fact_value_v2(fact)?;
+        }
+        validate_unique_order(
+            "V2 profile.setting_descriptors",
+            &self.setting_descriptors,
+            |row| row.id.as_str(),
+            true,
+        )?;
+        for descriptor in &self.setting_descriptors {
+            descriptor.validate()?;
+        }
+        validate_unique_order(
+            "V2 profile.primary_sources",
+            &self.primary_sources,
+            |row| row.id.as_str(),
+            true,
+        )?;
+        for source in &self.primary_sources {
+            source.validate()?;
+            for id in source.supported_fact_ids() {
+                if !matches!(
+                    self.fact(*id).map(|fact| fact.state()),
+                    Some(EngineFactStateV2::Known(_))
+                ) {
+                    return Err(EngineContractError::InvalidV2SourceFact {
+                        source_id: source.id.clone(),
+                        fact: *id,
+                    });
+                }
+            }
+            for id in source.supported_setting_ids() {
+                if self.setting_descriptor(*id).is_none() {
+                    return Err(EngineContractError::InvalidV2SourceSetting {
+                        source_id: source.id.clone(),
+                        setting: *id,
+                    });
+                }
+            }
+        }
+        for fact in &self.facts {
+            if matches!(fact.state(), EngineFactStateV2::Known(_))
+                && !self
+                    .primary_sources
+                    .iter()
+                    .any(|source| source.supported_fact_ids.contains(&fact.id))
+            {
+                return Err(EngineContractError::UnreferencedV2Fact { fact: fact.id });
+            }
+        }
+        for descriptor in &self.setting_descriptors {
+            if !self
+                .primary_sources
+                .iter()
+                .any(|source| source.supported_setting_ids.contains(&descriptor.id))
+            {
+                return Err(EngineContractError::UnreferencedV2Setting {
+                    setting: descriptor.id,
+                });
+            }
+        }
+        if !matches!(
+            self.fact(EngineFactIdV2::AcceptedInputs).map(|fact| fact.state()),
+            Some(EngineFactStateV2::Known(EngineFactValueV2::AcceptedFormats(formats))) if !formats.is_empty()
+        ) {
+            return Err(EngineContractError::InvalidAcceptedInputs);
+        }
+        let rows = self
+            .facts
+            .len()
+            .checked_add(self.setting_descriptors.len())
+            .and_then(|rows| rows.checked_add(self.primary_sources.len()))
+            .ok_or(EngineContractError::ArithmeticOverflow {
+                field: "V2 profile rows",
+            })?;
+        if rows > ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS {
+            return Err(EngineContractError::TooManyAggregateRows {
+                found: rows,
+                max: ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS,
+            });
+        }
+        let json_bytes = serde_json::to_vec(&(
+            &self.selection,
+            &self.fact_bundle_urn,
+            &self.facts,
+            &self.setting_descriptors,
+            &self.primary_sources,
+        ))
+        .expect("V2 profile has infallible JSON serialization")
+        .len();
+        if json_bytes > ENGINE_CONTRACT_V1_MAX_TOTAL_TEXT_BYTES {
+            return Err(EngineContractError::TooMuchAggregateText {
+                found: json_bytes,
+                max: ENGINE_CONTRACT_V1_MAX_TOTAL_TEXT_BYTES,
+            });
+        }
+        if verify_identity && self.identity != self.computed_identity() {
+            return Err(EngineContractError::IdentityMismatch {
+                contract: ENGINE_PROFILE_FACTS_V2_ID,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<ResolvedEngineProfileWireV2> for ResolvedEngineProfileV2 {
+    type Error = EngineContractError;
+
+    fn try_from(wire: ResolvedEngineProfileWireV2) -> Result<Self, Self::Error> {
+        if wire.facts.overflowed
+            || wire.setting_descriptors.overflowed
+            || wire.primary_sources.overflowed
+        {
+            return Err(EngineContractError::TooManyRows {
+                field: "V2 profile collection",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            });
+        }
+        let profile = Self {
+            schema: if wire.schema == ENGINE_PROFILE_FACTS_V2_ID {
+                ENGINE_PROFILE_FACTS_V2_ID
+            } else {
+                return Err(EngineContractError::InvalidSchema {
+                    field: "V2 profile.schema",
+                    expected: ENGINE_PROFILE_FACTS_V2_ID,
+                    found: wire.schema,
+                });
+            },
+            selection: wire.selection,
+            fact_bundle_urn: wire.fact_bundle_urn,
+            identity: wire.identity,
+            facts: wire.facts.values,
+            setting_descriptors: wire.setting_descriptors.values,
+            primary_sources: wire.primary_sources.values,
+        };
+        profile.validate()?;
+        Ok(profile)
+    }
+}
+
+impl<'de> Deserialize<'de> for ResolvedEngineProfileV2 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        ResolvedEngineProfileWireV2::deserialize(deserializer)?
+            .try_into()
+            .map_err(D::Error::custom)
+    }
+}
+
+/// Authority that supplied one resolved value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineSettingValueOriginV3 {
+    /// Caller configuration declared the value.
+    ExplicitConfig,
+    /// The immutable profile supplied its verified default.
+    ProfileDefault,
+}
+
+/// One materialized V3 setting row.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineSettingRowV3 {
+    id: EngineSettingIdV2,
+    value: EngineSettingValueV2,
+    value_origin: EngineSettingValueOriginV3,
+}
+
+impl EngineSettingRowV3 {
+    /// Construct one origin-bearing row.
+    pub const fn new(
+        id: EngineSettingIdV2,
+        value: EngineSettingValueV2,
+        value_origin: EngineSettingValueOriginV3,
+    ) -> Self {
+        Self {
+            id,
+            value,
+            value_origin,
+        }
+    }
+
+    /// Stable setting id.
+    pub const fn id(&self) -> EngineSettingIdV2 {
+        self.id
+    }
+    /// Materialized value.
+    pub const fn value(&self) -> &EngineSettingValueV2 {
+        &self.value
+    }
+    /// Exact value authority.
+    pub const fn value_origin(&self) -> EngineSettingValueOriginV3 {
+        self.value_origin
+    }
+}
+
+/// Origin-bearing settings for one exact source clip ordinal/name pair.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineClipSettingsV3 {
+    clip_ordinal: u64,
+    clip_name: String,
+    #[serde(deserialize_with = "deserialize_collection_vec")]
+    settings: Vec<EngineSettingRowV3>,
+}
+
+impl EngineClipSettingsV3 {
+    /// Construct one clip row and canonicalize its settings.
+    pub fn new(
+        clip_ordinal: u64,
+        clip_name: impl Into<String>,
+        mut settings: Vec<EngineSettingRowV3>,
+    ) -> Result<Self, EngineContractError> {
+        settings.sort_by_key(|row| row.id.as_str());
+        let row = Self {
+            clip_ordinal,
+            clip_name: clip_name.into(),
+            settings,
+        };
+        validate_required_text("V3 settings.clip_name", &row.clip_name)?;
+        validate_collection_len("V3 settings.clip.settings", row.settings.len())?;
+        validate_unique_order(
+            "V3 settings.clip.settings",
+            &row.settings,
+            |setting| setting.id.as_str(),
+            true,
+        )?;
+        Ok(row)
+    }
+
+    /// Original zero-based source clip ordinal.
+    pub const fn clip_ordinal(&self) -> u64 {
+        self.clip_ordinal
+    }
+    /// Exact source clip name.
+    pub fn clip_name(&self) -> &str {
+        &self.clip_name
+    }
+    /// Canonically ordered settings.
+    pub fn settings(&self) -> &[EngineSettingRowV3] {
+        &self.settings
+    }
+    /// Look up one setting.
+    pub fn setting(&self, id: EngineSettingIdV2) -> Option<&EngineSettingRowV3> {
+        self.settings.iter().find(|row| row.id == id)
+    }
+}
+
+/// Bounded, origin-bearing resolved settings used by profile facts V2.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResolvedEngineSettingsV3 {
+    schema: &'static str,
+    identity: InputIdentity,
+    source_format: SourceFormatV1,
+    document_settings: Vec<EngineSettingRowV3>,
+    clips: Vec<EngineClipSettingsV3>,
+    clip_coverage: ResolvedEngineSettingsCoverageV2,
+    work: ResolvedEngineSettingsWorkV2,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolvedEngineSettingsWireV3 {
+    schema: String,
+    identity: InputIdentity,
+    source_format: SourceFormatV1,
+    #[serde(deserialize_with = "deserialize_collection_rows")]
+    document_settings: CappedSequence<EngineSettingRowV3>,
+    #[serde(deserialize_with = "deserialize_collection_rows")]
+    clips: CappedSequence<EngineClipSettingsV3>,
+    clip_coverage: ResolvedEngineSettingsCoverageV2,
+    work: ResolvedEngineSettingsWorkV2,
+}
+
+impl ResolvedEngineSettingsV3 {
+    /// Construct complete or explicit-partial settings and bind them to a profile.
+    pub fn new(
+        profile: &ResolvedEngineProfileV2,
+        source_format: SourceFormatV1,
+        mut document_settings: Vec<EngineSettingRowV3>,
+        mut clips: Vec<EngineClipSettingsV3>,
+        clip_coverage: ResolvedEngineSettingsCoverageV2,
+        work: ResolvedEngineSettingsWorkV2,
+    ) -> Result<Self, EngineContractError> {
+        document_settings.sort_by_key(|row| row.id.as_str());
+        clips.sort_by(|left, right| {
+            (left.clip_ordinal, left.clip_name.as_str())
+                .cmp(&(right.clip_ordinal, right.clip_name.as_str()))
+        });
+        let mut settings = Self {
+            schema: RESOLVED_ENGINE_SETTINGS_V3_ID,
+            identity: InputIdentity::from_bytes(&[]),
+            source_format,
+            document_settings,
+            clips,
+            clip_coverage,
+            work,
+        };
+        settings.validate_semantics(profile, false)?;
+        settings.identity = settings.computed_identity(profile);
+        Ok(settings)
+    }
+
+    /// Immutable contract id.
+    pub const fn contract_id(&self) -> &'static str {
+        self.schema
+    }
+    /// Canonical settings identity.
+    pub const fn settings_identity(&self) -> &InputIdentity {
+        &self.identity
+    }
+    /// Exact source format whose applicable descriptors were materialized.
+    pub const fn source_format(&self) -> SourceFormatV1 {
+        self.source_format
+    }
+    /// Document-scoped rows.
+    pub fn document_settings(&self) -> &[EngineSettingRowV3] {
+        &self.document_settings
+    }
+    /// Clip-scoped rows in source-ordinal order.
+    pub fn clips(&self) -> &[EngineClipSettingsV3] {
+        &self.clips
+    }
+    /// Exact/partial clip coverage.
+    pub const fn clip_coverage(&self) -> &ResolvedEngineSettingsCoverageV2 {
+        &self.clip_coverage
+    }
+    /// Bounded work counters.
+    pub const fn work(&self) -> ResolvedEngineSettingsWorkV2 {
+        self.work
+    }
+    /// Look up one document setting.
+    pub fn document_setting(&self, id: EngineSettingIdV2) -> Option<&EngineSettingRowV3> {
+        self.document_settings.iter().find(|row| row.id == id)
+    }
+    /// Look up one exact clip row.
+    pub fn clip_row(&self, ordinal: u64, name: &str) -> Option<&EngineClipSettingsV3> {
+        self.clips
+            .iter()
+            .find(|row| row.clip_ordinal == ordinal && row.clip_name == name)
+    }
+    /// Validate against the exact profile used by the identity.
+    pub fn validate_against(
+        &self,
+        profile: &ResolvedEngineProfileV2,
+    ) -> Result<(), EngineContractError> {
+        self.validate_semantics(profile, true)
+    }
+
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, EngineContractError> {
+        let document_text = self
+            .document_settings
+            .iter()
+            .map(|row| row.value.retained_text_bytes())
+            .collect::<Result<Vec<_>, _>>()?;
+        let clip_text = self
+            .clips
+            .iter()
+            .map(|clip| {
+                checked_sum(
+                    "V3 clip retained text",
+                    std::iter::once(clip.clip_name.len()).chain(
+                        clip.settings
+                            .iter()
+                            .map(|row| row.value.retained_text_bytes())
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        checked_sum(
+            "V3 settings retained text",
+            document_text.into_iter().chain(clip_text),
+        )
+    }
+
+    pub(crate) fn encode_preimage(
+        &self,
+        profile: &ResolvedEngineProfileV2,
+        encoder: &mut CanonicalEncoder,
+    ) {
+        encoder.token(ENGINE_SETTINGS_V3_PREIMAGE_DOMAIN);
+        encoder.field("profile_identity");
+        encode_input_identity(encoder, profile.facts_identity());
+        encoder.field("source_format");
+        encoder.token(source_format_name(self.source_format));
+        encode_json_rows(encoder, "document_settings", &self.document_settings);
+        encode_json_rows(encoder, "clips", &self.clips);
+        encoder.field("clip_coverage");
+        encoder.token(serde_json::to_string(&self.clip_coverage).expect("coverage serializes"));
+        encoder.field("work");
+        encoder.token(serde_json::to_string(&self.work).expect("work serializes"));
+    }
+
+    fn computed_identity(&self, profile: &ResolvedEngineProfileV2) -> InputIdentity {
+        let mut encoder = CanonicalEncoder::default();
+        self.encode_preimage(profile, &mut encoder);
+        encoder.identity()
+    }
+
+    fn validate_semantics(
+        &self,
+        profile: &ResolvedEngineProfileV2,
+        verify_identity: bool,
+    ) -> Result<(), EngineContractError> {
+        profile.validate()?;
+        if !profile.accepts_format(self.source_format) {
+            return Err(EngineContractError::InvalidV3SettingsSourceFormat {
+                format: self.source_format,
+            });
+        }
+        validate_schema(
+            "V3 settings.schema",
+            self.schema,
+            RESOLVED_ENGINE_SETTINGS_V3_ID,
+        )?;
+        for (field, len) in [
+            (
+                "V3 settings.document_settings",
+                self.document_settings.len(),
+            ),
+            ("V3 settings.clips", self.clips.len()),
+        ] {
+            validate_collection_len(field, len)?;
+        }
+        validate_unique_order(
+            "V3 settings.document_settings",
+            &self.document_settings,
+            |row| row.id.as_str(),
+            true,
+        )?;
+        if self.clips.windows(2).any(|pair| {
+            (pair[0].clip_ordinal, pair[0].clip_name.as_str())
+                >= (pair[1].clip_ordinal, pair[1].clip_name.as_str())
+        }) {
+            return Err(EngineContractError::NonCanonicalOrder {
+                field: "V3 settings.clips",
+            });
+        }
+        for (expected_ordinal, clip) in self.clips.iter().enumerate() {
+            if clip.clip_ordinal != expected_ordinal as u64 {
+                return Err(EngineContractError::NonCanonicalOrder {
+                    field: "V3 settings.clips source ordinals",
+                });
+            }
+            validate_required_text("V3 settings.clip_name", &clip.clip_name)?;
+            validate_collection_len("V3 settings.clip.settings", clip.settings.len())?;
+            validate_unique_order(
+                "V3 settings.clip.settings",
+                &clip.settings,
+                |row| row.id.as_str(),
+                true,
+            )?;
+        }
+        for row in self
+            .document_settings
+            .iter()
+            .chain(self.clips.iter().flat_map(|clip| clip.settings.iter()))
+        {
+            let descriptor = profile
+                .setting_descriptor(row.id)
+                .ok_or(EngineContractError::UnknownV2MaterializedSetting { setting: row.id })?;
+            let expected_scope = if self
+                .document_settings
+                .iter()
+                .any(|candidate| std::ptr::eq(candidate, row))
+            {
+                EngineSettingScopeV1::Document
+            } else {
+                EngineSettingScopeV1::Clip
+            };
+            if descriptor.scope != expected_scope {
+                return Err(EngineContractError::WrongV2SettingScope { setting: row.id });
+            }
+            if !descriptor
+                .applicable_source_formats
+                .contains(&self.source_format)
+            {
+                return Err(EngineContractError::InapplicableV2MaterializedSetting {
+                    setting: row.id,
+                    format: self.source_format,
+                });
+            }
+            validate_setting_value_v2(row.id, descriptor.domain, &row.value)?;
+            if row.value_origin == EngineSettingValueOriginV3::ProfileDefault
+                && descriptor.default_value.as_ref() != Some(&row.value)
+            {
+                return Err(EngineContractError::InvalidProfileDefaultOrigin { setting: row.id });
+            }
+        }
+        for descriptor in profile.setting_descriptors().iter().filter(|descriptor| {
+            descriptor
+                .applicable_source_formats
+                .contains(&self.source_format)
+        }) {
+            match descriptor.scope {
+                EngineSettingScopeV1::Document => {
+                    if self.document_setting(descriptor.id).is_none() {
+                        return Err(EngineContractError::MissingApplicableV2Setting {
+                            setting: descriptor.id,
+                            format: self.source_format,
+                        });
+                    }
+                }
+                EngineSettingScopeV1::Clip => {
+                    if self
+                        .clips
+                        .iter()
+                        .any(|clip| clip.setting(descriptor.id).is_none())
+                    {
+                        return Err(EngineContractError::MissingApplicableV2Setting {
+                            setting: descriptor.id,
+                            format: self.source_format,
+                        });
+                    }
+                }
+            }
+        }
+        let retained_clip_rows = self.clips.len();
+        match self.clip_coverage.state() {
+            ResolvedEngineSettingsCoverageStateV2::Complete
+                if self.work.actual_clip_rows_inspected() != retained_clip_rows
+                    || self.work.materialized_clip_rows() != retained_clip_rows
+                    || self.work.retained_clip_rows() != retained_clip_rows =>
+            {
+                return Err(EngineContractError::InvalidV2CoverageWork);
+            }
+            ResolvedEngineSettingsCoverageStateV2::Partial
+                if self.work.actual_clip_rows_inspected()
+                    <= ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+                    || self.work.materialized_clip_rows() != retained_clip_rows
+                    || self.work.retained_clip_rows() != retained_clip_rows =>
+            {
+                return Err(EngineContractError::InvalidV2CoverageWork);
+            }
+            _ => {}
+        }
+        let rows = self
+            .document_settings
+            .len()
+            .checked_add(self.clips.len())
+            .and_then(|rows| {
+                rows.checked_add(self.clips.iter().map(|clip| clip.settings.len()).sum())
+            })
+            .ok_or(EngineContractError::ArithmeticOverflow {
+                field: "V3 settings rows",
+            })?;
+        if rows > ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS {
+            return Err(EngineContractError::TooManyAggregateRows {
+                found: rows,
+                max: ENGINE_CONTRACT_V1_MAX_AGGREGATE_ROWS,
+            });
+        }
+        if verify_identity && self.identity != self.computed_identity(profile) {
+            return Err(EngineContractError::IdentityMismatch {
+                contract: RESOLVED_ENGINE_SETTINGS_V3_ID,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<ResolvedEngineSettingsWireV3> for ResolvedEngineSettingsV3 {
+    type Error = EngineContractError;
+
+    fn try_from(wire: ResolvedEngineSettingsWireV3) -> Result<Self, Self::Error> {
+        if wire.schema != RESOLVED_ENGINE_SETTINGS_V3_ID {
+            return Err(EngineContractError::InvalidSchema {
+                field: "V3 settings.schema",
+                expected: RESOLVED_ENGINE_SETTINGS_V3_ID,
+                found: wire.schema,
+            });
+        }
+        if wire.document_settings.overflowed || wire.clips.overflowed {
+            return Err(EngineContractError::TooManyRows {
+                field: "V3 settings collection",
+                found: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS + 1,
+                max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
+            });
+        }
+        let settings = Self {
+            schema: RESOLVED_ENGINE_SETTINGS_V3_ID,
+            identity: wire.identity,
+            source_format: wire.source_format,
+            document_settings: wire.document_settings.values,
+            clips: wire.clips.values,
+            clip_coverage: wire.clip_coverage,
+            work: wire.work,
+        };
+        // Profile-dependent identity and descriptor checks are deliberately
+        // deferred to `validate_against`, as in historical settings readers.
+        for (field, len) in [
+            (
+                "V3 settings.document_settings",
+                settings.document_settings.len(),
+            ),
+            ("V3 settings.clips", settings.clips.len()),
+        ] {
+            validate_collection_len(field, len)?;
+        }
+        validate_unique_order(
+            "V3 settings.document_settings",
+            &settings.document_settings,
+            |row| row.id.as_str(),
+            true,
+        )?;
+        Ok(settings)
+    }
+}
+
+impl<'de> Deserialize<'de> for ResolvedEngineSettingsV3 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        ResolvedEngineSettingsWireV3::deserialize(deserializer)?
+            .try_into()
+            .map_err(D::Error::custom)
+    }
+}
+
+fn encode_json_rows<T: Serialize>(encoder: &mut CanonicalEncoder, field: &'static str, rows: &[T]) {
+    encoder.field(field);
+    encoder.count(rows.len());
+    for row in rows {
+        encoder.token(
+            serde_json::to_string(row).expect("contract row has infallible JSON serialization"),
+        );
+    }
+}
+
+fn validate_fact_value_v2(fact: &EngineProfileFactV2) -> Result<(), EngineContractError> {
+    let valid = match (&fact.id, &fact.state) {
+        (_, EngineFactStateV2::Unknown | EngineFactStateV2::NotApplicable) => true,
+        (
+            EngineFactIdV2::AcceptedInputs,
+            EngineFactStateV2::Known(EngineFactValueV2::AcceptedFormats(formats)),
+        ) => {
+            !formats.is_empty()
+                && formats.len() <= 3
+                && formats
+                    .windows(2)
+                    .all(|pair| source_format_name(pair[0]) < source_format_name(pair[1]))
+        }
+        (
+            EngineFactIdV2::TargetLinearUnit,
+            EngineFactStateV2::Known(EngineFactValueV2::LinearUnit(_)),
+        )
+        | (
+            EngineFactIdV2::SourceToTargetUnitMapping,
+            EngineFactStateV2::Known(EngineFactValueV2::UnitRatio(_)),
+        )
+        | (
+            EngineFactIdV2::PhysicalDimensionsPreserved
+            | EngineFactIdV2::ApplicationWorldUnitPolicy,
+            EngineFactStateV2::Known(EngineFactValueV2::Boolean(_)),
+        )
+        | (
+            EngineFactIdV2::ImporterScaleConversion
+            | EngineFactIdV2::ResultingTransformScale
+            | EngineFactIdV2::SourceImportDisposition
+            | EngineFactIdV2::ImportSettingProjection,
+            EngineFactStateV2::Known(EngineFactValueV2::Token(_)),
+        )
+        | (
+            EngineFactIdV2::RootMotionAddressability,
+            EngineFactStateV2::Known(EngineFactValueV2::RootMotionAddressability(_)),
+        ) => true,
+        _ => false,
+    };
+    if !valid {
+        return Err(EngineContractError::InvalidV2FactValue { fact: fact.id });
+    }
+    if let EngineFactStateV2::Known(EngineFactValueV2::Token(value)) = &fact.state {
+        validate_required_text("V2 fact token", value)?;
+        let allowed = match fact.id {
+            EngineFactIdV2::ImporterScaleConversion => value == "none",
+            EngineFactIdV2::ResultingTransformScale => {
+                value
+                    == "loader_entities_unit_orthonormal_trs_nodes_passthrough_matrix_nodes_decomposed"
+            }
+            EngineFactIdV2::SourceImportDisposition => value == "materialized_import_gates",
+            EngineFactIdV2::ImportSettingProjection => {
+                matches!(value.as_str(), "godot_params" | "unreal_fbx_import_data")
+            }
+            _ => false,
+        };
+        if !allowed {
+            return Err(EngineContractError::InvalidV2FactValue { fact: fact.id });
+        }
+    }
+    if let EngineFactStateV2::Known(EngineFactValueV2::UnitRatio(value)) = &fact.state {
+        value.validate()?;
+    }
+    Ok(())
+}
+
+fn validate_setting_value_v2(
+    id: EngineSettingIdV2,
+    domain: EngineSettingDomainV2,
+    value: &EngineSettingValueV2,
+) -> Result<(), EngineContractError> {
+    let valid = match (domain, value) {
+        (EngineSettingDomainV2::Boolean, EngineSettingValueV2::Boolean(_))
+        | (EngineSettingDomainV2::BakeOrExtract, EngineSettingValueV2::BakeOrExtract(_))
+        | (
+            EngineSettingDomainV2::SampleRate,
+            EngineSettingValueV2::SampleRate(
+                EngineSampleRateV2::Default30 | EngineSampleRateV2::SourceDetermined,
+            ),
+        ) => true,
+        (EngineSettingDomainV2::PositiveInteger, EngineSettingValueV2::PositiveInteger(value)) => {
+            *value > 0
+        }
+        (
+            EngineSettingDomainV2::SourceTransformPath,
+            EngineSettingValueV2::SourceTransformPath(value),
+        ) => validate_required_text("V2 setting value", value).is_ok(),
+        (EngineSettingDomainV2::Token, EngineSettingValueV2::Token(value)) => {
+            validate_required_text("V2 setting value", value).is_ok()
+                && match id {
+                    EngineSettingIdV2::LoadMeshes => {
+                        matches!(value.as_str(), "empty" | "nonempty")
+                    }
+                    EngineSettingIdV2::ExtensionHandlerEnvironment => {
+                        matches!(value.as_str(), "bare_empty" | "bevy_pbr_stock_0_19")
+                    }
+                    EngineSettingIdV2::AnimationType => {
+                        matches!(value.as_str(), "generic" | "humanoid" | "legacy")
+                    }
+                    EngineSettingIdV2::AvatarSetup => matches!(
+                        value.as_str(),
+                        "create_from_this_model" | "copy_from_other_avatar"
+                    ),
+                    _ => false,
+                }
+        }
+        (EngineSettingDomainV2::TextList, EngineSettingValueV2::TextList(values)) => {
+            values.len() <= ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+                && values
+                    .iter()
+                    .all(|value| validate_required_text("V2 setting list value", value).is_ok())
+        }
+        (
+            EngineSettingDomainV2::SampleRate,
+            EngineSettingValueV2::SampleRate(EngineSampleRateV2::CustomHz(value)),
+        ) => (1..=48_000).contains(value),
+        _ => false,
+    };
+    if !valid {
+        return Err(EngineContractError::WrongV2SettingDomain { setting: id });
+    }
+    if id == EngineSettingIdV2::AnimationFps
+        && !matches!(value, EngineSettingValueV2::PositiveInteger(1..=120))
+    {
+        return Err(EngineContractError::V2SettingValueOutOfRange { setting: id });
+    }
+    Ok(())
+}
+
 /// Typed violation of the core-owned profile/settings contract.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -3401,6 +4886,109 @@ pub enum EngineContractError {
         location: String,
         /// Missing setting id.
         setting: EngineSettingIdV1,
+    },
+    /// A rational was zero, had a zero denominator, or was not reduced.
+    #[error("invalid reduced ratio {numerator}/{denominator}")]
+    InvalidReducedRatio {
+        /// Supplied numerator.
+        numerator: u64,
+        /// Supplied denominator.
+        denominator: u64,
+    },
+    /// The complete closed V2 fact inventory was malformed.
+    #[error("profile facts must contain every V2 fact id exactly once")]
+    InvalidV2FactInventory,
+    /// A V2 fact carried a value from another domain.
+    #[error("V2 profile fact {fact:?} carries an invalid known-value variant")]
+    InvalidV2FactValue {
+        /// Invalid fact id.
+        fact: EngineFactIdV2,
+    },
+    /// A V2 descriptor carried a default while not applicable.
+    #[error("V2 setting descriptor {setting:?} has an invalid default")]
+    InvalidV2DescriptorDefault {
+        /// Invalid descriptor id.
+        setting: EngineSettingIdV2,
+    },
+    /// A V2 primary source referenced a missing or non-known fact.
+    #[error("V2 primary source {source_id:?} references unsupported fact {fact:?}")]
+    InvalidV2SourceFact {
+        /// Source id.
+        source_id: String,
+        /// Invalid fact id.
+        fact: EngineFactIdV2,
+    },
+    /// A V2 primary source referenced an absent descriptor.
+    #[error("V2 primary source {source_id:?} references absent setting {setting:?}")]
+    InvalidV2SourceSetting {
+        /// Source id.
+        source_id: String,
+        /// Missing setting id.
+        setting: EngineSettingIdV2,
+    },
+    /// A known V2 fact had no supporting source.
+    #[error("known V2 profile fact {fact:?} has no primary-source reference")]
+    UnreferencedV2Fact {
+        /// Unsupported fact.
+        fact: EngineFactIdV2,
+    },
+    /// A V2 descriptor had no supporting source.
+    #[error("V2 setting descriptor {setting:?} has no primary-source reference")]
+    UnreferencedV2Setting {
+        /// Unsupported setting.
+        setting: EngineSettingIdV2,
+    },
+    /// A V3 materialized row named no profile descriptor.
+    #[error("V3 settings contain unknown setting {setting:?}")]
+    UnknownV2MaterializedSetting {
+        /// Unknown setting id.
+        setting: EngineSettingIdV2,
+    },
+    /// A V3 materialized row appeared at the wrong scope.
+    #[error("V3 settings contain {setting:?} at the wrong scope")]
+    WrongV2SettingScope {
+        /// Wrong-scope setting id.
+        setting: EngineSettingIdV2,
+    },
+    /// A V3 value did not match its descriptor domain.
+    #[error("V3 setting {setting:?} has a value outside its domain")]
+    WrongV2SettingDomain {
+        /// Invalid setting id.
+        setting: EngineSettingIdV2,
+    },
+    /// A bounded setting value was outside its setting-specific range.
+    #[error("V3 setting {setting:?} is outside its allowed range")]
+    V2SettingValueOutOfRange {
+        /// Out-of-range setting id.
+        setting: EngineSettingIdV2,
+    },
+    /// A row claimed a profile default that disagreed with its descriptor.
+    #[error("V3 setting {setting:?} claims a mismatched profile default")]
+    InvalidProfileDefaultOrigin {
+        /// Mismatched setting id.
+        setting: EngineSettingIdV2,
+    },
+    /// V3 settings were bound to a format not accepted by their profile.
+    #[error("V3 settings source format {format:?} is not accepted by the profile")]
+    InvalidV3SettingsSourceFormat {
+        /// Rejected source format.
+        format: SourceFormatV1,
+    },
+    /// A V3 row materialized a descriptor outside its source applicability.
+    #[error("V3 setting {setting:?} is not applicable to source format {format:?}")]
+    InapplicableV2MaterializedSetting {
+        /// Inapplicable setting.
+        setting: EngineSettingIdV2,
+        /// Exact source format.
+        format: SourceFormatV1,
+    },
+    /// An applicable V2 descriptor was omitted from V3 materialization.
+    #[error("V3 settings omit applicable setting {setting:?} for source format {format:?}")]
+    MissingApplicableV2Setting {
+        /// Missing setting.
+        setting: EngineSettingIdV2,
+        /// Exact source format.
+        format: SourceFormatV1,
     },
     /// A canonical identity does not match its semantic preimage.
     #[error("identity does not match canonical {contract}")]
@@ -4665,7 +6253,7 @@ mod tests {
 
         let profile = godot_profile();
         let settings = ResolvedEngineSettingsV1::new(&profile, vec![], vec![]).unwrap();
-        let mut settings_wire = serde_json::to_value(settings).unwrap();
+        let mut settings_wire = serde_json::to_value(&settings).unwrap();
         let setting = serde_json::json!({"id": "convert_units", "value": {"boolean": true}});
         let full_clip = serde_json::json!({
             "clip_name": "clip",
@@ -4703,5 +6291,147 @@ mod tests {
                 max: ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS,
             },
         );
+    }
+
+    fn profile_v2_for_origin_tests() -> ResolvedEngineProfileV2 {
+        let mut facts = ALL_FACT_IDS_V2
+            .into_iter()
+            .map(|id| EngineProfileFactV2::new(id, EngineFactStateV2::Unknown))
+            .collect::<Vec<_>>();
+        facts
+            .iter_mut()
+            .find(|fact| fact.id() == EngineFactIdV2::AcceptedInputs)
+            .unwrap()
+            .state = EngineFactStateV2::Known(EngineFactValueV2::AcceptedFormats(vec![
+            SourceFormatV1::Glb,
+        ]));
+        let descriptor = EngineSettingDescriptorV2::new(
+            EngineSettingIdV2::LoadMeshes,
+            EngineSettingScopeV1::Document,
+            EngineSettingDomainV2::Token,
+            vec![SourceFormatV1::Glb],
+            Some(EngineSettingValueV2::Token("nonempty".into())),
+        )
+        .unwrap();
+        let source = EnginePrimarySourceV2::new(
+            "bevy-doc",
+            "0.19",
+            "https://example.invalid/bevy",
+            "2026-08-25",
+            vec![EngineFactIdV2::AcceptedInputs],
+            vec![EngineSettingIdV2::LoadMeshes],
+        )
+        .unwrap();
+        ResolvedEngineProfileV2::new(
+            EngineProfileSelectionV1::new("bevy", 2, "0.19", "bevy_gltf").unwrap(),
+            "urn:animsmith:engine-profile:bevy:0.19:2",
+            facts,
+            vec![descriptor],
+            vec![source],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn v3_value_origin_is_identity_bearing_and_applicable_rows_are_required() {
+        let profile = profile_v2_for_origin_tests();
+        let row = |origin| {
+            EngineSettingRowV3::new(
+                EngineSettingIdV2::LoadMeshes,
+                EngineSettingValueV2::Token("nonempty".into()),
+                origin,
+            )
+        };
+        let default = ResolvedEngineSettingsV3::new(
+            &profile,
+            SourceFormatV1::Glb,
+            vec![row(EngineSettingValueOriginV3::ProfileDefault)],
+            vec![],
+            ResolvedEngineSettingsCoverageV2::complete(),
+            ResolvedEngineSettingsWorkV2::new(0, 0, 0),
+        )
+        .unwrap();
+        let explicit = ResolvedEngineSettingsV3::new(
+            &profile,
+            SourceFormatV1::Glb,
+            vec![row(EngineSettingValueOriginV3::ExplicitConfig)],
+            vec![],
+            ResolvedEngineSettingsCoverageV2::complete(),
+            ResolvedEngineSettingsWorkV2::new(0, 0, 0),
+        )
+        .unwrap();
+        assert_ne!(default.settings_identity(), explicit.settings_identity());
+        assert!(matches!(
+            ResolvedEngineSettingsV3::new(
+                &profile,
+                SourceFormatV1::Glb,
+                vec![],
+                vec![],
+                ResolvedEngineSettingsCoverageV2::complete(),
+                ResolvedEngineSettingsWorkV2::new(0, 0, 0),
+            ),
+            Err(EngineContractError::MissingApplicableV2Setting {
+                setting: EngineSettingIdV2::LoadMeshes,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn v2_profile_and_v3_settings_readers_stop_at_each_nested_n_plus_one() {
+        let profile = profile_v2_for_origin_tests();
+        let mut profile_wire = serde_json::to_value(&profile).unwrap();
+        for field in ["facts", "setting_descriptors", "primary_sources"] {
+            let element = profile_wire[field][0].clone();
+            profile_wire[field] = vec![element; ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS].into();
+            profile_wire[field]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::Value::Null);
+            assert!(
+                serde_json::from_value::<ResolvedEngineProfileV2>(profile_wire.clone()).is_err()
+            );
+            profile_wire = serde_json::to_value(&profile).unwrap();
+        }
+
+        let settings = ResolvedEngineSettingsV3::new(
+            &profile,
+            SourceFormatV1::Glb,
+            vec![EngineSettingRowV3::new(
+                EngineSettingIdV2::LoadMeshes,
+                EngineSettingValueV2::Token("nonempty".into()),
+                EngineSettingValueOriginV3::ProfileDefault,
+            )],
+            vec![],
+            ResolvedEngineSettingsCoverageV2::complete(),
+            ResolvedEngineSettingsWorkV2::new(0, 0, 0),
+        )
+        .unwrap();
+        let mut settings_wire = serde_json::to_value(&settings).unwrap();
+        let row = settings_wire["document_settings"][0].clone();
+        settings_wire["document_settings"] =
+            vec![row; ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS].into();
+        settings_wire["document_settings"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::Null);
+        assert!(serde_json::from_value::<ResolvedEngineSettingsV3>(settings_wire).is_err());
+
+        let mut nested = serde_json::to_value(settings).unwrap();
+        let mut rows = vec![
+            serde_json::json!({
+                "id": "load_meshes",
+                "value": {"token": "nonempty"},
+                "value_origin": "profile_default"
+            });
+            ENGINE_CONTRACT_V1_MAX_COLLECTION_ROWS
+        ];
+        rows.push(serde_json::Value::Null);
+        nested["clips"] = serde_json::json!([{
+            "clip_ordinal": 0,
+            "clip_name": "clip",
+            "settings": rows
+        }]);
+        assert!(serde_json::from_value::<ResolvedEngineSettingsV3>(nested).is_err());
     }
 }

@@ -527,6 +527,7 @@ accepts only these tuples:
 | `unreal` | 1 | `5.8` | `fbx-importer` | FBX |
 | `godot` | 1 | `4.7` | `resource-importer-scene` | glTF, GLB, or FBX |
 | `bevy` | 1 | `0.19.0` | `gltf-asset-loader` | glTF or GLB |
+| `bevy` | 2 | `0.19.0` | `gltf-asset-loader` | glTF or GLB |
 
 The accepted-source column is AnimSmith's V1 profile boundary, not a claim
 that the named engine supports no other source formats. An absent `[engine]`
@@ -564,7 +565,32 @@ Unity Generic. It is not applicable to Unity Humanoid. The three
 `bake | extract` choices are clip-scoped for both Unity profiles and resolve
 with the normal field-by-field rule: matching globs in lexical order, then an
 exact clip name last. Every real clip must resolve all three choices. Unreal,
-Godot, and Bevy expose no V1 settings, so supplying any setting is an error.
+Godot and Bevy revision 1 expose no V1 settings, so supplying any setting is
+an error. Bevy revision 2 is the exact profile used by `engine-unit-scale`.
+It requires the load-time extension-handler environment and animation-feature
+state; other loader settings have version-pinned defaults that may be
+overridden explicitly:
+
+```toml
+[engine]
+profile = "bevy"
+profile_revision = 2
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty" # or "bevy_pbr_stock_0_19"
+bevy_animation_feature = true
+rotate_scene_entity = false
+rotate_meshes = false
+load_meshes = "nonempty" # or "empty"
+load_animations = true
+```
+
+The two handler values are closed, version-pinned environments: an empty
+registry, or exactly Bevy 0.19's stock PBR handler. Project/user extension
+handlers are outside the profile. The revision-2 settings are document-scoped;
+clip `engine_settings` are rejected.
 
 All statically knowable tuple, setting, value, scope, and applicability errors
 are reported before input I/O. Accepted input format and required per-clip
@@ -646,7 +672,7 @@ form selects one exact manifest logical id and reloads its declared
 source/config rather than consuming collection-output evidence. Neither form
 infers physical contact, footsteps, gameplay, IK, or engine behavior.
 
-An output-v14 measure report deliberately has no engine provenance or
+An output-v15 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.
 When its operands are JSON reports, `diff` validates the complete
 version-matched records and compares their decoded version-matched measurements
@@ -678,20 +704,22 @@ absent selector field or explicit empty list means no runtime-node policy.
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
 See [output.md](output.md) and the current
-`urn:animsmith:schema:output:14` [`output-v14.schema.json`](schemas/output-v14.schema.json). Nested measurement
+`urn:animsmith:schema:output:15` [`output-v15.schema.json`](schemas/output-v15.schema.json). Nested measurement
 evidence has its own
 `urn:animsmith:schema:measurements:16`
 [`measurements-v16.schema.json`](schemas/measurements-v16.schema.json) contract.
 `urn:animsmith:schema:measurements:15`, `urn:animsmith:schema:output:11`,
-`urn:animsmith:schema:output:12`, and `urn:animsmith:schema:output:13` remain
+`urn:animsmith:schema:output:12`, `urn:animsmith:schema:output:13`, and
+`urn:animsmith:schema:output:14` remain
 historical immutable contracts. `diff`
 retains strict version-matched readers for output-v11/v12 with
 measurements-v15 and output-v13/v14 with measurements-v16; output-v10 and earlier
 reports require regeneration from the original asset.
 
-`collection lint COLLECTION.toml --format json` emits the separate immutable
-`urn:animsmith:schema:collection-output:6` contract. Historical
-`urn:animsmith:schema:collection-output:5` and
+`collection lint COLLECTION.toml --format json` emits the separate current
+`urn:animsmith:schema:collection-output:7` contract. Historical
+`urn:animsmith:schema:collection-output:6`,
+`urn:animsmith:schema:collection-output:5`, and
 `urn:animsmith:schema:collection-output:4` remain immutable; the manifest directory is
 the control root; safe missing/unreadable sources, rejected readable bytes,
 digest/take mismatches, and incomplete runtime-set members remain typed rows
@@ -704,9 +732,10 @@ closure identity can establish that source, one of its clips, or a runtime-set
 member; partial/unavailable reasons remain typed and make the result incomplete
 with exit 1. Each established clip binds an exact source take index/name
 to a normalized clip index and carries duplicate-safe indexed measurements.
-The nested whole-document lint envelope advances to output v14 and measurements
-v16. The strict reader preserves version binding for collection-output-v5 with
-output-v13; older historical contracts remain immutable and are not retargeted. Regenerate current collection evidence
+The nested whole-document lint envelope advances to output v15 and measurements
+v16. The strict reader preserves version binding for collection-output-v6 with
+output-v14 and collection-output-v5 with output-v13; older historical
+contracts remain immutable and are not retargeted. Regenerate current collection evidence
 before passing it to collection evaluators.
 Runtime sets keep `decision: not_evaluated`; they make no blend, controller,
 engine, artistic, or gameplay claim. Every declared member carries raw
@@ -720,12 +749,12 @@ carry raw gait-phase availability, and only a fully established, phase-measured
 set emits `evidence.gait_phase.phase_spread` with basis
 `max_circular_deviation_from_mean`; this preserves existing gait lint
 threshold semantics. See
-[`collection-output-v6.schema.json`](schemas/collection-output-v6.schema.json).
+[`collection-output-v7.schema.json`](schemas/collection-output-v7.schema.json).
 
 `collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` strictly reads a bounded
 `collection-directional-speed-policy:1` declaration and a bounded
-collection-output V6 or historical V5 document, then writes the separate immutable
+collection-output V7, historical V6, or historical V5 document, then writes the separate immutable
 `urn:animsmith:schema:collection-directional-speed-evaluation:1` result. The
 result binds the exact raw TOML and JSON byte identities and preserves every
 declared member in manifest order. Invalid, stale, wrong-kind, unreadable,

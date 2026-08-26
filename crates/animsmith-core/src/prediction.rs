@@ -13,7 +13,7 @@ use serde::ser::{
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -28,15 +28,24 @@ use crate::dependency_closure::{
     DependencyResourceUnavailableReasonV1, decode_dependency_closure_v1,
 };
 use crate::engine_contract::{
-    CanonicalEncoder, ENGINE_PROFILE_FACTS_V1_ID, EngineContractDecodeError, EngineContractError,
-    EngineProfileLimitedDecodeError, EngineSettingIdV1, EngineSettingScopeV1,
-    EngineSettingsLimitedDecodeError, ResolvedEngineProfileV1, ResolvedEngineSettingsV1,
-    ResolvedEngineSettingsV2, decode_resolved_engine_profile_v1_with_provenance_limit,
+    CanonicalEncoder, ENGINE_PROFILE_FACTS_V1_ID, ENGINE_PROFILE_FACTS_V2_ID,
+    EngineContractDecodeError, EngineContractError, EngineFactIdV2, EngineFactStateV2,
+    EngineFactValueV2, EngineLinearUnitV2, EngineProfileLimitedDecodeError, EngineSettingIdV1,
+    EngineSettingIdV2, EngineSettingScopeV1, EngineSettingValueOriginV3, EngineSettingValueV2,
+    EngineSettingsLimitedDecodeError, RESOLVED_ENGINE_SETTINGS_V3_ID, ReducedRatioV1,
+    ResolvedEngineProfileV1, ResolvedEngineProfileV2, ResolvedEngineSettingsV1,
+    ResolvedEngineSettingsV2, ResolvedEngineSettingsV3,
+    decode_resolved_engine_profile_v1_with_provenance_limit,
     decode_resolved_engine_settings_v1_with_provenance_limit,
     decode_resolved_engine_settings_v2_with_provenance_limit, encode_input_identity,
 };
 use crate::evaluation::{CoverageGap, EvaluationScope};
 use crate::finding::Finding;
+use crate::measure::LinearTransformClassification;
+use crate::raw_scene_inventory::{
+    RAW_SCENE_ATTACHMENT_INVENTORY_V1_ID, RawSceneAttachmentCoverageV1,
+    RawSceneAttachmentInventoryV1,
+};
 use crate::source_facts::{
     RAW_SOURCE_FACTS_V1_ID, RAW_SOURCE_V1_MAX_OBSERVATIONS, RAW_SOURCE_V1_MAX_TOTAL_TEXT_BYTES,
     RAW_SOURCE_V1_MAX_TRAVERSAL_DEPTH, SourceAxisV1, SourceChannelPropertyV1,
@@ -69,6 +78,12 @@ pub const ENGINE_PREDICTION_V1_ID: &str = "urn:animsmith:engine-prediction:1";
 pub const ENGINE_PREDICTION_V2_ID: &str = "urn:animsmith:engine-prediction:2";
 /// Immutable exact-source per-check engine-prediction V3 schema identity.
 pub const ENGINE_PREDICTION_V3_ID: &str = "urn:animsmith:engine-prediction:3";
+/// Immutable result-bearing per-check engine-prediction V4 schema identity.
+pub const ENGINE_PREDICTION_V4_ID: &str = "urn:animsmith:engine-prediction:4";
+/// Immutable result-bearing prediction-provenance V4 schema identity.
+pub const PREDICTION_PROVENANCE_V4_ID: &str = "urn:animsmith:prediction-provenance:4";
+/// Immutable rule-input policy bound into prediction provenance V4.
+pub const PREDICTION_RULE_INPUTS_V1_ID: &str = "urn:animsmith:prediction-rule-inputs:1";
 /// Immutable identity of raw-source facts V2, composed from V1 and exact timing.
 pub const RAW_SOURCE_FACTS_V2_ID: &str = "urn:animsmith:raw-source-facts:2";
 /// Maximum facets retained across one lint file.
@@ -269,6 +284,50 @@ where
     deserialize_capped_sequence(deserializer, PREDICTION_V1_MAX_REASONS_PER_FACET)
 }
 
+fn deserialize_basis_references_v4<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<PredictionBasisReferenceV4>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET)
+}
+
+fn deserialize_unavailable_reasons_v4<'de, D>(
+    deserializer: D,
+) -> Result<CappedSequence<PredictionUnavailableReasonV2>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_capped_sequence(deserializer, PREDICTION_V1_MAX_REASONS_PER_FACET)
+}
+
+fn deserialize_prediction_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let values =
+        deserialize_capped_sequence(deserializer, PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET)?;
+    if values.overflowed {
+        return Err(D::Error::custom("prediction collection exceeds 4096 rows"));
+    }
+    Ok(values.values)
+}
+
+fn deserialize_consumed_contracts_v4<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let values = deserialize_capped_sequence(deserializer, CONSUMED_CONTRACTS_V4.len())?;
+    if values.overflowed {
+        return Err(D::Error::custom(
+            "V4 provenance consumed-contract inventory exceeds its exact bound",
+        ));
+    }
+    Ok(values.values)
+}
+
 fn deserialize_consumed_contracts<'de, D>(
     deserializer: D,
 ) -> Result<CappedSequence<String>, D::Error>
@@ -377,6 +436,24 @@ pub enum PredictionContractError {
     /// An available facet carried an unavailable reason.
     #[error("available prediction facet cannot carry unavailable reasons")]
     AvailableHasReasons,
+    /// A V4 available facet omitted its mandatory machine result.
+    #[error("available prediction facet must carry exactly one machine result")]
+    AvailableResultMissing,
+    /// A V4 required-unavailable facet incorrectly carried a result.
+    #[error("required-unavailable prediction facet cannot carry a machine result")]
+    UnavailableHasResult,
+    /// A machine-result variant carried an incoherent field combination.
+    #[error("invalid engine machine result: {0}")]
+    InvalidMachineResult(&'static str),
+    /// A result that consumes scene/attachment inventory lacked that authority.
+    #[error("engine machine result requires available raw scene/attachment inventory")]
+    MachineResultRequiresRawSceneInventory,
+    /// Raw scene/attachment availability contradicted source format or identity.
+    #[error("raw scene/attachment provenance binding is inconsistent")]
+    InvalidRawSceneAttachmentBinding,
+    /// A V4 basis reference did not resolve in the bound raw scene inventory.
+    #[error("raw scene/attachment basis reference was not found in the bound inventory")]
+    RawSceneAttachmentBasisReferenceNotFound,
     /// A required-unavailable facet carried no stable reason.
     #[error("required-unavailable prediction facet must carry at least one reason")]
     RequiredUnavailableWithoutReason,
@@ -459,6 +536,10 @@ pub enum PredictionContractError {
     /// available source-clip ends outside their exact frame lattice.
     #[error("engine-clip-boundary findings contradict exact source timing provenance")]
     EngineClipBoundaryFindingMismatch,
+    /// The current engine-unit-scale facets did not match the exact profile,
+    /// rule-input, raw-inventory, and measurement evidence embedded in V15.
+    #[error("engine-unit-scale facets contradict V4 provenance and measurements")]
+    EngineUnitScaleFacetMismatch,
     /// A required-unavailable facet scope was also reported as completed.
     #[error("required-unavailable prediction facet scope cannot occur in evaluated_scopes")]
     UnavailableScopeEvaluated,
@@ -8467,6 +8548,2351 @@ fn decode_prediction_provenance_v3_wire(
     Ok(provenance)
 }
 
+/// Source numeric-dimension behavior in an exact unit mapping result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceNumericDimensionsV1 {
+    /// Numeric dimensions reach the target without physical rescaling.
+    Preserved,
+}
+
+/// Importer scale conversion applied to source numeric dimensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImporterScaleConversionV1 {
+    /// No scale conversion is introduced by the importer.
+    None,
+}
+
+/// Whether the engine enforces an application-wide physical world unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationWorldUnitPolicyV1 {
+    /// Caller-authored world state is not constrained to one physical unit.
+    Unenforced,
+}
+
+/// Unit subjects used by exact unit mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictionUnitV1 {
+    /// glTF metre-per-unit source semantics.
+    Metre,
+    /// One target engine world-space length unit.
+    EngineWorldLengthUnit,
+}
+
+/// Exact numeric unit mapping without claiming a physical engine-world policy.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitMappingResultV1 {
+    /// Source unit semantics.
+    pub source_unit: PredictionUnitV1,
+    /// Target numeric unit semantics.
+    pub target_unit: PredictionUnitV1,
+    /// Exact target numeric units per source numeric unit.
+    pub exact_target_units_per_source_unit: ReducedRatioV1,
+    /// Physical-dimension preservation classification.
+    pub source_numeric_dimensions: SourceNumericDimensionsV1,
+    /// Importer scale conversion.
+    pub importer_scale_conversion: ImporterScaleConversionV1,
+    /// Application-owned world-unit policy.
+    pub application_world_unit_policy: ApplicationWorldUnitPolicyV1,
+}
+
+impl UnitMappingResultV1 {
+    /// Construct the exact glTF-to-Bevy numeric mapping authorized by #481.
+    pub fn gltf_to_engine_world_length_unit() -> Self {
+        Self {
+            source_unit: PredictionUnitV1::Metre,
+            target_unit: PredictionUnitV1::EngineWorldLengthUnit,
+            exact_target_units_per_source_unit: ReducedRatioV1::new(1, 1)
+                .expect("one-to-one is reduced"),
+            source_numeric_dimensions: SourceNumericDimensionsV1::Preserved,
+            importer_scale_conversion: ImporterScaleConversionV1::None,
+            application_world_unit_policy: ApplicationWorldUnitPolicyV1::Unenforced,
+        }
+    }
+
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.source_unit != PredictionUnitV1::Metre
+            || self.target_unit != PredictionUnitV1::EngineWorldLengthUnit
+            || self.source_numeric_dimensions != SourceNumericDimensionsV1::Preserved
+            || self.importer_scale_conversion != ImporterScaleConversionV1::None
+            || self.application_world_unit_policy != ApplicationWorldUnitPolicyV1::Unenforced
+            || self.exact_target_units_per_source_unit != ReducedRatioV1::new(1, 1).expect("1/1")
+        {
+            return Err(PredictionContractError::InvalidMachineResult(
+                "unit mapping uses an unsupported semantic combination",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Importer-created subject whose transform scale is predicted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransformScaleSubjectKindV1 {
+    /// File-level unit/transform domain.
+    File,
+    /// Loader-created scene entity (not the caller-owned world asset root).
+    LoaderSceneEntity,
+    /// Loader-created mesh primitive child entity.
+    LoaderMeshPrimitiveEntity,
+    /// Exactly selected source node.
+    SelectedSourceNode,
+}
+
+/// Whether the subject is created by resolved importer settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImporterSubjectCreationV1 {
+    /// The loader creates the subject.
+    Created,
+    /// A resolved setting suppresses the subject.
+    SuppressedBySetting,
+}
+
+/// Affine scale domain represented by the result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransformScaleDomainV1 {
+    /// The subject's local affine transform.
+    Local,
+    /// The affine transform accumulated from the loader root to the subject.
+    LoaderRootToSubject,
+}
+
+/// Static/default-rest transform-scale classification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransformScaleResultV1 {
+    /// Exact importer-created subject kind.
+    pub subject_kind: TransformScaleSubjectKindV1,
+    /// Creation state under resolved settings.
+    pub creation: ImporterSubjectCreationV1,
+    /// Named affine domain.
+    pub domain: TransformScaleDomainV1,
+    /// Existing engine-neutral affine classification, present only for a created subject.
+    pub classification: Option<LinearTransformClassification>,
+}
+
+impl TransformScaleResultV1 {
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.classification == Some(LinearTransformClassification::NonFinite) {
+            return Err(PredictionContractError::InvalidMachineResult(
+                "non-finite transform scale cannot be an available result",
+            ));
+        }
+        match (self.creation, self.classification) {
+            (ImporterSubjectCreationV1::Created, None) => {
+                return Err(PredictionContractError::InvalidMachineResult(
+                    "created transform subject must carry a classification",
+                ));
+            }
+            (ImporterSubjectCreationV1::SuppressedBySetting, Some(_)) => {
+                return Err(PredictionContractError::InvalidMachineResult(
+                    "suppressed transform subject cannot carry a classification",
+                ));
+            }
+            _ => {}
+        }
+        if self.creation == ImporterSubjectCreationV1::SuppressedBySetting
+            && self.subject_kind == TransformScaleSubjectKindV1::File
+        {
+            return Err(PredictionContractError::InvalidMachineResult(
+                "file transform subject cannot be suppressed by a loader setting",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Inventory domain summarized by one bounded result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictionInventoryDomainV1 {
+    /// Raw source scenes.
+    Scenes,
+    /// Raw node-to-mesh attachments.
+    NodeMeshAttachments,
+    /// Raw mesh primitive definitions.
+    MeshPrimitives,
+    /// Derived loader mesh-primitive subjects reachable through scene roots and attachments.
+    LoaderMeshPrimitiveSubjects,
+    /// Raw source animations.
+    Animations,
+    /// Raw source animation channels.
+    AnimationChannels,
+    /// Raw source extensions.
+    Extensions,
+    /// Raw source constructs.
+    Constructs,
+}
+
+/// Coverage state carried by a machine result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictionInventoryCoverageStateV1 {
+    /// The complete inventory is retained; zero rows proves absence.
+    Complete,
+    /// Only a canonical prefix is retained.
+    Partial,
+    /// No inventory rows are available.
+    Unavailable,
+}
+
+/// Explicit inventory coverage, including complete-empty evidence.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InventoryCoverageResultV1 {
+    /// Source inventory domain.
+    pub domain: PredictionInventoryDomainV1,
+    /// Exhaustiveness state.
+    pub coverage: PredictionInventoryCoverageStateV1,
+    /// Retained row count.
+    pub retained_rows: u64,
+}
+
+impl InventoryCoverageResultV1 {
+    /// Whether this result proves the inventory completely empty.
+    pub fn is_complete_empty(&self) -> bool {
+        self.coverage == PredictionInventoryCoverageStateV1::Complete && self.retained_rows == 0
+    }
+
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.coverage == PredictionInventoryCoverageStateV1::Unavailable {
+            return Err(PredictionContractError::InvalidMachineResult(
+                "unavailable inventory coverage must be a required-unavailable facet",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Root-motion routing axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootMotionAxisV1 {
+    /// Horizontal XZ translation.
+    HorizontalXz,
+    /// Vertical Y translation.
+    VerticalY,
+    /// Yaw rotation.
+    Yaw,
+}
+
+/// Project movement owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootMotionProjectOwnerV1 {
+    /// Gameplay/runtime code owns movement.
+    Gameplay,
+    /// Animation root motion owns movement.
+    Animation,
+}
+
+/// Importer routing disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootMotionImporterDispositionV1 {
+    /// The axis is baked into the pose.
+    BakedIntoPose,
+    /// The axis is stored as root motion.
+    StoredAsRootMotion,
+}
+
+/// Compatibility of project ownership and importer routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootMotionCompatibilityV1 {
+    /// Ownership and routing agree.
+    Compatible,
+    /// Ownership and routing conflict.
+    Conflict,
+}
+
+/// One declared-axis root-motion routing result.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RootMotionRoutingResultV1 {
+    /// Declared axis.
+    pub axis: RootMotionAxisV1,
+    /// Explicit project owner.
+    pub project_owner: RootMotionProjectOwnerV1,
+    /// Materialized importer disposition.
+    pub importer_disposition: RootMotionImporterDispositionV1,
+    /// Derived compatibility.
+    pub compatibility: RootMotionCompatibilityV1,
+}
+
+impl RootMotionRoutingResultV1 {
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        let compatible = matches!(
+            (self.project_owner, self.importer_disposition),
+            (
+                RootMotionProjectOwnerV1::Gameplay,
+                RootMotionImporterDispositionV1::BakedIntoPose
+            ) | (
+                RootMotionProjectOwnerV1::Animation,
+                RootMotionImporterDispositionV1::StoredAsRootMotion
+            )
+        );
+        if compatible != (self.compatibility == RootMotionCompatibilityV1::Compatible) {
+            return Err(PredictionContractError::InvalidMachineResult(
+                "root-motion compatibility disagrees with owner and disposition",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Source subject kind for importer-disposition predictions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceImportSubjectKindV1 {
+    /// Source animation.
+    Animation,
+    /// Source animation channel.
+    AnimationChannel,
+    /// Source extension.
+    Extension,
+    /// Source construct.
+    Construct,
+}
+
+/// Exact negative or proven importer disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceImportDispositionV1 {
+    /// Subject is dropped by a materialized gate.
+    Dropped,
+    /// Subject is retained by exact positive survival evidence.
+    Preserved,
+    /// Subject is converted to another supported representation.
+    Converted,
+    /// Importer rejects the subject.
+    Rejected,
+}
+
+/// One source-subject importer outcome.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceImportDispositionResultV1 {
+    /// Distinct source domain.
+    pub subject_kind: SourceImportSubjectKindV1,
+    /// Exact importer outcome.
+    pub disposition: SourceImportDispositionV1,
+    /// Materialized controlling gate, when one establishes the result.
+    pub controlling_gate: Option<EngineSettingIdV2>,
+}
+
+/// One exact engine import-setting field projection.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportSettingProjectionFieldV1 {
+    /// Engine-native field key.
+    pub key: String,
+    /// Exact projected value.
+    pub value: EngineSettingValueV2,
+    /// Resolved value authority.
+    pub value_origin: EngineSettingValueOriginV3,
+}
+
+/// Target shape of an import-setting projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportSettingProjectionKindV1 {
+    /// Godot `[params]` subset.
+    GodotParams,
+    /// Unreal FBX import-data field subset.
+    UnrealFbxImportData,
+}
+
+/// Closed bounded machine projection for import advice.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportSettingProjectionResultV1 {
+    /// Exact projection target.
+    pub projection_kind: ImportSettingProjectionKindV1,
+    /// Canonically key-ordered fields.
+    #[serde(deserialize_with = "deserialize_prediction_vec")]
+    pub fields: Vec<ImportSettingProjectionFieldV1>,
+}
+
+impl ImportSettingProjectionResultV1 {
+    /// Construct a bounded canonical projection.
+    pub fn new(
+        projection_kind: ImportSettingProjectionKindV1,
+        mut fields: Vec<ImportSettingProjectionFieldV1>,
+    ) -> Result<Self, PredictionContractError> {
+        fields.sort_by(|left, right| left.key.cmp(&right.key));
+        let result = Self {
+            projection_kind,
+            fields,
+        };
+        result.validate()?;
+        Ok(result)
+    }
+
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.fields.is_empty()
+            || self.fields.len() > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET
+        {
+            return Err(PredictionContractError::InvalidMachineResult(
+                "import-setting projection fields must be nonempty and bounded",
+            ));
+        }
+        for field in &self.fields {
+            stable_token("import-setting projection key", &field.key)?;
+        }
+        if self
+            .fields
+            .windows(2)
+            .any(|pair| pair[0].key >= pair[1].key)
+        {
+            return Err(PredictionContractError::InvalidMachineResult(
+                "import-setting projection fields are duplicated or noncanonical",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Closed bounded result vocabulary shared by #481, #482, #483, and #496.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "result",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum EngineMachineResultV1 {
+    /// Exact source-to-target numeric unit mapping.
+    UnitMapping(UnitMappingResultV1),
+    /// Effective affine scale classification.
+    TransformScale(TransformScaleResultV1),
+    /// Explicit bounded inventory coverage.
+    InventoryCoverage(InventoryCoverageResultV1),
+    /// Per-axis project/importer root-motion routing.
+    RootMotionRouting(RootMotionRoutingResultV1),
+    /// Source animation/channel/extension/construct outcome.
+    SourceImportDisposition(SourceImportDispositionResultV1),
+    /// Exact import-setting projection.
+    ImportSettingProjection(ImportSettingProjectionResultV1),
+}
+
+impl EngineMachineResultV1 {
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        match self {
+            Self::UnitMapping(result) => result.validate(),
+            Self::TransformScale(result) => result.validate(),
+            Self::InventoryCoverage(result) => result.validate(),
+            Self::RootMotionRouting(result) => result.validate(),
+            Self::SourceImportDisposition(_) => Ok(()),
+            Self::ImportSettingProjection(result) => result.validate(),
+        }
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        match self {
+            Self::ImportSettingProjection(result) => checked_sum(
+                "machine result retained text",
+                result
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        field
+                            .value
+                            .retained_text_bytes()
+                            .map(|bytes| [field.key.len(), bytes])
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten(),
+            ),
+            Self::UnitMapping(_)
+            | Self::TransformScale(_)
+            | Self::InventoryCoverage(_)
+            | Self::RootMotionRouting(_)
+            | Self::SourceImportDisposition(_) => Ok(0),
+        }
+    }
+
+    fn needs_raw_scene_inventory(&self) -> bool {
+        matches!(
+            self,
+            Self::InventoryCoverage(InventoryCoverageResultV1 {
+                domain: PredictionInventoryDomainV1::Scenes
+                    | PredictionInventoryDomainV1::NodeMeshAttachments
+                    | PredictionInventoryDomainV1::MeshPrimitives
+                    | PredictionInventoryDomainV1::LoaderMeshPrimitiveSubjects,
+                ..
+            }) | Self::TransformScale(TransformScaleResultV1 {
+                subject_kind: TransformScaleSubjectKindV1::LoaderSceneEntity
+                    | TransformScaleSubjectKindV1::LoaderMeshPrimitiveEntity,
+                ..
+            })
+        )
+    }
+
+    fn validate_against(
+        &self,
+        provenance: &PredictionProvenanceV4,
+        basis: &EnginePredictionBasisV4,
+    ) -> Result<(), PredictionContractError> {
+        self.validate()?;
+        match self {
+            Self::UnitMapping(result) => {
+                let cited = [
+                    EngineFactIdV2::TargetLinearUnit,
+                    EngineFactIdV2::SourceToTargetUnitMapping,
+                    EngineFactIdV2::PhysicalDimensionsPreserved,
+                    EngineFactIdV2::ImporterScaleConversion,
+                    EngineFactIdV2::ApplicationWorldUnitPolicy,
+                ]
+                .into_iter()
+                .all(|id| basis_references_profile_fact_v4(basis, id));
+                let profile = provenance.profile();
+                if !cited
+                    || !matches!(
+                        profile
+                            .fact(EngineFactIdV2::TargetLinearUnit)
+                            .map(|fact| fact.state()),
+                        Some(EngineFactStateV2::Known(EngineFactValueV2::LinearUnit(
+                            EngineLinearUnitV2::EngineWorldLengthUnit
+                        )))
+                    )
+                    || !matches!(profile.fact(EngineFactIdV2::SourceToTargetUnitMapping).map(|fact| fact.state()), Some(EngineFactStateV2::Known(EngineFactValueV2::UnitRatio(ratio))) if *ratio == result.exact_target_units_per_source_unit)
+                    || !matches!(
+                        profile
+                            .fact(EngineFactIdV2::PhysicalDimensionsPreserved)
+                            .map(|fact| fact.state()),
+                        Some(EngineFactStateV2::Known(EngineFactValueV2::Boolean(true)))
+                    )
+                    || !matches!(profile.fact(EngineFactIdV2::ImporterScaleConversion).map(|fact| fact.state()), Some(EngineFactStateV2::Known(EngineFactValueV2::Token(value))) if value == "none")
+                    || !matches!(
+                        profile
+                            .fact(EngineFactIdV2::ApplicationWorldUnitPolicy)
+                            .map(|fact| fact.state()),
+                        Some(EngineFactStateV2::Known(EngineFactValueV2::Boolean(false)))
+                    )
+                {
+                    return Err(PredictionContractError::InvalidMachineResult(
+                        "unit mapping disagrees with cited V2 profile facts",
+                    ));
+                }
+                Ok(())
+            }
+            Self::TransformScale(result) => {
+                if !basis_references_profile_fact_v4(basis, EngineFactIdV2::ResultingTransformScale)
+                    || !matches!(
+                        provenance.profile().fact(EngineFactIdV2::ResultingTransformScale).map(|fact| fact.state()),
+                        Some(EngineFactStateV2::Known(EngineFactValueV2::Token(value)))
+                            if value == "loader_entities_unit_orthonormal_trs_nodes_passthrough_matrix_nodes_decomposed"
+                    )
+                {
+                    return Err(PredictionContractError::InvalidMachineResult(
+                        "transform scale disagrees with its cited V2 profile fact",
+                    ));
+                }
+                let handler = basis_references_setting_v4(
+                    basis,
+                    EngineSettingIdV2::ExtensionHandlerEnvironment,
+                );
+                let valid = match result.subject_kind {
+                    TransformScaleSubjectKindV1::File => {
+                        result.creation == ImporterSubjectCreationV1::Created
+                            && result.classification
+                                == Some(LinearTransformClassification::UnitOrthonormal)
+                    }
+                    TransformScaleSubjectKindV1::LoaderSceneEntity => {
+                        handler
+                            && basis_references_setting_v4(
+                                basis,
+                                EngineSettingIdV2::RotateSceneEntity,
+                            )
+                            && result.creation == ImporterSubjectCreationV1::Created
+                            && result.classification
+                                == Some(LinearTransformClassification::UnitOrthonormal)
+                    }
+                    TransformScaleSubjectKindV1::LoaderMeshPrimitiveEntity => {
+                        let load_meshes = provenance
+                            .settings()
+                            .document_setting(EngineSettingIdV2::LoadMeshes)
+                            .and_then(|row| match row.value() {
+                                EngineSettingValueV2::Token(value) => Some(value.as_str()),
+                                _ => None,
+                            });
+                        handler
+                            && basis_references_setting_v4(basis, EngineSettingIdV2::LoadMeshes)
+                            && basis_references_setting_v4(basis, EngineSettingIdV2::RotateMeshes)
+                            && matches!(
+                                (load_meshes, result.creation, result.classification),
+                                (
+                                    Some("nonempty"),
+                                    ImporterSubjectCreationV1::Created,
+                                    Some(LinearTransformClassification::UnitOrthonormal)
+                                ) | (
+                                    Some("empty"),
+                                    ImporterSubjectCreationV1::SuppressedBySetting,
+                                    None
+                                )
+                            )
+                    }
+                    TransformScaleSubjectKindV1::SelectedSourceNode => {
+                        result.creation == ImporterSubjectCreationV1::Created
+                            && result.classification.is_some_and(|classification| {
+                                basis_references_linear_classification_v4(basis, classification)
+                            })
+                    }
+                };
+                if !valid {
+                    return Err(PredictionContractError::InvalidMachineResult(
+                        "transform scale disagrees with cited settings or measurement evidence",
+                    ));
+                }
+                Ok(())
+            }
+            Self::InventoryCoverage(result) => {
+                validate_inventory_coverage_result_v1(result, provenance)
+            }
+            Self::RootMotionRouting(_)
+            | Self::SourceImportDisposition(_)
+            | Self::ImportSettingProjection(_) => Ok(()),
+        }
+    }
+}
+
+fn basis_references_profile_fact_v4(
+    basis: &EnginePredictionBasisV4,
+    fact_id: EngineFactIdV2,
+) -> bool {
+    basis.references().iter().any(|reference| {
+        matches!(
+            reference,
+            PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+                PredictionBasisReferenceV1::ProfileFact { fact_id: retained }
+            )) if retained == fact_id.as_str()
+        )
+    })
+}
+
+fn basis_references_setting_v4(
+    basis: &EnginePredictionBasisV4,
+    setting_id: EngineSettingIdV2,
+) -> bool {
+    basis.references().iter().any(|reference| {
+        matches!(
+            reference,
+            PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+                PredictionBasisReferenceV1::ResolvedSetting { setting_id: retained, .. }
+            )) if retained == setting_id.as_str()
+        )
+    })
+}
+
+fn basis_references_linear_classification_v4(
+    basis: &EnginePredictionBasisV4,
+    classification: LinearTransformClassification,
+) -> bool {
+    let expected = match classification {
+        LinearTransformClassification::UnitOrthonormal => "unit_orthonormal",
+        LinearTransformClassification::UniformScaled => "uniform_scaled",
+        LinearTransformClassification::NonUniform => "non_uniform",
+        LinearTransformClassification::Sheared => "sheared",
+        LinearTransformClassification::Reflected => "reflected",
+        LinearTransformClassification::Singular => "singular",
+        LinearTransformClassification::NonFinite => return false,
+    };
+    basis.references().iter().any(|reference| {
+        matches!(
+            reference,
+            PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+                PredictionBasisReferenceV1::Measurement {
+                    value: PredictionScalarV1::Token { value },
+                    ..
+                }
+            )) if value == expected
+        )
+    })
+}
+
+fn validate_inventory_coverage_result_v1(
+    result: &InventoryCoverageResultV1,
+    provenance: &PredictionProvenanceV4,
+) -> Result<(), PredictionContractError> {
+    let inventory = provenance
+        .raw_scene_attachment()
+        .inventory()
+        .ok_or(PredictionContractError::MachineResultRequiresRawSceneInventory)?;
+    let raw = match result.domain {
+        PredictionInventoryDomainV1::Scenes => Some((
+            inventory.scenes().coverage(),
+            inventory.scenes().rows().len(),
+        )),
+        PredictionInventoryDomainV1::NodeMeshAttachments => Some((
+            inventory.node_mesh_attachments().coverage(),
+            inventory.node_mesh_attachments().rows().len(),
+        )),
+        PredictionInventoryDomainV1::MeshPrimitives => Some((
+            inventory.mesh_primitives().coverage(),
+            inventory.mesh_primitives().rows().len(),
+        )),
+        PredictionInventoryDomainV1::LoaderMeshPrimitiveSubjects => {
+            let complete = inventory.scenes().coverage() == RawSceneAttachmentCoverageV1::Complete
+                && inventory.node_mesh_attachments().coverage()
+                    == RawSceneAttachmentCoverageV1::Complete
+                && inventory.mesh_primitives().coverage() == RawSceneAttachmentCoverageV1::Complete;
+            let visibly_empty_join = inventory.scenes().rows().is_empty()
+                || inventory
+                    .scenes()
+                    .rows()
+                    .iter()
+                    .all(|scene| scene.root_node_indices().is_empty())
+                || inventory.node_mesh_attachments().rows().is_empty()
+                || inventory.mesh_primitives().rows().is_empty();
+            if !complete
+                || result.coverage != PredictionInventoryCoverageStateV1::Complete
+                || result.retained_rows != 0
+                || !visibly_empty_join
+            {
+                return Err(PredictionContractError::InvalidMachineResult(
+                    "loader mesh-primitive subject absence requires complete raw inventories",
+                ));
+            }
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+    let (coverage, rows) = raw.expect("raw domains return evidence");
+    let expected = match coverage {
+        RawSceneAttachmentCoverageV1::Complete => PredictionInventoryCoverageStateV1::Complete,
+        RawSceneAttachmentCoverageV1::PrefixOverflow => PredictionInventoryCoverageStateV1::Partial,
+        RawSceneAttachmentCoverageV1::Unavailable => {
+            return Err(PredictionContractError::InvalidMachineResult(
+                "unavailable raw inventory must be a required-unavailable facet",
+            ));
+        }
+    };
+    if result.coverage != expected || result.retained_rows != rows as u64 {
+        return Err(PredictionContractError::InvalidMachineResult(
+            "inventory coverage result disagrees with bound raw inventory",
+        ));
+    }
+    Ok(())
+}
+
+/// Why raw scene/attachment evidence is absent from V4 provenance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RawSceneAttachmentUnavailableReasonV1 {
+    /// The source format has no V1 projection.
+    UnsupportedSourceFormat,
+    /// Same-load loader projection was not available.
+    LoaderEvidenceUnavailable,
+}
+
+/// Exact available inventory or a typed absence committed by provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RawSceneAttachmentBindingV1 {
+    /// Exact same-load raw inventory.
+    Available {
+        /// Bounded inventory record.
+        inventory: RawSceneAttachmentInventoryV1,
+    },
+    /// Closed absence state.
+    Unavailable {
+        /// Why the inventory is absent.
+        reason: RawSceneAttachmentUnavailableReasonV1,
+    },
+}
+
+/// Inventory collection whose coverage is consumed by a V4 basis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RawSceneAttachmentBasisDomainV1 {
+    /// Source-skeleton cardinality evidence.
+    SourceSkeleton,
+    /// Source scene/root rows.
+    Scenes,
+    /// Source node-to-mesh attachment rows.
+    NodeMeshAttachments,
+    /// Source mesh primitive rows.
+    MeshPrimitives,
+}
+
+/// Stable index-only reference into a same-load raw scene inventory.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "field", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RawSceneAttachmentBasisReferenceV1 {
+    /// Coverage of one exact inventory collection.
+    Coverage {
+        /// Covered collection.
+        domain: RawSceneAttachmentBasisDomainV1,
+    },
+    /// One source-scene row.
+    SceneRow {
+        /// Stable source scene-array index.
+        source_scene_index: u64,
+    },
+    /// One authored root entry inside a source-scene row.
+    SceneRoot {
+        /// Stable source scene-array index.
+        source_scene_index: u64,
+        /// Stable ordinal in the scene's root array.
+        source_root_ordinal: u64,
+        /// Exact source node-array index retained at that ordinal.
+        source_node_index: u64,
+    },
+    /// One source node-to-mesh declaration.
+    NodeMeshAttachmentRow {
+        /// Stable source node-array index.
+        source_node_index: u64,
+        /// Exact source mesh-array index attached by that node.
+        source_mesh_index: u64,
+    },
+    /// One source mesh primitive definition.
+    MeshPrimitiveRow {
+        /// Stable source mesh-array index.
+        source_mesh_index: u64,
+        /// Stable primitive-array index inside that mesh.
+        source_primitive_index: u64,
+    },
+}
+
+/// Versioned V4 basis vocabulary, preserving every historical V2 reference.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(
+    tag = "contract",
+    content = "reference",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum PredictionBasisReferenceV4 {
+    /// One immutable V2 profile/settings/raw/timing/measurement reference.
+    V2(PredictionBasisReferenceV2),
+    /// One index-only reference into raw scene/attachment inventory V1.
+    RawSceneAttachment(RawSceneAttachmentBasisReferenceV1),
+}
+
+impl PredictionBasisReferenceV4 {
+    /// Lift an immutable V2 reference into the V4 basis vocabulary.
+    pub const fn v2(reference: PredictionBasisReferenceV2) -> Self {
+        Self::V2(reference)
+    }
+
+    /// Retain one typed raw scene/attachment inventory reference.
+    pub const fn raw_scene_attachment(reference: RawSceneAttachmentBasisReferenceV1) -> Self {
+        Self::RawSceneAttachment(reference)
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        match self {
+            Self::V2(reference) => reference.retained_text_bytes(),
+            Self::RawSceneAttachment(_) => Ok(0),
+        }
+    }
+}
+
+/// Domain-separated identity of one canonical V4 prediction basis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PredictionBasisIdentityV4(InputIdentity);
+
+impl PredictionBasisIdentityV4 {
+    /// SHA-256 and canonical-preimage byte count.
+    pub const fn input_identity(&self) -> &InputIdentity {
+        &self.0
+    }
+}
+
+/// Canonical V4 basis with typed raw scene/attachment row references.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EnginePredictionBasisV4 {
+    identity: PredictionBasisIdentityV4,
+    references: Vec<PredictionBasisReferenceV4>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnginePredictionBasisWireV4 {
+    identity: PredictionBasisIdentityV4,
+    #[serde(deserialize_with = "deserialize_basis_references_v4")]
+    references: CappedSequence<PredictionBasisReferenceV4>,
+}
+
+impl EnginePredictionBasisV4 {
+    /// Construct and canonically order one V4 basis.
+    pub fn new(
+        mut references: Vec<PredictionBasisReferenceV4>,
+    ) -> Result<Self, PredictionContractError> {
+        if references.len() > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET {
+            return Err(PredictionContractError::TooManyBasisReferences {
+                found: references.len(),
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+            });
+        }
+        for reference in &references {
+            validate_basis_reference_structure_v4(reference)?;
+        }
+        references.sort_by_cached_key(basis_reference_key_v4);
+        if references
+            .windows(2)
+            .any(|pair| basis_reference_key_v4(&pair[0]) == basis_reference_key_v4(&pair[1]))
+        {
+            return Err(PredictionContractError::DuplicateBasisReference);
+        }
+        Ok(Self {
+            identity: PredictionBasisIdentityV4(compute_basis_identity_v4(&references)),
+            references,
+        })
+    }
+
+    /// Canonical V4 basis identity.
+    pub const fn identity(&self) -> &PredictionBasisIdentityV4 {
+        &self.identity
+    }
+
+    /// Canonically ordered typed references.
+    pub fn references(&self) -> &[PredictionBasisReferenceV4] {
+        &self.references
+    }
+
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.references.len() > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET {
+            return Err(PredictionContractError::TooManyBasisReferences {
+                found: self.references.len(),
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+            });
+        }
+        for reference in &self.references {
+            validate_basis_reference_structure_v4(reference)?;
+        }
+        let keys = self
+            .references
+            .iter()
+            .map(basis_reference_key_v4)
+            .collect::<Vec<_>>();
+        if keys.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(if keys.windows(2).any(|pair| pair[0] == pair[1]) {
+                PredictionContractError::DuplicateBasisReference
+            } else {
+                PredictionContractError::NonCanonicalOrder("V4 basis references")
+            });
+        }
+        if self.identity.0 != compute_basis_identity_v4(&self.references) {
+            return Err(PredictionContractError::IdentityMismatch {
+                contract: "engine prediction basis v4",
+            });
+        }
+        Ok(())
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "V4 basis retained text",
+            self.references
+                .iter()
+                .map(PredictionBasisReferenceV4::retained_text_bytes)
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    }
+}
+
+impl TryFrom<EnginePredictionBasisWireV4> for EnginePredictionBasisV4 {
+    type Error = PredictionContractError;
+
+    fn try_from(wire: EnginePredictionBasisWireV4) -> Result<Self, Self::Error> {
+        if wire.references.overflowed {
+            return Err(PredictionContractError::TooManyBasisReferences {
+                found: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET + 1,
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+            });
+        }
+        let basis = Self {
+            identity: wire.identity,
+            references: wire.references.values,
+        };
+        basis.validate()?;
+        Ok(basis)
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePredictionBasisV4 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        EnginePredictionBasisWireV4::deserialize(deserializer)?
+            .try_into()
+            .map_err(D::Error::custom)
+    }
+}
+
+impl From<EnginePredictionBasisV2> for EnginePredictionBasisV4 {
+    fn from(basis: EnginePredictionBasisV2) -> Self {
+        Self::new(
+            basis
+                .references
+                .into_iter()
+                .map(PredictionBasisReferenceV4::V2)
+                .collect(),
+        )
+        .expect("validated V2 basis always lifts into V4")
+    }
+}
+
+fn validate_basis_reference_structure_v4(
+    reference: &PredictionBasisReferenceV4,
+) -> Result<(), PredictionContractError> {
+    match reference {
+        PredictionBasisReferenceV4::V2(reference) => {
+            validate_basis_reference_structure_v2(reference, MEASUREMENTS_SCHEMA_ID)
+        }
+        PredictionBasisReferenceV4::RawSceneAttachment(_) => Ok(()),
+    }
+}
+
+fn basis_reference_key_v4(reference: &PredictionBasisReferenceV4) -> (u8, Vec<u8>) {
+    let variant = match reference {
+        PredictionBasisReferenceV4::V2(_) => 0,
+        PredictionBasisReferenceV4::RawSceneAttachment(_) => 1,
+    };
+    (
+        variant,
+        serde_json::to_vec(reference).expect("V4 basis reference serializes"),
+    )
+}
+
+fn compute_basis_identity_v4(references: &[PredictionBasisReferenceV4]) -> InputIdentity {
+    let mut encoder = CanonicalEncoder::new("animsmith-engine-prediction-basis-v4");
+    encoder.field("references");
+    encoder.count(references.len());
+    for reference in references {
+        encoder.token(serde_json::to_string(reference).expect("V4 basis reference serializes"));
+    }
+    encoder.identity()
+}
+
+impl RawSceneAttachmentBindingV1 {
+    /// Construct an available binding.
+    pub fn available(inventory: RawSceneAttachmentInventoryV1) -> Self {
+        Self::Available { inventory }
+    }
+
+    /// Construct a typed unavailable binding.
+    pub const fn unavailable(reason: RawSceneAttachmentUnavailableReasonV1) -> Self {
+        Self::Unavailable { reason }
+    }
+
+    /// Exact inventory, when available.
+    pub const fn inventory(&self) -> Option<&RawSceneAttachmentInventoryV1> {
+        match self {
+            Self::Available { inventory } => Some(inventory),
+            Self::Unavailable { .. } => None,
+        }
+    }
+}
+
+/// Domain-separated identity of one V4 provenance record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PredictionProvenanceIdentityV4(InputIdentity);
+
+impl PredictionProvenanceIdentityV4 {
+    /// SHA-256 and canonical-preimage byte count.
+    pub const fn input_identity(&self) -> &InputIdentity {
+        &self.0
+    }
+}
+
+/// Result-bearing V4 prediction facet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EnginePredictionFacetV4 {
+    scope: EvaluationScope,
+    state: EnginePredictionFacetStateV1,
+    basis: EnginePredictionBasisV4,
+    result: Option<EngineMachineResultV1>,
+    reasons: Vec<PredictionUnavailableReasonV2>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnginePredictionFacetWireV4 {
+    scope: EvaluationScope,
+    state: EnginePredictionFacetStateV1,
+    basis: EnginePredictionBasisV4,
+    result: Option<EngineMachineResultV1>,
+    #[serde(deserialize_with = "deserialize_unavailable_reasons_v4")]
+    reasons: CappedSequence<PredictionUnavailableReasonV2>,
+}
+
+impl EnginePredictionFacetV4 {
+    /// Construct an available facet. A result is mandatory and reasons are absent.
+    pub fn available<B>(
+        scope: EvaluationScope,
+        basis: B,
+        result: EngineMachineResultV1,
+    ) -> Result<Self, PredictionContractError>
+    where
+        B: Into<EnginePredictionBasisV4>,
+    {
+        let facet = Self {
+            scope,
+            state: EnginePredictionFacetStateV1::Available,
+            basis: basis.into(),
+            result: Some(result),
+            reasons: Vec::new(),
+        };
+        facet.validate_structure()?;
+        Ok(facet)
+    }
+
+    /// Construct a required-unavailable facet. A result is forbidden.
+    pub fn required_unavailable<B>(
+        scope: EvaluationScope,
+        basis: B,
+        mut reasons: Vec<PredictionUnavailableReasonV2>,
+    ) -> Result<Self, PredictionContractError>
+    where
+        B: Into<EnginePredictionBasisV4>,
+    {
+        reasons.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        reasons.dedup();
+        let facet = Self {
+            scope,
+            state: EnginePredictionFacetStateV1::RequiredPredictionUnavailable,
+            basis: basis.into(),
+            result: None,
+            reasons,
+        };
+        facet.validate_structure()?;
+        Ok(facet)
+    }
+
+    /// Work scope.
+    pub const fn scope(&self) -> &EvaluationScope {
+        &self.scope
+    }
+    /// Availability state.
+    pub const fn state(&self) -> EnginePredictionFacetStateV1 {
+        self.state
+    }
+    /// Canonical evidence basis.
+    pub const fn basis(&self) -> &EnginePredictionBasisV4 {
+        &self.basis
+    }
+    /// Machine result, present exactly for available facets.
+    pub const fn result(&self) -> Option<&EngineMachineResultV1> {
+        self.result.as_ref()
+    }
+    /// Canonical unavailable reasons.
+    pub fn reasons(&self) -> &[PredictionUnavailableReasonV2] {
+        &self.reasons
+    }
+
+    fn validate_structure(&self) -> Result<(), PredictionContractError> {
+        validate_scope(&self.scope)?;
+        self.basis.validate()?;
+        if self.reasons.len() > PREDICTION_V1_MAX_REASONS_PER_FACET {
+            return Err(PredictionContractError::TooManyUnavailableReasons {
+                found: self.reasons.len(),
+                limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
+            });
+        }
+        if self
+            .reasons
+            .windows(2)
+            .any(|pair| pair[0].as_str() >= pair[1].as_str())
+        {
+            return Err(PredictionContractError::NonCanonicalOrder(
+                "V4 facet reasons",
+            ));
+        }
+        match (
+            self.state,
+            &self.result,
+            self.reasons.is_empty(),
+            self.basis.references().is_empty(),
+        ) {
+            (EnginePredictionFacetStateV1::Available, Some(result), true, false) => {
+                result.validate()
+            }
+            (EnginePredictionFacetStateV1::RequiredPredictionUnavailable, None, false, _) => Ok(()),
+            (EnginePredictionFacetStateV1::Available, None, _, _) => {
+                Err(PredictionContractError::AvailableResultMissing)
+            }
+            (EnginePredictionFacetStateV1::RequiredPredictionUnavailable, Some(_), _, _) => {
+                Err(PredictionContractError::UnavailableHasResult)
+            }
+            (EnginePredictionFacetStateV1::Available, Some(_), false, _) => {
+                Err(PredictionContractError::AvailableHasReasons)
+            }
+            (EnginePredictionFacetStateV1::Available, Some(_), true, true) => {
+                Err(PredictionContractError::AvailableBasisEmpty)
+            }
+            (EnginePredictionFacetStateV1::RequiredPredictionUnavailable, None, true, _) => {
+                Err(PredictionContractError::RequiredUnavailableWithoutReason)
+            }
+        }
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "V4 facet retained text",
+            [
+                self.scope.code.as_str().len(),
+                self.scope.subject.as_ref().map_or(0, String::len),
+                self.basis.retained_text_bytes()?,
+                self.result
+                    .as_ref()
+                    .map_or(Ok(0), EngineMachineResultV1::retained_text_bytes)?,
+                checked_sum(
+                    "V4 reasons",
+                    self.reasons.iter().map(|reason| reason.as_str().len()),
+                )?,
+            ],
+        )
+    }
+}
+
+impl TryFrom<EnginePredictionFacetWireV4> for EnginePredictionFacetV4 {
+    type Error = PredictionContractError;
+    fn try_from(wire: EnginePredictionFacetWireV4) -> Result<Self, Self::Error> {
+        if wire.reasons.overflowed {
+            return Err(PredictionContractError::TooManyUnavailableReasons {
+                found: PREDICTION_V1_MAX_REASONS_PER_FACET + 1,
+                limit: PREDICTION_V1_MAX_REASONS_PER_FACET,
+            });
+        }
+        let facet = Self {
+            scope: wire.scope,
+            state: wire.state,
+            basis: wire.basis,
+            result: wire.result,
+            reasons: wire.reasons.values,
+        };
+        facet.validate_structure()?;
+        Ok(facet)
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePredictionFacetV4 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        EnginePredictionFacetWireV4::deserialize(deserializer)?
+            .try_into()
+            .map_err(D::Error::custom)
+    }
+}
+
+/// Per-check result-bearing V4 prediction attachment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EnginePredictionV4 {
+    schema: &'static str,
+    provenance_identity: PredictionProvenanceIdentityV4,
+    facets: Vec<EnginePredictionFacetV4>,
+}
+
+struct EnginePredictionWireV4 {
+    schema: String,
+    provenance_identity: PredictionProvenanceIdentityV4,
+    facets: CappedSequence<EnginePredictionFacetV4>,
+    facet_budget: RowBudget,
+    reference_budget: RowBudget,
+}
+
+enum FacetElementV4 {
+    Value(EnginePredictionFacetV4),
+    Skipped,
+}
+
+struct FacetElementSeedV4<'a> {
+    facets: &'a mut RowBudget,
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for FacetElementSeedV4<'_> {
+    type Value = FacetElementV4;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if !self.facets.admit() || self.references.overflowed() {
+            return IgnoredAny::deserialize(deserializer).map(|_| FacetElementV4::Skipped);
+        }
+        let facet = EnginePredictionFacetV4::deserialize(deserializer)?;
+        for _ in facet.basis().references() {
+            if !self.references.admit() {
+                break;
+            }
+        }
+        Ok(FacetElementV4::Value(facet))
+    }
+}
+
+struct FacetsSeedV4<'a> {
+    facets: &'a mut RowBudget,
+    references: &'a mut RowBudget,
+}
+
+impl<'de> DeserializeSeed<'de> for FacetsSeedV4<'_> {
+    type Value = CappedSequence<EnginePredictionFacetV4>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FacetsVisitor<'a> {
+            facets: &'a mut RowBudget,
+            references: &'a mut RowBudget,
+        }
+        impl<'de> Visitor<'de> for FacetsVisitor<'_> {
+            type Value = CappedSequence<EnginePredictionFacetV4>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a bounded sequence of engine prediction V4 facets")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::with_capacity(
+                    sequence
+                        .size_hint()
+                        .unwrap_or(0)
+                        .min(PREDICTION_V1_MAX_FACETS_PER_FILE),
+                );
+                let mut seen = 0usize;
+                while seen < PREDICTION_V1_MAX_FACETS_PER_FILE {
+                    let Some(element) = sequence.next_element_seed(FacetElementSeedV4 {
+                        facets: self.facets,
+                        references: self.references,
+                    })?
+                    else {
+                        return Ok(CappedSequence {
+                            values,
+                            overflowed: false,
+                        });
+                    };
+                    seen += 1;
+                    match element {
+                        FacetElementV4::Value(value) => values.push(value),
+                        FacetElementV4::Skipped => {
+                            return Ok(CappedSequence {
+                                values,
+                                overflowed: consume_ignored_tail(
+                                    &mut sequence,
+                                    seen,
+                                    PREDICTION_V1_MAX_FACETS_PER_FILE,
+                                )?,
+                            });
+                        }
+                    }
+                }
+                Ok(CappedSequence {
+                    values,
+                    overflowed: consume_ignored_tail(
+                        &mut sequence,
+                        seen,
+                        PREDICTION_V1_MAX_FACETS_PER_FILE,
+                    )?,
+                })
+            }
+        }
+        deserializer.deserialize_seq(FacetsVisitor {
+            facets: self.facets,
+            references: self.references,
+        })
+    }
+}
+
+struct EnginePredictionWireSeedV4 {
+    facet_limit: usize,
+    reference_limit: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for EnginePredictionWireSeedV4 {
+    type Value = EnginePredictionWireV4;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Schema,
+            ProvenanceIdentity,
+            Facets,
+        }
+        struct PredictionVisitor {
+            facet_limit: usize,
+            reference_limit: usize,
+        }
+        impl<'de> Visitor<'de> for PredictionVisitor {
+            type Value = EnginePredictionWireV4;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an engine prediction V4")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut facet_budget = RowBudget::new(self.facet_limit);
+                let mut reference_budget = RowBudget::new(self.reference_limit);
+                let mut schema = None;
+                let mut provenance_identity = None;
+                let mut facets = None;
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Schema => {
+                            set_prediction_field(&mut schema, map.next_value()?, "schema")?
+                        }
+                        Field::ProvenanceIdentity => set_prediction_field(
+                            &mut provenance_identity,
+                            map.next_value()?,
+                            "provenance_identity",
+                        )?,
+                        Field::Facets => {
+                            if facets.is_some() {
+                                return Err(A::Error::duplicate_field("facets"));
+                            }
+                            facets = Some(map.next_value_seed(FacetsSeedV4 {
+                                facets: &mut facet_budget,
+                                references: &mut reference_budget,
+                            })?);
+                        }
+                    }
+                }
+                Ok(EnginePredictionWireV4 {
+                    schema: required_prediction_field(schema, "schema")?,
+                    provenance_identity: required_prediction_field(
+                        provenance_identity,
+                        "provenance_identity",
+                    )?,
+                    facets: required_prediction_field(facets, "facets")?,
+                    facet_budget,
+                    reference_budget,
+                })
+            }
+        }
+        deserializer.deserialize_struct(
+            "EnginePredictionV4",
+            &["schema", "provenance_identity", "facets"],
+            PredictionVisitor {
+                facet_limit: self.facet_limit,
+                reference_limit: self.reference_limit,
+            },
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePredictionWireV4 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        EnginePredictionWireSeedV4 {
+            facet_limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            reference_limit: usize::MAX,
+        }
+        .deserialize(deserializer)
+    }
+}
+
+impl EnginePredictionV4 {
+    /// Construct a V4 attachment with canonical unique scopes.
+    pub fn new(
+        provenance_identity: PredictionProvenanceIdentityV4,
+        mut facets: Vec<EnginePredictionFacetV4>,
+    ) -> Result<Self, PredictionContractError> {
+        facets.sort_by(|left, right| compare_scopes(left.scope(), right.scope()));
+        let prediction = Self {
+            schema: ENGINE_PREDICTION_V4_ID,
+            provenance_identity,
+            facets,
+        };
+        prediction.validate_structure()?;
+        Ok(prediction)
+    }
+    /// Immutable contract id.
+    pub const fn contract_id(&self) -> &'static str {
+        self.schema
+    }
+    /// Bound V4 provenance identity.
+    pub const fn provenance_identity(&self) -> &PredictionProvenanceIdentityV4 {
+        &self.provenance_identity
+    }
+    /// Canonically ordered facets.
+    pub fn facets(&self) -> &[EnginePredictionFacetV4] {
+        &self.facets
+    }
+    /// Whether any required work is unavailable.
+    pub fn has_required_unavailable(&self) -> bool {
+        self.facets
+            .iter()
+            .any(|facet| facet.state == EnginePredictionFacetStateV1::RequiredPredictionUnavailable)
+    }
+    /// Aggregate basis-reference count.
+    pub fn basis_reference_count(&self) -> usize {
+        self.facets
+            .iter()
+            .map(|facet| facet.basis.references().len())
+            .sum()
+    }
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "V4 prediction retained text",
+            self.facets
+                .iter()
+                .map(EnginePredictionFacetV4::retained_text_bytes)
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    }
+    /// Cross-validate all references and result prerequisites.
+    pub fn validate_against_provenance(
+        &self,
+        provenance: &PredictionProvenanceV4,
+    ) -> Result<(), PredictionContractError> {
+        if self.provenance_identity != provenance.identity {
+            return Err(PredictionContractError::ProvenanceIdentityMismatch);
+        }
+        self.validate_structure()?;
+        for facet in &self.facets {
+            for reference in facet.basis.references() {
+                validate_basis_reference_v4(reference, provenance)?;
+            }
+            if facet
+                .result
+                .as_ref()
+                .is_some_and(EngineMachineResultV1::needs_raw_scene_inventory)
+                && provenance.raw_scene_attachment.inventory().is_none()
+            {
+                return Err(PredictionContractError::MachineResultRequiresRawSceneInventory);
+            }
+            if facet
+                .result
+                .as_ref()
+                .is_some_and(EngineMachineResultV1::needs_raw_scene_inventory)
+                && !facet.basis.references().iter().any(|reference| {
+                    matches!(reference, PredictionBasisReferenceV4::RawSceneAttachment(_))
+                })
+            {
+                return Err(PredictionContractError::RawSceneAttachmentBasisReferenceNotFound);
+            }
+            if let Some(result) = facet.result.as_ref() {
+                result.validate_against(provenance, facet.basis())?;
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_for_check(
+        &self,
+        check_id: &str,
+        evaluated_scopes: &[EvaluationScope],
+        gaps: &[CoverageGap],
+        findings: &[Finding],
+    ) -> Result<(), PredictionContractError> {
+        self.validate_structure()?;
+        self.validate_facet_budget_summary_for_check(check_id)?;
+        for facet in &self.facets {
+            let evaluated = evaluated_scopes
+                .iter()
+                .filter(|scope| *scope == &facet.scope)
+                .count();
+            let gap = gaps
+                .iter()
+                .any(|gap| gap.scope.as_ref() == Some(&facet.scope));
+            match facet.state {
+                EnginePredictionFacetStateV1::Available if evaluated != 1 => {
+                    return Err(PredictionContractError::AvailableScopeNotEvaluatedExactlyOnce);
+                }
+                EnginePredictionFacetStateV1::RequiredPredictionUnavailable if evaluated != 0 => {
+                    return Err(PredictionContractError::UnavailableScopeEvaluated);
+                }
+                EnginePredictionFacetStateV1::RequiredPredictionUnavailable if gap => {
+                    return Err(PredictionContractError::UnavailableScopeDuplicatedAsGap);
+                }
+                _ => {}
+            }
+        }
+        for finding in findings {
+            let Some(scope) = finding.prediction_scope.as_ref() else {
+                return Err(PredictionContractError::FindingMissingPredictionScope);
+            };
+            if self
+                .facets
+                .iter()
+                .filter(|facet| {
+                    &facet.scope == scope && facet.state == EnginePredictionFacetStateV1::Available
+                })
+                .count()
+                != 1
+            {
+                return Err(PredictionContractError::FindingScopeNotAvailable);
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn has_facet_budget_summary(&self) -> bool {
+        self.facets
+            .iter()
+            .any(|facet| facet.reasons == [PredictionUnavailableReasonV2::FacetBudgetExceeded])
+    }
+    pub(crate) fn validate_facet_budget_summary_for_check(
+        &self,
+        check_id: &str,
+    ) -> Result<(), PredictionContractError> {
+        let expected_budget_scope = format!("{check_id}:facet-budget");
+        let mut summaries = 0usize;
+        for facet in &self.facets {
+            if facet
+                .reasons
+                .contains(&PredictionUnavailableReasonV2::FacetBudgetExceeded)
+            {
+                if facet.state != EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+                    || facet.scope.subject.is_some()
+                    || facet.scope.code.as_str() != expected_budget_scope
+                    || facet.reasons != [PredictionUnavailableReasonV2::FacetBudgetExceeded]
+                {
+                    return Err(PredictionContractError::InvalidFacetBudgetSummary);
+                }
+                summaries += 1;
+                if summaries > 1 {
+                    return Err(PredictionContractError::DuplicateFacetBudgetSummary);
+                }
+            }
+        }
+        Ok(())
+    }
+    fn validate_structure(&self) -> Result<(), PredictionContractError> {
+        if self.schema != ENGINE_PREDICTION_V4_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "prediction.schema",
+                expected: ENGINE_PREDICTION_V4_ID,
+                found: self.schema.to_owned(),
+            });
+        }
+        if self.facets.is_empty() {
+            return Err(PredictionContractError::EmptyFacetList);
+        }
+        if self.facets.len() > PREDICTION_V1_MAX_FACETS_PER_FILE {
+            return Err(PredictionContractError::TooManyFacets {
+                found: self.facets.len(),
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            });
+        }
+        for facet in &self.facets {
+            facet.validate_structure()?;
+        }
+        for pair in self.facets.windows(2) {
+            match compare_scopes(pair[0].scope(), pair[1].scope()) {
+                Ordering::Equal => return Err(PredictionContractError::DuplicateFacetScope),
+                Ordering::Greater => {
+                    return Err(PredictionContractError::NonCanonicalOrder("V4 facets"));
+                }
+                Ordering::Less => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<EnginePredictionWireV4> for EnginePredictionV4 {
+    type Error = PredictionContractError;
+    fn try_from(wire: EnginePredictionWireV4) -> Result<Self, Self::Error> {
+        if wire.schema != ENGINE_PREDICTION_V4_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "prediction.schema",
+                expected: ENGINE_PREDICTION_V4_ID,
+                found: wire.schema,
+            });
+        }
+        if wire.facets.overflowed {
+            return Err(PredictionContractError::TooManyFacets {
+                found: PREDICTION_V1_MAX_FACETS_PER_FILE + 1,
+                limit: PREDICTION_V1_MAX_FACETS_PER_FILE,
+            });
+        }
+        let prediction = Self {
+            schema: ENGINE_PREDICTION_V4_ID,
+            provenance_identity: wire.provenance_identity,
+            facets: wire.facets.values,
+        };
+        prediction.validate_structure()?;
+        Ok(prediction)
+    }
+}
+
+impl<'de> Deserialize<'de> for EnginePredictionV4 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        EnginePredictionWireV4::deserialize(deserializer)?
+            .try_into()
+            .map_err(D::Error::custom)
+    }
+}
+
+/// Normalized rule inputs whose complete declaration controls V4 facet demand.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PredictionRuleInputsV1 {
+    schema: &'static str,
+    runtime_node_selectors: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PredictionRuleInputsWireV1 {
+    schema: String,
+    #[serde(deserialize_with = "deserialize_prediction_vec")]
+    runtime_node_selectors: Vec<String>,
+}
+
+impl PredictionRuleInputsV1 {
+    /// Bind the complete normalized selector declaration. Compatibility aliases
+    /// must be resolved by the caller before constructing this value.
+    pub fn new(runtime_node_selectors: Vec<String>) -> Result<Self, PredictionContractError> {
+        let inputs = Self {
+            schema: PREDICTION_RULE_INPUTS_V1_ID,
+            runtime_node_selectors,
+        };
+        inputs.validate()?;
+        Ok(inputs)
+    }
+
+    /// Immutable rule-input contract id.
+    pub const fn contract_id(&self) -> &'static str {
+        self.schema
+    }
+
+    /// Complete normalized runtime-node selector declaration, in declaration order.
+    pub fn runtime_node_selectors(&self) -> &[String] {
+        &self.runtime_node_selectors
+    }
+
+    fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.schema != PREDICTION_RULE_INPUTS_V1_ID {
+            return Err(PredictionContractError::InvalidSchema {
+                field: "rule_inputs.schema",
+                expected: PREDICTION_RULE_INPUTS_V1_ID,
+                found: self.schema.to_owned(),
+            });
+        }
+        if self.runtime_node_selectors.len() > PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET {
+            return Err(PredictionContractError::TooManyAggregateProvenanceRows {
+                found: self.runtime_node_selectors.len(),
+                limit: PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET,
+            });
+        }
+        let mut seen = BTreeSet::new();
+        for selector in &self.runtime_node_selectors {
+            bounded_string("runtime node selector", selector)?;
+            if !seen.insert(selector) {
+                return Err(PredictionContractError::NonCanonicalOrder(
+                    "runtime node selectors must be normalized and unique",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        checked_sum(
+            "runtime node selector text",
+            self.runtime_node_selectors.iter().map(String::len),
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for PredictionRuleInputsV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = PredictionRuleInputsWireV1::deserialize(deserializer)?;
+        let inputs = Self {
+            schema: if wire.schema == PREDICTION_RULE_INPUTS_V1_ID {
+                PREDICTION_RULE_INPUTS_V1_ID
+            } else {
+                return Err(D::Error::custom("invalid prediction rule-input schema"));
+            },
+            runtime_node_selectors: wire.runtime_node_selectors,
+        };
+        inputs.validate().map_err(D::Error::custom)?;
+        Ok(inputs)
+    }
+}
+
+const CONSUMED_CONTRACTS_V4: [&str; 9] = [
+    "urn:animsmith:schema:output:15",
+    MEASUREMENTS_SCHEMA_ID,
+    RAW_SOURCE_FACTS_V2_ID,
+    EXACT_SOURCE_TIMING_V1_ID,
+    DEPENDENCY_CLOSURE_V1_ID,
+    ENGINE_PROFILE_FACTS_V2_ID,
+    RESOLVED_ENGINE_SETTINGS_V3_ID,
+    RAW_SCENE_ATTACHMENT_INVENTORY_V1_ID,
+    PREDICTION_RULE_INPUTS_V1_ID,
+];
+
+/// File-scoped V4 provenance binding profile facts V2, settings V3, and raw inventory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PredictionProvenanceV4 {
+    schema: &'static str,
+    identity: PredictionProvenanceIdentityV4,
+    profile: ResolvedEngineProfileV2,
+    source_format: SourceFormatV1,
+    settings: ResolvedEngineSettingsV3,
+    raw_source: RawSourceBindingV2,
+    raw_scene_attachment: RawSceneAttachmentBindingV1,
+    dependency_closure: DependencyClosureV1,
+    rule_inputs: PredictionRuleInputsV1,
+    consumed_contracts: [&'static str; 9],
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PredictionProvenanceWireV4 {
+    schema: String,
+    identity: PredictionProvenanceIdentityV4,
+    profile: Box<RawValue>,
+    source_format: SourceFormatV1,
+    settings: Box<RawValue>,
+    raw_source: Box<RawValue>,
+    raw_scene_attachment: Box<RawValue>,
+    dependency_closure: Box<RawValue>,
+    rule_inputs: PredictionRuleInputsV1,
+    #[serde(deserialize_with = "deserialize_consumed_contracts_v4")]
+    consumed_contracts: Vec<String>,
+}
+
+impl PredictionProvenanceV4 {
+    /// Bind exact V2/V3 engine authority and same-load raw evidence.
+    pub fn new(
+        profile: ResolvedEngineProfileV2,
+        source_format: SourceFormatV1,
+        settings: ResolvedEngineSettingsV3,
+        raw_source: RawSourceBindingV2,
+        raw_scene_attachment: RawSceneAttachmentBindingV1,
+        dependency_closure: DependencyClosureV1,
+        rule_inputs: PredictionRuleInputsV1,
+    ) -> Result<Self, PredictionContractError> {
+        let mut provenance = Self {
+            schema: PREDICTION_PROVENANCE_V4_ID,
+            identity: PredictionProvenanceIdentityV4(InputIdentity::from_bytes(&[])),
+            profile,
+            source_format,
+            settings,
+            raw_source,
+            raw_scene_attachment,
+            dependency_closure,
+            rule_inputs,
+            consumed_contracts: CONSUMED_CONTRACTS_V4,
+        };
+        provenance.identity = PredictionProvenanceIdentityV4(provenance.computed_identity());
+        provenance.validate()?;
+        Ok(provenance)
+    }
+    /// Immutable contract id.
+    pub const fn contract_id(&self) -> &'static str {
+        self.schema
+    }
+    /// Canonical V4 identity.
+    pub const fn identity(&self) -> &PredictionProvenanceIdentityV4 {
+        &self.identity
+    }
+    /// Exact V2 profile.
+    pub const fn profile(&self) -> &ResolvedEngineProfileV2 {
+        &self.profile
+    }
+    /// Source format.
+    pub const fn source_format(&self) -> SourceFormatV1 {
+        self.source_format
+    }
+    /// Origin-bearing V3 settings.
+    pub const fn settings(&self) -> &ResolvedEngineSettingsV3 {
+        &self.settings
+    }
+    /// Existing same-load raw facts/timing.
+    pub const fn raw_source(&self) -> &RawSourceBindingV2 {
+        &self.raw_source
+    }
+    /// Exact raw scene inventory or typed absence.
+    pub const fn raw_scene_attachment(&self) -> &RawSceneAttachmentBindingV1 {
+        &self.raw_scene_attachment
+    }
+    /// Same-load dependency closure.
+    pub const fn dependency_closure(&self) -> &DependencyClosureV1 {
+        &self.dependency_closure
+    }
+    /// Complete normalized rule-input declaration used to derive facet demand.
+    pub const fn rule_inputs(&self) -> &PredictionRuleInputsV1 {
+        &self.rule_inputs
+    }
+    /// Validate identities, bounds, and primary-input correlation.
+    pub fn validate(&self) -> Result<(), PredictionContractError> {
+        if self.schema != PREDICTION_PROVENANCE_V4_ID
+            || self.consumed_contracts != CONSUMED_CONTRACTS_V4
+        {
+            return Err(PredictionContractError::InvalidConsumedContracts);
+        }
+        self.profile.validate()?;
+        self.settings.validate_against(&self.profile)?;
+        if self.settings.source_format() != self.source_format {
+            return Err(PredictionContractError::SourceFormatMismatch);
+        }
+        self.raw_source.validate()?;
+        self.rule_inputs.validate()?;
+        if !self.profile.accepts_format(self.source_format) {
+            return Err(PredictionContractError::SourceFormatNotAccepted);
+        }
+        if self.source_format != self.raw_source.source_format() {
+            return Err(PredictionContractError::SourceFormatMismatch);
+        }
+        if self.raw_source.primary_input() != self.dependency_closure.primary_input() {
+            return Err(PredictionContractError::PrimaryInputMismatch);
+        }
+        match &self.raw_scene_attachment {
+            RawSceneAttachmentBindingV1::Available { inventory }
+                if inventory.primary_input() != self.raw_source.primary_input() =>
+            {
+                return Err(PredictionContractError::PrimaryInputMismatch);
+            }
+            RawSceneAttachmentBindingV1::Available { .. }
+                if !matches!(
+                    self.source_format,
+                    SourceFormatV1::GltfJson | SourceFormatV1::Glb
+                ) =>
+            {
+                return Err(PredictionContractError::InvalidRawSceneAttachmentBinding);
+            }
+            RawSceneAttachmentBindingV1::Unavailable {
+                reason: RawSceneAttachmentUnavailableReasonV1::UnsupportedSourceFormat,
+            } if matches!(
+                self.source_format,
+                SourceFormatV1::GltfJson | SourceFormatV1::Glb
+            ) =>
+            {
+                return Err(PredictionContractError::InvalidRawSceneAttachmentBinding);
+            }
+            RawSceneAttachmentBindingV1::Unavailable {
+                reason: RawSceneAttachmentUnavailableReasonV1::LoaderEvidenceUnavailable,
+            } if !matches!(
+                self.source_format,
+                SourceFormatV1::GltfJson | SourceFormatV1::Glb
+            ) =>
+            {
+                return Err(PredictionContractError::InvalidRawSceneAttachmentBinding);
+            }
+            _ => {}
+        }
+        let rows = self.retained_provenance_rows()?;
+        if rows > PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS {
+            return Err(PredictionContractError::TooManyAggregateProvenanceRows {
+                found: rows,
+                limit: PREDICTION_V1_MAX_AGGREGATE_PROVENANCE_ROWS,
+            });
+        }
+        if self.retained_text_bytes()? > PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE {
+            return Err(PredictionContractError::TooMuchRetainedText {
+                found: self.retained_text_bytes()?,
+                limit: PREDICTION_V1_MAX_TOTAL_TEXT_BYTES_PER_FILE,
+            });
+        }
+        if self.identity.0 != self.computed_identity() {
+            return Err(PredictionContractError::IdentityMismatch {
+                contract: PREDICTION_PROVENANCE_V4_ID,
+            });
+        }
+        Ok(())
+    }
+    pub(crate) fn retained_text_bytes(&self) -> Result<usize, PredictionContractError> {
+        let closure_text = checked_sum(
+            "V4 closure retained text",
+            self.dependency_closure
+                .references()
+                .iter()
+                .filter_map(|reference| closure_target_key(reference.target()).map(str::len))
+                .chain(
+                    self.dependency_closure
+                        .external_resources()
+                        .iter()
+                        .map(|resource| resource.key().as_str().len()),
+                ),
+        )?;
+        checked_sum(
+            "V4 provenance retained text",
+            [
+                self.profile.retained_text_bytes()?,
+                self.settings.retained_text_bytes()?,
+                self.raw_source.retained_text_bytes()?,
+                // Raw scene/attachment inventory V1 is deliberately index-only.
+                0,
+                closure_text,
+                self.rule_inputs.retained_text_bytes()?,
+            ],
+        )
+    }
+
+    fn retained_provenance_rows(&self) -> Result<usize, PredictionContractError> {
+        let clip_setting_rows = checked_sum(
+            "V4 clip setting rows",
+            self.settings
+                .clips()
+                .iter()
+                .map(|clip| clip.settings().len()),
+        )?;
+        let raw_inventory_rows =
+            self.raw_scene_attachment
+                .inventory()
+                .map_or(Ok(0), |inventory| {
+                    checked_sum(
+                        "V4 raw scene inventory rows",
+                        [
+                            inventory.scenes().rows().len(),
+                            checked_sum(
+                                "V4 raw scene root rows",
+                                inventory
+                                    .scenes()
+                                    .rows()
+                                    .iter()
+                                    .map(|row| row.root_node_indices().len()),
+                            )?,
+                            inventory.node_mesh_attachments().rows().len(),
+                            inventory.mesh_primitives().rows().len(),
+                        ],
+                    )
+                })?;
+        checked_sum(
+            "V4 provenance rows",
+            [
+                self.profile.facts().len(),
+                self.profile.setting_descriptors().len(),
+                self.profile.primary_sources().len(),
+                self.settings.document_settings().len(),
+                self.settings.clips().len(),
+                clip_setting_rows,
+                self.raw_source.provenance_rows()?,
+                raw_inventory_rows,
+                self.rule_inputs.runtime_node_selectors().len(),
+            ],
+        )
+    }
+    fn computed_identity(&self) -> InputIdentity {
+        let mut encoder = CanonicalEncoder::new("animsmith-prediction-provenance-v4");
+        encoder.field("schema");
+        encoder.token(self.schema);
+        encoder.field("profile");
+        self.profile.encode_preimage(&mut encoder);
+        encoder.field("source_format");
+        encoder.token(source_format_name(self.source_format));
+        encoder.field("settings");
+        self.settings.encode_preimage(&self.profile, &mut encoder);
+        encoder.field("raw_source");
+        encoder.token(serde_json::to_string(&self.raw_source).expect("raw source serializes"));
+        encoder.field("raw_scene_attachment");
+        encoder.token(
+            serde_json::to_string(&self.raw_scene_attachment)
+                .expect("raw scene binding serializes"),
+        );
+        encoder.field("dependency_closure");
+        encode_input_identity(&mut encoder, &self.dependency_closure.record_identity());
+        encoder.field("rule_inputs");
+        encoder.token(serde_json::to_string(&self.rule_inputs).expect("rule inputs serialize"));
+        encoder.field("consumed_contracts");
+        encoder.count(self.consumed_contracts.len());
+        for contract in self.consumed_contracts {
+            encoder.token(contract);
+        }
+        encoder.identity()
+    }
+}
+
+fn decode_prediction_provenance_v4_wire(
+    wire: PredictionProvenanceWireV4,
+) -> Result<PredictionProvenanceV4, PredictionDecodeError> {
+    if wire.schema != PREDICTION_PROVENANCE_V4_ID
+        || wire
+            .consumed_contracts
+            .iter()
+            .map(String::as_str)
+            .ne(CONSUMED_CONTRACTS_V4)
+    {
+        return Err(PredictionDecodeError::Semantic(
+            PredictionContractError::InvalidConsumedContracts,
+        ));
+    }
+    // Each staged nested type owns an N+1 reader for every collection. Keeping
+    // the raw fields opaque until this point prevents a malformed sibling from
+    // causing unrelated nested collections to be admitted first.
+    let profile = decode_capped_v4_nested::<ResolvedEngineProfileV2>(wire.profile.get())?;
+    let settings = decode_capped_v4_nested::<ResolvedEngineSettingsV3>(wire.settings.get())?;
+    let raw_source = decode_capped_v4_nested::<RawSourceBindingV2>(wire.raw_source.get())?;
+    let raw_scene_attachment =
+        decode_capped_v4_nested::<RawSceneAttachmentBindingV1>(wire.raw_scene_attachment.get())?;
+    let dependency_closure = decode_dependency_closure_v1(wire.dependency_closure.get()).map_err(
+        |error| match error {
+            DependencyClosureDecodeError::Shape(source) => PredictionDecodeError::Shape(source),
+            DependencyClosureDecodeError::Semantic(reason) => PredictionDecodeError::Semantic(
+                PredictionContractError::InvalidDependencyClosure(reason),
+            ),
+        },
+    )?;
+    let provenance = PredictionProvenanceV4 {
+        schema: PREDICTION_PROVENANCE_V4_ID,
+        identity: wire.identity,
+        profile,
+        source_format: wire.source_format,
+        settings,
+        raw_source,
+        raw_scene_attachment,
+        dependency_closure,
+        rule_inputs: wire.rule_inputs,
+        consumed_contracts: CONSUMED_CONTRACTS_V4,
+    };
+    provenance
+        .validate()
+        .map_err(PredictionDecodeError::Semantic)?;
+    Ok(provenance)
+}
+
+fn decode_capped_v4_nested<T>(raw: &str) -> Result<T, PredictionDecodeError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let mut deserializer = serde_json::Deserializer::from_str(raw);
+    let value = T::deserialize(&mut deserializer).map_err(PredictionDecodeError::Shape)?;
+    deserializer.end().map_err(PredictionDecodeError::Shape)?;
+    Ok(value)
+}
+
+impl<'de> Deserialize<'de> for PredictionProvenanceV4 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        decode_prediction_provenance_v4_wire(PredictionProvenanceWireV4::deserialize(deserializer)?)
+            .map_err(|error| match error {
+                PredictionDecodeError::Shape(source) => D::Error::custom(source),
+                PredictionDecodeError::Semantic(source) => D::Error::custom(source),
+                PredictionDecodeError::TooManyFileFacets
+                | PredictionDecodeError::TooManyFileBasisReferences => {
+                    unreachable!("provenance decoding cannot consume prediction budgets")
+                }
+            })
+    }
+}
+
+pub(crate) fn decode_prediction_provenance_v4(
+    raw: &str,
+) -> Result<PredictionProvenanceV4, PredictionDecodeError> {
+    let wire = serde_json::from_str(raw).map_err(PredictionDecodeError::Shape)?;
+    decode_prediction_provenance_v4_wire(wire)
+}
+
+pub(crate) fn decode_engine_prediction_v4(
+    raw: &str,
+    facet_limit: usize,
+    reference_limit: usize,
+) -> Result<EnginePredictionV4, PredictionDecodeError> {
+    let mut deserializer = serde_json::Deserializer::from_str(raw);
+    let wire = EnginePredictionWireSeedV4 {
+        facet_limit,
+        reference_limit,
+    }
+    .deserialize(&mut deserializer)
+    .map_err(PredictionDecodeError::Shape)?;
+    deserializer.end().map_err(PredictionDecodeError::Shape)?;
+    if wire.facet_budget.overflowed() {
+        return Err(PredictionDecodeError::TooManyFileFacets);
+    }
+    if wire.reference_budget.overflowed() {
+        return Err(PredictionDecodeError::TooManyFileBasisReferences);
+    }
+    wire.try_into().map_err(PredictionDecodeError::Semantic)
+}
+
+fn validate_basis_reference_v4(
+    reference: &PredictionBasisReferenceV4,
+    provenance: &PredictionProvenanceV4,
+) -> Result<(), PredictionContractError> {
+    match reference {
+        PredictionBasisReferenceV4::RawSceneAttachment(reference) => {
+            validate_raw_scene_attachment_basis_reference(reference, provenance)
+        }
+        PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::ExactSourceTiming(
+            reference,
+        )) => {
+            let timing = provenance
+                .raw_source()
+                .exact_source_timing()
+                .ok_or_else(|| {
+                    PredictionContractError::ExactSourceTimingFieldUnavailable("binding".to_owned())
+                })?;
+            reference.validate_against(timing)
+        }
+        PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+            PredictionBasisReferenceV1::ProfileFact { fact_id },
+        )) => {
+            if provenance
+                .profile()
+                .facts()
+                .iter()
+                .any(|fact| fact.id().as_str() == fact_id)
+            {
+                Ok(())
+            } else {
+                Err(PredictionContractError::UnknownProfileFact(fact_id.clone()))
+            }
+        }
+        PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+            PredictionBasisReferenceV1::ResolvedSetting {
+                location,
+                setting_id,
+            },
+        )) => {
+            let id = parse_setting_id_v2(setting_id).ok_or_else(|| {
+                PredictionContractError::UnknownResolvedSetting(setting_id.clone())
+            })?;
+            let descriptor = provenance.profile().setting_descriptor(id).ok_or_else(|| {
+                PredictionContractError::UnknownResolvedSetting(setting_id.clone())
+            })?;
+            let present = match location {
+                ResolvedSettingLocationV1::Document => {
+                    descriptor.scope() == EngineSettingScopeV1::Document
+                        && provenance.settings().document_setting(id).is_some()
+                }
+                ResolvedSettingLocationV1::Clip {
+                    clip_ordinal,
+                    clip_name,
+                } => {
+                    descriptor.scope() == EngineSettingScopeV1::Clip
+                        && provenance
+                            .settings()
+                            .clip_row(*clip_ordinal, clip_name)
+                            .is_some_and(|clip| clip.setting(id).is_some())
+                }
+            };
+            if present {
+                Ok(())
+            } else {
+                Err(PredictionContractError::UnknownResolvedSetting(
+                    setting_id.clone(),
+                ))
+            }
+        }
+        PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+            PredictionBasisReferenceV1::PrimarySource { source_id },
+        )) => {
+            if provenance.profile().source(source_id).is_some() {
+                Ok(())
+            } else {
+                Err(PredictionContractError::UnknownPrimarySource(
+                    source_id.clone(),
+                ))
+            }
+        }
+        PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+            PredictionBasisReferenceV1::Measurement { schema, .. },
+        )) if *schema != MEASUREMENTS_SCHEMA_ID => Err(PredictionContractError::InvalidSchema {
+            field: "basis.measurement.schema",
+            expected: MEASUREMENTS_SCHEMA_ID,
+            found: (*schema).to_owned(),
+        }),
+        PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+            PredictionBasisReferenceV1::RawSource { reference },
+        )) if !raw_domain_matches_key(reference.domain, &reference.key) => {
+            Err(PredictionContractError::RawSourceDomainKeyMismatch)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_raw_scene_attachment_basis_reference(
+    reference: &RawSceneAttachmentBasisReferenceV1,
+    provenance: &PredictionProvenanceV4,
+) -> Result<(), PredictionContractError> {
+    let inventory = provenance
+        .raw_scene_attachment()
+        .inventory()
+        .ok_or(PredictionContractError::MachineResultRequiresRawSceneInventory)?;
+    let found = match reference {
+        RawSceneAttachmentBasisReferenceV1::Coverage { .. } => true,
+        RawSceneAttachmentBasisReferenceV1::SceneRow { source_scene_index } => inventory
+            .scenes()
+            .rows()
+            .iter()
+            .any(|row| row.source_scene_index() == *source_scene_index),
+        RawSceneAttachmentBasisReferenceV1::SceneRoot {
+            source_scene_index,
+            source_root_ordinal,
+            source_node_index,
+        } => inventory.scenes().rows().iter().any(|row| {
+            row.source_scene_index() == *source_scene_index
+                && usize::try_from(*source_root_ordinal)
+                    .ok()
+                    .and_then(|ordinal| row.root_node_indices().get(ordinal))
+                    == Some(source_node_index)
+        }),
+        RawSceneAttachmentBasisReferenceV1::NodeMeshAttachmentRow {
+            source_node_index,
+            source_mesh_index,
+        } => inventory.node_mesh_attachments().rows().iter().any(|row| {
+            row.source_node_index() == *source_node_index
+                && row.source_mesh_index() == *source_mesh_index
+        }),
+        RawSceneAttachmentBasisReferenceV1::MeshPrimitiveRow {
+            source_mesh_index,
+            source_primitive_index,
+        } => inventory.mesh_primitives().rows().iter().any(|row| {
+            row.source_mesh_index() == *source_mesh_index
+                && row.source_primitive_index() == *source_primitive_index
+        }),
+    };
+    if found {
+        Ok(())
+    } else {
+        Err(PredictionContractError::RawSceneAttachmentBasisReferenceNotFound)
+    }
+}
+
+fn parse_setting_id_v2(value: &str) -> Option<EngineSettingIdV2> {
+    [
+        EngineSettingIdV2::ConvertUnits,
+        EngineSettingIdV2::BakeAxisConversion,
+        EngineSettingIdV2::RootMotionSource,
+        EngineSettingIdV2::RootRotation,
+        EngineSettingIdV2::RootPositionY,
+        EngineSettingIdV2::RootPositionXz,
+        EngineSettingIdV2::AnimationType,
+        EngineSettingIdV2::AvatarSetup,
+        EngineSettingIdV2::ImportAnimation,
+        EngineSettingIdV2::RotateSceneEntity,
+        EngineSettingIdV2::RotateMeshes,
+        EngineSettingIdV2::LoadMeshes,
+        EngineSettingIdV2::ExtensionHandlerEnvironment,
+        EngineSettingIdV2::BevyAnimationFeature,
+        EngineSettingIdV2::LoadAnimations,
+        EngineSettingIdV2::AnimationFps,
+        EngineSettingIdV2::AnimationTrimming,
+        EngineSettingIdV2::SampleRate,
+    ]
+    .into_iter()
+    .find(|id| id.as_str() == value)
+}
+
 fn map_profile_decode_error(error: EngineProfileLimitedDecodeError) -> PredictionDecodeError {
     match error {
         EngineProfileLimitedDecodeError::Contract(EngineContractDecodeError::Shape(source)) => {
@@ -9272,6 +11698,80 @@ pub(crate) fn validate_measurement_references_batch_v3<'prediction>(
                 value,
                 ..
             }) = reference
+            else {
+                continue;
+            };
+            let target = pointer
+                .as_str()
+                .split('/')
+                .skip(2)
+                .map(decode_pointer_component)
+                .collect::<Vec<_>>();
+            let next_index = targets.len();
+            let target_index = *targets.entry(target).or_insert(next_index);
+            expectations.push(MeasurementExpectation {
+                prediction_index,
+                pointer,
+                expected: value,
+                target_index,
+            });
+        }
+    }
+    if expectations.is_empty() {
+        return Ok(());
+    }
+    let mut found = vec![None; targets.len()];
+    let mut resolver = MeasurementScalarResolver {
+        targets: &targets,
+        path: Vec::new(),
+        found: &mut found,
+    };
+    if measurements.serialize(&mut resolver).is_err() {
+        let first = &expectations[0];
+        return Err(MeasurementReferenceBatchError {
+            prediction_index: first.prediction_index,
+            source: PredictionContractError::MeasurementPointerMissing(first.pointer.0.clone()),
+        });
+    }
+    for expectation in expectations {
+        let source = match found[expectation.target_index].as_ref() {
+            Some(ResolvedMeasurementNode::Scalar(actual)) if actual == expectation.expected => {
+                continue;
+            }
+            Some(ResolvedMeasurementNode::Scalar(_)) => {
+                PredictionContractError::MeasurementValueMismatch(expectation.pointer.0.clone())
+            }
+            Some(ResolvedMeasurementNode::NonScalar) => {
+                PredictionContractError::MeasurementPointerNotScalar(expectation.pointer.0.clone())
+            }
+            None => {
+                PredictionContractError::MeasurementPointerMissing(expectation.pointer.0.clone())
+            }
+        };
+        return Err(MeasurementReferenceBatchError {
+            prediction_index: expectation.prediction_index,
+            source,
+        });
+    }
+    Ok(())
+}
+
+/// V4 batch resolver for V1 measurement references lifted through basis V2/V4.
+pub(crate) fn validate_measurement_references_batch_v4<'prediction>(
+    measurements: &MeasurementContract,
+    predictions: impl IntoIterator<Item = (usize, &'prediction EnginePredictionV4)>,
+) -> Result<(), MeasurementReferenceBatchError> {
+    let mut targets = BTreeMap::<Vec<String>, usize>::new();
+    let mut expectations = Vec::new();
+    for (prediction_index, prediction) in predictions {
+        for reference in prediction
+            .facets
+            .iter()
+            .flat_map(|facet| facet.basis.references.iter())
+        {
+            let PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
+                PredictionBasisReferenceV1::Measurement { pointer, value, .. },
+            )) = reference
             else {
                 continue;
             };
@@ -11359,6 +13859,178 @@ mod tests {
                     }
                 )
             ))
+        ));
+    }
+
+    fn v4_test_basis() -> EnginePredictionBasisV4 {
+        EnginePredictionBasisV4::new(vec![PredictionBasisReferenceV4::v2(
+            PredictionBasisReferenceV2::v1(
+                PredictionBasisReferenceV1::profile_fact("accepted_inputs").unwrap(),
+            ),
+        )])
+        .unwrap()
+    }
+
+    #[test]
+    fn v4_result_state_truth_table_is_fail_closed() {
+        let facet = EnginePredictionFacetV4::available(
+            EvaluationScope::new(EvaluationScopeCode::custom("acme:v4-result")),
+            v4_test_basis(),
+            EngineMachineResultV1::UnitMapping(
+                UnitMappingResultV1::gltf_to_engine_world_length_unit(),
+            ),
+        )
+        .unwrap();
+        let mut wire = serde_json::to_value(&facet).unwrap();
+        wire["result"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<EnginePredictionFacetV4>(wire).is_err());
+
+        let mut wire = serde_json::to_value(&facet).unwrap();
+        wire["state"] = json!("required_prediction_unavailable");
+        wire["reasons"] = json!(["profile_fact_unknown"]);
+        assert!(serde_json::from_value::<EnginePredictionFacetV4>(wire).is_err());
+
+        let unavailable = EnginePredictionFacetV4::required_unavailable(
+            EvaluationScope::new(EvaluationScopeCode::custom("acme:v4-unavailable")),
+            v4_test_basis(),
+            vec![PredictionUnavailableReasonV2::ProfileFactUnknown],
+        )
+        .unwrap();
+        let mut wire = serde_json::to_value(unavailable).unwrap();
+        wire["result"] = serde_json::to_value(EngineMachineResultV1::UnitMapping(
+            UnitMappingResultV1::gltf_to_engine_world_length_unit(),
+        ))
+        .unwrap();
+        assert!(serde_json::from_value::<EnginePredictionFacetV4>(wire).is_err());
+    }
+
+    #[test]
+    fn v4_transform_creation_and_inventory_availability_are_correlated() {
+        let created_without_classification =
+            EngineMachineResultV1::TransformScale(TransformScaleResultV1 {
+                subject_kind: TransformScaleSubjectKindV1::LoaderSceneEntity,
+                creation: ImporterSubjectCreationV1::Created,
+                domain: TransformScaleDomainV1::Local,
+                classification: None,
+            });
+        assert!(created_without_classification.validate().is_err());
+        let suppressed_with_classification =
+            EngineMachineResultV1::TransformScale(TransformScaleResultV1 {
+                subject_kind: TransformScaleSubjectKindV1::LoaderSceneEntity,
+                creation: ImporterSubjectCreationV1::SuppressedBySetting,
+                domain: TransformScaleDomainV1::Local,
+                classification: Some(LinearTransformClassification::UnitOrthonormal),
+            });
+        assert!(suppressed_with_classification.validate().is_err());
+        assert!(
+            EngineMachineResultV1::InventoryCoverage(InventoryCoverageResultV1 {
+                domain: PredictionInventoryDomainV1::Scenes,
+                coverage: PredictionInventoryCoverageStateV1::Unavailable,
+                retained_rows: 0,
+            })
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn v4_raw_inventory_basis_identity_rejects_mutation() {
+        let basis =
+            EnginePredictionBasisV4::new(vec![PredictionBasisReferenceV4::raw_scene_attachment(
+                RawSceneAttachmentBasisReferenceV1::SceneRoot {
+                    source_scene_index: 0,
+                    source_root_ordinal: 0,
+                    source_node_index: 2,
+                },
+            )])
+            .unwrap();
+        let mut wire = serde_json::to_value(basis).unwrap();
+        wire["references"][0]["reference"]["source_node_index"] = json!(3);
+        assert!(serde_json::from_value::<EnginePredictionBasisV4>(wire).is_err());
+    }
+
+    #[test]
+    fn v4_basis_and_facet_readers_stop_at_exact_n_plus_one() {
+        let mut rule_inputs = json!({
+            "schema": PREDICTION_RULE_INPUTS_V1_ID,
+            "runtime_node_selectors": vec!["node"; PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET]
+        });
+        rule_inputs["runtime_node_selectors"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::Null);
+        assert!(serde_json::from_value::<PredictionRuleInputsV1>(rule_inputs).is_err());
+
+        let basis = EnginePredictionBasisV4::new(
+            (0..PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FACET)
+                .map(|source_scene_index| {
+                    PredictionBasisReferenceV4::raw_scene_attachment(
+                        RawSceneAttachmentBasisReferenceV1::SceneRow {
+                            source_scene_index: source_scene_index as u64,
+                        },
+                    )
+                })
+                .collect(),
+        )
+        .unwrap();
+        let mut wire = serde_json::to_value(basis).unwrap();
+        wire["references"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::Null);
+        assert!(serde_json::from_value::<EnginePredictionBasisV4>(wire).is_err());
+
+        let identity: PredictionProvenanceIdentityV4 = serde_json::from_value(json!({
+            "sha256": "00".repeat(32),
+            "bytes": 0
+        }))
+        .unwrap();
+        let facets = (0..PREDICTION_V1_MAX_FACETS_PER_FILE)
+            .map(|index| {
+                EnginePredictionFacetV4::required_unavailable(
+                    EvaluationScope::new(EvaluationScopeCode::custom("acme:v4-bound"))
+                        .subject(index.to_string()),
+                    EnginePredictionBasisV4::new(vec![]).unwrap(),
+                    vec![PredictionUnavailableReasonV2::ProfileFactUnknown],
+                )
+                .unwrap()
+            })
+            .collect();
+        let prediction = EnginePredictionV4::new(identity, facets).unwrap();
+        let mut wire = serde_json::to_value(prediction).unwrap();
+        wire["facets"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::Null);
+        assert!(serde_json::from_value::<EnginePredictionV4>(wire).is_err());
+
+        let identity: PredictionProvenanceIdentityV4 = serde_json::from_value(json!({
+            "sha256": "00".repeat(32),
+            "bytes": 0
+        }))
+        .unwrap();
+        let facets = (0..2)
+            .map(|index| {
+                EnginePredictionFacetV4::available(
+                    EvaluationScope::new(EvaluationScopeCode::custom("acme:v4-file-budget"))
+                        .subject(index.to_string()),
+                    v4_test_basis(),
+                    EngineMachineResultV1::UnitMapping(
+                        UnitMappingResultV1::gltf_to_engine_world_length_unit(),
+                    ),
+                )
+                .unwrap()
+            })
+            .collect();
+        let raw =
+            serde_json::to_string(&EnginePredictionV4::new(identity, facets).unwrap()).unwrap();
+        assert!(matches!(
+            decode_engine_prediction_v4(&raw, 2, 1),
+            Err(PredictionDecodeError::TooManyFileBasisReferences)
+        ));
+        assert!(matches!(
+            decode_engine_prediction_v4(&raw, 1, 2),
+            Err(PredictionDecodeError::TooManyFileFacets)
         ));
     }
 }
