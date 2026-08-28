@@ -6,7 +6,9 @@
 >
 > Evaluation date: **2026-08-26**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 
 This appendix records scrubbed evidence only. The canonical [readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -136,6 +138,10 @@ The external inventory contains 27 FBX files and 25 manifest-declared motions. A
 ## Limitations and unknowns
 
 1. License, target engine, project controller, runtime-set membership, source-to-manifest member mapping, retargeting, visual/contact quality, and cross-pack compatibility remain unverified.
+
+## Changes between AnimSmith versions
+
+AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.
 
 ## Reproduction
 

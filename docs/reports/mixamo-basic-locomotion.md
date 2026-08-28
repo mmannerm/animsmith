@@ -8,7 +8,9 @@
 >
 > Evaluation date: **2026-08-26**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 >
 > Detailed evidence: [Evidence appendix](mixamo-basic-locomotion-evidence.md)
 
@@ -62,6 +64,10 @@ No important runtime sets were identified.
 
 Best fit is a controlled evaluation intake where a project can supply per-clip intent and test its own controller. It is a poor fit for immediate drop-in compatibility claims.
 Cross-pack compatibility is unknown and must be tested against the exact intended constituents and target rig.
+
+## Changes between AnimSmith versions
+
+AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.
 
 ## Evidence status
 

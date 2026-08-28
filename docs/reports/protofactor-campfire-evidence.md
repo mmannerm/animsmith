@@ -2,11 +2,13 @@
 
 > Companion report: [Protofactor Campfire](protofactor-campfire.md)
 >
-> Evidence status: **partial** — exact AnimSmith 0.7.0 baseline, contracts, pruning verification, addressability, and bounded advice plus retained 0.3/0.4 and Unity 6000.5.8f1 evidence; visual contact, target-character, and engine-editor/runtime passes remain absent.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 baseline, contracts, pruning verification, addressability, and bounded advice plus a dated Unity 6000.5.8f1 observation; visual contact, target-character, and engine-editor/runtime passes remain absent.
 >
 > Evaluation date: **2026-08-26**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 
 This appendix uses the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) without redefining it.
 
@@ -20,7 +22,7 @@ This appendix uses the [canonical readiness ladder](../game-ready-clips.md#the-r
 | Target use | Game-engine camp/rest state machine, contextual actions, props, and combination with evaluated collection packs |
 | Target engines | Unity 6000.5.8f1 observed headless (retained 2026-08-17); Unity 6000.3, Unreal Engine 5.8, and Godot 4.7 AnimSmith import-advice probed (2026-08-21); Bevy 0.19.0 documentation-only, no generated glTF/GLB candidate |
 | Target rigs/packs | Supplied Protof-Actor; Basic Locomotion, Sword & Shield, Climbing, and Injured selective compatibility |
-| Source manifest | `campfire/source-archive-inventory.json`; RAR SHA-256 `bed86be7f91fdd46b376fce4b1a00c88372a3f703e0fe9077925712d8af8e8e9`; re-inventoried 2026-08-21 under AnimSmith 0.4.0, byte-identical to the published manifest (0 added, 0 removed, 0 changed) |
+| Source manifest | `campfire/source-archive-inventory.json`; RAR SHA-256 `bed86be7f91fdd46b376fce4b1a00c88372a3f703e0fe9077925712d8af8e8e9`; re-inventoried 2026-08-21 under AnimSmith 0.7.0, byte-identical to the published manifest (0 added, 0 removed, 0 changed) |
 | Evaluation manifest | `campfire/evidence/evaluation-manifest.json`; SHA-256 `11e67cd944ad2058d130eea06f557b41b1ba36e0ed14bbc3289d704d99bf962e`; schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1`; taxonomy/profile-set version 1; unchanged by the 2026-08-21 refresh |
 | Acquisition/license provenance | User states the local archive was downloaded from Protofactor; current [vendor EULA](https://protofactor.biz/end-user-license-agreement/) reviewed 2026-08-17. No receipt or local revision record was evaluated; no legal opinion. |
 
@@ -78,7 +80,7 @@ The retained evaluation manifest uses schema `urn:animsmith:skill:animation-pack
 | Preserve raw | `evaluated-clean` | RAR and Unitypackage retained unchanged outside the repository. |
 | Inspect | `evaluated-finding` | Every FBX inspected/measured/linted; declared loop and constant-track findings retained. |
 | Segment | `partially-evaluated` | Individual files used; combined take not promoted. |
-| Root motion | `evaluated-clean` | No root-motion-labelled constituent motion files; AnimSmith 0.4.0 `root_trajectory` (delivered this release by closed issue #408, "expose root displacement and accumulated yaw per clip", closed 2026-08-20) now measures 27/27 clips and confirms 0 move more than 1 cm horizontally and 0 exceed 1° of yaw travel — a measured confirmation, not merely an absence of a root-motion label. Sampled regression facts, not continuous-curve or engine-extraction proof; do not derive movement-ownership axes from this alone. |
+| Root motion | `evaluated-clean` | No root-motion-labelled constituent motion files; AnimSmith 0.7.0 `root_trajectory` measures 27/27 clips: 0 move more than 1 cm horizontally and 0 exceed 1° of yaw travel. Sampled regression facts, not continuous-curve or engine-extraction proof; do not derive movement-ownership axes from this alone. |
 | Conform | `partially-evaluated` | Standard skeleton and Unity shared Avatar work; target rigs/other engines open. |
 | Validate | `partially-evaluated` | Mechanical contracts and headless Unity complete; visual gameplay open. |
 | Optimize | `evaluated-finding` | One pruning candidate verified mechanically but not accepted semantically. |
@@ -125,47 +127,47 @@ All 25 individual motions share skeleton signature `2b6fe49d5ae6` with 56 bones,
 | Declared loop rotation seam | 8/14 | Once-per-cycle angular pulse | Contract summary |
 | Declared loop velocity seam | 6/14 | Once-per-cycle velocity pulse | Contract summary |
 | Loop semantics | 7 one-shot-like actions/transitions marked loop | Repeated interaction or snap/restart | Filename/metadata reconciliation |
-| Loop-seam ratio availability (0.4.0) | 27 clips: 0 measured, 26 not_applicable, 1 unavailable | Every stationary clip correctly has no real stride to normalize a seam against; previously such clips risked reading as an unlabelled pass or failure | `observed-animsmith`; 0.4.0 baseline `loop_seam_ratio` and `loop_seam_ratio_availability` |
-| Gait/phase availability (0.4.0) | 26/27 clips report `gait.phase_availability: measured`; contract `gait-group` is `not_applicable` on all 25 individual contracts | No in-place cyclic ring exists, so no gait anchoring ran; a correct not-applicable, not a refusal or a failure, and it does not certify prop/contact quality | `observed-animsmith`; 0.4.0 baseline `gait_phase_availability` and contract `gait_group_applicability` |
-| Root trajectory (0.4.0) | 27/27 clips measured | 0 clips move more than 1 cm horizontally, 26 report stationary, 0 exceed 1° of yaw travel — positive measured confirmation of no root motion; sampled regression facts from the shared metric grid, not continuous-curve or engine-extraction proof | `observed-animsmith`; 0.4.0 baseline `root_trajectory` (measurements v15); delivered this release by closed issue #408 (2026-08-20) |
-| Per-bone channel coverage (0.4.0) | `bone_channels` available on measured clips | Confirms canonical per-bone translation/rotation/scale track presence; narrows a composition/prop-mask risk discussion but does not by itself prove a visually acceptable engine mask | `observed-animsmith`; 0.4.0 measurements v15; delivered this release by closed issue #402 (2026-08-20) |
+| Loop-seam ratio availability (current) | 27 clips: 0 measured, 26 not_applicable, 1 unavailable | Stationary clips with no real stride are explicitly `not_applicable`, not pass or fail | `observed-animsmith`; current baseline `loop_seam_ratio` and `loop_seam_ratio_availability` |
+| Gait/phase availability (current) | 26/27 clips report `gait.phase_availability: measured`; contract `gait-group` is `not_applicable` on all 25 individual contracts | No in-place cyclic ring exists, so no gait anchoring ran; a correct not-applicable, not a refusal or a failure, and it does not certify prop/contact quality | `observed-animsmith`; current baseline `gait_phase_availability` and contract `gait_group_applicability` |
+| Root trajectory (current) | 27/27 clips measured | 0 clips move more than 1 cm horizontally, 26 report stationary, 0 exceed 1° of yaw travel — positive measured confirmation of no root motion; sampled regression facts from the shared metric grid, not continuous-curve or engine-extraction proof | `observed-animsmith`; current baseline `root_trajectory` (measurements v16); |
+| Per-bone channel coverage (current) | `bone_channels` available on measured clips | Confirms canonical per-bone translation/rotation/scale track presence; narrows a composition/prop-mask risk discussion but does not by itself prove a visually acceptable engine mask | `observed-animsmith`; current measurements v16; |
 
 ## AnimSmith remediation evidence
 
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
-| Constant tracks in IdleKneel | `transform --prune-constant-tracks` with its declared contract | Exit 0; FBX 815,008 bytes to GLB 53,628 bytes | Output inspect/measure exit 0; fix dry-run exit 0; diff detects intentional change | Lint still reports the original rotation seam; runtime equivalence not proven, so output not adopted. Bounded by open issue #401 (re-run under 0.4.0, produced a new candidate; verified open 2026-08-21). |
+| Constant tracks in IdleKneel | `transform --prune-constant-tracks` with its declared contract | Exit 0; FBX 815,008 bytes to GLB 53,628 bytes | Output inspect/measure exit 0; fix dry-run exit 0; diff detects intentional change | Lint still reports the original rotation seam; runtime equivalence not proven, so output not adopted. Bounded by open issue #401. |
 | Loop/action semantics | Contract `loop=true` only where Unity metadata says so | Eight files fail and seventeen pass | JSON and Markdown agree for all 25 | Detection does not decide whether metadata or motion is wrong. |
 
 ## Engine procedures and evidence
 
 | Runtime | Version | Procedure | Observed result | Remaining gate |
 |---|---|---|---|---|
-| Unity | 6000.5.8f1 (retained 2026-08-17); `unity-humanoid` revision 1 / 6000.3 import-advice (2026-08-21) | Merge five authorized Unitypackage reconstructions into a disposable project; inventory importers/clips; sample four Campfire clips on shared actor; mix Basic walk to StandToKneel; attach skewer; instantiate campfire. Separately, run `generate import-advice` under the frozen `unity-humanoid` / revision 1 / `6000.3` / `fbx-model-importer` profile on every individual clip. | 25/25 individual Humanoid clips import; 4/4 samples, mixer, and both prop checks pass. Skewer/actor height ratio 0.487; world campfire height 0.286 Unity units (all retained, unchanged). Import-advice: `available`, exit 0; each clip's `lockRootRotation`/`lockRootHeightY`/`lockRootPositionXZ` was derived from the delivered `.fbx.meta` (`useFileUnits:1`; `lockRoot*` absent on every meta, so Unity's serialization default of `false` applied, mapping to `extract`) — an assumption about the Unity serialization default, not observed 6000.5.8f1 importer behavior. **That assumption is now falsified by direct observation — see "Unity headless candidate probe (2026-08-21 correction)" below; the `available`/exit 0 result is unaffected, only the projected lock values were wrong.** | Visual offsets, contacts, loops, controller, compression, target rig, build. |
-| Unreal Engine | 5.8 | Official documentation review; run `generate import-advice` under the `unreal` / revision 1 / `5.8` / `fbx-importer` profile on every individual clip (2026-08-21). | Typed refusal `profile_settings_unmodeled`, exit 1: profile revision 1 has no modeled Unreal setting vocabulary. Not import-evaluated; runtime capabilities do not prove pack import. | FBX import/retarget, state machine, events, contacts, build. |
-| Godot | 4.7 | Official AnimationTree documentation review; run `generate import-advice` under the `godot` / revision 1 / `4.7` / `resource-importer-scene` profile on every individual clip (2026-08-21). | Typed refusal `profile_settings_unmodeled`, exit 1: profile revision 1 has no modeled Godot setting vocabulary. Not import-evaluated. | Conversion/import, retarget, graph, contacts, export. |
+| Unity Humanoid projection | Revision 1 / Unity 6000.3 | Current `generate import-advice` projection | Available; bounded settings projection only | Verify importer settings on the target project and character |
+| Unreal Engine | 5.8 | Official documentation review; run `generate import-advice` under the `unreal` / revision 2 / `5.8` / `fbx-importer` profile on every individual clip (2026-08-21). | Current revision-2 settings projection is available; no engine process ran. | FBX import/retarget, state machine, events, contacts, build. |
+| Godot | 4.7 | Official AnimationTree documentation review; run `generate import-advice` under the `godot` / revision 2 / `4.7` / `resource-importer-scene` profile on every individual clip (2026-08-21). | Current revision-2 settings projection is available; no engine process ran. | Conversion/import, retarget, graph, contacts, export. |
 | Bevy | 0.19.0 | Official example review; checked for a `generate addressability` candidate (2026-08-21). | Not evaluated: no generated glTF/GLB candidate exists for this stationary pack because no gait-anchored in-place ring exists to seed one, so there was nothing to inventory. This is a coverage gap, not an observed Bevy failure. glTF-centric route remains project work. A collection-wide headless Unity glTFast import of 134 GLB candidates ran 2026-08-21 (see GLB candidate import below), but none of those candidates came from this pack; Bevy addressability stays not-evaluated for Campfire. | Conversion, mapping, graph, contacts, profiling. |
 
 ### Unity headless candidate probe (2026-08-21 correction)
 
-The Unity row above stated an explicit assumption: because `lockRootRotation`, `lockRootHeightY`, and `lockRootPositionXZ` are absent from every delivered `.fbx.meta`, the advice read Unity's serialization default of `false` for each key and projected `extract` for every clip. **That assumption is falsified by direct observation.** Unity `6000.5.8f1` was run headless (`-batchmode -nographics -quit -executeMethod CandidateProbe.Run`) in a **new**, disposable project — the retained five-pack project above was not modified — reading `ModelImporterClipAnimation` on the delivered files together with their delivered `.meta`, across a 120-clip sample spanning all eight collection packs, including this pack's own stationary files (for example `Humanoid@FlintstonesLightCampfire.fbx` and `Humanoid@IdleGrillSkewerCampfire.fbx`):
+A direct Unity 6000.5.8f1 headless sample of 120 clips observed baked root rotation, baked XZ for nearly every in-place clip, and extracted XZ for most root-motion clips. This is sampled importer evidence, not visual or gameplay acceptance.
 
 | Variant | Clips | `lockRootRotation` true | `lockRootHeightY` true | `lockRootPositionXZ` true |
 |---|---:|---:|---:|---:|
 | In-place (non-`_RM`) | 84 | 84 | 84 | 83 |
 | Root-motion (`_RM`) | 36 | 36 | 28 | 5 |
 
-Aggregate across the sample: 120/120 clip definitions inspected, 120/120 `lockRootRotation` true, 112/120 `lockRootHeightY` true, 88/120 `lockRootPositionXZ` true. The delivered importer policy is therefore **bake**, not extract, and it is per-variant and axis-specific: `lockRootPositionXZ` is the discriminator — baked (`true`) for essentially all in-place clips (this pack's stationary files are all in-place by construction, with no `_RM` variants) and mostly extracted (`false`) for root-motion clips in other packs. That is a coherent authored root-motion policy, not an oversight. This observation supersedes the stated default-value assumption in the Unity row above; it does not change that row's `available`/exit 0 result, only the projected lock values, and it does not by itself certify prop or contact quality, which remains a visual gate.
+Aggregate across the sample: 120/120 clip definitions inspected, 120/120 `lockRootRotation` true, 112/120 `lockRootHeightY` true, 88/120 `lockRootPositionXZ` true. The observed policy is per-variant and axis-specific: rotation is baked throughout, while XZ is baked for nearly every in-place clip and extracted for most root-motion clips. This does not certify prop or contact quality.
 
 ### GLB candidate import into Unity (2026-08-21) — collection-level context, not a pack result
 
-All 134/134 AnimSmith 0.4.0 gait-anchored GLB candidates across the eight-pack collection were staged into a separate, **new** Unity 6000.5.8f1 project using `com.unity.cloud.gltfast` 6.9.0, because Unity has no native GLB importer; the retained five-pack project above was not modified. Result: 134/134 files staged produced assets, 134/134 produced exactly one Unity `AnimationClip`, and every clip is non-legacy and non-empty. **Campfire has no in-place gait ring (see Pipeline-stage coverage above) and therefore contributed none of the 134 candidates** — this result is reported here only as collection-level context, not as a Campfire pack result, and it does not change Bevy addressability, which stays not-evaluated for this pack.
+All 134/134 AnimSmith 0.7.0 gait-anchored GLB candidates across the eight-pack collection were staged into a separate, **new** Unity 6000.5.8f1 project using `com.unity.cloud.gltfast` 6.9.0, because Unity has no native GLB importer; the retained five-pack project above was not modified. Result: 134/134 files staged produced assets, 134/134 produced exactly one Unity `AnimationClip`, and every clip is non-legacy and non-empty. **Campfire has no in-place gait ring (see Pipeline-stage coverage above) and therefore contributed none of the 134 candidates** — this result is reported here only as collection-level context, not as a Campfire pack result, and it does not change Bevy addressability, which stays not-evaluated for this pack.
 
 **Limit, stated plainly, for the candidates that do exist:** glTFast imports glTF animation as a **Generic** clip and does not reconstruct a Humanoid Avatar. The 134/134 result proves those candidates load and yield one well-formed clip in Unity; it does **not** test the Humanoid retarget path the source packs actually use, and it is not a visual or gameplay acceptance test.
 
 ## Rig, masking, and compatibility evidence
 
-AnimSmith 0.4.0 (measurements v15) adds canonical per-bone `bone_channels`, delivered this release by closed issue #402 ("expose per-clip channel coverage at (bone, property) granularity", closed 2026-08-20), confirming translation/rotation/scale track presence per bone index for the pack's clips. This narrows which joints a hypothetical mask could omit, but channel presence alone does not prove a visually acceptable engine mask; the composition and contact gates below are unchanged.
+Current measurements v16 include canonical per-bone `bone_channels`. This narrows which joints a hypothetical mask could omit, but channel presence alone does not prove a visually acceptable engine mask; the composition and contact gates below remain open.
 
 | Pack/rig/set pair | Skeleton/retarget | Scale/axes | Root policy | Timing/blend | Overall evidence |
 |---|---|---|---|---|---|
@@ -181,28 +183,27 @@ AnimSmith 0.4.0 (measurements v15) adds canonical per-bone `bone_channels`, deli
 3. Unreal Engine, Godot, and Bevy remain documentation-only.
 4. Current vendor pages and EULA do not prove the local archive revision or transaction entitlement.
 5. Commercial files, derived motion outputs, screenshots, and the generated Unity project remain outside the repository and CI.
-6. The 0.4.0 availability recount for `loop_seam_ratio`, `gait.phase_availability`, and `gait-group` clarifies which stationary-pack facts are `not_applicable` versus `unavailable`; it is not a cleaner pass on prop/contact acceptance, which remains unevaluated.
-7. Measured `root_trajectory` (0.4.0, delivered by closed issue #408) is a sampled regression fact from the shared uniform metric grid, not continuous-curve or engine-extraction proof; it does not by itself decide movement-ownership axes for a game controller.
-8. A 2026-08-21 direct Unity 6000.5.8f1 headless probe falsified the Unity import-advice's stated default-`false`/`extract` assumption for root-lock declarations (see Unity headless candidate probe above): the observed delivered policy is `bake` for in-place clips such as this pack's, and per-axis `bake`/`extract` for root-motion clips in other packs. The probe is headless-import evidence over a 120-clip cross-pack sample, not continuous visual or gameplay acceptance, and it does not certify prop/contact quality.
-9. The collection-wide 134/134 GLB-candidate Unity import (2026-08-21) is context only for this pack: Campfire has no gait ring and contributed none of the candidates, so it proves nothing about Campfire content specifically, and Bevy addressability stays not-evaluated here. Where candidates do exist elsewhere, glTFast produces only a Generic clip, not a Humanoid retarget test. A same-commit rebuild of AnimSmith `v0.4.0` produced a differently-hashed binary (SHA-256 `1e53013bbe3224557a8783eafeb818f4ef9d74666590cbaa8c18ef48c5b7d6fa`, versus the recorded `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`) — the build is not byte-reproducible — but both builds emit byte-identical import-advice artifacts, so this appendix's regenerated Unity evidence is attributable to the tag and commit, not to the originally recorded binary digest.
+6. The current availability recount for `loop_seam_ratio`, `gait.phase_availability`, and `gait-group` clarifies which stationary-pack facts are `not_applicable` versus `unavailable`; it is not a cleaner pass on prop/contact acceptance, which remains unevaluated.
+7. Measured `root_trajectory` is a sampled regression fact from the shared uniform metric grid, not continuous-curve or engine-extraction proof; it does not by itself decide movement-ownership axes for a game controller.
+8. A direct Unity 6000.5.8f1 headless sample of 120 clips observed baked root rotation, baked XZ for nearly every in-place clip, and extracted XZ for most root-motion clips. This is sampled importer evidence, not visual or gameplay acceptance.
+9. The 134/134 collection candidate Unity import is context only: Campfire contributed no gait candidates. It proves nothing about this pack and does not establish Humanoid retarget.
+
+## Changes between AnimSmith versions
+
+| Evaluator | Change from the preceding evaluated state |
+|---|---|
+| AnimSmith 0.7.0 | Revalidated the 29-FBX baseline, 25 declared contracts, pruning trial, and current engine projections under output v17 / measurements v16; no generated gait candidate exists for this stationary pack. |
+| AnimSmith 0.4.1 | Reproduced the evaluated 0.4.0 results for this corpus; unrelated release fixes did not change the pack conclusion. |
+| AnimSmith 0.4.0 | Added root-trajectory and channel-coverage facts and current-at-the-time profile evidence without changing the baseline findings. |
+| AnimSmith 0.3.0 | Established the initial mechanical, contract, and dated Unity evidence. Those evaluator results are superseded. |
 
 ## Reproduction
 
-Source RAR: 150,047,944 bytes, SHA-256 `bed86be7f91fdd46b376fce4b1a00c88372a3f703e0fe9077925712d8af8e8e9`. Extracted Unitypackage: 150,181,063 bytes, SHA-256 `9cfd965420a31f0702f7e2d8f886037011c29b33efe8b1da757dfa7750cc4c7a`.
+### Current AnimSmith reproduction (2026-08-26)
 
-2026-08-17 baseline evaluator (historical): `animsmith 0.3.0 (v0.3.0-30-gaabac28)`; revision `aabac28edf2719db236068339f1208bbf156d0bb`; binary SHA-256 `2fb43d210b5448fb2cd642946cc46df0cbb34595a48821b22a28daf7c1938f77`.
+The same source corpus was re-inventoried and rerun with `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16. The current results below are attributable to this evaluator; dated engine observations remain labelled with their capture dates.
 
-Run `inspect`, `measure --format json`, `lint --format json`, and `lint --format markdown` on every FBX with the humanoid baseline. For each individual file, apply the retained rig profile and Unity-derived loop declaration; declare in-place only for an actual paired non-RM member. Generate three risk-selected offline reports and inspect rendered screenshots. Run the pruning trial, then inspect, measure, lint, diff, and fix dry-run the candidate. Finally import all five evaluated packs into Unity and execute the retained headless probe.
-
-Portable evidence digests (2026-08-17, historical): baseline `f9797cfd04dddac8b366a474dceac08dd968a95c52874398c014c81a1b2f9992`; contract `b9a858bcfce12ef799b06a91242054b8d0aa4a6f257660a41f0393bf20d1e7d2`; catalog `480ded14c195158d8768512e764c442cf14cf1fd04584bd27dfe24fd857ca1b9`; remediation `0e72dade266ad288c5ce2db068370d7563f0437def4177448783ea5bc9644b2e`; Basic comparison `0f6b0f6588822b1d309a6162de615c3de174bce92f6bfa6edc222a4467795903`; combined Unity probe `d2b6d1b0af14c2c77dca3c2cc4aa892d6e507f3cf8b9bb50bfdb4ef78d407afa`.
-
-2026-08-21 refresh evaluator: `animsmith 0.4.0`, tag `v0.4.0`; revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`; binary SHA-256 `fd1eee57407aa02db88763d144389a7f5104204c40ddfbb28eb5885ca8cd54c6`; output schema v10; measurements schema v15. **Rebuild reproducibility:** rebuilding tag `v0.4.0` at this same commit produced a binary with a *different* SHA-256, `1e53013bbe3224557a8783eafeb818f4ef9d74666590cbaa8c18ef48c5b7d6fa` — the build is not byte-reproducible. Both builds emit byte-identical import-advice artifacts, verified by `diff`, so the Unity headless-probe correction below is attributable to the tag and commit, not to one specific binary digest. Re-ran the source inventory against the same archive: byte-identical to the published manifest (0 added, 0 removed, 0 changed across 29 FBXs); archive SHA-256 `bed86be7f91fdd46b376fce4b1a00c88372a3f703e0fe9077925712d8af8e8e9` re-verifies. Re-ran `inspect`, `measure --format json`, and `lint --format json` for both the untouched baseline and the retained declared contract on every FBX; findings, exit codes, and constant-track/loop-closure/loop-seam counts reproduce the 2026-08-17 numbers exactly, with the newly available `loop_seam_ratio`, `gait.phase_availability`, `gait-group` applicability, `root_trajectory` (delivered by closed issue #408), and `bone_channels` (delivered by closed issue #402) facts now populated. Ran `generate import-advice` under the frozen `unity-humanoid` (Unity 6000.3), `unreal` (5.8), and `godot` (4.7) profiles on every individual clip: `unity-humanoid` returned `available` (exit 0); `unreal` and `godot` returned the typed `profile_settings_unmodeled` refusal (exit 1). Checked for a Bevy `generate addressability` candidate; none exists because this stationary pack has no gait-anchored in-place ring, so Bevy 0.19.0 is recorded not-evaluated rather than failed. Re-ran the `--prune-constant-tracks` trial on `Humanoid@IdleKneelCampfire.fbx` (source not modified; bounded by open issue #401). The retained Unity 6000.5.8f1 headless probe (2026-08-17) was not rerun because the source is byte-identical; it keeps its original date and attribution.
-
-### Current evaluator: AnimSmith 0.7.0 (2026-08-26)
-
-The same source corpus was re-inventoried and rerun with `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16. Historical evidence above keeps its original attribution.
-
-| Retained external evidence | SHA-256 | Result |
+| Current external evidence | SHA-256 | Result |
 |---|---|---|
 | Source inventory | `2f7e61f5c5d667272a2a67d756ccd96b9c9e1dc60b73e38613f83a9396a29ba4` | 29 FBXs; source unchanged |
 | Exhaustive baseline command envelope | `7d46f1744efbb0a521059912bab11bc75a464ce48b489ab8c07b8854724fd908` | 29/29 complete |
@@ -210,34 +211,7 @@ The same source corpus was re-inventoried and rerun with `animsmith 0.7.0`, exac
 | Remediation command envelope | `c77c17c296b1536a2fa39c75f63c86dd0233b75b3c3f4e9c5dbef3bc41ec2199` | Pruning candidate completed and verified |
 | 0.7 supplemental projections | `d696122f26d75c94767dd4713f4aac8dfd54227faac529f3f390874f112adffa` | Addressability V1 + rich V2; Unity v1, Unreal v2, Godot v2 advice available |
 
-The pruning candidate closes the former Bevy coverage gap at the source-addressability layer. It does not make the stationary/contact pack Bevy-ready: runtime target survival, graph wiring, props, contacts, and visual acceptance remain untested.
-
-### Evaluator currency: AnimSmith 0.4.1
-
-AnimSmith 0.4.1 (tag `v0.4.1`, commit `46e4adfc14947d2afbf433386b0ab9857ea935aa`,
-changelog-dated 2026-08-22) was released after this evidence was captured. The
-evidence in this appendix remains attributable to 0.4.0, which produced it;
-relabelling it would be false attribution. 0.4.1 was instead verified equivalent
-for this collection before that decision was made:
-
-| Comparison | Scope | Result |
-|---|---|---|
-| Baseline `measure`/`lint` content and exit codes | 918 delivered FBXs, all eight packs | 0 files differ |
-| Declared-contract `lint` | 177 per-clip contracts | 0 differ |
-| `generate import-advice` payload | Unity profile | identical |
-| Gait anchoring | 24-member ring | 24/24 anchored; circular spreads identical to seven decimals |
-| Generated GLB candidates | 24 | motion payload byte-identical; only the glTF `asset.generator` string differs |
-| Contract versions | — | unchanged at output v10 / measurements v15 |
-
-The tool-identity block is excluded from those comparisons because it necessarily
-differs between releases. 0.4.1 fixes [#502](https://github.com/mmannerm/animsmith/issues/502),
-which affects the `scale rest-bind` admission path this evaluation never invoked,
-and [#503](https://github.com/mmannerm/animsmith/issues/503), a diagnostics defect
-this evaluation reported: 0.4.0 emits `missing required engine setting
-BakeAxisConversion` while 0.4.1 emits the accepted key `bake_axis_conversion`.
-Neither fix changes a measurement here. Issue and release state are
-time-sensitive; re-query them before reuse.
-
+The pruning candidate has source-addressability coverage for Bevy. It does not make the stationary/contact pack Bevy-ready: runtime target survival, graph wiring, props, contacts, and visual acceptance remain untested.
 
 ## Sources
 

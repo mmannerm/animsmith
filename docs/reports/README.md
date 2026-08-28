@@ -18,8 +18,11 @@ Keep one linked report pair per constituent animation pack:
 This keeps the reader-facing decision short and reevaluation bounded when one
 pack, engine, or evaluator version changes.
 
-The linked-pair layout is report format version 1. Both documents record that
-version independently of the captured AnimSmith evaluator version.
+The current linked-pair layout is report format version 2. Both documents name
+one current AnimSmith evaluator and present ordinary sections as current state
+for a game developer. Prior evaluator behavior, superseded evidence, and
+version comparisons belong only in `Changes between AnimSmith versions`.
+Report-format version 1 remains an immutable historical/generated contract.
 
 Add a collection-level report pair after multiple constituent packs have been
 evaluated, even while the rollup is partial. Name evaluated and missing

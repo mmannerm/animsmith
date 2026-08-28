@@ -6,7 +6,9 @@
 >
 > Evaluation date: **{{YYYY-MM-DD}}**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith {{SEMVER}}**
+>
+> Report format: **2**
 
 This appendix preserves the detailed evidence behind the concise technical
 report. Link the canonical readiness ladder at
@@ -151,9 +153,7 @@ be recommended on root-motion clips without independently re-derived
 displacement and yaw proof for a trajectory-preserving operation.
 Also record whether the current version accepted or refused each representative
 set, whether the selected root heading basis was measurable, and whether an
-output was actually produced. On a version refresh, retain older successful
-outputs only as historical comparison; do not carry their post-transform
-measurements into the current result or integration recommendation.
+output was actually produced. This section describes only the current result.
 
 ## Engine procedures and evidence
 
@@ -175,6 +175,15 @@ retargeting as different evidence levels.
 ## Limitations and unknowns
 
 1. {{MATERIAL_LIMITATION_OR_UNKNOWN}}
+
+## Changes between AnimSmith versions
+
+Record older evaluator identities, superseded results, and version-to-version
+changes here only, newest first. Preserve exact provenance needed to interpret
+the change, but omit internal implementation reasoning and ticket chronology
+unless a public issue is the developer-facing current limitation. For an
+initial evaluation, write: `AnimSmith {{SEMVER}} — Initial evaluation; no
+earlier AnimSmith comparison.`
 
 ## Reproduction
 

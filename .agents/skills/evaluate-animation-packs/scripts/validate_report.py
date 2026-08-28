@@ -36,7 +36,12 @@ from evaluation_contract_v1 import (
 PRIMARY_HEADINGS = (
     "Technical decision", "Capability coverage", "Runtime sets and authored motion",
     "Integration recipe", "Technical issue register", "Engine status",
-    "Fit and limitations", "Evidence status", "Sources",
+    "Fit and limitations", "Changes between AnimSmith versions", "Evidence status",
+    "Sources",
+)
+V1_PRIMARY_HEADINGS = tuple(
+    heading for heading in PRIMARY_HEADINGS
+    if heading != "Changes between AnimSmith versions"
 )
 CAPABILITY_HEADINGS = ("Complete core", "Partial supporting gameplay", "Absent")
 V1_CAPABILITY_HEADINGS = CAPABILITY_HEADINGS + ("Not evaluated", "Not applicable")
@@ -45,7 +50,11 @@ APPENDIX_HEADINGS = (
     "Pack inventory and content evidence", "Mechanical baseline",
     "AnimSmith remediation evidence", "Engine procedures and evidence",
     "Rig, masking, and compatibility evidence", "Limitations and unknowns",
-    "Reproduction", "Sources",
+    "Changes between AnimSmith versions", "Reproduction", "Sources",
+)
+V1_APPENDIX_HEADINGS = tuple(
+    heading for heading in APPENDIX_HEADINGS
+    if heading != "Changes between AnimSmith versions"
 )
 APPENDIX_MANIFEST_HEADINGS = (
     "Canonical clip-role inventory", "Runtime-set inventory",
@@ -56,7 +65,7 @@ PIPELINE_STAGE_LABELS = tuple(label for _identifier, label in PIPELINE_STAGE_ROW
 PROFILE_LABELS = tuple(label for _identifier, label in PROFILE_ROWS)
 ENGINE_LABELS = ("Unity", "Unreal Engine", "Godot", "Bevy")
 MAX_PRIMARY_WORDS = 2000
-REPORT_FORMAT_VERSION = "1"
+REPORT_FORMAT_VERSION = "2"
 REPORT_TITLE_PREFIX = "Animation pack evaluation: "
 APPENDIX_TITLE_PREFIX = "Animation pack evidence appendix: "
 RUNTIME_SET_HEADER = (
@@ -101,6 +110,46 @@ GUIDANCE_PREFIX = "../game-ready-clips.md#"
 CANONICAL_LADDER = "../game-ready-clips.md#the-readiness-ladder"
 VENDOR_ID_MARKER = "<!-- vendor-id -->"
 VENDOR_ID_MARKER_RE = re.compile(r"(?:^|[^\w`\\])`[^`\r\n]+`<!-- vendor-id -->")
+CURRENT_EVALUATOR_RE = re.compile(r"^AnimSmith ([0-9]+\.[0-9]+\.[0-9]+)$")
+CHANGES_ENTRY_VERSION_RE = re.compile(
+    r"\bAnimSmith\s+`?v?([0-9]+\.[0-9]+\.[0-9]+)\b`?|"
+    r"^(?:Exact\s+)?`?v?([0-9]+\.[0-9]+\.[0-9]+)\b`?|"
+    r"(?<![\w.])`?v?([0-9]+\.[0-9]+\.[0-9]+)\b`?(?=\s+—)",
+    re.IGNORECASE,
+)
+CHANGES_STATUS_RE = re.compile(
+    r"\b(?:changed|initial evaluation|revalidated|reproduced|unchanged|"
+    r"unavailable|refused|refusal|rejected|produced|superseded|added|resolved|retained)\b",
+    re.IGNORECASE,
+)
+MAX_CHANGES_WORDS = 200
+ANIMSMITH_VERSION_RE = re.compile(
+    r"\bAnimSmith\s+v?([0-9]+\.[0-9]+\.[0-9]+)\b", re.IGNORECASE
+)
+UNQUALIFIED_HISTORY_VERSION_RE = re.compile(
+    r"(?:\b(?:version|release|evaluator|tag)\s+v?|(?<!\w)v)"
+    r"([0-9]+\.[0-9]+\.[0-9]+)\b|"
+    r"\b([0-9]+\.[0-9]+\.[0-9]+)\s+"
+    r"(?:accepted|changed|differed|introduced|measured|produced|refused|rejected|reported|shipped)\b",
+    re.IGNORECASE,
+)
+HISTORY_PROSE_RE = re.compile(
+    r"\b(?:retained historical|historical (?:animsmith|evaluator|result|results|"
+    r"output|outputs|measurement|measurements|behavior|behaviour|evidence)|"
+    r"(?:earlier|former|legacy|old|previous(?:ly)?|prior|superseded) (?:animsmith|evaluator|release|"
+    r"version|build|implementation|result|results|output|outputs|profile|advice|"
+    r"assumption|gap)|clos(?:es|ing) the prior|now records[^.\n]{0,160}rather "
+    r"than mislabelled|new:[^.\n]{0,120}(?:now|earlier|previous|prior|superseded)|"
+    r"new in (?:the )?current evaluator|current evaluation (?:adds|introduced)|"
+    r"animsmith \d+\.\d+\.\d+[^.\n]{0,80}(?:adds|introduced)|"
+    r"no longer (?:mislabelled|required)|pre-release|closed issue|delivered this release|shipped by "
+    r"issue|(?:issue|ticket)\s*#?\d+\s+(?:added|changed|delivered|fixed|introduced|"
+    r"implemented|landed|shipped)|implemented in (?:issue|ticket|pr)\s*#?\d+|"
+    r"(?:helper|probe|trial) run[^.\n]{0,120}(?:accidentally[^.\n]{0,120}"
+    r"(?:rejected|discarded|not evidence)|(?:rejected|discarded)[^.\n]{0,120}"
+    r"not evidence))\b",
+    re.IGNORECASE,
+)
 
 
 def _parse_report_markdown(text: str) -> dict[str, Any]:
@@ -122,6 +171,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("report", type=Path)
     parser.add_argument("--appendix", type=Path)
     parser.add_argument("--evaluation-model-v1", action="store_true", help="validate the fixed V1 renderer projection")
+    parser.add_argument("--report-format", choices=("1", "2"), help="override the report-view format independently of the evidence schema")
     return parser.parse_args()
 
 
@@ -462,6 +512,106 @@ def _evaluation_date(document: dict[str, Any]) -> str | None:
     return value if parsed.isoformat() == value else None
 
 
+def _current_evaluator_version(document: dict[str, Any]) -> str | None:
+    value = _bold_metadata_value(document, "Current evaluator")
+    if value is None:
+        return None
+    match = CURRENT_EVALUATOR_RE.fullmatch(value)
+    return match.group(1) if match else None
+
+
+def _history_boundary_errors(document: dict[str, Any]) -> list[str]:
+    """Keep superseded AnimSmith state inside the dedicated changes section."""
+    current = _current_evaluator_version(document)
+    if current is None:
+        return ["report format 2 must declare Current evaluator as bold AnimSmith X.Y.Z"]
+    errors: list[str] = []
+    blocks = [
+        *document["headings"],
+        *document["paragraphs"],
+        *document["tables"],
+        *document["code_blocks"],
+    ]
+    for block in blocks:
+        if block["section"] == "Changes between AnimSmith versions":
+            continue
+        if "rows" in block:
+            text = " ".join(
+                cell["text"]
+                for row in [block["header"], *block["rows"]]
+                for cell in row
+            )
+        else:
+            text = block["text"]
+        stale = sorted(
+            {
+                version
+                for version in ANIMSMITH_VERSION_RE.findall(text)
+                if version != current
+            }
+        )
+        stale.extend(
+            version
+            for match in UNQUALIFIED_HISTORY_VERSION_RE.findall(text)
+            for version in match
+            if version and version != current and version not in stale
+        )
+        stale.sort()
+        if stale:
+            errors.append(
+                "AnimSmith version history must appear only under Changes between AnimSmith versions: "
+                + ", ".join(stale)
+            )
+        if HISTORY_PROSE_RE.search(text):
+            errors.append(
+                "historical AnimSmith narrative must appear only under Changes between AnimSmith versions"
+            )
+    return sorted(set(errors))
+
+
+def _changes_section_errors(document: dict[str, Any], current: str | None) -> list[str]:
+    """Require concise, explicitly classified, newest-first version history."""
+    paragraphs = [
+        paragraph["text"]
+        for paragraph in document["paragraphs"]
+        if paragraph["section"] == "Changes between AnimSmith versions"
+    ]
+    units = list(paragraphs)
+    entries: list[tuple[str, str]] = []
+    for paragraph in paragraphs:
+        matches = list(CHANGES_ENTRY_VERSION_RE.finditer(paragraph))
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(paragraph)
+            version = next(group for group in match.groups() if group is not None)
+            entries.append((version, paragraph[match.start():end]))
+    for table in document["tables"]:
+        if table["section"] == "Changes between AnimSmith versions":
+            for row in table["rows"]:
+                row_text = " ".join(cell["text"] for cell in row)
+                units.append(row_text)
+                match = CHANGES_ENTRY_VERSION_RE.search(row[0]["text"]) if row else None
+                if match is not None:
+                    version = next(group for group in match.groups() if group is not None)
+                    entries.append((version, row_text))
+    text = " ".join(units)
+    errors: list[str] = []
+    if len(re.findall(r"\b[\w'-]+\b", text)) > MAX_CHANGES_WORDS:
+        errors.append(
+            f"Changes between AnimSmith versions must be concise ({MAX_CHANGES_WORDS} words maximum)"
+        )
+    versions = [version for version, _entry in entries]
+    if current is not None and (not versions or versions[0] != current):
+        errors.append("Changes between AnimSmith versions must begin with the current evaluator")
+    numeric = [tuple(int(component) for component in version.split(".")) for version in versions]
+    if any(newer <= older for newer, older in zip(numeric, numeric[1:])):
+        errors.append("Changes between AnimSmith versions must be ordered newest first")
+    if not entries or any(not CHANGES_STATUS_RE.search(entry) for _version, entry in entries):
+        errors.append(
+            "Changes between AnimSmith versions must classify every current or historical result"
+        )
+    return errors
+
+
 def _each_member_has_one_code_span(cell: dict[str, Any]) -> bool:
     boundaries = [-1]
     boundaries.extend(
@@ -595,7 +745,9 @@ def _validate_recipe(document: dict[str, Any]) -> list[str]:
     return errors
 
 
-def validate(text: str, *, evaluation_schema: str = SCHEMA) -> list[str]:
+def validate(
+    text: str, *, evaluation_schema: str = SCHEMA, report_format: str | None = None
+) -> list[str]:
     document = _parse_report_markdown(text)
     errors: list[str] = []
     if document["has_raw_html"]:
@@ -605,12 +757,16 @@ def validate(text: str, *, evaluation_schema: str = SCHEMA) -> list[str]:
         or _document_identity(document, REPORT_TITLE_PREFIX) is None
     ):
         errors.append("report must start with '# Animation pack evaluation:'")
-    errors.extend(_heading_order(document, PRIMARY_HEADINGS, level=2))
+    expected_format = report_format or (
+        "1" if evaluation_schema != SCHEMA else REPORT_FORMAT_VERSION
+    )
+    headings = V1_PRIMARY_HEADINGS if expected_format == "1" else PRIMARY_HEADINGS
+    errors.extend(_heading_order(document, headings, level=2))
     capability_headings = V1_CAPABILITY_HEADINGS if evaluation_schema != SCHEMA else CAPABILITY_HEADINGS
     errors.extend(_heading_order(document, capability_headings, level=3, section="Capability coverage"))
     errors.extend(_required_body_errors(
         document,
-        PRIMARY_HEADINGS,
+        headings,
         tuple(("Capability coverage", heading) for heading in capability_headings),
     ))
     errors.extend(_validate_runtime_sets(document))
@@ -638,8 +794,15 @@ def validate(text: str, *, evaluation_schema: str = SCHEMA) -> list[str]:
     if _evaluation_date(document) is None:
         errors.append("report must declare a bold YYYY-MM-DD Evaluation date")
     report_format = _metadata(document, "Report format")
-    if report_format is None or report_format["text"] != "Report format: 1" or report_format["strong"] != ["1"]:
-        errors.append("report must declare Report format 1")
+    if (
+        report_format is None
+        or report_format["text"] != f"Report format: {expected_format}"
+        or report_format["strong"] != [expected_format]
+    ):
+        errors.append(f"report must declare Report format {expected_format}")
+    if expected_format == REPORT_FORMAT_VERSION:
+        errors.extend(_history_boundary_errors(document))
+        errors.extend(_changes_section_errors(document, _current_evaluator_version(document)))
     word_count = int(document["word_count"])
     if word_count > MAX_PRIMARY_WORDS:
         errors.append(f"primary report has {word_count} words; maximum is {MAX_PRIMARY_WORDS}")
@@ -707,7 +870,9 @@ def _appendix_table(
     return table, [] if table is not None else [_missing_table(header)]
 
 
-def validate_appendix(text: str, *, evaluation_schema: str = SCHEMA) -> list[str]:
+def validate_appendix(
+    text: str, *, evaluation_schema: str = SCHEMA, report_format: str | None = None
+) -> list[str]:
     document = _parse_report_markdown(text)
     errors: list[str] = []
     if document["has_raw_html"]:
@@ -717,22 +882,33 @@ def validate_appendix(text: str, *, evaluation_schema: str = SCHEMA) -> list[str
         or _document_identity(document, APPENDIX_TITLE_PREFIX) is None
     ):
         errors.append("appendix must start with '# Animation pack evidence appendix:'")
-    errors.extend(_heading_order(document, APPENDIX_HEADINGS, level=2))
+    expected_format = report_format or (
+        "1" if evaluation_schema != SCHEMA else REPORT_FORMAT_VERSION
+    )
+    headings = V1_APPENDIX_HEADINGS if expected_format == "1" else APPENDIX_HEADINGS
+    errors.extend(_heading_order(document, headings, level=2))
     errors.extend(_heading_order(
         document, APPENDIX_MANIFEST_HEADINGS, level=3,
         section="Evaluation manifest and taxonomy",
     ))
     errors.extend(_required_body_errors(
         document,
-        APPENDIX_HEADINGS,
+        headings,
         tuple(
             ("Evaluation manifest and taxonomy", heading)
             for heading in APPENDIX_MANIFEST_HEADINGS
         ),
     ))
     report_format = _metadata(document, "Report format")
-    if report_format is None or report_format["text"] != "Report format: 1" or report_format["strong"] != ["1"]:
-        errors.append("appendix must declare Report format 1")
+    if (
+        report_format is None
+        or report_format["text"] != f"Report format: {expected_format}"
+        or report_format["strong"] != [expected_format]
+    ):
+        errors.append(f"appendix must declare Report format {expected_format}")
+    if expected_format == REPORT_FORMAT_VERSION:
+        errors.extend(_history_boundary_errors(document))
+        errors.extend(_changes_section_errors(document, _current_evaluator_version(document)))
     evidence_status = _bold_metadata_value(
         document, "Evidence status", allow_boundary=True
     )
@@ -922,6 +1098,19 @@ def validate_pair(
     appendix_date = _evaluation_date(appendix)
     if report_date is None or report_date != appendix_date:
         errors.append("report and appendix must declare the same evaluation date")
+    report_format = _metadata(report, "Report format")
+    appendix_format = _metadata(appendix, "Report format")
+    if report_format is not None and report_format["text"] == "Report format: 2":
+        report_evaluator = _current_evaluator_version(report)
+        appendix_evaluator = _current_evaluator_version(appendix)
+        if report_evaluator is None or report_evaluator != appendix_evaluator:
+            errors.append("report and appendix must declare the same current AnimSmith evaluator")
+    if (
+        report_format is not None
+        and appendix_format is not None
+        and report_format["text"] != appendix_format["text"]
+    ):
+        errors.append("report and appendix must declare the same report format")
     report_has_sets, report_sets = _runtime_sets(report, RUNTIME_SET_HEADER)
     appendix_has_sets, appendix_sets = _runtime_sets(appendix, APPENDIX_RUNTIME_HEADER)
     if report_has_sets and not appendix_has_sets:
@@ -946,8 +1135,16 @@ def main() -> int:
         report_text = args.report.read_text(encoding="utf-8")
         appendix_text = appendix.read_text(encoding="utf-8")
         evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:1" if args.evaluation_model_v1 else SCHEMA
-        errors = validate(report_text, evaluation_schema=evaluation_schema)
-        errors.extend(validate_appendix(appendix_text, evaluation_schema=evaluation_schema))
+        errors = validate(
+            report_text,
+            evaluation_schema=evaluation_schema,
+            report_format=args.report_format,
+        )
+        errors.extend(validate_appendix(
+            appendix_text,
+            evaluation_schema=evaluation_schema,
+            report_format=args.report_format,
+        ))
         errors.extend(validate_pair(report_text, appendix_text, str(args.report), str(appendix)))
     except (OSError, UnicodeError, subprocess.SubprocessError, ValueError) as error:
         print(f"validate_report.py: {error}", file=sys.stderr)

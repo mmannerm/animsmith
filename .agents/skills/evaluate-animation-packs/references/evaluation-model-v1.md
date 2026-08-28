@@ -111,7 +111,14 @@ migration.
 `scripts/render_evaluation_model.py` accepts a strict V1 model and its
 independently validated `collection-output:2` binding, validates both, and
 emits the one primary decision report plus companion appendix. Both views carry
-the model schema/version, canonical digest, and renderer version. They are
+the model schema/version, canonical digest, renderer version, current evaluator
+from the binding, and report format 2. Current state remains in ordinary
+sections and run history is rendered only in `Changes between AnimSmith
+versions`; this changes the view contract, not the frozen V1 model or
+`collection-output:2` binding. Because V1 has no evaluator-version or temporal
+field for historical runs, the format-2 renderer accepts at most one historical
+run and refuses ambiguous multi-run ordering rather than presenting ID order as
+newest-first history. The views are
 validated with the existing pinned Markdown AST workflow and additional
 model-to-view assertions; `--check` compares generated LF UTF-8 bytes without
 writing. The model's canonical `presentation.evaluation_date` supplies the

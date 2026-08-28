@@ -2,13 +2,15 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — complete 0.7.0 baseline, contracts, remediation, addressability, and bounded advice plus a retained Unity probe; no visual, target-character, or current engine-reimport pass.
+> Evaluation completeness: **partial** — complete 0.7.0 baseline, contracts, remediation, addressability, and bounded advice plus a dated Unity probe; no visual, target-character, or current engine-reimport pass.
 >
 > Confidence: **medium**
 >
 > Evaluation date: **2026-08-26**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 >
 > Detailed evidence: [Protofactor Dual Swords evidence appendix](protofactor-dual-swords-evidence.md)
 
@@ -16,9 +18,9 @@
 
 Use all 186 individual clips as a full-body dual-sword combat mode. They share one 56-bone structure, import as Unity Humanoid, and sampled paths execute unchanged in Unity.
 
-AnimSmith 0.4.0 (`6b37ad6`) reruns baseline, contracts, and gait remediation on one evaluator: re-inventory reproduces the manifest exactly, mechanical/contract counts hold unchanged, and gait anchoring reproduces `674396f` to seven decimals (appendix), confirming gait-behavior parity with 0.3.1. No Humanoid-retarget or visual acceptance import ran; candidates stay unpromoted.
+AnimSmith 0.7.0 (`461ac8a`) verifies the manifest, mechanical and contract counts, and current gait remediation. No Humanoid-retarget or visual acceptance import ran; candidates stay unpromoted.
 
-Replace loop policy, retain offsets for raw/residual phase, and review every RM action's translation/yaw. Artists must accept grips, arcs, hit/cancel windows, contacts, transitions, and deformation. The headless mask is execution evidence only — 0.4.0 channel coverage ([#402](https://github.com/mmannerm/animsmith/issues/402), closed) narrows attachment risk without proving a working mask — full-body attacks remain default.
+Replace loop policy, retain offsets for raw/residual phase, and review every RM action's translation/yaw. Artists must accept grips, arcs, hit/cancel windows, contacts, transitions, and deformation. The headless mask is execution evidence only; current channel coverage narrows attachment risk without proving a working mask, so full-body attacks remain default.
 
 ## Capability coverage
 
@@ -88,8 +90,8 @@ RM speed ratios are 1.10× walk, 1.01× run, 1.003× crouch, and 5.42× across f
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
 | DS-001 | major | [Incorrect loop declarations](../game-ready-clips.md#the-loop-pops) mark 88 obvious attacks, combos, reactions, and recoveries as loops, risking repeated actions and hard wraps. | engine-config | Override one-shot-like flags and review the remaining loop candidates. | A metadata/role-aware audit is feasible; universal intent inference is not. | 168/186 delivered loop flags; 162/186 contract failures (appendix). |
-| DS-002 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) risks foot skating. | animsmith-current-declared | Retain offsets; engine-test 24 IP candidates before adoption. | [#426](https://github.com/mmannerm/animsmith/issues/426) closed 2026-08-18 (first reproduced on this released build); residual policy and proof remain open. | 24/24 outputs reproduce `674396f` (appendix); loaded as Generic clips only; Humanoid/visual gate open. |
-| DS-003 | moderate | [RM action ownership](../game-ready-clips.md#the-character-glides-or-runs-in-place) is not established by `_RM` or measured horizontal travel alone, risking doubled or missing displacement/yaw. | engine-config | Inspect translation and yaw per attack/reaction before enabling root motion. | [#408](https://github.com/mmannerm/animsmith/issues/408) closed 2026-08-20, delivering the displacement/yaw evidence used above; owner policy remains open. | Root trajectory 188/188: 76 move >1 cm, 111 stationary, 0 yaw >1°; travel alone is not ownership evidence. |
+| DS-002 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) risks foot skating. | animsmith-current-declared | Retain offsets; engine-test 24 IP candidates before adoption. | Current anchoring produces candidates; residual policy and proof remain open. | 24/24 outputs load as Generic clips only; Humanoid and visual gates remain open. |
+| DS-003 | moderate | [RM action ownership](../game-ready-clips.md#the-character-glides-or-runs-in-place) is not established by `_RM` or measured horizontal travel alone, risking doubled or missing displacement/yaw. | engine-config | Inspect translation and yaw per attack/reaction before enabling root motion. | Per-clip displacement/yaw evidence is available; owner policy remains open. | Root trajectory 188/188: 76 move >1 cm, 111 stationary, 0 yaw >1°; travel alone is not ownership evidence. |
 | DS-004 | major | Attacks and combos lack accepted hit, cancel, grip, contact, and event timing; gameplay may miss, clip, or feel unresponsive. Guidance: not applicable. | artist-author | Author project events; review weapon arcs and contacts. | Tooling preserves declared metadata but cannot infer combat intent or arcs. | 30 attack/combo choices; headless samples only. |
 | DS-005 | moderate | [Dense constant tracks](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) may waste memory; unproved pruning can change sparse-track behavior. | animsmith-current-declared | Keep sources until runtime/equivalence gates pass. | Current pruning works mechanically; stronger equivalence proof remains tracked by [#401](https://github.com/mmannerm/animsmith/issues/401). | 25,167 contract notes; one verified export candidate. |
 
@@ -97,10 +99,10 @@ RM speed ratios are 1.10× walk, 1.01× run, 1.003× crouch, and 5.42× across f
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity | 0.4.0 advice (6000.3) + retained probe (6000.5.8f1, 2026-08-17) | **Conditional pass:** retained 186/186 Humanoid, seven samples, two mixers, mask, both attachments; new advice exits 0, matching **observed** root locks. | Visual controller, contacts, grips, root motion, retargeting, compression, build. |
-| Unreal Engine | 0.4.0 advice attempt (5.8); else documentation only | **Not evaluated.** Typed refusal `profile_settings_unmodeled` (exit 1); Root Motion and layered blends remain documented only. | FBX import, retarget, graphs, contacts, build. |
-| Godot | 0.4.0 advice attempt (4.7); else documentation only | **Not evaluated.** Typed refusal `profile_settings_unmodeled` (exit 1); AnimationTree blend spaces and root extraction remain documented only. | Import/conversion, retarget, graphs, contacts, export. |
-| Bevy | 0.4.0 addressability (0.19.0) on a generated GLB; masks documented only | **Selector prediction only:** exit 0, one clip, predicted `Animation0`, 0 findings; not a runtime load. | FBX→glTF, retarget path, graph, root motion, performance. |
+| Unity | 0.7.0 advice (6000.3) + retained probe (6000.5.8f1, 2026-08-17) | **Conditional pass:** retained 186/186 Humanoid, seven samples, two mixers, mask, both attachments; current advice exits 0 and matches **observed** root locks. | Visual controller, contacts, grips, root motion, retargeting, compression, build. |
+| Unreal Engine | 0.7.0 advice attempt (5.8); else documentation only | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | FBX import, retarget, graphs, contacts, build. |
+| Godot | 0.7.0 advice attempt (4.7); else documentation only | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | Import/conversion, retarget, graphs, contacts, export. |
+| Bevy | 0.7.0 addressability (0.19.0) on a generated GLB; masks documented only | **Selector prediction only:** exit 0, one clip, predicted `Animation0`, 0 findings; not a runtime load. | FBX→glTF, retarget path, graph, root motion, performance. |
 
 ## Fit and limitations
 
@@ -110,13 +112,13 @@ Poor fit: first-person, traversal-heavy, motion-matching, or network-root-motion
 
 The 56-bone structure matches Basic Locomotion, Sword & Shield, and the 1-Handed majority; every evaluated-constituent path overlap is byte-identical. Unity mixers and a Basic-locomotion mask execute, but use full-body state handoffs until style, pose, grips, and contacts are visually accepted. The [partial collection rollup](protofactor-ultimate-animation-collection.md) owns the cross-pack conclusion.
 
-## AnimSmith 0.7.0 refresh (2026-08-26)
+## Changes between AnimSmith versions
 
 Exact `v0.7.0` reproduced 189 FBXs, 186 contracts (24/162 pass/fail), and 25 candidates under output v17 / measurements v16. Projections are not engine or artistic acceptance.
 
 ## Evidence status
 
-The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-dual-swords-evidence.md) retain exact current and historical provenance. Local revision and terms remain unproven.
+The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-dual-swords-evidence.md) retain exact current evidence. Local revision and terms remain unproven.
 
 ## Sources
 
