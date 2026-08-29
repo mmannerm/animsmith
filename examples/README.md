@@ -356,8 +356,8 @@ all trajectory values are zero while the selected source remains explicit:
 ```console
 $ animsmith measure --format json examples/assets/walk.glb
 {
-  "schema_version": 13,
-  "schema": "urn:animsmith:schema:output:13",
+  "schema_version": 19,
+  "schema": "urn:animsmith:schema:output:19",
   "tool": { "name": "animsmith", "version": "0.8.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",

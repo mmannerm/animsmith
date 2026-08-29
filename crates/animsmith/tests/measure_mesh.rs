@@ -17,7 +17,7 @@ fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
         .collect::<Vec<_>>();
     assert!(
         errors.is_empty(),
-        "measurement output must satisfy the published v15 schema:\n{}\ninstance: {measurements:#}",
+        "measurement output must satisfy the published current v18 schema:\n{}\ninstance: {measurements:#}",
         errors.join("\n")
     );
 }
@@ -27,7 +27,7 @@ fn assert_measurements_schema_invalid(measurements: &serde_json::Value) {
     let validator = jsonschema::validator_for(&schema).expect("measurement schema compiles");
     assert!(
         !validator.is_valid(measurements),
-        "measurement output must violate the published v15 schema:\n{measurements:#}"
+        "measurement output must violate the published current v18 schema:\n{measurements:#}"
     );
 }
 

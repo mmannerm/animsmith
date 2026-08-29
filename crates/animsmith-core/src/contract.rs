@@ -415,11 +415,12 @@ impl MeasurementContract {
         })
     }
 
-    /// Reconstruct the measurements-v16 evidence view consumed by immutable
-    /// prediction contracts embedded in current output. V16 represented loop
-    /// continuity as all-or-nothing, so any unavailable V17 bone projects to
-    /// an unavailable outer fact; fully measured rows simply omit the V17-only
-    /// per-bone availability field.
+    /// Reconstruct the measurements-v18-to-v16 evidence view consumed by
+    /// immutable prediction contracts embedded in current output. V16
+    /// represented loop continuity as all-or-nothing, so any unavailable V17
+    /// bone projects to an unavailable outer fact; fully measured rows omit
+    /// the V17-only per-bone availability field, and every V18-only linear
+    /// rotation fact is removed.
     fn prediction_v16_projection(&self) -> Result<Self, MeasurementContractError> {
         let mut clips = self.clips.clone();
         for clip in clips.values_mut() {
@@ -13185,7 +13186,7 @@ mod measurement_report_input_tests {
     }
 
     #[test]
-    fn current_v16_primitive_mutations_fail_closed_on_readback() {
+    fn current_v18_primitive_mutations_fail_closed_on_readback() {
         let wire = measure_wire(primitive_measurement_contract());
         let primitive = &wire["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][0];
         assert_eq!(primitive["primitive_index"], serde_json::json!(1));
@@ -13327,7 +13328,7 @@ mod measurement_report_input_tests {
     }
 
     #[test]
-    fn current_v16_material_indices_follow_resource_coverage() {
+    fn current_v18_material_indices_follow_resource_coverage() {
         let unavailable = measure_wire(primitive_measurement_contract());
         serde_json::from_value::<MeasurementReportInput>(unavailable.clone())
             .unwrap()
@@ -13362,7 +13363,7 @@ mod measurement_report_input_tests {
     }
 
     #[test]
-    fn current_v16_leading_magic_is_bounded_reason_specific_hex() {
+    fn current_v18_leading_magic_is_bounded_reason_specific_hex() {
         let mut assets = AssetMeasurements {
             material_resource_coverage: MaterialResourceCoverage::Complete,
             ..AssetMeasurements::default()

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:animsmith:schema:output:19",
   "title": "animsmith output v19",
-  "description": "Machine-readable result contract for measure, lint, and diff carrying measurements v18 plus bounded, registry-independent prediction provenance. Immutable prediction contracts continue to bind measurements v16 and are validated against the fail-closed V17-to-V16 evidence projection documented in docs/output.md.",
+  "description": "Machine-readable result contract for measure, lint, and diff carrying measurements v18 plus bounded, registry-independent prediction provenance. Immutable prediction contracts continue to bind measurements v16 and are validated against the fail-closed measurements-v18-to-v16 evidence projection: it projects V17 loop-continuity availability and removes V18-only rotation facts, as documented in docs/output.md.",
   "type": "object",
   "required": [
     "schema_version",

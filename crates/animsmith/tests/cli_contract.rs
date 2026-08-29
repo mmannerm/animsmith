@@ -6253,7 +6253,7 @@ fn embedded_contract_types_emit_the_published_v16_envelope() {
 }
 
 #[test]
-fn published_v17_schema_requires_matching_role_policy_provenance() {
+fn published_v19_schema_requires_matching_role_policy_provenance() {
     let output = animsmith()
         .args([
             "measure",

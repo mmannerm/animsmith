@@ -356,12 +356,14 @@ output-v16, output-v15, or output-v9; all historical readers remain readable
 and their behavior remains preserved.
 
 Those immutable prediction contracts consume measurements-v16. In output-v19,
-their basis values are validated against a deterministic V17-to-V16 evidence
-view: fully measured loop-continuity rows omit the V17-only per-bone status,
-while any unavailable bone projects to the historical unavailable outer fact.
-The output-v19 report still retains the complete measurements-v18 rows. This
-projection cannot turn unavailable evidence into measured evidence, and a
-projection or basis mismatch is rejected rather than weakening the prediction.
+their basis values are validated against a deterministic measurements-v18-to-v16
+evidence view: fully measured loop-continuity rows omit the V17-only per-bone
+status, while any unavailable bone projects to the historical unavailable outer
+fact; every V18-only `rotation_xyzw` fact is removed from skeleton and skin
+linear measurements. The output-v19 report still retains the complete
+measurements-v18 rows. This projection cannot turn unavailable evidence into
+measured evidence, and a projection or basis mismatch is rejected rather than
+weakening the prediction.
 
 Output-v15 retains the V3 provenance/prediction path for revision-1 profiles
 and adds `prediction-provenance:4`, `engine-profile-facts:2`,
