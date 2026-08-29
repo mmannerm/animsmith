@@ -3421,15 +3421,20 @@ pub enum MeasurementFileError {
     MissingMeasurementVersion,
     /// The nested measurement contract uses an unsupported version.
     #[error(
-        "has measurement schema_version {found}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}"
+        "has measurement schema_version {found}; this reader expects measurement schema_version {expected}"
     )]
     UnsupportedMeasurementVersion {
         /// Version found in the nested contract.
         found: u32,
+        /// Version required by the output reader revision.
+        expected: u32,
     },
     /// The nested contract does not carry the immutable measurement identity.
-    #[error("does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}")]
-    WrongMeasurementIdentity,
+    #[error("does not identify measurement contract {expected}")]
+    WrongMeasurementIdentity {
+        /// Identity required by the output reader revision.
+        expected: &'static str,
+    },
     /// The nested contract omitted its clip-measurement map.
     #[error("measurement contract has no `clips` map")]
     MissingClips,
@@ -10627,7 +10632,10 @@ impl MeasurementReportInput {
                     Some(found) => {
                         return Err(MeasurementReportError::file(
                             file_index,
-                            MeasurementFileError::UnsupportedMeasurementVersion { found },
+                            MeasurementFileError::UnsupportedMeasurementVersion {
+                                found,
+                                expected: expected_measurement_version,
+                            },
                         ));
                     }
                     None => {
@@ -10640,7 +10648,9 @@ impl MeasurementReportInput {
                 if measurements.schema.as_deref() != Some(expected_measurement_schema) {
                     return Err(MeasurementReportError::file(
                         file_index,
-                        MeasurementFileError::WrongMeasurementIdentity,
+                        MeasurementFileError::WrongMeasurementIdentity {
+                            expected: expected_measurement_schema,
+                        },
                     ));
                 }
                 let clips = measurements.clips.ok_or_else(|| {
@@ -12995,7 +13005,10 @@ mod measurement_report_input_tests {
             report.into_files(),
             Err(MeasurementReportError::File {
                 file_index: 0,
-                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 11 },
+                source: MeasurementFileError::UnsupportedMeasurementVersion {
+                    found: 11,
+                    expected: MEASUREMENTS_SCHEMA_VERSION,
+                },
             })
         ));
     }
@@ -13409,7 +13422,10 @@ mod measurement_report_input_tests {
         assert!(matches!(
             reader_error(v12_with_v17),
             MeasurementReportError::File {
-                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 17 },
+                source: MeasurementFileError::UnsupportedMeasurementVersion {
+                    found: 17,
+                    expected: MEASUREMENTS_V15_SCHEMA_VERSION,
+                },
                 ..
             }
         ));
@@ -13418,11 +13434,16 @@ mod measurement_report_input_tests {
             MeasurementContract::historical_v15(BTreeMap::new(), AssetMeasurements::default())
                 .unwrap();
         let mut v13_with_v15 = current;
+        v13_with_v15["schema_version"] = serde_json::json!(OUTPUT_V13_SCHEMA_VERSION);
+        v13_with_v15["schema"] = serde_json::json!(OUTPUT_V13_SCHEMA_ID);
         v13_with_v15["files"][0]["measurements"] = serde_json::to_value(historical).unwrap();
         assert!(matches!(
             reader_error(v13_with_v15),
             MeasurementReportError::File {
-                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 15 },
+                source: MeasurementFileError::UnsupportedMeasurementVersion {
+                    found: 15,
+                    expected: MEASUREMENTS_V16_SCHEMA_VERSION,
+                },
                 ..
             }
         ));

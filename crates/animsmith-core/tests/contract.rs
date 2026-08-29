@@ -559,10 +559,11 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
                 file_index: 0,
                 source: MeasurementFileError::UnsupportedMeasurementVersion {
                     found: MEASUREMENTS_SCHEMA_VERSION + 1,
+                    expected: MEASUREMENTS_SCHEMA_VERSION,
                 },
             },
             format!(
-                "files[0] has measurement schema_version {}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
+                "files[0] has measurement schema_version {}; this reader expects measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
                 MEASUREMENTS_SCHEMA_VERSION + 1
             ),
         ),
@@ -571,7 +572,9 @@ fn measurement_report_input_rejects_every_invalid_contract_branch() {
             wrong_measurement_identity,
             MeasurementReportError::File {
                 file_index: 0,
-                source: MeasurementFileError::WrongMeasurementIdentity,
+                source: MeasurementFileError::WrongMeasurementIdentity {
+                    expected: MEASUREMENTS_SCHEMA_ID,
+                },
             },
             format!("files[0] does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}"),
         ),
@@ -1036,10 +1039,11 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
                 file_index: 1,
                 source: MeasurementFileError::UnsupportedMeasurementVersion {
                     found: MEASUREMENTS_SCHEMA_VERSION + 1,
+                    expected: MEASUREMENTS_SCHEMA_VERSION,
                 },
             },
             format!(
-                "files[1] has measurement schema_version {}; this build reads measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
+                "files[1] has measurement schema_version {}; this reader expects measurement schema_version {MEASUREMENTS_SCHEMA_VERSION}",
                 MEASUREMENTS_SCHEMA_VERSION + 1
             ),
         ),
@@ -1047,7 +1051,9 @@ fn measurement_report_input_identifies_invalid_file_without_cli_remediation() {
             wrong_measurement_identity,
             MeasurementReportError::File {
                 file_index: 1,
-                source: MeasurementFileError::WrongMeasurementIdentity,
+                source: MeasurementFileError::WrongMeasurementIdentity {
+                    expected: MEASUREMENTS_SCHEMA_ID,
+                },
             },
             format!("files[1] does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}"),
         ),
