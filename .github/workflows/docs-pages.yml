@@ -77,14 +77,10 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
-          python3 scripts/build-docs-site.py \
-            --source ../animsmith-pages-release --stage site-release --site-url "/animsmith/" --build
-          python3 scripts/build-docs-site.py --stage site-dev --site-url "/animsmith/dev/" --build
-          mkdir site
-          cp -a site-release/book/. site/
-          mkdir site/dev
-          cp -a site-dev/book/. site/dev/
-          printf 'Release root: %s\nDevelopment subtree: main\n' "$RELEASE_TAG" > site/BUILD-INFO.txt
+          python3 scripts/compose-pages-site.py \
+            --release-source ../animsmith-pages-release --main-source . \
+            --release-stage site-release --development-stage site-dev \
+            --output site --release-tag "$RELEASE_TAG"
       - uses: actions/upload-pages-artifact@v4
         if: steps.release.outputs.available == 'true'
         with:
