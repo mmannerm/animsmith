@@ -15,10 +15,15 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from hashlib import sha256
+from urllib.parse import urlsplit
 
 
 INDEX = Path("docs/README.md")
 PIN = Path(".mdbook-version")
+GENERATED_EXTERNAL_DIR = Path("_generated/external")
+MAX_EXTERNAL_URL_BYTES = 2048
+MAX_LABEL_BYTES = 256
 
 
 def tracked_files(source: Path) -> list[Path]:
@@ -57,10 +62,44 @@ def index_rows(index: Path) -> list[tuple[str, str, str]]:
     return rows
 
 
+def markdown_text(value: str) -> str:
+    """Quote canonical index labels before placing them in generated Markdown."""
+    return value.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
+def external_proxy(source: Path, label: str, destination: str, proxies: dict[Path, str]) -> str:
+    if len(label.encode("utf-8")) > MAX_LABEL_BYTES:
+        raise ValueError("external index label exceeds the generated Markdown bound")
+    if len(destination.encode("utf-8")) > MAX_EXTERNAL_URL_BYTES:
+        raise ValueError("external index destination exceeds the generated Markdown bound")
+    parsed = urlsplit(destination)
+    if parsed.scheme != "https" or not parsed.netloc or any(character.isspace() for character in destination):
+        raise ValueError(f"external index destination must be an https URL: {destination}")
+    relative = GENERATED_EXTERNAL_DIR / f"{sha256(destination.encode('utf-8')).hexdigest()}.md"
+    if relative in proxies:
+        if proxies[relative] != destination:
+            raise ValueError(f"external index destinations collide at {relative}")
+        return relative.as_posix()
+    proxies[relative] = destination
+    if (source / relative).exists():
+        raise ValueError(f"generated external-reference path is reserved: {relative}")
+    proxy = source / relative
+    proxy.parent.mkdir(parents=True, exist_ok=True)
+    escaped_label = markdown_text(label)
+    proxy.write_text(
+        f"# {escaped_label}\n\n"
+        "This reference is published outside the AnimSmith Pages site.\n\n"
+        f"[Open {escaped_label}](<{destination}>)\n",
+        encoding="utf-8",
+    )
+    return relative.as_posix()
+
+
 def write_book_files(stage: Path, rows: list[tuple[str, str, str]], site_url: str) -> None:
     source = stage / "src"
     summary = ["# Summary", "", "- [Documentation](docs/README.md)"]
     category = None
+    proxies: dict[Path, str] = {}
     for row_category, label, destination in rows:
         if row_category != category:
             category = row_category
@@ -68,12 +107,14 @@ def write_book_files(stage: Path, rows: list[tuple[str, str, str]], site_url: st
         # Table destinations are relative to docs/README.md; SUMMARY.md lives
         # at the staged repository root, so retain the canonical destination's
         # meaning while changing only its presentation location.
-        if "://" not in destination and not destination.startswith("#"):
+        if urlsplit(destination).scheme:
+            destination = external_proxy(source, label, destination, proxies)
+        elif not destination.startswith("#"):
             target, separator, fragment = destination.partition("#")
             destination = posixpath.normpath(posixpath.join("docs", target))
             if separator:
                 destination = f"{destination}#{fragment}"
-        summary.append(f"- [{label}]({destination})")
+        summary.append(f"- [{markdown_text(label)}]({destination})")
     (source / "SUMMARY.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
     (stage / "book.toml").write_text(
         "[book]\n"
@@ -123,6 +164,13 @@ def required_mdbook(source: Path) -> None:
 def build(source: Path, destination: Path) -> None:
     required_mdbook(source)
     subprocess.run(["mdbook", "build", "-d", "book"], cwd=destination, check=True)
+    invalid = [
+        path.relative_to(destination / "book")
+        for path in (destination / "book").rglob("*")
+        if any(character in '<>:"|?*' or ord(character) < 32 for character in path.name)
+    ]
+    if invalid:
+        raise RuntimeError(f"rendered Pages artifact has invalid path characters: {invalid}")
 
 
 def main() -> None:
