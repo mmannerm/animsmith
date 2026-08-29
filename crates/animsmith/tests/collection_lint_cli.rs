@@ -5,17 +5,17 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:10";
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:18";
+const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:11";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:19";
 const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
 const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const MEASUREMENTS_V16_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:17";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:18";
 const COLLECTION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-output-v10.schema.json");
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v18.schema.json");
+    include_str!("../../../docs/schemas/collection-output-v11.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v19.schema.json");
 const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
 const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
@@ -24,7 +24,7 @@ const MEASUREMENTS_V15_SCHEMA: &str =
 const MEASUREMENTS_V16_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v16.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v17.schema.json");
+    include_str!("../../../docs/schemas/measurements-v18.schema.json");
 
 fn spike_path(relative: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -66,7 +66,7 @@ fn validate_collection_output(bytes: &[u8]) -> Output {
 
 fn evaluation_fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
-        "../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v10-complete.json",
+        "../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v11-complete.json",
     )
 }
 
@@ -133,14 +133,14 @@ fn retained_spike_emits_exact_deterministic_collection_evidence() {
     let value: Value = serde_json::from_slice(&first.stdout).expect("collection JSON");
     assert_schema(&value);
     assert_eq!(value["schema"], COLLECTION_SCHEMA_ID);
-    assert_eq!(value["schema_version"], 10);
+    assert_eq!(value["schema_version"], 11);
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema"],
         OUTPUT_SCHEMA_ID
     );
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema_version"],
-        18
+        19
     );
     assert_eq!(value["summary"]["sources"], 3);
     assert_eq!(value["summary"]["established_clips"], 4);
@@ -1040,7 +1040,7 @@ fn hidden_collection_output_validator_uses_the_authoritative_strict_reader() {
     );
     assert_eq!(
         accepted.stdout,
-        b"animsmith-internal collection-output-valid urn:animsmith:schema:collection-output:10 10\n"
+        b"animsmith-internal collection-output-valid urn:animsmith:schema:collection-output:11 11\n"
     );
 
     let help = Command::new(env!("CARGO_BIN_EXE_animsmith"))

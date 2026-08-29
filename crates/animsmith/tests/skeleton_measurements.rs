@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v17.schema.json");
+    include_str!("../../../docs/schemas/measurements-v18.schema.json");
 const DEEP_HIERARCHY_DEPTH: usize = 4_096;
 
 #[derive(Clone, Copy)]
@@ -600,10 +600,10 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
         measurements, &second["files"][0]["measurements"],
         "deterministic measurements"
     );
-    assert_eq!(measurements["schema_version"], 17);
+    assert_eq!(measurements["schema_version"], 18);
     assert_eq!(
         measurements["schema"],
-        "urn:animsmith:schema:measurements:17"
+        "urn:animsmith:schema:measurements:18"
     );
     assert_eq!(measurements["skeleton_source_coverage"], "complete");
     assert_eq!(
@@ -662,6 +662,7 @@ fn cli_measure_preserves_source_skin_identity_and_coordinate_domains() {
             "axis_lengths": [1.0, 1.0, 1.0],
             "determinant": 1.0,
             "orientation": "positive",
+            "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
             "uniform_scale": 1.0
         })
     );
@@ -1105,6 +1106,24 @@ fn published_schema_rejects_impossible_skeleton_transform_states() {
     assert_measurements_schema_rejected(
         &non_finite_with_numbers,
         "non-finite linear facts cannot carry finite numeric observations",
+    );
+
+    let mut unit_without_rotation = base.clone();
+    unit_without_rotation["skeleton_nodes"][0]["rest_world_linear"]
+        .as_object_mut()
+        .expect("linear facts object")
+        .remove("rotation_xyzw");
+    assert_measurements_schema_rejected(
+        &unit_without_rotation,
+        "unit-orthonormal linear facts require their canonical rotation",
+    );
+
+    let mut non_unit_with_rotation = base.clone();
+    non_unit_with_rotation["skeleton_nodes"][0]["rest_world_linear"]["classification"] =
+        json!("uniform_scaled");
+    assert_measurements_schema_rejected(
+        &non_unit_with_rotation,
+        "only unit-orthonormal linear facts may carry a canonical rotation",
     );
 
     let mut available_world_with_non_finite_linear = base.clone();

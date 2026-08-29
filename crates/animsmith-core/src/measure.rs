@@ -385,6 +385,10 @@ pub struct LinearTransformMeasurements {
     /// classification.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orientation: Option<LinearTransformOrientation>,
+    /// Canonical XYZW rotation of the linear part, present exactly for a
+    /// right-handed unit-orthonormal transform.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation_xyzw: Option<[f32; 4]>,
     /// Common orthogonal axis length when one is well-defined.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uniform_scale: Option<f64>,
@@ -608,6 +612,7 @@ fn unavailable_linear_transform() -> LinearTransformMeasurements {
         axis_lengths: None,
         determinant: None,
         orientation: None,
+        rotation_xyzw: None,
         uniform_scale: None,
     }
 }
@@ -1160,6 +1165,7 @@ pub fn measure_linear_transform(matrix: Mat4) -> LinearTransformMeasurements {
             axis_lengths: None,
             determinant: None,
             orientation: None,
+            rotation_xyzw: None,
             uniform_scale: None,
         };
     }
@@ -1208,14 +1214,93 @@ pub fn measure_linear_transform(matrix: Mat4) -> LinearTransformMeasurements {
     } else {
         LinearTransformClassification::NonUniform
     };
+    let rotation_xyzw = (classification == LinearTransformClassification::UnitOrthonormal)
+        .then(|| canonical_rotation_xyzw(Mat3::from_mat4(matrix)));
 
     LinearTransformMeasurements {
         classification,
         axis_lengths: Some(facts.axis_lengths),
         determinant: Some(facts.determinant),
         orientation: Some(orientation),
+        rotation_xyzw,
         uniform_scale,
     }
+}
+
+/// Extract and sign-canonicalize the rotation represented by a classified
+/// unit-orthonormal matrix. The four-branch extraction avoids the trace-only
+/// cancellation at and near half turns. The largest-absolute-component rule
+/// picks one total representation from the equivalent `q`/`-q` pair.
+fn canonical_rotation_xyzw(matrix: Mat3) -> [f32; 4] {
+    let m00 = f64::from(matrix.x_axis.x);
+    let m01 = f64::from(matrix.y_axis.x);
+    let m02 = f64::from(matrix.z_axis.x);
+    let m10 = f64::from(matrix.x_axis.y);
+    let m11 = f64::from(matrix.y_axis.y);
+    let m12 = f64::from(matrix.z_axis.y);
+    let m20 = f64::from(matrix.x_axis.z);
+    let m21 = f64::from(matrix.y_axis.z);
+    let m22 = f64::from(matrix.z_axis.z);
+    let trace = m00 + m11 + m22;
+
+    let mut quaternion = if trace > 0.0 {
+        let scale = 2.0 * (trace + 1.0).sqrt();
+        [
+            (m21 - m12) / scale,
+            (m02 - m20) / scale,
+            (m10 - m01) / scale,
+            0.25 * scale,
+        ]
+    } else if m00 > m11 && m00 > m22 {
+        let scale = 2.0 * (1.0 + m00 - m11 - m22).sqrt();
+        [
+            0.25 * scale,
+            (m01 + m10) / scale,
+            (m02 + m20) / scale,
+            (m21 - m12) / scale,
+        ]
+    } else if m11 > m22 {
+        let scale = 2.0 * (1.0 + m11 - m00 - m22).sqrt();
+        [
+            (m01 + m10) / scale,
+            0.25 * scale,
+            (m12 + m21) / scale,
+            (m02 - m20) / scale,
+        ]
+    } else {
+        let scale = 2.0 * (1.0 + m22 - m00 - m11).sqrt();
+        [
+            (m02 + m20) / scale,
+            (m12 + m21) / scale,
+            0.25 * scale,
+            (m10 - m01) / scale,
+        ]
+    };
+
+    let norm = quaternion
+        .iter()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt();
+    for value in &mut quaternion {
+        *value /= norm;
+    }
+    // The public representation is f32. Canonicalize at that precision so
+    // algebraically tied half-turn components do not acquire an accidental
+    // sign solely from different f64 evaluation paths above.
+    let mut quaternion = quaternion.map(|value| value as f32);
+    let mut selected = 0usize;
+    for index in 1..quaternion.len() {
+        if quaternion[index].abs() > quaternion[selected].abs() {
+            selected = index;
+        }
+    }
+    if quaternion[selected] < 0.0 {
+        for value in &mut quaternion {
+            *value = -*value;
+        }
+    }
+    quaternion
 }
 
 pub(crate) fn summarize_skin_bind_linear(
@@ -3122,6 +3207,7 @@ mod tests {
                 axis_lengths: None,
                 determinant: None,
                 orientation: None,
+                rotation_xyzw: None,
                 uniform_scale: None,
             }
         );
@@ -3136,6 +3222,131 @@ mod tests {
             assert_eq!(measured.uniform_scale, Some(f64::from(scale)));
             assert!(measured.determinant.is_some_and(f64::is_finite));
             assert_ne!(measured.determinant, Some(0.0));
+        }
+    }
+
+    #[test]
+    fn linear_transform_rotation_is_recomposable_canonical_and_unit_only() {
+        // Use literal matrices here rather than `Quat::from_rotation_*`: the
+        // latter quite reasonably retains a tiny trigonometric w component,
+        // whereas the contract needs to pin the exact half-turn branch.
+        let exact_x_half_turn = Mat4::from_cols_array(&[
+            1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ]);
+        let exact_equal_xy_half_turn = Mat4::from_cols_array(&[
+            0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ]);
+        let exact_x = measure_linear_transform(exact_x_half_turn)
+            .rotation_xyzw
+            .expect("exact unit half turn");
+        assert_eq!(exact_x, [1.0, 0.0, 0.0, 0.0]);
+        let exact_equal_xy = measure_linear_transform(exact_equal_xy_half_turn)
+            .rotation_xyzw
+            .expect("exact unit half turn");
+        assert_eq!(exact_equal_xy[3], 0.0, "exact half turn has w == 0");
+        assert!(
+            exact_equal_xy[0] > 0.0 && exact_equal_xy[1] < 0.0,
+            "equal |x|/|y| must choose X first, then make X non-negative: {exact_equal_xy:?}"
+        );
+        assert!((exact_equal_xy[0].abs() - exact_equal_xy[1].abs()).abs() <= f32::EPSILON);
+
+        let rotations = [
+            Quat::from_rotation_y(core::f32::consts::PI - 1.0e-4),
+            Quat::from_euler(glam::EulerRot::XYZ, 0.4, -1.1, 2.2),
+        ];
+        for rotation in rotations {
+            let matrix = Mat4::from_quat(rotation);
+            let measured = measure_linear_transform(matrix);
+            assert_eq!(
+                measured.classification,
+                LinearTransformClassification::UnitOrthonormal
+            );
+            let reported = Quat::from_array(measured.rotation_xyzw.expect("unit rotation"));
+            let recomposed = Mat3::from_quat(reported);
+            for (expected, actual) in Mat3::from_mat4(matrix)
+                .to_cols_array()
+                .into_iter()
+                .zip(recomposed.to_cols_array())
+            {
+                assert!(
+                    (expected - actual).abs() <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE as f32,
+                    "recomposed {actual} differs from {expected}"
+                );
+            }
+
+            let inverse_sign = Quat::from_xyzw(-rotation.x, -rotation.y, -rotation.z, -rotation.w);
+            assert_eq!(
+                measured.rotation_xyzw,
+                measure_linear_transform(Mat4::from_quat(inverse_sign)).rotation_xyzw,
+                "q and -q canonicalize identically"
+            );
+            let values = measured.rotation_xyzw.expect("unit rotation");
+            let selected = values
+                .iter()
+                .enumerate()
+                .max_by(|(left_index, left), (right_index, right)| {
+                    left.abs()
+                        .partial_cmp(&right.abs())
+                        .unwrap()
+                        .then_with(|| right_index.cmp(left_index))
+                })
+                .expect("quaternion components");
+            assert!(
+                *selected.1 >= 0.0,
+                "largest XYZW-tie-broken component is non-negative"
+            );
+        }
+
+        // The classifier deliberately admits a small amount of scale and
+        // orthogonality error. Its advertised tolerance must also bound the
+        // rotation-only recomposition that the new field represents.
+        let tolerance_admitted = Mat4::from_cols_array(&[
+            1.0 + 4.0e-6,
+            0.0,
+            0.0,
+            0.0,
+            4.0e-6,
+            1.0 - 4.0e-6,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ]);
+        let admitted = measure_linear_transform(tolerance_admitted);
+        assert_eq!(
+            admitted.classification,
+            LinearTransformClassification::UnitOrthonormal
+        );
+        let recomposed = Mat3::from_quat(Quat::from_array(
+            admitted.rotation_xyzw.expect("tolerance-admitted rotation"),
+        ));
+        for (expected, actual) in Mat3::from_mat4(tolerance_admitted)
+            .to_cols_array()
+            .into_iter()
+            .zip(recomposed.to_cols_array())
+        {
+            assert!(
+                (expected - actual).abs() <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE as f32,
+                "tolerance-admitted recomposition {actual} differs from {expected}"
+            );
+        }
+
+        let sheared = Mat4::from_cols_array(&[
+            1.0, 0.0, 0.0, 0.0, 0.25, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ]);
+        for matrix in [
+            sheared,
+            Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)),
+            Mat4::from_scale(Vec3::new(2.0, 3.0, 4.0)),
+            Mat4::from_scale(Vec3::splat(2.0)),
+        ] {
+            assert!(measure_linear_transform(matrix).rotation_xyzw.is_none());
         }
     }
 

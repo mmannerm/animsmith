@@ -588,8 +588,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): current output v18, identified by
-  `urn:animsmith:schema:output:18`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): current output v19, identified by
+  `urn:animsmith:schema:output:19`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -625,9 +625,9 @@ learns an embedder's contract schema.
   introduced bounded V2 provenance/settings/prediction evidence and
   catalog-allocated facet summaries; output v17 retained that evidence while
   advancing its nested measurements to v16 and adding V6 root-motion
-  provenance. Output v18 retains the immutable prediction graphs against a
+  provenance. Output v19 retains the immutable prediction graphs against a
   fail-closed measurements-v16 projection while publishing the complete
-  measurements-v17 evidence. Output-v9, measurements-v15, output-v12, and
+  measurements-v18 evidence. Output-v9, measurements-v15, output-v12, and
   collection-output-v4 remain immutable historical contracts.
   Measurements v14 gives every clip fact that is not applicable to every
   clip (loop continuity, loop endpoint mode, frame grid, loop seam ratio,
@@ -648,7 +648,7 @@ learns an embedder's contract schema.
   CLI exit status derives from content severity (warnings block only with
   `--deny-warnings`) plus required-unavailable engine-prediction facets;
   ordinary coverage gaps remain nonblocking evidence.
-  The current output-v18 envelope types and immutable identities live in
+  The current output-v19 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -2935,9 +2935,9 @@ subjectless, unsuppressible `required_prediction_unavailable` inventory facet
 and no retained-prefix prediction, including the N+1 boundary. If both gates
 allow loading, the result is a stable required-unavailable runtime-survival
 state. Extensions, other constructs, and positive runtime survival are not
-modeled by this slice. V5 provenance and output-v18 are current for this Bevy
+modeled by this slice. V5 provenance and output-v19 are current for this Bevy
 slice; V4/revision-2 and output-v15 remain preserved and readable. The Unity
-Generic root-motion slice uses V6 provenance in output-v18, while output v9
+Generic root-motion slice uses V6 provenance in output-v19, while output v9
 and all other historical readers remain immutable.
 
 Configuration precedence is consequently:
@@ -3205,8 +3205,8 @@ historical `urn:animsmith:schema:collection-output:3` derives from V2 and adds o
 bounded `dependency_closure` state to every source. A complete state retains the
 loader's exact `DependencyClosureIdentityV1`; partial and unavailable states
 retain a nonempty, sorted, unique sequence from the seven closed
-`DependencyClosureCoverageReasonV1` values. The current `collection-output:10`
-embeds the current output-v18 lint envelope with measurements-v17 while
+`DependencyClosureCoverageReasonV1` values. The current `collection-output:11`
+embeds the current output-v19 lint envelope with measurements-v18 while
 preserving collection-output-v8 and its nested output-v16, and
 collection-output-v4 with its nested output-v12/measurements-v15, as immutable
 historical evidence. Only complete closure coverage can
@@ -3251,13 +3251,13 @@ The repository-owned structured evaluation model is a separate skill-level
 authority. `animation-pack-evaluation:1` remains frozen to independently
 validated `collection-output:2`. Current evaluations use the additive
 `animation-pack-evaluation:2` contract and bind the exact raw
-`collection-output:10` digest and byte count plus its manifest identity. V2
+`collection-output:11` digest and byte count plus its manifest identity. V2
 retains every scrubbed source state, including complete dependency-closure
 identity or the full typed partial/unavailable reason set, and proves exact
-clip source/take and ordered runtime-set relationships against that V10 input.
+clip source/take and ordered runtime-set relationships against that V11 input.
 The V2 validation boundary requires the explicitly selected checkout-matched
 AnimSmith binary and invokes a hidden validation-only collection subcommand
-that calls the one authoritative V10 strict reader before any projection.
+that calls the one authoritative V11 strict reader before any projection.
 Schema validity plus a matching raw digest is not sufficient, and there is no
 second Python semantic mirror.
 Clip duration and speed preserve exact measured, unavailable, or not-applicable
@@ -3265,7 +3265,7 @@ availability rather than collapsing the latter two categories.
 Unavailable rows are mandatory typed soft failures, not grounds to shrink the
 model to surviving records. A separate projection sidecar was rejected because
 it would duplicate clip/set authority and create a third versioned contract;
-V2 is the single report authority, while the exact hashed V10 document remains
+V2 is the single report authority, while the exact hashed V11 document remains
 the mechanical evidence binding. Neither model is accepted as a CLI protocol.
 
 ### F.2 Logical and physical clip identity

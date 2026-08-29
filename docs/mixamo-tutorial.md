@@ -240,7 +240,7 @@ sample values as vendor evidence:
 $ animsmith measure --format json walking.glb
 {
   "schema_version": 18,
-  "schema": "urn:animsmith:schema:output:18",
+  "schema": "urn:animsmith:schema:output:19",
   "tool": { "name": "animsmith", "version": "0.8.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -259,7 +259,7 @@ $ animsmith measure --format json walking.glb
           "left_foot": "exact", "right_foot": "exact" } },
       "measurements": {
         "schema_version": 17,
-        "schema": "urn:animsmith:schema:measurements:17",
+        "schema": "urn:animsmith:schema:measurements:18",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],

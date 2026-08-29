@@ -1,5 +1,5 @@
-//! Internal producer and strict reader types for current collection-output V10,
-//! plus immutable historical V9, V8, V7, V6, and V5.
+//! Internal producer and strict reader types for current collection-output V11,
+//! plus immutable historical V10 through V5.
 //!
 //! This is deliberately a CLI-local contract.  Core owns the validated
 //! collection declaration vocabulary; this module owns the command's evidence
@@ -17,11 +17,12 @@ use animsmith_core::{
     CollectionDirectionalSpeedManifestIdentityV1, CollectionIdV1, CollectionLogicalIdV1,
     CollectionRuntimeSetKindV1, CollectionSourceKeyV1, DependencyClosureCoverageReasonV1,
     DependencyClosureCoverageV1, DependencyClosureIdentityV1, DependencyClosureV1,
-    DependencyResourceKeyV1, InputIdentity, LintEnvelopeV18, MeasurementReportInput,
+    DependencyResourceKeyV1, InputIdentity, LintEnvelopeV19, MeasurementReportInput,
     OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION,
     OUTPUT_V14_SCHEMA_ID, OUTPUT_V14_SCHEMA_VERSION, OUTPUT_V15_SCHEMA_ID,
     OUTPUT_V15_SCHEMA_VERSION, OUTPUT_V16_SCHEMA_ID, OUTPUT_V16_SCHEMA_VERSION,
-    OUTPUT_V17_SCHEMA_ID, OUTPUT_V17_SCHEMA_VERSION, ResourceKeySyntaxV1, ToolInfo,
+    OUTPUT_V17_SCHEMA_ID, OUTPUT_V17_SCHEMA_VERSION, OUTPUT_V18_SCHEMA_ID,
+    OUTPUT_V18_SCHEMA_VERSION, ResourceKeySyntaxV1, ToolInfo,
 };
 use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,8 @@ pub(crate) const COLLECTION_OUTPUT_V9_ID: &str = "urn:animsmith:schema:collectio
 pub(crate) const COLLECTION_OUTPUT_V9_SCHEMA_VERSION: u32 = 9;
 pub(crate) const COLLECTION_OUTPUT_V10_ID: &str = "urn:animsmith:schema:collection-output:10";
 pub(crate) const COLLECTION_OUTPUT_V10_SCHEMA_VERSION: u32 = 10;
+pub(crate) const COLLECTION_OUTPUT_V11_ID: &str = "urn:animsmith:schema:collection-output:11";
+pub(crate) const COLLECTION_OUTPUT_V11_SCHEMA_VERSION: u32 = 11;
 pub(crate) const COLLECTION_OUTPUT_BUDGET_V1_ID: &str = "urn:animsmith:collection-output-budget:1";
 pub(crate) const COLLECTION_OUTPUT_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) const COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -232,7 +235,7 @@ impl SourceDependencyClosureState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub(crate) enum DocumentResult {
-    Available { envelope: Box<LintEnvelopeV18> },
+    Available { envelope: Box<LintEnvelopeV19> },
     Unavailable { reason: DocumentUnavailableReason },
 }
 
@@ -859,8 +862,8 @@ impl CollectionOutput {
             serialized_bytes,
         )?;
         let output = Self {
-            schema_version: COLLECTION_OUTPUT_V10_SCHEMA_VERSION,
-            schema: COLLECTION_OUTPUT_V10_ID,
+            schema_version: COLLECTION_OUTPUT_V11_SCHEMA_VERSION,
+            schema: COLLECTION_OUTPUT_V11_ID,
             tool,
             command: "collection lint",
             manifest,
@@ -1008,16 +1011,16 @@ pub(crate) fn read_collection_output(
     Ok(output)
 }
 
-/// Strictly read only the current V10 collection-output revision.
+/// Strictly read only the current V11 collection-output revision.
 pub(crate) fn read_current_collection_output(
     reader: impl Read,
 ) -> Result<CollectionOutputInput, CollectionOutputError> {
     let output = read_collection_output(reader)?;
-    if output.wire.schema != COLLECTION_OUTPUT_V10_ID
-        || output.wire.schema_version != COLLECTION_OUTPUT_V10_SCHEMA_VERSION
+    if output.wire.schema != COLLECTION_OUTPUT_V11_ID
+        || output.wire.schema_version != COLLECTION_OUTPUT_V11_SCHEMA_VERSION
     {
         return Err(CollectionOutputError::Contradictory(
-            "validation requires current collection-output V10",
+            "validation requires current collection-output V11",
         ));
     }
     Ok(output)
@@ -1127,6 +1130,9 @@ impl CollectionOutputInput {
             }
             (COLLECTION_OUTPUT_V10_SCHEMA_VERSION, COLLECTION_OUTPUT_V10_ID) => {
                 CollectionOutputRevision::V10
+            }
+            (COLLECTION_OUTPUT_V11_SCHEMA_VERSION, COLLECTION_OUTPUT_V11_ID) => {
+                CollectionOutputRevision::V11
             }
             (COLLECTION_OUTPUT_V9_SCHEMA_VERSION, COLLECTION_OUTPUT_V9_ID) => {
                 CollectionOutputRevision::V9
@@ -1523,6 +1529,7 @@ enum CollectionOutputRevision {
     V8,
     V9,
     V10,
+    V11,
 }
 
 impl CollectionOutputRevision {
@@ -1533,7 +1540,8 @@ impl CollectionOutputRevision {
             Self::V7 => (OUTPUT_V15_SCHEMA_ID, OUTPUT_V15_SCHEMA_VERSION),
             Self::V8 => (OUTPUT_V16_SCHEMA_ID, OUTPUT_V16_SCHEMA_VERSION),
             Self::V9 => (OUTPUT_V17_SCHEMA_ID, OUTPUT_V17_SCHEMA_VERSION),
-            Self::V10 => (OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION),
+            Self::V10 => (OUTPUT_V18_SCHEMA_ID, OUTPUT_V18_SCHEMA_VERSION),
+            Self::V11 => (OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION),
         }
     }
 }
@@ -2648,13 +2656,13 @@ fn summarize_wire(
 mod tests {
     use super::*;
     use animsmith_core::{
-        Clip, Config, DependencyClosureBuilderV1, Document, LintFileReportV18,
+        Clip, Config, DependencyClosureBuilderV1, Document, LintFileReportV19,
         MEASUREMENTS_V16_SCHEMA_ID, MEASUREMENTS_V16_SCHEMA_VERSION, MeasurementContract,
         MetricGrids, ResolvedRoles, RigInfo, SourceSetCoverageV1,
     };
     type JsonValue = serde_json::value::Value;
 
-    fn source_fixture() -> (InputIdentity, LintEnvelopeV18, ClipMeasurements) {
+    fn source_fixture() -> (InputIdentity, LintEnvelopeV19, ClipMeasurements) {
         let input = InputIdentity::from_bytes(b"collection-output-source");
         let mut document = Document::default();
         document.clips.push(Clip {
@@ -2671,7 +2679,7 @@ mod tests {
         )
         .unwrap();
         let clip = measurements.clips()["take"].clone();
-        let report = LintFileReportV18::new(
+        let report = LintFileReportV19::new(
             "safe/source.glb",
             input.clone(),
             RigInfo::from_resolved(&document, &roles).unwrap(),
@@ -2682,7 +2690,7 @@ mod tests {
         .unwrap();
         (
             input,
-            LintEnvelopeV18::new(crate::current_tool(), vec![report]).unwrap(),
+            LintEnvelopeV19::new(crate::current_tool(), vec![report]).unwrap(),
             clip,
         )
     }
@@ -2971,13 +2979,24 @@ mod tests {
     }
 
     #[test]
-    fn evaluation_v2_complete_fixture_passes_the_authoritative_v10_reader() {
+    fn evaluation_v2_complete_fixture_passes_the_authoritative_v11_reader() {
+        let bytes = include_bytes!(
+            "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v11-complete.json"
+        );
+        let decoded = read_current_collection_output(&bytes[..]).expect("strict V11 fixture");
+        assert_eq!(decoded.source_count(), 2);
+        assert_eq!(decoded.clip_count(), 2);
+    }
+
+    #[test]
+    fn historical_v10_fixture_keeps_its_output_v18_measurements_v17_binding() {
         let bytes = include_bytes!(
             "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v10-complete.json"
         );
-        let decoded = read_current_collection_output(&bytes[..]).expect("strict V10 fixture");
+        let decoded = read_collection_output(&bytes[..]).expect("historical V10 fixture");
         assert_eq!(decoded.source_count(), 2);
         assert_eq!(decoded.clip_count(), 2);
+        assert!(read_current_collection_output(&bytes[..]).is_err());
     }
 
     fn historicalize_measurements_v16(value: &mut JsonValue) {

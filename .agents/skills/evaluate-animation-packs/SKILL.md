@@ -208,18 +208,18 @@ remains frozen to independently validated `collection-output:2`.
 New structured evaluations use
 `urn:animsmith:skill:animation-pack-evaluation:2`, documented in
 [`references/evaluation-model-v2.md`](references/evaluation-model-v2.md), and
-bind the exact current `collection-output:10` bytes. V2 retains every typed
+bind the exact current `collection-output:11` bytes. V2 retains every typed
 source and dependency-closure state in its binding, every clip source/take
 witness, and every runtime-set member in declared order. Incomplete or
 unavailable rows remain mandatory typed soft-fail evidence; never omit them or
 promote a surviving subset. The V2 validator must receive the exact
 checkout-matched executable already selected and captured above as
 `--animsmith PATH`. It invokes that binary's hidden validation-only collection
-entry point over stdin on the exact V10 bytes before any model projection. The
+entry point over stdin on the exact V11 bytes before any model projection. The
 validator opens the binding once without following links, requires a regular
 file, applies the serialized-output byte bound, and reuses that one in-memory
 buffer for Rust readback, JSON parsing, hashing, and projection. It requires the
-binary's exact internal V10 success handshake; an arbitrary exit-zero
+binary's exact internal V11 success handshake; an arbitrary exit-zero
 executable is not acceptance. Offline schema success and a raw digest match
 alone are not acceptance. Record the selected
 binary path, SHA-256, `--version`, source revision, and dirty state with the
@@ -253,7 +253,7 @@ already-rendered pair without writing:
 ```
 
 For a current V2 evaluation, replace the validator with
-`validate_evaluation_model_v2.py`, pass the exact collection-output V10 document
+`validate_evaluation_model_v2.py`, pass the exact collection-output V11 document
 as `--binding`, pass the captured checkout-matched executable as `--animsmith
 PATH` to both the validator and renderer, and use `--evaluation-model-v2` for
 the final report check. A missing, non-executable, timed-out, or rejecting

@@ -134,7 +134,7 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
   },
   "measurements": {
     "schema_version": 17,
-    "schema": "urn:animsmith:schema:measurements:17"
+    "schema": "urn:animsmith:schema:measurements:18"
   }
 }
 ```
@@ -374,7 +374,7 @@ $ animsmith measure --format json examples/assets/walk.glb
         "resolved_role_policies": { "hips": "exact", "left_foot": "exact", "right_foot": "exact" } },
       "measurements": {
         "schema_version": 17,
-        "schema": "urn:animsmith:schema:measurements:17",
+        "schema": "urn:animsmith:schema:measurements:18",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],
@@ -667,7 +667,7 @@ not run Bevy. Complete-empty inventory is not applicable; partial or
 unavailable inventory yields one subjectless, unsuppressible inventory facet
 and no retained-prefix prediction, including bounded N+1 overflow. Extensions,
 other animation constructs, and positive runtime survival are outside this
-slice. V5 provenance remains immutable inside the current output-v18 envelope;
+slice. V5 provenance remains immutable inside the current output-v19 envelope;
 output-v17, output-v16, the rev1/rev2 profiles, and output-v15 contracts remain
 preserved.
 
@@ -774,7 +774,7 @@ content finding, and exits 1. Measurement magnitude does not affect routing:
 zero and nonzero travel use the same comparison. This is prediction evidence
 only—no Unity editor execution, imported-asset readback, runtime playback, or
 engine certification occurs. The contract uses prediction provenance V6 and
-output V17; historical output V9 and other readers remain immutable. The
+output V19; historical output V9 and other readers remain immutable. The
 checked-in/CI FBX inputs for this slice are self-authored synthetic fixtures.
 
 ### Generating engine import advice

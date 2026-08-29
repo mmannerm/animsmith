@@ -13,7 +13,7 @@ use animsmith_core::measure::{
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
     Document, EvaluationScope, EvaluationScopeCode, Finding, ImageContainerFormat,
-    ImageUnavailableReason, InputIdentity, LintEnvelopeV18, LintFileReportV18,
+    ImageUnavailableReason, InputIdentity, LintEnvelopeV19, LintFileReportV19,
     MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MaterialResourceCoverage,
     MaterialTextureSlot, MeasureEnvelope, MeasureFileReport, MeasurementContract,
     MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
@@ -88,10 +88,10 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
         ],
     )
     .expect("bounded measure envelope");
-    let lint = LintEnvelopeV18::new(
+    let lint = LintEnvelopeV19::new(
         tool(),
         vec![
-            LintFileReportV18::new(
+            LintFileReportV19::new(
                 "lint.glb",
                 input(b"lint input"),
                 rig(),
@@ -179,7 +179,7 @@ fn output_v11_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new()),
     )
     .expect("empty active check is valid");
-    let at_limit_file = LintFileReportV18::new(
+    let at_limit_file = LintFileReportV19::new(
         "limit.glb",
         input(b"limit"),
         rig(),
@@ -188,7 +188,7 @@ fn output_v11_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         measurements(),
     )
     .expect("exact output-v11 check limit is valid");
-    let at_limit = LintEnvelopeV18::new(tool(), vec![at_limit_file])
+    let at_limit = LintEnvelopeV19::new(tool(), vec![at_limit_file])
         .expect("exact output-v11 check limit forms an envelope");
     let at_limit_wire = serde_json::to_value(&at_limit).expect("bounded envelope serializes");
     let at_limit_read: MeasurementReportInput =
@@ -198,7 +198,7 @@ fn output_v11_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         .expect("exact output-v11 check limit validates");
 
     assert_eq!(
-        LintFileReportV18::new(
+        LintFileReportV19::new(
             "limit.glb",
             input(b"limit"),
             rig(),
@@ -299,10 +299,10 @@ fn lint_summary_aggregates_every_axis_and_finding_bucket_across_files() {
     )
     .expect("complete record is valid");
 
-    let report = LintEnvelopeV18::new(
+    let report = LintEnvelopeV19::new(
         tool(),
         vec![
-            LintFileReportV18::new(
+            LintFileReportV19::new(
                 "first.glb",
                 input(b"first input"),
                 rig(),
@@ -311,7 +311,7 @@ fn lint_summary_aggregates_every_axis_and_finding_bucket_across_files() {
                 measurements(),
             )
             .expect("bounded first lint file"),
-            LintFileReportV18::new(
+            LintFileReportV19::new(
                 "second.glb",
                 input(b"second input"),
                 rig(),
@@ -1356,6 +1356,7 @@ fn complete_skeleton_assets() -> AssetMeasurements {
                 "axis_lengths": [1.0, 1.0, 1.0],
                 "determinant": 1.0,
                 "orientation": "positive",
+                "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
                 "uniform_scale": 1.0
             }
         }],
@@ -1367,12 +1368,12 @@ fn complete_skeleton_assets() -> AssetMeasurements {
                     "source_inverse_bind_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
                     "inversion_quality": { "reciprocal_condition_number_inf": 1.0 },
                     "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-                    "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "uniform_scale": 1.0 }
+                    "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "rotation_xyzw": [0.0, 0.0, 0.0, 1.0], "uniform_scale": 1.0 }
                 },
                 "mesh_bind_world": {
                     "source_inverse_bind_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
                     "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-                    "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "uniform_scale": 1.0 }
+                    "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "rotation_xyzw": [0.0, 0.0, 0.0, 1.0], "uniform_scale": 1.0 }
                 }
             }],
             "joint_bind_linear_summary": { "classification": "consistent_uniform", "joint_count": 1, "available_joint_count": 1, "unavailable_joint_count": 0, "consistent_uniform_scale": 1.0 },
@@ -1412,6 +1413,7 @@ fn measurement_contract_rejects_inconsistent_skeleton_source_evidence() {
         &|assets| {
             assets.skeleton_nodes[0].rest_world_linear.classification =
                 LinearTransformClassification::UniformScaled;
+            assets.skeleton_nodes[0].rest_world_linear.rotation_xyzw = None;
         },
         "skeleton_nodes[0].rest_world_linear",
         "rest_world_linear must be derived from rest_world_matrix",

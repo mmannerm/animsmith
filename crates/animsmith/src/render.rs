@@ -20,7 +20,7 @@ use animsmith_core::{
     DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, Document,
     EnginePredictionFacetStateV1, EnginePredictionFacetV3, EnginePredictionFacetV4,
     EvaluationScope, EvaluationState, Finding, LintFileReport, LintFileReportV16,
-    LintFileReportV18, MeasureFileReport, PredictionUnavailableReasonV2,
+    LintFileReportV19, MeasureFileReport, PredictionUnavailableReasonV2,
     RawGltfAddressabilityCoverageReasonV1, RawGltfAddressabilityCoverageV1,
     RawGltfDefaultSceneObservationV1, ResolvedRoles, SelectionState, Severity, SourceFormatV1,
 };
@@ -1419,8 +1419,12 @@ fn render_linear_facts(linear: &LinearTransformMeasurements) -> String {
                 .uniform_scale
                 .map(|scale| format!(", uniform={}", render_linear_number(scale)))
                 .unwrap_or_default();
+            let rotation = linear
+                .rotation_xyzw
+                .map(|[x, y, z, w]| format!(", rotation_xyzw=({x:.6}, {y:.6}, {z:.6}, {w:.6})"))
+                .unwrap_or_default();
             format!(
-                "{class} axes=({}, {}, {}) det={} orientation={orientation}{uniform}",
+                "{class} axes=({}, {}, {}) det={} orientation={orientation}{rotation}{uniform}",
                 render_linear_number(axes[0]),
                 render_linear_number(axes[1]),
                 render_linear_number(axes[2]),
@@ -2338,7 +2342,7 @@ impl LintReportView for LintFileReportV16 {
     }
 }
 
-impl LintReportView for LintFileReportV18 {
+impl LintReportView for LintFileReportV19 {
     fn path(&self) -> &str {
         self.path()
     }
