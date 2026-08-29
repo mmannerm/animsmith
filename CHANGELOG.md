@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/mmannerm/animsmith/compare/v0.7.0...v0.8.0) - 2026-08-29
+
 ### Fixed
 
+- *(report)* bind evaluations to current collection output
 - preserve finite per-bone loop-continuity evidence when another bone is non-finite
 
 ### Changed
