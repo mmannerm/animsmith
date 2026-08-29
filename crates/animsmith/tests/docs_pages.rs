@@ -642,10 +642,7 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
     );
 }
 
-#[test]
-fn release_eligibility_outputs_the_workflow_available_value_for_each_tag() {
-    const ELIGIBILITY_HELPER: &str =
-        include_str!("../../../scripts/check-pages-release-eligibility.sh");
+fn release_eligibility_fixture() -> tempfile::TempDir {
     let temp = tempfile::tempdir().expect("creates release eligibility fixture");
     let repository = temp.path().join("releases");
     std::fs::create_dir(&repository).expect("creates fixture repository");
@@ -673,6 +670,52 @@ fn release_eligibility_outputs_the_workflow_available_value_for_each_tag() {
         &["commit", "--quiet", "-m", "Pages foundation"],
     );
     git(&repository, &["tag", "vpages"]);
+
+    temp
+}
+
+fn release_tag_has_pages_pin(repository: &Path, tag: &str) -> bool {
+    Command::new("git")
+        .args([
+            "-C",
+            repository.to_str().expect("fixture path is UTF-8"),
+            "cat-file",
+            "-e",
+            &format!("{tag}:.mdbook-version"),
+        ])
+        .output()
+        .expect("queries tag Pages eligibility")
+        .status
+        .success()
+}
+
+#[test]
+fn release_eligibility_policy_and_workflow_invocation_are_cross_platform() {
+    let temp = release_eligibility_fixture();
+    let repository = temp.path().join("releases");
+    assert!(!release_tag_has_pages_pin(&repository, "vlegacy"));
+    assert!(release_tag_has_pages_pin(&repository, "vpages"));
+
+    let workflow = std::fs::read_to_string(repo_root().join(".github/workflows/docs-pages.yml"))
+        .expect("reads Pages workflow");
+    assert!(
+        workflow.contains(
+            "eligibility=\"$(bash scripts/check-pages-release-eligibility.sh \"$tag\")\""
+        ) && workflow.contains("echo \"$eligibility\" >> \"$GITHUB_OUTPUT\"")
+            && workflow.contains("runs-on: ubuntu-latest"),
+        "the Ubuntu Pages workflow consumes the checked-in eligibility helper"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_pages_runtime_executes_the_exact_eligibility_helper() {
+    const ELIGIBILITY_HELPER: &str =
+        include_str!("../../../scripts/check-pages-release-eligibility.sh");
+    // Pages runs on Ubuntu. Windows CI pins the same policy above with Git
+    // object queries and the workflow invocation contract, not a Bash lookup.
+    let temp = release_eligibility_fixture();
+    let repository = temp.path().join("releases");
 
     let eligibility = |tag: &str| {
         let output = Command::new("bash")
