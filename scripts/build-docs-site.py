@@ -157,7 +157,11 @@ def write_book_files(stage: Path, rows: list[tuple[str, str, str]], site_url: st
         # Table destinations are relative to docs/README.md; SUMMARY.md lives
         # at the staged repository root, so retain the canonical destination's
         # meaning while changing only its presentation location.
-        if urlsplit(destination).scheme:
+        # A drive-prefixed path is not a URL scheme.  Route it through the
+        # canonical local-path guard so every host refuses it consistently.
+        if len(destination) >= 2 and destination[0].isalpha() and destination[1] == ":":
+            destination = local_summary_destination(destination)
+        elif urlsplit(destination).scheme:
             destination = external_proxy(source, label, destination, proxies)
         elif not destination.startswith("#"):
             destination = local_summary_destination(destination)

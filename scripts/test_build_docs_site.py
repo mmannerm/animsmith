@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -117,6 +118,33 @@ class ExternalProxyContractTests(unittest.TestCase):
                     self.assertTrue(source.joinpath("docs/README.md").is_file())
             self.assertFalse((source / "stage").exists(), "inside-source stage was never created")
 
+    @unittest.skipIf(os.name == "nt", "Windows symlink creation requires host-specific privileges")
+    def test_staging_refuses_tracked_symlinks_without_replacing_a_prior_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            stage = root / "published"
+            self.fixture_source(source, "Guide", "guide.md")
+            link = source / "docs/linked-root.md"
+            link.symlink_to(source / "README.md")
+            subprocess.run(["git", "-C", str(source), "add", str(link.relative_to(source))], check=True)
+            stage.mkdir()
+            sentinel = stage / "previous-publication.txt"
+            sentinel.write_text("keep\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(BUILDER), "--source", str(source), "--stage", str(stage)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            self.assertIn("refusing symbolic link in Pages source", result.stderr)
+            self.assertTrue(link.is_symlink(), "refusal never deletes the canonical symlink")
+            self.assertTrue(sentinel.is_file(), "refusal preserves the prior publication")
+            self.assertFalse((stage / "src").exists(), "refusal publishes no partial tree")
+
     def test_label_controls_are_rejected_before_markdown_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(ValueError, "control or non-printable"):
@@ -140,6 +168,46 @@ class ExternalProxyContractTests(unittest.TestCase):
             r"\book.toml",
             "canonical index destination must be a relative URL path",
         )
+        self.assert_rejected_without_publication(
+            "drive",
+            r"C:\book.toml",
+            "canonical index destination must be a relative URL path",
+        )
+
+    def test_external_proxy_accepts_exact_documented_byte_boundaries(self) -> None:
+        label = "l" * BUILD_DOCS_SITE.MAX_LABEL_BYTES
+        prefix = "https://example.test/"
+        destination = prefix + "u" * (BUILD_DOCS_SITE.MAX_EXTERNAL_URL_BYTES - len(prefix.encode("utf-8")))
+        self.assertEqual(len(label.encode("utf-8")), BUILD_DOCS_SITE.MAX_LABEL_BYTES)
+        self.assertEqual(len(destination.encode("utf-8")), BUILD_DOCS_SITE.MAX_EXTERNAL_URL_BYTES)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            stage = root / "stage"
+            self.fixture_source(source, label, destination)
+            result = subprocess.run(
+                [sys.executable, str(BUILDER), "--source", str(source), "--stage", str(stage)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            proxy = next((stage / "src/_generated/external").glob("*.md"))
+            self.assertIn(f"](<{destination}>)", proxy.read_text(encoding="utf-8"))
+
+    def test_docs_serve_uses_the_same_external_stage_without_starting_a_server(self) -> None:
+        result = subprocess.run(
+            ["just", "--dry-run", "docs-serve"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stage = f"{ROOT}-docs-site"
+        rendered = result.stdout + result.stderr
+        self.assertIn(f'python3 scripts/build-docs-site.py --stage "{stage}"', rendered)
+        self.assertIn(f'cd "{stage}" && mdbook serve -d book', rendered)
 
     def test_safe_brackets_and_backslash_are_escaped_without_changing_the_url(self) -> None:
         label = r"safe [ ] and \ label"

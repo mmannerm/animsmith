@@ -173,8 +173,8 @@ locally before using the Pages commands:
 $ cargo install mdbook --version "$(tr -d '[:space:]' < .mdbook-version)" --locked
 ```
 
-`just docs-check` stages tracked repository files outside the checkout (under
-`/tmp/animsmith-docs-site` by default), generates mdBook navigation from the
+`just docs-check` stages tracked repository files outside the checkout (in a
+deterministic sibling directory named after the checkout by default), generates mdBook navigation from the
 category column in `docs/README.md`, builds it, and parser-validates the staged
 Markdown destinations. `just docs-serve` stages the same source and serves it
 locally. Set `ANIMSMITH_DOCS_STAGE` to choose another external staging

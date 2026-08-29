@@ -1,7 +1,9 @@
 # Task runner for animsmith. `just gates` green locally == PR CI green.
 
 worktree_root := parent_directory(justfile_directory()) / "animsmith-worktrees"
-docs_stage := env_var_or_default("ANIMSMITH_DOCS_STAGE", "/tmp/animsmith-docs-site")
+# Keep generated documentation beside, never inside, this checkout.  This is
+# portable and avoids sharing a mutable staging directory between worktrees.
+docs_stage := env_var_or_default("ANIMSMITH_DOCS_STAGE", justfile_directory() + "-docs-site")
 
 # Install local Rust build tools used by this workspace. `RUSTC_WRAPPER=`
 # is intentional: this bootstraps sccache even when the user's Cargo
