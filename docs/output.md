@@ -378,8 +378,12 @@ Measurement evidence is nested and independently versioned as
 [`measurements-v18.schema.json`](schemas/measurements-v18.schema.json). Version
 18 adds `rotation_xyzw` to every `LinearTransformMeasurements` surface exactly
 when its `classification` is `unit_orthonormal`. It is the canonical XYZW
-quaternion for the reported linear matrix: extraction uses all matrix branches
-near half turns, and the largest absolute component (XYZW tie order) is always
+quaternion for the linear matrix's proper-orthogonal polar factor (the nearest
+proper rotation): the classifier deliberately admits small scale and shear
+residuals, which a quaternion does not encode. Exact rotations therefore
+recompose directly; tolerance-admitted residuals retain their matrix evidence
+alongside this orientation fact. Extraction uses all matrix branches near half
+turns, and the largest absolute component (XYZW tie order) is always
 non-negative, so equivalent `q` and `-q` rotations compare identically.
 The field is absent for uniform-scaled, non-uniform, sheared, reflected,
 singular, and non-finite transforms. Version 17 adds explicit availability to
@@ -1215,8 +1219,9 @@ v11 renamed it so adapters cannot accidentally erase the coordinate domain.
 matrix. `rest_world_translation_m` repeats indices 12, 13, and 14 of that
 matrix as a directly consumable world-domain translation. `rest_world_linear`
 describes its upper-left 3x3 matrix with X/Y/Z column lengths, determinant,
-orientation sign, an optional canonical `rotation_xyzw` for a proper unit
-rotation, an optional common orthogonal `uniform_scale`, and one stable
+orientation sign, an optional canonical `rotation_xyzw` for the proper
+orthogonal polar factor of a unit-classified linear matrix, an optional common
+orthogonal `uniform_scale`, and one stable
 classification: `unit_orthonormal`, `uniform_scaled`, `non_uniform`,
 `sheared`, `reflected`, `singular`, or `non_finite`. After singularity,
 reflection takes classification precedence over shear and scale shape; axis

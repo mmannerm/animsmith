@@ -20,7 +20,7 @@ use crate::model::{
 use crate::profile::{ResolvedRoles, Role};
 use crate::sample::PoseGrid;
 use crate::transform::analyze_duplicate_loop_endpoint;
-use glam::{Mat3, Mat4, Vec3};
+use glam::{DMat3, Mat3, Mat4, Vec3};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
@@ -385,8 +385,8 @@ pub struct LinearTransformMeasurements {
     /// classification.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orientation: Option<LinearTransformOrientation>,
-    /// Canonical XYZW rotation of the linear part, present exactly for a
-    /// right-handed unit-orthonormal transform.
+    /// Canonical XYZW proper-orthogonal polar rotation of the linear part,
+    /// present exactly for a right-handed unit-orthonormal transform.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation_xyzw: Option<[f32; 4]>,
     /// Common orthogonal axis length when one is well-defined.
@@ -1227,20 +1227,36 @@ pub fn measure_linear_transform(matrix: Mat4) -> LinearTransformMeasurements {
     }
 }
 
-/// Extract and sign-canonicalize the rotation represented by a classified
-/// unit-orthonormal matrix. The four-branch extraction avoids the trace-only
+/// Extract and sign-canonicalize the proper orthogonal polar factor of a
+/// classified unit-orthonormal matrix. Classification deliberately admits
+/// small scale and shear residuals, which no quaternion can encode; its polar
+/// factor is the unique nearest proper rotation for these positive,
+/// nonsingular inputs. The four-branch extraction avoids trace-only
 /// cancellation at and near half turns. The largest-absolute-component rule
 /// picks one total representation from the equivalent `q`/`-q` pair.
 fn canonical_rotation_xyzw(matrix: Mat3) -> [f32; 4] {
-    let m00 = f64::from(matrix.x_axis.x);
-    let m01 = f64::from(matrix.y_axis.x);
-    let m02 = f64::from(matrix.z_axis.x);
-    let m10 = f64::from(matrix.x_axis.y);
-    let m11 = f64::from(matrix.y_axis.y);
-    let m12 = f64::from(matrix.z_axis.y);
-    let m20 = f64::from(matrix.x_axis.z);
-    let m21 = f64::from(matrix.y_axis.z);
-    let m22 = f64::from(matrix.z_axis.z);
+    // A classified unit transform is finite, nonsingular, and positive. The
+    // fixed widened iteration is therefore deterministic and rapidly
+    // converges to its proper orthogonal polar factor without f32 rounding
+    // changing a branch near a half turn.
+    let mut polar = DMat3::from_cols(
+        matrix.x_axis.as_dvec3(),
+        matrix.y_axis.as_dvec3(),
+        matrix.z_axis.as_dvec3(),
+    );
+    for _ in 0..4 {
+        polar = (polar + polar.inverse().transpose()) * 0.5;
+    }
+
+    let m00 = polar.x_axis.x;
+    let m01 = polar.y_axis.x;
+    let m02 = polar.z_axis.x;
+    let m10 = polar.x_axis.y;
+    let m11 = polar.y_axis.y;
+    let m12 = polar.z_axis.y;
+    let m20 = polar.x_axis.z;
+    let m21 = polar.y_axis.z;
+    let m22 = polar.z_axis.z;
     let trace = m00 + m11 + m22;
 
     let mut quaternion = if trace > 0.0 {
@@ -3297,43 +3313,53 @@ mod tests {
             );
         }
 
-        // The classifier deliberately admits a small amount of scale and
-        // orthogonality error. Its advertised tolerance must also bound the
-        // rotation-only recomposition that the new field represents.
-        let tolerance_admitted = Mat4::from_cols_array(&[
-            1.0 + 4.0e-6,
-            0.0,
-            0.0,
-            0.0,
-            4.0e-6,
-            1.0 - 4.0e-6,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-        ]);
+        // Unit classification is deliberately tolerant, so it also admits
+        // non-rotations. A quaternion cannot reproduce their scale or shear;
+        // it must report the unique proper orthogonal polar factor instead.
+        // This diagonal is inside the classifier's existing unit boundary but
+        // differs from every rotation by more than its raw 1e-5 parameter.
+        let diagonal_boundary = Mat3::from_diagonal(Vec3::new(1.000_019, 1.000_004_5, 1.000_004_5));
+        let diagonal_admitted = measure_linear_transform(Mat4::from_mat3(diagonal_boundary));
+        assert_eq!(
+            diagonal_admitted.classification,
+            LinearTransformClassification::UnitOrthonormal
+        );
+        assert!(diagonal_boundary.x_axis.x - 1.0 > LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE as f32);
+        assert_eq!(
+            diagonal_admitted.rotation_xyzw,
+            Some([0.0, 0.0, 0.0, 1.0]),
+            "the polar factor of a positive diagonal matrix is identity"
+        );
+
+        // For A = R*S with a symmetric positive-definite S, polar(A) is R.
+        // This matrix keeps every scale and dot residual in the existing unit
+        // classifier band while exercising a non-diagonal shear residual.
+        let known_rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.4, -1.1, 2.2);
+        let symmetric_positive_definite = Mat3::from_cols(
+            Vec3::new(1.000_006, 3.0e-6, 0.0),
+            Vec3::new(3.0e-6, 0.999_996, -2.0e-6),
+            Vec3::new(0.0, -2.0e-6, 1.000_002),
+        );
+        let tolerance_admitted =
+            Mat4::from_mat3(Mat3::from_quat(known_rotation) * symmetric_positive_definite);
         let admitted = measure_linear_transform(tolerance_admitted);
         assert_eq!(
             admitted.classification,
             LinearTransformClassification::UnitOrthonormal
         );
         let recomposed = Mat3::from_quat(Quat::from_array(
-            admitted.rotation_xyzw.expect("tolerance-admitted rotation"),
+            admitted
+                .rotation_xyzw
+                .expect("tolerance-admitted polar rotation"),
         ));
-        for (expected, actual) in Mat3::from_mat4(tolerance_admitted)
+        for (expected, actual) in Mat3::from_quat(known_rotation)
             .to_cols_array()
             .into_iter()
             .zip(recomposed.to_cols_array())
         {
             assert!(
                 (expected - actual).abs() <= LINEAR_CLASSIFICATION_RELATIVE_TOLERANCE as f32,
-                "tolerance-admitted recomposition {actual} differs from {expected}"
+                "polar rotation {actual} differs from known factor {expected}"
             );
         }
 
