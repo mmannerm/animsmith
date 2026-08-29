@@ -142,10 +142,16 @@ Include every profile in the captured profile-set version.
 |---|---|---|---|---|
 | {{ISSUE}} | {{CAPTURED_COMMAND}} | {{RESULT}} | {{POSTCONDITION_EVIDENCE}} | {{GAP}} |
 
-For an explicit rig-role map, retain the default unresolved-role result beside
-the configured result, identify the covered skeleton variant, and record the
-configuration digest. Configuration can close evaluator coverage without
-changing or repairing the delivered animation bytes.
+For any explicit evaluator or project configuration that materially increases
+coverage, retain the untouched result beside the configured result. Record a
+portable/scrubbed configuration locator (never an absolute/private path) and
+digest, exact covered assets/clips and skeleton subset, the post-configuration
+result, and any newly runnable checks or contracts. Configuration can close evaluator coverage
+without changing or repairing delivered animation bytes, and does not prove
+artistic correctness, engine acceptance, or applicability beyond that subset.
+An explicit rig-role map is the concrete example; automatic or case-insensitive
+aliases must detect ambiguity and refuse rather than select among multiple
+bones.
 
 For gait anchoring, explicitly state whether any root translation or yaw
 accumulates. AnimSmith versions that cyclically resample every channel must not

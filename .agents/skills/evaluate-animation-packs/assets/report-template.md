@@ -25,10 +25,20 @@ State separately:
 - what still needs engine, artist/vendor, or future-tool work;
 - the largest confidence boundary.
 
-If explicit rig-role configuration changes measurement coverage, state the
-untouched result and the config-backed result separately. Do not describe a
-role map as a repaired source asset, and limit the configured conclusion to
-the skeleton variants actually covered by that map.
+If any explicit evaluator or project configuration materially increases
+evaluation coverage, state the untouched result and the config-backed result
+separately, including measured, linted, or otherwise validated results as
+applicable, and summarize the outcome with a required link to the appendix's
+configuration evidence. The appendix is authoritative for the portable/scrubbed
+configuration locator, digest, exact covered assets, clips, skeleton variants,
+post-configuration result, and newly runnable checks or contracts; never put an
+absolute or private path in the primary report. Do not
+describe configuration as source-asset repair or generalize beyond the
+measured subset; it does not prove artistic correctness, engine acceptance,
+or semantic applicability. For example, a rig-role map may close an evaluator
+coverage gap for only the skeleton variants it names; automatic or
+case-insensitive aliases remain acceptable only when ambiguity is detected and
+handled fail-closed.
 
 Write this section and every ordinary report section as the current evaluation
 against the declared current evaluator. Do not narrate earlier tool behavior,

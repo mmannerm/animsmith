@@ -313,14 +313,21 @@ the current version. Derive declarations from the selected validation profiles,
 but never turn a profile's likely needs into invented pack facts or tolerances.
 Run lint again and preserve the config and digest.
 
-When the untouched baseline cannot resolve rig roles but delivered bone names
-and a documented target convention support an explicit role map, preserve both
-results: the out-of-the-box coverage gap and the config-backed pass. Treat the
-map as repeatable evaluation/project configuration, not a source-asset repair.
-Record the config path and digest, and do not generalize success to skeleton
-variants that the map did not cover. A future automatic alias or
-case-insensitive match is only a tooling candidate if it detects ambiguity and
-refuses rather than choosing between multiple bones.
+When any explicit evaluator or project declaration materially increases
+evaluation coverage, preserve both results: the untouched coverage result and
+the config-backed pass. Record a portable/scrubbed configuration locator (never
+an absolute/private path) and digest, the exact assets, clips, and skeleton
+variants covered, and the post-configuration result.
+Treat declarations as repeatable evaluation/project configuration, not a
+source-asset repair, and do not generalize the configured conclusion beyond
+that measured subset. This includes required-bone, rig-role, gait-group,
+sync-group, loop, duration, frame-grid, and in-place/root-motion contracts
+when they change which checks can run. A rig-role map remains the concrete
+example: a future automatic alias or case-insensitive match is only a tooling
+candidate if it detects ambiguity and refuses rather than choosing between
+multiple bones. Configuration does not establish artistic correctness,
+engine acceptance, or semantic applicability that was not independently
+tested.
 
 Organize conclusions using the version-matched readiness ladder, not one flat
 pass/fail score:
