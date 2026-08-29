@@ -15,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILDER = ROOT / "scripts/build-docs-site.py"
+COMPOSER = ROOT / "scripts/compose-pages-site.py"
 SPEC = importlib.util.spec_from_file_location("build_docs_site", BUILDER)
 assert SPEC and SPEC.loader
 BUILD_DOCS_SITE = importlib.util.module_from_spec(SPEC)
@@ -211,6 +212,90 @@ class ExternalProxyContractTests(unittest.TestCase):
         rendered = result.stdout + result.stderr
         self.assertIn(f'python3 scripts/build-docs-site.py --stage "{stage}"', rendered)
         self.assertIn(f'cd "{stage}" && mdbook serve -d book', rendered)
+
+    def test_composer_refuses_path_aliases_before_builder_or_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            release_source = root / "release-source"
+            main_source = root / "main-source"
+            release_stage = root / "release-stage"
+            development_stage = root / "development-stage"
+            output = root / "output"
+            builder = root / "fixture-builder.py"
+            invoked = root / "builder-invoked"
+            builder.write_text(
+                "from pathlib import Path\n"
+                f"Path({str(invoked)!r}).write_text('invoked\\n', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+
+            cases = [
+                ("source-alias", release_source, release_source / "nested-main", release_stage, development_stage, output,
+                 "release-source", "main-source"),
+                ("release-stage-main-source", release_source, main_source, main_source, development_stage, output,
+                 "release-stage", "main-source"),
+                ("output-release-source", release_source, main_source, release_stage, development_stage, release_source,
+                 "release-source", "output"),
+                ("output-release-stage", release_source, main_source, release_stage, development_stage, release_stage,
+                 "release-stage", "output"),
+                ("equal-stages", release_source, main_source, release_stage, release_stage, output,
+                 "release-stage", "development-stage"),
+                ("ancestor-descendant-stages", release_source, main_source, root / "stages", root / "stages/development", output,
+                 "release-stage", "development-stage"),
+            ]
+            for name, release, main, release_build, development_build, published, first_role, second_role in cases:
+                with self.subTest(name=name):
+                    paths = {
+                        "release-source": release,
+                        "main-source": main,
+                        "release-stage": release_build,
+                        "development-stage": development_build,
+                        "output": published,
+                    }
+                    sentinels = {}
+                    for role, path in paths.items():
+                        path.mkdir(parents=True, exist_ok=True)
+                        sentinel = path / f"{name}-{role}.sentinel"
+                        sentinel.write_text(f"{role}\n", encoding="utf-8")
+                        sentinels[sentinel] = sentinel.read_text(encoding="utf-8")
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(COMPOSER),
+                            "--builder",
+                            str(builder),
+                            "--release-source",
+                            str(release),
+                            "--main-source",
+                            str(main),
+                            "--release-stage",
+                            str(release_build),
+                            "--development-stage",
+                            str(development_build),
+                            "--output",
+                            str(published),
+                            "--release-tag",
+                            "v-fixture",
+                            "--release-mdbook",
+                            str(root / "release-mdbook"),
+                            "--development-mdbook",
+                            str(root / "development-mdbook"),
+                        ],
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("Pages composition path conflict", result.stderr)
+                    self.assertIn(first_role, result.stderr)
+                    self.assertIn(second_role, result.stderr)
+                    self.assertFalse(invoked.exists(), "path preflight runs before invoking the builder")
+                    for sentinel, expected in sentinels.items():
+                        self.assertEqual(
+                            sentinel.read_text(encoding="utf-8"),
+                            expected,
+                            "path preflight preserves source and destination sentinels",
+                        )
 
     def test_safe_brackets_and_backslash_are_escaped_without_changing_the_url(self) -> None:
         label = r"safe [ ] and \ label"
