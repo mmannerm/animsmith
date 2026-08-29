@@ -644,7 +644,8 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
 
 #[test]
 fn release_eligibility_outputs_the_workflow_available_value_for_each_tag() {
-    let root = repo_root();
+    const ELIGIBILITY_HELPER: &str =
+        include_str!("../../../scripts/check-pages-release-eligibility.sh");
     let temp = tempfile::tempdir().expect("creates release eligibility fixture");
     let repository = temp.path().join("releases");
     std::fs::create_dir(&repository).expect("creates fixture repository");
@@ -672,22 +673,23 @@ fn release_eligibility_outputs_the_workflow_available_value_for_each_tag() {
         &["commit", "--quiet", "-m", "Pages foundation"],
     );
     git(&repository, &["tag", "vpages"]);
-    std::fs::copy(
-        root.join("scripts/check-pages-release-eligibility.sh"),
-        repository.join("check-pages-release-eligibility.sh"),
-    )
-    .expect("copies untracked eligibility helper into fixture checkout");
 
     let eligibility = |tag: &str| {
         let output = Command::new("bash")
-            .arg("./check-pages-release-eligibility.sh")
-            .arg(tag)
+            .args([
+                "-c",
+                ELIGIBILITY_HELPER,
+                "check-pages-release-eligibility.sh",
+                tag,
+            ])
             .current_dir(&repository)
             .output()
             .expect("runs release eligibility helper");
         assert!(
             output.status.success(),
-            "eligibility helper exits successfully: {}",
+            "eligibility helper for {tag:?} exits successfully; status={:?}, stdout={:?}, stderr={:?}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
         String::from_utf8(output.stdout).expect("eligibility output is UTF-8")
