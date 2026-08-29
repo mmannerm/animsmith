@@ -196,9 +196,12 @@ class ExternalProxyContractTests(unittest.TestCase):
             self.assertIn(f"](<{destination}>)", proxy.read_text(encoding="utf-8"))
 
     def test_docs_serve_uses_the_same_external_stage_without_starting_a_server(self) -> None:
+        environment = os.environ.copy()
+        environment.pop("ANIMSMITH_DOCS_STAGE", None)
         result = subprocess.run(
             ["just", "--dry-run", "docs-serve"],
             cwd=ROOT,
+            env=environment,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
