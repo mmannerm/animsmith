@@ -113,7 +113,8 @@ release-packaging:
 
 # Behavioral and published-report checks for the reusable animation-pack skill.
 animation-pack-skill:
-    PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/evaluate-animation-packs/scripts/test_validators.py
+    cargo build -p animsmith --bin animsmith
+    ANIMSMITH_TEST_BINARY=target/debug/animsmith PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/evaluate-animation-packs/scripts/test_validators.py
 
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package

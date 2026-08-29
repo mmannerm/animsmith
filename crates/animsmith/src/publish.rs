@@ -129,6 +129,14 @@ pub(crate) fn emit_required_json(bytes: &[u8]) -> Result<(), String> {
     emit_required_json_to(&mut std::io::stdout().lock(), bytes)
 }
 
+/// Write one exact internal text response and flush it before reporting success.
+///
+/// Validation-only handshakes use this checked boundary because their caller
+/// must distinguish a fully delivered token from a broken or partial stream.
+pub(crate) fn emit_required_text(bytes: &[u8]) -> Result<(), String> {
+    emit_required_text_to(&mut std::io::stdout().lock(), bytes)
+}
+
 /// Write one already-rendered human-readable result to stdout, diagnosing a
 /// write failure on stderr without changing the command's outcome.
 ///
@@ -242,6 +250,12 @@ fn emit_required_json_to(sink: &mut impl std::io::Write, bytes: &[u8]) -> Result
     emit_to(sink, bytes)?;
     sink.flush()
         .map_err(|error| format!("cannot write JSON output to stdout: {error}"))
+}
+
+fn emit_required_text_to(sink: &mut impl std::io::Write, bytes: &[u8]) -> Result<(), String> {
+    emit_text_to(sink, bytes)?;
+    sink.flush()
+        .map_err(|error| format!("cannot write text output to stdout: {error}"))
 }
 
 /// Checked human-readable stdout write, split out so failure paths are unit
@@ -905,6 +919,13 @@ mod tests {
         assert!(
             single.starts_with("cannot write text output to stdout"),
             "{single}"
+        );
+
+        let required = emit_required_text_to(&mut BrokenPipe, b"handshake\n")
+            .expect_err("a closed required text stream must be diagnosed");
+        assert!(
+            required.starts_with("cannot write text output to stdout"),
+            "{required}"
         );
 
         let lines = emit_text_lines_to(&mut BrokenPipe, ["first".to_owned(), "second".to_owned()])

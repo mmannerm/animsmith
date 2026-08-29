@@ -1008,6 +1008,21 @@ pub(crate) fn read_collection_output(
     Ok(output)
 }
 
+/// Strictly read only the current V10 collection-output revision.
+pub(crate) fn read_current_collection_output(
+    reader: impl Read,
+) -> Result<CollectionOutputInput, CollectionOutputError> {
+    let output = read_collection_output(reader)?;
+    if output.wire.schema != COLLECTION_OUTPUT_V10_ID
+        || output.wire.schema_version != COLLECTION_OUTPUT_V10_SCHEMA_VERSION
+    {
+        return Err(CollectionOutputError::Contradictory(
+            "validation requires current collection-output V10",
+        ));
+    }
+    Ok(output)
+}
+
 pub(crate) struct CollectionOutputInput {
     wire: CollectionOutputWire,
 }
@@ -2955,6 +2970,16 @@ mod tests {
         assert!(read_collection_output(&bytes[..]).is_err());
     }
 
+    #[test]
+    fn evaluation_v2_complete_fixture_passes_the_authoritative_v10_reader() {
+        let bytes = include_bytes!(
+            "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v10-complete.json"
+        );
+        let decoded = read_current_collection_output(&bytes[..]).expect("strict V10 fixture");
+        assert_eq!(decoded.source_count(), 2);
+        assert_eq!(decoded.clip_count(), 2);
+    }
+
     fn historicalize_measurements_v16(value: &mut JsonValue) {
         for source in value["sources"].as_array_mut().unwrap() {
             if let Some(measurements) = source
@@ -3068,6 +3093,7 @@ mod tests {
         historicalize_measurements_v16(&mut historical_v9);
         let historical_v9_bytes = stable_json_bytes(historical_v9.clone());
         assert!(read_collection_output(&historical_v9_bytes[..]).is_ok());
+        assert!(read_current_collection_output(&historical_v9_bytes[..]).is_err());
 
         historical_v9["sources"][0]["result"]["envelope"]["schema_version"] =
             OUTPUT_SCHEMA_VERSION.into();

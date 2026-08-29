@@ -26,7 +26,9 @@ import inventory_pack
 import validate_evaluation_manifest as manifest_validator
 import validate_report as report_validator
 import evaluation_model_v1 as model_contract
+import evaluation_model_v2 as model_contract_v2
 import validate_evaluation_model as model_validator
+import validate_evaluation_model_v2 as model_validator_v2
 import render_evaluation_model as model_renderer
 
 
@@ -3748,9 +3750,663 @@ def valid_evaluation_model() -> dict[str, object]:
     }
 
 
-class EvaluationModelV1Tests(unittest.TestCase):
+def valid_collection_output_v10() -> dict[str, object]:
+    """Producer-emitted complete V10/output18/measurements17 fixture."""
+    fixture = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "collection-output-v10-complete.json"
+    )
+    return json.loads(fixture.read_bytes())
+
+
+def valid_incomplete_collection_output_v10() -> tuple[dict[str, object], bytes]:
+    """Strict-valid soft-failure V10 fixture with exact raw byte accounting."""
+    binding = copy.deepcopy(valid_collection_output_projection())
+    binding["schema"] = model_contract_v2.COLLECTION_OUTPUT_SCHEMA
+    binding["schema_version"] = 10
+    aliases = {
+        "fixture:idle-ip": "fixture/idle-ip",
+        "fixture:walk-rm": "fixture/walk-rm",
+        "fixture:paired": "fixture/paired",
+    }
+    for clip in binding["clips"]:  # type: ignore[index]
+        clip["id"] = aliases[clip["id"]]
+    for runtime_set in binding["runtime_sets"]:  # type: ignore[index]
+        runtime_set["id"] = aliases[runtime_set["id"]]
+        for member in runtime_set["members"]:
+            member["id"] = aliases[member["id"]]
+        runtime_set["gaps"] = [member["id"] for member in runtime_set["members"]]
+    binding["sources"][0]["dependency_closure"] = {  # type: ignore[index]
+        "state": "unavailable",
+        "reasons": ["source_declarations_unavailable", "capture_unavailable"],
+    }
+    for _iteration in range(16):
+        raw = model_contract_v2.canonical_json(binding)
+        if binding["work"]["serialized_bytes"] == len(raw):  # type: ignore[index]
+            return binding, raw
+        binding["work"]["serialized_bytes"] = len(raw)  # type: ignore[index]
+    raise AssertionError("collection-output serialized byte count did not converge")
+
+
+def valid_partial_collection_output_v10() -> tuple[dict[str, object], bytes]:
+    """Strict-valid V10 with readable sources but partial dependency closure."""
+    binding = valid_collection_output_v10()
+    for source in binding["sources"]:  # type: ignore[index]
+        source["dependency_closure"] = {
+            "state": "partial",
+            "reasons": ["unavailable_resource"],
+        }
+    for clip in binding["clips"]:  # type: ignore[index]
+        clip["binding"] = {
+            "state": "unavailable",
+            "reason": "dependency_closure_incomplete",
+        }
+    for runtime_set in binding["runtime_sets"]:  # type: ignore[index]
+        runtime_set["lifecycle"] = "incomplete"
+        runtime_set["gaps"] = [member["id"] for member in runtime_set["members"]]
+        for member in runtime_set["members"]:
+            member["resolution"] = {
+                "state": "unavailable",
+                "reason": "dependency_closure_incomplete",
+            }
+            member["root_travel"] = {
+                "translation_availability": "unavailable",
+                "speed_mps_availability": "unavailable",
+            }
+        runtime_set["evidence"]["root_travel"] = {  # type: ignore[index]
+            "lifecycle": "incomplete",
+            "members_measured": 0,
+        }
+    binding["summary"].update({  # type: ignore[union-attr]
+        "established_sources": 0,
+        "established_clips": 0,
+        "complete_runtime_sets": 0,
+        "incomplete": True,
+    })
+    for _iteration in range(16):
+        raw = model_contract_v2.canonical_json(binding)
+        if binding["work"]["serialized_bytes"] == len(raw):  # type: ignore[index]
+            return binding, raw
+        binding["work"]["serialized_bytes"] = len(raw)  # type: ignore[index]
+    raise AssertionError("partial collection-output byte count did not converge")
+
+
+def valid_evaluation_model_v2(
+    binding: dict[str, object] | None = None,
+    binding_bytes: bytes | None = None,
+) -> dict[str, object]:
+    """Current V2 model whose facts exactly match complete or unavailable V10."""
+    binding = binding or valid_collection_output_v10()
+    binding_bytes = binding_bytes or model_contract_v2.canonical_json(binding)
+    model = copy.deepcopy(valid_evaluation_model())
+    model["schema"] = model_contract_v2.SCHEMA
+    model["schema_version"] = model_contract_v2.SCHEMA_VERSION
+    clip_templates = model["clips"]  # type: ignore[index]
+    model["clips"] = []
+    for index, clip in enumerate(binding["clips"]):  # type: ignore[index]
+        record = copy.deepcopy(clip_templates[min(index, len(clip_templates) - 1)])
+        record.update({
+            "id": clip["id"], "source": clip["source"],
+            "take_index": clip["take_index"], "take_name": clip["take_name"],
+        })
+        state = clip["binding"]
+        if state["state"] == "established":
+            measurements = state["measurements"]
+            record["duration_s"] = {"state": "available", "value": measurements["duration_s"]}
+            speed_availability = measurements["speed_mps_availability"]
+            record["root_motion_speed_mps"] = (
+                {"state": "available", "value": measurements["speed_mps"]}
+                if speed_availability == "measured"
+                else {
+                    "unavailable": {"state": "unavailable"},
+                    "not_applicable": {"state": "not-applicable"},
+                }[speed_availability]
+            )
+        else:
+            record.update({
+                "duration_s": {"state": "unavailable"},
+                "root_motion_speed_mps": {"state": "unavailable"},
+                "assessment": "not-evaluated", "coverage": "unavailable-evidence",
+            })
+        model["clips"].append(record)  # type: ignore[index]
+    model["runtime_sets"] = [
+        {
+            "id": runtime_set["id"], "kind": runtime_set["kind"],
+            "members": [
+                {
+                    "clip_id": member["id"],
+                    "eligibility": "complete" if member["resolution"]["state"] == "established" else "incomplete",
+                }
+                for member in runtime_set["members"]
+            ],
+            "assessment": "not-evaluated",
+            "coverage": "not-evaluated" if runtime_set["lifecycle"] == "complete" else "unavailable-evidence",
+            "evidence_refs": ["evidence-a"],
+        }
+        for runtime_set in binding["runtime_sets"]  # type: ignore[index]
+    ]
+    model["narratives"][0]["fact_refs"] = ["evidence-a"]  # type: ignore[index]
+    manifest = binding["manifest"]  # type: ignore[index]
+    model["binding"] = {
+        "collection_id": manifest["collection_id"],
+        "manifest_sha256": manifest["input"]["sha256"],
+        "manifest_bytes": manifest["input"]["bytes"],
+        "collection_output_sha256": hashlib.sha256(binding_bytes).hexdigest(),
+        "collection_output_bytes": len(binding_bytes),
+        "sources": [
+            {
+                "key": source["key"],
+                "input": copy.deepcopy(source["input"]),
+                "digest": copy.deepcopy(source["digest"]),
+                "config": {
+                    "state": source["config"]["state"],
+                    **(
+                        {"input": copy.deepcopy(source["config"]["input"])}
+                        if "input" in source["config"] else {}
+                    ),
+                },
+                "loader": copy.deepcopy(source["loader"]),
+                "dependency_closure": copy.deepcopy(source["dependency_closure"]),
+                "take_inventory": source["take_inventory"],
+                "result": {
+                    "state": source["result"]["state"],
+                    **(
+                        {"reason": source["result"]["reason"]}
+                        if "reason" in source["result"] else {}
+                    ),
+                },
+            }
+            for source in binding["sources"]  # type: ignore[index]
+        ],
+    }
+    return model
+
+
+class EvaluationModelTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        configured = os.environ.get("ANIMSMITH_TEST_BINARY")
+        if configured is None:
+            raise AssertionError(
+                "ANIMSMITH_TEST_BINARY must identify the checkout-matched binary"
+            )
+        cls.animsmith = Path(configured).resolve(strict=True)
+
+    def assert_authoritative_accepts(self, raw: bytes) -> None:
+        model_validator_v2.validate_with_animsmith(self.animsmith, raw)
+
+    def assert_authoritative_rejects(self, raw: bytes) -> None:
+        with self.assertRaisesRegex(ValueError, "rejected collection-output V10"):
+            model_validator_v2.validate_with_animsmith(self.animsmith, raw)
+
     def test_synthetic_fixture_covers_pair_refusal_unknown_and_artist_work(self) -> None:
         self.assertEqual(model_validator.validate_model(valid_evaluation_model(), valid_collection_output_projection()), [])
+
+    def valid(self) -> tuple[dict[str, object], dict[str, object], bytes]:
+        fixture = (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "collection-output-v10-complete.json"
+        )
+        raw = fixture.read_bytes()
+        binding = json.loads(raw)
+        model = valid_evaluation_model_v2(binding, raw)
+        model = json.loads(model_contract_v2.canonical_json(model))
+        return model, binding, raw
+
+    def synchronized(
+        self, binding: dict[str, object]
+    ) -> tuple[dict[str, object], dict[str, object], bytes]:
+        """Rebind model identity/projections after one raw semantic mutation."""
+        for _iteration in range(16):
+            raw = model_contract_v2.canonical_json(binding)
+            if binding["work"]["serialized_bytes"] == len(raw):  # type: ignore[index]
+                return valid_evaluation_model_v2(binding, raw), binding, raw
+            binding["work"]["serialized_bytes"] = len(raw)  # type: ignore[index]
+        raise AssertionError("mutated collection-output byte count did not converge")
+
+    def test_current_model_binds_exact_v10_and_keeps_v1_frozen(self) -> None:
+        model, binding, raw = self.valid()
+        self.assert_authoritative_accepts(raw)
+        self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
+        self.assertTrue(model_validator.validate_model(model, binding))
+        self.assertTrue(
+            model_validator_v2.validate_model(
+                valid_evaluation_model(), valid_collection_output_projection(),
+                model_contract.canonical_json(valid_collection_output_projection()),
+            )
+        )
+
+    def test_synchronized_v10_source_sequence_work_and_closure_mutations_fail_closed(self) -> None:
+        for label, mutate in (
+            (
+                "serialized-bytes",
+                lambda value: value["work"].update(serialized_bytes=1),
+            ),
+            (
+                "aggregate-exhausted-inspected-byte",
+                lambda value: value["sources"][0].update(
+                    input={"state": "unavailable", "reason": "aggregate_exhausted", "inspected_bytes": 1}
+                ),
+            ),
+            (
+                "complete-closure-on-missing-source",
+                lambda value: value["sources"][0].update(
+                    dependency_closure={"state": "complete", "identity": {"sha256": "d" * 64, "bytes": 19}}
+                ),
+            ),
+            (
+                "reversed-closure-reasons",
+                lambda value: value["sources"][0]["dependency_closure"]["reasons"].reverse(),
+            ),
+        ):
+            with self.subTest(label=label):
+                binding, _prior = valid_incomplete_collection_output_v10()
+                mutate(binding)
+                if label == "serialized-bytes":
+                    raw = model_contract_v2.canonical_json(binding)
+                    model = valid_evaluation_model_v2(binding, raw)
+                else:
+                    model, binding, raw = self.synchronized(binding)
+                self.assert_authoritative_rejects(raw)
+
+    def test_synchronized_clip_source_take_and_set_membership_mutations_fail_closed(self) -> None:
+        for label, mutate in (
+            ("source", lambda value: value["clips"][0].update(source="b")),
+            ("take-index", lambda value: value["clips"][0].update(take_index=1)),
+            ("take-name", lambda value: value["clips"][0].update(take_name="Changed take")),
+            (
+                "set-membership",
+                lambda value: value["runtime_sets"][0]["members"][0].update(
+                    id=value["runtime_sets"][0]["members"][1]["id"]
+                ),
+            ),
+        ):
+            with self.subTest(label=label):
+                _model, binding, _raw = self.valid()
+                mutate(binding)
+                model, binding, raw = self.synchronized(binding)
+                self.assert_authoritative_rejects(raw)
+
+    def test_v2_runtime_member_order_is_exact_even_when_membership_is_unchanged(self) -> None:
+        model, binding, raw = self.valid()
+        model["runtime_sets"][0]["members"].reverse()  # type: ignore[index]
+        errors = model_validator_v2.validate_model(model, binding, raw)
+        self.assertTrue(any("member order" in error for error in errors), errors)
+
+    def test_slash_logical_ids_reach_narratives_and_collection_constituents(self) -> None:
+        model, binding, raw = self.valid()
+        clip_ids = [clip["id"] for clip in binding["clips"]]  # type: ignore[index]
+        set_ids = [runtime_set["id"] for runtime_set in binding["runtime_sets"]]  # type: ignore[index]
+        model["narratives"][0]["fact_refs"] = sorted(["evidence-a", clip_ids[0], set_ids[0]])  # type: ignore[index]
+        model["collection"]["constituents"] = [{  # type: ignore[index]
+            "id": "synthetic",
+            "model_sha256": "b" * 64,
+            "clip_ids": clip_ids,
+            "source_file_count": len(binding["sources"]),  # type: ignore[arg-type]
+            "runtime_set_ids": set_ids,
+        }]
+        self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
+
+        unknown = copy.deepcopy(model)
+        unknown["narratives"][0]["fact_refs"] = ["unknown/clip"]  # type: ignore[index]
+        unknown["collection"]["constituents"][0]["clip_ids"] = ["unknown/clip"]  # type: ignore[index]
+        errors = model_validator_v2.validate_model(unknown, binding, raw)
+        self.assertTrue(errors)
+        self.assertTrue(any("unknown/clip" in error for error in errors), errors)
+
+    def test_partial_dependency_closure_is_authoritative_typed_soft_fail_evidence(self) -> None:
+        binding, raw = valid_partial_collection_output_v10()
+        model = valid_evaluation_model_v2(binding, raw)
+        self.assert_authoritative_accepts(raw)
+        self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
+        self.assertTrue(
+            all(
+                source["dependency_closure"] == {
+                    "state": "partial",
+                    "reasons": ["unavailable_resource"],
+                }
+                for source in model["binding"]["sources"]  # type: ignore[index]
+            )
+        )
+        self.assertTrue(
+            all(
+                clip["coverage"] == "unavailable-evidence"
+                for clip in model["clips"]  # type: ignore[index]
+            )
+        )
+
+    def test_wrong_schema_and_stale_exact_bytes_are_rejected(self) -> None:
+        model, binding, raw = self.valid()
+        wrong = copy.deepcopy(binding)
+        wrong["schema"] = "urn:animsmith:schema:collection-output:9"
+        wrong_model, wrong, wrong_raw = self.synchronized(wrong)
+        self.assert_authoritative_rejects(wrong_raw)
+        self.assertTrue(model_validator_v2.validate_model(wrong_model, wrong, wrong_raw))
+        self.assertTrue(
+            any(
+                "exact collection-output:10" in error
+                for error in model_validator_v2.validate_model(model, binding, raw + b" ")
+            )
+        )
+
+    def test_offline_registry_is_exactly_v10_output18_measurements17(self) -> None:
+        self.assertEqual(
+            tuple(document["$id"] for document in model_validator_v2._DOCUMENTS),
+            (
+                model_contract_v2.SCHEMA,
+                model_contract.SCHEMA,
+                model_contract_v2.COLLECTION_OUTPUT_SCHEMA,
+                "urn:animsmith:schema:output:10",
+                model_contract_v2.OUTPUT_SCHEMA,
+                model_contract_v2.MEASUREMENTS_SCHEMA,
+            ),
+        )
+
+    def test_incomplete_rows_are_mandatory_typed_soft_failures(self) -> None:
+        for label, mutate, needle in (
+            ("clip-omission", lambda model: model["clips"].pop(), "every V10 clip row"),
+            ("set-omission", lambda model: model["runtime_sets"].clear(), "every V10 runtime-set row"),
+            (
+                "clip-promotion",
+                lambda model: model["clips"][0].update(assessment="pass", coverage="evaluated-clean"),
+                "typed soft failure",
+            ),
+            (
+                "member-promotion",
+                lambda model: model["runtime_sets"][0]["members"][0].update(eligibility="complete"),
+                "cannot be complete",
+            ),
+        ):
+            with self.subTest(label=label):
+                binding, raw = valid_incomplete_collection_output_v10()
+                model = valid_evaluation_model_v2(binding, raw)
+                mutate(model)
+                errors = model_validator_v2.validate_model(model, binding, raw)
+                self.assertTrue(any(needle in error for error in errors), errors)
+
+    def test_measurement_availability_categories_are_exact_not_collapsed(self) -> None:
+        model, binding, raw = self.valid()
+        self.assert_authoritative_accepts(raw)
+        self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
+        self.assertEqual(model["clips"][0]["duration_s"], {"state": "available", "value": 1.0})
+        self.assertEqual(model["clips"][0]["root_motion_speed_mps"], {"state": "available", "value": 1.0})
+        model["clips"][0]["root_motion_speed_mps"] = {"state": "not-applicable"}
+        self.assertTrue(any("exact V10 value and availability" in error for error in model_validator_v2.validate_model(model, binding, raw)))
+
+        unavailable_binding, unavailable_raw = valid_incomplete_collection_output_v10()
+        self.assert_authoritative_accepts(unavailable_raw)
+        unavailable = valid_evaluation_model_v2(unavailable_binding, unavailable_raw)
+        for field in ("duration_s", "root_motion_speed_mps"):
+            swapped = copy.deepcopy(unavailable)
+            swapped["clips"][0][field] = {"state": "not-applicable"}
+            self.assertTrue(any("preserve unavailable" in error for error in model_validator_v2.validate_model(swapped, unavailable_binding, unavailable_raw)))
+
+        _model, not_applicable_binding, _raw = self.valid()
+        for clip in not_applicable_binding["clips"]:
+            measurements = clip["binding"]["measurements"]
+            measurements["root_trajectory_availability"] = "not_applicable"
+            measurements.pop("root_trajectory")
+            measurements["speed_mps_availability"] = "not_applicable"
+            measurements.pop("speed_mps")
+            reference = clip["binding"]["check_reference"]["reference"]
+            nested = next(source for source in not_applicable_binding["sources"] if source["key"] == clip["source"])["result"]["envelope"]["files"][0]["measurements"]["clips"][reference["measurement_key"]]
+            nested["root_trajectory_availability"] = "not_applicable"
+            nested.pop("root_trajectory")
+            nested["speed_mps_availability"] = "not_applicable"
+            nested.pop("speed_mps")
+        for member in not_applicable_binding["runtime_sets"][0]["members"]:
+            member["root_travel"]["translation_availability"] = "not_applicable"
+            member["root_travel"].pop("horizontal_displacement_x_m")
+            member["root_travel"].pop("horizontal_displacement_z_m")
+            member["root_travel"].pop("horizontal_travel_m")
+            member["root_travel"]["speed_mps_availability"] = "not_applicable"
+            member["root_travel"].pop("speed_mps")
+        not_applicable_binding["runtime_sets"][0]["evidence"]["root_travel"] = {
+            "lifecycle": "incomplete",
+            "members_measured": 0,
+        }
+        not_applicable, not_applicable_binding, not_applicable_raw = self.synchronized(not_applicable_binding)
+        self.assert_authoritative_accepts(not_applicable_raw)
+        self.assertEqual(model_validator_v2.validate_model(not_applicable, not_applicable_binding, not_applicable_raw), [])
+        swapped = copy.deepcopy(not_applicable)
+        swapped["clips"][0]["root_motion_speed_mps"] = {"state": "unavailable"}
+        self.assertTrue(any("exact V10 value and availability" in error for error in model_validator_v2.validate_model(swapped, not_applicable_binding, not_applicable_raw)))
+
+    def test_v2_renderer_proves_current_identity_and_typed_source_evidence(self) -> None:
+        binding, raw = valid_incomplete_collection_output_v10()
+        model = valid_evaluation_model_v2(binding, raw)
+        views = model_renderer.render_views(
+            model, binding, report_name="fixture.md",
+            appendix_name="fixture-evidence.md", binding_bytes=raw,
+        )
+        self.assertEqual(
+            model_renderer.validate_views(
+                model, binding, views, report_name="fixture.md",
+                appendix_name="fixture-evidence.md", binding_bytes=raw,
+            ),
+            [],
+        )
+        self.assertIn(model_contract_v2.SCHEMA, views.appendix)
+        self.assertIn(hashlib.sha256(raw).hexdigest(), views.appendix)
+        self.assertIn("source_declarations_unavailable", views.appendix)
+        stale = model_renderer.RenderedViews(
+            views.report,
+            views.appendix.replace("source_declarations_unavailable", "capture_unavailable", 1),
+        )
+        self.assertTrue(
+            model_renderer.validate_views(
+                model, binding, stale, report_name="fixture.md",
+                appendix_name="fixture-evidence.md", binding_bytes=raw,
+            )
+        )
+
+    def test_v2_cli_requires_authoritative_nested_numeric_and_text_readback(self) -> None:
+        cases: list[tuple[str, dict[str, object], bytes]] = []
+        for name, mutate in (
+            (
+                "nested-summary",
+                lambda value: value["sources"][0]["result"]["envelope"]["summary"]["prediction_facets"].update(available=1),
+            ),
+            (
+                "unicode-control",
+                lambda value: value["sources"][0].update(locator="safe/\u0085.glb"),
+            ),
+            (
+                "utf8-byte-limit",
+                lambda value: value["sources"][0].update(locator="é" * 2051),
+            ),
+        ):
+            _model, binding, _raw = self.valid()
+            mutate(binding)
+            model, binding, raw = self.synchronized(binding)
+            cases.append((name, model, raw))
+
+        _model, numeric_binding, _raw = self.valid()
+        for _iteration in range(16):
+            finite = model_contract_v2.canonical_json(numeric_binding)
+            overflow = finite.replace(b'"duration_s":1', b'"duration_s":1e999', 1)
+            self.assertNotEqual(finite, overflow)
+            if numeric_binding["work"]["serialized_bytes"] == len(overflow):  # type: ignore[index]
+                break
+            numeric_binding["work"]["serialized_bytes"] = len(overflow)  # type: ignore[index]
+        else:
+            raise AssertionError("overflow byte count did not converge")
+        cases.append(
+            (
+                "numeric-overflow",
+                valid_evaluation_model_v2(numeric_binding, overflow),
+                overflow,
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for name, model, raw in cases:
+                model_path = directory / f"{name}-model.json"
+                binding_path = directory / f"{name}-binding.json"
+                model_path.write_bytes(model_contract_v2.canonical_json(model))
+                binding_path.write_bytes(raw)
+                result = subprocess.run(
+                    [
+                        str(Path(__file__).with_name("validate_evaluation_model_v2.py")),
+                        str(model_path), "--binding", str(binding_path),
+                        "--animsmith", str(self.animsmith),
+                    ],
+                    check=False, text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, 2, f"{name}: {result.stderr}")
+                self.assertIn("selected AnimSmith binary rejected", result.stderr)
+
+            valid_model, _binding, valid_raw = self.valid()
+            model_path = directory / "missing-binary-model.json"
+            binding_path = directory / "missing-binary-binding.json"
+            model_path.write_bytes(model_contract_v2.canonical_json(valid_model))
+            binding_path.write_bytes(valid_raw)
+            missing = subprocess.run(
+                [
+                    str(Path(__file__).with_name("validate_evaluation_model_v2.py")),
+                    str(model_path), "--binding", str(binding_path),
+                    "--animsmith", str(directory / "missing-animsmith"),
+                ],
+                check=False, text=True, capture_output=True,
+            )
+            self.assertEqual(missing.returncode, 2, missing.stderr)
+            self.assertIn("selected AnimSmith binary is unavailable", missing.stderr)
+
+    def test_v2_authority_reuses_one_buffer_after_path_substitution(self) -> None:
+        _model, expected_binding, expected_raw = self.valid()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            binding_path = directory / "binding.json"
+            binding_path.write_bytes(expected_raw)
+            authoritative = model_validator_v2.validate_with_animsmith
+
+            def swap_after_read(animsmith: Path, raw: bytes) -> None:
+                self.assertEqual(raw, expected_raw)
+                binding_path.write_bytes(b'{"substituted":true}')
+                authoritative(animsmith, raw)
+
+            with mock.patch.object(
+                model_validator_v2,
+                "validate_with_animsmith",
+                side_effect=swap_after_read,
+            ):
+                binding, raw = model_validator_v2.load_authoritative_collection_output(
+                    self.animsmith, binding_path
+                )
+            self.assertEqual(raw, expected_raw)
+            self.assertEqual(binding, expected_binding)
+            self.assertNotEqual(binding_path.read_bytes(), expected_raw)
+
+    def test_v2_authority_rejects_symlinks_and_special_files(self) -> None:
+        _model, _binding, expected_raw = self.valid()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            target = directory / "target.json"
+            target.write_bytes(expected_raw)
+            link = directory / "binding-link.json"
+            try:
+                link.symlink_to(target)
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+            with self.assertRaisesRegex(ValueError, "must be a regular file"):
+                model_validator_v2.load_authoritative_collection_output(
+                    self.animsmith, link
+                )
+
+            fifo = directory / "binding.fifo"
+            if hasattr(os, "mkfifo"):
+                try:
+                    os.mkfifo(fifo)
+                except OSError:
+                    pass
+                else:
+                    with self.assertRaisesRegex(ValueError, "must be a regular file"):
+                        model_validator_v2.load_authoritative_collection_output(
+                            self.animsmith, fifo
+                        )
+
+    @unittest.skipIf(os.name == "nt", "executable-script fixtures require POSIX")
+    def test_v2_authority_requires_exact_internal_handshake(self) -> None:
+        _model, _binding, raw = self.valid()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for name, program in (
+                ("exit-zero", "#!/usr/bin/env python3\n"),
+                (
+                    "wrong-handshake",
+                    "#!/usr/bin/env python3\nprint('not an AnimSmith handshake')\n",
+                ),
+                (
+                    "oversized-output",
+                    "#!/usr/bin/env python3\nprint('x' * 1048576)\n",
+                ),
+            ):
+                with self.subTest(name=name):
+                    fake = directory / name
+                    fake.write_text(program, encoding="utf-8")
+                    fake.chmod(0o755)
+                    with self.assertRaisesRegex(ValueError, "exact internal.*handshake"):
+                        model_validator_v2.validate_with_animsmith(fake, raw)
+
+    def test_v2_validator_and_renderer_cli_select_only_the_explicit_v2_urn(self) -> None:
+        model, binding, raw = self.valid()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            model_path = directory / "model.json"
+            binding_path = directory / "binding.json"
+            report_path = directory / "fixture.md"
+            appendix_path = directory / "fixture-evidence.md"
+            model_path.write_bytes(model_contract_v2.canonical_json(model))
+            binding_path.write_bytes(raw)
+            validator = subprocess.run(
+                [
+                    str(Path(__file__).with_name("validate_evaluation_model_v2.py")),
+                    str(model_path), "--binding", str(binding_path),
+                    "--animsmith", str(self.animsmith), "--check-canonical",
+                ],
+                check=False, text=True, capture_output=True,
+            )
+            self.assertEqual(validator.returncode, 0, validator.stderr)
+            views = model_renderer.render_views(
+                model, binding, report_name=report_path.name,
+                appendix_name=appendix_path.name, binding_bytes=raw,
+            )
+            report_path.write_text(views.report, encoding="utf-8")
+            appendix_path.write_text(views.appendix, encoding="utf-8")
+            missing_authority = subprocess.run(
+                [
+                    str(Path(__file__).with_name("render_evaluation_model.py")),
+                    str(model_path), "--binding", str(binding_path),
+                    "--report", str(report_path), "--appendix", str(appendix_path),
+                    "--check",
+                ],
+                check=False, text=True, capture_output=True,
+            )
+            self.assertEqual(missing_authority.returncode, 2, missing_authority.stderr)
+            self.assertIn("requires --animsmith PATH", missing_authority.stderr)
+            renderer = subprocess.run(
+                [
+                    str(Path(__file__).with_name("render_evaluation_model.py")),
+                    str(model_path), "--binding", str(binding_path),
+                    "--animsmith", str(self.animsmith),
+                    "--report", str(report_path), "--appendix", str(appendix_path),
+                    "--check",
+                ],
+                check=False, text=True, capture_output=True,
+            )
+            self.assertEqual(renderer.returncode, 0, renderer.stderr)
+            report_check = subprocess.run(
+                [
+                    str(Path(__file__).with_name("validate_report.py")),
+                    str(report_path), "--appendix", str(appendix_path),
+                    "--evaluation-model-v2", "--report-format", "2",
+                ],
+                check=False, text=True, capture_output=True,
+            )
+            self.assertEqual(report_check.returncode, 0, report_check.stderr)
 
     def test_fixed_renderer_is_deterministic_ast_valid_and_model_bound(self) -> None:
         model, binding = valid_evaluation_model(), valid_collection_output_projection()

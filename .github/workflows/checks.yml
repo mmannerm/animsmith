@@ -58,8 +58,10 @@ jobs:
           python-version: "3.x"
       - name: Install animation-pack validator dependency
         run: python -m pip install --disable-pip-version-check "PyYAML>=6,<7" "jsonschema>=4.18,<5"
+      - name: Build checkout-matched AnimSmith validator
+        run: cargo build -p animsmith --bin animsmith
       - name: Validate animation-pack skill and published reports
-        run: PYTHONDONTWRITEBYTECODE=1 python .agents/skills/evaluate-animation-packs/scripts/test_validators.py
+        run: ANIMSMITH_TEST_BINARY=target/debug/animsmith PYTHONDONTWRITEBYTECODE=1 python .agents/skills/evaluate-animation-packs/scripts/test_validators.py
 
   msrv:
     name: MSRV

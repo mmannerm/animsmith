@@ -221,6 +221,52 @@ check_schema docs/schemas/collection-output-v7.schema.json urn:animsmith:schema:
 check_schema docs/schemas/collection-output-v8.schema.json urn:animsmith:schema:collection-output:8 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-output-v9.schema.json urn:animsmith:schema:collection-output:9 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-output-v10.schema.json urn:animsmith:schema:collection-output:10 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
+check_schema .agents/skills/evaluate-animation-packs/schemas/evaluation-model-v2.schema.json urn:animsmith:skill:animation-pack-evaluation:2 .agents/skills/evaluate-animation-packs/SKILL.md .agents/skills/evaluate-animation-packs/references/evaluation-model-v2.md .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py
+
+# A producer advance must fail this exact consumer inventory until the skill,
+# scripts, adapter routing, docs, fixtures, and blocked-ticket wording have all
+# been audited for the new current identity.
+collection_output_current="$(sed -n 's/^pub(crate) const COLLECTION_OUTPUT_V[0-9]*_ID: &str = "\(urn:animsmith:schema:collection-output:[0-9]*\)";/\1/p' crates/animsmith/src/collection_output.rs | tail -1)"
+test -n "$collection_output_current" || fail 'could not discover current collection-output producer identity'
+collection_output_version="${collection_output_current##*:}"
+for file in \
+  .agents/skills/evaluate-animation-packs/SKILL.md \
+  .agents/skills/evaluate-animation-packs/references/evaluation-model-v2.md \
+  .agents/skills/evaluate-animation-packs/references/schema-impact-audit.md \
+  DESIGN.md; do
+  grep -Fq "collection-output:$collection_output_version" "$file" \
+    || fail "collection-output schema-impact audit is stale in $file"
+done
+grep -Fq "$collection_output_current" .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
+  || fail 'current evaluation-model contract is stale against the producer identity'
+grep -Fq 'urn:animsmith:schema:output:18' .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
+  || fail 'current evaluation-model contract is stale against output:18'
+grep -Fq 'urn:animsmith:schema:measurements:17' .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
+  || fail 'current evaluation-model contract is stale against measurements:17'
+grep -Fq 'evaluation_model_v2' .agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
+  || fail 'renderer is not discovered through the current evaluation-model contract'
+grep -Fq 'evaluation_model_v2 as contract' .agents/skills/evaluate-animation-packs/scripts/validate_evaluation_model_v2.py \
+  || fail 'current evaluator validator is not pinned through the current model contract'
+grep -Fq '../../../.agents/skills/evaluate-animation-packs/SKILL.md' .claude/skills/evaluate-animation-packs/SKILL.md \
+  || fail 'Claude discovery adapter no longer routes to the audited canonical skill'
+grep -Fq '#574' .agents/skills/evaluate-animation-packs/references/schema-impact-audit.md \
+  || fail 'schema-impact audit no longer covers the blocked report-migration ticket'
+grep -Fq 'test_synchronized_v10_source_sequence_work_and_closure_mutations_fail_closed' .agents/skills/evaluate-animation-packs/scripts/test_validators.py \
+  || fail 'schema-impact audit lost its synchronized current-binding mutation fixture'
+grep -Fq 'evaluation_v2_complete_fixture_passes_the_authoritative_v10_reader' crates/animsmith/src/collection_output.rs \
+  || fail 'authoritative V10 reader no longer proves the complete evaluation fixture'
+grep -Fq 'ValidateOutput' crates/animsmith/src/main.rs \
+  || fail 'authoritative collection-output validation entry point is missing'
+grep -Fq 'read_current_collection_output(stdin.lock())' crates/animsmith/src/main.rs \
+  || fail 'collection-output validation entry point no longer invokes the strict reader'
+grep -Fq 'load_authoritative_collection_output(' .agents/skills/evaluate-animation-packs/scripts/validate_evaluation_model_v2.py \
+  || fail 'V2 validator no longer centralizes one authoritative input buffer'
+grep -Fq 'binding, binding_bytes = load_authoritative_collection_output(' .agents/skills/evaluate-animation-packs/scripts/validate_evaluation_model_v2.py \
+  || fail 'V2 validator no longer requires the selected AnimSmith binary'
+grep -Fq 'model_validator_v2.load_authoritative_collection_output(animsmith, path)' .agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
+  || fail 'V2 renderer no longer requires authoritative collection-output readback'
+grep -Fq 'stdout_size != len(_VALIDATION_HANDSHAKE)' .agents/skills/evaluate-animation-packs/scripts/validate_evaluation_model_v2.py \
+  || fail 'V2 validator no longer requires the exact Rust V10 handshake'
 jq -e '
   any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:output:12")
   and any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:measurements:15#/$defs/clip_measurements")
