@@ -238,9 +238,10 @@ fn walkdir(root: &Path) -> Vec<PathBuf> {
     paths
 }
 
-fn write_book_fixture(root: &Path, marker: &str) {
+fn write_book_fixture(root: &Path, marker: &str, mdbook_pin: &str) {
     std::fs::create_dir_all(root.join("docs")).expect("creates fixture docs directory");
-    std::fs::write(root.join(".mdbook-version"), "0.4.52\n").expect("writes mdBook pin");
+    std::fs::write(root.join(".mdbook-version"), format!("{mdbook_pin}\n"))
+        .expect("writes mdBook pin");
     std::fs::write(root.join("README.md"), format!("# {marker}\n")).expect("writes root page");
     std::fs::write(
         root.join("docs/README.md"),
@@ -302,11 +303,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--source", type=Path, required=True)
 parser.add_argument("--stage", type=Path, required=True)
 parser.add_argument("--site-url")
+parser.add_argument("--mdbook", type=Path, required=True)
 parser.add_argument("--build", action="store_true")
 args = parser.parse_args()
 (args.stage / "book").mkdir(parents=True)
 marker = (args.source / "README.md").read_text(encoding="utf-8")
-(args.stage / "book" / "index.html").write_text(marker, encoding="utf-8")
+pin = (args.source / ".mdbook-version").read_text(encoding="utf-8")
+(args.stage / "book" / "index.html").write_text(
+    f"{marker}mdbook={args.mdbook.name}\npin={pin}", encoding="utf-8"
+)
 "#,
     )
     .expect("writes deterministic fixture builder");
@@ -523,7 +528,7 @@ fn staged_link_validation_refuses_existing_escape_and_keeps_docs_to_root_links()
     std::fs::write(staged.join("README.md"), "# Staged root\n").expect("writes staged root page");
     std::fs::write(
         staged.join("docs/guide.md"),
-        "[root](../README.md) [escape](../../book.toml)\n",
+        "[root](../README.md) [escape](../../book.toml) [rooted](/README.md) [backslash](..\\README.md) [drive](C:/README.md)\n",
     )
     .expect("writes staged containment page");
     std::fs::write(temp.path().join("book.toml"), "outside staged source\n")
@@ -532,16 +537,31 @@ fn staged_link_validation_refuses_existing_escape_and_keeps_docs_to_root_links()
     let errors = validate_staged_links(&staged);
     assert_eq!(
         errors.len(),
-        1,
-        "the legitimate docs-to-root link resolves while the escape fails: {errors:?}"
+        4,
+        "the legitimate docs-to-root link resolves while every non-URL or escaping path fails: {errors:?}"
     );
-    let diagnostic = errors[0].replace('\\', "/");
+    let normalized_errors: Vec<String> = errors
+        .iter()
+        .map(|error| error.replace('\\', "/"))
+        .collect();
     assert!(
-        diagnostic.contains("docs/guide.md")
-            && diagnostic.contains("../../book.toml")
-            && diagnostic.contains("outside staged source"),
-        "existing target outside src is rejected: {errors:?}"
+        normalized_errors
+            .iter()
+            .any(|error| error.contains("docs/guide.md")
+                && error.contains("../../book.toml")
+                && error.contains("outside staged source")),
+        "existing target outside src is rejected: {normalized_errors:?}"
     );
+    for destination in ["/README.md", "..\\README.md", "C:/README.md"] {
+        let normalized_destination = destination.replace('\\', "/");
+        assert!(
+            normalized_errors
+                .iter()
+                .any(|error| error.contains(&normalized_destination)
+                    && error.contains("non-URL local path")),
+            "rooted, backslash, and drive destinations fail closed: {normalized_errors:?}"
+        );
+    }
 }
 
 #[test]
@@ -591,11 +611,13 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
     let temp = tempfile::tempdir().expect("creates composition fixture");
     let release = temp.path().join("release");
     let main = temp.path().join("main");
-    write_book_fixture(&release, "RELEASE ROOT");
-    write_book_fixture(&main, "MAIN DEVELOPMENT");
+    write_book_fixture(&release, "RELEASE ROOT", "0.4.51");
+    write_book_fixture(&main, "MAIN DEVELOPMENT", "0.4.52");
 
     let output = temp.path().join("site");
     let builder = temp.path().join("fixture-builder.py");
+    let release_mdbook = temp.path().join("release-mdbook");
+    let development_mdbook = temp.path().join("development-mdbook");
     write_fixture_builder(&builder);
     assert!(
         Command::new("python3")
@@ -615,6 +637,10 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
                 output.to_str().unwrap(),
                 "--release-tag",
                 "vfixture",
+                "--release-mdbook",
+                release_mdbook.to_str().unwrap(),
+                "--development-mdbook",
+                development_mdbook.to_str().unwrap(),
             ])
             .status()
             .expect("runs Pages composition")
@@ -623,14 +649,14 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
     assert!(
         std::fs::read_to_string(output.join("index.html"))
             .expect("reads release root")
-            .contains("RELEASE ROOT"),
-        "the Pages root comes from the selected release checkout"
+            .contains("RELEASE ROOT\nmdbook=release-mdbook\npin=0.4.51"),
+        "the Pages root uses the selected release checkout and its mdBook pin"
     );
     assert!(
         std::fs::read_to_string(output.join("dev/index.html"))
             .expect("reads development subtree")
-            .contains("MAIN DEVELOPMENT"),
-        "the /dev subtree comes from current main"
+            .contains("MAIN DEVELOPMENT\nmdbook=development-mdbook\npin=0.4.52"),
+        "the /dev subtree uses current main and its independent mdBook pin"
     );
     assert_eq!(
         strict_lines(
@@ -702,8 +728,12 @@ fn release_eligibility_policy_and_workflow_invocation_are_cross_platform() {
         workflow.contains(
             "eligibility=\"$(bash scripts/check-pages-release-eligibility.sh \"$tag\")\""
         ) && workflow.contains("echo \"$eligibility\" >> \"$GITHUB_OUTPUT\"")
+            && workflow.contains("install_mdbook ../animsmith-pages-release \"$RUNNER_TEMP/animsmith-pages-release-mdbook\"")
+            && workflow.contains("install_mdbook . \"$RUNNER_TEMP/animsmith-pages-development-mdbook\"")
+            && workflow.contains("--release-mdbook \"$RUNNER_TEMP/animsmith-pages-release-mdbook/bin/mdbook\"")
+            && workflow.contains("--development-mdbook \"$RUNNER_TEMP/animsmith-pages-development-mdbook/bin/mdbook\"")
             && workflow.contains("runs-on: ubuntu-latest"),
-        "the Ubuntu Pages workflow consumes the checked-in eligibility helper"
+        "the Ubuntu Pages workflow consumes the eligibility helper and routes independent pins to each build"
     );
 }
 

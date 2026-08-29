@@ -75,6 +75,8 @@ class ExternalProxyContractTests(unittest.TestCase):
             ("label", "http://example.test/reference", "must be an https URL", False),
             ("label", "https://example.test/has space", "whitespace or control", False),
             ("label", "https://example.test/?q=>evil", "cannot be rendered exactly", False),
+            ("label", "https://example.test/?q=<evil", "cannot be rendered exactly", False),
+            ("label", "https://example.test/a\\b", "cannot be rendered exactly", False),
             ("x" * 257, "https://example.test/reference", "label exceeds", False),
             ("label", "https://example.test/" + "x" * 2049, "destination exceeds", False),
             ("bad\tlabel", "https://example.test/reference", "control or non-printable", False),
@@ -90,6 +92,30 @@ class ExternalProxyContractTests(unittest.TestCase):
             "category contains control or non-printable",
             category="bad\tcategory",
         )
+
+    def test_staging_refuses_all_source_destination_overlaps_without_mutating_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            container = Path(temporary) / "container"
+            source = container / "source"
+            self.fixture_source(source, "Guide", "guide.md")
+            expected_readme = source.joinpath("README.md").read_text(encoding="utf-8")
+            for stage in [source / "stage", container]:
+                with self.subTest(stage=stage):
+                    result = subprocess.run(
+                        [sys.executable, str(BUILDER), "--source", str(source), "--stage", str(stage)],
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("must not overlap the source checkout", result.stderr)
+                    self.assertEqual(
+                        source.joinpath("README.md").read_text(encoding="utf-8"),
+                        expected_readme,
+                        "overlap refusal leaves the canonical source untouched",
+                    )
+                    self.assertTrue(source.joinpath("docs/README.md").is_file())
+            self.assertFalse((source / "stage").exists(), "inside-source stage was never created")
 
     def test_label_controls_are_rejected_before_markdown_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

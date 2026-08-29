@@ -31,13 +31,15 @@ jobs:
       - name: Install the pinned mdBook
         run: cargo install mdbook --version "$(tr -d '[:space:]' < .mdbook-version)" --locked
       - name: Build and validate the staged book
+        env:
+          ANIMSMITH_DOCS_STAGE: ${{ runner.temp }}/animsmith-docs-site
         run: just docs-check
       - name: Retain pull-request preview artifact
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: pages-preview
-          path: target/docs-site/book
+          path: ${{ runner.temp }}/animsmith-docs-site/book
           if-no-files-found: error
 
   prepare-release-site:
@@ -55,8 +57,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install the pinned mdBook
-        run: cargo install mdbook --version "$(tr -d '[:space:]' < .mdbook-version)" --locked
       - name: Select latest published release
         id: release
         env:
@@ -73,6 +73,19 @@ jobs:
           if [ "$eligibility" = "available=true" ]; then
             git worktree add --detach ../animsmith-pages-release "$tag"
           fi
+      - name: Install release and development mdBook pins
+        if: steps.release.outputs.available == 'true'
+        run: |
+          set -euo pipefail
+          install_mdbook() {
+            local source="$1"
+            local root="$2"
+            local version
+            version="$(tr -d '[:space:]' < "$source/.mdbook-version")"
+            cargo install mdbook --version "$version" --locked --root "$root"
+          }
+          install_mdbook ../animsmith-pages-release "$RUNNER_TEMP/animsmith-pages-release-mdbook"
+          install_mdbook . "$RUNNER_TEMP/animsmith-pages-development-mdbook"
       - name: Build the release root and main development subtree
         if: steps.release.outputs.available == 'true'
         env:
@@ -81,12 +94,15 @@ jobs:
           set -euo pipefail
           python3 scripts/compose-pages-site.py \
             --release-source ../animsmith-pages-release --main-source . \
-            --release-stage site-release --development-stage site-dev \
-            --output site --release-tag "$RELEASE_TAG"
+            --release-stage "$RUNNER_TEMP/animsmith-pages-release-stage" \
+            --development-stage "$RUNNER_TEMP/animsmith-pages-development-stage" \
+            --output "$RUNNER_TEMP/animsmith-pages-site" --release-tag "$RELEASE_TAG" \
+            --release-mdbook "$RUNNER_TEMP/animsmith-pages-release-mdbook/bin/mdbook" \
+            --development-mdbook "$RUNNER_TEMP/animsmith-pages-development-mdbook/bin/mdbook"
       - uses: actions/upload-pages-artifact@v4
         if: steps.release.outputs.available == 'true'
         with:
-          path: site
+          path: ${{ runner.temp }}/animsmith-pages-site
 
   deploy:
     name: deploy Pages

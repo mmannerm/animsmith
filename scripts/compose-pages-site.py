@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-def build(builder: Path, source: Path, stage: Path, site_url: str) -> None:
+def build(builder: Path, source: Path, stage: Path, site_url: str, mdbook: Path) -> None:
     subprocess.run(
         [
             sys.executable,
@@ -21,6 +21,8 @@ def build(builder: Path, source: Path, stage: Path, site_url: str) -> None:
             str(stage),
             "--site-url",
             site_url,
+            "--mdbook",
+            str(mdbook),
             "--build",
         ],
         check=True,
@@ -41,6 +43,8 @@ def compose(
     development_stage: Path,
     output: Path,
     release_tag: str,
+    release_mdbook: Path,
+    development_mdbook: Path,
 ) -> None:
     """Put the selected release at `/` and current main at `/dev/`."""
     release_source = release_source.resolve()
@@ -49,8 +53,8 @@ def compose(
         raise ValueError("release and development sources must be distinct checkouts")
     if not release_tag:
         raise ValueError("release tag is required")
-    build(builder, release_source, release_stage, "/animsmith/")
-    build(builder, main_source, development_stage, "/animsmith/dev/")
+    build(builder, release_source, release_stage, "/animsmith/", release_mdbook)
+    build(builder, main_source, development_stage, "/animsmith/dev/", development_mdbook)
     if output.exists():
         shutil.rmtree(output)
     copy_tree(release_stage / "book", output)
@@ -70,6 +74,8 @@ def main() -> None:
     parser.add_argument("--development-stage", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--release-tag", required=True)
+    parser.add_argument("--release-mdbook", type=Path, required=True)
+    parser.add_argument("--development-mdbook", type=Path, required=True)
     args = parser.parse_args()
     compose(
         args.builder,
@@ -79,6 +85,8 @@ def main() -> None:
         args.development_stage,
         args.output,
         args.release_tag,
+        args.release_mdbook,
+        args.development_mdbook,
     )
 
 

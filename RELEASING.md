@@ -185,9 +185,11 @@ to unreleased work without relabeling it as released documentation.
 
 The workflow source is the default branch; pull requests only retain a rendered
 preview artifact and never deploy. The release root is selected from GitHub's
-latest published release, rather than from an assumed version prefix. If no
-published release exists, do not enable Pages deployment: publish the first
-release first, then run the default-branch workflow.
+latest published release, rather than from an assumed version prefix. Its
+mdBook executable is installed from that selected tag's `.mdbook-version`;
+the `/dev/` subtree separately uses the default branch pin. If no published
+release exists, do not enable Pages deployment: publish the first release
+first, then run the default-branch workflow.
 
 `docs/README.md` is the canonical task index. Its category column generates
 the mdBook navigation during clean staging; do not add a hand-maintained

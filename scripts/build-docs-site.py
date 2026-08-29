@@ -180,8 +180,8 @@ def write_book_files(stage: Path, rows: list[tuple[str, str, str]], site_url: st
 def stage(source: Path, destination: Path, site_url: str) -> None:
     source = source.resolve()
     destination = destination.resolve()
-    if destination == source:
-        raise ValueError("staging directory must not replace the source checkout")
+    if destination.is_relative_to(source) or source.is_relative_to(destination):
+        raise ValueError("staging directory must not overlap the source checkout")
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent))
     try:
@@ -204,9 +204,9 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
             shutil.rmtree(temporary)
 
 
-def required_mdbook(source: Path) -> None:
+def required_mdbook(source: Path, mdbook: str) -> None:
     expected = (source / PIN).read_text(encoding="utf-8").strip()
-    result = subprocess.run(["mdbook", "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run([mdbook, "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode or result.stdout.strip() != f"mdbook v{expected}":
         raise RuntimeError(
             f"mdBook {expected} is required (found {result.stdout.strip() or 'not installed'}); "
@@ -224,9 +224,9 @@ def validate_artifact_paths(book: Path) -> None:
         raise RuntimeError(f"rendered Pages artifact has invalid path characters: {invalid}")
 
 
-def build(source: Path, destination: Path) -> None:
-    required_mdbook(source)
-    subprocess.run(["mdbook", "build", "-d", "book"], cwd=destination, check=True)
+def build(source: Path, destination: Path, mdbook: str) -> None:
+    required_mdbook(source, mdbook)
+    subprocess.run([mdbook, "build", "-d", "book"], cwd=destination, check=True)
     validate_artifact_paths(destination / "book")
 
 
@@ -235,11 +235,12 @@ def main() -> None:
     parser.add_argument("--source", type=Path, default=Path.cwd())
     parser.add_argument("--stage", type=Path, required=True)
     parser.add_argument("--site-url", default="/animsmith/")
+    parser.add_argument("--mdbook", default="mdbook")
     parser.add_argument("--build", action="store_true")
     args = parser.parse_args()
     stage(args.source, args.stage, args.site_url)
     if args.build:
-        build(args.source.resolve(), args.stage.resolve())
+        build(args.source.resolve(), args.stage.resolve(), args.mdbook)
 
 
 if __name__ == "__main__":

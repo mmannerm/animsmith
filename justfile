@@ -1,6 +1,7 @@
 # Task runner for animsmith. `just gates` green locally == PR CI green.
 
 worktree_root := parent_directory(justfile_directory()) / "animsmith-worktrees"
+docs_stage := env_var_or_default("ANIMSMITH_DOCS_STAGE", "/tmp/animsmith-docs-site")
 
 # Install local Rust build tools used by this workspace. `RUSTC_WRAPPER=`
 # is intentional: this bootstraps sccache even when the user's Cargo
@@ -88,18 +89,18 @@ doc:
 
 # Stage canonical tracked Markdown and generate navigation from docs/README.md.
 docs-stage:
-    python3 scripts/build-docs-site.py --stage target/docs-site
+    python3 scripts/build-docs-site.py --stage "{{docs_stage}}"
 
 # Build a clean, parser-validated Pages preview. mdBook must match .mdbook-version.
 docs-check:
-    python3 scripts/build-docs-site.py --stage target/docs-site --build
+    python3 scripts/build-docs-site.py --stage "{{docs_stage}}" --build
     python3 scripts/test_build_docs_site.py
     cargo test -p animsmith --test docs_pages
 
 # Serve the same staged Pages book locally at http://localhost:3000.
 docs-serve:
-    python3 scripts/build-docs-site.py --stage target/docs-site
-    cd target/docs-site && mdbook serve -d book
+    python3 scripts/build-docs-site.py --stage "{{docs_stage}}"
+    cd "{{docs_stage}}" && mdbook serve -d book
 
 schema-id:
     scripts/check-schema-id.sh
