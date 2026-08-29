@@ -164,6 +164,21 @@ patch or minor during pre-dispatch documentation staging; on a generated
 bumped workspace manifest. Historical changelog, bootstrap, and roadmap
 versions are deliberately outside that inventory.
 
+### GitHub Pages preview
+
+The Pages site uses the mdBook version pinned in `.mdbook-version`. Install it
+locally before using the Pages commands:
+
+```console
+$ cargo install mdbook --version "$(tr -d '[:space:]' < .mdbook-version)" --locked
+```
+
+`just docs-check` stages tracked repository files under `target/docs-site`,
+generates mdBook navigation from the category column in `docs/README.md`,
+builds it, and parser-validates the staged Markdown destinations. `just
+docs-serve` stages the same source and serves it locally. Both directories are
+generated and must not be committed.
+
 ## Spell Checking
 
 `just gates` runs [`typos`](https://github.com/crate-ci/typos) over source,

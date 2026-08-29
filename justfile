@@ -86,6 +86,20 @@ doc:
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps
 
+# Stage canonical tracked Markdown and generate navigation from docs/README.md.
+docs-stage:
+    python3 scripts/build-docs-site.py --stage target/docs-site
+
+# Build a clean, parser-validated Pages preview. mdBook must match .mdbook-version.
+docs-check:
+    python3 scripts/build-docs-site.py --stage target/docs-site --build
+    cargo test -p animsmith --test docs_pages
+
+# Serve the same staged Pages book locally at http://localhost:3000.
+docs-serve:
+    python3 scripts/build-docs-site.py --stage target/docs-site
+    cd target/docs-site && mdbook serve -d book
+
 schema-id:
     scripts/check-schema-id.sh
 
@@ -131,6 +145,7 @@ gates: require-cargo-deny require-typos
     cargo deny check
     just schema-id
     just github-community
+    just docs-check
     typos
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps

@@ -1,0 +1,106 @@
+name: Pages documentation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: build Pages preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the pinned mdBook
+        run: cargo install mdbook --version "$(tr -d '[:space:]' < .mdbook-version)" --locked
+      - name: Build and validate the staged book
+        run: just docs-check
+      - name: Retain pull-request preview artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pages-preview
+          path: target/docs-site/book
+          if-no-files-found: error
+
+  prepare-release-site:
+    name: prepare release root and development site
+    if: github.event_name != 'pull_request'
+    needs: preview
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.tag }}
+      release_available: ${{ steps.release.outputs.available }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the pinned mdBook
+        run: cargo install mdbook --version "$(tr -d '[:space:]' < .mdbook-version)" --locked
+      - name: Select latest published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName --jq .tagName)"
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # The first Pages-enabled release is the first tag that carries the
+          # pinned builder and canonical-index generator. Do not manufacture a
+          # root from an older tag while it is still the latest release.
+          if ! git cat-file -e "${tag}:.mdbook-version"; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          git worktree add --detach ../animsmith-pages-release "$tag"
+      - name: Build the release root and main development subtree
+        if: steps.release.outputs.available == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 scripts/build-docs-site.py \
+            --source ../animsmith-pages-release --stage site-release --site-url "/animsmith/" --build
+          python3 scripts/build-docs-site.py --stage site-dev --site-url "/animsmith/dev/" --build
+          mkdir site
+          cp -a site-release/book/. site/
+          mkdir site/dev
+          cp -a site-dev/book/. site/dev/
+          printf 'Release root: %s\nDevelopment subtree: main\n' "$RELEASE_TAG" > site/BUILD-INFO.txt
+      - uses: actions/upload-pages-artifact@v4
+        if: steps.release.outputs.available == 'true'
+        with:
+          path: site
+
+  deploy:
+    name: deploy Pages
+    if: github.event_name != 'pull_request' && needs.prepare-release-site.outputs.release_available == 'true'
+    needs: prepare-release-site
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
