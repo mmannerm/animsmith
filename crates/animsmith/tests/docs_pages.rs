@@ -120,6 +120,46 @@ fn heading_anchors(markdown: &str) -> BTreeSet<String> {
     anchors
 }
 
+fn staged_local_target(staged: &Path, page: &Path, local: &str) -> Result<PathBuf, &'static str> {
+    if (local.starts_with('/') || local.starts_with('\\'))
+        || local.contains('\\')
+        || local
+            .as_bytes()
+            .get(1)
+            .is_some_and(|character| *character == b':')
+            && local.as_bytes()[0].is_ascii_alphabetic()
+    {
+        return Err("rooted or non-URL local path");
+    }
+    let page_relative = page
+        .strip_prefix(staged)
+        .map_err(|_| "page is outside staged source")?;
+    let candidate = if local.is_empty() {
+        page_relative.to_path_buf()
+    } else {
+        page_relative
+            .parent()
+            .ok_or("staged page has no parent")?
+            .join(local)
+    };
+    let mut normalized = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(component) => normalized.push(component),
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err("local path escapes staged source");
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return Err("rooted local path");
+            }
+        }
+    }
+    Ok(staged.join(normalized))
+}
+
 fn validate_staged_links(staged: &Path) -> Vec<String> {
     let mut errors = Vec::new();
     let mut anchors = BTreeMap::new();
@@ -134,10 +174,15 @@ fn validate_staged_links(staged: &Path) -> Vec<String> {
                 .map_or((destination.as_str(), None), |(local, fragment)| {
                     (local, Some(fragment))
                 });
-            let target = if local.is_empty() {
-                page.clone()
-            } else {
-                page.parent().expect("staged page parent").join(local)
+            let target = match staged_local_target(staged, &page, local) {
+                Ok(target) => target,
+                Err(reason) => {
+                    errors.push(format!(
+                        "{} renders a local link outside staged source ({reason}): {destination}",
+                        page.strip_prefix(staged).expect("page is staged").display()
+                    ));
+                    continue;
+                }
             };
             if !target.exists() {
                 errors.push(format!(
@@ -467,6 +512,34 @@ fn staged_anchor_validation_rejects_missing_same_and_cross_page_fragments() {
         errors.len(),
         3,
         "valid slug and duplicate fragments pass: {errors:?}"
+    );
+}
+
+#[test]
+fn staged_link_validation_refuses_existing_escape_and_keeps_docs_to_root_links() {
+    let temp = tempfile::tempdir().expect("creates staged containment fixture");
+    let staged = temp.path().join("src");
+    std::fs::create_dir_all(staged.join("docs")).expect("creates staged docs directory");
+    std::fs::write(staged.join("README.md"), "# Staged root\n").expect("writes staged root page");
+    std::fs::write(
+        staged.join("docs/guide.md"),
+        "[root](../README.md) [escape](../../book.toml)\n",
+    )
+    .expect("writes staged containment page");
+    std::fs::write(temp.path().join("book.toml"), "outside staged source\n")
+        .expect("writes existing outside target");
+
+    let errors = validate_staged_links(&staged);
+    assert_eq!(
+        errors.len(),
+        1,
+        "the legitimate docs-to-root link resolves while the escape fails: {errors:?}"
+    );
+    assert!(
+        errors[0].contains("docs/guide.md")
+            && errors[0].contains("../../book.toml")
+            && errors[0].contains("outside staged source"),
+        "existing target outside src is rejected: {errors:?}"
     );
 }
 

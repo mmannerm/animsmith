@@ -98,6 +98,23 @@ class ExternalProxyContractTests(unittest.TestCase):
                     Path(temporary), "bad\nlabel", "https://example.test/reference", {}
                 )
 
+    def test_canonical_local_destinations_cannot_escape_staged_source(self) -> None:
+        self.assert_rejected_without_publication(
+            "escape",
+            "../../book.toml",
+            "canonical index destination escapes staged source",
+        )
+        self.assert_rejected_without_publication(
+            "rooted",
+            "/book.toml",
+            "canonical index destination must be a relative URL path",
+        )
+        self.assert_rejected_without_publication(
+            "rooted",
+            r"\book.toml",
+            "canonical index destination must be a relative URL path",
+        )
+
     def test_safe_brackets_and_backslash_are_escaped_without_changing_the_url(self) -> None:
         label = r"safe [ ] and \ label"
         destination = "https://example.test/reference?query=exact"

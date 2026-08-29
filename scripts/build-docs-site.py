@@ -123,6 +123,26 @@ def external_proxy(source: Path, label: str, destination: str, proxies: dict[Pat
     return relative.as_posix()
 
 
+def local_summary_destination(destination: str) -> str:
+    """Translate a docs-index path to SUMMARY.md without crossing src/.
+
+    Canonical index rows are relative URL paths from docs/README.md.  Refuse
+    rooted and backslash paths on every host, then normalize lexically so a
+    docs-to-root ../README.md remains valid while ../../ escapes do not.
+    """
+    target, separator, fragment = destination.partition("#")
+    if (
+        target.startswith(("/", "\\"))
+        or "\\" in target
+        or (len(target) >= 2 and target[0].isalpha() and target[1] == ":")
+    ):
+        raise ValueError(f"canonical index destination must be a relative URL path: {destination}")
+    normalized = posixpath.normpath(posixpath.join("docs", target))
+    if normalized == ".." or normalized.startswith("../"):
+        raise ValueError(f"canonical index destination escapes staged source: {destination}")
+    return f"{normalized}#{fragment}" if separator else normalized
+
+
 def write_book_files(stage: Path, rows: list[tuple[str, str, str]], site_url: str) -> None:
     source = stage / "src"
     summary = ["# Summary", "", "- [Documentation](docs/README.md)"]
@@ -140,10 +160,7 @@ def write_book_files(stage: Path, rows: list[tuple[str, str, str]], site_url: st
         if urlsplit(destination).scheme:
             destination = external_proxy(source, label, destination, proxies)
         elif not destination.startswith("#"):
-            target, separator, fragment = destination.partition("#")
-            destination = posixpath.normpath(posixpath.join("docs", target))
-            if separator:
-                destination = f"{destination}#{fragment}"
+            destination = local_summary_destination(destination)
         summary.append(f"- [{markdown_text(label)}]({destination})")
     (source / "SUMMARY.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
     (stage / "book.toml").write_text(
