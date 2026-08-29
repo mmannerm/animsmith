@@ -519,54 +519,55 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
     let index =
         std::fs::read_to_string(root.join("docs/README.md")).expect("reads canonical index");
     let index_rows = canonical_index_category_links(&index);
-    let expected_local: Vec<(String, String)> = index_rows
+    let expected: Vec<(String, String)> = index_rows
         .iter()
-        .filter(|(_, destination)| !destination.contains("://"))
-        .map(|(category, destination)| (category.clone(), summary_destination(destination)))
+        .map(|(category, destination)| {
+            let destination = if destination.contains("://") {
+                destination.clone()
+            } else {
+                summary_destination(destination)
+            };
+            (category.clone(), destination)
+        })
         .collect();
     let generated_rows = summary_category_links(&first_summary);
+    let generated = generated_rows
+        .into_iter()
+        .map(|(category, destination)| {
+            if !destination.starts_with("_generated/external/") {
+                return (category, destination);
+            }
+            assert!(
+                destination.ends_with(".md"),
+                "proxy is a local Markdown page: {destination}"
+            );
+            let proxy_path = first.path().join("src").join(&destination);
+            assert!(
+                proxy_path.is_file(),
+                "external proxy is staged: {destination}"
+            );
+            let proxy_links =
+                links(&std::fs::read_to_string(&proxy_path).expect("reads external proxy"));
+            assert_eq!(proxy_links.len(), 1, "external proxy has one outbound link");
+            (
+                category,
+                proxy_links
+                    .into_iter()
+                    .next()
+                    .expect("proxy link is present"),
+            )
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
-        generated_rows
+        generated, expected,
+        "SUMMARY.md preserves every canonical index row's category and global order, resolving external proxies to their exact destinations"
+    );
+    assert!(
+        expected
             .iter()
-            .filter(|(_, destination)| !destination.starts_with("_generated/external/"))
-            .cloned()
-            .collect::<Vec<_>>(),
-        expected_local,
-        "local index rows retain their category and order in SUMMARY.md"
+            .any(|(_, destination)| destination.contains("://")),
+        "fixture includes an external canonical index row"
     );
-
-    let expected_external: Vec<(String, String)> = index_rows
-        .into_iter()
-        .filter(|(_, destination)| destination.contains("://"))
-        .collect();
-    let generated_external: Vec<(String, String)> = generated_rows
-        .into_iter()
-        .filter(|(_, destination)| destination.starts_with("_generated/external/"))
-        .collect();
-    assert_eq!(
-        generated_external.len(),
-        expected_external.len(),
-        "every external canonical index row has a local navigation proxy"
-    );
-    for ((category, external), (generated_category, proxy)) in
-        expected_external.iter().zip(&generated_external)
-    {
-        assert_eq!(
-            generated_category, category,
-            "external row keeps its category"
-        );
-        assert!(
-            proxy.ends_with(".md"),
-            "proxy is a local Markdown page: {proxy}"
-        );
-        let proxy_path = first.path().join("src").join(proxy);
-        assert!(proxy_path.is_file(), "external proxy is staged: {proxy}");
-        assert_eq!(
-            links(&std::fs::read_to_string(&proxy_path).expect("reads external proxy")),
-            vec![external.clone()],
-            "external proxy preserves the exact destination"
-        );
-    }
     for path in walkdir(&first.path().join("src")) {
         assert!(
             !path
