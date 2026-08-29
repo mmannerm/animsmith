@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import inspect
 import os
 import re
@@ -17,11 +18,14 @@ from typing import Any
 
 import evaluation_contract_v1 as contract
 import evaluation_model_v1 as model_contract
+import evaluation_model_v2 as model_contract_v2
 import validate_evaluation_model as model_validator
+import validate_evaluation_model_v2 as model_validator_v2
 import validate_report as report_validator
 
 
 RENDERER_VERSION = "2"
+RENDERER_VERSION_V2 = "3"
 READINESS_LADDER = "../game-ready-clips.md#the-readiness-ladder"
 
 
@@ -40,6 +44,10 @@ def _text(value: Any) -> str:
         .replace("\\", "\\\\").replace("|", "\\|").replace("[", "\\[")
         .replace("]", "\\]").replace("\r", " ").replace("\n", " ")
     )
+
+
+def _renderer_version(model: dict[str, Any]) -> str:
+    return RENDERER_VERSION_V2 if model.get("schema") == model_contract_v2.SCHEMA else RENDERER_VERSION
 
 
 def _code(value: Any) -> str:
@@ -123,7 +131,7 @@ def _public_clip_binding(value: Any) -> dict[str, Any]:
     return projected
 
 
-def _public_binding_projection(binding: dict[str, Any]) -> dict[str, Any]:
+def _public_binding_projection(binding: dict[str, Any], binding_bytes: bytes | None = None) -> dict[str, Any]:
     """Return the non-recoverable, renderer-safe collection binding witness.
 
     Collection-output bindings can legitimately contain absolute evaluator
@@ -133,37 +141,53 @@ def _public_binding_projection(binding: dict[str, Any]) -> dict[str, Any]:
     identities, and manifest relations needed to audit model derivation.
     """
     manifest = binding["manifest"]
+    current = binding.get("schema") == model_contract_v2.COLLECTION_OUTPUT_SCHEMA
+    if current and binding_bytes is None:
+        raise ValueError("evaluation model V2 rendering requires exact collection-output bytes")
+    def result(value: Any) -> dict[str, Any]:
+        return _binding_status(value)
+    def config(value: Any) -> dict[str, Any]:
+        return {
+            **_binding_status(value, ("state",)),
+            **({"input": _identity(value["input"])} if isinstance(value, dict) and isinstance(value.get("input"), dict) else {}),
+        }
+    def source_row(source: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "key": source["key"],
+            "input": {**_binding_status(source.get("input"), ("state", "reason", "inspected_bytes")), **({"input": _identity(source["input"]["input"])} if isinstance(source.get("input"), dict) and isinstance(source["input"].get("input"), dict) else {})},
+            "digest": _binding_status(source.get("digest"), ("state", "expected_sha256", "observed_sha256")),
+            "config": config(source.get("config")),
+            "loader": _binding_status(source.get("loader")),
+            **({"dependency_closure": copy.deepcopy(source["dependency_closure"])} if current else {}),
+            "take_inventory": source.get("take_inventory"),
+            "observed_take_count": len(source.get("observed_takes", [])),
+            "result": result(source.get("result")),
+        }
+    def set_row(runtime_set: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": runtime_set["id"], "kind": runtime_set["kind"],
+            "members": (
+                [
+                    {key: copy.deepcopy(member[key]) for key in ("id", "resolution", "root_travel", "gait_phase") if key in member}
+                    for member in runtime_set["members"]
+                ] if current else [member.get("id") for member in runtime_set["members"]]
+            ),
+            "lifecycle": runtime_set.get("lifecycle"), "decision": runtime_set.get("decision"),
+            "gap_count": len(runtime_set.get("gaps", [])),
+            **({"evidence": copy.deepcopy(runtime_set["evidence"])} if current else {}),
+        }
     return {
         "schema": binding["schema"], "schema_version": binding["schema_version"],
+        **({"input": {"sha256": hashlib.sha256(binding_bytes).hexdigest(), "bytes": len(binding_bytes)}} if current and binding_bytes is not None else {}),
         "command": binding["command"],
         "manifest": {"collection_id": manifest["collection_id"], "input": _identity(manifest["input"])},
         "summary": dict(binding["summary"]),
-        "sources": [
-            {
-                "key": source["key"],
-                "input": {**_binding_status(source.get("input"), ("state", "reason", "inspected_bytes")), **({"input": _identity(source["input"]["input"])} if isinstance(source.get("input"), dict) and isinstance(source["input"].get("input"), dict) else {})},
-                "digest": _binding_status(source.get("digest"), ("state", "expected_sha256", "observed_sha256")),
-                "config": {**_binding_status(source.get("config"), ("state",)), **({"input": _identity(source["config"]["input"])} if isinstance(source.get("config"), dict) and isinstance(source["config"].get("input"), dict) else {})},
-                "loader": _binding_status(source.get("loader")),
-                "take_inventory": source.get("take_inventory"),
-                "observed_take_count": len(source.get("observed_takes", [])),
-                "result": _binding_status(source.get("result")),
-            }
-            for source in binding["sources"]
-        ],
+        "sources": [source_row(source) for source in binding["sources"]],
         "clips": [
             {**{key: clip[key] for key in ("id", "source", "take_index", "take_name")}, "binding": _public_clip_binding(clip.get("binding"))}
             for clip in binding["clips"]
         ],
-        "runtime_sets": [
-            {
-                "id": runtime_set["id"], "kind": runtime_set["kind"],
-                "members": [member.get("id") for member in runtime_set["members"]],
-                "lifecycle": runtime_set.get("lifecycle"), "decision": runtime_set.get("decision"),
-                "gap_count": len(runtime_set.get("gaps", [])),
-            }
-            for runtime_set in binding["runtime_sets"]
-        ],
+        "runtime_sets": [set_row(runtime_set) for runtime_set in binding["runtime_sets"]],
     }
 
 
@@ -248,14 +272,15 @@ def _ledger_table(title: str, columns: tuple[str, ...], records: list[dict[str, 
     ])
 
 
-def _ledger_sections(model: dict[str, Any], binding: dict[str, Any]) -> list[tuple[str, tuple[str, ...], list[dict[str, Any]]]]:
+def _ledger_sections(model: dict[str, Any], binding: dict[str, Any], binding_bytes: bytes | None = None) -> list[tuple[str, tuple[str, ...], list[dict[str, Any]]]]:
     """Render every closed V1 fact family in individually labelled table cells.
 
     This is intentionally a human-readable projection, not a second authority:
     each row labels every persisted field and the later AST checker compares it
     exactly with the already validated in-memory model/binding.
     """
-    binding = _public_binding_projection(binding)
+    binding = _public_binding_projection(binding, binding_bytes)
+    current = model.get("schema") == model_contract_v2.SCHEMA
     collection_totals = {
         "constituents": len(model["collection"]["constituents"]),
         "logical_clips": sum(len(record["clip_ids"]) for record in model["collection"]["constituents"]),
@@ -264,7 +289,7 @@ def _ledger_sections(model: dict[str, Any], binding: dict[str, Any]) -> list[tup
         "pair_records": len(model["collection"]["cross_pack_records"]),
     }
     current_run_id = next(record["id"] for record in model["runs"] if record["state"] == "current")
-    return [
+    sections = [
         ("Model contract", ("schema", "schema_version", "canonical_digest"), [{"schema": model["schema"], "schema_version": model["schema_version"], "canonical_digest": model_contract.canonical_digest(model)}]),
         ("Presentation", ("id", "title", "evaluation_date", "verdict", "completeness", "confidence"), [model["presentation"]]),
         ("Evidence", ("id", "kind", "locator", "summary"), model["evidence"]),
@@ -296,6 +321,24 @@ def _ledger_sections(model: dict[str, Any], binding: dict[str, Any]) -> list[tup
         ("Binding clip witnesses", ("id", "source", "take_index", "take_name", "binding"), binding["clips"]),
         ("Binding runtime-set witnesses", ("id", "kind", "members", "lifecycle", "decision", "gap_count"), binding["runtime_sets"]),
     ]
+    if current:
+        sections.insert(-3, (
+            "Current collection-output identity",
+            ("collection_output_sha256", "collection_output_bytes"),
+            [model["binding"]],
+        ))
+        sections.insert(-3, (
+            "Current source binding evidence",
+            ("key", "input", "digest", "config", "loader", "dependency_closure", "take_inventory", "result"),
+            model["binding"]["sources"],
+        ))
+        source_index = next(index for index, section in enumerate(sections) if section[0] == "Binding source witnesses")
+        sections[source_index] = (
+            "Binding source witnesses",
+            ("key", "input", "digest", "config", "loader", "dependency_closure", "take_inventory", "observed_take_count", "result"),
+            binding["sources"],
+        )
+    return sections
 
 
 def _current_model_projection(model: dict[str, Any]) -> dict[str, Any]:
@@ -313,9 +356,17 @@ def _current_model_projection(model: dict[str, Any]) -> dict[str, Any]:
     return projection
 
 
-def _authority_ledger(model: dict[str, Any], binding: dict[str, Any]) -> str:
+def _authority_ledger(model: dict[str, Any], binding: dict[str, Any], binding_bytes: bytes | None = None) -> str:
     """Render all authority-ledger tables in their closed fixed order."""
-    return "\n".join(_ledger_table(title, columns, records) for title, columns, records in _ledger_sections(model, binding))
+    return "\n".join(_ledger_table(title, columns, records) for title, columns, records in _ledger_sections(model, binding, binding_bytes))
+
+
+def _validate_model(model: dict[str, Any], binding: dict[str, Any], binding_bytes: bytes | None) -> list[str]:
+    if model.get("schema") == model_contract_v2.SCHEMA:
+        if binding_bytes is None:
+            return ["evaluation model V2 requires exact collection-output bytes"]
+        return model_validator_v2.validate_model(model, binding, binding_bytes)
+    return model_validator.validate_model(model, binding)
 
 
 def _evidence_relationship_rows(model: dict[str, Any]) -> list[dict[str, str]]:
@@ -359,9 +410,9 @@ def _evidence_relationship_table(model: dict[str, Any]) -> str:
     ])
 
 
-def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name: str, appendix_name: str) -> RenderedViews:
+def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name: str, appendix_name: str, binding_bytes: bytes | None = None) -> RenderedViews:
     """Render deterministic LF-only views after strict model/binding validation."""
-    errors = model_validator.validate_model(model, binding)
+    errors = _validate_model(model, binding, binding_bytes)
     if errors:
         raise ValueError("invalid evaluation model: " + "; ".join(errors))
     digest = model_contract.canonical_digest(model)
@@ -410,7 +461,7 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         "## Engine status", "| Runtime | Evidence level | Technical result | Remaining gate |", "|---|---|---|---|", *(_engine_rows(model)), "",
         "## Fit and limitations", _narrative(model, "fit-and-limitations", "See the typed limitations in the appendix."), "",
         "## Changes between AnimSmith versions", *_changes(model, binding), "",
-        "## Evidence status", f"Model schema: {_code(model_contract.SCHEMA)}; schema version: {_code(model_contract.SCHEMA_VERSION)}; digest: {_code(digest)}; renderer: {_code(RENDERER_VERSION)}. {_link('Canonical readiness ladder', READINESS_LADDER)}.", "",
+        "## Evidence status", f"Model schema: {_code(model['schema'])}; schema version: {_code(model['schema_version'])}; digest: {_code(digest)}; renderer: {_code(_renderer_version(model))}. {_link('Canonical readiness ladder', READINESS_LADDER)}.", "",
         "## Sources", *source_rows, "",
     ])
     role_rows = []
@@ -439,7 +490,7 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         f"> Evaluation date: **{_text(presentation['evaluation_date'])}**", ">",
         f"> Current evaluator: **AnimSmith {_text(binding['tool']['version'])}**", ">",
         "> Report format: **2**", "",
-        f"Model schema: {_code(model_contract.SCHEMA)}; version: {_code(model_contract.SCHEMA_VERSION)}; canonical digest: {_code(digest)}; renderer: {_code(RENDERER_VERSION)}. {_link('Canonical readiness ladder', READINESS_LADDER)} is authoritative.", "",
+        f"Model schema: {_code(model['schema'])}; version: {_code(model['schema_version'])}; canonical digest: {_code(digest)}; renderer: {_code(_renderer_version(model))}. {_link('Canonical readiness ladder', READINESS_LADDER)} is authoritative.", "",
         "## Evaluation scope and provenance", _narrative(model, "evidence-status", "Synthetic or declared V1 provenance is listed below."), "",
         "### Evidence coverage", f"Validated source records: {len(binding.get('sources', []))}.", "", "### Claim legend", "Evidence kinds are fixed V1 vocabulary.", "",
         "## Evaluation manifest and taxonomy", "", "### Canonical clip-role inventory", "| Canonical primary role | Logical motions | Unique source files used by role | Evidence boundary |", "|---|---:|---:|---|", *role_rows, f"| **Total** | **{len(model['clips'])}** | **{len(binding['sources'])}** | All-unique source files across overlapping, non-additive roles; V1 binding: {_code(model['binding']['collection_id'])}. |", "",
@@ -454,20 +505,20 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         "## Rig, masking, and compatibility evidence", "| Pack/rig/set pair | Skeleton/retarget | Scale/axes | Root policy | Timing/blend | Overall evidence |", "|---|---|---|---|---|---|", *cross_rows, "",
         "## Limitations and unknowns", *limitation_rows, "",
         "## Changes between AnimSmith versions", *_changes(model, binding), "",
-        "## Reproduction", _narrative(model, "reproduction", "Use the model digest and source records below."), "", "### V1 authoritative field ledger", _authority_ledger(model, binding), _evidence_relationship_table(model), "Current-state public projection (the canonical model digest above remains the authority):", "```json", model_contract.canonical_json({"binding": _public_binding_projection(binding), "current_model_projection": _current_model_projection(model)}).decode("utf-8"), "```", "",
+        "## Reproduction", _narrative(model, "reproduction", "Use the model digest and source records below."), "", f"### V{model['schema_version']} authoritative field ledger", _authority_ledger(model, binding, binding_bytes), _evidence_relationship_table(model), "Current-state public projection (the canonical model digest above remains the authority):", "```json", model_contract.canonical_json({"binding": _public_binding_projection(binding, binding_bytes), "current_model_projection": _current_model_projection(model)}).decode("utf-8"), "```", "",
         "## Sources", *source_rows, "",
     ])
     return RenderedViews(report + "\n", appendix + "\n")
 
 
-def validate_views(model: dict[str, Any], binding: dict[str, Any], views: RenderedViews, *, report_name: str, appendix_name: str) -> list[str]:
+def validate_views(model: dict[str, Any], binding: dict[str, Any], views: RenderedViews, *, report_name: str, appendix_name: str, binding_bytes: bytes | None = None) -> list[str]:
     """Use the pinned AST parser, then prove the fixed projections match V1."""
-    errors = model_validator.validate_model(model, binding)
+    errors = _validate_model(model, binding, binding_bytes)
     errors.extend(report_validator.validate(
-        views.report, evaluation_schema=model_contract.SCHEMA, report_format="2"
+        views.report, evaluation_schema=model["schema"], report_format="2"
     ))
     errors.extend(report_validator.validate_appendix(
-        views.appendix, evaluation_schema=model_contract.SCHEMA, report_format="2"
+        views.appendix, evaluation_schema=model["schema"], report_format="2"
     ))
     errors.extend(report_validator.validate_pair(views.report, views.appendix, report_name, appendix_name))
     report_ast, appendix_ast = report_validator.parse_markdown(views.report), report_validator.parse_markdown(views.appendix)
@@ -475,12 +526,12 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
     current_remediations = [
         record for record in model["remediations"] if record["run_id"] == current_run_id
     ]
-    for title, columns, records in _ledger_sections(model, binding):
+    for title, columns, records in _ledger_sections(model, binding, binding_bytes):
         matching = [
             table for table in appendix_ast["tables"]
             if tuple(cell["text"] for cell in table["header"]) == columns
             and table["section"] == "Reproduction"
-            and table["subsection"] == "V1 authoritative field ledger"
+            and table["subsection"] == f"V{model['schema_version']} authoritative field ledger"
         ]
         if len(matching) != 1:
             errors.append(f"model-to-view missing fixed authority table: {title}")
@@ -926,9 +977,21 @@ def _matches_expected(path: Path, expected: bytes) -> bool:
         return False
 
 
+def _load_binding(
+    model: dict[str, Any], path: Path, animsmith: Path | None
+) -> tuple[Any, bytes]:
+    """Use the immutable input budget selected by the explicit model URN."""
+    if model.get("schema") == model_contract_v2.SCHEMA:
+        if animsmith is None:
+            raise ValueError("evaluation model V2 requires --animsmith PATH")
+        return model_validator_v2.load_authoritative_collection_output(animsmith, path)
+    return model_validator.load_json(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model", type=Path); parser.add_argument("--binding", type=Path, required=True)
+    parser.add_argument("--animsmith", type=Path)
     parser.add_argument("--report", type=Path, required=True); parser.add_argument("--appendix", type=Path, required=True)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
@@ -936,9 +999,9 @@ def main() -> int:
         if args.check:
             # Check-only comparison is cross-platform and never publishes.
             model_path, binding_path, report_path, appendix_path = _checked_paths(args.model, args.binding, args.report, args.appendix)
-            model, _ = model_validator.load_json(model_path); binding, _ = model_validator.load_json(binding_path)
-            views = render_views(model, binding, report_name=report_path.name, appendix_name=appendix_path.name)
-            errors = validate_views(model, binding, views, report_name=report_path.name, appendix_name=appendix_path.name)
+            model, _ = model_validator.load_json(model_path); binding, binding_bytes = _load_binding(model, binding_path, args.animsmith)
+            views = render_views(model, binding, report_name=report_path.name, appendix_name=appendix_path.name, binding_bytes=binding_bytes)
+            errors = validate_views(model, binding, views, report_name=report_path.name, appendix_name=appendix_path.name, binding_bytes=binding_bytes)
             if errors:
                 raise ValueError("; ".join(errors))
             if not _matches_expected(report_path, views.report.encode()) or not _matches_expected(appendix_path, views.appendix.encode()):
@@ -949,9 +1012,9 @@ def main() -> int:
             model_path, binding_path, report_target, appendix_target = _checked_targets(args.model, args.binding, args.report, args.appendix)
             try:
                 report_path, appendix_path = report_target.path, appendix_target.path
-                model, _ = model_validator.load_json(model_path); binding, _ = model_validator.load_json(binding_path)
-                views = render_views(model, binding, report_name=report_path.name, appendix_name=appendix_path.name)
-                errors = validate_views(model, binding, views, report_name=report_path.name, appendix_name=appendix_path.name)
+                model, _ = model_validator.load_json(model_path); binding, binding_bytes = _load_binding(model, binding_path, args.animsmith)
+                views = render_views(model, binding, report_name=report_path.name, appendix_name=appendix_path.name, binding_bytes=binding_bytes)
+                errors = validate_views(model, binding, views, report_name=report_path.name, appendix_name=appendix_path.name, binding_bytes=binding_bytes)
                 if errors:
                     raise ValueError("; ".join(errors))
                 _publish_pair(report_target, appendix_target, views)

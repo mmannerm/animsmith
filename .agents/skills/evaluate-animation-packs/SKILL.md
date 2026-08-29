@@ -200,26 +200,37 @@ ladder as outcome coverage; for example, a completed inspect stage may still
 produce file-ready findings.
 
 The legacy evaluation manifest remains the report-input contract until its
-explicit migration. New structured evaluations should use the strict
+explicit migration. The strict historical
 `urn:animsmith:skill:animation-pack-evaluation:1` model documented in
-[`references/evaluation-model-v1.md`](references/evaluation-model-v1.md). It
-binds to an independently validated `collection-output:2` projection; it does
-not parse collection-manifest TOML or make generated Markdown authoritative
-before the explicit renderer and migration boundaries.
+[`references/evaluation-model-v1.md`](references/evaluation-model-v1.md)
+remains frozen to independently validated `collection-output:2`.
 
-That V1 model is frozen to historical `collection-output:2`; its deterministic
-views use the current report format 2. It is not compatible with current
-AnimSmith 0.7.0 `collection-output:9`. Until [issue
-#598](https://github.com/mmannerm/animsmith/issues/598) delivers a versioned
-current binding, do not pass current collection output to the V1 validator,
-relabel V9 as V2, or claim a new structured evaluation. For a new hand-authored
-format-2 evaluation, retain the scrubbed current collection authority
-externally so it can migrate without reconstructing clip or set identity from
-filenames or prose.
+New structured evaluations use
+`urn:animsmith:skill:animation-pack-evaluation:2`, documented in
+[`references/evaluation-model-v2.md`](references/evaluation-model-v2.md), and
+bind the exact current `collection-output:10` bytes. V2 retains every typed
+source and dependency-closure state in its binding, every clip source/take
+witness, and every runtime-set member in declared order. Incomplete or
+unavailable rows remain mandatory typed soft-fail evidence; never omit them or
+promote a surviving subset. The V2 validator must receive the exact
+checkout-matched executable already selected and captured above as
+`--animsmith PATH`. It invokes that binary's hidden validation-only collection
+entry point over stdin on the exact V10 bytes before any model projection. The
+validator opens the binding once without following links, requires a regular
+file, applies the serialized-output byte bound, and reuses that one in-memory
+buffer for Rust readback, JSON parsing, hashing, and projection. It requires the
+binary's exact internal V10 success handshake; an arbitrary exit-zero
+executable is not acceptance. Offline schema success and a raw digest match
+alone are not acceptance. Record the selected
+binary path, SHA-256, `--version`, source revision, and dirty state with the
+evaluation evidence. Preserve measured, unavailable, and not-applicable
+measurement categories exactly. Do not pass current output to the V1 validator
+or relabel one collection schema as another.
 
-Render a validated V1 model with its independently validated binding through
-the one fixed renderer. It produces the paired Markdown views from the same
-canonical model and never reverse-imports Markdown as authority. V1 has no
+Render a validated model with its exact independently validated binding through
+the one fixed renderer. It selects V1 or V2 from the explicit model schema,
+produces the paired Markdown views from the same canonical model, and never
+reverse-imports Markdown as authority. V1 has no
 temporal field for historical runs, so report-format-2 rendering fails closed
 when more than one historical run would require an unprovable newest-first
 order:
@@ -240,6 +251,13 @@ already-rendered pair without writing:
 .agents/skills/evaluate-animation-packs/scripts/validate_report.py \
   REPORT.md --appendix REPORT-evidence.md --evaluation-model-v1 --report-format 2
 ```
+
+For a current V2 evaluation, replace the validator with
+`validate_evaluation_model_v2.py`, pass the exact collection-output V10 document
+as `--binding`, pass the captured checkout-matched executable as `--animsmith
+PATH` to both the validator and renderer, and use `--evaluation-model-v2` for
+the final report check. A missing, non-executable, timed-out, or rejecting
+binary is an operator error; do not fall back to schema-only acceptance.
 
 Both output-parent directories must already exist. `--check` byte-compares
 both views with bounded reads, never writes them, and remains cross-platform.

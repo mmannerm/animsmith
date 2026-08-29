@@ -14,8 +14,10 @@ import yaml
 CHECKOUT = "actions/checkout@v7"
 HEAD_REF = "${{ github.event.pull_request.head.sha || github.sha }}"
 VALIDATOR_NAME = "Validate animation-pack skill and published reports"
+BUILD_NAME = "Build checkout-matched AnimSmith validator"
+BUILD_RUN = "cargo build -p animsmith --bin animsmith"
 VALIDATOR_RUN = (
-    "PYTHONDONTWRITEBYTECODE=1 python "
+    "ANIMSMITH_TEST_BINARY=target/debug/animsmith PYTHONDONTWRITEBYTECODE=1 python "
     ".agents/skills/evaluate-animation-packs/scripts/test_validators.py"
 )
 JOB_CONTROLS = {"if", "continue-on-error", "strategy", "needs", "defaults"}
@@ -146,6 +148,26 @@ def check_workflow_text(text: str, source: str) -> None:
             f"{source}: validator step run must be {VALIDATOR_RUN!r}"
         )
 
+    build_steps = [step for step in step_mappings if step.get("name") == BUILD_NAME]
+    if len(build_steps) != 1:
+        raise WorkflowContractError(
+            f"{source}: animation-pack must contain exactly one checkout-binary build step"
+        )
+    build = build_steps[0]
+    build_extras = sorted(set(build) - VALIDATOR_KEYS)
+    if build_extras:
+        raise WorkflowContractError(
+            f"{source}: checkout-binary build step must not define {', '.join(build_extras)}"
+        )
+    if build.get("run") != BUILD_RUN:
+        raise WorkflowContractError(
+            f"{source}: checkout-binary build step run must be {BUILD_RUN!r}"
+        )
+    if step_mappings.index(build) >= step_mappings.index(validator):
+        raise WorkflowContractError(
+            f"{source}: checkout-binary build step must precede the validator"
+        )
+
 
 VALID_WORKFLOW = f"""\
 jobs:
@@ -154,6 +176,8 @@ jobs:
       - uses: {CHECKOUT}
         with:
           ref: {HEAD_REF}
+      - name: {BUILD_NAME}
+        run: {BUILD_RUN}
       - name: {VALIDATOR_NAME}
         run: {VALIDATOR_RUN}
 """
@@ -169,6 +193,19 @@ def expect_rejected(label: str, text: str) -> None:
 
 def self_test() -> None:
     check_workflow_text(VALID_WORKFLOW, "valid fixture")
+    expect_rejected(
+        "missing-build fixture",
+        VALID_WORKFLOW.replace(
+            f"      - name: {BUILD_NAME}\n        run: {BUILD_RUN}\n", ""
+        ),
+    )
+    expect_rejected(
+        "late-build fixture",
+        VALID_WORKFLOW.replace(
+            f"      - name: {BUILD_NAME}\n        run: {BUILD_RUN}\n", ""
+        )
+        + f"      - name: {BUILD_NAME}\n        run: {BUILD_RUN}\n",
+    )
     expect_rejected(
         "commented fixture",
         VALID_WORKFLOW.replace(

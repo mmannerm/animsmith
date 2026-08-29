@@ -170,7 +170,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check a report and evidence appendix.")
     parser.add_argument("report", type=Path)
     parser.add_argument("--appendix", type=Path)
-    parser.add_argument("--evaluation-model-v1", action="store_true", help="validate the fixed V1 renderer projection")
+    model = parser.add_mutually_exclusive_group()
+    model.add_argument("--evaluation-model-v1", action="store_true", help="validate the fixed V1 renderer projection")
+    model.add_argument("--evaluation-model-v2", action="store_true", help="validate the current V2 renderer projection")
     parser.add_argument("--report-format", choices=("1", "2"), help="override the report-view format independently of the evidence schema")
     return parser.parse_args()
 
@@ -1134,7 +1136,12 @@ def main() -> int:
     try:
         report_text = args.report.read_text(encoding="utf-8")
         appendix_text = appendix.read_text(encoding="utf-8")
-        evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:1" if args.evaluation_model_v1 else SCHEMA
+        if args.evaluation_model_v2:
+            evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:2"
+        elif args.evaluation_model_v1:
+            evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:1"
+        else:
+            evaluation_schema = SCHEMA
         errors = validate(
             report_text,
             evaluation_schema=evaluation_schema,

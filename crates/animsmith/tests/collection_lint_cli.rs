@@ -1,8 +1,9 @@
 use jsonschema::Validator;
 use serde_json::{Value, json};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:10";
 const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:18";
@@ -42,6 +43,42 @@ fn collection(manifest: &Path) -> Output {
         ])
         .output()
         .expect("collection lint runs")
+}
+
+fn validate_collection_output(bytes: &[u8]) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .args(["collection", "validate-output"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("collection-output validation starts");
+    child
+        .stdin
+        .take()
+        .expect("validation stdin")
+        .write_all(bytes)
+        .expect("collection-output bytes are written");
+    child
+        .wait_with_output()
+        .expect("collection-output validation runs")
+}
+
+fn evaluation_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v10-complete.json",
+    )
+}
+
+fn stable_collection_output(mut value: Value) -> Vec<u8> {
+    for _ in 0..16 {
+        let bytes = serde_json::to_vec(&value).unwrap();
+        if value["work"]["serialized_bytes"] == json!(bytes.len()) {
+            return bytes;
+        }
+        value["work"]["serialized_bytes"] = json!(bytes.len());
+    }
+    panic!("collection-output byte count did not converge")
 }
 
 fn collection_validator() -> Validator {
@@ -990,4 +1027,70 @@ members = ["com.example.canonical/b", "com.example.canonical/a"]
         output["manifest"]["input"] = json!({"sha256":"manifest-specific","bytes":0});
     }
     assert_eq!(outputs[0], outputs[1]);
+}
+
+#[test]
+fn hidden_collection_output_validator_uses_the_authoritative_strict_reader() {
+    let accepted = validate_collection_output(&fs::read(evaluation_fixture_path()).unwrap());
+    assert_eq!(
+        accepted.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    assert_eq!(
+        accepted.stdout,
+        b"animsmith-internal collection-output-valid urn:animsmith:schema:collection-output:10 10\n"
+    );
+
+    let help = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .args(["collection", "--help"])
+        .output()
+        .unwrap();
+    assert_eq!(help.status.code(), Some(0));
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("validate-output"));
+}
+
+#[test]
+fn hidden_collection_output_validator_rejects_nested_numeric_and_text_parity_cases() {
+    let fixture: Value = serde_json::from_slice(&fs::read(evaluation_fixture_path()).unwrap())
+        .expect("complete fixture JSON");
+    let mut cases = Vec::new();
+
+    let mut nested = fixture.clone();
+    nested["sources"][0]["result"]["envelope"]["summary"]["prediction_facets"]["available"] =
+        json!(1);
+    cases.push(("nested-summary", stable_collection_output(nested)));
+
+    let mut c1 = fixture.clone();
+    c1["sources"][0]["locator"] = json!("safe/\u{0085}.glb");
+    cases.push(("unicode-control", stable_collection_output(c1)));
+
+    let mut utf8 = fixture.clone();
+    utf8["sources"][0]["locator"] = json!("é".repeat(2051));
+    cases.push(("utf8-byte-limit", stable_collection_output(utf8)));
+
+    let mut numeric = fixture;
+    let overflow = loop {
+        let bytes = serde_json::to_vec(&numeric).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        let mutated = text.replacen("\"duration_s\":1.0", "\"duration_s\":1e999", 1);
+        assert_ne!(mutated, text, "fixture duration token changed");
+        if numeric["work"]["serialized_bytes"] == json!(mutated.len()) {
+            break mutated.into_bytes();
+        }
+        numeric["work"]["serialized_bytes"] = json!(mutated.len());
+    };
+    cases.push(("numeric-overflow", overflow));
+
+    for (name, bytes) in cases {
+        let output = validate_collection_output(&bytes);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty(), "{name}");
+    }
 }

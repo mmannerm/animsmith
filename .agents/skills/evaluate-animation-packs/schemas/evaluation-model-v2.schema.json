@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:skill:animation-pack-evaluation:2",
+  "title": "AnimSmith animation-pack evaluation model V2",
+  "description": "Current evaluation authority bound exactly to collection-output V10, retaining typed per-source completeness evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "binding", "presentation", "evidence", "runs", "clips", "runtime_sets", "profiles", "pipeline_stages", "readiness", "capabilities", "integration_steps", "issues", "remediations", "engine_evidence", "limitations", "sources", "narratives", "collection"],
+  "properties": {
+    "schema": { "const": "urn:animsmith:skill:animation-pack-evaluation:2" },
+    "schema_version": { "const": 2 },
+    "binding": { "$ref": "#/$defs/binding" },
+    "presentation": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/presentation" },
+    "evidence": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/evidence" },
+    "runs": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/runs" },
+    "clips": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/clip" } },
+    "runtime_sets": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/runtime_set" } },
+    "profiles": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/profiles" },
+    "pipeline_stages": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/pipeline_stages" },
+    "readiness": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/readiness" },
+    "capabilities": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/capabilities" },
+    "integration_steps": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/integration_steps" },
+    "issues": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/issues" },
+    "remediations": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/remediations" },
+    "engine_evidence": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/engine_evidence" },
+    "limitations": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/limitations" },
+    "sources": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/properties/sources" },
+    "narratives": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/narrative" } },
+    "collection": { "$ref": "#/$defs/collection" }
+  },
+  "$defs": {
+    "logical_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 255,
+      "pattern": "^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)+$"
+    },
+    "fact_refs": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": {
+        "oneOf": [
+          { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/id" },
+          { "$ref": "#/$defs/logical_id" }
+        ]
+      }
+    },
+    "narrative": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "slot", "text", "fact_refs"],
+      "properties": {
+        "id": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/id" },
+        "slot": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/narrative/properties/slot" },
+        "text": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/narrative_text" },
+        "fact_refs": { "$ref": "#/$defs/fact_refs" }
+      }
+    },
+    "collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["constituents", "exclusions", "cross_pack_records"],
+      "properties": {
+        "constituents": {
+          "type": "array",
+          "maxItems": 90,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "model_sha256", "clip_ids", "source_file_count", "runtime_set_ids"],
+            "properties": {
+              "id": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/id" },
+              "model_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "clip_ids": { "type": "array", "maxItems": 4096, "uniqueItems": true, "items": { "$ref": "#/$defs/logical_id" } },
+              "source_file_count": { "type": "integer", "minimum": 0 },
+              "runtime_set_ids": { "type": "array", "maxItems": 4096, "uniqueItems": true, "items": { "$ref": "#/$defs/logical_id" } }
+            }
+          }
+        },
+        "exclusions": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/collection/properties/exclusions" },
+        "cross_pack_records": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/collection/properties/cross_pack_records" }
+      }
+    },
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "take_index", "take_name", "primary_role", "tags", "classification_basis", "evidence_refs", "loop", "duration_s", "root_motion_speed_mps", "movement_owner", "assessment", "coverage"],
+      "properties": {
+        "id": { "$ref": "#/$defs/logical_id" },
+        "source": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/id" },
+        "take_index": { "type": "integer", "minimum": 0 },
+        "take_name": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/text" },
+        "primary_role": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/clip/properties/primary_role" },
+        "tags": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/refs" },
+        "classification_basis": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/clip/properties/classification_basis" },
+        "evidence_refs": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/refs" },
+        "loop": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/clip/properties/loop" },
+        "duration_s": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/availability" },
+        "root_motion_speed_mps": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/availability" },
+        "movement_owner": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/owner" },
+        "assessment": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/clip/properties/assessment" },
+        "coverage": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/coverage" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "bytes"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "config": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "default" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "input"], "properties": { "state": { "const": "explicit" }, "input": { "$ref": "#/$defs/identity" } } }
+      ]
+    },
+    "result": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "available" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "reason"], "properties": { "state": { "const": "unavailable" }, "reason": { "enum": ["source_unavailable", "loader_unavailable", "nested_output_unavailable"] } } }
+      ]
+    },
+    "source_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "input", "digest", "config", "loader", "dependency_closure", "take_inventory", "result"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "input": { "$ref": "urn:animsmith:schema:collection-output:10#/$defs/source_input" },
+        "digest": { "$ref": "urn:animsmith:schema:collection-output:10#/$defs/digest" },
+        "config": { "$ref": "#/$defs/config" },
+        "loader": { "$ref": "urn:animsmith:schema:collection-output:10#/$defs/loader" },
+        "dependency_closure": { "$ref": "urn:animsmith:schema:collection-output:10#/$defs/dependency_closure" },
+        "take_inventory": { "enum": ["complete", "unavailable"] },
+        "result": { "$ref": "#/$defs/result" }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["collection_id", "manifest_sha256", "manifest_bytes", "collection_output_sha256", "collection_output_bytes", "sources"],
+      "properties": {
+        "collection_id": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/id" },
+        "manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "manifest_bytes": { "type": "integer", "minimum": 0 },
+        "collection_output_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "collection_output_bytes": { "type": "integer", "minimum": 0, "maximum": 268435456 },
+        "sources": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/source_binding" } }
+      }
+    },
+    "runtime_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "members", "assessment", "coverage", "evidence_refs"],
+      "properties": {
+        "id": { "$ref": "#/$defs/logical_id" },
+        "kind": { "enum": ["gait-group", "sync-group", "directional-blend", "speed-blend", "transition-chain", "mask-composition", "retarget-group", "paired-interaction", "motion-database"] },
+        "members": {
+          "type": "array", "maxItems": 4096,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["clip_id", "eligibility"],
+            "properties": {
+              "clip_id": { "$ref": "#/$defs/logical_id" },
+              "eligibility": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/runtime_set/properties/members/items/properties/eligibility" }
+            }
+          }
+        },
+        "assessment": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/runtime_set/properties/assessment" },
+        "coverage": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/coverage" },
+        "evidence_refs": { "$ref": "urn:animsmith:skill:animation-pack-evaluation:1#/$defs/refs" }
+      }
+    }
+  }
+}

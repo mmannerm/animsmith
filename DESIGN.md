@@ -3247,6 +3247,27 @@ animation-pack evaluation manifest remains a skill-level evidence and taxonomy
 format. It may supply retained validation evidence, but it is not accepted as
 the CLI protocol.
 
+The repository-owned structured evaluation model is a separate skill-level
+authority. `animation-pack-evaluation:1` remains frozen to independently
+validated `collection-output:2`. Current evaluations use the additive
+`animation-pack-evaluation:2` contract and bind the exact raw
+`collection-output:10` digest and byte count plus its manifest identity. V2
+retains every scrubbed source state, including complete dependency-closure
+identity or the full typed partial/unavailable reason set, and proves exact
+clip source/take and ordered runtime-set relationships against that V10 input.
+The V2 validation boundary requires the explicitly selected checkout-matched
+AnimSmith binary and invokes a hidden validation-only collection subcommand
+that calls the one authoritative V10 strict reader before any projection.
+Schema validity plus a matching raw digest is not sufficient, and there is no
+second Python semantic mirror.
+Clip duration and speed preserve exact measured, unavailable, or not-applicable
+availability rather than collapsing the latter two categories.
+Unavailable rows are mandatory typed soft failures, not grounds to shrink the
+model to surviving records. A separate projection sidecar was rejected because
+it would duplicate clip/set authority and create a third versioned contract;
+V2 is the single report authority, while the exact hashed V10 document remains
+the mechanical evidence binding. Neither model is accepted as a CLI protocol.
+
 ### F.2 Logical and physical clip identity
 
 Every collection clip has one user-declared logical id and one physical
