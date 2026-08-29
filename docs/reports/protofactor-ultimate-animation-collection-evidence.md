@@ -2,11 +2,13 @@
 
 > Companion report: [partial collection technical evaluation](protofactor-ultimate-animation-collection.md)
 >
-> Evidence status: **partial** — eight constituent manifests, all 28 pairwise shared-file comparisons, and an eight-pack Unity project with retained contextual and melee probe phases are recorded; 15 listed constituents and visual acceptance are absent.
+> Evidence status: **partial** — exact AnimSmith 0.7.0 mechanical reruns and bounded projections cover eight constituents; all 28 pairwise shared-file comparisons and dated Unity observations remain available; 15 listed constituents and visual acceptance are absent.
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 
 This collection appendix links rather than replaces the [Basic Locomotion](protofactor-basic-locomotion-evidence.md), [Sword & Shield](protofactor-sword-and-shield-evidence.md), [Campfire](protofactor-campfire-evidence.md), [Climbing](protofactor-climbing-evidence.md), [Injured](protofactor-injured-evidence.md), [1-Handed Melee](protofactor-one-handed-melee-evidence.md), [2-Handed Melee](protofactor-two-handed-melee-evidence.md), and [Dual Swords](protofactor-dual-swords-evidence.md) evidence. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -34,7 +36,7 @@ Evaluated: **Basic Locomotion, Sword & Shield, Campfire, Climbing, Injured, 1-Ha
 | Canonical inventory | 895 individual files | 582 logical motions, 90 manifest set records | Eight namespaced validated manifests | Visual semantic correctness |
 | Shared logical paths | 28 pack pairs × 25 overlaps | 700 comparisons | 700 byte-identical; zero conflicts | Unevaluated constituents |
 | Engine import/playback | Eight reconstructed Unity deliveries | Eight in one project | Melee 33/33 required passes plus four expected Generic failures; contextual 22/22 retained | Visual controller, compression, player build |
-| Cross-pack composition | Latest 6 mixers, 3 masks, 4 prop attachments; prior contextual 4 mixers, 1 mask, 2 props | Two retained probe phases | All required checks execute | Style, contacts, IK, offsets, deformation |
+| Cross-pack composition | 6 mixers, 3 masks, 4 prop attachments | Dated Unity observations | All required checks execute | Style, contacts, IK, offsets, deformation |
 | Other engines | Three runtime documentation sets | Documentation only | Capabilities exist | Pack import/retarget/runtime behavior |
 
 ### Claim legend
@@ -93,7 +95,7 @@ The count above is the versioned manifest-record count: 76 constituent records p
 | Root motion | `evaluated-finding` | IP/RM families inventoried; vertical/yaw evidence and outliers remain bounded. |
 | Conform | `partially-evaluated` | Standard 56-bone family, 58-bone 2-Handed twist variant, and shared Unity Avatars co-exist; outliers and target/other engines open. |
 | Validate | `evaluated-finding` | Constituent contracts and combined Unity graph probes ran; visuals open. |
-| Optimize | `partially-evaluated` | AnimSmith 0.4.0 emits 159 candidates across the collection: 134 gait-anchor, 12 slice, 12 prune-constant-tracks, and 1 drop-duplicate-loop-endpoint. Pruning stays bounded by open [#401](https://github.com/mmannerm/animsmith/issues/401); no generated collection output was promoted. |
+| Optimize | `partially-evaluated` | AnimSmith 0.7.0 emits 159 candidates across the collection: 134 gait-anchor, 12 slice, 12 prune-constant-tracks, and 1 drop-duplicate-loop-endpoint. Pruning stays bounded by open [#401](https://github.com/mmannerm/animsmith/issues/401); no generated collection output was promoted. |
 | Export | `partially-evaluated` | Native Unity assets co-imported; other-engine exports not accepted. |
 | Gate/report | `partially-evaluated` | Eight report pairs and this rollup are versioned; 15 constituents and visual gates remain. |
 
@@ -140,10 +142,10 @@ Every pairwise logical-delivery comparison found exactly 25 overlapping paths, a
 |---|---|---|---|
 | Shared paths | 700/700 pairwise overlaps identical | Evaluated packs do not silently overwrite different shared content | Twenty-eight SHA-256 comparisons |
 | Standard skeleton | Accepted standard motion families across seven packs, including 1-Handed | Strong co-install/state-switch prerequisite | Current order-independent 56-bone signature |
-| 2-Handed twist skeleton | 118 accepted files | Adds two forearm-twist targets and different name case; generic tools may miss roles and target deformation may differ | 58-bone signature, explicit-role measurement, and Unity Humanoid execution |
+| 2-Handed twist skeleton | 118 accepted files | Adds two forearm-twist targets; target deformation may differ | 58-bone signature, built-in case-tolerant role resolution, and Unity Humanoid execution |
 | Basic raw timing | 12 files | Strict pipelines may reject/clamp without declared slicing | Constituent report |
 | Rig/import outliers | Sword Crouch FR RM; Climbing FallingUnarmed; four 1-/2-Handed Generic block files | Specific RM, airborne, or blocking paths unusable | AnimSmith plus Unity evidence |
-| Default role resolution | 118 dominant 2-Handed files | Default profile omits custom gait-role measures despite readable animation | Empty default measurements; explicit `[rig.roles]` restores them |
+| Default role resolution | 118 dominant 2-Handed files | Unique case-only aliases resolve without project overrides; ambiguity would refuse | Current structured output retains exact delivered names and `ascii-case-insensitive` provenance |
 | Loop/phase policy | All eight constituents | Wrap pulses, skating, or wrong semantic repetition | Exhaustive constituent contracts |
 | Constant tracks | Broadly present | Optimization opportunity and retarget overhead | Constituent summaries and bounded transforms |
 
@@ -152,18 +154,18 @@ Every pairwise logical-delivery comparison found exactly 25 overlapping paths, a
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
 | Basic negative-time keys | Declared slice to Unity clip ranges | 12/12 candidate outputs remove strict-time errors | Post-transform checks | Visual/engine acceptance still required |
-| Gait phase across packs | Re-run every selected IP ring member on one frozen AnimSmith 0.4.0 evaluator, after delivered [#426](https://github.com/mmannerm/animsmith/issues/426) extended anchoring to rigs whose root local forward axis is vertical. Selection is unchanged from each constituent's published run. | All 134 transforms across the six gait-bearing packs exit 0 and emit GLB candidates; none refuse, against 62 refusals for Basic, Sword, and Injured under 0.3.0. Circular walk/run/crouch phase spread: Basic 0.6598/0.4630/0.7156 to 0.072442/0.093840/0.050191; Sword & Shield 0.7231/0.6605/0.6974 to 0.059938/0.137277/0.052440; Injured walk/run 0.6025/0.5541 to 0.051348/0.109841; 1-Handed 0.5538/0.7342/0.7136 to 0.063903/0.108198/0.039432; 2-Handed 0.7112/0.6024/0.5774 to 0.069337/0.142914/0.053758; Dual Swords 0.7086/0.6732/0.6184 to 0.052993/0.135051/0.058715. The three melee packs reproduce their pre-release figures to seven decimal places. | Every one of the 134 candidates re-reads under `inspect`. Spread is the smallest arc containing all ring members, so cyclic wrap is not mistaken for divergence. 2-Handed phase is measurable only under its explicit `[rig.roles]` config. | Only IP members transformed; Campfire and Climbing have no in-place ring. Residual runtime offsets, GLB engine import, visual review, and independent trajectory acceptance remain open. |
-| 2-Handed role resolution | Explicit `[rig.roles]` mapping for the capitalized 58-bone family | Restores role-backed measurements on all 118 accepted files without modifying assets | Configured baseline and config digest | Config must be retained; generic case-tolerant resolution is tracked by [#437](https://github.com/mmannerm/animsmith/issues/437) |
+| Gait phase across packs | Current evaluation of every selected IP ring member | All 134 transforms across the six gait-bearing packs emit GLB candidates. Circular walk/run/crouch spreads: Basic 0.6598/0.4630/0.7156→0.072442/0.093840/0.050191; Sword & Shield 0.7231/0.6605/0.6974→0.059938/0.137277/0.052440; Injured walk/run 0.6025/0.5541→0.051348/0.109841; 1-Handed 0.5538/0.7342/0.7136→0.063903/0.108198/0.039432; 2-Handed 0.7112/0.6024/0.5774→0.069337/0.142914/0.053758; Dual Swords 0.7086/0.6732/0.6184→0.052993/0.135051/0.058715. | All 134 candidates re-read under `inspect`; spread uses the smallest containing arc. | Only IP members transformed; Campfire and Climbing have no in-place ring. Runtime offsets, engine import, visual review, and trajectory acceptance remain open. |
+| 2-Handed role resolution | Built-in humanoid profile on the capitalized 58-bone family | Resolves role-backed measurements on all 118 accepted files without modifying assets or requiring a role override | Exact delivered names and per-role case-resolution policies | Target-rig retarget/deformation quality remains untested |
 | Constant tracks | Representative pruning in all eight packs | Smaller GLBs reopen and retain declared findings | Inspect/measure/lint/diff/fix dry-run | Runtime equivalence unproven; no candidate promoted |
 | Rig/import outliers | No safe repair | Six files quarantined/excluded | AnimSmith and Unity agree | Artist/vendor source required |
 
-Only manifest-selected in-place ring members were transformed; no root-motion member was cyclically reordered. The old `b7c215b` safe refusals remain historical evidence, superseded for these 72 IP trials by the current successful outputs. Those external candidates are unpromoted and do not make the sets acceptance-ready without engine import, visual review, and residual phase policy.
+Only manifest-selected in-place ring members were transformed; no root-motion member was cyclically reordered. Current candidates remain unpromoted pending engine import, visual review, and residual phase policy.
 
 ## Engine procedures and evidence
 
 | Runtime | Version | Procedure | Observed result | Remaining gate |
 |---|---|---|---|---|
-| Unity | 6000.5.8f1 | Merge eight authorized package reconstructions in one disposable external project. Retain the prior contextual phase (15 samples, 4 mixers, 1 mask, 2 props) and run the melee phase (20 samples, 6 mixers, 3 masks, 4 prop attachments, 4 expected Generic assertions). | Contextual 22/22 and melee 33/33 required checks pass. Four expected Generic files fail Humanoid playback separately; all eight packs and shared assets co-import. | Visual states, root motion, contacts, target retarget, compression, player build. |
+| Unity | 6000.5.8f1 | Merge eight authorized package reconstructions in one disposable external project. Contextual checks cover 15 samples, 4 mixers, 1 mask, and 2 props; melee checks cover 20 samples, 6 mixers, 3 masks, 4 prop attachments, and 4 expected Generic assertions. | Contextual 22/22 and melee 33/33 required checks pass. Four expected Generic files fail Humanoid playback separately; all eight packs and shared assets co-import. | Visual states, root motion, contacts, target retarget, compression, player build. |
 | Unreal Engine | 5.7 | Official root-motion/animation/layering documentation review only. | Not evaluated. | Eight-pack import/retarget, graphs, contacts, build. |
 | Godot | stable | Official AnimationTree documentation review only. | Not evaluated. | Conversion/import, retarget, graphs, root, export. |
 | Bevy | unspecified | Official AnimationGraph mask example review only. | Not evaluated. | glTF conversion, target mapping, graphs, root, performance. |
@@ -190,49 +192,28 @@ Only manifest-selected in-place ring members were transformed; no root-motion me
 6. The current gait outputs are GLB files, while the disposable Unity project has no GLB importer; no generated candidate was engine-imported, visually reviewed, or independently accepted.
 7. Commercial assets, derived motion outputs, screenshots, manifests with local paths, and generated projects remain outside the repository and CI.
 
+## Changes between AnimSmith versions
+
+| Evaluator | Change from the preceding evaluated state |
+|---|---|
+| AnimSmith 0.7.0 | Revalidated all eight evaluated constituents under output v17 / measurements v16, retained 159 unpromoted candidates, and added current engine projections. The 2-Handed default-profile role gap is resolved through fail-closed case-only aliases. |
+| AnimSmith 0.4.1 | Reproduced the evaluated 0.4.0 measurements and transforms across the retained collection scope; unrelated release fixes did not change the rollup conclusion. |
+| AnimSmith 0.4.0 | Added consolidated constituent and profile evidence while retaining the eight-of-23 partial scope and the same engine/artistic gates. |
+| AnimSmith 0.3.x | Established the original constituent baselines, collection comparisons, dated Unity probes, and first gait trials. Those evaluator results are superseded. |
+
 ## Reproduction
 
-Constituent evaluation-manifest SHA-256 values: Basic `3cc3922dc7b4b06db59643f366eab2844f4490334868ea5a2c26bd1926000cd4`; Sword `b9a5317dcd0ed0a4d46e3c9144cbfa3430ab473354cdf9901c796b8875287d02`; Campfire `11e67cd944ad2058d130eea06f557b41b1ba36e0ed14bbc3289d704d99bf962e`; Climbing `b3807b89f30fb4656446d1e21f41d7405a414025356dd250d9c4a6d212ef3c2f`; Injured `ad98ac7639c997a6d7a3eabb7552b2bbb06ab1c797013cf84cb86e764a3159f5`; 1-Handed `f4a76e505dea5eab9afbff0602f6091f08bfa053e0d1956922da193fc375c5c8`; 2-Handed `0121fd1d73e46646c6fd585954bd2fab7744c51f6bac86c6d0ac6504108abd82`; Dual Swords `57e90445c1cb11f80506c5d551c2426ef45bf421a38e45dab3fcd928c79fbd21`.
+### Current AnimSmith reproduction (2026-08-26)
 
-Rollup manifest SHA-256: `b3ac8ec9b2bfde35edbf5b240f51d0a875d2213c1b35b8ce7b101635b691b309`. Eight-pack melee Unity probe SHA-256: `1c147ff6683833ba28c1db210d58aee65140ac232311f370782c28c3925ae62d`. Retained five-pack contextual Unity probe SHA-256: `d2b6d1b0af14c2c77dca3c2cc4aa892d6e507f3cf8b9bb50bfdb4ef78d407afa`.
+Every one of the eight evaluated constituents was re-inventoried or reconciled and rerun under `animsmith 0.7.0`, exact tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, and measurements schema v16. The constituent appendices bind their individual baseline, contract, remediation, manifest, and supplemental-projection digests.
 
-The eight-pack rollup and new melee evaluations used AnimSmith 0.3.0 at revision `b7c215ba259b87b4b4e46567452a037a34be7308`, binary SHA-256 `67bdc22ce1a83feb7312a1ddf251d330b2e8113c10a845b71de1169955ef8609`. Basic and Sword retain their original evaluator revisions; Campfire, Climbing, and Injured used revision `aabac28edf2719db236068339f1208bbf156d0bb`, binary SHA-256 `2fb43d210b5448fb2cd642946cc46df0cbb34595a48821b22a28daf7c1938f77`.
+All 159 current GLB remediation candidates emitted immutable addressability V1 and Bevy revision-3 rich addressability V2 with 64-bit target UUIDs. Representative Unity Humanoid revision-1, Unreal revision-2, and Godot revision-2 advice projections were available for every constituent. This is sealed addressability and version-pinned settings evidence only; it does not replace the dated Unity import observations or fill the Unreal/Godot/Bevy execution, retarget, visual, contact, gameplay, or artistic gates.
 
-The gait-only refresh used the pre-release 0.3.1 code at revision `674396f0f53b10c4344e7315a5756fe5ef71b469`; its binary identified as `animsmith 0.3.0 (v0.3.0-39-g674396f)` and has SHA-256 `7744b71580e04d80f9e5738efce76e0295323ccb3150fa57b0ad9b37c5ff1513`. The later 0.3.1 release commit changes version metadata, example assets, and one fixture test, not transform/core source. The combined refresh summary SHA-256 is `118116c9173df4e3e782cdfe3b712deb9fb14cec23c8e0e75cd484e8156d7f4b`; pack command-result SHA-256 values are 1-Handed `6f8717ec84797cbb89d830e7098baf529fdc6f37eb1b877775a0f6c5d514c5d6`, 2-Handed `65d6a098d67478e6ce4af1c758e48b3b737e96b10a8df5e5444f861147cfcb5e`, and Dual Swords `16d31a27a961180154afc30613e1ab3e5e4a7cdb8aab94238861947c8e819a15`. Baseline, contract, manifest, Unity, and non-gait remediation evidence remain tied to their earlier recorded revisions.
-
-Rebuild the namespaced manifest, verify all pairwise overlaps, validate its schema, then reconstruct the eight authorized Unity deliveries outside the repository and run the retained probes. Re-run constituent contracts when their source, evaluator, declared policy, or target runtime changes. To reproduce the gait refresh, select only each new melee manifest's 24 in-place walk/run/crouch ring members, write new GLBs, and rerun inspect, measure, lint, diff, and fix dry-run while retaining every exit code.
-
-### Evaluator currency: AnimSmith 0.4.1
-
-AnimSmith 0.4.1 (tag `v0.4.1`, commit `46e4adfc14947d2afbf433386b0ab9857ea935aa`,
-changelog-dated 2026-08-22) was released after this evidence was captured. The
-evidence in this appendix remains attributable to 0.4.0, which produced it;
-relabelling it would be false attribution. 0.4.1 was instead verified equivalent
-for this collection before that decision was made:
-
-| Comparison | Scope | Result |
-|---|---|---|
-| Baseline `measure`/`lint` content and exit codes | 918 delivered FBXs, all eight packs | 0 files differ |
-| Declared-contract `lint` | 177 per-clip contracts | 0 differ |
-| `generate import-advice` payload | Unity profile | identical |
-| Gait anchoring | 24-member ring | 24/24 anchored; circular spreads identical to seven decimals |
-| Generated GLB candidates | 24 | motion payload byte-identical; only the glTF `asset.generator` string differs |
-| Contract versions | — | unchanged at output v10 / measurements v15 |
-
-The tool-identity block is excluded from those comparisons because it necessarily
-differs between releases. 0.4.1 fixes [#502](https://github.com/mmannerm/animsmith/issues/502),
-which affects the `scale rest-bind` admission path this evaluation never invoked,
-and [#503](https://github.com/mmannerm/animsmith/issues/503), a diagnostics defect
-this evaluation reported: 0.4.0 emits `missing required engine setting
-BakeAxisConversion` while 0.4.1 emits the accepted key `bake_axis_conversion`.
-Neither fix changes a measurement here. Issue and release state are
-time-sensitive; re-query them before reuse.
-
+The collection is partial at eight of 23 constituents. The bound evidence contains 28 pairwise shared-path comparisons, all byte-identical, and the current source inventories match that comparison scope.
 
 ## Sources
 
 - Constituent evidence: [Basic Locomotion](protofactor-basic-locomotion-evidence.md), [Sword & Shield](protofactor-sword-and-shield-evidence.md), [Campfire](protofactor-campfire-evidence.md), [Climbing](protofactor-climbing-evidence.md), [Injured](protofactor-injured-evidence.md), [1-Handed Melee](protofactor-one-handed-melee-evidence.md), [2-Handed Melee](protofactor-two-handed-melee-evidence.md), and [Dual Swords](protofactor-dual-swords-evidence.md).
-- AnimSmith [issue #437](https://github.com/mmannerm/animsmith/issues/437) — case-tolerant humanoid role aliases with deterministic ambiguity handling.
 - Protofactor, [Ultimate Animation Collection](https://protofactor.biz/product/ultimate-animation-collection/) and [End User License Agreement](https://protofactor.biz/end-user-license-agreement/) — current context, accessed 2026-08-17.
 - Unity Asset Store, [Ultimate Animation Collection](https://marketplace.unity.com/packages/3d/animations/ultimate-animation-collection-195459) — current version 1.65, released 2026-08-16, listed at USD 259.99, accessed 2026-08-17.
 - Unity, [Avatar Mask](https://docs.unity3d.com/6000.0/Documentation/Manual/class-AvatarMask.html), [Animation Layers](https://docs.unity3d.com/6000.0/Documentation/Manual/AnimationLayers.html), and [Root Motion](https://docs.unity3d.com/6000.5/Documentation/Manual/RootMotion.html); Epic Games, [Root Motion](https://dev.epicgames.com/documentation/unreal-engine/root-motion-in-unreal-engine?application_version=5.7) and [Layered Animations](https://dev.epicgames.com/documentation/unreal-engine/using-layered-animations-in-unreal-engine?lang=en-US); Godot, [AnimationTree](https://docs.godotengine.org/en/stable/tutorials/animation/animation_tree.html); Bevy, [Animation Masks](https://bevy.org/examples/animation/animation-masks/) — capabilities only.

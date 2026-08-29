@@ -18,8 +18,11 @@ Keep one linked report pair per constituent animation pack:
 This keeps the reader-facing decision short and reevaluation bounded when one
 pack, engine, or evaluator version changes.
 
-The linked-pair layout is report format version 1. Both documents record that
-version independently of the captured AnimSmith evaluator version.
+The current linked-pair layout is report format version 2. Both documents name
+one current AnimSmith evaluator and present ordinary sections as current state
+for a game developer. Prior evaluator behavior, superseded evidence, and
+version comparisons belong only in `Changes between AnimSmith versions`.
+Report-format version 1 remains an immutable historical/generated contract.
 
 Add a collection-level report pair after multiple constituent packs have been
 evaluated, even while the rollup is partial. Name evaluated and missing
@@ -64,6 +67,16 @@ Use flat, stable filenames for each pair:
 | [Protofactor 2-Handed Melee](protofactor-two-handed-melee.md) | [Detailed evidence](protofactor-two-handed-melee-evidence.md) | One locally held 2-Handed Melee pack from the Ultimate Animation Collection | Partial: exhaustive file/tool evaluation with an explicit rig-role map plus Unity 6000.5.8f1 eight-pack co-import, sampling, blend, mask, and prop probes; two Generic block clips and visual acceptance remain open |
 | [Protofactor Dual Swords](protofactor-dual-swords.md) | [Detailed evidence](protofactor-dual-swords-evidence.md) | One locally held Dual Swords pack from the Ultimate Animation Collection | Partial: exhaustive file/tool evaluation plus Unity 6000.5.8f1 eight-pack co-import, sampling, blend, mask, and two-prop probes; contact and visual acceptance remain open |
 | [Protofactor Ultimate Animation Collection](protofactor-ultimate-animation-collection.md) | [Detailed evidence](protofactor-ultimate-animation-collection-evidence.md) | Partial rollup of Basic Locomotion, Sword & Shield, Campfire, Climbing, Injured, 1-Handed Melee, 2-Handed Melee, and Dual Swords | Partial: all 28 pairwise shared-asset comparisons and eight-pack Unity co-import/composition evidence; 15 constituents and visual acceptance deferred |
+| [Mixamo Basic Locomotion](mixamo-basic-locomotion.md) | [Detailed evidence](mixamo-basic-locomotion-evidence.md) | One archive-paired Basic Locomotion constituent | Partial: exhaustive file/tool baseline and variant ownership contracts; licensing and runtime gates deferred |
+| [Mixamo Female Basic Locomotion](mixamo-female-basic-locomotion.md) | [Detailed evidence](mixamo-female-basic-locomotion-evidence.md) | One archive-paired Female Basic Locomotion constituent | Partial: exhaustive file/tool baseline and variant ownership contracts; licensing and runtime gates deferred |
+| [Mixamo Female Locomotion](mixamo-female-locomotion.md) | [Detailed evidence](mixamo-female-locomotion-evidence.md) | One archive-paired Female Locomotion constituent | Partial: exhaustive file/tool baseline and variant ownership contracts; licensing and runtime gates deferred |
+| [Mixamo Locomotion](mixamo-locomotion.md) | [Detailed evidence](mixamo-locomotion-evidence.md) | One archive-paired Locomotion constituent | Partial: exhaustive file/tool baseline and variant ownership contracts; licensing and runtime gates deferred |
+| [Mixamo Longbow Locomotion](mixamo-longbow-locomotion.md) | [Detailed evidence](mixamo-longbow-locomotion-evidence.md) | One archive-paired Longbow Locomotion constituent | Partial: exhaustive file/tool baseline and variant ownership contracts; licensing and runtime gates deferred |
+| [Mixamo Magic Locomotion](mixamo-magic-locomotion.md) | [Detailed evidence](mixamo-magic-locomotion-evidence.md) | One archive-paired Magic Locomotion constituent | Partial: exhaustive file/tool baseline and variant ownership contracts; licensing and runtime gates deferred |
+| [Mixamo Male Locomotion](mixamo-male-locomotion.md) | [Detailed evidence](mixamo-male-locomotion-evidence.md) | One archive-paired Male Locomotion constituent | Partial: exhaustive file/tool baseline and variant ownership contracts; licensing and runtime gates deferred |
+| [Mixamo Pistol-Handgun Locomotion](mixamo-pistol-handgun-locomotion.md) | [Detailed evidence](mixamo-pistol-handgun-locomotion-evidence.md) | One archive-paired Pistol-Handgun Locomotion constituent | Partial: exhaustive file/tool baseline and variant ownership contracts; licensing and runtime gates deferred |
+| [Mixamo Rifle 8-Way Locomotion](mixamo-rifle-8-way-locomotion.md) | [Detailed evidence](mixamo-rifle-8-way-locomotion-evidence.md) | One archive-paired Rifle 8-Way Locomotion constituent | Partial: exhaustive file/tool baseline and variant ownership contracts; licensing and runtime gates deferred |
+| [Mixamo Locomotion Collection](mixamo-locomotion-collection.md) | [Detailed evidence](mixamo-locomotion-collection-evidence.md) | Partial rollup of nine archive-paired locomotion constituents | Partial: mechanical rollup only; no cross-pack compatibility, engine, or visual acceptance claim |
 
 Commercial and other redistribution-restricted source files, excerpts,
 motion-bearing derivatives, and generated engine projects are not committed.

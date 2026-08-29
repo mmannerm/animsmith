@@ -2,13 +2,15 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — AnimSmith 0.4.0 analysis, a retained Unity probe, and 0.4.0 advice-only profiles for Unity/Unreal/Godot/Bevy; no target-character, visual-blend, or new-candidate engine pass.
+> Evaluation completeness: **partial** — complete AnimSmith 0.7.0 baseline, contracts, remediation, addressability, and bounded advice plus a dated Unity probe; no target-character, visual-blend, or current candidate engine pass.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 >
 > Detailed evidence: [Protofactor Basic Locomotion evidence appendix](protofactor-basic-locomotion-evidence.md)
 
@@ -16,13 +18,11 @@
 
 This is a strong **third-person locomotion source pack**, not a drop-in controller: in-place and root-motion 8-way walk/run/crouch rings, idles, and varied turns. Unity imports all 177 humanoid clips. Twelve files have negative-time keys, raw rings are not phase-aligned, and 22/24 cyclic in-place members fail strict closure or seam checks (AP-002), risking wrap pops.
 
-Directional root-motion speeds span 1.35–1.49× per gait, diagonal faster than forward in every ring (AP-014); loader-projected hierarchy/rest evidence is unchanged under 0.4.0, with hands about 0.01 scale across all 179 FBXs (AP-011) — verify weapon/socket compensation in engine.
+Directional root-motion speeds span 1.35–1.49× per gait, with diagonals faster than forward (AP-014). Hands measure about 0.01 scale across all 179 FBXs (AP-011); verify weapon/socket compensation in engine.
 
-AnimSmith 0.4.0 slices the 12 negative-time files cleanly and anchors all 24 in-place ring members via a measured vertical yaw heading axis, where 0.3.0 refused all 24 (AP-003); the GLB candidates stay unpromoted pending a visual gate, and the 0.2.1 outputs remain historical.
+AnimSmith 0.7.0 slices the 12 negative-time files cleanly and anchors all 24 in-place ring members via a measured vertical yaw heading axis (AP-003). The current GLB candidates stay unpromoted pending a target-character visual gate.
 
-Root trajectory is now sampled on all 179 clips as a grid fact, not continuous-curve or extraction proof (AP-012); it is descriptive only, and movement ownership stays a controller decision. It still requires deliberate controller setup and target-character visual acceptance.
-
-The archive was evaluated as authorized input; a fresh 0.4.0 re-inventory reproduces the published manifest exactly (0 added/removed/changed) — an evaluator-only refresh, not an asset revision. License and provenance boundaries are appendix evidence, not pack defects.
+Root trajectory is sampled on all 179 clips as a grid fact, not continuous-curve or extraction proof (AP-012). Movement ownership remains a controller decision.
 
 ## Capability coverage
 
@@ -79,49 +79,53 @@ Equal durations make these stride-length differences: walk spans 0.655–0.975 m
 ## Integration recipe
 
 1. **Members/topology:** `topology=separate-2d-blends`; build separate in-place/root-motion graphs at the table coordinates. Treat each RM speed as authored evidence, not one gait-wide speed.
-2. **Timing/synchronization:** `loop=per-member-table`; `sync=gait-phase`. Slice the 12 affected files; 0.4.0 anchors all 24 in-place members (AP-003), but keep those candidates ungated — use runtime phase offsets or artist exports as fallback. Enable loops after wrap review; Run L/R remain unknown.
+2. **Timing/synchronization:** `loop=per-member-table`; `sync=gait-phase`. Slice the 12 affected files; 0.7.0 anchors all 24 in-place members (AP-003), but keep those candidates ungated — use runtime phase offsets or artist exports as fallback. Enable loops after wrap review; Run L/R remain unknown.
 3. **State ownership:** `owner=validate-per-axis`; controller owns in-place translation; validate RM ownership per axis, since sampled RM clips bake root rotation. Preserve trajectories when offsetting.
 4. **Composition constraints:** `composition=separate-gaits-and-full-body-actions`; never mix movement variants. Treat grenade/cover as full-body until masks, additive bases, sockets, IK, and interruptions are tested.
 5. **Acceptance gate:** `gate=target-character-visual-review`; test contacts, wrap, and travel in all eight directions. Phase alignment does not repair [foot skating](../game-ready-clips.md#feet-skate-when-clips-blend) or [loop seams](../game-ready-clips.md#the-loop-pops).
 
 ## Technical issue register
 
-Retired: AP-007 (provenance), AP-008 (Unity rerun), AP-010 (appendix metadata).
-
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
 | AP-001 | major | [Negative-time keys](../game-ready-clips.md#the-clip-is-the-wrong-length-or-freezes-at-the-end) in 12 files can fail strict pipelines or clamp a pose. | animsmith-current-declared | Slice to the Unity range, 30 fps. | Batch the declared transform. | Verified: 36/36 errors removed. |
 | AP-002 | major | [Loop seams](../game-ready-clips.md#the-loop-pops) fail on 22/24 raw cyclic IP clips, risking pops/pulses. | artist-author | Correct endpoints/tangents or review an engine blend. | Generic invention is unsafe. | Exhaustive; visual impact untested. |
-| AP-003 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) may cause blend skating; 0.4.0 anchors all 24 members (spread ~0.05–0.09) via a vertical yaw axis. | engine-config | Validate the 24 candidates in engine/visually; keep runtime/artist exports as fallback. | Basis-safe anchoring ([#426](https://github.com/mmannerm/animsmith/issues/426)) ships; a rebase needs visual proof. | 24/24 anchored; unpromoted, no Humanoid-retarget or visual import. |
+| AP-003 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) may cause blend skating; 0.7.0 anchors all 24 members (spread ~0.05–0.09) via a vertical yaw axis. | engine-config | Validate the 24 candidates in engine/visually; keep runtime/artist exports as fallback. | Basis-safe anchoring is available; a rebase still needs visual proof. | 24/24 anchored; unpromoted, no Humanoid-retarget or visual import. |
 | AP-004 | moderate | [Three skeleton signatures](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) block exact interchange; may change transitions. | engine-config | Use the supplied Avatar; test 56/73-bone boundaries. | Diagnostics plausible; retargeting is not. | Avatar references valid; deformation untested. |
-| AP-005 | moderate | [Constant tracks](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) may affect sparse-track resets/transitions if pruned. | animsmith-current-declared | Retain until runtime/equivalence tests justify pruning. | Tracked by [#401](https://github.com/mmannerm/animsmith/issues/401), [#402](https://github.com/mmannerm/animsmith/issues/402). | Runtime cost unknown. |
-| AP-006 | moderate | Every FBX uses `Take 001`; [cross-file set identity](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) needs filenames plus a manifest. | animsmith-future-candidate | Keep file-scoped IDs and the manifest. | Grouping tracked by [#409](https://github.com/mmannerm/animsmith/issues/409). | 179/179 FBXs observed. |
+| AP-005 | moderate | [Constant tracks](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) may affect sparse-track resets/transitions if pruned. | animsmith-current-declared | Retain until runtime/equivalence tests justify pruning. | Per-bone channel coverage is available; [#401](https://github.com/mmannerm/animsmith/issues/401) limits broad pruning adoption. | Runtime cost unknown. |
+| AP-006 | moderate | Every FBX uses `Take 001`; [cross-file set identity](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) needs file-scoped identities plus a manifest. | engine-config | Keep the published file-scoped IDs and author a current collection manifest from source authority. | Current collection manifests and runtime sets support this layout; this report's legacy manifest is not a current collection binding. | 179/179 FBXs observed. |
 | AP-009 | moderate | The combined FBX has a [copied-avatar hierarchy mismatch](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) and no authoritative segmentation. | artist-author | Use the 177 individual FBXs. | Tools cannot invent boundaries. | Unity 6000.5.8f1. |
 | AP-011 | moderate | [Attachment scale](../game-ready-clips.md#attachment-nodes-and-inherited-rest-world-scale) is about 0.01 at both hands; an uncompensated weapon may be 100× too small. | engine-config | Test sockets/prop compensation on the target rig. | Source-node evidence available. | 358 warnings; engine untested. |
-| AP-012 | moderate | [`_RM` speed](../game-ready-clips.md#the-character-glides-or-runs-in-place) does not characterize root yaw; turns may be ignored or doubled. | engine-config | Inspect yaw, extraction, and movement ownership. | Tracked by [#408](https://github.com/mmannerm/animsmith/issues/408). | 71/179 move >1 cm, 107 stationary, 21 show >1° yaw (sampled grid); controller untested. |
-| AP-013 | major | [RM gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) may skate; resampling must preserve translation/yaw. | engine-config | Keep trajectories; use runtime/artist exports. | Safety shipped in [#407](https://github.com/mmannerm/animsmith/issues/407); rebase needs separate proof. | Publishes no unsafe output. |
-| AP-014 | major | [Directional speed/stride variation](../game-ready-clips.md#directional-blend-members-travel-at-different-speeds) spans 1.35–1.49×; one gait-wide speed can cause travel or slide. | engine-config | Preserve per-direction speeds/thresholds, tune playback, or request artist re-timing. | Lint tracked by [#411](https://github.com/mmannerm/animsmith/issues/411); auto re-timing is unsafe. | Exact measurements; visual impact untested. |
+| AP-012 | moderate | [`_RM` speed](../game-ready-clips.md#the-character-glides-or-runs-in-place) does not characterize root yaw; turns may be ignored or doubled. | engine-config | Inspect yaw, extraction, and movement ownership. | Per-clip displacement and yaw evidence are available; continuous-curve extraction proof is not. | 71/179 move >1 cm, 107 stationary, 21 show >1° yaw (sampled grid); controller untested. |
+| AP-013 | major | [RM gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) may skate; resampling must preserve translation/yaw. | engine-config | Keep trajectories; use runtime/artist exports. | Current safety policy refuses unsafe rewrites; rebase needs separate proof. | Publishes no unsafe output. |
+| AP-014 | major | [Directional speed/stride variation](../game-ready-clips.md#directional-blend-members-travel-at-different-speeds) spans 1.35–1.49×; one gait-wide speed can cause travel or slide. | engine-config | Preserve per-direction speeds/thresholds, tune playback, or request artist re-timing. | Current declared-set policies can lint a supplied controller contract; auto re-timing remains unsafe. | Exact measurements; no current collection-policy binding or visual test. |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | Import + Playables (retained), 0.4.0 advice | **Conditional pass:** 177 clips imported; 6/6 samples, 3/3 blends passed; combined FBX hit AP-009. Advice: `available`, exit 0, matching **observed** locks (IP bakes; RM mostly extracts XZ, 31/36), correcting an earlier meta-inferred reading. | Visual blends, root motion, masks, retargeting, build. |
-| Unreal Engine | Documentation only, 0.4.0 advice (UE 5.8) | **Not evaluated.** Typed refusal `profile_settings_unmodeled`, exit 1. | Import, retarget, blends, root motion, layers. |
-| Godot | Documentation only, 0.4.0 advice (4.7) | **Not evaluated.** Typed refusal `profile_settings_unmodeled`, exit 1. | Import/retarget, reset, root motion, masks. |
-| Bevy | Documentation only, 0.4.0 addressability probe | **Not evaluated.** Addressability exit 0 on a generated GLB: 1 clip, selector `Animation0`, 0 findings; selector prediction only. | Conversion, graph, root motion, playback. |
+| Unity 6000.5.8f1 | Observed import + Playables; 0.7.0 advice | **Conditional pass:** 177 clips imported; 6/6 samples and 3/3 blends passed; the combined FBX hit AP-009. Advice is `available` and matches observed locks: IP bakes, while 31/36 RM clips extract XZ. | Visual blends, root motion, masks, retargeting, build. |
+| Unreal Engine | Documentation only, 0.7.0 advice (UE 5.8) | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | Import, retarget, blends, root motion, layers. |
+| Godot | Documentation only, 0.7.0 advice (4.7) | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | Import/retarget, reset, root motion, masks. |
+| Bevy | Documentation only, 0.7.0 addressability probe | **Not evaluated.** Addressability exit 0 on a generated GLB: 1 clip, selector `Animation0`, 0 findings; selector prediction only. | Conversion, graph, root motion, playback. |
 
-The retained Unity probe proves headless mixing only; 0.4.0 advice is a metadata prediction only.
+The Unity probe proves headless mixing only; 0.7.0 advice is a metadata prediction only.
 
 ## Fit and limitations
 
-Best fit: grounded third-person controllers needing broad locomotion, turns, and basic cover/grenade/jump/obstacle placeholders.
+Best fit: grounded third-person controllers needing broad locomotion and action placeholders.
 
 Caveats: loop polish, phase/root ownership, retargeting, weapon layers, and contacts remain project work; incomplete for traversal, combat, reaction/death, first-person, or paired-interaction systems. Cross-pack compatibility remains untested.
 
+## Changes between AnimSmith versions
+
+AnimSmith 0.7.0 reproduced the 179-FBX baseline and 177 contracts (58 pass / 119 fail). Its 39 candidates include V1 and rich V2 addressability. Projections do not prove engine acceptance.
+
+AnimSmith 0.4.0 added the successful 12-file slicing and 24-member in-place gait anchoring used by the current recipe. AnimSmith 0.3.0 refused those gait trials, and the 0.2.1 candidates are superseded.
+
 ## Evidence status
 
-The evaluation covers all 177 motion FBXs with AnimSmith 0.4.0 (tag v0.4.0, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`). Source identity is unchanged from the published 0.3.0 pass — an evaluator-only refresh; the mechanical baseline (24,186 constant-track notes, 36 time-monotonic errors) reproduces exactly. Loop-seam scoring is now more honest: 111/177 files are seam-applicable, and of those 84 completed measurement while 93 are recorded not-evaluated rather than pass/fail. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) defines what the claims mean; details are in the [evidence appendix](protofactor-basic-locomotion-evidence.md).
+Current evidence is the exact 0.7.0 rerun plus the dated Unity 6000.5.8f1 observation. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-basic-locomotion-evidence.md).
 
 ## Sources
 

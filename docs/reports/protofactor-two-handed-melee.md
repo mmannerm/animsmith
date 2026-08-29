@@ -2,13 +2,15 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — 0.4.0 baseline/contracts/remediation (default + explicit-role passes), retained Unity 6000.5.8f1 evidence, and new engine-profile advice/addressability probes; no visual controller, target character, or engine-editor import/playback.
+> Evaluation completeness: **partial** — complete 0.7.0 baseline, declared contracts, remediation, addressability, and bounded advice plus dated Unity evidence; no visual controller, target character, or current engine-editor import/playback.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 >
 > Detailed evidence: [Protofactor 2-Handed Melee evidence appendix](protofactor-two-handed-melee-evidence.md)
 
@@ -16,9 +18,9 @@
 
 Use 118 Unity-Humanoid clips as a full-body two-handed combat mode, after quarantining `Humanoid@Blocked2HandMelee.fbx` and `Humanoid@IdleBlock2HandMelee.fbx`. Seven pack samples, two cross-pack mixers, one mask, and the sword attachment execute unchanged; headless execution is not visual/contact acceptance.
 
-AnimSmith 0.4.0 (`6b37ad636b1`) reproduces the published manifest byte-for-byte — a pure evaluator refresh. The default profile resolves almost nothing here (root trajectory 4/122, gait 3/122); the unchanged explicit `[rig.roles]` config resolves it fully (122/122; gait 121/122). Identical lint-note counts in both passes prove the map is repeatable configuration, not an asset repair — [#437](https://github.com/mmannerm/animsmith/issues/437) stays open (live 2026-08-21).
+AnimSmith 0.7.0 verifies the published manifest byte-for-byte. Its default humanoid profile resolves the dominant capitalized rig with unique ASCII-case-insensitive aliases while retaining the delivered bone names: root trajectory is measured on 122/122 clips and gait on 121/122. The remaining unavailable gait row belongs to non-motion delivery content, not a role-resolution gap.
 
-Gait anchoring under the same contracts reproduces `674396f`'s circular phase spreads to seven decimals (~0.58–0.71 raw → ~0.05–0.14 anchored), confirming the release preserves 0.3.1 gait behavior; candidates stay unpromoted, no Humanoid-retarget or visual import.
+Current gait anchoring reduces circular phase spreads from ~0.58–0.71 raw to ~0.05–0.14 anchored. Candidates stay unpromoted pending Humanoid-retarget and visual import.
 
 Replace loop policy, retain runtime offsets for raw RM and residual IP phase, and review grip, contacts, hit windows, transitions, root-motion ownership, and one heavy-hit RM timing anomaly.
 
@@ -73,7 +75,7 @@ Coordinates are `(right,forward)`; speeds are measured RM magnitudes.
 | Normal forward speed | sprint | IP `Humanoid@Sprint2HandMelee.fbx`; RM `Humanoid@Sprint2HandMelee_RM.fbx` | variant=paired-ip-rm | duration=0.500 s; rm_speed=6.000 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
 | Draw/combat/put-away | ordered | `Humanoid@Draw2HandMelee.fbx`; `Humanoid@IdleCombatA2HandMelee.fbx`; `Humanoid@PutBack2HandMelee.fbx` | set_type=transition-chain | N/A | transition=at-end; state=armed-combat |
 
-RM speed ratios are 1.35× walk, 1.22× run, 1.30× crouch, and 6.27× across the normal-forward speed family; preserve authored velocity or tune playback deliberately, never normalize silently. Circular phase spreads reproduce historical `674396f` values on released 0.4.0 (see Technical decision); residual offsets and acceptance remain.
+RM speed ratios are 1.35× walk, 1.22× run, 1.30× crouch, and 6.27× across the normal-forward speed family; preserve authored velocity or tune playback deliberately, never normalize silently. Current circular phase spreads are lower but retain residual offsets; engine and visual acceptance remain open.
 
 ## Integration recipe
 
@@ -88,21 +90,20 @@ RM speed ratios are 1.35× walk, 1.22× run, 1.30× crouch, and 6.27× across th
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
 | TH-001 | blocker | [Rig/import disagreement](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) excludes both block clips from Unity Humanoid. | artist-author | Quarantine or substitute pending corrected exports. | Detection can improve; metadata/intent cannot be invented. | Unity imports both as Generic; 56-bone structure. |
-| TH-002 | major | Default roles miss 118 capitalized clips, hiding gait/root/loop-seam coverage. Guidance: [rig identity](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity). | animsmith-future-candidate | Use the explicit-role config throughout. | Fail-closed case-tolerant aliasing tracked by [#437](https://github.com/mmannerm/animsmith/issues/437). | Explicit config unlocks 4 loop-seam findings (0 default); identical 17,016-note lint count proves configuration. |
 | TH-003 | major | [Incorrect loop declarations](../game-ready-clips.md#the-loop-pops) flag 44 obvious one-shots, risking repeats/hard wraps. | engine-config | Override them; review remaining candidates. | Metadata-aware auditing is feasible; universal intent inference is not. | 108/120 loop flags; 107 contract failures. |
-| TH-004 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) risks foot skating. | animsmith-current-declared | Trial the 24 IP candidates, validate, and offset residual phase; keep RM raw. | Vertical-root-axis gait-anchor shipped via [#426](https://github.com/mmannerm/animsmith/issues/426) (merged); RM trajectory-preservation untested. | 0.4.0 reproduces circular spreads 0.577–0.711 → 0.054–0.143 to 7 decimals vs. `674396f`; no engine/visual acceptance. |
-| TH-005 | major | [Directional RM speed variation](../game-ready-clips.md#directional-blend-members-travel-at-different-speeds) can make input magnitude change with direction. | engine-config | Preserve velocity per member or tune playback. | Cross-member checks tracked by [#411](https://github.com/mmannerm/animsmith/issues/411). | Walk 1.35×; crouch 1.30×; run 1.22×. |
-| TH-006 | moderate | [Unequal channel spans](../game-ready-clips.md#the-clip-is-the-wrong-length-or-freezes-at-the-end) can clamp-hold forearm twists in `Humanoid@GetHitLeftHeavy2HandMelee_RM.fbx`. | artist-author | Review/correct timing on the target rig. | Declared normalization is plausible only with twist/contact proof. | One warning; six notes; unchanged since 0.3.0. |
-| TH-007 | moderate | [RM action ownership](../game-ready-clips.md#the-character-glides-or-runs-in-place) is unclear, risking doubled or missing motion. | engine-config | Declare per-axis `movement_owner_*` intent; do not infer it from travel. | [#408](https://github.com/mmannerm/animsmith/issues/408)/[#466](https://github.com/mmannerm/animsmith/issues/466) shipped; needs a human/engine decision. | 45/121 clips move >1 cm, 76 stationary, 0 with >1° yaw — sampled, not proof. |
-| TH-008 | moderate | [Dense constant tracks](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) may waste memory; pruning lacks equivalence proof. | animsmith-current-declared | Retain sources pending runtime/equivalence gates. | `(bone, property)` coverage shipped via [#402](https://github.com/mmannerm/animsmith/issues/402); pruning stays open via [#401](https://github.com/mmannerm/animsmith/issues/401). | 16,747 notes; one readable export candidate. |
+| TH-004 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) risks foot skating. | animsmith-current-declared | Trial the 24 IP candidates, validate, and offset residual phase; keep RM raw. | Vertical-root-axis anchoring is available; RM trajectory preservation remains untested. | 0.7.0 reduces circular spreads from 0.577–0.711 to 0.054–0.143; no engine/visual acceptance. |
+| TH-005 | major | [Directional RM speed variation](../game-ready-clips.md#directional-blend-members-travel-at-different-speeds) can make input magnitude change with direction. | engine-config | Preserve velocity per member or tune playback. | Current declared-set policies can check a project contract; this evaluation did not supply one. | Walk 1.35×; crouch 1.30×; run 1.22×. |
+| TH-006 | moderate | [Unequal channel spans](../game-ready-clips.md#the-clip-is-the-wrong-length-or-freezes-at-the-end) can clamp-hold forearm twists in `Humanoid@GetHitLeftHeavy2HandMelee_RM.fbx`. | artist-author | Review/correct timing on the target rig. | Declared normalization is plausible only with twist/contact proof. | One warning and six notes in the current run. |
+| TH-007 | moderate | [RM action ownership](../game-ready-clips.md#the-character-glides-or-runs-in-place) is unclear, risking doubled or missing motion. | engine-config | Declare per-axis `movement_owner_*` intent; do not infer it from travel. | Per-clip root evidence and per-axis declarations are available; ownership still needs a human/engine decision. | 45/121 clips move >1 cm, 76 stationary, 0 with >1° yaw — sampled, not proof. |
+| TH-008 | moderate | [Dense constant tracks](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) may waste memory; pruning lacks equivalence proof. | animsmith-current-declared | Retain sources pending runtime/equivalence gates. | Per-bone channel coverage is available; [#401](https://github.com/mmannerm/animsmith/issues/401) limits broad pruning adoption. | 16,747 notes; one readable export candidate. |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 / 6000.3 | Retained co-import (2026-08-17) + rev 1 advice (2026-08-21) | **Conditional pass (retained):** 118/120 clips Humanoid; 7 samples/2 mixers/mask/sword pass. New: advice available (exit 0), now **observed**-derived; appendix. | Visual controller, contacts, grip, root motion, retargeting, compression, build. |
-| Unreal Engine 5.8 | Advice probe | **Not evaluated in-editor.** `unreal` rev 1 refuses (`profile_settings_unmodeled`, exit 1); not an editor test. | FBX import, retarget/twist mapping, graphs, contacts, build. |
-| Godot 4.7 | Advice probe | **Not evaluated in-editor.** `godot` rev 1: same refusal (exit 1). | Import/conversion, retarget, graphs, contacts, export. |
+| Unity 6000.5.8f1 / 6000.3 | Dated co-import (2026-08-17) + current revision-1 advice projection | **Conditional pass:** the retained engine observation covers 118/120 Humanoid clips and 7 samples/2 mixers/mask/sword. The current advice projection uses observed measurements but is not engine execution; see the appendix. | Visual controller, contacts, grip, root motion, retargeting, compression, build. |
+| Unreal Engine 5.8 | Advice probe | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | FBX import, retarget/twist mapping, graphs, contacts, build. |
+| Godot 4.7 | Advice probe | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | Import/conversion, retarget, graphs, contacts, export. |
 | Bevy 0.19.0 | Addressability probe | **Not evaluated at runtime.** Generated-GLB addressability exits 0: 1 animation, selector `Animation0` — prediction only. | glTF conversion, retarget path, graph, root motion, performance. |
 
 ## Fit and limitations
@@ -113,9 +114,13 @@ Poor fit: blocking-critical gameplay without substitutes, first-person, traversa
 
 The dominant rig adds forearm twists to the collection's 56-bone majority; Unity Humanoid mixers with Basic Locomotion and Sword & Shield execute. Use full-body handoffs until style, grip, twist deformation, and contacts pass visual review. The [partial collection rollup](protofactor-ultimate-animation-collection.md) owns the cross-pack conclusion.
 
+## Changes between AnimSmith versions
+
+Exact `v0.7.0` reproduced 123 FBXs, 120 declared contracts (13/107 pass/fail), and 25 candidates under output v17 / measurements v16. Projections are not engine or artistic acceptance.
+
 ## Evidence status
 
-All 123 FBXs were analyzed on AnimSmith `0.4.0` (`6b37ad636b1`); the v1 manifest covers 76 motions/120 individual files. Baseline, contracts, and remediation are complete for both passes; `674396f` gait and `b7c215b` baseline/contracts stay dated historical comparison. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-two-handed-melee-evidence.md) define remaining boundaries.
+The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-two-handed-melee-evidence.md) retain current evidence and exact role-resolution provenance.
 
 ## Sources
 

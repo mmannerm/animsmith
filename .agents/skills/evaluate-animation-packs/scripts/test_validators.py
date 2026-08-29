@@ -141,6 +141,7 @@ V1_REQUIRED_HEADINGS = (
     "## Technical issue register",
     "## Engine status",
     "## Fit and limitations",
+    "## Changes between AnimSmith versions",
     "## Evidence status",
     "## Sources",
 )
@@ -158,6 +159,7 @@ V1_REQUIRED_APPENDIX_HEADINGS = (
     "## Engine procedures and evidence",
     "## Rig, masking, and compatibility evidence",
     "## Limitations and unknowns",
+    "## Changes between AnimSmith versions",
     "## Reproduction",
     "## Sources",
 )
@@ -316,7 +318,9 @@ def valid_report() -> str:
 >
 > Evaluation date: **2026-08-16**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 >
 > Detailed evidence: [fixture evidence appendix](fixture-evidence.md)
 
@@ -362,6 +366,9 @@ Fixture capability.
 ## Fit and limitations
 Fixture result.
 
+## Changes between AnimSmith versions
+AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.
+
 ## Evidence status
 Schema: `{V1_SCHEMA}`. See the
 [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder).
@@ -391,7 +398,9 @@ def valid_appendix() -> str:
 >
 > Evaluation date: **2026-08-16**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 
 The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder)
 is authoritative.
@@ -442,6 +451,9 @@ Fixture result.
 
 ## Limitations and unknowns
 Fixture result.
+
+## Changes between AnimSmith versions
+AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.
 
 ## Reproduction
 Fixture result.
@@ -1504,7 +1516,7 @@ class ReportValidatorTests(unittest.TestCase):
         relocated = appendix[:start] + appendix[end:] + "\n\n" + metadata + "\n"
         errors = report_validator.validate_appendix(relocated)
         self.assertIn("appendix must declare one canonical bold Evidence status", errors)
-        self.assertIn("appendix must declare Report format 1", errors)
+        self.assertIn("appendix must declare Report format 2", errors)
 
     def test_requires_confidence_evidence_status_and_evaluation_dates(self) -> None:
         report = valid_report().replace("> Confidence: **medium**\n>\n", "", 1)
@@ -1572,13 +1584,167 @@ class ReportValidatorTests(unittest.TestCase):
 
     def test_requires_report_format_in_both_documents(self) -> None:
         report_errors = report_validator.validate(
-            valid_report().replace("> Report format: **1**\n", "")
+            valid_report().replace("> Report format: **2**\n", "")
         )
         appendix_errors = report_validator.validate_appendix(
-            valid_appendix().replace("> Report format: **1**\n", "")
+            valid_appendix().replace("> Report format: **2**\n", "")
         )
-        self.assertIn("report must declare Report format 1", report_errors)
-        self.assertIn("appendix must declare Report format 1", appendix_errors)
+        self.assertIn("report must declare Report format 2", report_errors)
+        self.assertIn("appendix must declare Report format 2", appendix_errors)
+
+    def test_requires_matching_current_evaluator_in_format_two_pair(self) -> None:
+        missing = valid_report().replace("> Current evaluator: **AnimSmith 0.7.0**\n>\n", "", 1)
+        self.assertIn(
+            "report format 2 must declare Current evaluator as bold AnimSmith X.Y.Z",
+            report_validator.validate(missing),
+        )
+        changed = valid_appendix().replace("AnimSmith 0.7.0", "AnimSmith 0.8.0", 1)
+        self.assertIn(
+            "report and appendix must declare the same current AnimSmith evaluator",
+            report_validator.validate_pair(
+                valid_report(), changed, "fixture.md", "fixture-evidence.md"
+            ),
+        )
+
+    def test_rejects_animsmith_history_outside_changes_section(self) -> None:
+        report = valid_report().replace(
+            "Fixture decision.",
+            "AnimSmith 0.6.0 replaced the previous evaluator result.",
+            1,
+        )
+        errors = report_validator.validate(report)
+        self.assertIn(
+            "AnimSmith version history must appear only under Changes between AnimSmith versions: 0.6.0",
+            errors,
+        )
+        self.assertIn(
+            "historical AnimSmith narrative must appear only under Changes between AnimSmith versions",
+            errors,
+        )
+
+        appendix = valid_appendix().replace(
+            "Fixture result.",
+            "AnimSmith 0.6.0 replaced the previous evaluator result.",
+            1,
+        )
+        appendix_errors = report_validator.validate_appendix(appendix)
+        self.assertIn(
+            "AnimSmith version history must appear only under Changes between AnimSmith versions: 0.6.0",
+            appendix_errors,
+        )
+        self.assertIn(
+            "historical AnimSmith narrative must appear only under Changes between AnimSmith versions",
+            appendix_errors,
+        )
+
+        allowed = valid_report().replace(
+            "AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.",
+            "AnimSmith 0.7.0 — Revalidated the current result. AnimSmith 0.6.0 — Superseded.",
+            1,
+        )
+        self.assertEqual(report_validator.validate(allowed), [])
+
+        for current_entry in (
+            "AnimSmith 0.7.0 — Revalidated the current result.",
+            "Exact `v0.7.0` reproduced the current result.",
+            "AnimSmith 0.7.0 — Revalidated output schema 1.2.3 and measurements 2.3.4.",
+        ):
+            with self.subTest(current_entry=current_entry):
+                changed = valid_report().replace(
+                    "AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.",
+                    current_entry,
+                    1,
+                )
+                self.assertEqual(report_validator.validate(changed), [])
+
+        current_issue = valid_report().replace(
+            "Fixture issue.",
+            "The current limitation is tracked by open issue #123.",
+            1,
+        )
+        self.assertEqual(report_validator.validate(current_issue), [])
+
+        for historical in (
+            "Version 0.6.0 accepted a different result.",
+            "v0.6.0 accepted a different result.",
+            "0.6.0 accepted a different result.",
+            "Issue #123 introduced this capability.",
+            "Ticket 123 added this behavior.",
+            "Implemented in PR #123.",
+            "A helper run accidentally used the wrong directory and was rejected as not evidence.",
+            "The new metric closes the prior horizontal-only gap.",
+            "Root trajectory is new in the current evaluator.",
+            "The current evaluation adds root trajectory evidence.",
+            "The former evaluator rejected this source.",
+            "The legacy evaluator rejected this source.",
+        ):
+            with self.subTest(historical=historical):
+                changed = valid_report().replace("Fixture decision.", historical, 1)
+                self.assertTrue(report_validator.validate(changed))
+
+        for current_state in (
+            "New: current guidance is available.",
+            "The current probe run failed because the target engine was unavailable.",
+        ):
+            with self.subTest(current_state=current_state):
+                changed = valid_report().replace("Fixture decision.", current_state, 1)
+                self.assertEqual(report_validator.validate(changed), [])
+
+        stale_heading = valid_report().replace(
+            "## Technical decision", "## Technical decision for AnimSmith 0.6.0", 1
+        )
+        self.assertIn(
+            "AnimSmith version history must appear only under Changes between AnimSmith versions: 0.6.0",
+            report_validator.validate(stale_heading),
+        )
+
+        stale_table_header = valid_report().replace(
+            "Current action", "AnimSmith 0.6.0 action", 1
+        )
+        self.assertIn(
+            "AnimSmith version history must appear only under Changes between AnimSmith versions: 0.6.0",
+            report_validator.validate(stale_table_header),
+        )
+
+        out_of_order = valid_report().replace(
+            "AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.",
+            "AnimSmith 0.7.0 — Revalidated; 0.5.0 — superseded; 0.6.0 — superseded.",
+            1,
+        )
+        self.assertIn(
+            "Changes between AnimSmith versions must be ordered newest first",
+            report_validator.validate(out_of_order),
+        )
+
+        verbose_changes = valid_report().replace(
+            "AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.",
+            "AnimSmith 0.7.0 — Current revalidated result. " + "detail " * 200,
+            1,
+        )
+        self.assertIn(
+            "Changes between AnimSmith versions must be concise (200 words maximum)",
+            report_validator.validate(verbose_changes),
+        )
+
+        unclassified_changes = valid_report().replace(
+            "AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.",
+            "AnimSmith 0.7.0 — Details are available.",
+            1,
+        )
+        self.assertIn(
+            "Changes between AnimSmith versions must classify every current or historical result",
+            report_validator.validate(unclassified_changes),
+        )
+
+        partially_classified = valid_report().replace(
+            "AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.",
+            "AnimSmith 0.7.0 — Revalidated; 0.6.0 — details only.",
+            1,
+        )
+        self.assertIn(
+            "Changes between AnimSmith versions must classify every current or historical result",
+            report_validator.validate(partially_classified),
+        )
 
     def test_primary_report_word_limit_boundary(self) -> None:
         base = valid_report().replace("Fixture decision.", "", 1)
@@ -3010,7 +3176,29 @@ class ReportValidatorTests(unittest.TestCase):
             if report.name != "README.md" and not report.stem.endswith("-evidence")
         )
         appendices = sorted(report_directory.glob("*-evidence.md"))
+        expected = {
+            "mixamo-basic-locomotion",
+            "mixamo-female-basic-locomotion",
+            "mixamo-female-locomotion",
+            "mixamo-locomotion-collection",
+            "mixamo-locomotion",
+            "mixamo-longbow-locomotion",
+            "mixamo-magic-locomotion",
+            "mixamo-male-locomotion",
+            "mixamo-pistol-handgun-locomotion",
+            "mixamo-rifle-8-way-locomotion",
+            "protofactor-basic-locomotion",
+            "protofactor-campfire",
+            "protofactor-climbing",
+            "protofactor-dual-swords",
+            "protofactor-injured",
+            "protofactor-one-handed-melee",
+            "protofactor-sword-and-shield",
+            "protofactor-two-handed-melee",
+            "protofactor-ultimate-animation-collection",
+        }
         self.assertTrue(reports, "expected at least one published pack report")
+        self.assertEqual({report.stem for report in reports}, expected)
         self.assertEqual(
             {report.stem for report in reports},
             {appendix.stem.removesuffix("-evidence") for appendix in appendices},
@@ -3022,6 +3210,12 @@ class ReportValidatorTests(unittest.TestCase):
                 self.assertTrue(appendix.is_file(), f"missing {appendix.name}")
                 report_text = report.read_text(encoding="utf-8")
                 appendix_text = appendix.read_text(encoding="utf-8")
+                self.assertIn(
+                    "> Current evaluator: **AnimSmith 0.7.0**", report_text
+                )
+                self.assertIn(
+                    "> Current evaluator: **AnimSmith 0.7.0**", appendix_text
+                )
                 self.assertEqual(report_validator.validate(report_text), [])
                 self.assertEqual(
                     report_validator.validate_appendix(appendix_text), []
@@ -3563,6 +3757,23 @@ class EvaluationModelV1Tests(unittest.TestCase):
         first = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
         second = model_renderer.render_views(copy.deepcopy(model), binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
         self.assertEqual(first, second)
+        for view in (first.report, first.appendix):
+            self.assertEqual(view.count("> Current evaluator: **AnimSmith 0.0.0**"), 1)
+            self.assertEqual(view.count("> Report format: **2**"), 1)
+            self.assertEqual(view.count("## Changes between AnimSmith versions"), 1)
+        for view, following_heading in (
+            (first.report, "## Evidence status"),
+            (first.appendix, "## Reproduction"),
+        ):
+            current_state, change_tail = view.split("## Changes between AnimSmith versions", 1)
+            changes, current_state_tail = change_tail.split(following_heading, 1)
+            current_state_text = current_state + current_state_tail
+            self.assertNotIn("Historical generated candidate.", current_state_text)
+            self.assertNotIn("historical-output", current_state_text)
+            self.assertNotIn("candidate-v0", current_state_text)
+            self.assertIn("Historical generated candidate.", changes)
+            self.assertIn("historical-output", changes)
+            self.assertIn("candidate-v0", changes)
         self.assertEqual(model_renderer.validate_views(model, binding, first, report_name="fixture.md", appendix_name="fixture-evidence.md"), [])
         self.assertLessEqual(report_validator.rendered_word_count(first.report), report_validator.MAX_PRIMARY_WORDS)
         stale = model_renderer.RenderedViews(first.report.replace("fixture:walk-rm", "fixture:stale"), first.appendix.replace("fixture:walk-rm", "fixture:stale"))
@@ -3576,6 +3787,24 @@ class EvaluationModelV1Tests(unittest.TestCase):
         # Exact authority values may contain hostile punctuation in the ledger,
         # but the pinned parser must keep it in code spans rather than HTML.
         self.assertFalse(report_validator.parse_markdown(escaped.appendix)["has_raw_html"])
+
+    def test_format_two_renderer_refuses_ambiguous_historical_order(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["runs"].append({  # type: ignore[union-attr]
+            "id": "historical-run-older",
+            "state": "historical",
+            "evidence_refs": ["evidence-a"],
+            "summary": "An older result.",
+        })
+        model["runs"].sort(key=lambda record: record["id"])  # type: ignore[union-attr]
+        self.assertEqual(model_validator.validate_model(model, binding), [])
+        with self.assertRaisesRegex(ValueError, "at most one historical run"):
+            model_renderer.render_views(
+                model,
+                binding,
+                report_name="fixture.md",
+                appendix_name="fixture-evidence.md",
+            )
 
     def test_renderer_ledger_rejects_a_mutation_in_every_authority_family(self) -> None:
         """The parsed fixed tables, rather than a provenance blob, are the view proof."""
@@ -4294,7 +4523,7 @@ class EvaluationModelV1Tests(unittest.TestCase):
             clean = subprocess.run(command + ["--check"], check=False, text=True, capture_output=True)
             self.assertEqual(clean.returncode, 0, clean.stderr)
             rendered_validator = subprocess.run(
-                [str(Path(__file__).with_name("validate_report.py")), str(report_path), "--appendix", str(appendix_path), "--evaluation-model-v1"],
+                [str(Path(__file__).with_name("validate_report.py")), str(report_path), "--appendix", str(appendix_path), "--evaluation-model-v1", "--report-format", "2"],
                 check=False, text=True, capture_output=True,
             )
             self.assertEqual(rendered_validator.returncode, 0, rendered_validator.stderr)

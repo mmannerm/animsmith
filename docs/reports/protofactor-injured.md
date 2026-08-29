@@ -2,13 +2,15 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — all 72 delivered FBXs and 70 individual motion contracts were evaluated, Unity 6000.5.8f1 was probed, and 0.4.0's gait-anchor and per-engine advice checks ran, but gait blends, loop quality, transitions, masks, target-character results, and the newly anchored candidates were not visually accepted.
+> Evaluation completeness: **partial** — AnimSmith 0.7.0 reevaluated all 72 FBXs, 70 contracts, remediation, addressability, and bounded advice; dated Unity evidence exists, but blends, loops, transitions, masks, target-character results, and candidates lack visual acceptance.
 >
 > Confidence: **high**
 >
-> Evaluation date: **2026-08-21**
+> Evaluation date: **2026-08-26**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith 0.7.0**
+>
+> Report format: **2**
 >
 > Detailed evidence: [Protofactor Injured evidence](protofactor-injured-evidence.md)
 
@@ -16,7 +18,7 @@
 
 Use the pack as seven coherent full-body injury styles, each with idle, walk, run, sit, kneel, and transition material. Do not pool all A–G clips into one interchangeable blend space: root-motion walk speed differs by 48%, run speed by 22%, and the walk/run gait-phase relationship varies materially by style. All standard files share the collection's 56-bone skeleton, all 70 individual clips import as Unity Humanoid, and each IP/RM gait pair has matching duration and near-identical phase.
 
-The main out-of-box defect is looping: 42 of 70 declared contracts fail, including all 27 explicitly loop-declared locomotion files and 15 of 21 injury idles. 0.4.0 separates loop-seam applicability from raw findings (48 applicable/22 not-applicable; 25 complete/45 not-evaluated), so several no-stride idles are now correctly recorded as not evaluated rather than mislabelled failures. Under 0.3.0 (2026-08-17), AnimSmith's fail-closed gait-anchor safety policy ([issue #407](https://github.com/mmannerm/animsmith/issues/407), closed 2026-08-17) safely refused all 14 tested IP gait-anchor transforms because this skeleton's root lacked a finite horizontal forward axis. [Issue #426](https://github.com/mmannerm/animsmith/issues/426) (closed 2026-08-18) delivered vertical-forward-axis gait-anchor support, and 0.4.0 measures a vertical `positive_y` heading on 71/72 clips and all 14 now anchor (exit 0), cutting cross-style circular phase spread from 0.554 to 0.110 (run) and 0.603 to 0.051 (walk) — a mechanical improvement only: no Humanoid-retarget or visual import ran, so candidates remain unpromoted.
+The main out-of-box defect is looping: 42 of 70 declared contracts fail, including all 27 explicitly loop-declared locomotion files and 15 of 21 injury idles. AnimSmith 0.7.0 reports 48 loop-seam-applicable and 22 not-applicable clips, with 25 complete and 45 not evaluated under the declared contracts. It measures a vertical `positive_y` heading on 71/72 clips and anchors all 14 selected in-place gaits, reducing cross-style circular phase spread from 0.554 to 0.110 for run and 0.603 to 0.051 for walk. This is a mechanical candidate only: no Humanoid retarget or visual import ran, so the outputs remain unpromoted.
 
 ## Capability coverage
 
@@ -69,9 +71,9 @@ These loop values are the intended runtime policy, not proof that the delivered 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
 | IN-001 | major | All 27 explicit locomotion loops fail a strict seam check, risking a once-per-cycle pose or velocity pulse; [loop guidance](../game-ready-clips.md#the-loop-pops). | artist-author | Inspect each wrap and re-author/crossfade only with visual acceptance. | Current diagnostics identify seams; safe repair needs authored acceptance. | High mechanical; visual severity open. |
-| IN-002 | major | Walk speeds span 0.494–0.733 m/s and runs 1.748–2.127 m/s; uncalibrated shared thresholds cause speed jumps or foot sliding; [blend guidance](../game-ready-clips.md#feet-skate-when-clips-blend). | engine-config | Build one speed blend per style using measured thresholds. | [Issue #411](https://github.com/mmannerm/animsmith/issues/411) tracks speed/stride coherence. | High measurements; blends visually open. |
-| IN-003 | major | Walk-to-run phase offsets reach 0.181 cycles; direct blending can double-contact or scuff even though each IP/RM pair matches; [blend guidance](../game-ready-clips.md#feet-skate-when-clips-blend). | engine-config | Trial the newly anchored 14 IP candidates for per-style engine sync/contact markers, then test transition windows before adoption. | [Issue #426](https://github.com/mmannerm/animsmith/issues/426) (delivered, closed 2026-08-18) added vertical-forward-axis gait-anchor support, resolving the [issue #407](https://github.com/mmannerm/animsmith/issues/407)-governed (closed 2026-08-17) fail-closed refusal; 0.4.0 anchors all 14 IP gaits (circular spread 0.554→0.110 run; 0.603→0.051 walk). Candidates remain unpromoted; no Humanoid-retarget or visual import. | High phase evidence; 14/14 anchor outputs produced but unpromoted (0.3.0's exit-2 refusal is retained as historical, 2026-08-17). |
-| IN-004 | moderate | Fifteen of 21 injury idles show loop-closure/seam lint findings, risking visible periodic pops during long holds; separately, 0.4.0's loop-seam applicability split (48 applicable/22 not-applicable; 25 complete/45 not-evaluated) now records many no-stride clips as not evaluated rather than mislabelled failures, so per-idle severity needs individual review; [loop guidance](../game-ready-clips.md#the-loop-pops). | artist-author | Preview all wraps and repair or crossfade accepted loops. | Current diagnostics exist; repair remains author-reviewed. | High mechanical; visual severity open. |
+| IN-002 | major | Walk speeds span 0.494–0.733 m/s and runs 1.748–2.127 m/s; uncalibrated shared thresholds cause speed jumps or foot sliding; [blend guidance](../game-ready-clips.md#feet-skate-when-clips-blend). | engine-config | Build one speed blend per style using measured thresholds. | Current declared-set policies can check a supplied controller contract; this evaluation did not supply one. | High measurements; blends visually open. |
+| IN-003 | major | Walk-to-run phase offsets reach 0.181 cycles; direct blending can double-contact or scuff even though each IP/RM pair matches; [blend guidance](../game-ready-clips.md#feet-skate-when-clips-blend). | engine-config | Trial the 14 anchored IP candidates with per-style engine sync/contact markers, then test transition windows before adoption. | Vertical-heading anchoring is available; 0.7.0 anchors all 14 IP gaits, but the candidates remain unpromoted without Humanoid-retarget or visual proof. | High phase evidence; 14/14 outputs produced, with run spread 0.554 to 0.110 and walk spread 0.603 to 0.051. |
+| IN-004 | moderate | Fifteen of 21 injury idles show loop-closure/seam lint findings, risking visible periodic pops during long holds. Current loop-seam coverage is 48 applicable/22 not-applicable and 25 complete/45 not-evaluated, so each idle still needs individual review; [loop guidance](../game-ready-clips.md#the-loop-pops). | artist-author | Preview all wraps and repair or crossfade accepted loops. | Current diagnostics exist; repair remains author-reviewed. | High mechanical; visual severity open. |
 | IN-005 | moderate | All seven kneel styles have entry motions but no kneel-to-stand counterpart, so recovery requires a reversed or custom transition that may look implausible. Guidance: not applicable. | artist-author | Author/approve a recovery path; do not assume reverse playback is valid. | Transition-family reporting can expose the gap but cannot invent motion. | High inventory evidence. |
 | IN-006 | moderate | The current listing says zero root-motion clips while the local archive has 14 `_RM` gait files; purchase expectations and controller design may diverge. Guidance: not applicable. | vendor-license | Scope decisions to the hashed local archive and ask the vendor to reconcile the listing. | Report tooling can flag the discrepancy, not establish revision provenance. | High current-page/local-file evidence. |
 | IN-007 | minor | 9,644 constant-track notes across 70 individual files add export/retarget overhead; [optimization guidance](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes). | animsmith-current-declared | Retain sources; prune only after equivalence tests. | Current pruning is available; still bounded by [issue #401](https://github.com/mmannerm/animsmith/issues/401). | One sample shrank 658,816 to 45,152 bytes; seam remained. |
@@ -80,10 +82,10 @@ These loop values are the intended runtime policy, not proof that the delivered 
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 (retained); 6000.3 advice (0.4.0) | Observed headless import/sampling (2026-08-17, unchanged); evaluator import-advice (2026-08-21) | All 70 clips import; 6/6 samples, both mixers, and the mask graph pass. 0.4.0 `unity-humanoid` import-advice exits 0 using declarations **observed** in Unity 6000.5.8f1 (in-place clips bake all three root locks); the earlier `.fbx.meta`-inferred `extract` reading was wrong. | Visual loops/blends/mask, controller, target rig, compression, build; 6000.3 advice is not observed 6000.5.8f1 behavior. |
-| Unreal Engine 5.8 | 0.4.0 evaluator import-advice attempt | Typed refusal `profile_settings_unmodeled`, exit 1: profile settings not yet modeled. | FBX import/retarget, markers, root authority, masks, build. |
-| Godot 4.7 | 0.4.0 evaluator import-advice attempt | Typed refusal `profile_settings_unmodeled`, exit 1: profile settings not yet modeled. | Conversion/import, retarget, sync policy, masks, export. |
-| Bevy 0.19.0 | 0.4.0 evaluator addressability (generated GLB) | Exit 0: 1 animation row, coverage complete, predicted selector `Animation0`, facet available, 0 findings — inventory/selector prediction only. | glTF conversion of the delivered source, mapping, phase policy, performance. |
+| Unity 6000.5.8f1; 6000.3 advice | Observed headless import/sampling plus 0.7.0 evaluator advice | All 70 clips import; 6/6 samples, both mixers, and the mask graph pass. Observed in-place root locks make the advice declare bake for all three root components. | Visual loops/blends/mask, controller, target rig, compression, and build; 6000.3 advice is not observed 6000.5.8f1 behavior. |
+| Unreal Engine 5.8 | 0.7.0 evaluator import-advice attempt | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | FBX import/retarget, markers, root authority, masks, build. |
+| Godot 4.7 | 0.7.0 evaluator import-advice attempt | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | Conversion/import, retarget, sync policy, masks, export. |
+| Bevy 0.19.0 | 0.7.0 evaluator addressability (generated GLB) | Exit 0: 1 animation row, coverage complete, predicted selector `Animation0`, facet available, 0 findings — inventory/selector prediction only. | glTF conversion of the delivered source, mapping, phase policy, performance. |
 
 ## Fit and limitations
 
@@ -93,9 +95,17 @@ Poor fit: drop-in omnidirectional locomotion, first-person arms, one universal b
 
 The pack combines technically with Basic Locomotion, Sword & Shield, Campfire, and Climbing: standard skeleton signatures align, pairwise shared paths are byte-identical, and the five-pack Unity project co-imports. Artistic style, gait transition, weapon posture, and state handoffs remain gates; see the [partial collection report](protofactor-ultimate-animation-collection.md).
 
+## Changes between AnimSmith versions
+
+AnimSmith 0.7.0 — Revalidated the unchanged 72-FBX corpus under output v17 / measurements v16. Its 70 contracts reproduce 28 pass / 42 fail and the prior findings; 15 remediation candidates passed verification and emitted addressability V1 plus Bevy rich V2. Unity, Unreal, and Godot advice was available, but these projections do not prove engine execution, blending, retargeting, or visuals.
+
+AnimSmith 0.4.0 — Added vertical-heading gait anchoring; a direct Unity 6000.5.8f1 root-lock observation corrected the metadata inference.
+
+AnimSmith 0.3.0 — Refused the same 14 gait trials.
+
 ## Evidence status
 
-The evaluation covers 72 FBXs: 70 individual motions, one combined take, and one actor. This is a pure evaluator-version refresh: AnimSmith 0.4.0 (tag `v0.4.0`, revision `6b37ad636b198ef8ff47fadbf6a3a51eb1a27c8e`) re-inventories the source archive byte-identical to the published manifest (0 added, 0 removed, 0 changed) and reuses manifest schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1` and the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder). The local archive was supplied as a Protofactor-site download; current store/license pages establish context, not its revision or transaction rights. Exact evidence, the historical 0.3.0 baseline, and current limitations are in the [appendix](protofactor-injured-evidence.md).
+Current mechanical evidence is the exact 0.7.0 rerun. The evaluation covers 72 FBXs: 70 individual motions, one combined take, and one actor, plus the dated Unity observation. This report uses manifest schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1` and the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder). The local archive was supplied as a Protofactor-site download; current store and license pages establish context, not its revision or transaction rights. Exact evidence and current limitations are in the [appendix](protofactor-injured-evidence.md).
 
 ## Sources
 

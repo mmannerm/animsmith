@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import inspect
 import os
 import re
@@ -20,7 +21,7 @@ import validate_evaluation_model as model_validator
 import validate_report as report_validator
 
 
-RENDERER_VERSION = "1"
+RENDERER_VERSION = "2"
 READINESS_LADDER = "../game-ready-clips.md#the-readiness-ladder"
 
 
@@ -207,6 +208,32 @@ def _engine_rows(model: dict[str, Any]) -> list[str]:
     return rows
 
 
+def _changes(model: dict[str, Any], binding: dict[str, Any]) -> list[str]:
+    """Render the current run first, followed by explicitly historical runs."""
+    current = next(record for record in model["runs"] if record["state"] == "current")
+    historical = sorted(
+        (record for record in model["runs"] if record["state"] == "historical"),
+        key=lambda record: record["id"],
+    )
+    if len(historical) > 1:
+        raise ValueError(
+            "report format 2 V1 rendering supports at most one historical run; "
+            "V1 has no temporal field for newest-first ordering"
+        )
+    version = _text(binding["tool"]["version"])
+    rows = [f"- AnimSmith {version} — Current: {_text(current['summary'])}"]
+    rows.extend(
+        f"- Earlier evaluator (version not represented by model V1) — {_text(record['summary'])}"
+        for record in historical
+    )
+    rows.extend(
+        f"- Earlier remediation {_code(record['id'])} — state={_text(record['state'])}; output={_code(record['output_id'])}."
+        for record in model["remediations"]
+        if record["run_id"] != current["id"]
+    )
+    return rows
+
+
 def _ledger_table(title: str, columns: tuple[str, ...], records: list[dict[str, Any]]) -> str:
     """Render an explicit, readable fixed-slot projection for one authority."""
     return "\n".join([
@@ -236,11 +263,14 @@ def _ledger_sections(model: dict[str, Any], binding: dict[str, Any]) -> list[tup
         "runtime_sets": sum(len(record["runtime_set_ids"]) for record in model["collection"]["constituents"]),
         "pair_records": len(model["collection"]["cross_pack_records"]),
     }
+    current_run_id = next(record["id"] for record in model["runs"] if record["state"] == "current")
     return [
         ("Model contract", ("schema", "schema_version", "canonical_digest"), [{"schema": model["schema"], "schema_version": model["schema_version"], "canonical_digest": model_contract.canonical_digest(model)}]),
         ("Presentation", ("id", "title", "evaluation_date", "verdict", "completeness", "confidence"), [model["presentation"]]),
         ("Evidence", ("id", "kind", "locator", "summary"), model["evidence"]),
-        ("Runs", ("id", "state", "evidence_refs", "summary", "supersedes"), model["runs"]),
+        ("Runs", ("id", "state", "evidence_refs", "summary"), [
+            record for record in model["runs"] if record["id"] == current_run_id
+        ]),
         ("Clips", ("id", "source", "take_index", "take_name", "primary_role", "tags", "classification_basis", "evidence_refs", "loop", "duration_s", "root_motion_speed_mps", "movement_owner", "assessment", "coverage"), model["clips"]),
         ("Runtime sets", ("id", "kind", "members", "assessment", "coverage", "evidence_refs"), model["runtime_sets"]),
         ("Validation profiles", ("id", "status", "activation_basis", "evidence_refs"), model["profiles"]),
@@ -249,7 +279,9 @@ def _ledger_sections(model: dict[str, Any], binding: dict[str, Any]) -> list[tup
         ("Capabilities", ("id", "state", "evidence_refs"), model["capabilities"]),
         ("Integration steps", ("id", "order", "action", "movement_owner", "phase_owner", "coordinates_or_thresholds", "evidence_refs"), model["integration_steps"]),
         ("Issues", ("id", "severity", "impact", "primary_owner", "current_action", "future_candidate", "secondary_workaround", "evidence_refs"), model["issues"]),
-        ("Remediations", ("id", "run_id", "state", "input_evidence_refs", "output_id", "refusal_evidence_refs", "historical_output_id"), model["remediations"]),
+        ("Remediations", ("id", "run_id", "state", "input_evidence_refs", "output_id", "refusal_evidence_refs"), [
+            record for record in model["remediations"] if record["run_id"] == current_run_id
+        ]),
         ("Engine evidence", ("id", "runtime", "version", "level", "coverage", "settings", "procedure", "evidence_refs"), model["engine_evidence"]),
         ("Limitations", ("id", "summary", "evidence_refs"), model["limitations"]),
         ("Source provenance", ("id", "source_commit", "report_sha256", "acquisition_scope", "license_scope", "evidence_kind", "evidence_refs"), model["sources"]),
@@ -266,6 +298,21 @@ def _ledger_sections(model: dict[str, Any], binding: dict[str, Any]) -> list[tup
     ]
 
 
+def _current_model_projection(model: dict[str, Any]) -> dict[str, Any]:
+    """Return a non-authoritative public projection without superseded state."""
+    projection = copy.deepcopy(model)
+    current_run = next(record for record in projection["runs"] if record["state"] == "current")
+    current_run.pop("supersedes", None)
+    projection["runs"] = [current_run]
+    projection["remediations"] = [
+        record for record in projection["remediations"]
+        if record["run_id"] == current_run["id"]
+    ]
+    for record in projection["remediations"]:
+        record.pop("historical_output_id", None)
+    return projection
+
+
 def _authority_ledger(model: dict[str, Any], binding: dict[str, Any]) -> str:
     """Render all authority-ledger tables in their closed fixed order."""
     return "\n".join(_ledger_table(title, columns, records) for title, columns, records in _ledger_sections(model, binding))
@@ -274,6 +321,7 @@ def _authority_ledger(model: dict[str, Any], binding: dict[str, Any]) -> str:
 def _evidence_relationship_rows(model: dict[str, Any]) -> list[dict[str, str]]:
     """Flatten every declared evidence edge in stable record and field order."""
     rows: list[dict[str, str]] = []
+    current_run_id = next(record["id"] for record in model["runs"] if record["state"] == "current")
     fields = (
         ("runs", ("evidence_refs",)), ("clips", ("evidence_refs",)),
         ("runtime_sets", ("evidence_refs",)), ("profiles", ("evidence_refs",)),
@@ -287,6 +335,10 @@ def _evidence_relationship_rows(model: dict[str, Any]) -> list[dict[str, str]]:
     for family, refs_fields in fields:
         records = model["collection"][family.split(".", 1)[1]] if family.startswith("collection.") else model[family]
         for record in records:
+            if family == "runs" and record["id"] != current_run_id:
+                continue
+            if family == "remediations" and record["run_id"] != current_run_id:
+                continue
             for refs_field in refs_fields:
                 for reference in record[refs_field]:
                     rows.append({"family": family, "record_id": record["id"], "field": refs_field, "evidence_ref": reference})
@@ -341,7 +393,8 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         f"> Evaluation completeness: **{_text(presentation['completeness'])}** — {_narrative(model, 'evidence-status', 'Bounded to the V1 evidence records.')}", ">",
         f"> Confidence: **{_text(presentation['confidence'])}**", ">",
         f"> Evaluation date: **{_text(presentation['evaluation_date'])}**", ">",
-        "> Report format: **1**", ">",
+        f"> Current evaluator: **AnimSmith {_text(binding['tool']['version'])}**", ">",
+        "> Report format: **2**", ">",
         f"> Detailed evidence: {_link(appendix_name, appendix_name)}", "",
         "## Technical decision", _narrative(model, "technical-decision", "No technical-decision narrative was recorded."), "",
         "## Capability coverage", "", "### Complete core", "\n".join("- " + value for value in capabilities["pass"]) or "- None recorded.", "",
@@ -356,6 +409,7 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         "\n".join(["| ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |", "|---|---|---|---|---|---|---|"] + issue_rows) if issue_rows else "No material technical issues were found at the stated scope.", "",
         "## Engine status", "| Runtime | Evidence level | Technical result | Remaining gate |", "|---|---|---|---|", *(_engine_rows(model)), "",
         "## Fit and limitations", _narrative(model, "fit-and-limitations", "See the typed limitations in the appendix."), "",
+        "## Changes between AnimSmith versions", *_changes(model, binding), "",
         "## Evidence status", f"Model schema: {_code(model_contract.SCHEMA)}; schema version: {_code(model_contract.SCHEMA_VERSION)}; digest: {_code(digest)}; renderer: {_code(RENDERER_VERSION)}. {_link('Canonical readiness ladder', READINESS_LADDER)}.", "",
         "## Sources", *source_rows, "",
     ])
@@ -374,11 +428,17 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         f"1. {_text(record['summary'])} {_evidence(model, record['evidence_refs'])} id={_code(record['id'])}"
         for record in model["limitations"]
     ] or ["1. No limitations were recorded."]
+    current_run_id = next(record["id"] for record in model["runs"] if record["state"] == "current")
+    current_remediations = [
+        record for record in model["remediations"] if record["run_id"] == current_run_id
+    ]
     appendix = "\n".join([
         f"# Animation pack evidence appendix: {_text(presentation['title'])}", "",
         f"> Companion report: {_link(report_name, report_name)}", ">",
         f"> Evidence status: **{_text(presentation['completeness'])}** — {_narrative(model, 'evidence-status', 'Bounded to the V1 evidence records.')}", ">",
-        f"> Evaluation date: **{_text(presentation['evaluation_date'])}**", ">", "> Report format: **1**", "",
+        f"> Evaluation date: **{_text(presentation['evaluation_date'])}**", ">",
+        f"> Current evaluator: **AnimSmith {_text(binding['tool']['version'])}**", ">",
+        "> Report format: **2**", "",
         f"Model schema: {_code(model_contract.SCHEMA)}; version: {_code(model_contract.SCHEMA_VERSION)}; canonical digest: {_code(digest)}; renderer: {_code(RENDERER_VERSION)}. {_link('Canonical readiness ladder', READINESS_LADDER)} is authoritative.", "",
         "## Evaluation scope and provenance", _narrative(model, "evidence-status", "Synthetic or declared V1 provenance is listed below."), "",
         "### Evidence coverage", f"Validated source records: {len(binding.get('sources', []))}.", "", "### Claim legend", "Evidence kinds are fixed V1 vocabulary.", "",
@@ -389,11 +449,12 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         "### Validation-profile status", "| Validation profile | Selection | Result / next evidence |", "|---|---|---|", *[f"| {_text(dict(contract.PROFILE_ROWS)[record['id']])} | " + (f"{_code('selected')} — {_code(record['activation_basis'])}" if record['status'] == 'selected' else _code(record['status'])) + f" | id={_code(record['id'])}; {_evidence(model, record['evidence_refs'])} |" for record in model['profiles']], "",
         "## Pack inventory and content evidence", _narrative(model, "pack-inventory", "No inventory narrative was recorded."), "| Clip | Source | Take | Take name | Role | Loop | Duration | RM speed | Movement owner | Assessment |", "|---|---|---:|---|---|---|---|---|---|---|", *clip_rows, "",
         "## Mechanical baseline", _narrative(model, "mechanical-baseline", "No mechanical-baseline narrative was recorded."), "",
-        "## AnimSmith remediation evidence", "| ID | Run | State | Output | Historical output | Evidence |", "|---|---|---|---|---|---|", *[f"| {_code(record['id'])} | {_code(record['run_id'])} | {_text(record['state'])} | {_code(record['output_id'])} | {_code(record['historical_output_id'])} | {_evidence(model, record['input_evidence_refs'] + record['refusal_evidence_refs'])} |" for record in model['remediations']], "",
+        "## AnimSmith remediation evidence", "| ID | Run | State | Current output | Evidence |", "|---|---|---|---|---|", *[f"| {_code(record['id'])} | {_code(record['run_id'])} | {_text(record['state'])} | {_code(record['output_id'])} | {_evidence(model, record['input_evidence_refs'] + record['refusal_evidence_refs'])} |" for record in current_remediations], "",
         "## Engine procedures and evidence", "| Runtime | Version | Procedure | Observed result | Remaining gate |", "|---|---|---|---|---|", *[f"| {_text(record['runtime'])} | {_text(record['version'])} | id={_code(record['id'])}; {_text(record['procedure'])}; {_evidence(model, record['evidence_refs'])} | {_text(record['level'])}/{_text(record['coverage'])} | {_text(record['settings'])} |" for record in model['engine_evidence']], "",
         "## Rig, masking, and compatibility evidence", "| Pack/rig/set pair | Skeleton/retarget | Scale/axes | Root policy | Timing/blend | Overall evidence |", "|---|---|---|---|---|---|", *cross_rows, "",
         "## Limitations and unknowns", *limitation_rows, "",
-        "## Reproduction", _narrative(model, "reproduction", "Use the model digest and source records below."), "", "### V1 authoritative field ledger", _authority_ledger(model, binding), _evidence_relationship_table(model), "```json", model_contract.canonical_json({"binding": _public_binding_projection(binding), "model": model}).decode("utf-8"), "```", "",
+        "## Changes between AnimSmith versions", *_changes(model, binding), "",
+        "## Reproduction", _narrative(model, "reproduction", "Use the model digest and source records below."), "", "### V1 authoritative field ledger", _authority_ledger(model, binding), _evidence_relationship_table(model), "Current-state public projection (the canonical model digest above remains the authority):", "```json", model_contract.canonical_json({"binding": _public_binding_projection(binding), "current_model_projection": _current_model_projection(model)}).decode("utf-8"), "```", "",
         "## Sources", *source_rows, "",
     ])
     return RenderedViews(report + "\n", appendix + "\n")
@@ -402,10 +463,18 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
 def validate_views(model: dict[str, Any], binding: dict[str, Any], views: RenderedViews, *, report_name: str, appendix_name: str) -> list[str]:
     """Use the pinned AST parser, then prove the fixed projections match V1."""
     errors = model_validator.validate_model(model, binding)
-    errors.extend(report_validator.validate(views.report, evaluation_schema=model_contract.SCHEMA))
-    errors.extend(report_validator.validate_appendix(views.appendix, evaluation_schema=model_contract.SCHEMA))
+    errors.extend(report_validator.validate(
+        views.report, evaluation_schema=model_contract.SCHEMA, report_format="2"
+    ))
+    errors.extend(report_validator.validate_appendix(
+        views.appendix, evaluation_schema=model_contract.SCHEMA, report_format="2"
+    ))
     errors.extend(report_validator.validate_pair(views.report, views.appendix, report_name, appendix_name))
     report_ast, appendix_ast = report_validator.parse_markdown(views.report), report_validator.parse_markdown(views.appendix)
+    current_run_id = next(record["id"] for record in model["runs"] if record["state"] == "current")
+    current_remediations = [
+        record for record in model["remediations"] if record["run_id"] == current_run_id
+    ]
     for title, columns, records in _ledger_sections(model, binding):
         matching = [
             table for table in appendix_ast["tables"]
@@ -480,7 +549,7 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
     assert_projection_links(appendix_ast, report_validator.PIPELINE_HEADER, model["pipeline_stages"], 2, ("evidence_refs",), "pipeline")
     assert_projection_links(appendix_ast, ("Role or runtime set", "File-ready / clip-ready", "Set-ready / rig-use", "Runtime / acceptance boundary"), model["readiness"], 3, ("evidence_refs",), "readiness")
     assert_projection_links(appendix_ast, report_validator.PROFILE_HEADER, model["profiles"], 2, ("evidence_refs",), "profile")
-    assert_projection_links(appendix_ast, ("ID", "Run", "State", "Output", "Historical output", "Evidence"), model["remediations"], 5, ("input_evidence_refs", "refusal_evidence_refs"), "remediation")
+    assert_projection_links(appendix_ast, ("ID", "Run", "State", "Current output", "Evidence"), current_remediations, 4, ("input_evidence_refs", "refusal_evidence_refs"), "remediation")
     assert_projection_links(appendix_ast, ("Runtime", "Version", "Procedure", "Observed result", "Remaining gate"), model["engine_evidence"], 2, ("evidence_refs",), "appendix engine")
     if model["collection"]["cross_pack_records"]:
         assert_projection_links(appendix_ast, ("Pack/rig/set pair", "Skeleton/retarget", "Scale/axes", "Root policy", "Timing/blend", "Overall evidence"), model["collection"]["cross_pack_records"], 5, ("evidence_refs",), "cross-pack")

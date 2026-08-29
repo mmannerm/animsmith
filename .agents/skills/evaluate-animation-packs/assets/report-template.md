@@ -8,7 +8,9 @@
 >
 > Evaluation date: **{{YYYY-MM-DD}}**
 >
-> Report format: **1**
+> Current evaluator: **AnimSmith {{SEMVER}}**
+>
+> Report format: **2**
 >
 > Detailed evidence: `{{REPORT_STEM}}-evidence.md` (replace with a relative Markdown link in the completed report)
 
@@ -28,10 +30,10 @@ untouched result and the config-backed result separately. Do not describe a
 role map as a repaired source asset, and limit the configured conclusion to
 the skeleton variants actually covered by that map.
 
-If this is a refresh against a newer AnimSmith version, state which baseline,
-contract, and remediation conclusions changed. A current safety refusal is not
-a successful remediation; keep older generated-output measurements explicitly
-historical and do not use them as the current integration recipe.
+Write this section and every ordinary report section as the current evaluation
+against the declared current evaluator. Do not narrate earlier tool behavior,
+ticket history, superseded measurements, or the steps by which the current
+result was reached here.
 
 Do not let evaluator setup, price, or transaction-record gaps change the
 technical verdict. Put provenance and evaluation-completeness limitations in
@@ -160,6 +162,20 @@ For collection reports, include digest results for overlapping package paths,
 namespaced cross-pack members, exact skeleton/reference-rig evidence, and the
 gameplay gaps that one constituent fills for another. Do not infer compatibility
 from shared role names, humanoid labels, or co-import alone.
+
+## Changes between AnimSmith versions
+
+List only evaluator-version changes, newest first. Keep this concise and useful
+to a returning reader: changed conclusions or measurements, results explicitly
+revalidated as unchanged, and operations that became available, unavailable,
+or fail-closed. Put all prior evaluator behavior, superseded evidence, ticket
+implementation history, and before/after version comparisons here—not in the
+technical decision, issue register, engine status, recipe, or evidence status.
+A current safety refusal is not a successful remediation; keep any older
+generated-output measurements explicitly historical here and do not use them
+as the current integration recipe.
+For an initial evaluation, write: `AnimSmith {{SEMVER}} — Initial evaluation;
+no earlier AnimSmith comparison.`
 
 ## Evidence status
 

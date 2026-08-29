@@ -126,6 +126,19 @@ missing. Treat earlier generated outputs as historical evidence. A new
 fail-closed refusal is a current result, but it is not a successful remediation
 and must not inherit the earlier version's post-transform claims.
 
+Write every ordinary report and appendix section as the current state against
+one explicitly declared current AnimSmith evaluator. The audience is a game
+developer, not the tool's implementation team: do not scatter prior evaluator
+behavior, superseded measurements, ticket chronology, or the reasoning history
+that led to the current implementation through the decision, recipe, issue,
+engine, evidence, or reproduction sections. Put all version-to-version history
+under the single `Changes between AnimSmith versions` section in each document,
+newest first. That section may retain exact older evaluator identities and the
+concise changed, revalidated, unavailable, or refused result, but not an
+internal development diary. Current public issues remain appropriate in the
+issue register only when they describe a present developer-facing limitation
+or action.
+
 Use the version-matched project sources as authorities:
 
 - [README](../../../README.md) for the current check and command overview;
@@ -187,16 +200,29 @@ ladder as outcome coverage; for example, a completed inspect stage may still
 produce file-ready findings.
 
 The legacy evaluation manifest remains the report-input contract until its
-explicit migration. New structured evaluations may additionally use the strict
+explicit migration. New structured evaluations should use the strict
 `urn:animsmith:skill:animation-pack-evaluation:1` model documented in
 [`references/evaluation-model-v1.md`](references/evaluation-model-v1.md). It
 binds to an independently validated `collection-output:2` projection; it does
 not parse collection-manifest TOML or make generated Markdown authoritative
 before the explicit renderer and migration boundaries.
 
+That V1 model is frozen to historical `collection-output:2`; its deterministic
+views use the current report format 2. It is not compatible with current
+AnimSmith 0.7.0 `collection-output:9`. Until [issue
+#598](https://github.com/mmannerm/animsmith/issues/598) delivers a versioned
+current binding, do not pass current collection output to the V1 validator,
+relabel V9 as V2, or claim a new structured evaluation. For a new hand-authored
+format-2 evaluation, retain the scrubbed current collection authority
+externally so it can migrate without reconstructing clip or set identity from
+filenames or prose.
+
 Render a validated V1 model with its independently validated binding through
 the one fixed renderer. It produces the paired Markdown views from the same
-canonical model and never reverse-imports Markdown as authority:
+canonical model and never reverse-imports Markdown as authority. V1 has no
+temporal field for historical runs, so report-format-2 rendering fails closed
+when more than one historical run would require an unprovable newest-first
+order:
 
 ```text
 .agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
@@ -212,7 +238,7 @@ already-rendered pair without writing:
 .agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
   MODEL.json --binding COLLECTION.json --report REPORT.md --appendix REPORT-evidence.md --check
 .agents/skills/evaluate-animation-packs/scripts/validate_report.py \
-  REPORT.md --appendix REPORT-evidence.md --evaluation-model-v1
+  REPORT.md --appendix REPORT-evidence.md --evaluation-model-v1 --report-format 2
 ```
 
 Both output-parent directories must already exist. `--check` byte-compares
@@ -436,7 +462,7 @@ Create a linked pair:
   1,500–2,000 rendered words and never more than 2,000 words;
 - `<vendor>-<pack>-evidence.md`: the exhaustive evidence appendix.
 
-This two-document contract is report format version 1. Record the format
+This two-document contract is report format version 2. Record the format
 version in both files so future AnimSmith revisions can migrate or compare
 reports explicitly.
 
@@ -459,7 +485,8 @@ Write the primary report in this reader order:
    owner, and applicable repository-relative `docs/game-ready-clips.md` links;
 6. Unity, Unreal Engine, Godot, and Bevy status;
 7. best fit, poor fit, cross-pack status, and limitations;
-8. a short evidence/provenance boundary and sources.
+8. one concise changes-between-AnimSmith-versions section;
+9. a short evidence/provenance boundary and sources.
 
 The primary report is technical, not a commercial scorecard. Keep evaluator
 license/setup failures, acquisition records, prices, and legal uncertainty out
