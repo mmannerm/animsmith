@@ -174,6 +174,131 @@ fn write_book_fixture(root: &Path, marker: &str) {
     );
 }
 
+fn git(root: &Path, arguments: &[&str]) {
+    assert!(
+        Command::new("git")
+            .args(["-C", root.to_str().expect("fixture path is UTF-8")])
+            .args(arguments)
+            .status()
+            .expect("runs git for fixture")
+            .success(),
+        "git {:?} succeeds",
+        arguments
+    );
+}
+
+fn canonical_index_category_links(markdown: &str) -> Vec<(String, String)> {
+    let mut in_table = false;
+    let mut in_head = false;
+    let mut first_header = None;
+    let mut header_cell = 0usize;
+    let mut is_index = false;
+    let mut cell = 0usize;
+    let mut row_link = None;
+    let mut row_category = String::new();
+    let mut rows = Vec::new();
+
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Table(_)) => {
+                in_table = true;
+                is_index = false;
+                first_header = None;
+                header_cell = 0;
+            }
+            Event::Start(Tag::TableHead) if in_table => in_head = true,
+            Event::Start(Tag::TableCell) if in_head => {
+                header_cell += 1;
+                if header_cell == 1 {
+                    first_header = Some(String::new());
+                }
+            }
+            Event::Text(text) if in_head && header_cell == 1 => {
+                first_header
+                    .as_mut()
+                    .expect("header is present")
+                    .push_str(&text);
+            }
+            Event::End(TagEnd::TableHead) if in_table => {
+                in_head = false;
+                is_index = first_header.as_deref() == Some("Document");
+            }
+            Event::Start(Tag::TableRow) if is_index => {
+                cell = 0;
+                row_link = None;
+                row_category.clear();
+            }
+            Event::Start(Tag::TableCell) if is_index && !in_head => cell += 1,
+            Event::Start(Tag::Link { dest_url, .. }) if is_index && !in_head && cell == 1 => {
+                row_link = Some(dest_url.into_string());
+            }
+            Event::Text(text) if is_index && !in_head && cell == 3 => {
+                row_category.push_str(&text);
+            }
+            Event::End(TagEnd::TableRow) if is_index => rows.push((
+                row_category.trim().to_owned(),
+                row_link.take().expect("index Document cell has a link"),
+            )),
+            Event::End(TagEnd::Table) if in_table => break,
+            _ => {}
+        }
+    }
+    rows
+}
+
+fn summary_destination(destination: &str) -> String {
+    if destination.contains("://") || destination.starts_with('#') {
+        return destination.to_owned();
+    }
+    let (path, fragment) = destination
+        .split_once('#')
+        .map_or((destination, None), |(path, fragment)| {
+            (path, Some(fragment))
+        });
+    let mut components = vec!["docs"];
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            component => components.push(component),
+        }
+    }
+    let output = components.join("/");
+    fragment.map_or(output.clone(), |fragment| format!("{output}#{fragment}"))
+}
+
+fn summary_category_links(markdown: &str) -> Vec<(String, String)> {
+    let mut heading = None;
+    let mut active_category = None;
+    let mut links = Vec::new();
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Heading { .. }) => heading = Some(String::new()),
+            Event::Text(text) if heading.is_some() => {
+                heading
+                    .as_mut()
+                    .expect("heading is present")
+                    .push_str(&text);
+            }
+            Event::End(TagEnd::Heading(_)) => active_category = heading.take(),
+            Event::Start(Tag::Link { dest_url, .. })
+                if active_category
+                    .as_deref()
+                    .is_some_and(|category| category != "Summary") =>
+            {
+                links.push((
+                    active_category.clone().expect("active category is present"),
+                    dest_url.into_string(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    links
+}
+
 #[test]
 fn staged_pages_tree_is_clean_and_every_rendered_local_link_resolves() {
     let root = repo_root();
@@ -218,7 +343,7 @@ fn staged_anchor_validation_rejects_missing_same_and_cross_page_fragments() {
     .expect("writes cross-page target");
     std::fs::write(
         staged.join("cross.md"),
-        "[valid](target.md#punctuation--code) [deduped](target.md#repeat-1) [missing](target.md#gone)\n",
+        "[valid](target.md#punctuation--code) [deduped](target.md#repeat-1) [missing](target.md#gone) [missing file](absent.md)\n",
     )
     .expect("writes cross-page fixture");
 
@@ -235,9 +360,15 @@ fn staged_anchor_validation_rejects_missing_same_and_cross_page_fragments() {
             .any(|error| error.contains("cross.md") && error.contains("target.md#gone")),
         "cross-page missing fragment fails: {errors:?}"
     );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("cross.md") && error.contains("absent.md")),
+        "plain missing target fails: {errors:?}"
+    );
     assert_eq!(
         errors.len(),
-        2,
+        3,
         "valid slug and duplicate fragments pass: {errors:?}"
     );
 }
@@ -292,6 +423,54 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
 }
 
 #[test]
+fn release_eligibility_outputs_the_workflow_available_value_for_each_tag() {
+    let root = repo_root();
+    let temp = tempfile::tempdir().expect("creates release eligibility fixture");
+    let repository = temp.path().join("releases");
+    std::fs::create_dir(&repository).expect("creates fixture repository");
+    assert!(
+        Command::new("git")
+            .args(["init", "--quiet", repository.to_str().unwrap()])
+            .status()
+            .expect("initializes release fixture")
+            .success()
+    );
+    git(
+        &repository,
+        &["config", "user.email", "pages-test@example.invalid"],
+    );
+    git(&repository, &["config", "user.name", "Pages test"]);
+    std::fs::write(repository.join("README.md"), "legacy release\n")
+        .expect("writes legacy revision");
+    git(&repository, &["add", "README.md"]);
+    git(&repository, &["commit", "--quiet", "-m", "legacy release"]);
+    git(&repository, &["tag", "vlegacy"]);
+    std::fs::write(repository.join(".mdbook-version"), "0.4.52\n").expect("adds Pages pin");
+    git(&repository, &["add", ".mdbook-version"]);
+    git(
+        &repository,
+        &["commit", "--quiet", "-m", "Pages foundation"],
+    );
+    git(&repository, &["tag", "vpages"]);
+
+    let eligibility = |tag: &str| {
+        let output = Command::new("bash")
+            .arg(root.join("scripts/check-pages-release-eligibility.sh"))
+            .arg(tag)
+            .current_dir(&repository)
+            .output()
+            .expect("runs release eligibility helper");
+        assert!(
+            output.status.success(),
+            "eligibility helper exits successfully"
+        );
+        String::from_utf8(output.stdout).expect("eligibility output is UTF-8")
+    };
+    assert_eq!(eligibility("vlegacy"), "available=false\n");
+    assert_eq!(eligibility("vpages"), "available=true\n");
+}
+
+#[test]
 fn summary_is_deterministic_and_has_the_public_information_architecture() {
     let root = repo_root();
     let first = tempfile::tempdir().expect("first staging destination");
@@ -312,6 +491,18 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
     let second_summary =
         std::fs::read_to_string(second.path().join("src/SUMMARY.md")).expect("second summary");
     assert_eq!(first_summary, second_summary, "navigation is deterministic");
+
+    let index =
+        std::fs::read_to_string(root.join("docs/README.md")).expect("reads canonical index");
+    let expected: Vec<(String, String)> = canonical_index_category_links(&index)
+        .into_iter()
+        .map(|(category, destination)| (category, summary_destination(&destination)))
+        .collect();
+    assert_eq!(
+        summary_category_links(&first_summary),
+        expected,
+        "SUMMARY.md preserves every canonical index row beneath its declared category and in index order"
+    );
 
     let headings: BTreeSet<String> = Parser::new_ext(&first_summary, options())
         .filter_map(|event| match event {

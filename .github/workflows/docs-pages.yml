@@ -62,15 +62,13 @@ jobs:
           tag="$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName --jq .tagName)"
           test -n "$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          # The first Pages-enabled release is the first tag that carries the
-          # pinned builder and canonical-index generator. Do not manufacture a
-          # root from an older tag while it is still the latest release.
-          if ! git cat-file -e "${tag}:.mdbook-version"; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          eligibility="$(bash scripts/check-pages-release-eligibility.sh "$tag")"
+          echo "$eligibility" >> "$GITHUB_OUTPUT"
+          # A release without the pinned builder is skipped, never used to
+          # manufacture a synthetic Pages root.
+          if [ "$eligibility" = "available=true" ]; then
+            git worktree add --detach ../animsmith-pages-release "$tag"
           fi
-          echo "available=true" >> "$GITHUB_OUTPUT"
-          git worktree add --detach ../animsmith-pages-release "$tag"
       - name: Build the release root and main development subtree
         if: steps.release.outputs.available == 'true'
         env:
