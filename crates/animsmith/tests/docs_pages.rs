@@ -535,10 +535,11 @@ fn staged_link_validation_refuses_existing_escape_and_keeps_docs_to_root_links()
         1,
         "the legitimate docs-to-root link resolves while the escape fails: {errors:?}"
     );
+    let diagnostic = errors[0].replace('\\', "/");
     assert!(
-        errors[0].contains("docs/guide.md")
-            && errors[0].contains("../../book.toml")
-            && errors[0].contains("outside staged source"),
+        diagnostic.contains("docs/guide.md")
+            && diagnostic.contains("../../book.toml")
+            && diagnostic.contains("outside staged source"),
         "existing target outside src is rejected: {errors:?}"
     );
 }
@@ -671,17 +672,23 @@ fn release_eligibility_outputs_the_workflow_available_value_for_each_tag() {
         &["commit", "--quiet", "-m", "Pages foundation"],
     );
     git(&repository, &["tag", "vpages"]);
+    std::fs::copy(
+        root.join("scripts/check-pages-release-eligibility.sh"),
+        repository.join("check-pages-release-eligibility.sh"),
+    )
+    .expect("copies untracked eligibility helper into fixture checkout");
 
     let eligibility = |tag: &str| {
         let output = Command::new("bash")
-            .arg(root.join("scripts/check-pages-release-eligibility.sh"))
+            .arg("./check-pages-release-eligibility.sh")
             .arg(tag)
             .current_dir(&repository)
             .output()
             .expect("runs release eligibility helper");
         assert!(
             output.status.success(),
-            "eligibility helper exits successfully"
+            "eligibility helper exits successfully: {}",
+            String::from_utf8_lossy(&output.stderr),
         );
         String::from_utf8(output.stdout).expect("eligibility output is UTF-8")
     };
