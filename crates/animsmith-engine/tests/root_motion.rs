@@ -342,6 +342,46 @@ fn fixture(
     }
 }
 
+fn partial_settings_overflow_fixture(
+    witness: &str,
+    owners: (
+        Option<RootMotionProjectOwnerV1>,
+        Option<RootMotionProjectOwnerV1>,
+        Option<RootMotionProjectOwnerV1>,
+    ),
+) -> Fixture {
+    let mut fixture = fixture(
+        witness,
+        &["walk"],
+        PathFixture::Exact,
+        owners,
+        (
+            BakeOrExtract::Bake,
+            BakeOrExtract::Bake,
+            BakeOrExtract::Bake,
+        ),
+    );
+    let mut names = (0..=animsmith_engine::RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS)
+        .map(|index| format!("clip-{index:04}"))
+        .collect::<Vec<_>>();
+    names[0] = "walk".to_owned();
+    let borrowed = names.iter().map(String::as_str).collect::<Vec<_>>();
+    let resolved = declaration(
+        &borrowed,
+        BakeOrExtract::Bake,
+        BakeOrExtract::Bake,
+        BakeOrExtract::Bake,
+    );
+    fixture.provenance = project_prediction_provenance_v6(
+        &resolved,
+        &fixture.source,
+        Vec::new(),
+        intent(&["walk"], owners),
+    )
+    .unwrap();
+    fixture
+}
+
 fn evaluate(fixture: &Fixture) -> animsmith_core::CheckEvaluation {
     let grids = MetricGrids::new(fixture.source.document());
     let check: Box<dyn Check + '_> = Box::new(
@@ -1312,40 +1352,11 @@ fn incomplete_path_inventory_is_one_atomic_summary_without_prefix() {
 }
 
 #[test]
-fn partial_settings_are_one_atomic_summary_without_prefix() {
-    let mut fixture = fixture(
+fn owned_partial_settings_are_one_atomic_summary_without_prefix() {
+    let fixture = partial_settings_overflow_fixture(
         "partial-settings",
-        &["walk"],
-        PathFixture::Exact,
         (Some(RootMotionProjectOwnerV1::Gameplay), None, None),
-        (
-            BakeOrExtract::Bake,
-            BakeOrExtract::Bake,
-            BakeOrExtract::Bake,
-        ),
     );
-    let mut names = (0..=animsmith_engine::RESOLVED_ENGINE_SETTINGS_V2_MAX_CLIPS)
-        .map(|index| format!("clip-{index:04}"))
-        .collect::<Vec<_>>();
-    names[0] = "walk".to_owned();
-    let borrowed = names.iter().map(String::as_str).collect::<Vec<_>>();
-    let resolved = declaration(
-        &borrowed,
-        BakeOrExtract::Bake,
-        BakeOrExtract::Bake,
-        BakeOrExtract::Bake,
-    );
-    fixture.provenance = project_prediction_provenance_v6(
-        &resolved,
-        &fixture.source,
-        Vec::new(),
-        intent(
-            &["walk"],
-            (Some(RootMotionProjectOwnerV1::Gameplay), None, None),
-        ),
-    )
-    .unwrap();
-
     let record = evaluate(&fixture);
     let facets = record.engine_prediction_v6().unwrap().facets();
     assert_eq!(facets.len(), 1);
@@ -1357,6 +1368,49 @@ fn partial_settings_are_one_atomic_summary_without_prefix() {
         facets[0].reasons(),
         &[PredictionUnavailableReasonV2::ResolvedSettingsOverflow]
     );
+}
+
+#[test]
+fn ownerless_partial_settings_are_applicable_with_one_atomic_summary_and_strict_readback() {
+    let fixture =
+        partial_settings_overflow_fixture("ownerless-partial-settings", (None, None, None));
+
+    let grids = MetricGrids::new(fixture.source.document());
+    let check = EngineRootMotionCheck::new(
+        &fixture.source,
+        Some(&fixture.provenance),
+        &fixture.roles,
+        &fixture.measurements,
+    )
+    .unwrap();
+    assert_eq!(
+        check.applicability(&CheckCtx::new(&grids, &fixture.roles, &fixture.config)),
+        Applicability::Applicable,
+        "partial resolved settings must keep an ownerless project applicable"
+    );
+
+    let record = evaluate(&fixture);
+    let facets = record.engine_prediction_v6().unwrap().facets();
+    assert_eq!(facets.len(), 1);
+    assert_eq!(
+        facets[0].state(),
+        EnginePredictionFacetStateV1::RequiredPredictionUnavailable
+    );
+    assert_eq!(
+        facets[0].scope().code.as_str(),
+        "engine-root-motion:inventory"
+    );
+    assert_eq!(
+        facets[0].reasons(),
+        &[PredictionUnavailableReasonV2::ResolvedSettingsOverflow]
+    );
+    assert!(record.evaluated_scopes().is_empty());
+
+    let bytes = strict_v17_bytes(&fixture, record);
+    MeasurementReportInput::read_from(&bytes[..])
+        .unwrap()
+        .into_files()
+        .expect("strict reader must accept ownerless resolved-settings overflow output");
 }
 
 #[test]
