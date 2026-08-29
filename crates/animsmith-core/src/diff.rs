@@ -299,6 +299,7 @@ pub fn diff_measurements(
             .flat_map(|continuity| &continuity.bones)
             .map(|bone| (bone.bone_index, bone))
             .collect();
+        let mut loop_bone_availability_deltas = Vec::new();
         for bone_index in a_loop_bones
             .keys()
             .chain(b_loop_bones.keys())
@@ -308,35 +309,45 @@ pub fn diff_measurements(
             let a_bone = a_loop_bones.get(&bone_index).copied();
             let b_bone = b_loop_bones.get(&bone_index).copied();
             let metric = |field: &str| format!("loop_continuity.bones[{bone_index}].{field}");
+            if let (Some(a_bone), Some(b_bone)) = (a_bone, b_bone) {
+                push_availability(
+                    &mut loop_bone_availability_deltas,
+                    clip,
+                    &metric("availability"),
+                    a_bone.availability,
+                    b_bone.availability,
+                );
+            }
             push_num(
                 &metric("position_delta_m"),
-                finite(a_bone.map(|bone| bone.position_delta_m)),
-                finite(b_bone.map(|bone| bone.position_delta_m)),
+                finite(a_bone.and_then(|bone| bone.position_delta_m)),
+                finite(b_bone.and_then(|bone| bone.position_delta_m)),
                 LOOP_POSITION_THRESHOLD_M,
                 None,
             );
             push_num(
                 &metric("rotation_delta_deg"),
-                finite(a_bone.map(|bone| bone.rotation_delta_deg)),
-                finite(b_bone.map(|bone| bone.rotation_delta_deg)),
+                finite(a_bone.and_then(|bone| bone.rotation_delta_deg)),
+                finite(b_bone.and_then(|bone| bone.rotation_delta_deg)),
                 LOOP_ROTATION_THRESHOLD_DEG,
                 None,
             );
             push_num(
                 &metric("seam_velocity_delta_mps"),
-                finite(a_bone.map(|bone| bone.seam_velocity_delta_mps)),
-                finite(b_bone.map(|bone| bone.seam_velocity_delta_mps)),
+                finite(a_bone.and_then(|bone| bone.seam_velocity_delta_mps)),
+                finite(b_bone.and_then(|bone| bone.seam_velocity_delta_mps)),
                 LOOP_VELOCITY_THRESHOLD_MPS,
                 None,
             );
             push_num(
                 &metric("seam_angular_velocity_delta_degps"),
-                finite(a_bone.map(|bone| bone.seam_angular_velocity_delta_degps)),
-                finite(b_bone.map(|bone| bone.seam_angular_velocity_delta_degps)),
+                finite(a_bone.and_then(|bone| bone.seam_angular_velocity_delta_degps)),
+                finite(b_bone.and_then(|bone| bone.seam_angular_velocity_delta_degps)),
                 LOOP_ANGULAR_VELOCITY_THRESHOLD_DEGPS,
                 None,
             );
         }
+        deltas.append(&mut loop_bone_availability_deltas);
 
         if let (Some(a_trajectory), Some(b_trajectory)) =
             (ma.root_trajectory.as_ref(), mb.root_trajectory.as_ref())
@@ -595,10 +606,12 @@ mod tests {
                 bones: vec![BoneLoopContinuityMeasurement {
                     bone_index: 0,
                     bone_name: "hips".into(),
-                    position_delta_m: 0.02,
-                    rotation_delta_deg: 2.0,
-                    seam_velocity_delta_mps: 0.2,
-                    seam_angular_velocity_delta_degps: 10.0,
+                    availability: MeasurementAvailability::Measured,
+                    availability_was_present: true,
+                    position_delta_m: Some(0.02),
+                    rotation_delta_deg: Some(2.0),
+                    seam_velocity_delta_mps: Some(0.2),
+                    seam_angular_velocity_delta_degps: Some(10.0),
                 }],
             }),
             loop_continuity_availability: MeasurementAvailability::Measured,
@@ -722,17 +735,19 @@ mod tests {
             .push(BoneLoopContinuityMeasurement {
                 bone_index: 1,
                 bone_name: "hips".into(),
-                position_delta_m: 0.03,
-                rotation_delta_deg: 3.0,
-                seam_velocity_delta_mps: 0.3,
-                seam_angular_velocity_delta_degps: 11.0,
+                availability: MeasurementAvailability::Measured,
+                availability_was_present: true,
+                position_delta_m: Some(0.03),
+                rotation_delta_deg: Some(3.0),
+                seam_velocity_delta_mps: Some(0.3),
+                seam_angular_velocity_delta_degps: Some(11.0),
             });
         let mut after = before.clone();
         let changed = &mut after.loop_continuity.as_mut().unwrap().bones[1];
-        changed.position_delta_m = 0.032;
-        changed.rotation_delta_deg = 3.2;
-        changed.seam_velocity_delta_mps = 0.32;
-        changed.seam_angular_velocity_delta_degps = 11.6;
+        changed.position_delta_m = Some(0.032);
+        changed.rotation_delta_deg = Some(3.2);
+        changed.seam_velocity_delta_mps = Some(0.32);
+        changed.seam_angular_velocity_delta_degps = Some(11.6);
 
         let deltas = diff_measurements(
             &measurement_map("walk", before),
@@ -750,17 +765,17 @@ mod tests {
     fn loop_continuity_diff_floors_are_inclusive() {
         let mut before = clip_measurements();
         let before_bone = &mut before.loop_continuity.as_mut().unwrap().bones[0];
-        before_bone.position_delta_m = 0.0;
-        before_bone.rotation_delta_deg = 0.0;
-        before_bone.seam_velocity_delta_mps = 0.0;
-        before_bone.seam_angular_velocity_delta_degps = 0.0;
+        before_bone.position_delta_m = Some(0.0);
+        before_bone.rotation_delta_deg = Some(0.0);
+        before_bone.seam_velocity_delta_mps = Some(0.0);
+        before_bone.seam_angular_velocity_delta_degps = Some(0.0);
 
         let mut at_floor = before.clone();
         let after_bone = &mut at_floor.loop_continuity.as_mut().unwrap().bones[0];
-        after_bone.position_delta_m = 0.001;
-        after_bone.rotation_delta_deg = 0.1;
-        after_bone.seam_velocity_delta_mps = 0.01;
-        after_bone.seam_angular_velocity_delta_degps = 0.5;
+        after_bone.position_delta_m = Some(0.001);
+        after_bone.rotation_delta_deg = Some(0.1);
+        after_bone.seam_velocity_delta_mps = Some(0.01);
+        after_bone.seam_angular_velocity_delta_degps = Some(0.5);
 
         assert!(
             diff_measurements(
@@ -769,6 +784,44 @@ mod tests {
             )
             .is_empty(),
             "movement exactly at a significance floor is noise"
+        );
+    }
+
+    #[test]
+    fn loop_continuity_diff_reports_per_bone_unavailability() {
+        let before = clip_measurements();
+        let mut after = before.clone();
+        let bone = &mut after.loop_continuity.as_mut().unwrap().bones[0];
+        bone.availability = MeasurementAvailability::Unavailable;
+        bone.position_delta_m = None;
+        bone.rotation_delta_deg = None;
+        bone.seam_velocity_delta_mps = None;
+        bone.seam_angular_velocity_delta_degps = None;
+
+        let deltas = diff_measurements(
+            &measurement_map("walk", before.clone()),
+            &measurement_map("walk", after.clone()),
+        );
+        assert_eq!(
+            delta_for(&deltas, "loop_continuity.bones[0].availability").note,
+            "became unavailable"
+        );
+        assert_eq!(
+            delta_for(&deltas, "loop_continuity.bones[0].position_delta_m").note,
+            "disappeared"
+        );
+
+        let reverse = diff_measurements(
+            &measurement_map("walk", after),
+            &measurement_map("walk", before),
+        );
+        assert_eq!(
+            delta_for(&reverse, "loop_continuity.bones[0].availability").note,
+            "became measured"
+        );
+        assert_eq!(
+            delta_for(&reverse, "loop_continuity.bones[0].position_delta_m").note,
+            "appeared"
         );
     }
 
@@ -843,39 +896,41 @@ mod tests {
             Case {
                 metric: "loop_continuity.bones[0].position_delta_m", // threshold 0.001 m
                 over: |m| {
-                    m.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = 0.022;
+                    m.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = Some(0.022);
                 },
                 under: |m| {
-                    m.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = 0.0205;
+                    m.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = Some(0.0205);
                 },
             },
             Case {
                 metric: "loop_continuity.bones[0].rotation_delta_deg", // threshold 0.1 deg
                 over: |m| {
-                    m.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg = 2.2;
+                    m.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg = Some(2.2);
                 },
                 under: |m| {
-                    m.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg = 2.05;
+                    m.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg = Some(2.05);
                 },
             },
             Case {
                 metric: "loop_continuity.bones[0].seam_velocity_delta_mps", // threshold 0.01 m/s
                 over: |m| {
-                    m.loop_continuity.as_mut().unwrap().bones[0].seam_velocity_delta_mps = 0.22;
+                    m.loop_continuity.as_mut().unwrap().bones[0].seam_velocity_delta_mps =
+                        Some(0.22);
                 },
                 under: |m| {
-                    m.loop_continuity.as_mut().unwrap().bones[0].seam_velocity_delta_mps = 0.205;
+                    m.loop_continuity.as_mut().unwrap().bones[0].seam_velocity_delta_mps =
+                        Some(0.205);
                 },
             },
             Case {
                 metric: "loop_continuity.bones[0].seam_angular_velocity_delta_degps", // threshold 0.5 deg/s
                 over: |m| {
                     m.loop_continuity.as_mut().unwrap().bones[0]
-                        .seam_angular_velocity_delta_degps = 10.5001;
+                        .seam_angular_velocity_delta_degps = Some(10.5001);
                 },
                 under: |m| {
                     m.loop_continuity.as_mut().unwrap().bones[0]
-                        .seam_angular_velocity_delta_degps = 10.4999;
+                        .seam_angular_velocity_delta_degps = Some(10.4999);
                 },
             },
         ];

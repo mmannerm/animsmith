@@ -13,14 +13,14 @@ use animsmith_core::measure::{
 use animsmith_core::{
     Bone, CheckEvaluation, CheckOutput, CheckSelection, Config, CoverageGap, CoverageGapCode,
     Document, EvaluationScope, EvaluationScopeCode, Finding, ImageContainerFormat,
-    ImageUnavailableReason, InputIdentity, LintEnvelope, LintFileReport, MEASUREMENTS_SCHEMA_ID,
-    MEASUREMENTS_SCHEMA_VERSION, MaterialResourceCoverage, MaterialTextureSlot, MeasureEnvelope,
-    MeasureFileReport, MeasurementContract, MeasurementContractError, MeasurementFileError,
-    MeasurementReportError, MeasurementReportFile, MeasurementReportInput, MetricGrids,
-    OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES,
-    OutputContractError, Property, ResolvedRoles, RigInfo, RigInfoError, Role, Severity,
-    SourceInverseBindAccessorStatus, SourceSkeletonCoverage, ToolInfo, ToolSource, Transform,
-    evaluate_checks, sha256_hex,
+    ImageUnavailableReason, InputIdentity, LintEnvelopeV18, LintFileReportV18,
+    MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MaterialResourceCoverage,
+    MaterialTextureSlot, MeasureEnvelope, MeasureFileReport, MeasurementContract,
+    MeasurementContractError, MeasurementFileError, MeasurementReportError, MeasurementReportFile,
+    MeasurementReportInput, MetricGrids, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION,
+    OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES, OutputContractError, Property,
+    ResolvedRoles, RigInfo, RigInfoError, Role, Severity, SourceInverseBindAccessorStatus,
+    SourceSkeletonCoverage, ToolInfo, ToolSource, Transform, evaluate_checks, sha256_hex,
 };
 
 fn tool() -> ToolInfo {
@@ -77,18 +77,21 @@ fn input_identity_serializes_sha256_and_byte_count() {
 fn command_specific_file_types_serialize_only_their_valid_shape() {
     let measure = MeasureEnvelope::new(
         tool(),
-        vec![MeasureFileReport::new(
-            "measure.glb",
-            input(b"measure input"),
-            rig(),
-            measurements(),
-        )],
+        vec![
+            MeasureFileReport::new(
+                "measure.glb",
+                input(b"measure input"),
+                rig(),
+                measurements(),
+            )
+            .expect("current measure file"),
+        ],
     )
     .expect("bounded measure envelope");
-    let lint = LintEnvelope::new(
+    let lint = LintEnvelopeV18::new(
         tool(),
         vec![
-            LintFileReport::new(
+            LintFileReportV18::new(
                 "lint.glb",
                 input(b"lint input"),
                 rig(),
@@ -122,7 +125,8 @@ fn command_specific_file_types_serialize_only_their_valid_shape() {
 
 #[test]
 fn output_v11_file_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
-    let file = MeasureFileReport::new("limit.glb", input(b"limit"), rig(), measurements());
+    let file = MeasureFileReport::new("limit.glb", input(b"limit"), rig(), measurements())
+        .expect("current measure file");
     let at_limit_files = vec![file; OUTPUT_V11_MAX_FILES];
     let at_limit =
         MeasureEnvelope::new(tool(), at_limit_files).expect("exact output-v11 file limit is valid");
@@ -138,7 +142,8 @@ fn output_v11_file_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         OUTPUT_V11_MAX_FILES
     );
 
-    let extra = MeasureFileReport::new("extra.glb", input(b"extra"), rig(), measurements());
+    let extra = MeasureFileReport::new("extra.glb", input(b"extra"), rig(), measurements())
+        .expect("current measure file");
     assert_eq!(
         MeasureEnvelope::new(tool(), vec![extra; OUTPUT_V11_MAX_FILES + 1])
             .expect_err("N+1 output files must fail on write"),
@@ -174,7 +179,7 @@ fn output_v11_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new()),
     )
     .expect("empty active check is valid");
-    let at_limit_file = LintFileReport::new(
+    let at_limit_file = LintFileReportV18::new(
         "limit.glb",
         input(b"limit"),
         rig(),
@@ -183,7 +188,7 @@ fn output_v11_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         measurements(),
     )
     .expect("exact output-v11 check limit is valid");
-    let at_limit = LintEnvelope::new(tool(), vec![at_limit_file])
+    let at_limit = LintEnvelopeV18::new(tool(), vec![at_limit_file])
         .expect("exact output-v11 check limit forms an envelope");
     let at_limit_wire = serde_json::to_value(&at_limit).expect("bounded envelope serializes");
     let at_limit_read: MeasurementReportInput =
@@ -193,7 +198,7 @@ fn output_v11_check_bound_accepts_n_and_rejects_n_plus_one_on_write_and_read() {
         .expect("exact output-v11 check limit validates");
 
     assert_eq!(
-        LintFileReport::new(
+        LintFileReportV18::new(
             "limit.glb",
             input(b"limit"),
             rig(),
@@ -294,10 +299,10 @@ fn lint_summary_aggregates_every_axis_and_finding_bucket_across_files() {
     )
     .expect("complete record is valid");
 
-    let report = LintEnvelope::new(
+    let report = LintEnvelopeV18::new(
         tool(),
         vec![
-            LintFileReport::new(
+            LintFileReportV18::new(
                 "first.glb",
                 input(b"first input"),
                 rig(),
@@ -306,7 +311,7 @@ fn lint_summary_aggregates_every_axis_and_finding_bucket_across_files() {
                 measurements(),
             )
             .expect("bounded first lint file"),
-            LintFileReport::new(
+            LintFileReportV18::new(
                 "second.glb",
                 input(b"second input"),
                 rig(),
@@ -1103,6 +1108,7 @@ fn valid_clip_measurements() -> ClipMeasurements {
         "loop_continuity": { "bones": [{
             "bone_index": 0,
             "bone_name": "hips",
+            "availability": "measured",
             "position_delta_m": 0.01,
             "rotation_delta_deg": 0.5,
             "seam_velocity_delta_mps": 0.02,
@@ -1896,27 +1902,28 @@ fn measurement_contract_rejects_every_non_finite_numeric_branch() {
     );
     assert_invalid_clip(
         |clip| {
-            clip.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = f64::NAN;
+            clip.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = Some(f64::NAN);
         },
         "clips[\"walk\"].loop_continuity.bones[0].position_delta_m",
     );
     assert_invalid_clip(
         |clip| {
-            clip.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg = f64::INFINITY;
+            clip.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg =
+                Some(f64::INFINITY);
         },
         "clips[\"walk\"].loop_continuity.bones[0].rotation_delta_deg",
     );
     assert_invalid_clip(
         |clip| {
             clip.loop_continuity.as_mut().unwrap().bones[0].seam_velocity_delta_mps =
-                f64::NEG_INFINITY;
+                Some(f64::NEG_INFINITY);
         },
         "clips[\"walk\"].loop_continuity.bones[0].seam_velocity_delta_mps",
     );
     assert_invalid_clip(
         |clip| {
             clip.loop_continuity.as_mut().unwrap().bones[0].seam_angular_velocity_delta_degps =
-                f64::NAN;
+                Some(f64::NAN);
         },
         "clips[\"walk\"].loop_continuity.bones[0].seam_angular_velocity_delta_degps",
     );
@@ -2224,12 +2231,10 @@ fn measurement_contract_roundtrips_absent_nested_gait_phase_states() {
         .expect("absent nested phase status is structurally valid");
         let envelope = MeasureEnvelope::new(
             tool(),
-            vec![MeasureFileReport::new(
-                "walk.glb",
-                input(b"gait phase"),
-                rig(),
-                measurements,
-            )],
+            vec![
+                MeasureFileReport::new("walk.glb", input(b"gait phase"), rig(), measurements)
+                    .expect("current measure file"),
+            ],
         )
         .expect("measurement envelope is valid");
         let wire = serde_json::to_value(envelope).expect("measurement envelope serializes");
@@ -2420,13 +2425,63 @@ fn measurement_contract_rejects_invalid_loop_continuity_structure() {
         "clips[\"walk\"].loop_continuity.bones[0].bone_index",
         "expected skeleton-order index 0, found 1",
     );
+
+    let value_fields = [
+        "position_delta_m",
+        "rotation_delta_deg",
+        "seam_velocity_delta_mps",
+        "seam_angular_velocity_delta_degps",
+    ];
+    for field in value_fields {
+        let mut measured = serde_json::to_value(valid_clip_measurements()).expect("serializes");
+        measured["loop_continuity"]["bones"][0]
+            .as_object_mut()
+            .expect("bone object")
+            .remove(field);
+        let measured: ClipMeasurements =
+            serde_json::from_value(measured).expect("measured mutation decodes");
+        assert!(
+            matches!(
+                MeasurementContract::new(
+                    BTreeMap::from([("walk".into(), measured)]),
+                    AssetMeasurements::default(),
+                ),
+                Err(MeasurementContractError::InvalidStructure { ref reason, .. })
+                    if reason == "all loop-continuity values must be present exactly when the bone is measured"
+            ),
+            "measured row without {field}"
+        );
+
+        let mut unavailable = serde_json::to_value(valid_clip_measurements()).expect("serializes");
+        let row = unavailable["loop_continuity"]["bones"][0]
+            .as_object_mut()
+            .expect("bone object");
+        row.insert("availability".into(), serde_json::json!("unavailable"));
+        for value_field in value_fields {
+            row.remove(value_field);
+        }
+        row.insert(field.into(), serde_json::json!(0.0));
+        let unavailable: ClipMeasurements =
+            serde_json::from_value(unavailable).expect("unavailable mutation decodes");
+        assert!(
+            matches!(
+                MeasurementContract::new(
+                    BTreeMap::from([("walk".into(), unavailable)]),
+                    AssetMeasurements::default(),
+                ),
+                Err(MeasurementContractError::InvalidStructure { ref reason, .. })
+                    if reason == "all loop-continuity values must be present exactly when the bone is measured"
+            ),
+            "unavailable row with {field}"
+        );
+    }
     invalid(
         |clip| clip.loop_continuity.as_mut().unwrap().bones.clear(),
         "clips[\"walk\"].loop_continuity.bones",
         "present loop-continuity evidence must contain at least one bone",
     );
     invalid(
-        |clip| clip.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = -0.01,
+        |clip| clip.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = Some(-0.01),
         "clips[\"walk\"].loop_continuity.bones[0].position_delta_m",
         "loop-continuity deltas must be non-negative",
     );
@@ -2438,6 +2493,7 @@ fn measurement_contract_rejects_invalid_loop_continuity_structure() {
         .push(serde_json::json!({
             "bone_index": 1,
             "bone_name": "foot",
+            "availability": "measured",
             "position_delta_m": 0.0,
             "rotation_delta_deg": 0.0,
             "seam_velocity_delta_mps": 0.0,
@@ -2461,7 +2517,7 @@ fn measurement_contract_rejects_invalid_loop_continuity_structure() {
 
     let mut non_finite: ClipMeasurements =
         serde_json::from_value(two_bone_json.clone()).expect("two-bone fixture");
-    non_finite.loop_continuity.as_mut().unwrap().bones[1].rotation_delta_deg = f64::NAN;
+    non_finite.loop_continuity.as_mut().unwrap().bones[1].rotation_delta_deg = Some(f64::NAN);
     assert_eq!(
         MeasurementContract::new(
             BTreeMap::from([("walk".into(), non_finite)]),
@@ -2475,7 +2531,7 @@ fn measurement_contract_rejects_invalid_loop_continuity_structure() {
 
     let mut negative: ClipMeasurements =
         serde_json::from_value(two_bone_json.clone()).expect("two-bone fixture");
-    negative.loop_continuity.as_mut().unwrap().bones[1].seam_velocity_delta_mps = -0.01;
+    negative.loop_continuity.as_mut().unwrap().bones[1].seam_velocity_delta_mps = Some(-0.01);
     assert_eq!(
         MeasurementContract::new(
             BTreeMap::from([("walk".into(), negative)]),
@@ -2491,7 +2547,7 @@ fn measurement_contract_rejects_invalid_loop_continuity_structure() {
     let mut angular_negative: ClipMeasurements =
         serde_json::from_value(two_bone_json).expect("two-bone fixture");
     angular_negative.loop_continuity.as_mut().unwrap().bones[1].seam_angular_velocity_delta_degps =
-        -0.01;
+        Some(-0.01);
     assert_eq!(
         MeasurementContract::new(
             BTreeMap::from([("walk".into(), angular_negative)]),
@@ -2504,6 +2560,192 @@ fn measurement_contract_rejects_invalid_loop_continuity_structure() {
             reason: "loop-continuity deltas must be non-negative".into(),
         }
     );
+}
+
+#[test]
+fn output_v18_requires_bone_availability_while_output_v17_readback_defaults_measured() {
+    let measurements = MeasurementContract::new(
+        BTreeMap::from([("walk".into(), valid_clip_measurements())]),
+        AssetMeasurements::default(),
+    )
+    .expect("current measurements");
+    let envelope = MeasureEnvelope::new(
+        tool(),
+        vec![
+            MeasureFileReport::new("walk.glb", input(b"walk"), rig(), measurements)
+                .expect("current measure file"),
+        ],
+    )
+    .expect("current measure envelope");
+    let mut current = serde_json::to_value(envelope).expect("serializes current envelope");
+    let mut unknown_field = current.clone();
+    unknown_field["files"][0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"][0]["future_field"] =
+        serde_json::json!(0);
+    let unknown_field: MeasurementReportInput =
+        serde_json::from_value(unknown_field).expect("outer envelope reads");
+    assert!(matches!(
+        unknown_field.into_files(),
+        Err(MeasurementReportError::File {
+            source: MeasurementFileError::InvalidMeasurementsShape { ref reason },
+            ..
+        }) if reason.contains("unknown field `future_field`")
+    ));
+    let assert_null_shape_error = |wire: serde_json::Value, field: &str| {
+        let input: MeasurementReportInput =
+            serde_json::from_value(wire).expect("outer envelope reads");
+        assert!(matches!(
+            input.into_files(),
+            Err(MeasurementReportError::File {
+                source: MeasurementFileError::InvalidMeasurementsShape { ref reason },
+                ..
+            }) if reason.contains(&format!("`{field}` must be omitted rather than null"))
+        ));
+    };
+    let mut null_availability = current.clone();
+    null_availability["files"][0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"][0]
+        ["availability"] = serde_json::Value::Null;
+    assert_null_shape_error(null_availability, "availability");
+    for field in [
+        "position_delta_m",
+        "rotation_delta_deg",
+        "seam_velocity_delta_mps",
+        "seam_angular_velocity_delta_degps",
+    ] {
+        let mut unavailable_with_null = current.clone();
+        let row = unavailable_with_null["files"][0]["measurements"]["clips"]["walk"]
+            ["loop_continuity"]["bones"][0]
+            .as_object_mut()
+            .expect("bone object");
+        row.insert("availability".into(), serde_json::json!("unavailable"));
+        for value_field in [
+            "position_delta_m",
+            "rotation_delta_deg",
+            "seam_velocity_delta_mps",
+            "seam_angular_velocity_delta_degps",
+        ] {
+            row.remove(value_field);
+        }
+        row.insert(field.into(), serde_json::Value::Null);
+        assert_null_shape_error(unavailable_with_null, field);
+    }
+    current["files"][0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"][0]
+        .as_object_mut()
+        .expect("bone object")
+        .remove("availability");
+
+    let current: MeasurementReportInput =
+        serde_json::from_value(current.clone()).expect("missing field remains readable");
+    assert_eq!(
+        current
+            .into_files()
+            .expect_err("current contract must reject implicit availability"),
+        MeasurementReportError::File {
+            file_index: 0,
+            source: MeasurementFileError::InvalidMeasurements {
+                source: MeasurementContractError::InvalidStructure {
+                    path: "clips[\"walk\"].loop_continuity.bones[0].availability".into(),
+                    reason: "measurements-v17 requires explicit per-bone availability".into(),
+                },
+            },
+        }
+    );
+
+    let mut historical = serde_json::to_value(
+        MeasureEnvelope::new(
+            tool(),
+            vec![
+                MeasureFileReport::new(
+                    "walk.glb",
+                    input(b"walk"),
+                    rig(),
+                    MeasurementContract::new(
+                        BTreeMap::from([("walk".into(), valid_clip_measurements())]),
+                        AssetMeasurements::default(),
+                    )
+                    .expect("current measurements"),
+                )
+                .expect("current measure file"),
+            ],
+        )
+        .expect("current envelope"),
+    )
+    .expect("serializes");
+    historical["schema_version"] = serde_json::json!(17);
+    historical["schema"] = serde_json::json!("urn:animsmith:schema:output:17");
+    historical["files"][0]["measurements"]["schema_version"] = serde_json::json!(16);
+    historical["files"][0]["measurements"]["schema"] =
+        serde_json::json!("urn:animsmith:schema:measurements:16");
+    historical["files"][0]["measurements"]["clips"]["walk"]["loop_continuity"]["bones"][0]
+        .as_object_mut()
+        .expect("bone object")
+        .remove("availability");
+    let mut historical_v16_null_availability = historical.clone();
+    historical_v16_null_availability["files"][0]["measurements"]["clips"]["walk"]["loop_continuity"]
+        ["bones"][0]["availability"] = serde_json::Value::Null;
+    assert_null_shape_error(historical_v16_null_availability, "availability");
+    let mut historical_with_availability = historical.clone();
+    historical_with_availability["files"][0]["measurements"]["clips"]["walk"]["loop_continuity"]
+        ["bones"][0]["availability"] = serde_json::json!("measured");
+    let historical_with_availability: MeasurementReportInput =
+        serde_json::from_value(historical_with_availability).expect("historical outer shape reads");
+    assert!(matches!(
+        historical_with_availability.into_files(),
+        Err(MeasurementReportError::File {
+            source: MeasurementFileError::InvalidMeasurements {
+                source: MeasurementContractError::InvalidStructure { ref path, ref reason },
+            },
+            ..
+        }) if path.ends_with(".availability")
+            && reason == "per-bone loop-continuity availability is exclusive to measurements-v17"
+    ));
+
+    let mut historical_v15_with_availability = historical.clone();
+    historical_v15_with_availability["schema_version"] = serde_json::json!(12);
+    historical_v15_with_availability["schema"] =
+        serde_json::json!("urn:animsmith:schema:output:12");
+    historical_v15_with_availability["files"][0]["measurements"]["schema_version"] =
+        serde_json::json!(15);
+    historical_v15_with_availability["files"][0]["measurements"]["schema"] =
+        serde_json::json!("urn:animsmith:schema:measurements:15");
+    historical_v15_with_availability["files"][0]["measurements"]["clips"]["walk"]["loop_continuity"]
+        ["bones"][0]["availability"] = serde_json::json!("measured");
+    let historical_v15_with_availability: MeasurementReportInput =
+        serde_json::from_value(historical_v15_with_availability)
+            .expect("historical v15 outer shape reads");
+    assert!(matches!(
+        historical_v15_with_availability.into_files(),
+        Err(MeasurementReportError::File {
+            source: MeasurementFileError::InvalidMeasurements {
+                source: MeasurementContractError::InvalidStructure { ref path, ref reason },
+            },
+            ..
+        }) if path.ends_with(".availability")
+            && reason == "per-bone loop-continuity availability is exclusive to measurements-v17"
+    ));
+
+    let mut historical_v15_null_availability = historical.clone();
+    historical_v15_null_availability["schema_version"] = serde_json::json!(12);
+    historical_v15_null_availability["schema"] =
+        serde_json::json!("urn:animsmith:schema:output:12");
+    historical_v15_null_availability["files"][0]["measurements"]["schema_version"] =
+        serde_json::json!(15);
+    historical_v15_null_availability["files"][0]["measurements"]["schema"] =
+        serde_json::json!("urn:animsmith:schema:measurements:15");
+    historical_v15_null_availability["files"][0]["measurements"]["clips"]["walk"]["loop_continuity"]
+        ["bones"][0]["availability"] = serde_json::Value::Null;
+    assert_null_shape_error(historical_v15_null_availability, "availability");
+
+    let historical: MeasurementReportInput =
+        serde_json::from_value(historical).expect("historical shape reads");
+    let files = historical
+        .into_files()
+        .expect("immutable output-v17/measurements-v16 readback remains valid");
+    let bone = &files[0].measurements().clips()["walk"]
+        .loop_continuity
+        .as_ref()
+        .unwrap()
+        .bones[0];
+    assert_eq!(bone.availability, MeasurementAvailability::Measured);
 }
 
 #[test]

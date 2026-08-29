@@ -4,23 +4,26 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:9";
-const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:17";
+const COLLECTION_SCHEMA_ID: &str = "urn:animsmith:schema:collection-output:10";
+const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:18";
 const OUTPUT_V14_SCHEMA_ID: &str = "urn:animsmith:schema:output:14";
 const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
+const MEASUREMENTS_V16_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:17";
 const COLLECTION_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-output-v9.schema.json");
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v17.schema.json");
+    include_str!("../../../docs/schemas/collection-output-v10.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v18.schema.json");
 const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
 const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
 const MEASUREMENTS_V15_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v15.schema.json");
-const MEASUREMENTS_SCHEMA: &str =
+const MEASUREMENTS_V16_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v16.schema.json");
+const MEASUREMENTS_SCHEMA: &str =
+    include_str!("../../../docs/schemas/measurements-v17.schema.json");
 
 fn spike_path(relative: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -48,6 +51,7 @@ fn collection_validator() -> Validator {
     let output_v13: Value = serde_json::from_str(OUTPUT_V13_SCHEMA).unwrap();
     let output_v10: Value = serde_json::from_str(OUTPUT_V10_SCHEMA).unwrap();
     let measurements_v15: Value = serde_json::from_str(MEASUREMENTS_V15_SCHEMA).unwrap();
+    let measurements_v16: Value = serde_json::from_str(MEASUREMENTS_V16_SCHEMA).unwrap();
     let measurements: Value = serde_json::from_str(MEASUREMENTS_SCHEMA).unwrap();
     let registry = jsonschema::Registry::new()
         .add(OUTPUT_V14_SCHEMA_ID, output_v14)
@@ -57,6 +61,8 @@ fn collection_validator() -> Validator {
         .add(OUTPUT_V10_SCHEMA_ID, output_v10)
         .unwrap()
         .add(MEASUREMENTS_V15_SCHEMA_ID, measurements_v15)
+        .unwrap()
+        .add(MEASUREMENTS_V16_SCHEMA_ID, measurements_v16)
         .unwrap()
         .add(OUTPUT_SCHEMA_ID, output)
         .unwrap()
@@ -90,14 +96,14 @@ fn retained_spike_emits_exact_deterministic_collection_evidence() {
     let value: Value = serde_json::from_slice(&first.stdout).expect("collection JSON");
     assert_schema(&value);
     assert_eq!(value["schema"], COLLECTION_SCHEMA_ID);
-    assert_eq!(value["schema_version"], 9);
+    assert_eq!(value["schema_version"], 10);
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema"],
         OUTPUT_SCHEMA_ID
     );
     assert_eq!(
         value["sources"][0]["result"]["envelope"]["schema_version"],
-        17
+        18
     );
     assert_eq!(value["summary"]["sources"], 3);
     assert_eq!(value["summary"]["established_clips"], 4);
@@ -601,10 +607,9 @@ take_name = "Take 001"
         "the complete dependency closure binds external animation bytes"
     );
     let position_delta = |value: &Value| {
-        value["clips"][0]["binding"]["measurements"]["loop_continuity"]["bones"][0]
-            ["position_delta_m"]
-            .as_f64()
-            .unwrap()
+        let bone = &value["clips"][0]["binding"]["measurements"]["loop_continuity"]["bones"][0];
+        assert_eq!(bone["availability"], "measured");
+        bone["position_delta_m"].as_f64().unwrap()
     };
     assert_eq!(position_delta(&first), 1.0);
     assert_eq!(position_delta(&second), 2.0);

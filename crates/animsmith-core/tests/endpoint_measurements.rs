@@ -1,4 +1,4 @@
-use animsmith_core::measure::{LoopEndpointMode, measure_document};
+use animsmith_core::measure::{LoopEndpointMode, MeasurementAvailability, measure_document};
 use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
 };
@@ -92,6 +92,39 @@ fn endpoint_mode_omits_non_loops_and_unavailable_short_evidence() {
         measure(&short, &config(true, None)).loop_endpoint_mode,
         None
     );
+}
+
+#[test]
+fn duplicate_endpoint_fails_closed_when_any_skeleton_row_is_unavailable() {
+    for unavailable_index in [0usize, 1] {
+        let mut doc = document([0.0, 1.0, 0.0]);
+        let unavailable = Bone {
+            name: "untracked_non_finite_rest".into(),
+            parent: None,
+            rest: Transform {
+                translation: Vec3::splat(f32::NAN),
+                ..Transform::IDENTITY
+            },
+            inverse_bind: None,
+        };
+        if unavailable_index == 0 {
+            doc.skeleton.bones.insert(0, unavailable);
+            doc.clips[0].tracks[0].bone = 1;
+        } else {
+            doc.skeleton.bones.push(unavailable);
+        }
+
+        let measured = measure(&doc, &config(true, None));
+        assert_eq!(
+            measured.loop_endpoint_mode_availability,
+            MeasurementAvailability::Unavailable,
+            "unavailable skeleton row at index {unavailable_index}"
+        );
+        assert_eq!(
+            measured.loop_endpoint_mode, None,
+            "duplicate authored endpoints cannot bypass whole-skeleton availability"
+        );
+    }
 }
 
 #[test]

@@ -588,8 +588,8 @@ learns an embedder's contract schema.
 
 - **Text** (default): findings grouped per clip, measured-vs-expected on
   one line, colored; `--quiet` for CI summaries.
-- **JSON** (`--format json`): current output v17, identified by
-  `urn:animsmith:schema:output:17`. Lint emits one result per catalog check and
+- **JSON** (`--format json`): current output v18, identified by
+  `urn:animsmith:schema:output:18`. Lint emits one result per catalog check and
   represents selection, configuration, applicability, evaluation coverage,
   content findings, completed scopes, and typed gaps independently. Measure
   and lint share a nested, independently versioned measurement contract. The
@@ -597,7 +597,9 @@ learns an embedder's contract schema.
   `base_color`, `normal`, `metallic_roughness`, `occlusion`, and `emissive`
   texture slots, texture-to-image identity, and decoded image metadata in
   source order. Complete coverage is scoped to that documented core domain;
-  extension-defined texture slots are not implied. Measurements-v16 also
+  extension-defined texture slots are not implied. Measurements-v17 makes
+  per-bone loop-continuity unavailability explicit without suppressing finite
+  sibling rows. It retains measurements-v16's
   inventories each mesh's primitives in source order: nullable source material,
   total and finite decoded `POSITION` rows, and finite-only primitive AABB and
   centroid. Indexed geometry counts each stored position once rather than index
@@ -621,9 +623,11 @@ learns an embedder's contract schema.
   scoped-facet substrate described in Appendix E. Output v11 retained it and
   added per-role resolution outcome and match-policy provenance. Output v12
   introduced bounded V2 provenance/settings/prediction evidence and
-  catalog-allocated facet summaries; output v17 retains that evidence while
+  catalog-allocated facet summaries; output v17 retained that evidence while
   advancing its nested measurements to v16 and adding V6 root-motion
-  provenance. Output-v9, measurements-v15, output-v12, and
+  provenance. Output v18 retains the immutable prediction graphs against a
+  fail-closed measurements-v16 projection while publishing the complete
+  measurements-v17 evidence. Output-v9, measurements-v15, output-v12, and
   collection-output-v4 remain immutable historical contracts.
   Measurements v14 gives every clip fact that is not applicable to every
   clip (loop continuity, loop endpoint mode, frame grid, loop seam ratio,
@@ -644,7 +648,7 @@ learns an embedder's contract schema.
   CLI exit status derives from content severity (warnings block only with
   `--deny-warnings`) plus required-unavailable engine-prediction facets;
   ordinary coverage gaps remain nonblocking evidence.
-  The current output-v17 envelope types and immutable identities live in
+  The current output-v18 envelope types and immutable identities live in
   `animsmith-core` so CLI and embedded producers serialize the same reporting
   contract. Static-bake evidence is also a public core type; the conversion
   envelope remains a CLI producer contract.
@@ -2931,9 +2935,9 @@ subjectless, unsuppressible `required_prediction_unavailable` inventory facet
 and no retained-prefix prediction, including the N+1 boundary. If both gates
 allow loading, the result is a stable required-unavailable runtime-survival
 state. Extensions, other constructs, and positive runtime survival are not
-modeled by this slice. V5 provenance and output-v17 are current for this Bevy
+modeled by this slice. V5 provenance and output-v18 are current for this Bevy
 slice; V4/revision-2 and output-v15 remain preserved and readable. The Unity
-Generic root-motion slice uses V6 provenance in output-v17, while output v9
+Generic root-motion slice uses V6 provenance in output-v18, while output v9
 and all other historical readers remain immutable.
 
 Configuration precedence is consequently:
@@ -3201,8 +3205,8 @@ historical `urn:animsmith:schema:collection-output:3` derives from V2 and adds o
 bounded `dependency_closure` state to every source. A complete state retains the
 loader's exact `DependencyClosureIdentityV1`; partial and unavailable states
 retain a nonempty, sorted, unique sequence from the seven closed
-`DependencyClosureCoverageReasonV1` values. The current `collection-output:9`
-embeds the current output-v17 lint envelope with measurements-v16 while
+`DependencyClosureCoverageReasonV1` values. The current `collection-output:10`
+embeds the current output-v18 lint envelope with measurements-v17 while
 preserving collection-output-v8 and its nested output-v16, and
 collection-output-v4 with its nested output-v12/measurements-v15, as immutable
 historical evidence. Only complete closure coverage can

@@ -62,8 +62,8 @@ including bounded N+1 overflow. If both gates allow loading, the result is
 instead required-unavailable runtime-survival evidence: the pipeline must still
 exercise the actual Bevy application. This slice has no extension/construct
 coverage, no positive runtime-survival claim, and no content finding for a
-dropped row. Current output-v17 carries its V5 provenance unchanged;
-output-v16 remains its immutable historical reader, and rev1/rev2 with
+dropped row. Current output-v18 carries its immutable V5 provenance unchanged;
+output-v17 and output-v16 remain historical readers, and rev1/rev2 with
 output-v15 remain preserved for existing consumers.
 
 ## Shared contract config

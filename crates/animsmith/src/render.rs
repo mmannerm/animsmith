@@ -20,7 +20,7 @@ use animsmith_core::{
     DependencyClosureCoverageReasonV1, DependencyClosureCoverageV1, Document,
     EnginePredictionFacetStateV1, EnginePredictionFacetV3, EnginePredictionFacetV4,
     EvaluationScope, EvaluationState, Finding, LintFileReport, LintFileReportV16,
-    LintFileReportV17, MeasureFileReport, PredictionUnavailableReasonV2,
+    LintFileReportV18, MeasureFileReport, PredictionUnavailableReasonV2,
     RawGltfAddressabilityCoverageReasonV1, RawGltfAddressabilityCoverageV1,
     RawGltfDefaultSceneObservationV1, ResolvedRoles, SelectionState, Severity, SourceFormatV1,
 };
@@ -1467,23 +1467,29 @@ pub(crate) fn render_measure_text(
                             .as_ref()
                             .filter(|continuity| !continuity.bones.is_empty())
                             .map(|continuity| {
-                                let (position, rotation, velocity, angular_velocity) = continuity.bones.iter().fold(
-                                    (0.0f64, 0.0f64, 0.0f64, 0.0f64),
-                                    |(position, rotation, velocity, angular_velocity), bone| {
-                                        (
-                                            position.max(bone.position_delta_m),
-                                            rotation.max(bone.rotation_delta_deg),
-                                            velocity.max(bone.seam_velocity_delta_mps),
-                                            angular_velocity.max(
-                                                bone.seam_angular_velocity_delta_degps,
-                                            ),
-                                        )
-                                    },
-                                );
-                                format!(
-                                    " loop Δp={:.2}cm Δr={rotation:.2}° Δv={velocity:.3}m/s Δω={angular_velocity:.2}°/s",
-                                    position * 100.0
-                                )
+                                let unavailable = continuity
+                                    .bones
+                                    .iter()
+                                    .filter(|bone| bone.availability == MeasurementAvailability::Unavailable)
+                                    .count();
+                                let maxima = continuity.bones.iter().filter_map(|bone| {
+                                    Some((
+                                        bone.position_delta_m?,
+                                        bone.rotation_delta_deg?,
+                                        bone.seam_velocity_delta_mps?,
+                                        bone.seam_angular_velocity_delta_degps?,
+                                    ))
+                                }).reduce(|a, b| {
+                                    (a.0.max(b.0), a.1.max(b.1), a.2.max(b.2), a.3.max(b.3))
+                                });
+                                match maxima {
+                                    Some((position, rotation, velocity, angular_velocity)) => format!(
+                                        " loop Δp={:.2}cm Δr={rotation:.2}° Δv={velocity:.3}m/s Δω={angular_velocity:.2}°/s{}",
+                                        position * 100.0,
+                                        if unavailable == 0 { String::new() } else { format!(" ({unavailable} bone(s) unavailable)") }
+                                    ),
+                                    None => format!(" loop continuity unavailable for {unavailable} bone(s)"),
+                                }
                             })
                             .unwrap_or_default();
                         let gait = measurement
@@ -2332,7 +2338,7 @@ impl LintReportView for LintFileReportV16 {
     }
 }
 
-impl LintReportView for LintFileReportV17 {
+impl LintReportView for LintFileReportV18 {
     fn path(&self) -> &str {
         self.path()
     }
@@ -3275,7 +3281,8 @@ mod tests {
 
     #[test]
     fn measure_renderer_owns_layout_and_escaping() {
-        let clips = serde_json::from_value(json!({
+        let clips: BTreeMap<String, animsmith_core::measure::ClipMeasurements> =
+            serde_json::from_value(json!({
             "walk\nclip": {
                 "duration_s": 1.0,
                 "frame_count": 2,
@@ -3290,6 +3297,7 @@ mod tests {
                     {
                         "bone_index": 0,
                         "bone_name": "hips",
+                        "availability": "measured",
                         "position_delta_m": 0.012,
                         "rotation_delta_deg": 2.5,
                         "seam_velocity_delta_mps": 0.3456,
@@ -3298,10 +3306,16 @@ mod tests {
                     {
                         "bone_index": 1,
                         "bone_name": "foot",
+                        "availability": "measured",
                         "position_delta_m": 0.008,
                         "rotation_delta_deg": 3.5,
                         "seam_velocity_delta_mps": 0.123,
                         "seam_angular_velocity_delta_degps": 67.891
+                    },
+                    {
+                        "bone_index": 2,
+                        "bone_name": "bad_helper",
+                        "availability": "unavailable"
                     }
                 ] },
                 "loop_continuity_availability": "measured",
@@ -3335,8 +3349,8 @@ mod tests {
                 "root_trajectory_availability": "measured",
                 "speed_mps_availability": "not_applicable"
             }
-        }))
-        .expect("clip measurements deserialize");
+            }))
+            .expect("clip measurements deserialize");
         let assets = serde_json::from_value(json!({
             "material_resource_coverage": "complete",
             "material_definitions": [{
@@ -3393,24 +3407,55 @@ mod tests {
             "default_scene_index": 2
         }))
         .expect("asset measurements deserialize");
+        let mut all_unavailable_clips = clips.clone();
+        for bone in &mut all_unavailable_clips
+            .get_mut("walk\nclip")
+            .expect("clip fixture")
+            .loop_continuity
+            .as_mut()
+            .expect("loop fixture")
+            .bones
+        {
+            bone.availability = MeasurementAvailability::Unavailable;
+            bone.position_delta_m = None;
+            bone.rotation_delta_deg = None;
+            bone.seam_velocity_delta_mps = None;
+            bone.seam_angular_velocity_delta_degps = None;
+        }
         let measurements = MeasurementContract::new(clips, assets).expect("finite measurements");
         let reports = [MeasureFileReport::new(
             "asset\npath.glb",
             input_identity("asset\npath.glb"),
             empty_rig(),
             measurements,
-        )];
+        )
+        .expect("current measure file")];
 
         assert_eq!(
             render_measure_text(&reports).collect::<Vec<_>>(),
             vec![
                 "asset\\npath.glb:",
-                "  walk\\nclip: 1.000s, 2 frames, 1 animated bones, 1 bone channels loop Δp=1.20cm Δr=3.50° Δv=0.346m/s Δω=67.89°/s seam×0.25 gait φ=0.50 (10.0cm) root hips_fallback#0:\"hips\" Δxz=(0.250,-1.000)m xzΣ=1.500m Δy=0.100m y=[-0.050,0.300]m yaw[+Z]=90.00° unwrap=450.00° travel=540.00°",
+                "  walk\\nclip: 1.000s, 2 frames, 1 animated bones, 1 bone channels loop Δp=1.20cm Δr=3.50° Δv=0.346m/s Δω=67.89°/s (1 bone(s) unavailable) seam×0.25 gait φ=0.50 (10.0cm) root hips_fallback#0:\"hips\" Δxz=(0.250,-1.000)m xzΣ=1.500m Δy=0.100m y=[-0.050,0.300]m yaw[+Z]=90.00° unwrap=450.00° travel=540.00°",
                 "  material resources: 1 materials, 1 textures, 1 images (complete)",
                 "  mesh definition #7 body\\nmesh: 3 verts geometry bbox 1.000×2.000×3.000 geometry centroid (0.250, 1.000, 0.500), ≤4 joints/vtx, weight-sum 0.900–1.100, additional influence sets: JOINTS_1 + WEIGHTS_1 (also JOINTS-only and WEIGHTS-only primitives), JOINTS_2 (also JOINTS-only primitives), WEIGHTS_3 (also WEIGHTS-only primitives)",
                 "  node instance #9 body\\nnode -> mesh #7: static node-world bbox 1.000×2.000×3.000",
                 "  scene #2 main\\nscene [default]: 1 instances static scene-world bbox 1.000×2.000×3.000",
             ]
+        );
+
+        let all_unavailable = MeasureFileReport::new(
+            "all-unavailable.glb",
+            input_identity("all-unavailable.glb"),
+            empty_rig(),
+            MeasurementContract::new(all_unavailable_clips, AssetMeasurements::default())
+                .expect("all-unavailable continuity is valid"),
+        )
+        .expect("current measure file");
+        let lines = render_measure_text(&[all_unavailable]).collect::<Vec<_>>();
+        assert!(
+            lines[1].contains("loop continuity unavailable for 3 bone(s)"),
+            "{}",
+            lines[1]
         );
     }
 
@@ -3481,7 +3526,8 @@ mod tests {
             empty_rig(),
             MeasurementContract::new(clips, AssetMeasurements::default())
                 .expect("mixed root availability is valid"),
-        )];
+        )
+        .expect("current measure file")];
 
         assert_eq!(
             render_measure_text(&reports).collect::<Vec<_>>(),
@@ -3550,7 +3596,8 @@ mod tests {
                 input_identity("first.glb"),
                 empty_rig(),
                 MeasurementContract::new(clips, assets).expect("finite measurements"),
-            ),
+            )
+            .expect("current measure file"),
             MeasureFileReport::new(
                 "second.glb",
                 input_identity("second.glb"),
@@ -3560,7 +3607,8 @@ mod tests {
                     animsmith_core::measure::AssetMeasurements::default(),
                 )
                 .expect("empty measurements"),
-            ),
+            )
+            .expect("current measure file"),
         ];
 
         assert_eq!(
@@ -3644,7 +3692,8 @@ mod tests {
             empty_rig(),
             MeasurementContract::new(BTreeMap::new(), measure_assets(&doc))
                 .expect("scale-domain measurements are valid"),
-        );
+        )
+        .expect("current measure file");
         let lines = render_measure_text(&[report]).collect::<Vec<_>>();
         assert!(lines.iter().any(|line| {
             line.contains("source node #1 socket: parent-space translation (11.500, 0.000, 0.000)m")

@@ -624,13 +624,13 @@ unavailable facet still exits 1.
 Revision 3's historical artifacts use output-v16 and V5 prediction
 provenance/readback. Revision-2/V4 and output-v15 readers and historical
 examples remain preserved. Unity Generic root-motion uses the separate V6
-provenance and current output-v17 contract; output-v9 and every later
+provenance and current output-v18 contract; output-v9 and every later
 historical reader remain immutable and readable.
 
 All statically knowable tuple, setting, value, scope, and applicability errors
 are reported before input I/O. Accepted input format and required per-clip
 materialization are checked after loading. Profile selection never changes
-`measure` values. Current output-v17 records resolved profile provenance on
+`measure` values. Current output-v18 records resolved profile provenance on
 lint files.
 
 The first production rule is `engine-addressability` for the exact Bevy
@@ -802,7 +802,7 @@ form selects one exact manifest logical id and reloads its declared
 source/config rather than consuming collection-output evidence. Neither form
 infers physical contact, footsteps, gameplay, IK, or engine behavior.
 
-An output-v17 measure report deliberately has no engine provenance or
+An output-v18 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.
 When its operands are JSON reports, `diff` validates the complete
 version-matched records and compares their decoded version-matched measurements
@@ -834,24 +834,29 @@ absent selector field or explicit empty list means no runtime-node policy.
 `--format json`. The native JSON contract is the source of truth and is
 versioned with `schema_version`.
 See [output.md](output.md) and the current
-`urn:animsmith:schema:output:17`. Output-v16 remains available as historical
+`urn:animsmith:schema:output:18`. Output-v17 remains available as historical
+[`output-v17.schema.json`](schemas/output-v17.schema.json) with immutable
+identity `urn:animsmith:schema:output:17`. Output-v16 remains available as historical
 [`output-v16.schema.json`](schemas/output-v16.schema.json) with immutable
 identity `urn:animsmith:schema:output:16`. Nested measurement
 evidence has its own
-`urn:animsmith:schema:measurements:16`
-[`measurements-v16.schema.json`](schemas/measurements-v16.schema.json) contract.
+`urn:animsmith:schema:measurements:17`
+[`measurements-v17.schema.json`](schemas/measurements-v17.schema.json) contract.
 `urn:animsmith:schema:measurements:15`, `urn:animsmith:schema:output:9`,
 `urn:animsmith:schema:output:11`,
 `urn:animsmith:schema:output:12`, `urn:animsmith:schema:output:13`,
 `urn:animsmith:schema:output:14`, and `urn:animsmith:schema:output:15` remain
 historical immutable contracts alongside output-v16. `diff`
 retains strict version-matched readers for output-v11/v12 with
-measurements-v15 and output-v13/v14 with measurements-v16; output-v9 and its
+measurements-v15 and output-v13 through output-v17 with measurements-v16;
+the latter retains identity `urn:animsmith:schema:measurements:16`;
+output-v9 and its
 measurements-v9 pairing remain immutable historical contracts. Output-v10 and
 earlier reports require regeneration from the original asset.
 
 `collection lint COLLECTION.toml --format json` emits the separate current
-`urn:animsmith:schema:collection-output:9` contract. Historical
+`urn:animsmith:schema:collection-output:10` contract. Historical
+`urn:animsmith:schema:collection-output:9`,
 `urn:animsmith:schema:collection-output:8`,
 `urn:animsmith:schema:collection-output:7`,
 `urn:animsmith:schema:collection-output:6`,
@@ -868,10 +873,11 @@ closure identity can establish that source, one of its clips, or a runtime-set
 member; partial/unavailable reasons remain typed and make the result incomplete
 with exit 1. Each established clip binds an exact source take index/name
 to a normalized clip index and carries duplicate-safe indexed measurements.
-The nested whole-document lint envelope advances to output v17 and measurements
-v16. The strict reader preserves version binding for collection-output-v8 with
-output-v16, collection-output-v7 with output-v15, collection-output-v6 with
-output-v14 and collection-output-v5 with output-v13; older historical
+The nested whole-document lint envelope uses output v18 and measurements v17.
+The strict reader preserves version binding for collection-output-v9 with
+output-v17, collection-output-v8 with output-v16, collection-output-v7 with
+output-v15, collection-output-v6 with output-v14 and collection-output-v5 with
+output-v13; older historical
 contracts remain immutable and are not retargeted. Regenerate current collection evidence
 before passing it to collection evaluators.
 Runtime sets keep `decision: not_evaluated`; they make no blend, controller,
