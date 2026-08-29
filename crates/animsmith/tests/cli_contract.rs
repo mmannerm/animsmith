@@ -7822,14 +7822,14 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
             "unsupported measurement version",
             unsupported_measurement_version,
             format!(
-                "has measurement schema_version 7; this build reads measurement schema_version 17; {remediation}"
+                "has measurement schema_version 7; this reader expects measurement schema_version 16; {remediation}"
             ),
         ),
         (
             "wrong measurement identity",
             wrong_measurement_identity,
             format!(
-                "does not identify measurement contract {MEASUREMENTS_SCHEMA_ID}; {remediation}"
+                "does not identify measurement contract {MEASUREMENTS_V16_SCHEMA_ID}; {remediation}"
             ),
         ),
         (
@@ -7940,7 +7940,7 @@ fn diff_rejects_outer_and_nested_contract_identity_drift() {
                 report["files"][0]["measurements"]["schema_version"] = json!(7);
                 report
             },
-            "has measurement schema_version 7; this build reads measurement schema_version 17; regenerate it from the original asset with `animsmith measure --format json <asset>`",
+            "has measurement schema_version 7; this reader expects measurement schema_version 16; regenerate it from the original asset with `animsmith measure --format json <asset>`",
         ),
         (
             {
@@ -8228,10 +8228,120 @@ fn diff_rejects_all_unsupported_nested_measurement_schema_versions() {
         );
         assert!(
             stderr(&output).contains(&format!(
-                "has measurement schema_version {version}; this build reads measurement schema_version 17"
+                "has measurement schema_version {version}; this reader expects measurement schema_version 16"
             )),
             "version {version}: stderr:\n{}",
             stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn diff_historical_reader_reports_its_pinned_measurement_contract() {
+    let dir = unique_temp_dir("diff-historical-reader-diagnostics");
+    let report_path = dir.path().join("report.json");
+    let mut report = measurement_report(1.0);
+    report["schema_version"] = json!(12);
+    report["schema"] = json!("urn:animsmith:schema:output:12");
+
+    report["files"][0]["measurements"]["schema_version"] = json!(17);
+    write_json(&report_path, &report);
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().unwrap(),
+            fixture("rig.gltf").to_str().unwrap(),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains(
+        "has measurement schema_version 17; this reader expects measurement schema_version 15"
+    ));
+
+    report["files"][0]["measurements"]["schema_version"] = json!(15);
+    report["files"][0]["measurements"]["schema"] = json!("urn:other:measurements");
+    write_json(&report_path, &report);
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().unwrap(),
+            fixture("rig.gltf").to_str().unwrap(),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains(
+            "does not identify measurement contract urn:animsmith:schema:measurements:15"
+        )
+    );
+}
+
+#[test]
+fn diff_reports_pinned_measurement_contract_for_every_output_reader_revision() {
+    let dir = unique_temp_dir("diff-reader-revision-diagnostics");
+    let report_path = dir.path().join("report.json");
+    let readers = [
+        (11, 15, MEASUREMENTS_V15_SCHEMA_ID),
+        (12, 15, MEASUREMENTS_V15_SCHEMA_ID),
+        (13, 16, MEASUREMENTS_V16_SCHEMA_ID),
+        (14, 16, MEASUREMENTS_V16_SCHEMA_ID),
+        (15, 16, MEASUREMENTS_V16_SCHEMA_ID),
+        (16, 16, MEASUREMENTS_V16_SCHEMA_ID),
+        (17, 16, MEASUREMENTS_V16_SCHEMA_ID),
+        (18, 17, MEASUREMENTS_SCHEMA_ID),
+    ];
+    let remediation =
+        "regenerate it from the original asset with `animsmith measure --format json <asset>`";
+
+    for (output_version, expected_version, expected_identity) in readers {
+        let mut report = measurement_report(1.0);
+        report["schema_version"] = json!(output_version);
+        report["schema"] = json!(format!("urn:animsmith:schema:output:{output_version}"));
+        report["files"][0]["measurements"]["schema_version"] = json!(expected_version + 99);
+        write_json(&report_path, &report);
+        let output = animsmith()
+            .args([
+                "diff",
+                report_path.to_str().unwrap(),
+                fixture("rig.gltf").to_str().unwrap(),
+            ])
+            .output()
+            .expect("runs animsmith");
+        assert_eq!(output.status.code(), Some(2), "output v{output_version}");
+        assert_eq!(stdout(&output), "");
+        assert_eq!(
+            stderr(&output),
+            format!(
+                "animsmith: {} has measurement schema_version {}; this reader expects measurement schema_version {}; {remediation}\n",
+                report_path.display(),
+                expected_version + 99,
+                expected_version,
+            ),
+            "output v{output_version} version mismatch"
+        );
+
+        report["files"][0]["measurements"]["schema_version"] = json!(expected_version);
+        report["files"][0]["measurements"]["schema"] = json!("urn:other:measurements");
+        write_json(&report_path, &report);
+        let output = animsmith()
+            .args([
+                "diff",
+                report_path.to_str().unwrap(),
+                fixture("rig.gltf").to_str().unwrap(),
+            ])
+            .output()
+            .expect("runs animsmith");
+        assert_eq!(output.status.code(), Some(2), "output v{output_version}");
+        assert_eq!(stdout(&output), "");
+        assert_eq!(
+            stderr(&output),
+            format!(
+                "animsmith: {} does not identify measurement contract {expected_identity}; {remediation}\n",
+                report_path.display(),
+            ),
+            "output v{output_version} identity mismatch"
         );
     }
 }
@@ -8275,7 +8385,7 @@ fn diff_rejects_v11_skeleton_shape_before_decoding_v13_fields() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has measurement schema_version 11; this build reads measurement schema_version 17; regenerate it from the original asset with `animsmith measure --format json <asset>`"
+            "has measurement schema_version 11; this reader expects measurement schema_version 16; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)

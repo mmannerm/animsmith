@@ -2408,14 +2408,12 @@ fn diff_report_error(error: &MeasurementReportError, file_count: Option<usize>) 
             MeasurementFileError::MissingMeasurementVersion => {
                 format!("has no versioned measurement contract; {REMEDIATION}")
             }
-            MeasurementFileError::UnsupportedMeasurementVersion { found } => format!(
-                "has measurement schema_version {found}; this build reads measurement schema_version {}; {REMEDIATION}",
-                animsmith_core::MEASUREMENTS_SCHEMA_VERSION
+            MeasurementFileError::UnsupportedMeasurementVersion { found, expected } => format!(
+                "has measurement schema_version {found}; this reader expects measurement schema_version {expected}; {REMEDIATION}"
             ),
-            MeasurementFileError::WrongMeasurementIdentity => format!(
-                "does not identify measurement contract {}; {REMEDIATION}",
-                animsmith_core::MEASUREMENTS_SCHEMA_ID
-            ),
+            MeasurementFileError::WrongMeasurementIdentity { expected } => {
+                format!("does not identify measurement contract {expected}; {REMEDIATION}")
+            }
             MeasurementFileError::MissingClips => "measurement contract has no `clips` map".into(),
             MeasurementFileError::InvalidMeasurements { source } => {
                 format!("has invalid measurements: {source}; {REMEDIATION}")
