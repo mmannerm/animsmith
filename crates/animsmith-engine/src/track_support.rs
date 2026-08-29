@@ -1,7 +1,8 @@
 //! Exact negative-only Bevy animation/channel import-gate prediction.
 
+use crate::SettingIdV2;
+use crate::canonical::matches_frozen_registry_projection_v2;
 use crate::error::PredictionRuleError;
-use crate::{SettingIdV2, profiles_v2};
 use animsmith_core::engine_contract::{EngineSettingIdV2, EngineSettingValueV2};
 use animsmith_core::prediction::{EnginePredictionBasisV4, PredictionBasisReferenceV4};
 use animsmith_core::{
@@ -57,7 +58,9 @@ impl<'a> EngineTrackSupportCheck<'a> {
             {
                 return Err(PredictionRuleError::SourceProvenanceMismatch);
             }
-            if is_bevy_tuple(provenance) && !has_frozen_bevy_profile(provenance) {
+            if is_bevy_tuple(provenance)
+                && !matches_frozen_registry_projection_v2(provenance.base().profile())
+            {
                 return Err(PredictionRuleError::FrozenProfileMismatch);
             }
         }
@@ -395,25 +398,13 @@ fn is_bevy_tuple(provenance: &PredictionProvenanceV5) -> bool {
         && selection.importer() == BEVY_IMPORTER
 }
 
-fn has_frozen_bevy_profile(provenance: &PredictionProvenanceV5) -> bool {
-    profiles_v2().iter().any(|profile| {
-        let selection = profile.selection();
-        selection.family() == BEVY_FAMILY
-            && selection.profile_revision() == BEVY_PROFILE_REVISION
-            && selection.engine_version() == BEVY_ENGINE_VERSION
-            && selection.importer() == BEVY_IMPORTER
-            && crate::project_engine_profile_v2(profile)
-                .is_ok_and(|projected| &projected == provenance.base().profile())
-    })
-}
-
 fn is_exact_bevy_gltf(source: &LoadedSource, provenance: &PredictionProvenanceV5) -> bool {
     matches!(
         source.source_facts().format(),
         SourceFormatV1::GltfJson | SourceFormatV1::Glb
     ) && source.source_facts().format() == provenance.base().source_format()
         && is_bevy_tuple(provenance)
-        && has_frozen_bevy_profile(provenance)
+        && matches_frozen_registry_projection_v2(provenance.base().profile())
 }
 
 fn empty_output() -> CheckOutput {
