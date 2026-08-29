@@ -24,6 +24,52 @@ fn links(markdown: &str) -> Vec<String> {
         .collect()
 }
 
+fn rendered_links(markdown: &str) -> Vec<(String, String)> {
+    let mut rendered = Vec::new();
+    let mut active = None;
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                active = Some((String::new(), dest_url.into_string()))
+            }
+            Event::Text(text) | Event::Code(text) => {
+                if let Some((label, _)) = active.as_mut() {
+                    label.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some(link) = active.take() {
+                    rendered.push(link);
+                }
+            }
+            _ => {}
+        }
+    }
+    rendered
+}
+
+fn rendered_headings(markdown: &str) -> Vec<String> {
+    let mut rendered = Vec::new();
+    let mut active = None;
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Heading { .. }) => active = Some(String::new()),
+            Event::Text(text) | Event::Code(text) => {
+                if let Some(heading) = active.as_mut() {
+                    heading.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(heading) = active.take() {
+                    rendered.push(heading);
+                }
+            }
+            _ => {}
+        }
+    }
+    rendered
+}
+
 /// Keep staged-page anchors identical to the parser-backed repository-link
 /// gate in `docs_links.rs`: GitHub-style slugging and duplicate suffixes, not
 /// a line-oriented heading regex.
@@ -158,6 +204,33 @@ fn write_book_fixture(root: &Path, marker: &str) {
     .expect("writes canonical fixture index");
     std::fs::write(root.join("docs/guide.md"), format!("# {marker} guide\n"))
         .expect("writes fixture guide");
+    assert!(
+        Command::new("git")
+            .args(["init", "--quiet", root.to_str().unwrap()])
+            .status()
+            .expect("initializes fixture checkout")
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .args(["-C", root.to_str().unwrap(), "add", "."])
+            .status()
+            .expect("tracks fixture checkout")
+            .success()
+    );
+}
+
+fn write_external_index_fixture(root: &Path, label: &str, destination: &str) {
+    std::fs::create_dir_all(root.join("docs")).expect("creates fixture docs directory");
+    std::fs::write(root.join(".mdbook-version"), "0.4.52\n").expect("writes mdBook pin");
+    std::fs::write(root.join("README.md"), "# fixture\n").expect("writes root page");
+    std::fs::write(
+        root.join("docs/README.md"),
+        format!(
+            "# Documentation\n\n| Document | Use it to… | Category |\n|---|---|---|\n| [{label}]({destination}) | External fixture. | Reference |\n"
+        ),
+    )
+    .expect("writes external fixture index");
     assert!(
         Command::new("git")
             .args(["init", "--quiet", root.to_str().unwrap()])
@@ -319,6 +392,10 @@ fn summary_category_links(markdown: &str) -> Vec<(String, String)> {
     links
 }
 
+fn strict_lines(text: &str) -> Vec<&str> {
+    text.lines().collect()
+}
+
 #[test]
 fn staged_pages_tree_is_clean_and_every_rendered_local_link_resolves() {
     let root = repo_root();
@@ -394,6 +471,47 @@ fn staged_anchor_validation_rejects_missing_same_and_cross_page_fragments() {
 }
 
 #[test]
+fn external_proxy_preserves_safe_bracket_and_backslash_labels_and_exact_url() {
+    let root = repo_root();
+    let temp = tempfile::tempdir().expect("creates proxy fixture");
+    let source = temp.path().join("source");
+    let stage = temp.path().join("stage");
+    let label = r"safe [ ] and \ label";
+    let destination = "https://example.test/reference?query=exact";
+    write_external_index_fixture(&source, label, destination);
+    assert!(
+        Command::new("python3")
+            .arg(root.join("scripts/build-docs-site.py"))
+            .args(["--source", source.to_str().unwrap(), "--stage"])
+            .arg(&stage)
+            .status()
+            .expect("stages external proxy fixture")
+            .success()
+    );
+
+    let summary = std::fs::read_to_string(stage.join("src/SUMMARY.md")).expect("reads summary");
+    assert!(
+        rendered_links(&summary)
+            .iter()
+            .any(|(rendered_label, _)| rendered_label == label),
+        "escaped SUMMARY label is one rendered label"
+    );
+    let proxy = summary_category_links(&summary)
+        .into_iter()
+        .map(|(_, path)| path)
+        .find(|path| path.starts_with("_generated/external/"))
+        .expect("SUMMARY uses a generated external proxy");
+    let proxy_markdown =
+        std::fs::read_to_string(stage.join("src").join(proxy)).expect("reads external proxy");
+    assert_eq!(rendered_headings(&proxy_markdown), vec![label.to_owned()]);
+    assert_eq!(
+        rendered_links(&proxy_markdown),
+        vec![(format!("Open {label}"), destination.to_owned())],
+        "proxy preserves one rendered label and its exact external URL"
+    );
+}
+
+#[test]
 fn pages_composition_uses_release_at_root_and_main_below_dev() {
     let root = repo_root();
     let temp = tempfile::tempdir().expect("creates composition fixture");
@@ -441,8 +559,12 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
         "the /dev subtree comes from current main"
     );
     assert_eq!(
-        std::fs::read_to_string(output.join("BUILD-INFO.txt")).expect("reads build routing record"),
-        "Release root: vfixture\nDevelopment subtree: main\n"
+        strict_lines(
+            &std::fs::read_to_string(output.join("BUILD-INFO.txt"))
+                .expect("reads build routing record"),
+        ),
+        ["Release root: vfixture", "Development subtree: main"],
+        "routing record has exactly the expected semantic lines",
     );
 }
 
@@ -490,8 +612,8 @@ fn release_eligibility_outputs_the_workflow_available_value_for_each_tag() {
         );
         String::from_utf8(output.stdout).expect("eligibility output is UTF-8")
     };
-    assert_eq!(eligibility("vlegacy"), "available=false\n");
-    assert_eq!(eligibility("vpages"), "available=true\n");
+    assert_eq!(strict_lines(&eligibility("vlegacy")), ["available=false"]);
+    assert_eq!(strict_lines(&eligibility("vpages")), ["available=true"]);
 }
 
 #[test]

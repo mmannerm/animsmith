@@ -93,6 +93,7 @@ docs-stage:
 # Build a clean, parser-validated Pages preview. mdBook must match .mdbook-version.
 docs-check:
     python3 scripts/build-docs-site.py --stage target/docs-site --build
+    python3 scripts/test_build_docs_site.py
     cargo test -p animsmith --test docs_pages
 
 # Serve the same staged Pages book locally at http://localhost:3000.

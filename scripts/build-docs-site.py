@@ -10,10 +10,13 @@ the source tree and refuses symbolic links in the staged input.
 from __future__ import annotations
 
 import argparse
+import os
 import posixpath
 import shutil
 import subprocess
 import sys
+import tempfile
+import unicodedata
 from pathlib import Path
 from hashlib import sha256
 from urllib.parse import urlsplit
@@ -56,6 +59,8 @@ def index_rows(index: Path) -> list[tuple[str, str, str]]:
         label, destination = document[1:-1].split("](", 1)
         if not label or not destination or not category:
             raise ValueError(f"{index}: document label, destination, and category are required")
+        validate_label(label)
+        validate_category(category)
         rows.append((category, label, destination))
     if not rows:
         raise ValueError(f"{index}: canonical index table has no rows")
@@ -67,13 +72,36 @@ def markdown_text(value: str) -> str:
     return value.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
 
 
+def has_non_printable(value: str) -> bool:
+    """Reject controls and formatting characters that alter generated Markdown."""
+    return any(unicodedata.category(character).startswith("C") for character in value)
+
+
+def validate_label(label: str) -> None:
+    if has_non_printable(label):
+        raise ValueError("index label contains control or non-printable characters")
+
+
+def validate_category(category: str) -> None:
+    if has_non_printable(category):
+        raise ValueError("index category contains control or non-printable characters")
+
+
 def external_proxy(source: Path, label: str, destination: str, proxies: dict[Path, str]) -> str:
+    validate_label(label)
     if len(label.encode("utf-8")) > MAX_LABEL_BYTES:
         raise ValueError("external index label exceeds the generated Markdown bound")
     if len(destination.encode("utf-8")) > MAX_EXTERNAL_URL_BYTES:
         raise ValueError("external index destination exceeds the generated Markdown bound")
+    if has_non_printable(destination) or any(character.isspace() for character in destination):
+        raise ValueError(f"external index destination contains whitespace or control characters: {destination}")
+    # Angle-bracket destinations are the only Markdown form that keeps query
+    # delimiters literal, but raw angle brackets and backslashes would end or
+    # escape that form.  Refuse them rather than publishing a changed URL.
+    if any(character in "<>\\" for character in destination):
+        raise ValueError(f"external index destination cannot be rendered exactly: {destination}")
     parsed = urlsplit(destination)
-    if parsed.scheme != "https" or not parsed.netloc or any(character.isspace() for character in destination):
+    if parsed.scheme != "https" or not parsed.netloc:
         raise ValueError(f"external index destination must be an https URL: {destination}")
     relative = GENERATED_EXTERNAL_DIR / f"{sha256(destination.encode('utf-8')).hexdigest()}.md"
     if relative in proxies:
@@ -101,6 +129,8 @@ def write_book_files(stage: Path, rows: list[tuple[str, str, str]], site_url: st
     category = None
     proxies: dict[Path, str] = {}
     for row_category, label, destination in rows:
+        validate_label(label)
+        validate_category(row_category)
         if row_category != category:
             category = row_category
             summary.extend(["", f"# {category}"])
@@ -135,20 +165,26 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
     destination = destination.resolve()
     if destination == source:
         raise ValueError("staging directory must not replace the source checkout")
-    if destination.exists():
-        shutil.rmtree(destination)
-    destination.mkdir(parents=True)
-    staged_source = destination / "src"
-    for relative in tracked_files(source):
-        original = source / relative
-        if original.is_symlink():
-            raise ValueError(f"refusing symbolic link in Pages source: {relative}")
-        if not original.is_file():
-            continue
-        target = staged_source / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(original, target)
-    write_book_files(destination, index_rows(source / INDEX), site_url)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent))
+    try:
+        staged_source = temporary / "src"
+        for relative in tracked_files(source):
+            original = source / relative
+            if original.is_symlink():
+                raise ValueError(f"refusing symbolic link in Pages source: {relative}")
+            if not original.is_file():
+                continue
+            target = staged_source / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(original, target)
+        write_book_files(temporary, index_rows(source / INDEX), site_url)
+        if destination.exists():
+            shutil.rmtree(destination)
+        os.replace(temporary, destination)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
 
 
 def required_mdbook(source: Path) -> None:
@@ -161,16 +197,20 @@ def required_mdbook(source: Path) -> None:
         )
 
 
-def build(source: Path, destination: Path) -> None:
-    required_mdbook(source)
-    subprocess.run(["mdbook", "build", "-d", "book"], cwd=destination, check=True)
+def validate_artifact_paths(book: Path) -> None:
     invalid = [
-        path.relative_to(destination / "book")
-        for path in (destination / "book").rglob("*")
+        path.relative_to(book)
+        for path in book.rglob("*")
         if any(character in '<>:"|?*' or ord(character) < 32 for character in path.name)
     ]
     if invalid:
         raise RuntimeError(f"rendered Pages artifact has invalid path characters: {invalid}")
+
+
+def build(source: Path, destination: Path) -> None:
+    required_mdbook(source)
+    subprocess.run(["mdbook", "build", "-d", "book"], cwd=destination, check=True)
+    validate_artifact_paths(destination / "book")
 
 
 def main() -> None:
