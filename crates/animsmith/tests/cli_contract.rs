@@ -136,7 +136,7 @@ fn assert_output_schema_valid(instance: &Value) {
         .collect();
     assert!(
         errors.is_empty(),
-        "output must satisfy the published v17 schemas:\n{}\ninstance: {instance:#}",
+        "output must satisfy the published current v19 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }

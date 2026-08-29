@@ -550,7 +550,7 @@ impl CheckOutput {
         }
     }
 
-    /// V2 prediction attachment used by the current output-v13 lint path.
+    /// V2 prediction attachment retained by historical output-v13 lint readers.
     pub const fn engine_prediction_v2(&self) -> Option<&EnginePredictionV2> {
         match self.engine_prediction.as_ref() {
             Some(EnginePredictionEvidence::V2(prediction)) => Some(prediction),

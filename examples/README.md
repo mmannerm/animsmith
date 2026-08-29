@@ -93,7 +93,7 @@ should fail on warnings too:
 $ animsmith lint --deny-warnings examples/assets/clip-dirty.glb   # exits 1
 ```
 
-For machine consumption, `--format json` emits the v13 result envelope
+For machine consumption, `--format json` emits the current v19 result envelope
 (see [output.md](../docs/output.md)). This `jq` projection keeps the example
 short while showing where retained/promotion evidence, content findings, and
 independently versioned measurement evidence live:
@@ -108,8 +108,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
         {check_id, selection, configuration, applicability, evaluation, findings}),
       measurements: (.files[0].measurements | {schema_version, schema})}'
 {
-  "schema_version": 13,
-  "schema": "urn:animsmith:schema:output:13",
+  "schema_version": 19,
+  "schema": "urn:animsmith:schema:output:19",
   "command": "lint",
   "prediction_facets": {
     "available": 0,
