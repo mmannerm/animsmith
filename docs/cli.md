@@ -806,7 +806,7 @@ An output-v19 measure report deliberately has no engine provenance or
 loader-owned source format. `diff` also ignores the provenance on lint reports.
 When its operands are JSON reports, `diff` validates the complete
 version-matched records and compares their decoded version-matched measurements
-(historical v15/v16 or current v17); a selected engine profile does not change
+(historical v15/v16 or current v18); a selected engine profile does not change
 that report meaning. When its operands are source assets, the profile is still
 resolved against each loader-owned source format before measurement.
 

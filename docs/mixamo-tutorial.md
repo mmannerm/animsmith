@@ -239,7 +239,7 @@ sample values as vendor evidence:
 ```console
 $ animsmith measure --format json walking.glb
 {
-  "schema_version": 18,
+  "schema_version": 19,
   "schema": "urn:animsmith:schema:output:19",
   "tool": { "name": "animsmith", "version": "0.8.0",
             "source": { "revision": null, "dirty": null } },
@@ -258,7 +258,7 @@ $ animsmith measure --format json walking.glb
         "resolved_role_policies": { "hips": "exact", "spine": "exact",
           "left_foot": "exact", "right_foot": "exact" } },
       "measurements": {
-        "schema_version": 17,
+        "schema_version": 18,
         "schema": "urn:animsmith:schema:measurements:18",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,

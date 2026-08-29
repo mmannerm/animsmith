@@ -11374,6 +11374,60 @@ mod measurement_report_input_tests {
         MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default()).unwrap()
     }
 
+    fn prediction_measurements_with_rotation_facts() -> MeasurementContract {
+        let assets: AssetMeasurements = serde_json::from_value(serde_json::json!({
+            "material_resource_coverage": "unavailable",
+            "material_definitions": [], "textures": [], "images": [],
+            "skeleton_source_coverage": "complete",
+            "skeleton_nodes": [{
+                "node_index": 0,
+                "scene_root_indices": [],
+                "local_rest": {
+                    "kind": "trs",
+                    "translation_parent_space_m": [0.0, 0.0, 0.0],
+                    "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                    "scale": [1.0, 1.0, 1.0]
+                },
+                "rest_world_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                "rest_world_translation_m": [0.0, 0.0, 0.0],
+                "rest_world_linear": {
+                    "classification": "unit_orthonormal",
+                    "axis_lengths": [1.0, 1.0, 1.0],
+                    "determinant": 1.0,
+                    "orientation": "positive",
+                    "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                    "uniform_scale": 1.0
+                }
+            }],
+            "skins": [{
+                "skin_index": 0,
+                "joints": [{
+                    "joint_index": 0, "node_index": 0,
+                    "joint_bind_to_mesh": {
+                        "source_inverse_bind_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                        "inversion_quality": { "reciprocal_condition_number_inf": 1.0 },
+                        "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                        "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "rotation_xyzw": [0.0, 0.0, 0.0, 1.0], "uniform_scale": 1.0 }
+                    },
+                    "mesh_bind_world": {
+                        "source_inverse_bind_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                        "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                        "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "rotation_xyzw": [0.0, 0.0, 0.0, 1.0], "uniform_scale": 1.0 }
+                    }
+                }],
+                "joint_bind_linear_summary": { "classification": "consistent_uniform", "joint_count": 1, "available_joint_count": 1, "unavailable_joint_count": 0, "consistent_uniform_scale": 1.0 },
+                "inverse_bind_accessor": {
+                    "status": "available", "declared_count": 1,
+                    "matrices": [[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]]
+                },
+                "attachments": [{ "node_index": 0 }]
+            }],
+            "mesh_definitions": [], "node_instances": [], "scenes": []
+        }))
+        .expect("complete skeleton and skin fixture");
+        MeasurementContract::new(BTreeMap::new(), assets).expect("current rotation facts")
+    }
+
     fn prediction_test_measurements_v16() -> MeasurementContract {
         MeasurementContract::historical_v16(BTreeMap::new(), AssetMeasurements::default()).unwrap()
     }
@@ -13585,7 +13639,7 @@ mod measurement_report_input_tests {
     }
 
     #[test]
-    fn current_v18_writers_refuse_measurements_v16_at_file_and_envelope_boundaries() {
+    fn current_v19_writers_refuse_measurements_v16_at_file_and_envelope_boundaries() {
         let mismatch = OutputContractError::CurrentMeasurementContractMismatch {
             output_version: OUTPUT_SCHEMA_VERSION,
             found_version: MEASUREMENTS_V16_SCHEMA_VERSION,
@@ -13671,6 +13725,62 @@ mod measurement_report_input_tests {
                 .iter()
                 .all(|bone| bone.get("availability").is_none())
         );
+
+        // Historical prediction writers consume a V16 projection. Exercise
+        // every new V18 rotation location with real skeleton and skin facts so
+        // the projection cannot accidentally leak an exclusive V18 field.
+        let rotation_facts = prediction_measurements_with_rotation_facts();
+        let projected_rotation_facts = rotation_facts.prediction_v16_projection().unwrap();
+        let projected_wire = serde_json::to_value(&projected_rotation_facts).unwrap();
+        let projected_linear_paths = [
+            &projected_wire["skeleton_nodes"][0]["rest_world_linear"],
+            &projected_wire["skins"][0]["joints"][0]["joint_bind_to_mesh"]["linear"],
+            &projected_wire["skins"][0]["joints"][0]["mesh_bind_world"]["linear"],
+        ];
+        assert!(
+            projected_linear_paths
+                .into_iter()
+                .all(|linear| linear.get("rotation_xyzw").is_none()),
+            "V16 projection must remove every V18-only rotation fact"
+        );
+        let historical_rotation_report = LintFileReport::new(
+            "rotation-facts.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            Vec::new(),
+            rotation_facts,
+        )
+        .expect("historical writer projects non-empty rotation facts");
+        let historical_rotation_wire = serde_json::to_value(&historical_rotation_report).unwrap();
+        assert_eq!(
+            historical_rotation_report.measurements().schema_version,
+            MEASUREMENTS_V16_SCHEMA_VERSION
+        );
+        let historical_linear_paths = [
+            &historical_rotation_wire["measurements"]["skeleton_nodes"][0]["rest_world_linear"],
+            &historical_rotation_wire["measurements"]["skins"][0]["joints"][0]["joint_bind_to_mesh"]
+                ["linear"],
+            &historical_rotation_wire["measurements"]["skins"][0]["joints"][0]["mesh_bind_world"]["linear"],
+        ];
+        assert!(
+            historical_linear_paths
+                .into_iter()
+                .all(|linear| linear.get("rotation_xyzw").is_none()),
+            "historical V15 writer must preserve the V16 measurement shape"
+        );
+        let historical_envelope = LintEnvelope::new(
+            ToolInfo::animsmith(ToolSource::new(None, None)),
+            vec![historical_rotation_report],
+        )
+        .expect("historical envelope accepts projected non-empty rotation facts");
+        let historical_envelope_wire = serde_json::to_value(historical_envelope).unwrap();
+        let historical_input: MeasurementReportInput =
+            serde_json::from_value(historical_envelope_wire).unwrap();
+        assert_eq!(historical_input.file_count(), Some(1));
+        historical_input
+            .into_files()
+            .expect("historical reader accepts the projected V16 wire shape");
 
         let partial = loop_projection_measurements(&[
             MeasurementAvailability::Measured,
@@ -15488,7 +15598,7 @@ pub struct LintEnvelopeV19 {
 }
 
 impl LintEnvelopeV19 {
-    /// Construct a schema-valid V18 lint envelope and derive summaries.
+    /// Construct a schema-valid V19 lint envelope and derive summaries.
     pub fn new(tool: ToolInfo, files: Vec<LintFileReportV19>) -> Result<Self, OutputContractError> {
         if files.len() > OUTPUT_V11_MAX_FILES {
             return Err(OutputContractError::TooManyFiles {

@@ -133,7 +133,7 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 17,
+    "schema_version": 18,
     "schema": "urn:animsmith:schema:measurements:18"
   }
 }
@@ -373,7 +373,7 @@ $ animsmith measure --format json examples/assets/walk.glb
         "resolved_roles": { "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" },
         "resolved_role_policies": { "hips": "exact", "left_foot": "exact", "right_foot": "exact" } },
       "measurements": {
-        "schema_version": 17,
+        "schema_version": 18,
         "schema": "urn:animsmith:schema:measurements:18",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,

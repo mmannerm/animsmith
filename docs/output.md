@@ -331,7 +331,7 @@ remain immutable.
 
 ## Contract identities
 
-Validation and comparison JSON commands emit output contract v18 with the
+Validation and comparison JSON commands emit output contract v19 with the
 current protocol identity `urn:animsmith:schema:output:19`. Output-v17 retains
 identity `urn:animsmith:schema:output:17` and remains
 retrievable historical schema evidence at
@@ -895,7 +895,7 @@ Both commands put evidence under `files[].measurements`:
 
 ```json
 {
-  "schema_version": 17,
+  "schema_version": 18,
   "schema": "urn:animsmith:schema:measurements:18",
   "clips": {},
   "mesh_definitions": [],
@@ -1604,7 +1604,7 @@ delta count, and structured metric deltas:
 
 ```json
 {
-  "schema_version": 18,
+  "schema_version": 19,
   "schema": "urn:animsmith:schema:output:19",
   "tool": {
     "name": "animsmith",

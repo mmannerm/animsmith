@@ -1227,6 +1227,9 @@ pub fn measure_linear_transform(matrix: Mat4) -> LinearTransformMeasurements {
     }
 }
 
+const POLAR_ROTATION_MAX_NEWTON_STEPS: usize = 8;
+const POLAR_ROTATION_ORTHOGONALITY_TOLERANCE: f64 = 64.0 * f64::EPSILON;
+
 /// Extract and sign-canonicalize the proper orthogonal polar factor of a
 /// classified unit-orthonormal matrix. Classification deliberately admits
 /// small scale and shear residuals, which no quaternion can encode; its polar
@@ -1235,18 +1238,7 @@ pub fn measure_linear_transform(matrix: Mat4) -> LinearTransformMeasurements {
 /// cancellation at and near half turns. The largest-absolute-component rule
 /// picks one total representation from the equivalent `q`/`-q` pair.
 fn canonical_rotation_xyzw(matrix: Mat3) -> [f32; 4] {
-    // A classified unit transform is finite, nonsingular, and positive. The
-    // fixed widened iteration is therefore deterministic and rapidly
-    // converges to its proper orthogonal polar factor without f32 rounding
-    // changing a branch near a half turn.
-    let mut polar = DMat3::from_cols(
-        matrix.x_axis.as_dvec3(),
-        matrix.y_axis.as_dvec3(),
-        matrix.z_axis.as_dvec3(),
-    );
-    for _ in 0..4 {
-        polar = (polar + polar.inverse().transpose()) * 0.5;
-    }
+    let polar = proper_orthogonal_polar_factor(matrix);
 
     let m00 = polar.x_axis.x;
     let m01 = polar.y_axis.x;
@@ -1317,6 +1309,38 @@ fn canonical_rotation_xyzw(matrix: Mat3) -> [f32; 4] {
         }
     }
     quaternion
+}
+
+/// Return the proper orthogonal polar factor for the classifier's admitted
+/// positive, nonsingular unit domain.
+fn proper_orthogonal_polar_factor(matrix: Mat3) -> DMat3 {
+    // `unit_orthonormal` has already established finite, positive, nonsingular
+    // input with axis and pair-dot residuals bounded by 1e-5. Newton's polar
+    // iteration squares that small orthogonality residual each pass. Stop on a
+    // widened orthogonality residual rather than assuming a particular fixed
+    // pass count; eight is only a bounded fail-safe for this well-conditioned,
+    // untrusted-input-derived domain and is independently characterized below.
+    let mut polar = DMat3::from_cols(
+        matrix.x_axis.as_dvec3(),
+        matrix.y_axis.as_dvec3(),
+        matrix.z_axis.as_dvec3(),
+    );
+    for _ in 0..POLAR_ROTATION_MAX_NEWTON_STEPS {
+        polar = (polar + polar.inverse().transpose()) * 0.5;
+        if polar_orthogonality_residual(polar) <= POLAR_ROTATION_ORTHOGONALITY_TOLERANCE {
+            break;
+        }
+    }
+    polar
+}
+
+fn polar_orthogonality_residual(matrix: DMat3) -> f64 {
+    let residual = matrix.transpose() * matrix - DMat3::IDENTITY;
+    residual
+        .to_cols_array()
+        .into_iter()
+        .map(f64::abs)
+        .fold(0.0, f64::max)
 }
 
 pub(crate) fn summarize_skin_bind_linear(
@@ -3252,6 +3276,14 @@ mod tests {
         let exact_equal_xy_half_turn = Mat4::from_cols_array(&[
             0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
         ]);
+        let exact_equal_yz_half_turn = Mat4::from_cols_array(&[
+            -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ]);
+        // This is -90 degrees about Z: Z and W tie, but Z must win the fixed
+        // XYZW tie order and therefore make Z positive by negating W too.
+        let exact_equal_zw = Mat4::from_cols_array(&[
+            0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ]);
         let exact_x = measure_linear_transform(exact_x_half_turn)
             .rotation_xyzw
             .expect("exact unit half turn");
@@ -3265,6 +3297,24 @@ mod tests {
             "equal |x|/|y| must choose X first, then make X non-negative: {exact_equal_xy:?}"
         );
         assert!((exact_equal_xy[0].abs() - exact_equal_xy[1].abs()).abs() <= f32::EPSILON);
+        let exact_equal_yz = measure_linear_transform(exact_equal_yz_half_turn)
+            .rotation_xyzw
+            .expect("exact unit half turn");
+        assert_eq!(exact_equal_yz[0], 0.0);
+        assert_eq!(exact_equal_yz[3], 0.0);
+        assert!(
+            exact_equal_yz[1] > 0.0 && exact_equal_yz[2] < 0.0,
+            "equal |y|/|z| must choose Y first: {exact_equal_yz:?}"
+        );
+        assert!((exact_equal_yz[1].abs() - exact_equal_yz[2].abs()).abs() <= f32::EPSILON);
+        let exact_equal_zw = measure_linear_transform(exact_equal_zw)
+            .rotation_xyzw
+            .expect("exact quarter turn");
+        assert!(
+            exact_equal_zw[2] > 0.0 && exact_equal_zw[3] < 0.0,
+            "equal |z|/|w| must choose Z first: {exact_equal_zw:?}"
+        );
+        assert!((exact_equal_zw[2].abs() - exact_equal_zw[3].abs()).abs() <= f32::EPSILON);
 
         let rotations = [
             Quat::from_rotation_y(core::f32::consts::PI - 1.0e-4),
@@ -3373,6 +3423,87 @@ mod tests {
             Mat4::from_scale(Vec3::splat(2.0)),
         ] {
             assert!(measure_linear_transform(matrix).rotation_xyzw.is_none());
+        }
+    }
+
+    #[test]
+    fn unit_linear_polar_factor_is_orthogonal_and_analytic_at_classifier_boundaries() {
+        let factors = [
+            Mat3::from_diagonal(Vec3::new(1.000_019, 1.000_004_5, 1.000_004_5)),
+            Mat3::from_cols(
+                Vec3::new(1.000_006, 3.0e-6, 0.0),
+                Vec3::new(3.0e-6, 0.999_996, -2.0e-6),
+                Vec3::new(0.0, -2.0e-6, 1.000_002),
+            ),
+            Mat3::from_cols(
+                Vec3::new(0.999_994, -3.5e-6, 1.5e-6),
+                Vec3::new(-3.5e-6, 1.000_005, 2.5e-6),
+                Vec3::new(1.5e-6, 2.5e-6, 1.000_004),
+            ),
+        ];
+        let rotations = [
+            Quat::from_euler(glam::EulerRot::XYZ, 0.4, -1.1, 2.2),
+            Quat::from_rotation_y(core::f32::consts::PI - 1.0e-4),
+        ];
+        let max_abs = |matrix: DMat3| {
+            matrix
+                .to_cols_array()
+                .into_iter()
+                .map(f64::abs)
+                .fold(0.0, f64::max)
+        };
+
+        for (factor_index, factor) in factors.into_iter().enumerate() {
+            for (rotation_index, rotation) in rotations.into_iter().enumerate() {
+                // A = R*S with symmetric positive-definite S, so R is A's
+                // unique proper orthogonal polar factor. These cases sit on
+                // the unit-classifier scale/dot boundary without requiring an
+                // unrepresentable quaternion to carry S.
+                let linear = Mat3::from_quat(rotation) * factor;
+                assert_eq!(
+                    measure_linear_transform(Mat4::from_mat3(linear)).classification,
+                    LinearTransformClassification::UnitOrthonormal,
+                    "admitted factor {factor_index}, rotation {rotation_index}"
+                );
+                let polar = proper_orthogonal_polar_factor(linear);
+                assert!(
+                    polar_orthogonality_residual(polar) <= POLAR_ROTATION_ORTHOGONALITY_TOLERANCE,
+                    "polar factor {factor_index}/{rotation_index} did not converge"
+                );
+                assert!(
+                    (polar.determinant() - 1.0).abs() <= POLAR_ROTATION_ORTHOGONALITY_TOLERANCE
+                );
+
+                let source = DMat3::from_cols(
+                    linear.x_axis.as_dvec3(),
+                    linear.y_axis.as_dvec3(),
+                    linear.z_axis.as_dvec3(),
+                );
+                let polar_residual = polar.transpose() * source;
+                assert!(
+                    max_abs(polar_residual - polar_residual.transpose())
+                        <= POLAR_ROTATION_ORTHOGONALITY_TOLERANCE,
+                    "polar residual {factor_index}/{rotation_index} must be symmetric"
+                );
+
+                let reported = Mat3::from_quat(Quat::from_array(
+                    measure_linear_transform(Mat4::from_mat3(linear))
+                        .rotation_xyzw
+                        .expect("unit transform publishes a polar rotation"),
+                ));
+                let expected = Mat3::from_quat(rotation);
+                for (actual, expected) in reported
+                    .to_cols_array()
+                    .into_iter()
+                    .zip(expected.to_cols_array())
+                {
+                    assert!(
+                        (actual - expected).abs() <= 1.0e-6,
+                        "reported polar factor {factor_index}/{rotation_index} differs by {}",
+                        (actual - expected).abs()
+                    );
+                }
+            }
         }
     }
 
