@@ -29,6 +29,7 @@ fn measurements(duration_s: f64) -> MeasurementMap {
             "loop_continuity": { "bones": [{
                 "bone_index": 0,
                 "bone_name": "hips",
+                "availability": "measured",
                 "position_delta_m": 0.02,
                 "rotation_delta_deg": 2.0,
                 "seam_velocity_delta_mps": 0.2,
@@ -165,7 +166,7 @@ fn public_diff_treats_non_finite_measurements_as_absent() {
             metric: "loop_continuity.bones[0].position_delta_m",
             finite: 0.02,
             make_non_finite: |clip| {
-                clip.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = f64::NAN;
+                clip.loop_continuity.as_mut().unwrap().bones[0].position_delta_m = Some(f64::NAN);
             },
             appeared_note: "appeared",
             disappeared_note: "disappeared",
@@ -174,7 +175,8 @@ fn public_diff_treats_non_finite_measurements_as_absent() {
             metric: "loop_continuity.bones[0].rotation_delta_deg",
             finite: 2.0,
             make_non_finite: |clip| {
-                clip.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg = f64::INFINITY;
+                clip.loop_continuity.as_mut().unwrap().bones[0].rotation_delta_deg =
+                    Some(f64::INFINITY);
             },
             appeared_note: "appeared",
             disappeared_note: "disappeared",
@@ -184,7 +186,7 @@ fn public_diff_treats_non_finite_measurements_as_absent() {
             finite: 0.2,
             make_non_finite: |clip| {
                 clip.loop_continuity.as_mut().unwrap().bones[0].seam_velocity_delta_mps =
-                    f64::NEG_INFINITY;
+                    Some(f64::NEG_INFINITY);
             },
             appeared_note: "appeared",
             disappeared_note: "disappeared",
@@ -194,7 +196,7 @@ fn public_diff_treats_non_finite_measurements_as_absent() {
             finite: 10.0,
             make_non_finite: |clip| {
                 clip.loop_continuity.as_mut().unwrap().bones[0].seam_angular_velocity_delta_degps =
-                    f64::NEG_INFINITY;
+                    Some(f64::NEG_INFINITY);
             },
             appeared_note: "appeared",
             disappeared_note: "disappeared",

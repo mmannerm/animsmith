@@ -133,8 +133,8 @@ $ animsmith lint --format json examples/assets/clip-dirty.glb | jq \
     ]
   },
   "measurements": {
-    "schema_version": 16,
-    "schema": "urn:animsmith:schema:measurements:16"
+    "schema_version": 17,
+    "schema": "urn:animsmith:schema:measurements:17"
   }
 }
 ```
@@ -373,8 +373,8 @@ $ animsmith measure --format json examples/assets/walk.glb
         "resolved_roles": { "hips": "pelvis", "left_foot": "foot_l", "right_foot": "foot_r" },
         "resolved_role_policies": { "hips": "exact", "left_foot": "exact", "right_foot": "exact" } },
       "measurements": {
-        "schema_version": 16,
-        "schema": "urn:animsmith:schema:measurements:16",
+        "schema_version": 17,
+        "schema": "urn:animsmith:schema:measurements:17",
         "clips": { "walk": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["foot_l", "foot_r"],
@@ -387,14 +387,17 @@ $ animsmith measure --format json examples/assets/walk.glb
           "bone_rotation_range_deg": {},
           "loop_continuity": { "bones": [
             { "bone_index": 0, "bone_name": "pelvis",
+              "availability": "measured",
               "position_delta_m": 0.0, "rotation_delta_deg": 0.0,
               "seam_velocity_delta_mps": 0.0,
               "seam_angular_velocity_delta_degps": 0.0 },
             { "bone_index": 1, "bone_name": "foot_l",
+              "availability": "measured",
               "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
               "seam_velocity_delta_mps": 0.0,
               "seam_angular_velocity_delta_degps": 0.0 },
             { "bone_index": 2, "bone_name": "foot_r",
+              "availability": "measured",
               "position_delta_m": 3.7e-17, "rotation_delta_deg": 0.0,
               "seam_velocity_delta_mps": 0.0,
               "seam_angular_velocity_delta_degps": 0.0 }
@@ -664,8 +667,9 @@ not run Bevy. Complete-empty inventory is not applicable; partial or
 unavailable inventory yields one subjectless, unsuppressible inventory facet
 and no retained-prefix prediction, including bounded N+1 overflow. Extensions,
 other animation constructs, and positive runtime survival are outside this
-slice. V5 provenance and output-v17 are current; output-v16, the rev1/rev2
-profiles, and output-v15 contracts remain preserved.
+slice. V5 provenance remains immutable inside the current output-v18 envelope;
+output-v17, output-v16, the rev1/rev2 profiles, and output-v15 contracts remain
+preserved.
 
 Generate a reusable engine-neutral inventory as canonical JSON without a
 profile:

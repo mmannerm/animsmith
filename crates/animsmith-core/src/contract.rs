@@ -51,13 +51,13 @@ use crate::prediction::{
     RawSceneAttachmentBasisDomainV1, RawSceneAttachmentBasisReferenceV1, RawSourceBasisReferenceV1,
     ResolvedSettingLocationV1, TransformScaleDomainV1, TransformScaleResultV1,
     TransformScaleSubjectKindV1, UnitMappingResultV1,
-    decode_engine_prediction_v1_with_measurement_schema, decode_engine_prediction_v2,
+    decode_engine_prediction_v1_with_measurement_schema,
     decode_engine_prediction_v2_with_measurement_schema, decode_engine_prediction_v3,
     decode_engine_prediction_v4, decode_prediction_provenance_v1_with_measurement_schema,
-    decode_prediction_provenance_v2, decode_prediction_provenance_v2_with_measurement_schema,
-    decode_prediction_provenance_v3, decode_prediction_provenance_v4,
-    validate_measurement_references_batch, validate_measurement_references_batch_v2,
-    validate_measurement_references_batch_v3, validate_measurement_references_batch_v4,
+    decode_prediction_provenance_v2_with_measurement_schema, decode_prediction_provenance_v3,
+    decode_prediction_provenance_v4, validate_measurement_references_batch,
+    validate_measurement_references_batch_v2, validate_measurement_references_batch_v3,
+    validate_measurement_references_batch_v4,
 };
 use crate::profile::ResolvedRoles;
 use crate::source_facts::SourceFormatV1;
@@ -74,9 +74,13 @@ use crate::{
 };
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 17;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 18;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:17";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:18";
+/// Immutable output-v17 identity retained for historical V6 prediction evidence.
+pub const OUTPUT_V17_SCHEMA_ID: &str = "urn:animsmith:schema:output:17";
+/// Schema version of output-v17.
+pub const OUTPUT_V17_SCHEMA_VERSION: u32 = 17;
 /// Immutable output-v16 identity retained for historical V5 prediction evidence.
 pub const OUTPUT_V16_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
 /// Schema version of output-v16.
@@ -110,9 +114,13 @@ pub const OUTPUT_V11_MAX_FILES: usize = 4_096;
 /// Maximum check records carried by one output-v11 lint file.
 pub const OUTPUT_V11_MAX_CHECKS_PER_FILE: usize = 4_096;
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 16;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 17;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:17";
+/// Immutable measurements-v16 identity retained for output-v13 through output-v17 readers.
+pub const MEASUREMENTS_V16_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
+/// Immutable measurements-v16 version retained for historical report readers.
+pub const MEASUREMENTS_V16_SCHEMA_VERSION: u32 = 16;
 /// Immutable measurements-v15 identity retained for output-v11 and output-v12 readers.
 pub const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 /// Immutable measurements-v15 version retained for historical report readers.
@@ -351,7 +359,7 @@ impl MeasurementContract {
         clips: BTreeMap<String, ClipMeasurements>,
         assets: AssetMeasurements,
     ) -> Result<Self, MeasurementContractError> {
-        validate_measurements(&clips, &assets, MeasurementRevision::V16)?;
+        validate_measurements(&clips, &assets, MeasurementRevision::V17)?;
         Ok(Self {
             schema_version: MEASUREMENTS_SCHEMA_VERSION,
             schema: MEASUREMENTS_SCHEMA_ID,
@@ -360,7 +368,7 @@ impl MeasurementContract {
         })
     }
 
-    fn historical_v15(
+    pub(crate) fn historical_v15(
         clips: BTreeMap<String, ClipMeasurements>,
         assets: AssetMeasurements,
     ) -> Result<Self, MeasurementContractError> {
@@ -371,6 +379,45 @@ impl MeasurementContract {
             clips,
             assets,
         })
+    }
+
+    pub(crate) fn historical_v16(
+        clips: BTreeMap<String, ClipMeasurements>,
+        assets: AssetMeasurements,
+    ) -> Result<Self, MeasurementContractError> {
+        validate_measurements(&clips, &assets, MeasurementRevision::V16)?;
+        Ok(Self {
+            schema_version: MEASUREMENTS_V16_SCHEMA_VERSION,
+            schema: MEASUREMENTS_V16_SCHEMA_ID,
+            clips,
+            assets,
+        })
+    }
+
+    /// Reconstruct the measurements-v16 evidence view consumed by immutable
+    /// prediction contracts embedded in current output. V16 represented loop
+    /// continuity as all-or-nothing, so any unavailable V17 bone projects to
+    /// an unavailable outer fact; fully measured rows simply omit the V17-only
+    /// per-bone availability field.
+    fn prediction_v16_projection(&self) -> Result<Self, MeasurementContractError> {
+        let mut clips = self.clips.clone();
+        for clip in clips.values_mut() {
+            let has_unavailable_bone = clip.loop_continuity.as_ref().is_some_and(|continuity| {
+                continuity
+                    .bones
+                    .iter()
+                    .any(|bone| bone.availability != MeasurementAvailability::Measured)
+            });
+            if has_unavailable_bone {
+                clip.loop_continuity = None;
+                clip.loop_continuity_availability = MeasurementAvailability::Unavailable;
+            } else if let Some(continuity) = &mut clip.loop_continuity {
+                for bone in &mut continuity.bones {
+                    bone.availability_was_present = false;
+                }
+            }
+        }
+        Self::historical_v16(clips, self.assets.clone())
     }
 
     /// Per-clip measurements keyed by clip name.
@@ -393,6 +440,7 @@ impl MeasurementContract {
 enum MeasurementRevision {
     V15,
     V16,
+    V17,
 }
 
 fn validate_measurements(
@@ -654,7 +702,37 @@ fn validate_measurements(
                         ),
                     });
                 }
-                for (field, value) in [
+                if revision == MeasurementRevision::V17 && !bone.availability_was_present {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.availability"),
+                        reason: "measurements-v17 requires explicit per-bone availability".into(),
+                    });
+                }
+                if revision != MeasurementRevision::V17 && bone.availability_was_present {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.availability"),
+                        reason:
+                            "per-bone loop-continuity availability is exclusive to measurements-v17"
+                                .into(),
+                    });
+                }
+                if revision != MeasurementRevision::V17
+                    && bone.availability != MeasurementAvailability::Measured
+                {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.availability"),
+                        reason: "historical measurement contracts require every present loop-continuity row to be measured"
+                            .into(),
+                    });
+                }
+                if bone.availability == MeasurementAvailability::NotApplicable {
+                    return Err(MeasurementContractError::InvalidStructure {
+                        path: format!("{path}.availability"),
+                        reason: "an existing bone's loop-continuity evidence remains applicable"
+                            .into(),
+                    });
+                }
+                let values = [
                     ("position_delta_m", bone.position_delta_m),
                     ("rotation_delta_deg", bone.rotation_delta_deg),
                     ("seam_velocity_delta_mps", bone.seam_velocity_delta_mps),
@@ -662,7 +740,21 @@ fn validate_measurements(
                         "seam_angular_velocity_delta_degps",
                         bone.seam_angular_velocity_delta_degps,
                     ),
-                ] {
+                ];
+                let values_present = values.iter().filter(|(_, value)| value.is_some()).count();
+                match (bone.availability, values_present) {
+                    (MeasurementAvailability::Measured, 4)
+                    | (MeasurementAvailability::Unavailable, 0) => {}
+                    _ => {
+                        return Err(MeasurementContractError::InvalidStructure {
+                            path: path.clone(),
+                            reason: "all loop-continuity values must be present exactly when the bone is measured"
+                                .into(),
+                        });
+                    }
+                }
+                for (field, value) in values {
+                    let Some(value) = value else { continue };
                     finite(value, format!("{path}.{field}"))?;
                     if value < 0.0 {
                         return Err(MeasurementContractError::InvalidStructure {
@@ -759,7 +851,7 @@ fn validate_measurements(
             ));
         }
         match (&mesh.primitives, revision) {
-            (None, MeasurementRevision::V16) => {
+            (None, MeasurementRevision::V16 | MeasurementRevision::V17) => {
                 return Err(invalid(
                     format!("mesh_definitions[{index}].primitives"),
                     "measurements-v16 requires per-primitive evidence",
@@ -771,7 +863,7 @@ fn validate_measurements(
                     "measurements-v15 cannot carry per-primitive evidence",
                 ));
             }
-            (Some(primitives), MeasurementRevision::V16) => {
+            (Some(primitives), MeasurementRevision::V16 | MeasurementRevision::V17) => {
                 let mut summed_vertex_count = 0u64;
                 let mut summed_finite_vertex_count = 0u64;
                 let mut aggregate_min = [f32::INFINITY; 3];
@@ -1987,7 +2079,7 @@ fn validate_image_measurement(
             ));
         }
         (
-            MeasurementRevision::V16,
+            MeasurementRevision::V16 | MeasurementRevision::V17,
             Some(crate::model::ImageUnavailableReason::UnsupportedContainer),
             Some(magic),
         ) => {
@@ -2005,18 +2097,18 @@ fn validate_image_measurement(
             }
         }
         (
-            MeasurementRevision::V16,
+            MeasurementRevision::V16 | MeasurementRevision::V17,
             Some(crate::model::ImageUnavailableReason::UnsupportedContainer),
             None,
         )
         | (MeasurementRevision::V15, _, None) => {}
-        (MeasurementRevision::V16, _, Some(_)) => {
+        (MeasurementRevision::V16 | MeasurementRevision::V17, _, Some(_)) => {
             return Err(invalid(
                 format!("images[{offset}].leading_magic_hex"),
                 "leading_magic_hex is permitted only for unsupported_container",
             ));
         }
-        (MeasurementRevision::V16, _, None) => {}
+        (MeasurementRevision::V16 | MeasurementRevision::V17, _, None) => {}
     }
     Ok(())
 }
@@ -3483,14 +3575,10 @@ fn decode_prediction_phase_file(
         RequiredNullable::Missing => unreachable!("missing provenance was rejected above"),
         RequiredNullable::Present(None) => RequiredNullable::Present(None),
         RequiredNullable::Present(Some(raw)) => {
-            let provenance = if expected_measurement_schema == MEASUREMENTS_SCHEMA_ID {
-                decode_prediction_provenance_v2(raw.get())
-            } else {
-                decode_prediction_provenance_v2_with_measurement_schema(
-                    raw.get(),
-                    expected_measurement_schema,
-                )
-            }
+            let provenance = decode_prediction_provenance_v2_with_measurement_schema(
+                raw.get(),
+                expected_measurement_schema,
+            )
             .map_err(|error| {
                 let source = match error {
                     PredictionDecodeError::Shape(source) => {
@@ -3574,16 +3662,12 @@ fn decode_prediction_phase_file(
                             PREDICTION_V1_MAX_FACETS_PER_FILE.saturating_sub(decoded_facets);
                         let reference_limit = PREDICTION_V1_MAX_BASIS_REFERENCES_PER_FILE
                             .saturating_sub(decoded_references);
-                        if expected_measurement_schema == MEASUREMENTS_SCHEMA_ID {
-                            decode_engine_prediction_v2(raw.get(), facet_limit, reference_limit)
-                        } else {
-                            decode_engine_prediction_v2_with_measurement_schema(
-                                raw.get(),
-                                facet_limit,
-                                reference_limit,
-                                expected_measurement_schema,
-                            )
-                        }
+                        decode_engine_prediction_v2_with_measurement_schema(
+                            raw.get(),
+                            facet_limit,
+                            reference_limit,
+                            expected_measurement_schema,
+                        )
                         .map_err(|error| {
                             let source = match error {
                                 PredictionDecodeError::Shape(source) => {
@@ -9512,7 +9596,7 @@ fn unit_scale_exact_selected_evidence(
     matches!(
         measurement_references.as_slice(),
         [(
-            MEASUREMENTS_SCHEMA_ID,
+            MEASUREMENTS_V16_SCHEMA_ID,
             actual_pointer,
             PredictionScalarV1::Token { value },
         )] if *actual_pointer == pointer
@@ -10328,6 +10412,7 @@ impl MeasurementReportInput {
             V15,
             V16,
             V17,
+            V18,
         }
 
         let revision = match self.schema_version {
@@ -10337,7 +10422,8 @@ impl MeasurementReportInput {
             Some(OUTPUT_V14_SCHEMA_VERSION) => ReaderRevision::V14,
             Some(OUTPUT_V15_SCHEMA_VERSION) => ReaderRevision::V15,
             Some(OUTPUT_V16_SCHEMA_VERSION) => ReaderRevision::V16,
-            Some(OUTPUT_SCHEMA_VERSION) => ReaderRevision::V17,
+            Some(OUTPUT_V17_SCHEMA_VERSION) => ReaderRevision::V17,
+            Some(OUTPUT_SCHEMA_VERSION) => ReaderRevision::V18,
             Some(found) => {
                 return Err(MeasurementReportError::UnsupportedOutputVersion { found });
             }
@@ -10350,7 +10436,8 @@ impl MeasurementReportInput {
             ReaderRevision::V14 => OUTPUT_V14_SCHEMA_ID,
             ReaderRevision::V15 => OUTPUT_V15_SCHEMA_ID,
             ReaderRevision::V16 => OUTPUT_V16_SCHEMA_ID,
-            ReaderRevision::V17 => OUTPUT_SCHEMA_ID,
+            ReaderRevision::V17 => OUTPUT_V17_SCHEMA_ID,
+            ReaderRevision::V18 => OUTPUT_SCHEMA_ID,
         };
         if self.schema.as_deref() != Some(expected_schema) {
             return Err(MeasurementReportError::WrongOutputIdentity);
@@ -10430,7 +10517,7 @@ impl MeasurementReportInput {
                     .checked_add(file_unavailable)
                     .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
                 file
-            } else if revision == ReaderRevision::V17 {
+            } else if matches!(revision, ReaderRevision::V17 | ReaderRevision::V18) {
                 let file = decode_prediction_phase_file_v17(command, file_index, &raw)?;
                 let (file_available, file_unavailable) =
                     validate_prediction_phase_file_v17(command, file_index, &file)?;
@@ -10445,7 +10532,7 @@ impl MeasurementReportInput {
                 let expected_measurement_schema = if revision == ReaderRevision::V12 {
                     MEASUREMENTS_V15_SCHEMA_ID
                 } else {
-                    MEASUREMENTS_SCHEMA_ID
+                    MEASUREMENTS_V16_SCHEMA_ID
                 };
                 let file = decode_prediction_phase_file(
                     command,
@@ -10511,6 +10598,7 @@ impl MeasurementReportInput {
                             | ReaderRevision::V15
                             | ReaderRevision::V16
                             | ReaderRevision::V17
+                            | ReaderRevision::V18
                     ),
                 )
                 .map_err(|source| {
@@ -10529,7 +10617,10 @@ impl MeasurementReportInput {
                     | ReaderRevision::V14
                     | ReaderRevision::V15
                     | ReaderRevision::V16
-                    | ReaderRevision::V17 => (MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_SCHEMA_ID),
+                    | ReaderRevision::V17 => {
+                        (MEASUREMENTS_V16_SCHEMA_VERSION, MEASUREMENTS_V16_SCHEMA_ID)
+                    }
+                    ReaderRevision::V18 => (MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_SCHEMA_ID),
                 };
                 match measurements.schema_version {
                     Some(found) if found == expected_measurement_version => {}
@@ -10662,7 +10753,8 @@ impl MeasurementReportInput {
                     | ReaderRevision::V14
                     | ReaderRevision::V15
                     | ReaderRevision::V16
-                    | ReaderRevision::V17 => MeasurementContract::new(clips, assets),
+                    | ReaderRevision::V17 => MeasurementContract::historical_v16(clips, assets),
+                    ReaderRevision::V18 => MeasurementContract::new(clips, assets),
                 }
                 .map_err(|source| {
                     MeasurementReportError::file(
@@ -10670,6 +10762,16 @@ impl MeasurementReportInput {
                         MeasurementFileError::InvalidMeasurements { source },
                     )
                 })?;
+                let prediction_measurements = if revision == ReaderRevision::V18 {
+                    measurements.prediction_v16_projection().map_err(|source| {
+                        MeasurementReportError::file(
+                            file_index,
+                            MeasurementFileError::InvalidMeasurements { source },
+                        )
+                    })?
+                } else {
+                    measurements.clone()
+                };
                 if revision == ReaderRevision::V15 {
                     let provenance = file.prediction_provenance_v4.as_present();
                     for (check_index, check) in file
@@ -10686,7 +10788,7 @@ impl MeasurementReportInput {
                             check.applicability,
                             None,
                             None,
-                            &measurements,
+                            &prediction_measurements,
                         )
                         .map_err(|source| {
                             MeasurementReportError::file(
@@ -10712,7 +10814,7 @@ impl MeasurementReportInput {
                             check.applicability,
                             check.prediction.as_ref(),
                             provenance,
-                            &measurements,
+                            &prediction_measurements,
                         )
                         .map_err(|source| {
                             MeasurementReportError::file(
@@ -10725,8 +10827,10 @@ impl MeasurementReportInput {
                         })?;
                     }
                 }
-                if matches!(revision, ReaderRevision::V16 | ReaderRevision::V17)
-                    && !matches!(file.prediction_provenance_v5, RequiredNullable::Missing)
+                if matches!(
+                    revision,
+                    ReaderRevision::V16 | ReaderRevision::V17 | ReaderRevision::V18
+                ) && !matches!(file.prediction_provenance_v5, RequiredNullable::Missing)
                 {
                     let provenance = file.prediction_provenance_v5.as_present();
                     for (check_index, check) in file
@@ -10743,7 +10847,7 @@ impl MeasurementReportInput {
                             check.applicability,
                             check.prediction.as_ref(),
                             provenance,
-                            &measurements,
+                            &prediction_measurements,
                         )
                         .map_err(|source| {
                             MeasurementReportError::file(
@@ -10756,7 +10860,7 @@ impl MeasurementReportInput {
                         })?;
                     }
                 }
-                if revision == ReaderRevision::V17
+                if matches!(revision, ReaderRevision::V17 | ReaderRevision::V18)
                     && !matches!(file.prediction_provenance_v6, RequiredNullable::Missing)
                 {
                     let provenance = file.prediction_provenance_v6.as_present();
@@ -10764,7 +10868,7 @@ impl MeasurementReportInput {
                         MeasurementReportError::file(
                             file_index,
                             MeasurementFileError::InvalidFileShape {
-                                reason: "output-v17 rig evidence was not retained".into(),
+                                reason: "current role-policy rig evidence was not retained".into(),
                             },
                         )
                     })?;
@@ -10784,7 +10888,7 @@ impl MeasurementReportInput {
                             provenance,
                             &check.findings,
                             rig,
-                            &measurements,
+                            &prediction_measurements,
                         )
                         .map_err(|source| {
                             MeasurementReportError::file(
@@ -10822,8 +10926,20 @@ impl MeasurementReportInput {
             (file, (checks, legacy_checks, checks_v3, checks_v4, checks_v5, checks_v6)),
         ) in parsed.iter().enumerate()
         {
+            let prediction_measurements = if revision == ReaderRevision::V18 {
+                file.measurements
+                    .prediction_v16_projection()
+                    .map_err(|source| {
+                        MeasurementReportError::file(
+                            file_index,
+                            MeasurementFileError::InvalidMeasurements { source },
+                        )
+                    })?
+            } else {
+                file.measurements.clone()
+            };
             validate_measurement_references_batch_v4(
-                &file.measurements,
+                &prediction_measurements,
                 checks_v6
                     .iter()
                     .enumerate()
@@ -10844,7 +10960,7 @@ impl MeasurementReportInput {
                 )
             })?;
             validate_measurement_references_batch_v4(
-                &file.measurements,
+                &prediction_measurements,
                 checks_v5
                     .iter()
                     .enumerate()
@@ -10865,7 +10981,7 @@ impl MeasurementReportInput {
                 )
             })?;
             validate_measurement_references_batch_v4(
-                &file.measurements,
+                &prediction_measurements,
                 checks_v4
                     .iter()
                     .enumerate()
@@ -10886,7 +11002,7 @@ impl MeasurementReportInput {
                 )
             })?;
             validate_measurement_references_batch_v3(
-                &file.measurements,
+                &prediction_measurements,
                 checks_v3
                     .iter()
                     .enumerate()
@@ -10907,7 +11023,7 @@ impl MeasurementReportInput {
                 )
             })?;
             validate_measurement_references_batch_v2(
-                &file.measurements,
+                &prediction_measurements,
                 checks
                     .iter()
                     .enumerate()
@@ -10928,7 +11044,7 @@ impl MeasurementReportInput {
                 )
             })?;
             validate_measurement_references_batch(
-                &file.measurements,
+                &prediction_measurements,
                 legacy_checks
                     .iter()
                     .enumerate()
@@ -11131,13 +11247,67 @@ mod measurement_report_input_tests {
         MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default()).unwrap()
     }
 
+    fn prediction_test_measurements_v16() -> MeasurementContract {
+        MeasurementContract::historical_v16(BTreeMap::new(), AssetMeasurements::default()).unwrap()
+    }
+
+    fn loop_projection_measurements(
+        availability: &[MeasurementAvailability],
+    ) -> MeasurementContract {
+        let bones = availability
+            .iter()
+            .enumerate()
+            .map(|(index, availability)| match availability {
+                MeasurementAvailability::Measured => serde_json::json!({
+                    "bone_index": index,
+                    "bone_name": format!("bone-{index}"),
+                    "availability": "measured",
+                    "position_delta_m": index as f64,
+                    "rotation_delta_deg": index as f64,
+                    "seam_velocity_delta_mps": index as f64,
+                    "seam_angular_velocity_delta_degps": index as f64,
+                }),
+                MeasurementAvailability::Unavailable => serde_json::json!({
+                    "bone_index": index,
+                    "bone_name": format!("bone-{index}"),
+                    "availability": "unavailable",
+                }),
+                MeasurementAvailability::NotApplicable => {
+                    panic!("loop-continuity rows are always applicable")
+                }
+            })
+            .collect::<Vec<_>>();
+        let clip: ClipMeasurements = serde_json::from_value(serde_json::json!({
+            "duration_s": 1.0,
+            "frame_count": 3,
+            "animated_bones": [],
+            "bone_channels": [],
+            "bone_rotation_range_deg": {},
+            "loop_continuity": { "bones": bones },
+            "loop_continuity_availability": "measured",
+            "loop_endpoint_mode_availability": "not_applicable",
+            "frame_grid_availability": "not_applicable",
+            "loop_seam_ratio_availability": "not_applicable",
+            "gait_availability": "not_applicable",
+            "root_trajectory_availability": "not_applicable",
+            "speed_mps_availability": "not_applicable"
+        }))
+        .unwrap();
+        MeasurementContract::new(
+            BTreeMap::from([("loop".into(), clip)]),
+            AssetMeasurements::default(),
+        )
+        .unwrap()
+    }
+
     fn measure_wire(measurements: MeasurementContract) -> serde_json::Value {
         let file = MeasureFileReport::new(
             "test.glb",
             InputIdentity::from_bytes(&[]),
             prediction_test_rig(),
             measurements,
-        );
+        )
+        .unwrap();
         let envelope =
             MeasureEnvelope::new(ToolInfo::animsmith(ToolSource::new(None, None)), vec![file])
                 .unwrap();
@@ -11259,7 +11429,7 @@ mod measurement_report_input_tests {
             prediction_test_rig(),
             Some(provenance.clone()),
             checks,
-            prediction_test_measurements(),
+            prediction_test_measurements_v16(),
         )
     }
 
@@ -11313,7 +11483,7 @@ mod measurement_report_input_tests {
             prediction_test_rig(),
             None,
             vec![check],
-            prediction_test_measurements(),
+            prediction_test_measurements_v16(),
         )
         .unwrap_err();
         assert_eq!(error, OutputContractError::PredictionWithoutProvenance);
@@ -11332,7 +11502,7 @@ mod measurement_report_input_tests {
             prediction_test_rig(),
             None,
             vec![check],
-            prediction_test_measurements(),
+            prediction_test_measurements_v16(),
         )
         .unwrap_err();
         assert_eq!(
@@ -11743,7 +11913,7 @@ mod measurement_report_input_tests {
             prediction_test_rig(),
             Some(provenance),
             vec![check],
-            prediction_test_measurements(),
+            prediction_test_measurements_v16(),
         )
         .unwrap();
         let envelope =
@@ -13233,13 +13403,13 @@ mod measurement_report_input_tests {
     #[test]
     fn adjacent_output_revisions_reject_each_others_nested_measurements() {
         let current = measure_wire(prediction_test_measurements());
-        let mut v12_with_v16 = current.clone();
-        v12_with_v16["schema_version"] = serde_json::json!(OUTPUT_V12_SCHEMA_VERSION);
-        v12_with_v16["schema"] = serde_json::json!(OUTPUT_V12_SCHEMA_ID);
+        let mut v12_with_v17 = current.clone();
+        v12_with_v17["schema_version"] = serde_json::json!(OUTPUT_V12_SCHEMA_VERSION);
+        v12_with_v17["schema"] = serde_json::json!(OUTPUT_V12_SCHEMA_ID);
         assert!(matches!(
-            reader_error(v12_with_v16),
+            reader_error(v12_with_v17),
             MeasurementReportError::File {
-                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 16 },
+                source: MeasurementFileError::UnsupportedMeasurementVersion { found: 17 },
                 ..
             }
         ));
@@ -13256,6 +13426,213 @@ mod measurement_report_input_tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn historical_output_v17_writer_projects_current_measurements_to_v16() {
+        let report = LintFileReportV17::new(
+            "historical.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            Vec::new(),
+            prediction_test_measurements(),
+        )
+        .unwrap();
+        assert_eq!(
+            report.measurements().schema_version,
+            MEASUREMENTS_V16_SCHEMA_VERSION
+        );
+        assert_eq!(report.measurements().schema, MEASUREMENTS_V16_SCHEMA_ID);
+    }
+
+    #[test]
+    fn current_v18_writers_refuse_measurements_v16_at_file_and_envelope_boundaries() {
+        let mismatch = OutputContractError::CurrentMeasurementContractMismatch {
+            output_version: OUTPUT_SCHEMA_VERSION,
+            found_version: MEASUREMENTS_V16_SCHEMA_VERSION,
+            found_schema: MEASUREMENTS_V16_SCHEMA_ID.into(),
+        };
+        assert_eq!(
+            MeasureFileReport::new(
+                "historical.glb",
+                InputIdentity::from_bytes(&[]),
+                prediction_test_rig(),
+                prediction_test_measurements_v16(),
+            )
+            .unwrap_err(),
+            mismatch
+        );
+        assert_eq!(
+            LintFileReportV18::new(
+                "historical.glb",
+                InputIdentity::from_bytes(&[]),
+                prediction_test_rig(),
+                None,
+                Vec::new(),
+                prediction_test_measurements_v16(),
+            )
+            .unwrap_err(),
+            mismatch
+        );
+
+        let malformed_measure = MeasureFileReport {
+            evidence: FileEvidence::new(
+                "historical.glb",
+                InputIdentity::from_bytes(&[]),
+                prediction_test_rig(),
+                prediction_test_measurements_v16(),
+            ),
+        };
+        assert_eq!(
+            MeasureEnvelope::new(
+                ToolInfo::animsmith(ToolSource::new(None, None)),
+                vec![malformed_measure],
+            )
+            .unwrap_err(),
+            mismatch
+        );
+        let malformed_lint = LintFileReportV18 {
+            evidence: FileEvidence::new(
+                "historical.glb",
+                InputIdentity::from_bytes(&[]),
+                prediction_test_rig(),
+                prediction_test_measurements_v16(),
+            ),
+            prediction_provenance: None,
+            checks: Vec::new(),
+        };
+        assert_eq!(
+            LintEnvelopeV18::new(
+                ToolInfo::animsmith(ToolSource::new(None, None)),
+                vec![malformed_lint],
+            )
+            .unwrap_err(),
+            mismatch
+        );
+    }
+
+    #[test]
+    fn v17_to_v16_projection_is_total_and_used_by_prediction_and_historical_writers() {
+        let fully_measured = loop_projection_measurements(&[
+            MeasurementAvailability::Measured,
+            MeasurementAvailability::Measured,
+        ]);
+        let projected = fully_measured.prediction_v16_projection().unwrap();
+        assert_eq!(projected.schema_version, MEASUREMENTS_V16_SCHEMA_VERSION);
+        let continuity = projected.clips()["loop"]
+            .loop_continuity
+            .as_ref()
+            .expect("fully measured rows survive projection");
+        assert_eq!(continuity.bones.len(), 2);
+        let wire = serde_json::to_value(&projected).unwrap();
+        assert!(
+            wire["clips"]["loop"]["loop_continuity"]["bones"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|bone| bone.get("availability").is_none())
+        );
+
+        let partial = loop_projection_measurements(&[
+            MeasurementAvailability::Measured,
+            MeasurementAvailability::Unavailable,
+        ]);
+        let all_unavailable = loop_projection_measurements(&[
+            MeasurementAvailability::Unavailable,
+            MeasurementAvailability::Unavailable,
+        ]);
+        for measurements in [&partial, &all_unavailable] {
+            let projected = measurements.prediction_v16_projection().unwrap();
+            assert_eq!(
+                projected.clips()["loop"].loop_continuity_availability,
+                MeasurementAvailability::Unavailable
+            );
+            assert!(projected.clips()["loop"].loop_continuity.is_none());
+        }
+
+        let current_v3 = LintFileReportV18::new(
+            "v3.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            Vec::new(),
+            fully_measured,
+        )
+        .unwrap();
+        let current_v5 = LintFileReportV18::new_v5(
+            "v5.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            Vec::new(),
+            partial.clone(),
+        )
+        .unwrap();
+        let current_v6 = LintFileReportV18::new_v6(
+            "v6.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            Vec::new(),
+            all_unavailable.clone(),
+        )
+        .unwrap();
+        assert!(
+            current_v3.measurements().clips()["loop"]
+                .loop_continuity
+                .is_some()
+        );
+        assert!(
+            current_v5.measurements().clips()["loop"]
+                .loop_continuity
+                .is_some()
+        );
+        assert!(
+            current_v6.measurements().clips()["loop"]
+                .loop_continuity
+                .is_some()
+        );
+
+        let historical_v15 = LintFileReport::new(
+            "v15.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            Vec::new(),
+            partial.clone(),
+        )
+        .unwrap();
+        let historical_v16 = LintFileReportV16::new(
+            "v16.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            Vec::new(),
+            partial.clone(),
+        )
+        .unwrap();
+        let historical_v17 = LintFileReportV17::new(
+            "v17.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            Vec::new(),
+            partial,
+        )
+        .unwrap();
+        for measurements in [
+            historical_v15.measurements(),
+            historical_v16.measurements(),
+            historical_v17.measurements(),
+        ] {
+            assert_eq!(measurements.schema_version, MEASUREMENTS_V16_SCHEMA_VERSION);
+            assert_eq!(
+                measurements.clips()["loop"].loop_continuity_availability,
+                MeasurementAvailability::Unavailable
+            );
+            assert!(measurements.clips()["loop"].loop_continuity.is_none());
+        }
     }
 
     #[test]
@@ -13432,6 +13809,20 @@ impl FileEvidence {
             measurements,
         }
     }
+
+    fn historical_v16(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        measurements: MeasurementContract,
+    ) -> Result<Self, OutputContractError> {
+        Ok(Self::new(
+            path,
+            input,
+            rig,
+            measurements.prediction_v16_projection()?,
+        ))
+    }
 }
 
 /// One source file and its measurement-command evidence.
@@ -13443,15 +13834,21 @@ pub struct MeasureFileReport {
 
 impl MeasureFileReport {
     /// Construct a measurement-command file report.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputContractError::CurrentMeasurementContractMismatch`] if
+    /// the nested evidence is not the exact current measurements-v17 contract.
     pub fn new(
         path: impl Into<String>,
         input: InputIdentity,
         rig: RigInfo,
         measurements: MeasurementContract,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, OutputContractError> {
+        require_measurements_v17(OUTPUT_SCHEMA_VERSION, &measurements)?;
+        Ok(Self {
             evidence: FileEvidence::new(path, input, rig, measurements),
-        }
+        })
     }
 
     /// Display path supplied by the producer.
@@ -13545,6 +13942,69 @@ pub enum OutputContractError {
     /// Nested prediction evidence violated its contract.
     #[error("invalid prediction evidence: {0}")]
     InvalidPrediction(#[from] PredictionContractError),
+    /// Current measurements could not be projected into the immutable V16
+    /// evidence view consumed by existing prediction contracts.
+    #[error("invalid measurements-v16 prediction projection: {0}")]
+    InvalidMeasurementProjection(#[from] MeasurementContractError),
+    /// A historical output writer was paired with a different nested
+    /// measurement contract.
+    #[error(
+        "output-v{output_version} requires measurements-v16, found version {found_version} with identity {found_schema}"
+    )]
+    HistoricalMeasurementContractMismatch {
+        /// Historical outer output revision.
+        output_version: u32,
+        /// Supplied nested measurement revision.
+        found_version: u32,
+        /// Supplied nested measurement identity.
+        found_schema: String,
+    },
+    /// A current output writer received a non-current nested measurement contract.
+    #[error(
+        "output-v{output_version} requires measurements-v17, found measurement schema_version {found_version} ({found_schema})"
+    )]
+    CurrentMeasurementContractMismatch {
+        /// Current outer output revision.
+        output_version: u32,
+        /// Supplied nested measurement revision.
+        found_version: u32,
+        /// Supplied nested measurement identity.
+        found_schema: String,
+    },
+}
+
+fn require_measurements_v17(
+    output_version: u32,
+    measurements: &MeasurementContract,
+) -> Result<(), OutputContractError> {
+    if measurements.schema_version == MEASUREMENTS_SCHEMA_VERSION
+        && measurements.schema == MEASUREMENTS_SCHEMA_ID
+    {
+        Ok(())
+    } else {
+        Err(OutputContractError::CurrentMeasurementContractMismatch {
+            output_version,
+            found_version: measurements.schema_version,
+            found_schema: measurements.schema.to_owned(),
+        })
+    }
+}
+
+fn require_measurements_v16(
+    output_version: u32,
+    measurements: &MeasurementContract,
+) -> Result<(), OutputContractError> {
+    if measurements.schema_version == MEASUREMENTS_V16_SCHEMA_VERSION
+        && measurements.schema == MEASUREMENTS_V16_SCHEMA_ID
+    {
+        Ok(())
+    } else {
+        Err(OutputContractError::HistoricalMeasurementContractMismatch {
+            output_version,
+            found_version: measurements.schema_version,
+            found_schema: measurements.schema.to_owned(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -13655,6 +14115,9 @@ impl MeasureEnvelope {
                 limit: OUTPUT_V11_MAX_FILES,
             });
         }
+        for file in &files {
+            require_measurements_v17(OUTPUT_SCHEMA_VERSION, &file.evidence.measurements)?;
+        }
         Ok(Self {
             header: EnvelopeHeader::new(tool, "measure"),
             summary: MeasureSummary { files: files.len() },
@@ -13700,7 +14163,7 @@ impl LintFileReport {
             });
         }
         let report = Self {
-            evidence: FileEvidence::new(path, input, rig, measurements),
+            evidence: FileEvidence::historical_v16(path, input, rig, measurements)?,
             prediction_provenance: prediction_provenance.map(CurrentPredictionProvenance::V3),
             checks,
         };
@@ -13732,7 +14195,7 @@ impl LintFileReport {
             });
         }
         let report = Self {
-            evidence: FileEvidence::new(path, input, rig, measurements),
+            evidence: FileEvidence::historical_v16(path, input, rig, measurements)?,
             prediction_provenance: prediction_provenance.map(CurrentPredictionProvenance::V4),
             checks,
         };
@@ -13769,6 +14232,7 @@ impl LintFileReport {
     }
 
     fn validate(&self) -> Result<(), OutputContractError> {
+        require_measurements_v16(OUTPUT_V15_SCHEMA_VERSION, &self.evidence.measurements)?;
         if let Some(provenance) = &self.prediction_provenance {
             let primary_input = match provenance {
                 CurrentPredictionProvenance::V3(provenance) => {
@@ -14102,7 +14566,7 @@ impl LintFileReportV16 {
         measurements: MeasurementContract,
     ) -> Result<Self, OutputContractError> {
         let report = Self {
-            evidence: FileEvidence::new(path, input, rig, measurements),
+            evidence: FileEvidence::historical_v16(path, input, rig, measurements)?,
             prediction_provenance: prediction_provenance.map(CurrentPredictionProvenanceV16::V3),
             checks,
         };
@@ -14120,7 +14584,7 @@ impl LintFileReportV16 {
         measurements: MeasurementContract,
     ) -> Result<Self, OutputContractError> {
         let report = Self {
-            evidence: FileEvidence::new(path, input, rig, measurements),
+            evidence: FileEvidence::historical_v16(path, input, rig, measurements)?,
             prediction_provenance: prediction_provenance.map(CurrentPredictionProvenanceV16::V5),
             checks,
         };
@@ -14160,6 +14624,7 @@ impl LintFileReportV16 {
     }
 
     fn validate(&self) -> Result<(), OutputContractError> {
+        require_measurements_v16(OUTPUT_V16_SCHEMA_VERSION, &self.evidence.measurements)?;
         if self.checks.len() > OUTPUT_V11_MAX_CHECKS_PER_FILE {
             return Err(OutputContractError::TooManyChecks {
                 found: self.checks.len(),
@@ -14382,7 +14847,7 @@ enum CurrentPredictionProvenanceV17 {
     V6(PredictionProvenanceV6),
 }
 
-/// Current output-v17 lint file evidence with immutable V3, V5, or V6 provenance.
+/// Historical output-v17 lint file evidence with immutable V3, V5, or V6 provenance.
 #[derive(Debug, Clone, Serialize)]
 pub struct LintFileReportV17 {
     #[serde(flatten)]
@@ -14402,7 +14867,7 @@ impl LintFileReportV17 {
         measurements: MeasurementContract,
     ) -> Result<Self, OutputContractError> {
         let report = Self {
-            evidence: FileEvidence::new(path, input, rig, measurements),
+            evidence: FileEvidence::historical_v16(path, input, rig, measurements)?,
             prediction_provenance: prediction_provenance.map(CurrentPredictionProvenanceV17::V3),
             checks,
         };
@@ -14420,7 +14885,7 @@ impl LintFileReportV17 {
         measurements: MeasurementContract,
     ) -> Result<Self, OutputContractError> {
         let report = Self {
-            evidence: FileEvidence::new(path, input, rig, measurements),
+            evidence: FileEvidence::historical_v16(path, input, rig, measurements)?,
             prediction_provenance: prediction_provenance.map(CurrentPredictionProvenanceV17::V5),
             checks,
         };
@@ -14438,7 +14903,7 @@ impl LintFileReportV17 {
         measurements: MeasurementContract,
     ) -> Result<Self, OutputContractError> {
         let report = Self {
-            evidence: FileEvidence::new(path, input, rig, measurements),
+            evidence: FileEvidence::historical_v16(path, input, rig, measurements)?,
             prediction_provenance: prediction_provenance.map(CurrentPredictionProvenanceV17::V6),
             checks,
         };
@@ -14488,6 +14953,7 @@ impl LintFileReportV17 {
     }
 
     fn validate(&self) -> Result<(), OutputContractError> {
+        require_measurements_v16(OUTPUT_V17_SCHEMA_VERSION, &self.evidence.measurements)?;
         match &self.prediction_provenance {
             Some(CurrentPredictionProvenanceV17::V3(provenance)) => {
                 return LintFileReportV16::new(
@@ -14629,7 +15095,159 @@ impl LintFileReportV17 {
     }
 }
 
-/// Current output-v17 lint envelope.
+/// Current output-v18 lint-file payload. Immutable prediction contracts are
+/// checked against the deterministic measurements-v16 projection while the
+/// report retains the complete measurements-v17 evidence.
+#[derive(Debug, Clone, Serialize)]
+pub struct LintFileReportV18 {
+    #[serde(flatten)]
+    evidence: FileEvidence,
+    prediction_provenance: Option<CurrentPredictionProvenanceV17>,
+    checks: Vec<CheckEvaluation>,
+}
+
+impl LintFileReportV18 {
+    /// Construct a revision-1-profile record whose V3 graph is unchanged.
+    pub fn new(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        prediction_provenance: Option<PredictionProvenanceV3>,
+        checks: Vec<CheckEvaluation>,
+        measurements: MeasurementContract,
+    ) -> Result<Self, OutputContractError> {
+        Self::build(
+            path,
+            input,
+            rig,
+            prediction_provenance.map(CurrentPredictionProvenanceV17::V3),
+            checks,
+            measurements,
+        )
+    }
+
+    /// Construct a V5 record whose immutable prediction graph consumes V16.
+    pub fn new_v5(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        prediction_provenance: Option<PredictionProvenanceV5>,
+        checks: Vec<CheckEvaluation>,
+        measurements: MeasurementContract,
+    ) -> Result<Self, OutputContractError> {
+        Self::build(
+            path,
+            input,
+            rig,
+            prediction_provenance.map(CurrentPredictionProvenanceV17::V5),
+            checks,
+            measurements,
+        )
+    }
+
+    /// Construct a V6 record whose immutable prediction graph consumes V16.
+    pub fn new_v6(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        prediction_provenance: Option<PredictionProvenanceV6>,
+        checks: Vec<CheckEvaluation>,
+        measurements: MeasurementContract,
+    ) -> Result<Self, OutputContractError> {
+        Self::build(
+            path,
+            input,
+            rig,
+            prediction_provenance.map(CurrentPredictionProvenanceV17::V6),
+            checks,
+            measurements,
+        )
+    }
+
+    fn build(
+        path: impl Into<String>,
+        input: InputIdentity,
+        rig: RigInfo,
+        prediction_provenance: Option<CurrentPredictionProvenanceV17>,
+        checks: Vec<CheckEvaluation>,
+        measurements: MeasurementContract,
+    ) -> Result<Self, OutputContractError> {
+        require_measurements_v17(OUTPUT_SCHEMA_VERSION, &measurements)?;
+        let report = Self {
+            evidence: FileEvidence::new(path, input, rig, measurements),
+            prediction_provenance,
+            checks,
+        };
+        report.historical_prediction_view()?;
+        Ok(report)
+    }
+
+    /// Display path supplied by the producer.
+    pub fn path(&self) -> &str {
+        &self.evidence.path
+    }
+
+    /// Immutable source-byte identity.
+    pub fn input(&self) -> &InputIdentity {
+        &self.evidence.input
+    }
+
+    /// Nested current measurement evidence.
+    pub fn measurements(&self) -> &MeasurementContract {
+        &self.evidence.measurements
+    }
+
+    /// Catalog-ordered check records.
+    pub fn checks(&self) -> &[CheckEvaluation] {
+        &self.checks
+    }
+
+    /// V3 provenance for a revision-1 profile.
+    pub const fn prediction_provenance_v3(&self) -> Option<&PredictionProvenanceV3> {
+        match self.prediction_provenance.as_ref() {
+            Some(CurrentPredictionProvenanceV17::V3(provenance)) => Some(provenance),
+            Some(CurrentPredictionProvenanceV17::V5(_) | CurrentPredictionProvenanceV17::V6(_))
+            | None => None,
+        }
+    }
+
+    /// Immutable V5 provenance.
+    pub const fn prediction_provenance_v5(&self) -> Option<&PredictionProvenanceV5> {
+        match self.prediction_provenance.as_ref() {
+            Some(CurrentPredictionProvenanceV17::V5(provenance)) => Some(provenance),
+            Some(CurrentPredictionProvenanceV17::V3(_) | CurrentPredictionProvenanceV17::V6(_))
+            | None => None,
+        }
+    }
+
+    /// Immutable V6 provenance.
+    pub const fn prediction_provenance_v6(&self) -> Option<&PredictionProvenanceV6> {
+        match self.prediction_provenance.as_ref() {
+            Some(CurrentPredictionProvenanceV17::V6(provenance)) => Some(provenance),
+            Some(CurrentPredictionProvenanceV17::V3(_) | CurrentPredictionProvenanceV17::V5(_))
+            | None => None,
+        }
+    }
+
+    fn historical_prediction_view(&self) -> Result<LintFileReportV17, OutputContractError> {
+        let measurements = self.evidence.measurements.prediction_v16_projection()?;
+        let report = LintFileReportV17 {
+            evidence: FileEvidence::new(
+                self.evidence.path.clone(),
+                self.evidence.input.clone(),
+                self.evidence.rig.clone(),
+                measurements,
+            ),
+            prediction_provenance: self.prediction_provenance.clone(),
+            checks: self.checks.clone(),
+        };
+        report.validate()?;
+        Ok(report)
+    }
+}
+
+/// Historical output-v17 lint envelope retained for immutable writer tests and
+/// the output-v18 prediction projection.
 #[derive(Debug, Clone, Serialize)]
 pub struct LintEnvelopeV17 {
     #[serde(flatten)]
@@ -14706,8 +15324,8 @@ impl LintEnvelopeV17 {
         }
         Ok(Self {
             header: EnvelopeHeaderV2 {
-                schema_version: OUTPUT_SCHEMA_VERSION,
-                schema: OUTPUT_SCHEMA_ID,
+                schema_version: OUTPUT_V17_SCHEMA_VERSION,
+                schema: OUTPUT_V17_SCHEMA_ID,
                 tool,
                 command: "lint",
             },
@@ -14717,6 +15335,45 @@ impl LintEnvelopeV17 {
                 checks,
                 prediction_facets,
             },
+            files,
+        })
+    }
+}
+
+/// Current output-v18 lint envelope.
+#[derive(Debug, Clone, Serialize)]
+pub struct LintEnvelopeV18 {
+    #[serde(flatten)]
+    header: EnvelopeHeaderV2,
+    summary: LintSummary,
+    files: Vec<LintFileReportV18>,
+}
+
+impl LintEnvelopeV18 {
+    /// Construct a schema-valid V18 lint envelope and derive summaries.
+    pub fn new(tool: ToolInfo, files: Vec<LintFileReportV18>) -> Result<Self, OutputContractError> {
+        if files.len() > OUTPUT_V11_MAX_FILES {
+            return Err(OutputContractError::TooManyFiles {
+                found: files.len(),
+                limit: OUTPUT_V11_MAX_FILES,
+            });
+        }
+        for file in &files {
+            require_measurements_v17(OUTPUT_SCHEMA_VERSION, &file.evidence.measurements)?;
+        }
+        let historical_files = files
+            .iter()
+            .map(LintFileReportV18::historical_prediction_view)
+            .collect::<Result<Vec<_>, _>>()?;
+        let historical = LintEnvelopeV17::new(tool.clone(), historical_files)?;
+        Ok(Self {
+            header: EnvelopeHeaderV2 {
+                schema_version: OUTPUT_SCHEMA_VERSION,
+                schema: OUTPUT_SCHEMA_ID,
+                tool,
+                command: "lint",
+            },
+            summary: historical.summary,
             files,
         })
     }

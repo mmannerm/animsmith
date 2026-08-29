@@ -80,11 +80,30 @@ impl Check for LoopClosure {
                 );
                 continue;
             };
+            let unavailable_bones = metrics.iter().filter(|metric| metric.is_none()).count();
+            if unavailable_bones > 0 {
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        format!(
+                            "{unavailable_bones} of {} bones have unusable loop-continuity evidence",
+                            metrics.len()
+                        ),
+                    )
+                    .scope(scope.clone()),
+                );
+            }
+            if metrics.iter().all(Option::is_none) {
+                continue;
+            }
             evaluated_scopes.push(scope);
 
             let max_position = metrics
                 .iter()
                 .enumerate()
+                .filter_map(|(bone_index, metric)| {
+                    metric.as_ref().map(|metric| (bone_index, metric))
+                })
                 .max_by(|(_, a), (_, b)| a.position_delta_m.total_cmp(&b.position_delta_m));
             if let Some((bone_index, metric)) = max_position
                 && exceeds_f32_cap(metric.position_delta_m, max_position_delta_m)
@@ -110,6 +129,9 @@ impl Check for LoopClosure {
             let max_rotation = metrics
                 .iter()
                 .enumerate()
+                .filter_map(|(bone_index, metric)| {
+                    metric.as_ref().map(|metric| (bone_index, metric))
+                })
                 .max_by(|(_, a), (_, b)| a.rotation_delta_deg.total_cmp(&b.rotation_delta_deg));
             if let Some((bone_index, metric)) = max_rotation
                 && exceeds_f32_cap(metric.rotation_delta_deg, max_rotation_delta_deg)

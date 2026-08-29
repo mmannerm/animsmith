@@ -21,7 +21,8 @@ use crate::profile::{ResolvedRoles, Role};
 use crate::sample::PoseGrid;
 use crate::transform::analyze_duplicate_loop_endpoint;
 use glam::{Mat3, Mat4, Vec3};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Rotation ranges below this are not recorded (matches the incubating
@@ -101,7 +102,7 @@ pub struct MeshDefinitionMeasurements {
     pub mesh_index: usize,
     /// Mesh name.
     pub name: String,
-    /// Per-primitive measurements in source order. Current measurements-v16
+    /// Per-primitive measurements in source order. Measurements-v16 and later
     /// producers always emit this field; `None` is retained only while reading
     /// historical measurements-v15 payloads that predate primitive evidence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1892,7 +1893,7 @@ pub struct RootTrajectoryMeasurement {
 }
 
 /// Model-space loop-continuity measurements for one skeleton bone.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BoneLoopContinuityMeasurement {
     /// Stable zero-based bone index in skeleton order.
@@ -1900,16 +1901,171 @@ pub struct BoneLoopContinuityMeasurement {
     /// Human-readable bone name. Consumers should use `bone_index` as the
     /// identity because display names are not required to be unique.
     pub bone_name: String,
+    /// Whether this bone's seam-adjacent model-space evidence was measured or
+    /// was unusable. Every skeleton bone remains represented.
+    pub availability: MeasurementAvailability,
+    pub(crate) availability_was_present: bool,
     /// Last-sample to first-sample model-space position distance (metres).
-    pub position_delta_m: f64,
+    pub position_delta_m: Option<f64>,
     /// Shortest-path model-space rotation difference (degrees).
-    pub rotation_delta_deg: f64,
+    pub rotation_delta_deg: Option<f64>,
     /// Difference between the model-space linear velocities immediately
     /// before and after the wrap (metres per second).
-    pub seam_velocity_delta_mps: f64,
+    pub seam_velocity_delta_mps: Option<f64>,
     /// Difference between the model-space angular velocities immediately
     /// before and after the wrap (degrees per second).
-    pub seam_angular_velocity_delta_degps: f64,
+    pub seam_angular_velocity_delta_degps: Option<f64>,
+}
+
+impl Serialize for BoneLoopContinuityMeasurement {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut wire = serializer.serialize_struct("BoneLoopContinuityMeasurement", 7)?;
+        wire.serialize_field("bone_index", &self.bone_index)?;
+        wire.serialize_field("bone_name", &self.bone_name)?;
+        if self.availability_was_present {
+            wire.serialize_field("availability", &self.availability)?;
+        }
+        if let Some(value) = self.position_delta_m {
+            wire.serialize_field("position_delta_m", &value)?;
+        }
+        if let Some(value) = self.rotation_delta_deg {
+            wire.serialize_field("rotation_delta_deg", &value)?;
+        }
+        if let Some(value) = self.seam_velocity_delta_mps {
+            wire.serialize_field("seam_velocity_delta_mps", &value)?;
+        }
+        if let Some(value) = self.seam_angular_velocity_delta_degps {
+            wire.serialize_field("seam_angular_velocity_delta_degps", &value)?;
+        }
+        wire.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for BoneLoopContinuityMeasurement {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Default)]
+        enum Presence<T> {
+            #[default]
+            Absent,
+            Value(T),
+        }
+
+        struct NonNullVisitor<T> {
+            field: &'static str,
+            marker: std::marker::PhantomData<T>,
+        }
+
+        impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for NonNullVisitor<T> {
+            type Value = T;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(formatter, "a non-null `{}` value", self.field)
+            }
+
+            fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Err(E::custom(format_args!(
+                    "`{}` must be omitted rather than null",
+                    self.field
+                )))
+            }
+
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                self.visit_none()
+            }
+
+            fn visit_some<D: Deserializer<'de>>(
+                self,
+                deserializer: D,
+            ) -> Result<Self::Value, D::Error> {
+                T::deserialize(deserializer)
+            }
+        }
+
+        fn deserialize_non_null<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+            deserializer: D,
+            field: &'static str,
+        ) -> Result<Presence<T>, D::Error> {
+            deserializer
+                .deserialize_option(NonNullVisitor {
+                    field,
+                    marker: std::marker::PhantomData,
+                })
+                .map(Presence::Value)
+        }
+
+        fn deserialize_availability<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Presence<MeasurementAvailability>, D::Error> {
+            deserialize_non_null(deserializer, "availability")
+        }
+
+        fn deserialize_position<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Presence<f64>, D::Error> {
+            deserialize_non_null(deserializer, "position_delta_m")
+        }
+
+        fn deserialize_rotation<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Presence<f64>, D::Error> {
+            deserialize_non_null(deserializer, "rotation_delta_deg")
+        }
+
+        fn deserialize_velocity<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Presence<f64>, D::Error> {
+            deserialize_non_null(deserializer, "seam_velocity_delta_mps")
+        }
+
+        fn deserialize_angular_velocity<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Presence<f64>, D::Error> {
+            deserialize_non_null(deserializer, "seam_angular_velocity_delta_degps")
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            bone_index: u32,
+            bone_name: String,
+            #[serde(default, deserialize_with = "deserialize_availability")]
+            availability: Presence<MeasurementAvailability>,
+            #[serde(default, deserialize_with = "deserialize_position")]
+            position_delta_m: Presence<f64>,
+            #[serde(default, deserialize_with = "deserialize_rotation")]
+            rotation_delta_deg: Presence<f64>,
+            #[serde(default, deserialize_with = "deserialize_velocity")]
+            seam_velocity_delta_mps: Presence<f64>,
+            #[serde(default, deserialize_with = "deserialize_angular_velocity")]
+            seam_angular_velocity_delta_degps: Presence<f64>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let (availability, availability_was_present) = match wire.availability {
+            Presence::Absent => (MeasurementAvailability::Measured, false),
+            Presence::Value(availability) => (availability, true),
+        };
+        let into_option = |value| match value {
+            Presence::Absent => None,
+            Presence::Value(value) => Some(value),
+        };
+        Ok(Self {
+            bone_index: wire.bone_index,
+            bone_name: wire.bone_name,
+            availability,
+            availability_was_present,
+            position_delta_m: into_option(wire.position_delta_m),
+            rotation_delta_deg: into_option(wire.rotation_delta_deg),
+            seam_velocity_delta_mps: into_option(wire.seam_velocity_delta_mps),
+            seam_angular_velocity_delta_degps: into_option(wire.seam_angular_velocity_delta_degps),
+        })
+    }
 }
 
 /// Per-bone C0 pose closure plus C1 linear- and angular-velocity continuity
@@ -2002,9 +2158,10 @@ pub struct ClipMeasurements {
     /// [`MIN_RECORDED_ROTATION_DEG`] are omitted.
     pub bone_rotation_range_deg: BTreeMap<String, f64>,
     /// Model-space pose closure plus seam-adjacent linear- and angular-velocity
-    /// continuity for every skeleton bone. Not applicable only when the
-    /// skeleton has no bones; otherwise available without rig-role
-    /// resolution.
+    /// continuity for every skeleton bone. A present container retains one
+    /// row per bone and marks only unusable rows unavailable. Not applicable
+    /// only when the skeleton has no bones; otherwise available without
+    /// rig-role resolution when the shared grid is usable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_continuity: Option<LoopContinuityMeasurement>,
     /// Availability of [`Self::loop_continuity`].
@@ -2149,14 +2306,30 @@ pub fn measure_document_indexed(
                             bones: metrics
                                 .into_iter()
                                 .enumerate()
-                                .map(|(bone_index, metrics)| BoneLoopContinuityMeasurement {
-                                    bone_index: bone_index as u32,
-                                    bone_name: doc.skeleton.bones[bone_index].name.clone(),
-                                    position_delta_m: metrics.position_delta_m,
-                                    rotation_delta_deg: metrics.rotation_delta_deg,
-                                    seam_velocity_delta_mps: metrics.seam_velocity_delta_mps,
-                                    seam_angular_velocity_delta_degps: metrics
-                                        .seam_angular_velocity_delta_degps,
+                                .map(|(bone_index, metrics)| {
+                                    let availability = if metrics.is_some() {
+                                        MeasurementAvailability::Measured
+                                    } else {
+                                        MeasurementAvailability::Unavailable
+                                    };
+                                    BoneLoopContinuityMeasurement {
+                                        bone_index: bone_index as u32,
+                                        bone_name: doc.skeleton.bones[bone_index].name.clone(),
+                                        availability,
+                                        availability_was_present: true,
+                                        position_delta_m: metrics
+                                            .as_ref()
+                                            .map(|metrics| metrics.position_delta_m),
+                                        rotation_delta_deg: metrics
+                                            .as_ref()
+                                            .map(|metrics| metrics.rotation_delta_deg),
+                                        seam_velocity_delta_mps: metrics
+                                            .as_ref()
+                                            .map(|metrics| metrics.seam_velocity_delta_mps),
+                                        seam_angular_velocity_delta_degps: metrics.as_ref().map(
+                                            |metrics| metrics.seam_angular_velocity_delta_degps,
+                                        ),
+                                    }
                                 })
                                 .collect(),
                         }),
@@ -2361,13 +2534,15 @@ pub(crate) fn measure_loop_endpoint_mode(
     max_position_delta_m: f64,
     max_rotation_delta_deg: f64,
 ) -> Option<LoopEndpointMode> {
-    match analyze_duplicate_loop_endpoint(clip) {
-        Ok(Some(_)) => return Some(LoopEndpointMode::DuplicateEndpoint),
-        Ok(None) => {}
-        Err(_) => return None,
-    }
+    let duplicate_endpoint = analyze_duplicate_loop_endpoint(clip).ok()?;
     let continuity = loop_continuity_metrics(grid?)?;
-    let closes = continuity.iter().all(|bone| {
+    if continuity.iter().any(Option::is_none) {
+        return None;
+    }
+    if duplicate_endpoint.is_some() {
+        return Some(LoopEndpointMode::DuplicateEndpoint);
+    }
+    let closes = continuity.iter().flatten().all(|bone| {
         !exceeds_f32_cap(bone.position_delta_m, max_position_delta_m)
             && !exceeds_f32_cap(bone.rotation_delta_deg, max_rotation_delta_deg)
     });

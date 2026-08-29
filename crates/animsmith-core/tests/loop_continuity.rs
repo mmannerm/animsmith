@@ -1,3 +1,4 @@
+use animsmith_core::measure::MeasurementAvailability;
 use animsmith_core::model::{
     Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
 };
@@ -195,10 +196,11 @@ fn clean_stationary_loop_is_measured_without_roles_or_stride() {
     let root = &continuity.bones[0];
     assert_eq!(root.bone_index, 0);
     assert_eq!(root.bone_name, "root");
-    assert_eq!(root.position_delta_m, 0.0);
-    assert_eq!(root.rotation_delta_deg, 0.0);
-    assert_eq!(root.seam_velocity_delta_mps, 0.0);
-    assert_eq!(root.seam_angular_velocity_delta_degps, 0.0);
+    assert_eq!(root.availability, MeasurementAvailability::Measured);
+    assert_eq!(root.position_delta_m, Some(0.0));
+    assert_eq!(root.rotation_delta_deg, Some(0.0));
+    assert_eq!(root.seam_velocity_delta_mps, Some(0.0));
+    assert_eq!(root.seam_angular_velocity_delta_degps, Some(0.0));
 
     let ctx = CheckCtx::new(&grids, &roles, &config);
     let records =
@@ -254,8 +256,8 @@ fn angular_continuity_catches_a_rotational_cusp_with_no_linear_metric() {
         .as_ref()
         .expect("continuity")
         .bones[0];
-    assert_eq!(metric.seam_velocity_delta_mps, 0.0);
-    assert!((metric.seam_angular_velocity_delta_degps - 80.0).abs() < 1e-4);
+    assert_eq!(metric.seam_velocity_delta_mps, Some(0.0));
+    assert!((metric.seam_angular_velocity_delta_degps.unwrap() - 80.0).abs() < 1e-4);
 }
 
 #[test]
@@ -275,7 +277,8 @@ fn angular_continuity_uses_shortest_path_and_quaternion_sign_equivalence() {
         .as_ref()
         .expect("continuity")
         .bones[0]
-        .seam_angular_velocity_delta_degps;
+        .seam_angular_velocity_delta_degps
+        .unwrap();
     assert!(clean_metric < 1e-3, "{clean_metric}");
     let clean_records = evaluate(&doc, &loop_config());
     let clean_check = check(&clean_records, "loop-seam-rot");
@@ -298,7 +301,8 @@ fn angular_continuity_uses_shortest_path_and_quaternion_sign_equivalence() {
         .as_ref()
         .expect("continuity")
         .bones[0]
-        .seam_angular_velocity_delta_degps;
+        .seam_angular_velocity_delta_degps
+        .unwrap();
     assert!((sign_metric - clean_metric).abs() < 1e-4, "{sign_metric}");
 }
 
@@ -338,11 +342,11 @@ fn angular_continuity_compares_rotation_vectors_and_uses_the_actual_timestep() {
         .as_ref()
         .expect("continuity")
         .bones[0];
-    assert_eq!(metric.rotation_delta_deg, 0.0);
-    assert_eq!(metric.seam_velocity_delta_mps, 0.0);
+    assert_eq!(metric.rotation_delta_deg, Some(0.0));
+    assert_eq!(metric.seam_velocity_delta_mps, Some(0.0));
     let expected = 20.0 * std::f64::consts::SQRT_2;
     assert!(
-        (metric.seam_angular_velocity_delta_degps - expected).abs() < 1e-4,
+        (metric.seam_angular_velocity_delta_degps.unwrap() - expected).abs() < 1e-4,
         "{metric:#?}"
     );
 
@@ -390,8 +394,8 @@ fn angular_check_reports_the_maximum_bone_and_preserves_per_bone_evidence() {
         (bones[1].bone_index, bones[1].bone_name.as_str()),
         (1, "second-root")
     );
-    assert!((bones[0].seam_angular_velocity_delta_degps - 8.0).abs() < 1e-4);
-    assert!((bones[1].seam_angular_velocity_delta_degps - 80.0).abs() < 1e-4);
+    assert!((bones[0].seam_angular_velocity_delta_degps.unwrap() - 8.0).abs() < 1e-4);
+    assert!((bones[1].seam_angular_velocity_delta_degps.unwrap() - 80.0).abs() < 1e-4);
 
     let records = evaluate(&doc, &loop_config());
     let result = check(&records, "loop-seam-rot");
@@ -399,7 +403,7 @@ fn angular_check_reports_the_maximum_bone_and_preserves_per_bone_evidence() {
     assert_eq!(result.findings()[0].bone.as_deref(), Some("second-root"));
     assert_eq!(
         number(&result.findings()[0].measured),
-        bones[1].seam_angular_velocity_delta_degps
+        bones[1].seam_angular_velocity_delta_degps.unwrap()
     );
     assert_eq!(number(&result.findings()[0].expected), 5.0);
 }
@@ -449,8 +453,8 @@ fn closed_pose_with_a_velocity_cusp_fails_only_c1() {
         .as_ref()
         .expect("continuity")
         .bones[0];
-    assert_eq!(metric.position_delta_m, 0.0);
-    assert!((metric.seam_velocity_delta_mps - 2.0).abs() < 1e-6);
+    assert_eq!(metric.position_delta_m, Some(0.0));
+    assert!((metric.seam_velocity_delta_mps.unwrap() - 2.0).abs() < 1e-6);
 }
 
 #[test]
@@ -468,8 +472,8 @@ fn seam_velocity_uses_independent_incoming_and_outgoing_steps() {
         .as_ref()
         .expect("continuity")
         .bones[0];
-    assert_eq!(metric.position_delta_m, 0.0);
-    assert!((metric.seam_velocity_delta_mps - 0.3).abs() < 1e-6);
+    assert_eq!(metric.position_delta_m, Some(0.0));
+    assert!((metric.seam_velocity_delta_mps.unwrap() - 0.3).abs() < 1e-6);
 }
 
 #[test]
@@ -494,6 +498,7 @@ fn rotation_closure_uses_shortest_path_model_space_delta() {
             .unwrap()
             .bones[0]
             .rotation_delta_deg
+            .unwrap()
             - 10.0)
             .abs()
             < 1e-5
@@ -510,6 +515,7 @@ fn rotation_closure_uses_shortest_path_model_space_delta() {
             .unwrap()
             .bones[0]
             .rotation_delta_deg
+            .unwrap()
             - 10.0)
             .abs()
             < 1e-4,
@@ -531,7 +537,7 @@ fn rotation_closure_uses_shortest_path_model_space_delta() {
             .unwrap()
             .bones[0]
             .rotation_delta_deg,
-        0.0
+        Some(0.0)
     );
 }
 
@@ -979,6 +985,119 @@ fn non_finite_model_evidence_is_a_typed_gap_not_a_loop_finding() {
 }
 
 #[test]
+fn one_unusable_bone_retains_other_bones_measurements_and_findings() {
+    let mut doc = translation_doc([0.0, 0.03, 0.01, 0.02, 0.02]);
+    doc.clips[0]
+        .tracks
+        .push(rotation_track([0.0, 10.0, 20.0, 10.0, 0.0]));
+    doc.skeleton.bones.push(Bone {
+        name: "bad_helper".into(),
+        parent: None,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    });
+    doc.clips[0].tracks.push(Track {
+        bone: 1,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: TIMES.into(),
+        values: TrackValues::Vec3s(vec![Vec3::splat(f32::NAN); TIMES.len()]),
+    });
+
+    let grids = MetricGrids::new(&doc);
+    let measurements = animsmith_core::measure::measure_document(
+        &grids,
+        &ResolvedRoles::default(),
+        &loop_config(),
+    );
+    let continuity = measurements["guard"]
+        .loop_continuity
+        .as_ref()
+        .expect("shared loop grid remains measurable");
+    assert_eq!(
+        measurements["guard"].loop_continuity_availability,
+        MeasurementAvailability::Measured
+    );
+    assert_eq!(continuity.bones.len(), 2);
+    assert_eq!(
+        continuity.bones[0].availability,
+        MeasurementAvailability::Measured
+    );
+    assert_eq!(
+        continuity.bones[0].position_delta_m,
+        Some(f64::from(0.02f32))
+    );
+    assert_eq!(
+        continuity.bones[1].availability,
+        MeasurementAvailability::Unavailable
+    );
+    assert_eq!(continuity.bones[1].bone_name, "bad_helper");
+    assert_eq!(continuity.bones[1].position_delta_m, None);
+    assert_eq!(continuity.bones[1].rotation_delta_deg, None);
+    assert_eq!(continuity.bones[1].seam_velocity_delta_mps, None);
+    assert_eq!(continuity.bones[1].seam_angular_velocity_delta_degps, None);
+    assert_eq!(
+        measurements["guard"].loop_endpoint_mode_availability,
+        MeasurementAvailability::Unavailable,
+        "endpoint classification must fail closed over the complete skeleton"
+    );
+    assert_eq!(measurements["guard"].loop_endpoint_mode, None);
+
+    let records = evaluate(&doc, &loop_config());
+    for id in ["loop-closure", "loop-seam-vel", "loop-seam-rot"] {
+        let result = check(&records, id);
+        assert_eq!(result.evaluation(), EvaluationState::Partial, "{id}");
+        assert_eq!(result.evaluated_scopes().len(), 1, "{id}");
+        assert_eq!(result.gaps().len(), 1, "{id}");
+        assert_eq!(
+            result.gaps()[0].code,
+            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+            "{id}"
+        );
+        assert!(result.gaps()[0].message.contains("1 of 2 bones"), "{id}");
+        assert_eq!(result.findings().len(), 1, "{id}: {result:#?}");
+        assert_eq!(result.findings()[0].bone.as_deref(), Some("root"), "{id}");
+    }
+    let closure = check(&records, "loop-closure");
+    assert_eq!(number(&closure.findings()[0].measured), f64::from(0.02f32));
+}
+
+#[test]
+fn all_unusable_bones_are_explicit_and_checks_remain_not_evaluated() {
+    let doc = translation_doc([f32::NAN; 5]);
+    let grids = MetricGrids::new(&doc);
+    let measurements = animsmith_core::measure::measure_document(
+        &grids,
+        &ResolvedRoles::default(),
+        &loop_config(),
+    );
+    let clip = &measurements["guard"];
+    let continuity = clip
+        .loop_continuity
+        .as_ref()
+        .expect("the usable shared grid retains the skeleton row");
+    assert_eq!(
+        clip.loop_continuity_availability,
+        MeasurementAvailability::Measured
+    );
+    assert_eq!(continuity.bones.len(), 1);
+    assert_eq!(
+        continuity.bones[0].availability,
+        MeasurementAvailability::Unavailable
+    );
+    assert_eq!(continuity.bones[0].position_delta_m, None);
+
+    let records = evaluate(&doc, &loop_config());
+    for id in ["loop-closure", "loop-seam-vel", "loop-seam-rot"] {
+        let result = check(&records, id);
+        assert_eq!(result.evaluation(), EvaluationState::NotEvaluated, "{id}");
+        assert!(result.evaluated_scopes().is_empty(), "{id}");
+        assert_eq!(result.gaps().len(), 1, "{id}");
+        assert!(result.gaps()[0].message.contains("1 of 1 bones"), "{id}");
+    }
+}
+
+#[test]
 fn measurements_keep_indices_when_bone_names_repeat() {
     let mut doc = translation_doc([0.0; 5]);
     doc.skeleton.bones.push(Bone {
@@ -1044,7 +1163,7 @@ fn model_rotation_is_composed_independently_of_non_uniform_scale() {
         .expect("continuity")
         .bones;
     assert!(
-        (bones[1].rotation_delta_deg - 10.0).abs() < 1e-3,
+        (bones[1].rotation_delta_deg.unwrap() - 10.0).abs() < 1e-3,
         "{bones:#?}"
     );
 }
@@ -1106,8 +1225,8 @@ fn child_metrics_include_parent_driven_model_space_c0_and_c1_motion() {
         .as_ref()
         .expect("continuity")
         .bones;
-    assert_eq!(bones[0].seam_velocity_delta_mps, 0.0);
-    assert!(bones[1].seam_velocity_delta_mps > 0.1);
+    assert_eq!(bones[0].seam_velocity_delta_mps, Some(0.0));
+    assert!(bones[1].seam_velocity_delta_mps.unwrap() > 0.1);
 
     let angular_cusp_doc = {
         let mut doc = translation_doc([0.0; 5]);
@@ -1142,7 +1261,10 @@ fn child_metrics_include_parent_driven_model_space_c0_and_c1_motion() {
         .as_ref()
         .expect("continuity")
         .bones;
-    assert_eq!(angular_bones[0].seam_angular_velocity_delta_degps, 0.0);
-    assert!(angular_bones[1].seam_angular_velocity_delta_degps > 79.9);
-    assert!(angular_bones[2].seam_angular_velocity_delta_degps > 79.9);
+    assert_eq!(
+        angular_bones[0].seam_angular_velocity_delta_degps,
+        Some(0.0)
+    );
+    assert!(angular_bones[1].seam_angular_velocity_delta_degps.unwrap() > 79.9);
+    assert!(angular_bones[2].seam_angular_velocity_delta_degps.unwrap() > 79.9);
 }

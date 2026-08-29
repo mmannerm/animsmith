@@ -239,8 +239,8 @@ sample values as vendor evidence:
 ```console
 $ animsmith measure --format json walking.glb
 {
-  "schema_version": 17,
-  "schema": "urn:animsmith:schema:output:17",
+  "schema_version": 18,
+  "schema": "urn:animsmith:schema:output:18",
   "tool": { "name": "animsmith", "version": "0.7.0",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
@@ -258,17 +258,20 @@ $ animsmith measure --format json walking.glb
         "resolved_role_policies": { "hips": "exact", "spine": "exact",
           "left_foot": "exact", "right_foot": "exact" } },
       "measurements": {
-        "schema_version": 16,
-        "schema": "urn:animsmith:schema:measurements:16",
+        "schema_version": 17,
+        "schema": "urn:animsmith:schema:measurements:17",
         "clips": { "mixamo.com": {
           "duration_s": 1.0, "frame_count": 33,
           "animated_bones": ["mixamorig:Hips", "mixamorig:LeftFoot", "mixamorig:RightFoot"],
           "bone_channels": [
             { "bone_index": 0, "bone_name": "mixamorig:Hips",
+              "availability": "measured",
               "properties": ["translation", "rotation"] },
             { "bone_index": 1, "bone_name": "mixamorig:LeftFoot",
+              "availability": "measured",
               "properties": ["translation"] },
             { "bone_index": 2, "bone_name": "mixamorig:RightFoot",
+              "availability": "measured",
               "properties": ["translation"] }
           ],
           "bone_rotation_range_deg": { "mixamorig:Hips": 3.2 },

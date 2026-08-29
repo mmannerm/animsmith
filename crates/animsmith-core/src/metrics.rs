@@ -443,17 +443,18 @@ fn shortest_path_model_rotation_vector(from: Quat, to: Quat) -> Option<Vec3> {
 }
 
 /// Measure C0 pose closure plus C1 linear- and angular-velocity continuity
-/// for every bone.
+/// independently for every bone.
 ///
 /// The grid spans `[0, duration]`, including both endpoints. C1 continuity is
 /// therefore the difference between the in-clip step entering the last sample
 /// and the in-clip step leaving frame 0. Treating the last-to-first endpoint
 /// chord as a velocity would assign zero velocity to a perfectly closed loop.
 ///
-/// Returns `None` when the grid has fewer than three frames, has no bones, has
-/// an unusable seam-adjacent time step, or contains a non-finite model-space
-/// position or rotation needed by the measurement.
-pub fn loop_continuity_metrics(grid: &PoseGrid) -> Option<Vec<BoneLoopContinuityMetrics>> {
+/// Returns `None` when the shared grid has fewer than three frames, has no
+/// bones, or has an unusable seam-adjacent time step. A row is `None` only
+/// when that bone's seam-adjacent model-space evidence is unusable; one bad
+/// bone never suppresses finite evidence for another bone.
+pub fn loop_continuity_metrics(grid: &PoseGrid) -> Option<Vec<Option<BoneLoopContinuityMetrics>>> {
     let frames = grid.frame_count();
     if frames < 3 || grid.bone_count() == 0 {
         return None;
@@ -465,74 +466,77 @@ pub fn loop_continuity_metrics(grid: &PoseGrid) -> Option<Vec<BoneLoopContinuity
         return None;
     }
 
-    (0..grid.bone_count())
-        .map(|bone| {
-            let first = grid.model_position(0, bone);
-            let next = grid.model_position(1, bone);
-            let previous = grid.model_position(frames - 2, bone);
-            let last = grid.model_position(frames - 1, bone);
-            if [first, next, previous, last]
-                .iter()
-                .any(|position| !position.is_finite())
-            {
-                return None;
-            }
+    Some(
+        (0..grid.bone_count())
+            .map(|bone| {
+                let first = grid.model_position(0, bone);
+                let next = grid.model_position(1, bone);
+                let previous = grid.model_position(frames - 2, bone);
+                let last = grid.model_position(frames - 1, bone);
+                if [first, next, previous, last]
+                    .iter()
+                    .any(|position| !position.is_finite())
+                {
+                    return None;
+                }
 
-            let rotations = [
-                grid.model_rotation(0, bone),
-                grid.model_rotation(1, bone),
-                grid.model_rotation(frames - 2, bone),
-                grid.model_rotation(frames - 1, bone),
-            ];
-            if rotations.iter().any(|rotation| {
-                !rotation.is_finite()
-                    || !rotation.length_squared().is_finite()
-                    || rotation.length_squared() == 0.0
-            }) {
-                return None;
-            }
-            let [
-                first_rotation,
-                next_rotation,
-                previous_rotation,
-                last_rotation,
-            ] = rotations.map(Quat::normalize);
-            let delta = first_rotation.conjugate() * last_rotation;
-            let [x, y, z, w] = delta.to_array();
-            let sin_half_angle = Vec3::new(x, y, z).length();
-            let rotation_delta_deg = f64::from(2.0 * sin_half_angle.atan2(w.abs()).to_degrees());
-            let position_delta_m = f64::from((last - first).length());
-            let outgoing_velocity = (next - first) / first_dt as f32;
-            let incoming_velocity = (last - previous) / last_dt as f32;
-            let seam_velocity_delta_mps =
-                f64::from((outgoing_velocity - incoming_velocity).length());
-            let outgoing_angular_velocity =
-                shortest_path_model_rotation_vector(first_rotation, next_rotation)?
-                    / first_dt as f32;
-            let incoming_angular_velocity =
-                shortest_path_model_rotation_vector(previous_rotation, last_rotation)?
-                    / last_dt as f32;
-            let seam_angular_velocity_delta_degps = f64::from(
-                (outgoing_angular_velocity - incoming_angular_velocity)
-                    .length()
-                    .to_degrees(),
-            );
+                let rotations = [
+                    grid.model_rotation(0, bone),
+                    grid.model_rotation(1, bone),
+                    grid.model_rotation(frames - 2, bone),
+                    grid.model_rotation(frames - 1, bone),
+                ];
+                if rotations.iter().any(|rotation| {
+                    !rotation.is_finite()
+                        || !rotation.length_squared().is_finite()
+                        || rotation.length_squared() == 0.0
+                }) {
+                    return None;
+                }
+                let [
+                    first_rotation,
+                    next_rotation,
+                    previous_rotation,
+                    last_rotation,
+                ] = rotations.map(Quat::normalize);
+                let delta = first_rotation.conjugate() * last_rotation;
+                let [x, y, z, w] = delta.to_array();
+                let sin_half_angle = Vec3::new(x, y, z).length();
+                let rotation_delta_deg =
+                    f64::from(2.0 * sin_half_angle.atan2(w.abs()).to_degrees());
+                let position_delta_m = f64::from((last - first).length());
+                let outgoing_velocity = (next - first) / first_dt as f32;
+                let incoming_velocity = (last - previous) / last_dt as f32;
+                let seam_velocity_delta_mps =
+                    f64::from((outgoing_velocity - incoming_velocity).length());
+                let outgoing_angular_velocity =
+                    shortest_path_model_rotation_vector(first_rotation, next_rotation)?
+                        / first_dt as f32;
+                let incoming_angular_velocity =
+                    shortest_path_model_rotation_vector(previous_rotation, last_rotation)?
+                        / last_dt as f32;
+                let seam_angular_velocity_delta_degps = f64::from(
+                    (outgoing_angular_velocity - incoming_angular_velocity)
+                        .length()
+                        .to_degrees(),
+                );
 
-            if !position_delta_m.is_finite()
-                || !rotation_delta_deg.is_finite()
-                || !seam_velocity_delta_mps.is_finite()
-                || !seam_angular_velocity_delta_degps.is_finite()
-            {
-                return None;
-            }
-            Some(BoneLoopContinuityMetrics {
-                position_delta_m,
-                rotation_delta_deg,
-                seam_velocity_delta_mps,
-                seam_angular_velocity_delta_degps,
+                if !position_delta_m.is_finite()
+                    || !rotation_delta_deg.is_finite()
+                    || !seam_velocity_delta_mps.is_finite()
+                    || !seam_angular_velocity_delta_degps.is_finite()
+                {
+                    return None;
+                }
+                Some(BoneLoopContinuityMetrics {
+                    position_delta_m,
+                    rotation_delta_deg,
+                    seam_velocity_delta_mps,
+                    seam_angular_velocity_delta_degps,
+                })
             })
-        })
-        .collect()
+            .collect(),
+    )
 }
 
 /// Measure the foot cycle of a clip from its pose grid. Requires the

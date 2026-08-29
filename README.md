@@ -338,7 +338,7 @@ is not applicable, while partial or unavailable inventory produces exactly one
 subjectless unsuppressible inventory facet and no retained-prefix prediction.
 This slice does not model extensions, other animation constructs,
 positive runtime survival, or a content finding for a dropped row. Its V5
-provenance and output-v17 contract are current; output-v16, revisions 1 and 2,
+provenance and output-v18 contract are current; output-v17, output-v16, revisions 1 and 2,
 and output-v15 remain preserved and readable.
 
 The rich glTF addressability producer is the separate immutable
@@ -401,7 +401,7 @@ unescaped separator; empty, `.`, `..`, backslash, control, and Unicode-format
 segments are rejected, with limits of 1,024 bytes per segment, 4,096 bytes per
 path, and 256 segments. The loader records same-byte raw source identities,
 parent chains, and names; implicit and generated helper nodes cannot match,
-and incomplete coverage cannot prove `NoMatch`. V6 provenance and output-v17
+and incomplete coverage cannot prove `NoMatch`. V6 provenance and output-v18
 carry this prediction. AnimSmith does not execute Unity, read back imported
 assets, play runtime clips, or certify engine behavior. Repository and CI use
 only self-authored synthetic fixtures for this slice.

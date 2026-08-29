@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use animsmith_core::{
     CheckSelection, CollectionClipV1, CollectionDigestPinV1, CollectionManifestV1,
-    CollectionSourceV1, InputIdentity, LintEnvelopeV17, Severity, SourceObservationStateV1,
+    CollectionSourceV1, InputIdentity, LintEnvelopeV18, Severity, SourceObservationStateV1,
     SourceSetCoverageStateV1,
 };
 
@@ -292,7 +292,7 @@ fn execute_source(
         indexed_measurements,
     } = analysis;
     let envelope =
-        LintEnvelopeV17::new(current_tool(), vec![report]).map_err(|error| error.to_string())?;
+        LintEnvelopeV18::new(current_tool(), vec![report]).map_err(|error| error.to_string())?;
     let nested_output_available =
         loaded.document().clips.iter().all(|clip| {
             clip.name.len() <= animsmith_core::COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES

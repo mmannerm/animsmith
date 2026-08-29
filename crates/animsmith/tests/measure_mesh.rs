@@ -6,7 +6,7 @@ use animsmith_core::glam::{Mat4, Vec3};
 use animsmith_core::model::*;
 
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v16.schema.json");
+    include_str!("../../../docs/schemas/measurements-v17.schema.json");
 
 fn assert_measurements_schema_valid(measurements: &serde_json::Value) {
     let schema = serde_json::from_str(MEASUREMENTS_SCHEMA).expect("valid measurement schema JSON");
@@ -1234,6 +1234,49 @@ fn published_schema_rejects_availability_status_value_mismatches() {
     let mut invalid_status = measurements.clone();
     invalid_status["clips"]["move"] = unknown_status;
     assert_measurements_schema_invalid(&invalid_status);
+
+    let unavailable_bone = serde_json::json!({
+        "bone_index": 0,
+        "bone_name": "root",
+        "availability": "unavailable"
+    });
+    let mut explicit_unavailable = clip.clone();
+    explicit_unavailable["loop_continuity_availability"] = serde_json::json!("measured");
+    explicit_unavailable["loop_continuity"] =
+        serde_json::json!({ "bones": [unavailable_bone.clone()] });
+    let mut valid = measurements.clone();
+    valid["clips"]["move"] = explicit_unavailable;
+    assert_measurements_schema_valid(&valid);
+
+    for invalid_bone in [
+        serde_json::json!({ "bone_index": 0, "bone_name": "root" }),
+        serde_json::json!({
+            "bone_index": 0,
+            "bone_name": "root",
+            "availability": "not_applicable"
+        }),
+        serde_json::json!({
+            "bone_index": 0,
+            "bone_name": "root",
+            "availability": "unavailable",
+            "position_delta_m": 0.0
+        }),
+        serde_json::json!({
+            "bone_index": 0,
+            "bone_name": "root",
+            "availability": "measured",
+            "position_delta_m": 0.0,
+            "rotation_delta_deg": 0.0,
+            "seam_velocity_delta_mps": 0.0
+        }),
+    ] {
+        let mut invalid_clip = clip.clone();
+        invalid_clip["loop_continuity_availability"] = serde_json::json!("measured");
+        invalid_clip["loop_continuity"] = serde_json::json!({ "bones": [invalid_bone] });
+        let mut invalid = measurements.clone();
+        invalid["clips"]["move"] = invalid_clip;
+        assert_measurements_schema_invalid(&invalid);
+    }
 
     // A `gait` object whose `phase` value disagrees with its own
     // `phase_availability` status is invalid even when the parent `gait`

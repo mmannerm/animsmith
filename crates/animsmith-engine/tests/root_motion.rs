@@ -10,7 +10,7 @@ use animsmith_core::{
     EnginePredictionFacetV4, EnginePredictionV4, EnginePredictionV6,
     EngineRootMotionClipIntentInputV1, EngineRootMotionClipMappingStateV1,
     EngineRootMotionProjectIntentV1, EvaluationScope, EvaluationScopeCode, InputIdentity,
-    Interpolation, LintEnvelopeV17, LintFileReportV17, MeasurementContract, MeasurementReportInput,
+    Interpolation, LintEnvelopeV18, LintFileReportV18, MeasurementContract, MeasurementReportInput,
     MetricGrids, PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE, PredictionFacetDemandV2,
     PredictionRuleDemandV2, PredictionUnavailableReasonV2, Property, RawSourceFactsBuilderV1,
     RawTransformPathInventoryV1, RawTransformPathNodeInputV1, RawTransformPathNodeKindV1,
@@ -28,7 +28,7 @@ use animsmith_engine::{
 use std::cell::Cell;
 use std::collections::BTreeMap;
 
-type StrictV17Mutation = (&'static str, fn(&mut serde_json::Value));
+type StrictV18Mutation = (&'static str, fn(&mut serde_json::Value));
 type RootTrajectoryMutation = (&'static str, fn(&mut RootTrajectoryMeasurement));
 
 #[derive(Clone, Copy)]
@@ -422,7 +422,7 @@ fn replace_intent_root(fixture: &mut Fixture, resolved_root_bone_index: Option<u
     .unwrap();
 }
 
-fn strict_v17_bytes_with_evaluations(
+fn strict_v18_bytes_with_evaluations(
     fixture: &Fixture,
     evaluations: Vec<CheckEvaluation>,
 ) -> Vec<u8> {
@@ -439,8 +439,8 @@ fn strict_v17_bytes_with_evaluations(
         animsmith_core::measure::measure_assets(fixture.source.document()),
     )
     .unwrap();
-    let report = LintFileReportV17::new_v6(
-        "strict-v17.fbx",
+    let report = LintFileReportV18::new_v6(
+        "strict-v18.fbx",
         fixture.source.source_facts().primary_identity().clone(),
         RigInfo::from_resolved(fixture.source.document(), &fixture.roles).unwrap(),
         Some(fixture.provenance.clone()),
@@ -448,7 +448,7 @@ fn strict_v17_bytes_with_evaluations(
         measurements,
     )
     .unwrap();
-    let envelope = LintEnvelopeV17::new(
+    let envelope = LintEnvelopeV18::new(
         ToolInfo::animsmith(ToolSource::new(None, None)),
         vec![report],
     )
@@ -456,8 +456,8 @@ fn strict_v17_bytes_with_evaluations(
     serde_json::to_vec(&envelope).unwrap()
 }
 
-fn strict_v17_bytes(fixture: &Fixture, evaluation: CheckEvaluation) -> Vec<u8> {
-    strict_v17_bytes_with_evaluations(fixture, vec![evaluation])
+fn strict_v18_bytes(fixture: &Fixture, evaluation: CheckEvaluation) -> Vec<u8> {
+    strict_v18_bytes_with_evaluations(fixture, vec![evaluation])
 }
 
 fn budget_filler_evaluation(
@@ -486,7 +486,7 @@ fn budget_filler_evaluation(
     .unwrap()
 }
 
-fn assert_strict_v17_mutation_rejected(
+fn assert_strict_v18_mutation_rejected(
     bytes: &[u8],
     label: &str,
     mutate: impl FnOnce(&mut serde_json::Value),
@@ -498,7 +498,7 @@ fn assert_strict_v17_mutation_rejected(
         Ok(report) => report.into_files().is_err(),
         Err(_) => true,
     };
-    assert!(rejected, "strict V17 readback accepted {label} mutation");
+    assert!(rejected, "strict V18 readback accepted {label} mutation");
 }
 
 fn first_candidate_references(wire: &mut serde_json::Value) -> &mut Vec<serde_json::Value> {
@@ -808,9 +808,9 @@ fn applicable_root_motion_check_rejects_severity_off() {
 }
 
 #[test]
-fn output_v17_candidate_basis_round_trips_through_the_strict_reader() {
+fn output_v18_candidate_basis_round_trips_through_the_strict_reader() {
     let fixture = fixture(
-        "strict-v17",
+        "strict-v18",
         &["walk"],
         PathFixture::Exact,
         (Some(RootMotionProjectOwnerV1::Animation), None, None),
@@ -820,72 +820,72 @@ fn output_v17_candidate_basis_round_trips_through_the_strict_reader() {
             BakeOrExtract::Bake,
         ),
     );
-    let bytes = strict_v17_bytes(&fixture, evaluate(&fixture));
+    let bytes = strict_v18_bytes(&fixture, evaluate(&fixture));
     let decoded = MeasurementReportInput::read_from(&bytes[..])
         .unwrap()
         .into_files()
         .unwrap();
     assert_eq!(decoded.len(), 1);
 
-    assert_strict_v17_mutation_rejected(&bytes, "candidate basis value", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "candidate basis value", |wire| {
         first_candidate_references(wire)[0]["reference"]["reference"]["fact_id"] =
             serde_json::json!("accepted_inputs");
     });
-    assert_strict_v17_mutation_rejected(&bytes, "missing candidate basis reference", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "missing candidate basis reference", |wire| {
         first_candidate_references(wire).remove(0);
     });
-    assert_strict_v17_mutation_rejected(&bytes, "extra candidate basis reference", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "extra candidate basis reference", |wire| {
         let extra = first_candidate_references(wire)[0].clone();
         first_candidate_references(wire).push(extra);
     });
-    assert_strict_v17_mutation_rejected(&bytes, "candidate result", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "candidate result", |wire| {
         wire["files"][0]["checks"][0]["prediction"]["prediction"]["facets"][0]["result"]["result"]
             ["compatibility"] = serde_json::json!("conflict");
     });
-    assert_strict_v17_mutation_rejected(&bytes, "candidate state and reason", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "candidate state and reason", |wire| {
         let facet = &mut wire["files"][0]["checks"][0]["prediction"]["prediction"]["facets"][0];
         facet["state"] = serde_json::json!("required_prediction_unavailable");
         facet["result"] = serde_json::Value::Null;
         facet["reasons"] = serde_json::json!(["measurement_unavailable"]);
     });
-    assert_strict_v17_mutation_rejected(&bytes, "candidate scope", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "candidate scope", |wire| {
         wire["files"][0]["checks"][0]["prediction"]["prediction"]["facets"][0]["scope"]["subject"] =
             serde_json::json!("source_clip:00000000000000000001:walk:horizontal_xz");
     });
-    assert_strict_v17_mutation_rejected(&bytes, "frozen profile identity", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "frozen profile identity", |wire| {
         wire["files"][0]["prediction_provenance"]["base"]["base"]["profile"]["identity"]["sha256"] =
             serde_json::json!("0000000000000000000000000000000000000000000000000000000000000000");
     });
-    assert_strict_v17_mutation_rejected(&bytes, "frozen profile source metadata", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "frozen profile source metadata", |wire| {
         wire["files"][0]["prediction_provenance"]["base"]["base"]["profile"]["primary_sources"]
             [0]["verified_on"] = serde_json::json!("2026-08-25");
     });
-    assert_strict_v17_mutation_rejected(&bytes, "resolved Root index", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "resolved Root index", |wire| {
         wire["files"][0]["prediction_provenance"]["root_motion_project_intent"]["resolved_root_bone_index"] =
             serde_json::json!(1);
     });
-    assert_strict_v17_mutation_rejected(&bytes, "clip mapping", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "clip mapping", |wire| {
         wire["files"][0]["prediction_provenance"]["root_motion_project_intent"]["clips"][0]["normalized_clip_index"] =
             serde_json::json!(1);
     });
-    assert_strict_v17_mutation_rejected(&bytes, "resolved clip setting", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "resolved clip setting", |wire| {
         wire["files"][0]["prediction_provenance"]["base"]["base"]["settings"]["clips"][0]["settings"]
             [0]["value"]["bake_or_extract"] = serde_json::json!("bake");
     });
-    assert_strict_v17_mutation_rejected(&bytes, "resolved transform path", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "resolved transform path", |wire| {
         wire["files"][0]["prediction_provenance"]["raw_transform_paths"]["rows"][2]["addressable_path"] =
             serde_json::json!("Reference/Other");
     });
-    assert_strict_v17_mutation_rejected(&bytes, "measurement availability", |wire| {
+    assert_strict_v18_mutation_rejected(&bytes, "measurement availability", |wire| {
         wire["files"][0]["measurements"]["clips"]["walk"]["root_trajectory"]["translation_availability"] =
             serde_json::json!("unavailable");
     });
 }
 
 #[test]
-fn output_v17_rejects_each_consumed_root_motion_provenance_mutation() {
+fn output_v18_rejects_each_consumed_root_motion_provenance_mutation() {
     let fixture = fixture(
-        "strict-v17-consumed-provenance",
+        "strict-v18-consumed-provenance",
         &["walk"],
         PathFixture::Exact,
         (
@@ -899,9 +899,9 @@ fn output_v17_rejects_each_consumed_root_motion_provenance_mutation() {
             BakeOrExtract::Extract,
         ),
     );
-    let bytes = strict_v17_bytes(&fixture, evaluate(&fixture));
+    let bytes = strict_v18_bytes(&fixture, evaluate(&fixture));
 
-    let document_mutations: [StrictV17Mutation; 8] = [
+    let document_mutations: [StrictV18Mutation; 8] = [
         ("animation_type value", |wire| {
             strict_document_setting(wire, "animation_type")["value"]["token"] =
                 serde_json::json!("humanoid");
@@ -936,10 +936,10 @@ fn output_v17_rejects_each_consumed_root_motion_provenance_mutation() {
         }),
     ];
     for (label, mutation) in document_mutations {
-        assert_strict_v17_mutation_rejected(&bytes, label, mutation);
+        assert_strict_v18_mutation_rejected(&bytes, label, mutation);
     }
 
-    let clip_mutations: [StrictV17Mutation; 6] = [
+    let clip_mutations: [StrictV18Mutation; 6] = [
         ("root_position_xz value", |wire| {
             strict_clip_setting(wire, "root_position_xz")["value"]["bake_or_extract"] =
                 serde_json::json!("bake");
@@ -966,10 +966,10 @@ fn output_v17_rejects_each_consumed_root_motion_provenance_mutation() {
         }),
     ];
     for (label, mutation) in clip_mutations {
-        assert_strict_v17_mutation_rejected(&bytes, label, mutation);
+        assert_strict_v18_mutation_rejected(&bytes, label, mutation);
     }
 
-    let raw_mutations: [StrictV17Mutation; 15] = [
+    let raw_mutations: [StrictV18Mutation; 15] = [
         ("raw inventory schema", |wire| {
             wire["files"][0]["prediction_provenance"]["raw_transform_paths"]["schema"] =
                 serde_json::json!("urn:animsmith:raw-transform-path-inventory:forged");
@@ -1027,10 +1027,10 @@ fn output_v17_rejects_each_consumed_root_motion_provenance_mutation() {
         }),
     ];
     for (label, mutation) in raw_mutations {
-        assert_strict_v17_mutation_rejected(&bytes, label, mutation);
+        assert_strict_v18_mutation_rejected(&bytes, label, mutation);
     }
 
-    let root_and_measurement_mutations: [StrictV17Mutation; 10] = [
+    let root_and_measurement_mutations: [StrictV18Mutation; 10] = [
         ("resolved Root role", |wire| {
             wire["files"][0]["rig"]["resolved_roles"]["root"] = serde_json::json!("Other");
         }),
@@ -1069,12 +1069,12 @@ fn output_v17_rejects_each_consumed_root_motion_provenance_mutation() {
         }),
     ];
     for (label, mutation) in root_and_measurement_mutations {
-        assert_strict_v17_mutation_rejected(&bytes, label, mutation);
+        assert_strict_v18_mutation_rejected(&bytes, label, mutation);
     }
 }
 
 #[test]
-fn output_v17_conflict_atomic_and_budget_facets_reject_strict_mutations() {
+fn output_v18_conflict_atomic_and_budget_facets_reject_strict_mutations() {
     let conflict = fixture(
         "strict-conflict",
         &["walk"],
@@ -1086,12 +1086,12 @@ fn output_v17_conflict_atomic_and_budget_facets_reject_strict_mutations() {
             BakeOrExtract::Bake,
         ),
     );
-    let conflict_bytes = strict_v17_bytes(&conflict, evaluate(&conflict));
-    assert_strict_v17_mutation_rejected(&conflict_bytes, "conflict finding message", |wire| {
+    let conflict_bytes = strict_v18_bytes(&conflict, evaluate(&conflict));
+    assert_strict_v18_mutation_rejected(&conflict_bytes, "conflict finding message", |wire| {
         wire["files"][0]["checks"][0]["findings"][0]["message"] =
             serde_json::json!("mutated conflict");
     });
-    assert_strict_v17_mutation_rejected(&conflict_bytes, "conflict finding scope", |wire| {
+    assert_strict_v18_mutation_rejected(&conflict_bytes, "conflict finding scope", |wire| {
         wire["files"][0]["checks"][0]["findings"][0]["prediction_scope"]["subject"] =
             serde_json::json!("source_clip:00000000000000000001:walk:horizontal_xz");
     });
@@ -1107,8 +1107,8 @@ fn output_v17_conflict_atomic_and_budget_facets_reject_strict_mutations() {
             BakeOrExtract::Bake,
         ),
     );
-    let atomic_bytes = strict_v17_bytes(&atomic, evaluate(&atomic));
-    assert_strict_v17_mutation_rejected(&atomic_bytes, "atomic basis", |wire| {
+    let atomic_bytes = strict_v18_bytes(&atomic, evaluate(&atomic));
+    assert_strict_v18_mutation_rejected(&atomic_bytes, "atomic basis", |wire| {
         wire["files"][0]["checks"][0]["prediction"]["prediction"]["facets"][0]["basis"]
             ["references"]
             .as_array_mut()
@@ -1162,7 +1162,7 @@ fn output_v17_conflict_atomic_and_budget_facets_reject_strict_mutations() {
         check.evaluate_with_prediction_allocation_v2(&ctx, allocation),
     )
     .unwrap();
-    let budget_bytes = strict_v17_bytes_with_evaluations(
+    let budget_bytes = strict_v18_bytes_with_evaluations(
         &budget,
         vec![
             budget_filler_evaluation(
@@ -1172,7 +1172,7 @@ fn output_v17_conflict_atomic_and_budget_facets_reject_strict_mutations() {
             budget_evaluation,
         ],
     );
-    assert_strict_v17_mutation_rejected(&budget_bytes, "budget basis", |wire| {
+    assert_strict_v18_mutation_rejected(&budget_bytes, "budget basis", |wire| {
         let check = wire["files"][0]["checks"]
             .as_array_mut()
             .unwrap()
@@ -1313,7 +1313,7 @@ fn producer_and_reader_agree_on_stale_root_trajectory_identity() {
             "animsmith:root_motion_source_not_explicit_root",
             "producer mismatch for {label}"
         );
-        let bytes = strict_v17_bytes(&fixture, record);
+        let bytes = strict_v18_bytes(&fixture, record);
         MeasurementReportInput::read_from(&bytes[..])
             .unwrap()
             .into_files()
@@ -1406,7 +1406,7 @@ fn ownerless_partial_settings_are_applicable_with_one_atomic_summary_and_strict_
     );
     assert!(record.evaluated_scopes().is_empty());
 
-    let bytes = strict_v17_bytes(&fixture, record);
+    let bytes = strict_v18_bytes(&fixture, record);
     MeasurementReportInput::read_from(&bytes[..])
         .unwrap()
         .into_files()

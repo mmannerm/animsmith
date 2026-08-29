@@ -60,8 +60,8 @@ use crate::{
     ExactSourceClipTimingV1, ExactSourceFramePeriodV1, ExactSourceRangeSelectionV1,
     ExactSourceTimeBasisV1, ExactSourceTimingObservationStateV1, ExactSourceTimingObservationV1,
     ExactSourceTimingUnavailableReasonV1, ExactSourceTimingV1, InputIdentity,
-    MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_V15_SCHEMA_ID, MeasurementContract, OUTPUT_V10_SCHEMA_ID,
-    OUTPUT_V12_SCHEMA_ID, OUTPUT_V13_SCHEMA_ID, ParserFrameRateProjectionV1,
+    MEASUREMENTS_V15_SCHEMA_ID, MEASUREMENTS_V16_SCHEMA_ID, MeasurementContract,
+    OUTPUT_V10_SCHEMA_ID, OUTPUT_V12_SCHEMA_ID, OUTPUT_V13_SCHEMA_ID, ParserFrameRateProjectionV1,
     SourceInverseBindAccessorStatus, SourceNodeLocalRest, SourceSkeletonCoverage,
     SourceTimeDisplayProtocolV1, SourceTimelineModeV1,
 };
@@ -98,7 +98,7 @@ pub const PREDICTION_RULE_INPUTS_V1_ID: &str = "urn:animsmith:prediction-rule-in
 
 const CONSUMED_CONTRACTS_V5: [&str; 11] = [
     "urn:animsmith:schema:output:16",
-    MEASUREMENTS_SCHEMA_ID,
+    MEASUREMENTS_V16_SCHEMA_ID,
     PREDICTION_PROVENANCE_V4_ID,
     RAW_SOURCE_FACTS_V2_ID,
     EXACT_SOURCE_TIMING_V1_ID,
@@ -111,7 +111,7 @@ const CONSUMED_CONTRACTS_V5: [&str; 11] = [
 ];
 const CONSUMED_CONTRACTS_V6: [&str; 13] = [
     "urn:animsmith:schema:output:17",
-    MEASUREMENTS_SCHEMA_ID,
+    MEASUREMENTS_V16_SCHEMA_ID,
     PREDICTION_PROVENANCE_V5_ID,
     RAW_SOURCE_FACTS_V2_ID,
     EXACT_SOURCE_TIMING_V1_ID,
@@ -1971,10 +1971,10 @@ impl PredictionBasisReferenceV1 {
         }
     }
 
-    /// Construct a current measurements-v16 scalar reference for V2 predictions.
+    /// Construct an immutable measurements-v16 scalar reference for V2 predictions.
     pub fn measurement_v16(pointer: MeasurementPointerV1, value: PredictionScalarV1) -> Self {
         Self::Measurement {
-            schema: MEASUREMENTS_SCHEMA_ID,
+            schema: MEASUREMENTS_V16_SCHEMA_ID,
             pointer,
             value,
         }
@@ -3642,7 +3642,7 @@ impl<'de> Deserialize<'de> for PredictionBasisReferenceV2 {
                     .map_err(D::Error::custom)?;
                 PredictionBasisReferenceV1::from_wire_with_measurement_schema(
                     wire,
-                    MEASUREMENTS_SCHEMA_ID,
+                    MEASUREMENTS_V16_SCHEMA_ID,
                 )
                 .map(Self::V1)
                 .map_err(D::Error::custom)
@@ -4094,11 +4094,11 @@ impl EnginePredictionBasisV1 {
         Self::new_with_measurement_schema(references, MEASUREMENTS_V15_SCHEMA_ID)
     }
 
-    /// Construct a current V2 basis pinned to measurements-v16.
+    /// Construct an immutable V2 basis pinned to measurements-v16.
     pub fn new_v16(
         references: Vec<PredictionBasisReferenceV1>,
     ) -> Result<Self, PredictionContractError> {
-        Self::new_with_measurement_schema(references, MEASUREMENTS_SCHEMA_ID)
+        Self::new_with_measurement_schema(references, MEASUREMENTS_V16_SCHEMA_ID)
     }
 
     fn new_with_measurement_schema(
@@ -4393,7 +4393,7 @@ pub struct EnginePredictionBasisV2 {
 }
 
 impl EnginePredictionBasisV2 {
-    /// Construct a current basis pinned to measurements-v16 and exact timing V1.
+    /// Construct an immutable basis pinned to measurements-v16 and exact timing V1.
     pub fn new(
         mut references: Vec<PredictionBasisReferenceV2>,
     ) -> Result<Self, PredictionContractError> {
@@ -4404,7 +4404,7 @@ impl EnginePredictionBasisV2 {
             });
         }
         for reference in &references {
-            validate_basis_reference_structure_v2(reference, MEASUREMENTS_SCHEMA_ID)?;
+            validate_basis_reference_structure_v2(reference, MEASUREMENTS_V16_SCHEMA_ID)?;
         }
         references.sort_by_cached_key(basis_reference_key_v2);
         if references
@@ -4498,7 +4498,7 @@ impl<'de> Deserialize<'de> for EnginePredictionBasisV2 {
     {
         Self::from_wire_with_measurement_schema(
             EnginePredictionBasisWireV2Exact::deserialize(deserializer)?,
-            MEASUREMENTS_SCHEMA_ID,
+            MEASUREMENTS_V16_SCHEMA_ID,
         )
         .map_err(D::Error::custom)
     }
@@ -5843,7 +5843,7 @@ impl EnginePredictionFacetV2 {
         if basis.references().is_empty() {
             return Err(PredictionContractError::AvailableBasisEmpty);
         }
-        basis.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        basis.validate_with_measurement_schema(MEASUREMENTS_V16_SCHEMA_ID)?;
         Ok(Self {
             scope,
             state: EnginePredictionFacetStateV1::Available,
@@ -5859,7 +5859,7 @@ impl EnginePredictionFacetV2 {
         mut reasons: Vec<PredictionUnavailableReasonV2>,
     ) -> Result<Self, PredictionContractError> {
         validate_scope(&scope)?;
-        basis.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        basis.validate_with_measurement_schema(MEASUREMENTS_V16_SCHEMA_ID)?;
         reasons.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         reasons.dedup();
         if reasons.is_empty() {
@@ -5952,7 +5952,7 @@ impl TryFrom<EnginePredictionFacetWireV2> for EnginePredictionFacetV2 {
     type Error = PredictionContractError;
 
     fn try_from(wire: EnginePredictionFacetWireV2) -> Result<Self, Self::Error> {
-        Self::from_wire_with_measurement_schema(wire, MEASUREMENTS_SCHEMA_ID)
+        Self::from_wire_with_measurement_schema(wire, MEASUREMENTS_V16_SCHEMA_ID)
     }
 }
 
@@ -6229,7 +6229,7 @@ impl<'de> Deserialize<'de> for EnginePredictionWireV2 {
 
 impl EnginePredictionV2 {
     fn from_wire(wire: EnginePredictionWireV2) -> Result<Self, PredictionContractError> {
-        Self::from_wire_with_measurement_schema(wire, MEASUREMENTS_SCHEMA_ID)
+        Self::from_wire_with_measurement_schema(wire, MEASUREMENTS_V16_SCHEMA_ID)
     }
 
     fn from_wire_with_measurement_schema(
@@ -6312,7 +6312,7 @@ impl EnginePredictionV2 {
             });
         }
         for facet in &facets {
-            facet.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+            facet.validate_with_measurement_schema(MEASUREMENTS_V16_SCHEMA_ID)?;
         }
         facets.sort_by(|left, right| compare_scopes(left.scope(), right.scope()));
         if facets
@@ -6383,7 +6383,10 @@ impl EnginePredictionV2 {
         &self,
         provenance: &PredictionProvenanceV2,
     ) -> Result<(), PredictionContractError> {
-        self.validate_against_provenance_with_measurement_schema(provenance, MEASUREMENTS_SCHEMA_ID)
+        self.validate_against_provenance_with_measurement_schema(
+            provenance,
+            MEASUREMENTS_V16_SCHEMA_ID,
+        )
     }
 
     pub(crate) fn validate_against_provenance_with_measurement_schema(
@@ -6494,7 +6497,7 @@ impl EnginePredictionV2 {
     }
 
     fn validate_structure(&self) -> Result<(), PredictionContractError> {
-        self.validate_structure_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)
+        self.validate_structure_with_measurement_schema(MEASUREMENTS_V16_SCHEMA_ID)
     }
 
     fn validate_structure_with_measurement_schema(
@@ -6539,21 +6542,6 @@ impl<'de> Deserialize<'de> for EnginePredictionV2 {
         let wire = EnginePredictionWireV2::deserialize(deserializer)?;
         Self::from_wire(wire).map_err(D::Error::custom)
     }
-}
-
-/// Decode a V2 prediction with aggregate file budgets without retaining a
-/// prefix after either budget is exhausted.
-pub(crate) fn decode_engine_prediction_v2(
-    raw: &str,
-    facet_limit: usize,
-    reference_limit: usize,
-) -> Result<EnginePredictionV2, PredictionDecodeError> {
-    decode_engine_prediction_v2_with_measurement_schema(
-        raw,
-        facet_limit,
-        reference_limit,
-        MEASUREMENTS_SCHEMA_ID,
-    )
 }
 
 pub(crate) fn decode_engine_prediction_v2_with_measurement_schema(
@@ -6698,7 +6686,7 @@ impl EnginePredictionFacetV3 {
         basis: EnginePredictionBasisV2,
     ) -> Result<Self, PredictionContractError> {
         validate_scope(&scope)?;
-        basis.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        basis.validate_with_measurement_schema(MEASUREMENTS_V16_SCHEMA_ID)?;
         if basis.references().is_empty() {
             return Err(PredictionContractError::AvailableBasisEmpty);
         }
@@ -6717,7 +6705,7 @@ impl EnginePredictionFacetV3 {
         mut reasons: Vec<PredictionUnavailableReasonV2>,
     ) -> Result<Self, PredictionContractError> {
         validate_scope(&scope)?;
-        basis.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        basis.validate_with_measurement_schema(MEASUREMENTS_V16_SCHEMA_ID)?;
         reasons.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         reasons.dedup();
         if reasons.is_empty() {
@@ -6729,7 +6717,7 @@ impl EnginePredictionFacetV3 {
             basis,
             reasons,
         };
-        facet.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        facet.validate_with_measurement_schema(MEASUREMENTS_V16_SCHEMA_ID)?;
         Ok(facet)
     }
 
@@ -6846,7 +6834,7 @@ impl<'de> Deserialize<'de> for EnginePredictionFacetV3 {
                 references: &mut references,
             }
             .deserialize(deserializer)?,
-            MEASUREMENTS_SCHEMA_ID,
+            MEASUREMENTS_V16_SCHEMA_ID,
         )
         .map_err(D::Error::custom)
     }
@@ -7088,7 +7076,7 @@ impl EnginePredictionV3 {
             });
         }
         for facet in &facets {
-            facet.validate_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+            facet.validate_with_measurement_schema(MEASUREMENTS_V16_SCHEMA_ID)?;
         }
         facets.sort_by(|left, right| compare_scopes(left.scope(), right.scope()));
         if facets
@@ -7210,7 +7198,10 @@ impl EnginePredictionV3 {
         &self,
         provenance: &PredictionProvenanceV3,
     ) -> Result<(), PredictionContractError> {
-        self.validate_against_provenance_with_measurement_schema(provenance, MEASUREMENTS_SCHEMA_ID)
+        self.validate_against_provenance_with_measurement_schema(
+            provenance,
+            MEASUREMENTS_V16_SCHEMA_ID,
+        )
     }
 
     pub(crate) fn validate_against_provenance_with_measurement_schema(
@@ -7239,7 +7230,7 @@ impl EnginePredictionV3 {
         gaps: &[CoverageGap],
         findings: &[Finding],
     ) -> Result<(), PredictionContractError> {
-        self.validate_structure_with_measurement_schema(MEASUREMENTS_SCHEMA_ID)?;
+        self.validate_structure_with_measurement_schema(MEASUREMENTS_V16_SCHEMA_ID)?;
         self.validate_facet_budget_summary_for_check(check_id)?;
         for facet in &self.facets {
             let evaluated = evaluated_scopes
@@ -7359,7 +7350,7 @@ impl<'de> Deserialize<'de> for EnginePredictionV3 {
     {
         Self::from_wire_with_measurement_schema(
             EnginePredictionWireV3::deserialize(deserializer)?,
-            MEASUREMENTS_SCHEMA_ID,
+            MEASUREMENTS_V16_SCHEMA_ID,
         )
         .map_err(D::Error::custom)
     }
@@ -7385,7 +7376,7 @@ pub(crate) fn decode_engine_prediction_v3(
         return Err(PredictionDecodeError::TooManyFileBasisReferences);
     }
     let prediction =
-        EnginePredictionV3::from_wire_with_measurement_schema(wire, MEASUREMENTS_SCHEMA_ID)
+        EnginePredictionV3::from_wire_with_measurement_schema(wire, MEASUREMENTS_V16_SCHEMA_ID)
             .map_err(PredictionDecodeError::Semantic)?;
     Ok(prediction)
 }
@@ -7903,7 +7894,7 @@ impl PredictionProvenanceIdentityV2 {
 
 const CONSUMED_CONTRACTS_V2: [&str; 6] = [
     OUTPUT_V13_SCHEMA_ID,
-    MEASUREMENTS_SCHEMA_ID,
+    MEASUREMENTS_V16_SCHEMA_ID,
     RAW_SOURCE_FACTS_V1_ID,
     DEPENDENCY_CLOSURE_V1_ID,
     ENGINE_PROFILE_FACTS_V1_ID,
@@ -7924,10 +7915,10 @@ fn v2_consumed_contracts(
 ) -> Result<[&'static str; 6], PredictionContractError> {
     match measurement_schema {
         MEASUREMENTS_V15_SCHEMA_ID => Ok(CONSUMED_CONTRACTS_V2_MEASUREMENTS_V15),
-        MEASUREMENTS_SCHEMA_ID => Ok(CONSUMED_CONTRACTS_V2),
+        MEASUREMENTS_V16_SCHEMA_ID => Ok(CONSUMED_CONTRACTS_V2),
         found => Err(PredictionContractError::InvalidSchema {
             field: "basis.measurement.schema",
-            expected: MEASUREMENTS_SCHEMA_ID,
+            expected: MEASUREMENTS_V16_SCHEMA_ID,
             found: found.to_owned(),
         }),
     }
@@ -8188,15 +8179,6 @@ impl<'de> Deserialize<'de> for PredictionProvenanceV2 {
     }
 }
 
-/// Decode V2 provenance in dependency order so malformed/header evidence wins
-/// before nested payloads and profile/raw/closure rows are admitted under the
-/// shared provenance-row budget.
-pub(crate) fn decode_prediction_provenance_v2(
-    raw: &str,
-) -> Result<PredictionProvenanceV2, PredictionDecodeError> {
-    decode_prediction_provenance_v2_with_measurement_schema(raw, MEASUREMENTS_SCHEMA_ID)
-}
-
 pub(crate) fn decode_prediction_provenance_v2_with_measurement_schema(
     raw: &str,
     expected_measurement_schema: &'static str,
@@ -8301,7 +8283,7 @@ fn decode_prediction_provenance_v2_wire(
 
 const CONSUMED_CONTRACTS_V3: [&str; 7] = [
     "urn:animsmith:schema:output:14",
-    MEASUREMENTS_SCHEMA_ID,
+    MEASUREMENTS_V16_SCHEMA_ID,
     RAW_SOURCE_FACTS_V2_ID,
     EXACT_SOURCE_TIMING_V1_ID,
     DEPENDENCY_CLOSURE_V1_ID,
@@ -9618,7 +9600,7 @@ fn validate_basis_reference_structure_v4(
 ) -> Result<(), PredictionContractError> {
     match reference {
         PredictionBasisReferenceV4::V2(reference) => {
-            validate_basis_reference_structure_v2(reference, MEASUREMENTS_SCHEMA_ID)
+            validate_basis_reference_structure_v2(reference, MEASUREMENTS_V16_SCHEMA_ID)
         }
         PredictionBasisReferenceV4::RawSceneAttachment(_) => Ok(()),
     }
@@ -10405,7 +10387,7 @@ impl<'de> Deserialize<'de> for PredictionRuleInputsV1 {
 
 const CONSUMED_CONTRACTS_V4: [&str; 9] = [
     "urn:animsmith:schema:output:15",
-    MEASUREMENTS_SCHEMA_ID,
+    MEASUREMENTS_V16_SCHEMA_ID,
     RAW_SOURCE_FACTS_V2_ID,
     EXACT_SOURCE_TIMING_V1_ID,
     DEPENDENCY_CLOSURE_V1_ID,
@@ -10874,11 +10856,13 @@ fn validate_basis_reference_v4(
         }
         PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
             PredictionBasisReferenceV1::Measurement { schema, .. },
-        )) if *schema != MEASUREMENTS_SCHEMA_ID => Err(PredictionContractError::InvalidSchema {
-            field: "basis.measurement.schema",
-            expected: MEASUREMENTS_SCHEMA_ID,
-            found: (*schema).to_owned(),
-        }),
+        )) if *schema != MEASUREMENTS_V16_SCHEMA_ID => {
+            Err(PredictionContractError::InvalidSchema {
+                field: "basis.measurement.schema",
+                expected: MEASUREMENTS_V16_SCHEMA_ID,
+                found: (*schema).to_owned(),
+            })
+        }
         PredictionBasisReferenceV4::V2(PredictionBasisReferenceV2::V1(
             PredictionBasisReferenceV1::RawSource { reference },
         )) if !raw_domain_matches_key(reference.domain, &reference.key) => {
@@ -13975,7 +13959,10 @@ mod tests {
         // A later invalid coverage witness must not be decoded after the first
         // unadmitted settings row; the aggregate sentinel owns precedence.
         wire["settings"]["work"]["actual_clip_rows_inspected"] = json!(0);
-        let result = decode_prediction_provenance_v2(&serde_json::to_string(&wire).unwrap());
+        let result = decode_prediction_provenance_v2_with_measurement_schema(
+            &serde_json::to_string(&wire).unwrap(),
+            MEASUREMENTS_V16_SCHEMA_ID,
+        );
         assert!(
             matches!(result, Err(PredictionDecodeError::Semantic(
             PredictionContractError::TooManyAggregateProvenanceRows { found, limit }
@@ -14332,7 +14319,8 @@ mod tests {
         let current_basis = EnginePredictionBasisV1::new_v16(vec![reference]).unwrap();
 
         let mut forged_v1 = serde_json::to_value(v1).unwrap();
-        forged_v1["facets"][0]["basis"]["references"][0]["schema"] = json!(MEASUREMENTS_SCHEMA_ID);
+        forged_v1["facets"][0]["basis"]["references"][0]["schema"] =
+            json!(MEASUREMENTS_V16_SCHEMA_ID);
         let error = serde_json::from_value::<EnginePredictionV1>(forged_v1).unwrap_err();
         assert!(error.to_string().contains(MEASUREMENTS_V15_SCHEMA_ID));
 
@@ -14482,7 +14470,7 @@ mod tests {
             Err(PredictionContractError::InvalidSchema {
                 field: "basis.measurement.schema",
                 expected: MEASUREMENTS_V15_SCHEMA_ID,
-                found: MEASUREMENTS_SCHEMA_ID.to_owned(),
+                found: MEASUREMENTS_V16_SCHEMA_ID.to_owned(),
             })
         );
 
@@ -14753,11 +14741,12 @@ mod tests {
 
     #[test]
     fn measurement_references_distinguish_missing_object_and_wrong_scalar() {
-        let measurements = MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default())
-            .expect("empty measurement fixture is valid");
+        let measurements =
+            MeasurementContract::historical_v15(BTreeMap::new(), AssetMeasurements::default())
+                .expect("empty historical measurement fixture is valid");
         let correct = prediction_with_reference(PredictionBasisReferenceV1::measurement(
             MeasurementPointerV1::new("/measurements/schema_version").unwrap(),
-            PredictionScalarV1::UnsignedInteger { value: 16 },
+            PredictionScalarV1::UnsignedInteger { value: 15 },
         ));
         assert_eq!(
             correct.validate_measurement_references(&measurements),
@@ -14794,15 +14783,16 @@ mod tests {
 
     #[test]
     fn measurement_reference_batch_traverses_once_across_predictions() {
-        let measurements = MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default())
-            .expect("empty measurement fixture is valid");
+        let measurements =
+            MeasurementContract::historical_v15(BTreeMap::new(), AssetMeasurements::default())
+                .expect("empty historical measurement fixture is valid");
         let first = prediction_with_reference(PredictionBasisReferenceV1::measurement(
             MeasurementPointerV1::new("/measurements/schema_version").unwrap(),
-            PredictionScalarV1::UnsignedInteger { value: 16 },
+            PredictionScalarV1::UnsignedInteger { value: 15 },
         ));
         let second = prediction_with_reference(PredictionBasisReferenceV1::measurement(
             MeasurementPointerV1::new("/measurements/schema_version").unwrap(),
-            PredictionScalarV1::UnsignedInteger { value: 16 },
+            PredictionScalarV1::UnsignedInteger { value: 15 },
         ));
 
         assert_eq!(

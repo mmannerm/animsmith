@@ -69,12 +69,34 @@ impl Check for LoopSeamRotation {
                 );
                 continue;
             };
+            let unavailable_bones = metrics.iter().filter(|metric| metric.is_none()).count();
+            if unavailable_bones > 0 {
+                gaps.push(
+                    CoverageGap::new(
+                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                        format!(
+                            "{unavailable_bones} of {} bones have unusable loop-continuity evidence",
+                            metrics.len()
+                        ),
+                    )
+                    .scope(scope.clone()),
+                );
+            }
+            if metrics.iter().all(Option::is_none) {
+                continue;
+            }
             evaluated_scopes.push(scope);
 
-            let max_angular_velocity = metrics.iter().enumerate().max_by(|(_, a), (_, b)| {
-                a.seam_angular_velocity_delta_degps
-                    .total_cmp(&b.seam_angular_velocity_delta_degps)
-            });
+            let max_angular_velocity = metrics
+                .iter()
+                .enumerate()
+                .filter_map(|(bone_index, metric)| {
+                    metric.as_ref().map(|metric| (bone_index, metric))
+                })
+                .max_by(|(_, a), (_, b)| {
+                    a.seam_angular_velocity_delta_degps
+                        .total_cmp(&b.seam_angular_velocity_delta_degps)
+                });
             if let Some((bone_index, metric)) = max_angular_velocity
                 && exceeds_f32_cap(
                     metric.seam_angular_velocity_delta_degps,

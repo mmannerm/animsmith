@@ -25,8 +25,8 @@
 use animsmith_core::evaluate_checks;
 use animsmith_core::{
     Check, CheckCtx, CheckSelection, Config, DiffEnvelope, EngineRootMotionClipIntentInputV1,
-    EngineRootMotionClipMappingStateV1, EngineRootMotionProjectIntentV1, LintEnvelopeV17,
-    LintFileReportV17, MeasureEnvelope, MeasureFileReport, MeasurementContract,
+    EngineRootMotionClipMappingStateV1, EngineRootMotionProjectIntentV1, LintEnvelopeV18,
+    LintFileReportV18, MeasureEnvelope, MeasureFileReport, MeasurementContract,
     MeasurementFileError, MeasurementReportError, MeasurementReportInput,
     MeasurementReportReadError, MetricGrids, RigInfo, RootMotionProjectOwnerV1, Severity,
     TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES, ToolInfo, ToolSource,
@@ -280,12 +280,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files or one-file current output-v17 or historical output-v16/output-v15/output-v14/output-v13 `measure` or `lint` JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files, one-file current output-v18 `measure` or `lint` JSON carrying measurements-v17, or historical output-v17/output-v16/output-v15/output-v14/output-v13 JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v18/output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v18/output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -1415,7 +1415,7 @@ fn is_unity_generic_root_motion_profile(profile: &ResolvedProfileSettingsV2) -> 
 }
 
 struct LintAnalysis {
-    report: LintFileReportV17,
+    report: LintFileReportV18,
     requires_failure: bool,
     indexed_measurements: Vec<animsmith_core::measure::ClipMeasurements>,
 }
@@ -1535,7 +1535,7 @@ fn analyze_loaded_lint(
         MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(doc))
             .map_err(|error| error.to_string())?;
     let report = match (prediction_provenance_v6, prediction_provenance_v5) {
-        (Some(provenance), None) => LintFileReportV17::new_v6(
+        (Some(provenance), None) => LintFileReportV18::new_v6(
             path_label,
             input,
             rig,
@@ -1543,7 +1543,7 @@ fn analyze_loaded_lint(
             evaluations,
             measurements,
         ),
-        (None, Some(provenance)) => LintFileReportV17::new_v5(
+        (None, Some(provenance)) => LintFileReportV18::new_v5(
             path_label,
             input,
             rig,
@@ -1551,7 +1551,7 @@ fn analyze_loaded_lint(
             evaluations,
             measurements,
         ),
-        (None, None) => LintFileReportV17::new(
+        (None, None) => LintFileReportV18::new(
             path_label,
             input,
             rig,
@@ -1591,16 +1591,19 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let doc = loaded.document();
                 let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
                 let grids = MetricGrids::new(doc);
-                reports.push(MeasureFileReport::new(
-                    file.display().to_string(),
-                    input,
-                    RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?,
-                    MeasurementContract::new(
-                        animsmith_core::measure::measure_document(&grids, &roles, config),
-                        animsmith_core::measure::measure_assets(doc),
+                reports.push(
+                    MeasureFileReport::new(
+                        file.display().to_string(),
+                        input,
+                        RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?,
+                        MeasurementContract::new(
+                            animsmith_core::measure::measure_document(&grids, &roles, config),
+                            animsmith_core::measure::measure_assets(doc),
+                        )
+                        .map_err(|error| error.to_string())?,
                     )
                     .map_err(|error| error.to_string())?,
-                ));
+                );
             }
             match format {
                 Format::Json => {
@@ -1660,7 +1663,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             match format {
                 PresentationFormat::Json => {
-                    let envelope = LintEnvelopeV17::new(current_tool(), reports)
+                    let envelope = LintEnvelopeV18::new(current_tool(), reports)
                         .map_err(|error| error.to_string())?;
                     render::print_json(&envelope)?;
                 }
@@ -2302,7 +2305,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// current output-v17 or historical output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report
+/// current output-v18 carrying measurements-v17 or historical
+/// output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON
 /// carrying measurements-v16.
 fn load_measurements(
     path: &Path,
@@ -2323,7 +2327,7 @@ fn load_measurements(
             }
             _ => format!("{} {error}", path.display()),
         })?;
-        // Current output-v17 and historical output-v16/output-v15/output-v14/output-v13/output-v12/output-v11 envelopes
+        // Current output-v18 and historical output-v17/output-v16/output-v15/output-v14/output-v13/output-v12/output-v11 envelopes
         // are accepted only with their version-matched measurements contract.
         // The V11 route retains its original V1 evidence validation; producers
         // emit V16.
