@@ -1,3 +1,4 @@
+use crate::registry::profiles_v2;
 use crate::types::UnrealSampleRateV2;
 use crate::{
     AnimationAddressability, BakeOrExtract, ConversionControl, DefaultStatus, EngineProfile,
@@ -35,6 +36,20 @@ pub(crate) fn facts_identity(profile: &EngineProfile) -> InputIdentity {
         .expect("the frozen engine registry must project into its core-owned V1 contract")
         .facts_identity()
         .clone()
+}
+
+/// Whether a resolved core-owned V2 profile exactly reproduces its selected
+/// immutable registry projection.
+///
+/// Engine prediction rules retain their own tuple and source applicability
+/// predicates. This helper owns only the registry lookup and full-profile
+/// equality proof shared by those rules.
+pub(crate) fn matches_frozen_registry_projection_v2(profile: &CoreEngineProfileV2) -> bool {
+    profiles_v2().iter().any(|candidate| {
+        project_engine_profile_v2(candidate).is_ok_and(|projected| {
+            projected.selection() == profile.selection() && &projected == profile
+        })
+    })
 }
 
 pub(crate) fn settings_identity<'a>(
@@ -851,5 +866,30 @@ mod tests {
             })),
         );
         assert_ne!(facts_identity(&profile), expected);
+    }
+
+    #[test]
+    fn frozen_registry_projection_requires_full_profile_equality() {
+        let registry_profile = crate::profiles_v2()
+            .iter()
+            .find(|profile| {
+                let selection = profile.selection();
+                selection.family() == "bevy"
+                    && selection.profile_revision() == 2
+                    && selection.engine_version() == "0.19.0"
+                    && selection.importer() == "gltf-asset-loader"
+            })
+            .expect("frozen Bevy revision-2 profile");
+        let projected = project_engine_profile_v2(registry_profile).unwrap();
+        assert!(matches_frozen_registry_projection_v2(&projected));
+
+        let mut altered = registry_profile.clone();
+        altered.profile_urn = "urn:animsmith:engine-profile:bevy:revision-2-altered";
+        let altered_projection = project_engine_profile_v2(&altered).unwrap();
+        assert_ne!(altered_projection, projected);
+        assert!(
+            !matches_frozen_registry_projection_v2(&altered_projection),
+            "a same-tuple profile mutation must not satisfy the registry proof"
+        );
     }
 }

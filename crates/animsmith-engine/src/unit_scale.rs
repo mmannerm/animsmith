@@ -1,7 +1,8 @@
 //! Exact Bevy 0.19 glTF unit and static/default-rest scale prediction.
 
+use crate::SettingIdV2;
+use crate::canonical::matches_frozen_registry_projection_v2;
 use crate::error::PredictionRuleError;
-use crate::{SettingIdV2, profiles_v2};
 use animsmith_core::engine_contract::{EngineSettingIdV2, EngineSettingValueV2};
 use animsmith_core::measure::{
     AssetMeasurements, LinearTransformClassification, SkeletonNodeMeasurements, measure_assets,
@@ -95,7 +96,9 @@ impl<'a> EngineUnitScaleCheck<'a> {
             {
                 return Err(PredictionRuleError::SourceProvenanceMismatch);
             }
-            if is_bevy_tuple(provenance) && !has_frozen_bevy_profile(provenance) {
+            if is_bevy_tuple(provenance)
+                && !matches_frozen_registry_projection_v2(provenance.profile())
+            {
                 return Err(PredictionRuleError::FrozenProfileMismatch);
             }
         }
@@ -118,7 +121,7 @@ impl<'a> EngineUnitScaleCheck<'a> {
                 .validate()
                 .map_err(|_| PredictionRuleError::SourceProvenanceMismatch)?;
             if is_bevy_tuple_revision(provenance.base(), 3)
-                && !has_frozen_bevy_profile_revision(provenance.base(), 3)
+                && !matches_frozen_registry_projection_v2(provenance.base().profile())
             {
                 return Err(PredictionRuleError::FrozenProfileMismatch);
             }
@@ -1501,22 +1504,6 @@ fn is_bevy_tuple_revision(provenance: &PredictionProvenanceV4, revision: u32) ->
         && selection.importer() == BEVY_IMPORTER
 }
 
-fn has_frozen_bevy_profile(provenance: &PredictionProvenanceV4) -> bool {
-    has_frozen_bevy_profile_revision(provenance, BEVY_PROFILE_REVISION)
-}
-
-fn has_frozen_bevy_profile_revision(provenance: &PredictionProvenanceV4, revision: u32) -> bool {
-    profiles_v2().iter().any(|profile| {
-        let selection = profile.selection();
-        selection.family() == BEVY_FAMILY
-            && selection.profile_revision() == revision
-            && selection.engine_version() == BEVY_ENGINE_VERSION
-            && selection.importer() == BEVY_IMPORTER
-            && crate::project_engine_profile_v2(profile)
-                .is_ok_and(|projected| &projected == provenance.profile())
-    })
-}
-
 fn is_exact_bevy_gltf(source: &LoadedSource, provenance: &PredictionProvenanceV4) -> bool {
     is_exact_bevy_gltf_revision(source, provenance, BEVY_PROFILE_REVISION)
 }
@@ -1531,7 +1518,7 @@ fn is_exact_bevy_gltf_revision(
         SourceFormatV1::GltfJson | SourceFormatV1::Glb
     ) && source.source_facts().format() == provenance.source_format()
         && is_bevy_tuple_revision(provenance, revision)
-        && has_frozen_bevy_profile_revision(provenance, revision)
+        && matches_frozen_registry_projection_v2(provenance.profile())
 }
 
 fn empty_output() -> CheckOutput {
