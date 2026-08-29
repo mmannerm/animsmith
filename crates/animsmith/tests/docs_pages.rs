@@ -174,6 +174,26 @@ fn write_book_fixture(root: &Path, marker: &str) {
     );
 }
 
+fn write_fixture_builder(path: &Path) {
+    std::fs::write(
+        path,
+        r#"import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--source", type=Path, required=True)
+parser.add_argument("--stage", type=Path, required=True)
+parser.add_argument("--site-url")
+parser.add_argument("--build", action="store_true")
+args = parser.parse_args()
+(args.stage / "book").mkdir(parents=True)
+marker = (args.source / "README.md").read_text(encoding="utf-8")
+(args.stage / "book" / "index.html").write_text(marker, encoding="utf-8")
+"#,
+    )
+    .expect("writes deterministic fixture builder");
+}
+
 fn git(root: &Path, arguments: &[&str]) {
     assert!(
         Command::new("git")
@@ -383,10 +403,14 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
     write_book_fixture(&main, "MAIN DEVELOPMENT");
 
     let output = temp.path().join("site");
+    let builder = temp.path().join("fixture-builder.py");
+    write_fixture_builder(&builder);
     assert!(
         Command::new("python3")
             .arg(root.join("scripts/compose-pages-site.py"))
             .args([
+                "--builder",
+                builder.to_str().unwrap(),
                 "--release-source",
                 release.to_str().unwrap(),
                 "--main-source",

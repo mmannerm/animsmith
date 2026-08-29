@@ -24,6 +24,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - name: Install the pinned mdBook
         run: cargo install mdbook --version "$(tr -d '[:space:]' < .mdbook-version)" --locked
       - name: Build and validate the staged book
