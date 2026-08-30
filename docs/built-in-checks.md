@@ -70,7 +70,8 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Default findings: `error` for negative or non-increasing key times, `note`
   for a first key that starts materially after zero.
 - Measurement and finding: checks that key times start at or near zero and move
-  strictly forward. A finding means the runtime may clamp-hold or mis-sample
+  strictly forward. A finding means the runtime may clamp-hold or sample
+  incorrectly
   the track.
 - Prerequisites and applicability: none. This is generic file-ready coverage.
 - Config, defaults, and units: `[checks.time-monotonic] severity` only.
