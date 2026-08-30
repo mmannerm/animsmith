@@ -652,16 +652,8 @@ fn assert_documented_numeric_defaults(section: &MarkdownSection, source: &str) {
             default.key, default.constant
         );
         if !default.unit.is_empty() {
-            let unit_text = section.inline_tokens[value_index + 1..]
-                .iter()
-                .take_while(|token| !matches!(token, MarkdownInlineToken::Code(_)))
-                .filter_map(|token| match token {
-                    MarkdownInlineToken::Text(value) => Some(value.as_str()),
-                    MarkdownInlineToken::Code(_) => None,
-                })
-                .collect::<String>();
             assert!(
-                unit_text.contains(default.unit),
+                section_unit_after_value(section, value_index, default.unit),
                 "detailed section for {} is missing unit `{}` for `{}`",
                 section.heading,
                 default.unit,
@@ -670,6 +662,43 @@ fn assert_documented_numeric_defaults(section: &MarkdownSection, source: &str) {
         }
         assert_default_field_fallback(default, source, &section.heading);
     }
+}
+
+fn section_unit_after_value(section: &MarkdownSection, value_index: usize, unit: &str) -> bool {
+    section.inline_tokens[value_index + 1..]
+        .iter()
+        .take_while(|token| !matches!(token, MarkdownInlineToken::Code(_)))
+        .filter_map(|token| match token {
+            MarkdownInlineToken::Text(value) => Some(value.as_str()),
+            MarkdownInlineToken::Code(_) => None,
+        })
+        .collect::<String>()
+        .contains(unit)
+}
+
+fn section_unit_after_key(section: &MarkdownSection, key: &str, unit: &str) -> bool {
+    let Some(key_index) = section
+        .inline_tokens
+        .iter()
+        .position(|token| matches!(token, MarkdownInlineToken::Code(value) if value == key))
+    else {
+        return false;
+    };
+    let mut saw_default = false;
+    for (offset, token) in section.inline_tokens[key_index + 1..].iter().enumerate() {
+        match token {
+            MarkdownInlineToken::Text(value) => {
+                saw_default |= value.to_ascii_lowercase().contains("default");
+            }
+            MarkdownInlineToken::Code(value) if saw_default => {
+                return value.parse::<f64>().ok().is_some_and(|_| {
+                    section_unit_after_value(section, key_index + 1 + offset, unit)
+                });
+            }
+            MarkdownInlineToken::Code(_) => return false,
+        }
+    }
+    false
 }
 
 fn assert_default_field_fallback(default: &NumericDefault, source: &str, id: &str) {
@@ -1300,26 +1329,31 @@ fn unit_drift_in_one_detail_field_fails_even_when_a_later_unit_matches() {
     else {
         return;
     };
-    let mutated = built_in_checks.replacen(
-        "`contact_height_m` default `0.03` metres",
-        "`contact_height_m` default `0.03`",
-        1,
-    );
-    assert_ne!(
-        mutated, built_in_checks,
-        "mutation must remove the first unit"
-    );
-    assert!(
-        mutated.contains("`max_slide_mps` default `0.3`\n  metres per second"),
-        "the later unit must remain intact"
-    );
+    let normalized = built_in_checks.replace("\r\n", "\n");
+    for newline in ["\n", "\r\n"] {
+        let fixture = normalized.replace('\n', newline);
+        let mutated = fixture.replacen(
+            "`contact_height_m` default `0.03` metres",
+            "`contact_height_m` default `0.03`",
+            1,
+        );
+        assert_ne!(mutated, fixture, "mutation must remove the first unit");
+        let foot_slide = built_in_check_sections(&mutated)
+            .into_iter()
+            .find(|section| section.heading == "foot-slide")
+            .expect("the foot-slide detail section must remain");
+        assert!(
+            section_unit_after_key(&foot_slide, "max_slide_mps", "metres per second"),
+            "the later unit must remain intact for {newline:?} input"
+        );
 
-    let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &mutated);
-    })
-    .expect_err("a unit removed from one default association must fail the docs gate");
-    let message = panic_message(failure);
-    assert!(message.contains("contact_height_m"), "{message}");
+        let failure = std::panic::catch_unwind(|| {
+            assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &mutated);
+        })
+        .expect_err("a unit removed from one default association must fail the docs gate");
+        let message = panic_message(failure);
+        assert!(message.contains("contact_height_m"), "{message}");
+    }
 }
 
 #[test]
