@@ -6,6 +6,7 @@ Find what you need by task — each page below owns one job.
 |---|---|---|
 | [Why animsmith](why-animsmith.md) | Decide whether animsmith fits your team — what it is, why it exists, and what it is worth by role. The canonical home of the positioning case. | Get started |
 | [README](../README.md) | Install and quickstart, plus the check and configuration reference. | Get started |
+| [Configuration reference](configuration-reference.md) | Complete `animsmith.toml` tables, keys, defaults, precedence, validation, globs, rig profiles, and engine settings. | Reference |
 | [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder) and what animsmith validates at each level — and why a check fires: every runtime failure mode, mapped to the checks, repairs, and config that address it. | Guides |
 | [Unity 6000.3 profile guide](engine-profile-unity.md) | Configure the exact Unity Generic/Humanoid profiles, importer advice, root-motion choices, and scale boundary. | Guides |
 | [Unreal Engine 5.8 profile guide](engine-profile-unreal.md) | Map FBX animation, Skeleton, frame, unit, root-motion, and scale concerns to AnimSmith evidence without inventing importer settings. | Guides |

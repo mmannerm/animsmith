@@ -14,6 +14,9 @@ checks judge, and the
 [pipeline scenario guide](pipeline-scenarios.md) for acquiring and
 handling the raw asset.
 
+The complete key, default, and precedence reference for the contract used
+below is the [configuration reference](configuration-reference.md).
+
 **About the transcripts.** The command output in this tutorial is
 real, captured from a small generated rig that carries the same
 `mixamorig:*` bone names, the same nine profile roles, and the same

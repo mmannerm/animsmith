@@ -16,6 +16,9 @@ provenance and how to regenerate them). The conversion and reporting
 section operates on assets you supply, using placeholder filenames —
 `export.fbx`, `old.glb` — for your own exports and baselines.
 
+For complete contract semantics, see the
+[configuration reference](../docs/configuration-reference.md).
+
 Console transcripts are real command output, with long finding messages
 elided as `...`. JSON envelopes are abridged illustrative projections with
 placeholder digests, byte counts, and build provenance; capture those

@@ -205,6 +205,9 @@ than guessing or manufacturing a content finding.
 `animsmith.toml` is auto-loaded from the working directory, or passed
 with `--config`:
 
+The complete table/key reference, defaults, precedence, validation domains,
+and engine-profile settings live in the [configuration reference](https://github.com/mmannerm/animsmith/blob/main/docs/configuration-reference.md).
+
 ```toml
 [rig]
 profile = "auto"            # or mixamo / ue-mannequin / humanoid, or inline [rig.roles]
