@@ -507,6 +507,7 @@ fn assert_built_in_check_details(markdown: &str, catalog: &BTreeSet<&str>) {
 #[derive(Debug, Clone, Copy)]
 struct NumericDefault {
     constant: &'static str,
+    accessor: &'static str,
     key: &'static str,
     unit: &'static str,
     literal: &'static str,
@@ -516,6 +517,7 @@ fn numeric_defaults(id: &str) -> &'static [NumericDefault] {
     match id {
         "bind-pose" => &[NumericDefault {
             constant: "DEFAULT_MAX_MEAN_REST_DELTA_DEG",
+            accessor: "max_mean_rest_delta_deg",
             key: "max_mean_rest_delta_deg",
             unit: "degrees",
             literal: "45.0",
@@ -523,12 +525,14 @@ fn numeric_defaults(id: &str) -> &'static [NumericDefault] {
         "foot-slide" => &[
             NumericDefault {
                 constant: "DEFAULT_CONTACT_HEIGHT_M",
+                accessor: "contact_height_m",
                 key: "contact_height_m",
                 unit: "metres",
                 literal: "0.03",
             },
             NumericDefault {
                 constant: "DEFAULT_MAX_SLIDE_MPS",
+                accessor: "max_slide_mps",
                 key: "max_slide_mps",
                 unit: "metres per second",
                 literal: "0.3",
@@ -536,6 +540,7 @@ fn numeric_defaults(id: &str) -> &'static [NumericDefault] {
         ],
         "frozen-bone" => &[NumericDefault {
             constant: "DEFAULT_MIN_ROTATION_DEG",
+            accessor: "min_rotation_deg",
             key: "min_rotation_deg",
             unit: "degrees",
             literal: "1.0",
@@ -543,12 +548,14 @@ fn numeric_defaults(id: &str) -> &'static [NumericDefault] {
         "loop-closure" => &[
             NumericDefault {
                 constant: "DEFAULT_MAX_POSITION_DELTA_M",
+                accessor: "max_position_delta_m",
                 key: "max_position_delta_m",
                 unit: "metres",
                 literal: "0.01",
             },
             NumericDefault {
                 constant: "DEFAULT_MAX_ROTATION_DELTA_DEG",
+                accessor: "max_rotation_delta_deg",
                 key: "max_rotation_delta_deg",
                 unit: "degrees",
                 literal: "1.0",
@@ -556,18 +563,21 @@ fn numeric_defaults(id: &str) -> &'static [NumericDefault] {
         ],
         "loop-seam" => &[NumericDefault {
             constant: "DEFAULT_MAX_RATIO",
+            accessor: "max_ratio",
             key: "max_ratio",
             unit: "",
             literal: "1.5",
         }],
         "loop-seam-rot" => &[NumericDefault {
             constant: "DEFAULT_MAX_ANGULAR_VELOCITY_DELTA_DEGPS",
+            accessor: "max_angular_velocity_delta_degps",
             key: "max_angular_velocity_delta_degps",
             unit: "degrees per second",
             literal: "5.0",
         }],
         "loop-seam-vel" => &[NumericDefault {
             constant: "DEFAULT_MAX_VELOCITY_DELTA_MPS",
+            accessor: "max_velocity_delta_mps",
             key: "max_velocity_delta_mps",
             unit: "metres per second",
             literal: "0.1",
@@ -575,12 +585,14 @@ fn numeric_defaults(id: &str) -> &'static [NumericDefault] {
         "rest-world-scale" => &[
             NumericDefault {
                 constant: "DEFAULT_EXPECTED_UNIFORM_SCALE",
+                accessor: "expected_uniform_scale",
                 key: "expected_uniform_scale",
                 unit: "",
                 literal: "1.0",
             },
             NumericDefault {
                 constant: "DEFAULT_UNIFORM_SCALE_TOLERANCE",
+                accessor: "uniform_scale_tolerance",
                 key: "uniform_scale_tolerance",
                 unit: "",
                 literal: "1.0e-4",
@@ -603,26 +615,32 @@ fn assert_documented_numeric_defaults(section: &MarkdownSection, source: &str) {
             );
         };
         let mut saw_default = false;
-        let (value_index, documented_value) = section.inline_tokens[key_index + 1..]
-            .iter()
-            .enumerate()
-            .find_map(|(offset, token)| match token {
+        let mut value_index = None;
+        let mut documented_value = None;
+        for (offset, token) in section.inline_tokens[key_index + 1..].iter().enumerate() {
+            match token {
                 MarkdownInlineToken::Text(value) => {
                     saw_default |= value.to_ascii_lowercase().contains("default");
-                    None
                 }
-                MarkdownInlineToken::Code(value) if saw_default => value
-                    .parse::<f64>()
-                    .ok()
-                    .map(|value| (key_index + 1 + offset, value)),
-                MarkdownInlineToken::Code(_) => None,
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "detailed section for {} must put a numeric value after the `default` for `{}`",
-                    section.heading, default.key
-                )
-            });
+                MarkdownInlineToken::Code(value) if saw_default => {
+                    value_index = Some(key_index + 1 + offset);
+                    documented_value = Some(value.parse::<f64>().unwrap_or_else(|_| {
+                        panic!(
+                            "detailed section for {} must put a numeric value after the `default` for `{}`",
+                            section.heading, default.key
+                        )
+                    }));
+                    break;
+                }
+                MarkdownInlineToken::Code(_) => {}
+            }
+        }
+        let (Some(value_index), Some(documented_value)) = (value_index, documented_value) else {
+            panic!(
+                "detailed section for {} must put a numeric value after the `default` for `{}`",
+                section.heading, default.key
+            );
+        };
         assert_eq!(
             documented_value, implementation_value,
             "documented default for {} drifted from {}",
@@ -645,7 +663,27 @@ fn assert_documented_numeric_defaults(section: &MarkdownSection, source: &str) {
                 default.key
             );
         }
+        assert_default_field_fallback(default, source, &section.heading);
     }
+}
+
+fn assert_default_field_fallback(default: &NumericDefault, source: &str, id: &str) {
+    let production = source
+        .split_once("#[cfg(test)]")
+        .map_or(source, |(production, _)| production);
+    let compact_source: String = production
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    assert!(
+        compact_source.contains(&format!(
+            ".{}.unwrap_or({})",
+            default.accessor, default.constant
+        )),
+        "implementation default {} for {} is not bound to its production config field",
+        default.constant,
+        id
+    );
 }
 
 fn assert_source_contains_tokens(id: &str, source: &str, tokens: &[&str]) {
@@ -665,29 +703,92 @@ fn assert_emitted_severities(id: &str, source: &str, expected: &BTreeSet<&str>) 
     let mut remaining = production;
     while let Some(start) = remaining.find("Finding::new(") {
         let call = &remaining[start..];
-        let Some(severity) = call
-            .find("Severity::")
-            .map(|offset| &call[offset + "Severity::".len()..])
-            .and_then(|value| {
-                value
-                    .split(|character: char| !character.is_ascii_alphabetic())
-                    .next()
-            })
-        else {
-            panic!("implementation source for {id} has a Finding::new call without severity");
-        };
+        let end = balanced_call_end(call).unwrap_or_else(|| {
+            panic!("implementation source for {id} has an unterminated Finding::new call")
+        });
+        let severity = second_call_argument(&call[..=end]).unwrap_or_else(|| {
+            panic!(
+                "implementation source for {id} has a Finding::new call without a second argument"
+            )
+        });
         actual.insert(match severity {
-            "Error" => "error",
-            "Warning" => "warning",
-            "Note" => "note",
+            "Severity::Error" => "error",
+            "Severity::Warning" => "warning",
+            "Severity::Note" => "note",
             other => panic!("implementation source for {id} has unknown severity {other:?}"),
         });
-        remaining = &remaining[start + "Finding::new(".len()..];
+        remaining = &remaining[start + end + 1..];
     }
     assert_eq!(
         actual, *expected,
         "implementation emission severities for {id} drifted from documented defaults"
     );
+}
+
+fn balanced_call_end(call: &str) -> Option<usize> {
+    let open = call.find('(')?;
+    let mut depth = 1usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, character) in call.char_indices().skip(open + 1) {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn second_call_argument(call: &str) -> Option<&str> {
+    let open = call.find('(')?;
+    let end = call.char_indices().last()?.0;
+    let args = &call[open + 1..end];
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut first_comma = None;
+    for (offset, character) in args.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                if let Some(first) = first_comma {
+                    return Some(args[first + 1..offset].trim());
+                }
+                first_comma = Some(offset);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn assert_default_enablement(id: &str, source: &str, expected_enabled: bool) {
@@ -776,6 +877,20 @@ fn emitted_severity_helper_rejects_a_mutated_warning() {
 }
 
 #[test]
+fn emitted_severity_helper_rejects_an_unresolved_severity_argument() {
+    let failure = std::panic::catch_unwind(|| {
+        assert_emitted_severities(
+            "fixture",
+            "let severity = Severity::Warning; Finding::new(id, severity, \"first\"); Finding::new(id, Severity::Error, \"later\");",
+            &["error"].into_iter().collect(),
+        );
+    })
+    .expect_err("a non-literal severity argument must fail closed");
+    let message = panic_message(failure);
+    assert!(message.contains("unknown severity"), "{message}");
+}
+
+#[test]
 fn default_enablement_helper_rejects_a_mutated_opt_in_authority() {
     let source = "fn enabled_by_default(&self) -> bool { false }";
     let mutated = source.replacen("false", "true", 1);
@@ -797,6 +912,18 @@ fn default_constant_helper_rejects_a_mutated_numeric_fallback() {
     .expect_err("a changed numeric fallback must be rejected");
     let message = panic_message(failure);
     assert!(message.contains("DEFAULT_MAX_SLIDE_MPS"), "{message}");
+}
+
+#[test]
+fn default_field_helper_rejects_a_literal_fallback_with_an_unrelated_use() {
+    let source = "pub const DEFAULT_CONTACT_HEIGHT_M: f64 = 0.03; let contact_height_m = 0.03; #[cfg(test)] let unrelated = value.unwrap_or(DEFAULT_CONTACT_HEIGHT_M);";
+    let default = numeric_defaults("foot-slide")[0];
+    let failure = std::panic::catch_unwind(|| {
+        assert_default_field_fallback(&default, source, "fixture");
+    })
+    .expect_err("a literal production fallback must not satisfy the field authority");
+    let message = panic_message(failure);
+    assert!(message.contains("DEFAULT_CONTACT_HEIGHT_M"), "{message}");
 }
 
 fn assert_exact_ids(surface: &str, documented: &BTreeSet<&str>, expected: &BTreeSet<&str>) {
