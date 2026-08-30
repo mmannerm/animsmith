@@ -71,7 +71,9 @@ fields, malformed or oversized input, noncanonical rows, changed self-identity,
 and any stored conformance result that does not recompute from the strict V2
 prediction. The probe preserves closure-relative paths in its private,
 read-only snapshot, then re-hashes and removes that retained tree after all
-observation and before report serialization; neither the owner path nor the
+observation and before report serialization; on Windows the probe additionally
+refuses final reparse points and validates each opened source handle's final
+path remains under the authorized root, so neither the owner path nor the
 temporary path enters the contract.
 The headless Bevy executable is deliberately excluded from this Rust-1.88
 workspace because its isolated build records and enforces the exact official

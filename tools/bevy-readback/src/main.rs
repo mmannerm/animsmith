@@ -24,6 +24,12 @@ use std::{
 };
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::{Layer, layer::Context, prelude::*, registry::LookupSpan};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, GetFinalPathNameByHandleW, VOLUME_NAME_DOS,
+};
 
 const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
 const RUSTC_VERSION: &str = env!("ANIMSMITH_BEVY_READBACK_RUSTC");
@@ -133,6 +139,69 @@ enum SnapshotError {
     Temporary,
 }
 
+struct AuthorizedRoot {
+    access_path: PathBuf,
+    #[cfg(windows)]
+    final_path: PathBuf,
+}
+
+impl AuthorizedRoot {
+    fn open(path: impl AsRef<Path>) -> io::Result<Self> {
+        #[cfg(windows)]
+        {
+            let root = open_root_directory(path.as_ref())?;
+            let metadata = root.metadata()?;
+            if !metadata.file_type().is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "authorized root is not a directory",
+                ));
+            }
+            let final_path = final_path_for_handle(&root)?;
+            return Ok(Self {
+                access_path: final_path.clone(),
+                final_path,
+            });
+        }
+        #[cfg(not(windows))]
+        {
+            let access_path = fs::canonicalize(path)?;
+            if !access_path.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "authorized root is not a directory",
+                ));
+            }
+            Ok(Self { access_path })
+        }
+    }
+
+    fn open_source(&self, relative: &Path, expected_bytes: u64) -> Result<File, ()> {
+        #[cfg(windows)]
+        {
+            let path = self.access_path.join(relative);
+            let file = open_regular_bounded(&path, expected_bytes).map_err(|_| ())?;
+            let final_path = final_path_for_handle(&file).map_err(|_| ())?;
+            return final_path_stays_under_root(&self.final_path, &final_path)
+                .then_some(file)
+                .ok_or(());
+        }
+        #[cfg(not(windows))]
+        {
+            let path = fs::canonicalize(self.access_path.join(relative)).map_err(|_| ())?;
+            if !path.starts_with(&self.access_path) || !path.is_file() {
+                return Err(());
+            }
+            open_regular_bounded(&path, expected_bytes).map_err(|_| ())
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    fn path(&self) -> &Path {
+        &self.access_path
+    }
+}
+
 struct VerifiedSnapshot {
     root: PathBuf,
     primary: (PathBuf, animsmith_core::InputIdentity),
@@ -141,7 +210,7 @@ struct VerifiedSnapshot {
 
 impl VerifiedSnapshot {
     fn capture(
-        source_root: &Path,
+        source_root: &AuthorizedRoot,
         asset: &str,
         primary: &animsmith_core::InputIdentity,
         closure: &animsmith_core::DependencyClosureV1,
@@ -156,15 +225,18 @@ impl VerifiedSnapshot {
             primary: (primary_path.clone(), primary.clone()),
             resources: Vec::with_capacity(closure.external_resources().len()),
         };
-        let primary_source =
-            rooted_file(source_root, primary_relative).map_err(|()| SnapshotError::Source)?;
+        let primary_source = source_root
+            .open_source(primary_relative, primary.bytes())
+            .map_err(|()| SnapshotError::Source)?;
         stage_verified_file(&primary_source, &primary_path, primary)?;
         for resource in closure.external_resources() {
             let relative = Path::new(resource.key().as_str());
             if !safe_relative_path(relative) {
                 return Err(SnapshotError::Source);
             }
-            let source = rooted_file(source_root, relative).map_err(|()| SnapshotError::Source)?;
+            let source = source_root
+                .open_source(relative, resource.identity().bytes())
+                .map_err(|()| SnapshotError::Source)?;
             let destination = snapshot.root.join(relative);
             snapshot
                 .resources
@@ -181,12 +253,9 @@ impl VerifiedSnapshot {
     fn verify(&self) -> (bool, bool) {
         let primary = file_identity(&self.primary.0, self.primary.1.bytes())
             .is_ok_and(|value| value == self.primary.1);
-        let dependencies = self
-            .resources
-            .iter()
-            .all(|(path, expected)| {
-                file_identity(path, expected.bytes()).is_ok_and(|value| value == *expected)
-            });
+        let dependencies = self.resources.iter().all(|(path, expected)| {
+            file_identity(path, expected.bytes()).is_ok_and(|value| value == *expected)
+        });
         (primary, dependencies)
     }
 
@@ -250,14 +319,13 @@ fn private_snapshot_root() -> io::Result<PathBuf> {
 }
 
 fn stage_verified_file(
-    source: &Path,
+    source: &File,
     destination: &Path,
     expected: &animsmith_core::InputIdentity,
 ) -> Result<(), SnapshotError> {
     let parent = destination.parent().ok_or(SnapshotError::Temporary)?;
     fs::create_dir_all(parent).map_err(|_| SnapshotError::Temporary)?;
-    let mut input =
-        open_regular_bounded(source, expected.bytes()).map_err(|_| SnapshotError::Source)?;
+    let mut input = source.try_clone().map_err(|_| SnapshotError::Source)?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -318,6 +386,16 @@ fn file_identity(path: &Path, expected_bytes: u64) -> io::Result<animsmith_core:
 fn open_regular_bounded(path: &Path, expected_bytes: u64) -> io::Result<File> {
     let file = open_no_follow_nonblocking(path)?;
     let metadata = file.metadata()?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "snapshot source is a reparse point",
+            ));
+        }
+    }
     if !metadata.file_type().is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -344,7 +422,49 @@ fn open_no_follow_nonblocking(path: &Path) -> io::Result<File> {
 
 #[cfg(not(unix))]
 fn open_no_follow_nonblocking(path: &Path) -> io::Result<File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        return OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path);
+    }
     File::open(path)
+}
+
+#[cfg(windows)]
+fn open_root_directory(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    OpenOptions::new()
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn final_path_for_handle(file: &File) -> io::Result<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+
+    let handle = file.as_raw_handle() as _;
+    let flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
+    let mut capacity = 256_u32;
+    loop {
+        let mut buffer = vec![0_u16; capacity as usize];
+        let length =
+            unsafe { GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), capacity, flags) };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length < capacity {
+            buffer.truncate(length as usize);
+            return Ok(PathBuf::from(OsString::from_wide(&buffer)));
+        }
+        capacity = length + 1;
+    }
 }
 
 fn make_readonly(path: &Path) -> io::Result<()> {
@@ -383,6 +503,11 @@ fn safe_relative_path(path: &Path) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
+#[cfg(any(test, windows))]
+fn final_path_stays_under_root(root: &Path, path: &Path) -> bool {
+    path.starts_with(root)
+}
+
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let (Some(a), Some(root_arg), Some(b), Some(asset), Some(c), Some(prediction_path)) = (
@@ -403,8 +528,8 @@ fn main() -> ExitCode {
     {
         return usage();
     }
-    let root = match fs::canonicalize(root_arg) {
-        Ok(path) if path.is_dir() => path,
+    let root = match AuthorizedRoot::open(&root_arg) {
+        Ok(path) => path,
         _ => return operator_error("cannot access authorized asset root"),
     };
     let bytes = match read_prediction(prediction_path) {
@@ -443,18 +568,14 @@ fn main() -> ExitCode {
         }
     };
     #[cfg(feature = "test-support")]
-    if env::var_os("ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_AFTER_SNAPSHOT").is_some() {
-        let Ok(primary_path) = rooted_file(&root, Path::new(&asset)) else {
-            return operator_error("cannot locate original source for mutation");
-        };
-        if OpenOptions::new()
+    if env::var_os("ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_AFTER_SNAPSHOT").is_some()
+        && OpenOptions::new()
             .append(true)
-            .open(primary_path)
+            .open(root.path().join(&asset))
             .and_then(|mut file| file.write_all(b"mutation after snapshot"))
             .is_err()
-        {
-            return operator_error("cannot inject original-source mutation");
-        }
+    {
+        return operator_error("cannot inject original-source mutation");
     }
     #[cfg(feature = "test-support")]
     if let Some(key) =
@@ -468,7 +589,7 @@ fn main() -> ExitCode {
         };
         if OpenOptions::new()
             .append(true)
-            .open(root.join(key))
+            .open(root.path().join(key))
             .and_then(|mut file| file.write_all(b"mutation after snapshot"))
             .is_err()
         {
@@ -1030,6 +1151,7 @@ fn empty_observation(
         dependencies_verified,
     )
 }
+#[cfg(test)]
 fn rooted_file(root: &Path, relative: &Path) -> Result<PathBuf, ()> {
     let path = fs::canonicalize(root.join(relative)).map_err(|_| ())?;
     if path.starts_with(root) && path.is_file() {
@@ -1179,25 +1301,93 @@ mod tests {
         symlink(&external, root.join("external.gltf")).unwrap();
         assert!(rooted_file(&root, Path::new("external.gltf")).is_err());
 
-        let checked_primary = rooted_file(&root, Path::new("asset.gltf")).unwrap();
+        let authorized_root = AuthorizedRoot::open(&root).unwrap();
         fs::remove_file(&primary).unwrap();
         symlink(&external, &primary).unwrap();
         assert!(matches!(
-            stage_verified_file(&checked_primary, &staged.join("asset.gltf"), &primary_id),
+            authorized_root
+                .open_source(Path::new("asset.gltf"), primary_id.bytes())
+                .map_err(|()| SnapshotError::Source)
+                .and_then(|source| {
+                    stage_verified_file(&source, &staged.join("asset.gltf"), &primary_id)
+                }),
             Err(SnapshotError::Source)
         ));
         assert!(file_identity(&primary, primary_id.bytes()).is_err());
 
-        let checked_dependency = rooted_file(&root, Path::new("buffer.bin")).unwrap();
         replace_with_fifo(&dependency);
         assert!(matches!(
-            stage_verified_file(&checked_dependency, &staged.join("buffer.bin"), &dependency_id),
+            authorized_root
+                .open_source(Path::new("buffer.bin"), dependency_id.bytes())
+                .map_err(|()| SnapshotError::Source)
+                .and_then(|source| {
+                    stage_verified_file(&source, &staged.join("buffer.bin"), &dependency_id)
+                }),
             Err(SnapshotError::Source)
         ));
         assert!(file_identity(&dependency, dependency_id.bytes()).is_err());
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
         fs::remove_dir_all(staged).unwrap();
+    }
+
+    #[test]
+    fn final_path_boundary_rejects_prefix_confusion() {
+        assert!(final_path_stays_under_root(
+            Path::new("C:/authorized"),
+            Path::new("C:/authorized/nested/file.gltf")
+        ));
+        assert!(!final_path_stays_under_root(
+            Path::new("C:/authorized"),
+            Path::new("C:/authorized-elsewhere/file.gltf")
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_open_source_rejects_reparse_targets_and_root_escapes() {
+        use std::os::windows::fs::{symlink_dir, symlink_file};
+
+        let root = test_root();
+        let outside = test_root();
+        let asset = outside.join("external.gltf");
+        fs::write(&asset, b"external").unwrap();
+        let expected = animsmith_core::InputIdentity::from_bytes(b"external");
+        let authorized_root = AuthorizedRoot::open(&root).unwrap();
+
+        match symlink_file(&asset, root.join("asset.gltf")) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                let _ = fs::remove_dir_all(&root);
+                let _ = fs::remove_dir_all(&outside);
+                return;
+            }
+            Err(error) => panic!("cannot create file symlink: {error}"),
+        }
+        assert!(
+            authorized_root
+                .open_source(Path::new("asset.gltf"), expected.bytes())
+                .is_err()
+        );
+
+        let nested = root.join("escape");
+        match symlink_dir(&outside, &nested) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                let _ = fs::remove_dir_all(&root);
+                let _ = fs::remove_dir_all(&outside);
+                return;
+            }
+            Err(error) => panic!("cannot create directory symlink: {error}"),
+        }
+        assert!(
+            authorized_root
+                .open_source(Path::new("escape/external.gltf"), expected.bytes())
+                .is_err()
+        );
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]

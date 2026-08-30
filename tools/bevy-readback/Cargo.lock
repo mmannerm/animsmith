@@ -78,6 +78,7 @@ dependencies = [
  "sha2",
  "tracing",
  "tracing-subscriber",
+ "windows-sys",
 ]
 
 [[package]]

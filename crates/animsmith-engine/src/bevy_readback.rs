@@ -26,10 +26,10 @@ pub const BEVY_READBACK_V1_MAX_UPDATES: u64 = 4_096;
 /// Exact compiler identity required by the isolated harness build script.
 pub const BEVY_READBACK_V1_RUSTC: &str = "rustc 1.95.0 (59807616e 2026-04-14)";
 /// Frozen byte count of the committed excluded-tool lock graph.
-pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = 86_374;
+pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = 86_390;
 /// Frozen SHA-256 of the committed excluded-tool lock graph.
 pub const BEVY_READBACK_V1_LOCK_SHA256: &str =
-    "b674e2f74daff0a0815bfbbce258cbb76181c18b39ee5b6499c12a064a809b18";
+    "2427e9d5d83381fb4a4e66a4636fa1ac55c75cd21f1f09481dc2a1d1c1bf9773";
 const MAX_TEXT_BYTES: usize = 1_024;
 
 /// Exact V2 document identity plus its canonical V4 provenance header.
@@ -968,9 +968,9 @@ mod tests {
     fn frozen_lock_identity() -> InputIdentity {
         InputIdentity::from_sha256_digest(
             [
-                0xb6, 0x74, 0xe2, 0xf7, 0x4d, 0xaf, 0xf0, 0xa0, 0x81, 0x5b, 0xfb, 0xbc, 0xe2, 0x58,
-                0xcb, 0xb7, 0x61, 0x81, 0xc1, 0x8b, 0x39, 0xee, 0x5b, 0x64, 0x99, 0xc1, 0x2a, 0x06,
-                0x4a, 0x80, 0x9b, 0x18,
+                0x24, 0x27, 0xe9, 0xd5, 0xd8, 0x33, 0x81, 0xfb, 0x4a, 0x4e, 0x66, 0xa4, 0x63, 0x6f,
+                0xa1, 0xac, 0x55, 0xc7, 0x5c, 0xd2, 0x1f, 0x1f, 0x09, 0x48, 0x1d, 0xc2, 0xa1, 0xd1,
+                0xc1, 0xbf, 0x97, 0x73,
             ],
             BEVY_READBACK_V1_LOCK_BYTES,
         )

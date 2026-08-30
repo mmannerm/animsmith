@@ -38,9 +38,12 @@ The asset argument must be a relative `.gltf` or `.glb` path under
 `--asset-root`. The prediction must be AnimSmith's strict rich addressability
 V2 output for the same immutable primary input and dependency closure.
 
-Before Bevy starts, the probe canonicalizes the owner-provided root and streams
-the exact primary plus every complete-closure external resource into a private,
-read-only temporary snapshot while verifying their recorded identities. It
+Before Bevy starts, the probe resolves the owner-provided root once, then
+streams the exact primary plus every complete-closure external resource into a
+private, read-only temporary snapshot while verifying their recorded
+identities. On Windows, it opens each source descriptor before copying, refuses
+final reparse points, and validates the opened handle's final path remains
+under the authorized root; Unix retains nonblocking no-follow opens. It
 preserves each safe source-relative key, points `AssetServer` only at that
 snapshot, retains it through all observation, then re-hashes and removes it
 before forming or serializing the readback. The original authorized paths are
@@ -50,7 +53,7 @@ never emitted.
 
 The prediction path must directly name a regular file. Its type and metadata
 size are rejected before opening or allocating a corresponding buffer; Unix
-opens are also nonblocking and no-follow. A bounded N+1 read still catches
+opens are nonblocking and no-follow, and a bounded N+1 read still catches
 concurrent growth above the V2 256 MiB cap before strict decoding.
 
 The JSON root is `urn:animsmith:schema:bevy-readback:1`, is self-identifying,
