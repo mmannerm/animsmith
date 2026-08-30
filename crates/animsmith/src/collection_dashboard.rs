@@ -53,6 +53,7 @@ pub(crate) fn run(
         evaluation,
         report_links,
     )?;
+    let findings = authority_value.summary.findings;
     let authority_bytes = serialize_authority_bounded(&authority_value)?;
     validate_authority_readback(&authority_bytes)?;
     let authority_text = std::str::from_utf8(&authority_bytes)
@@ -74,7 +75,7 @@ pub(crate) fn run(
     publish::emit_text(&render::render_report_written(
         output,
         collection.clips.len(),
-        0,
+        findings,
         html_bytes.len(),
     ));
     Ok(ExitCode::SUCCESS)
@@ -90,7 +91,7 @@ fn serialize_authority_bounded(
 }
 
 fn validate_authority_readback(bytes: &[u8]) -> Result<(), String> {
-    let readback = serde_json::from_slice::<DashboardAuthorityReadback>(bytes)
+    let readback = serde_json::from_slice::<CollectionDashboardAuthorityV1>(bytes)
         .map_err(|_| "dashboard authority fails typed V1 readback".to_owned())?;
     readback.validate_semantics()?;
     Ok(())
@@ -268,7 +269,7 @@ fn read_compatible_evaluation(
     }
     wire.validate()?;
     Ok(EvaluationAuthorityV1 {
-        input: InputIdentity::from_bytes(&bytes),
+        input: IdentityWire::from_input_identity(&InputIdentity::from_bytes(&bytes)),
         status: wire.status,
         decision: wire.decision,
         reason: wire.reason,
@@ -380,19 +381,11 @@ fn build_authority(
                     excluded: facts.coverage.excluded,
                     not_evaluated: facts.coverage.not_evaluated,
                 });
-            let outcome = if facts.is_some_and(|facts| facts.findings > 0) {
-                "with_findings"
-            } else if coverage.partial > 0 {
-                "partial"
-            } else if coverage.complete > 0 {
-                "evaluated"
-            } else if coverage.excluded > 0 {
-                "excluded"
-            } else if clip.check_key.is_none() {
-                "unavailable"
-            } else {
-                "not_evaluated"
-            };
+            let outcome = derive_clip_outcome(
+                facts.map_or(0, |facts| facts.findings),
+                &coverage,
+                clip.availability,
+            );
             Ok(CollectionDashboardClipV1 {
                 id: clip.id.clone(),
                 source: clip.source.clone(),
@@ -414,9 +407,9 @@ fn build_authority(
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(CollectionDashboardAuthorityV1 {
-        schema: COLLECTION_DASHBOARD_V1_ID,
+        schema: COLLECTION_DASHBOARD_V1_ID.to_owned(),
         schema_version: COLLECTION_DASHBOARD_V1_VERSION,
-        collection_output,
+        collection_output: IdentityWire::from_input_identity(&collection_output),
         evaluation,
         summary: DashboardSummaryV1::from_rows(
             collection.sources.len(),
@@ -450,18 +443,40 @@ fn build_authority(
     })
 }
 
-#[derive(Serialize)]
+fn derive_clip_outcome(
+    findings: usize,
+    coverage: &DashboardCoverageV1,
+    availability: &str,
+) -> &'static str {
+    if findings > 0 {
+        "with_findings"
+    } else if coverage.partial > 0 {
+        "partial"
+    } else if coverage.complete > 0 {
+        "evaluated"
+    } else if coverage.excluded > 0 {
+        "excluded"
+    } else if availability != "established" {
+        "unavailable"
+    } else {
+        "not_evaluated"
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CollectionDashboardAuthorityV1 {
-    schema: &'static str,
+    schema: String,
     schema_version: u32,
-    collection_output: InputIdentity,
+    collection_output: IdentityWire,
     #[serde(skip_serializing_if = "Option::is_none")]
     evaluation: Option<EvaluationAuthorityV1>,
     summary: DashboardSummaryV1,
     view: CollectionDashboardViewV1,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DashboardSummaryV1 {
     sources: usize,
     clips: usize,
@@ -514,14 +529,16 @@ impl DashboardSummaryV1 {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CollectionDashboardViewV1 {
     sources: Vec<CollectionDashboardSourceV1>,
     clips: Vec<CollectionDashboardClipV1>,
     runtime_sets: Vec<CollectionDashboardRuntimeSetV1>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CollectionDashboardSourceV1 {
     key: String,
     locator: String,
@@ -530,7 +547,8 @@ struct CollectionDashboardSourceV1 {
     dependency_closure: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CollectionDashboardClipV1 {
     id: String,
     source: String,
@@ -549,7 +567,8 @@ struct CollectionDashboardClipV1 {
     report_link: Option<String>,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DashboardCoverageV1 {
     complete: usize,
     partial: usize,
@@ -557,7 +576,8 @@ struct DashboardCoverageV1 {
     not_evaluated: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CollectionDashboardRuntimeSetV1 {
     id: String,
     lifecycle: String,
@@ -565,22 +585,7 @@ struct CollectionDashboardRuntimeSetV1 {
     gaps: Vec<String>,
 }
 
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardAuthorityReadback {
-    schema: String,
-    schema_version: u32,
-    collection_output: IdentityWire,
-    summary: DashboardSummaryReadback,
-    #[serde(default)]
-    evaluation: Option<DashboardEvaluationReadback>,
-    view: DashboardViewReadback,
-}
-impl DashboardAuthorityReadback {
+impl CollectionDashboardAuthorityV1 {
     fn validate_semantics(&self) -> Result<(), String> {
         if self.schema != COLLECTION_DASHBOARD_V1_ID
             || self.schema_version != COLLECTION_DASHBOARD_V1_VERSION
@@ -594,7 +599,7 @@ impl DashboardAuthorityReadback {
         if let Some(evaluation) = &self.evaluation {
             evaluation.validate()?;
         }
-        let mut summary = DashboardSummaryReadback {
+        let mut summary = DashboardSummaryV1 {
             sources: self.view.sources.len(),
             clips: self.view.clips.len(),
             runtime_sets: self.view.runtime_sets.len(),
@@ -616,6 +621,18 @@ impl DashboardAuthorityReadback {
             .collect::<BTreeSet<_>>();
         if clip_ids.len() != self.view.clips.len() {
             return Err("dashboard authority duplicates a logical clip".to_owned());
+        }
+        if self.evaluation.as_ref().is_some_and(|evaluation| {
+            evaluation.families.iter().any(|family| {
+                family.members.iter().any(|member| {
+                    member
+                        .logical_clip
+                        .as_deref()
+                        .is_some_and(|clip| !clip_ids.contains(clip))
+                })
+            })
+        }) {
+            return Err("dashboard evaluation resolves an unknown logical clip".to_owned());
         }
         for clip in &self.view.clips {
             if clip.id.chars().count() > 4096
@@ -652,19 +669,7 @@ impl DashboardAuthorityReadback {
                 .prediction_unavailable
                 .checked_add(clip.prediction_unavailable)
                 .ok_or_else(|| "dashboard summary overflows".to_owned())?;
-            let expected = if clip.findings > 0 {
-                "with_findings"
-            } else if clip.coverage.partial > 0 {
-                "partial"
-            } else if clip.coverage.complete > 0 {
-                "evaluated"
-            } else if clip.coverage.excluded > 0 {
-                "excluded"
-            } else if clip.availability != "established" {
-                "unavailable"
-            } else {
-                "not_evaluated"
-            };
+            let expected = derive_clip_outcome(clip.findings, &clip.coverage, &clip.availability);
             if clip.outcome != expected {
                 return Err("dashboard row outcome contradicts its coverage".to_owned());
             }
@@ -678,6 +683,38 @@ impl DashboardAuthorityReadback {
                 _ => unreachable!(),
             }
         }
+        let source_keys = self
+            .view
+            .sources
+            .iter()
+            .map(|source| source.key.as_str())
+            .collect::<BTreeSet<_>>();
+        if source_keys.len() != self.view.sources.len() {
+            return Err("dashboard authority duplicates a source key".to_owned());
+        }
+        for source in &self.view.sources {
+            if source.key.chars().count() > 4096
+                || source.locator.chars().count() > 4096
+                || !matches!(source.availability.as_str(), "available" | "unavailable")
+                || !matches!(source.loader.as_str(), "ready" | "unavailable")
+                || !matches!(
+                    source.dependency_closure.as_str(),
+                    "complete" | "partial" | "unavailable"
+                )
+            {
+                return Err("dashboard authority has an invalid source".to_owned());
+            }
+        }
+        if self
+            .view
+            .clips
+            .iter()
+            .any(|clip| !source_keys.contains(clip.source.as_str()))
+        {
+            return Err("dashboard clip references an unknown source".to_owned());
+        }
+        let mut memberships = BTreeMap::<&str, BTreeSet<&str>>::new();
+        let mut set_ids = BTreeSet::new();
         for set in &self.view.runtime_sets {
             if set.id.chars().count() > 4096
                 || set.members.len() > 4096
@@ -691,6 +728,9 @@ impl DashboardAuthorityReadback {
             {
                 return Err("dashboard authority has an invalid runtime set".to_owned());
             }
+            if !set_ids.insert(set.id.as_str()) {
+                return Err("dashboard authority duplicates a runtime set".to_owned());
+            }
             if set
                 .members
                 .iter()
@@ -698,18 +738,29 @@ impl DashboardAuthorityReadback {
             {
                 return Err("dashboard runtime set references an unknown logical clip".to_owned());
             }
+            for member in &set.members {
+                if !memberships
+                    .entry(member.as_str())
+                    .or_default()
+                    .insert(set.id.as_str())
+                {
+                    return Err("dashboard runtime set duplicates a logical clip".to_owned());
+                }
+            }
         }
-        for source in &self.view.sources {
-            if source.key.chars().count() > 4096
-                || source.locator.chars().count() > 4096
-                || !matches!(source.availability.as_str(), "available" | "unavailable")
-                || !matches!(source.loader.as_str(), "ready" | "unavailable")
-                || !matches!(
-                    source.dependency_closure.as_str(),
-                    "complete" | "partial" | "unavailable"
-                )
+        for clip in &self.view.clips {
+            let listed = clip
+                .runtime_sets
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            if listed.len() != clip.runtime_sets.len()
+                || memberships
+                    .get(clip.id.as_str())
+                    .is_some_and(|sets| sets != &listed)
+                || !memberships.contains_key(clip.id.as_str()) && !listed.is_empty()
             {
-                return Err("dashboard authority has an invalid source".to_owned());
+                return Err("dashboard clip/runtime-set membership does not reconcile".to_owned());
             }
         }
         if self.summary.sources != summary.sources
@@ -730,112 +781,7 @@ impl DashboardAuthorityReadback {
         Ok(())
     }
 }
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardSummaryReadback {
-    sources: usize,
-    clips: usize,
-    runtime_sets: usize,
-    findings: usize,
-    coverage_gaps: usize,
-    prediction_unavailable: usize,
-    with_findings: usize,
-    evaluated: usize,
-    partial: usize,
-    excluded: usize,
-    unavailable: usize,
-    not_evaluated: usize,
-}
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardViewReadback {
-    sources: Vec<DashboardSourceReadback>,
-    clips: Vec<DashboardClipReadback>,
-    runtime_sets: Vec<DashboardSetReadback>,
-}
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardSourceReadback {
-    key: String,
-    locator: String,
-    availability: String,
-    loader: String,
-    dependency_closure: String,
-}
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardClipReadback {
-    id: String,
-    source: String,
-    take_index: u64,
-    take_name: String,
-    roles: Vec<String>,
-    availability: String,
-    outcome: String,
-    findings: usize,
-    severities: Vec<String>,
-    coverage_gaps: usize,
-    prediction_unavailable: usize,
-    coverage: DashboardCoverageReadback,
-    runtime_sets: Vec<String>,
-    #[serde(default)]
-    report_link: Option<String>,
-}
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardCoverageReadback {
-    complete: usize,
-    partial: usize,
-    excluded: usize,
-    not_evaluated: usize,
-}
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardSetReadback {
-    id: String,
-    lifecycle: String,
-    members: Vec<String>,
-    gaps: Vec<String>,
-}
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardEvaluationReadback {
-    input: IdentityWire,
-    status: String,
-    decision: String,
-    #[serde(default)]
-    reason: Option<String>,
-    families: Vec<DashboardEvaluationFamilyReadback>,
-}
-impl DashboardEvaluationReadback {
+impl EvaluationAuthorityV1 {
     fn validate(&self) -> Result<(), String> {
         if !self.input.valid(Some(MAX_EVALUATION_BYTES))
             || !matches!(self.status.as_str(), "complete" | "incomplete")
@@ -850,25 +796,42 @@ impl DashboardEvaluationReadback {
         for family in &self.families {
             family.validate()?;
         }
-        Ok(())
+        let complete_pass = self.status == "complete" && self.decision == "pass";
+        let complete_finding = self.status == "complete" && self.decision == "finding";
+        let incomplete = self.status == "incomplete" && self.decision == "not_evaluated";
+        let valid = (complete_pass
+            && ((self.reason.as_deref() == Some("no_configured_families")
+                && self.families.is_empty())
+                || (self.reason.is_none()
+                    && !self.families.is_empty()
+                    && self
+                        .families
+                        .iter()
+                        .all(|family| family.status == "complete" && family.decision == "pass"))))
+            || (complete_finding
+                && self.reason.is_none()
+                && !self.families.is_empty()
+                && self
+                    .families
+                    .iter()
+                    .all(|family| family.status == "complete")
+                && self
+                    .families
+                    .iter()
+                    .any(|family| family.decision == "finding"))
+            || (incomplete
+                && self.reason.is_none()
+                && !self.families.is_empty()
+                && self
+                    .families
+                    .iter()
+                    .any(|family| family.status == "incomplete"));
+        valid
+            .then_some(())
+            .ok_or_else(|| "dashboard authority has contradictory transition state".to_owned())
     }
 }
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardEvaluationFamilyReadback {
-    id: String,
-    status: String,
-    decision: String,
-    #[serde(default)]
-    reason: Option<String>,
-    members: Vec<DashboardEvaluationMemberReadback>,
-    pair_findings: Vec<DashboardEvaluationPairFindingReadback>,
-}
-impl DashboardEvaluationFamilyReadback {
+impl EvaluationFamilyV1 {
     fn validate(&self) -> Result<(), String> {
         if self.id.is_empty()
             || self.id.chars().count() > 255
@@ -901,35 +864,32 @@ impl DashboardEvaluationFamilyReadback {
         for pair in &self.pair_findings {
             pair.validate(self.members.len())?;
         }
-        Ok(())
+        let complete_pass = self.status == "complete" && self.decision == "pass";
+        let complete_finding = self.status == "complete" && self.decision == "finding";
+        let incomplete = self.status == "incomplete" && self.decision == "not_evaluated";
+        let valid = (complete_pass && self.reason.is_none() && self.pair_findings.is_empty())
+            || (complete_finding && self.reason.is_none() && !self.pair_findings.is_empty())
+            || (incomplete
+                && self.reason.as_deref().is_some_and(valid_transition_reason)
+                && self.pair_findings.is_empty());
+        valid
+            .then_some(())
+            .ok_or_else(|| "dashboard authority has contradictory transition family".to_owned())
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EvaluationPairFindingV1 {
     member_indices: [u64; 2],
     boundary: String,
     translation_offenders: Vec<TransitionPoseOffenderWire>,
     rotation_offenders: Vec<TransitionPoseOffenderWire>,
 }
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DashboardEvaluationMemberReadback {
-    take_index: u64,
-    take_name: String,
-    #[serde(default)]
-    source_input: Option<IdentityWire>,
-    #[serde(default)]
-    logical_clip: Option<String>,
-}
-
-#[derive(Serialize)]
 struct EvaluationAuthorityV1 {
-    input: InputIdentity,
+    input: IdentityWire,
     status: String,
     decision: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -937,7 +897,8 @@ struct EvaluationAuthorityV1 {
     families: Vec<EvaluationFamilyV1>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EvaluationFamilyV1 {
     id: String,
     status: String,
@@ -947,19 +908,7 @@ struct EvaluationFamilyV1 {
     members: Vec<EvaluationMemberV1>,
     pair_findings: Vec<EvaluationPairFindingV1>,
 }
-#[allow(
-    dead_code,
-    reason = "strict dashboard authority readback validates these fields"
-)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardEvaluationPairFindingReadback {
-    member_indices: [u64; 2],
-    boundary: String,
-    translation_offenders: Vec<TransitionPoseOffenderWire>,
-    rotation_offenders: Vec<TransitionPoseOffenderWire>,
-}
-impl DashboardEvaluationPairFindingReadback {
+impl EvaluationPairFindingV1 {
     fn validate(&self, members: usize) -> Result<(), String> {
         if self
             .member_indices
@@ -982,7 +931,8 @@ impl DashboardEvaluationPairFindingReadback {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EvaluationMemberV1 {
     take_index: u64,
     take_name: String,
@@ -1351,6 +1301,9 @@ mod tests {
             "report.html?q=1",
             "a\\b.html",
             "reports/%2e%2e/escape.html",
+            "reports/%2fescape.html",
+            "reports/evil\u{0000}.html",
+            "reports/evil\r\n.html",
         ] {
             assert!(!safe_relative_report_reference(value), "{value}");
         }
@@ -1379,6 +1332,79 @@ mod tests {
         let mut unknown = value;
         unknown["unexpected"] = true.into();
         assert!(validate_authority_readback(&serde_json::to_vec(&unknown).unwrap()).is_err());
+    }
+
+    fn rich_authority() -> serde_json::Value {
+        let identity = serde_json::json!({"sha256": "0".repeat(64), "bytes": 0});
+        serde_json::json!({
+            "schema":"urn:animsmith:schema:collection-dashboard:1", "schema_version":1,
+            "collection_output":identity,
+            "summary":{"sources":1,"clips":6,"runtime_sets":1,"findings":2,"coverage_gaps":3,"prediction_unavailable":4,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
+            "evaluation":{"input":{"sha256":"0".repeat(64),"bytes":0},"status":"complete","decision":"finding","families":[{"id":"family","status":"complete","decision":"finding","members":[{"take_index":0,"take_name":"Finding","logical_clip":"finding"},{"take_index":1,"take_name":"Partial","logical_clip":"partial"}],"pair_findings":[{"member_indices":[0,1],"boundary":"entry","translation_offenders":[{"bone_ordinal":0,"bone_name":"root","delta":0.25}],"rotation_offenders":[]}]}]},
+            "view":{"sources":[{"key":"source","locator":"source.gltf","availability":"available","loader":"ready","dependency_closure":"complete"}],"clips":[
+                {"id":"finding","source":"source","take_index":0,"take_name":"Finding","roles":["locomotion"],"availability":"established","outcome":"with_findings","findings":2,"severities":["error"],"coverage_gaps":3,"prediction_unavailable":4,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
+                {"id":"partial","source":"source","take_index":1,"take_name":"Partial","roles":["locomotion","combat"],"availability":"established","outcome":"partial","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":1,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
+                {"id":"evaluated","source":"source","take_index":2,"take_name":"Evaluated","roles":[],"availability":"established","outcome":"evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
+                {"id":"excluded","source":"source","take_index":3,"take_name":"Excluded","roles":[],"availability":"established","outcome":"excluded","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":1,"not_evaluated":0},"runtime_sets":[]},
+                {"id":"unavailable","source":"source","take_index":4,"take_name":"Unavailable","roles":[],"availability":"source_unavailable","outcome":"unavailable","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
+                {"id":"not-evaluated","source":"source","take_index":5,"take_name":"Not evaluated","roles":[],"availability":"established","outcome":"not_evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":1},"runtime_sets":[]}],"runtime_sets":[{"id":"set","lifecycle":"complete","members":["finding","partial"],"gaps":["missing_member"]}]}
+        })
+    }
+
+    #[test]
+    fn authority_readback_reconciles_every_outcome_and_relationship() {
+        let value = rich_authority();
+        let initial: super::CollectionDashboardAuthorityV1 =
+            serde_json::from_value(value.clone()).unwrap();
+        let bytes = serde_json::to_vec(&initial).unwrap();
+        assert!(validate_authority_readback(&bytes).is_ok());
+        let schema = serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../../docs/schemas/collection-dashboard-v1.schema.json"
+        ))
+        .unwrap();
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        assert!(validator.iter_errors(&value).next().is_none());
+        let parsed: super::CollectionDashboardAuthorityV1 = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(serde_json::to_vec(&parsed).unwrap(), bytes);
+
+        let mut unknown_source = value.clone();
+        unknown_source["view"]["clips"][0]["source"] = "missing".into();
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&unknown_source).unwrap()).is_err()
+        );
+        let mut asymmetric_membership = value.clone();
+        asymmetric_membership["view"]["clips"][0]["runtime_sets"] = serde_json::json!([]);
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&asymmetric_membership).unwrap())
+                .is_err()
+        );
+        let mut dangling_resolution = value.clone();
+        dangling_resolution["evaluation"]["families"][0]["members"][0]["logical_clip"] =
+            "missing".into();
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&dangling_resolution).unwrap())
+                .is_err()
+        );
+        let mut bad_severity = value;
+        bad_severity["view"]["clips"][0]["severities"] = serde_json::json!(["fatal"]);
+        assert!(validate_authority_readback(&serde_json::to_vec(&bad_severity).unwrap()).is_err());
+    }
+
+    #[test]
+    fn availability_outcomes_match_dashboard_input_check_reference_mapping() {
+        assert_eq!(
+            super::derive_clip_outcome(0, &super::DashboardCoverageV1::default(), "established"),
+            "not_evaluated"
+        );
+        for availability in ["duplicate_embedded_take_name", "nested_output_unavailable"] {
+            assert_eq!(
+                super::derive_clip_outcome(0, &super::DashboardCoverageV1::default(), availability),
+                "unavailable"
+            );
+            let mut authority = rich_authority();
+            authority["view"]["clips"][4]["availability"] = availability.into();
+            assert!(validate_authority_readback(&serde_json::to_vec(&authority).unwrap()).is_ok());
+        }
     }
 
     #[test]
@@ -1411,7 +1437,7 @@ mod tests {
         assert!(serde_json::from_value::<super::TransitionPosePairWire>(pair).is_err());
 
         let dashboard_pair = serde_json::json!({"member_indices":[0,1],"boundary":"entry","translation_offenders":[{"bone_ordinal":0,"bone_name":"bone","delta":0.0}],"rotation_offenders":[]});
-        let dashboard_pair: super::DashboardEvaluationPairFindingReadback =
+        let dashboard_pair: super::EvaluationPairFindingV1 =
             serde_json::from_value(dashboard_pair).unwrap();
         assert!(dashboard_pair.validate(2).is_ok());
     }

@@ -29,6 +29,32 @@ fn collection(manifest: &Path) -> Output {
         .expect("collection lint runs")
 }
 
+fn rendered_dashboard_state(html: &Path, filters: &Value) -> Value {
+    let script = r#"
+const fs=require('fs'),html=fs.readFileSync(process.argv[1],'utf8'),filters=JSON.parse(process.argv[2]);
+let data=html.match(/<script type="application\/json" id="collection-dashboard-data">([\s\S]*?)<\/script>/)[1];
+if(filters.hostile){const d=JSON.parse(data),c=d.view.clips[0];c.id='</td><img src=x>';c.source='<source>';c.take_name='"quoted"';c.report_link='reports/a&b.html';data=JSON.stringify(d)}
+const code=html.match(/<script>\s*([\s\S]*?)<\/script><\/body>/)[1];
+const elements=new Map();
+function element(id){if(!elements.has(id)){elements.set(id,{id,value:id==='group'?'source':'',children:[],append(value){this.children.push(value)}})}return elements.get(id)}
+global.document={getElementById:id=>id==='collection-dashboard-data'?{textContent:data}:element(id),createElement:()=>({})};
+new Function(code)();
+for(const [id,value] of Object.entries(filters)){element(id).value=value}
+element('group').onchange();
+console.log(JSON.stringify({count:element('count').textContent,groups:element('groups').textContent,roles:element('role').children.map(x=>x.value),clips:element('clips').innerHTML}));
+"#;
+    let output = Command::new("node")
+        .args(["-e", script, html.to_str().unwrap(), &filters.to_string()])
+        .output()
+        .expect("node is required for the dashboard renderer behavior test");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
 #[test]
 fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
     let evidence = collection(&spike_path("collection.toml"));
@@ -61,6 +87,7 @@ fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("4 finding(s)"));
     let repeat = Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .args([
             "collection",
@@ -125,6 +152,24 @@ fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
             "{forbidden}"
         );
     }
+    let state = rendered_dashboard_state(
+        &html,
+        &serde_json::json!({"source":"walk-a", "group":"runtime_sets"}),
+    );
+    assert_eq!(
+        state["count"],
+        "showing 1 of 4 declared clips; filters do not change collection completeness"
+    );
+    assert_eq!(
+        state["groups"],
+        "com.example.collection-spike/sets/cross-file-gait: 1 · com.example.collection-spike/sets/cross-file-sync: 1"
+    );
+    assert_eq!(state["roles"], serde_json::json!(["none"]));
+    let hostile = rendered_dashboard_state(&html, &serde_json::json!({"hostile":true}));
+    let table = hostile["clips"].as_str().unwrap();
+    assert!(table.contains("&lt;/td&gt;&lt;img src=x&gt;"));
+    assert!(table.contains("href=\"reports/a&amp;b.html\""));
+    assert!(!table.contains("<img src=x>"));
 }
 
 #[test]
@@ -165,6 +210,15 @@ fn dashboard_accepts_only_exact_manifest_bound_transition_authority() {
     fs::write(&collection_path, &evidence.stdout).unwrap();
     let collection: Value = serde_json::from_slice(&evidence.stdout).unwrap();
     let identity = collection["manifest"]["input"].clone();
+    let source_identity = |key: &str| {
+        collection["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["key"] == key)
+            .unwrap()["input"]["input"]
+            .clone()
+    };
     let exact = serde_json::json!({
         "schema": "urn:animsmith:schema:transition-pose-evaluation:1", "schema_version": 1,
         "status": "incomplete", "decision": "not_evaluated",
@@ -172,8 +226,8 @@ fn dashboard_accepts_only_exact_manifest_bound_transition_authority() {
         "subject_input": collection["manifest"]["input"].clone(), "families": [{
             "family_id": "com.example.dashboard/unmatched", "status": "incomplete", "decision": "not_evaluated",
             "reason": "member_unavailable", "members": [
-                {"take_index": 0, "take_name": "Take 001", "source_input": null},
-                {"take_index": 1, "take_name": "Take 002", "source_input": null}
+                {"take_index": 0, "take_name": "Take 001", "source_input": source_identity("walk-a")},
+                {"take_index": 0, "take_name": "Take 001", "source_input": source_identity("multi")}
             ], "pairs": []
         }]
     });
@@ -199,10 +253,13 @@ fn dashboard_accepts_only_exact_manifest_bound_transition_authority() {
         "{}",
         String::from_utf8_lossy(&accepted.stderr)
     );
+    let dashboard: Value = serde_json::from_slice(&fs::read(&authority).unwrap()).unwrap();
+    let family = &dashboard["evaluation"]["families"][0];
+    assert_eq!(family["reason"], "member_unavailable");
+    assert!(family["members"][0].get("logical_clip").is_none());
     assert_eq!(
-        serde_json::from_slice::<Value>(&fs::read(&authority).unwrap()).unwrap()["evaluation"]["families"]
-            [0]["reason"],
-        "member_unavailable"
+        family["members"][1]["logical_clip"],
+        "com.example.collection-spike/multi/first"
     );
     let mut wrong = exact;
     wrong["subject_input"]["bytes"] = Value::from(1_u64);
