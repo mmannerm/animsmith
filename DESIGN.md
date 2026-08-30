@@ -125,6 +125,7 @@ animsmith lint    <file...> [--config animsmith.toml] [--select ids] [--deny war
 animsmith measure <file...> --format json          # measurements only, no judgment
 animsmith inspect <file>                           # clips, durations, tracks, bones, detected rig profile
 animsmith report  <file> -o report.html [--clip name]
+animsmith report  <before> -o comparison.html --compare-after <after> --before-clip <name> --after-clip <name>
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks]
 animsmith fix     <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
@@ -666,6 +667,14 @@ learns an embedder's contract schema.
 
 `animsmith report clip.glb -o report.html` → **one self-contained offline
 HTML file** (CI-artifact- and PR-attachment-friendly; no CDN, no install).
+
+The explicit comparison spelling is a separate presentation producer: it
+preflights named/indexed skeleton correspondence, selected metric-grid work,
+and input text before either side's checks run; writes atomically only to an
+output distinct from both inputs; and uses one shared coordinate/path scale.
+Its phase synchronization labels both source times and never claims a retime.
+Findings, coverage, prediction provenance, and immutable identities remain
+side-specific, so a missing finding cannot read as acceptance.
 
 **Key design choice: no three.js, no `<model-viewer>`.**
 

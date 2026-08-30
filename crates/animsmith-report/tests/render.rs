@@ -17,8 +17,17 @@ fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rig.gltf")
 }
 
+fn comparison_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/assets")
+        .join(format!("report-comparison-{name}.glb"))
+}
+
 fn report_data(html: &str) -> Value {
-    let id = "report-data";
+    embedded_json(html, "report-data")
+}
+
+fn embedded_json(html: &str, id: &str) -> Value {
     let id_pos = html.find(id).expect("report data script id");
     let script_start = html[..id_pos].rfind("<script").expect("report data script");
     let start = html[id_pos..].find('>').expect("script tag close") + id_pos + 1;
@@ -28,6 +37,869 @@ fn report_data(html: &str) -> Value {
     );
     let end = html[start..].find("</script>").expect("script close") + start;
     serde_json::from_str(&html[start..end]).expect("report data JSON")
+}
+
+fn comparison_side<'a>(
+    source: &'a animsmith_core::LoadedSource,
+    grids: &'a MetricGrids<'a>,
+    roles: &'a ResolvedRoles,
+    checks: &'a [CheckEvaluation],
+    config: &'a animsmith_core::Config,
+    clip: &'a str,
+) -> animsmith_report::ComparisonSide<'a> {
+    animsmith_report::ComparisonSide {
+        source,
+        grids,
+        roles,
+        checks,
+        config,
+        prediction_provenance: None,
+        clip,
+    }
+}
+
+fn comparison_side_with_provenance<'a>(
+    source: &'a animsmith_core::LoadedSource,
+    grids: &'a MetricGrids<'a>,
+    roles: &'a ResolvedRoles,
+    checks: &'a [CheckEvaluation],
+    config: &'a animsmith_core::Config,
+    provenance: Option<&'a PredictionProvenanceV1>,
+    clip: &'a str,
+) -> animsmith_report::ComparisonSide<'a> {
+    animsmith_report::ComparisonSide {
+        source,
+        grids,
+        roles,
+        checks,
+        config,
+        prediction_provenance: provenance,
+        clip,
+    }
+}
+
+#[test]
+fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
+    let before_source =
+        animsmith_gltf::load_source(&comparison_fixture("before")).expect("before fixture loads");
+    let after_source =
+        animsmith_gltf::load_source(&comparison_fixture("after")).expect("after fixture loads");
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let checks = evaluations(vec![
+        Finding::new(
+            "fixture-check",
+            Severity::Warning,
+            "</script><img onerror=alert(1)>",
+        )
+        .clip("acceptance-matrix")
+        .bone("hips")
+        .time(0.5),
+        Finding::new(
+            "fixture-check",
+            Severity::Warning,
+            "second semantic at the same subject and time",
+        )
+        .clip("acceptance-matrix")
+        .bone("hips")
+        .time(0.5),
+    ]);
+    let before = comparison_side(
+        &before_source,
+        &before_grids,
+        &roles,
+        &checks,
+        &config,
+        "acceptance-matrix",
+    );
+    let after = comparison_side(
+        &after_source,
+        &after_grids,
+        &roles,
+        &[],
+        &config,
+        "acceptance-matrix",
+    );
+    let first = animsmith_report::render_comparison(before, after).expect("comparison renders");
+    let second = animsmith_report::render_comparison(before, after)
+        .expect("comparison renders deterministically");
+
+    assert_eq!(first, second);
+    assert_self_contained(&first);
+    assert!(
+        !first.contains("</script><img"),
+        "untrusted HTML must stay JSON data"
+    );
+    assert!(
+        first.contains("item.id ="),
+        "viewer gives findings stable in-document anchors"
+    );
+    let data = embedded_json(&first, "comparison-report-data");
+    let before_clip_anchor = data["before"]["clip"]["anchor"].as_str().unwrap();
+    let after_clip_anchor = data["after"]["clip"]["anchor"].as_str().unwrap();
+    assert_eq!(
+        before_clip_anchor,
+        embedded_json(&second, "comparison-report-data")["before"]["clip"]["anchor"]
+    );
+    assert!(first.contains(&format!("before-{before_clip_anchor}")));
+    assert!(first.contains(&format!("after-{after_clip_anchor}")));
+    assert_eq!(data["kind"], "animsmith-comparison-v1");
+    assert_eq!(data["correspondence"]["before_clip"], "acceptance-matrix");
+    assert_eq!(data["correspondence"]["after_clip"], "acceptance-matrix");
+    assert_eq!(
+        data["before"]["dependency_closure_identity"],
+        serde_json::to_value(before_source.dependency_closure().identity().unwrap()).unwrap()
+    );
+    assert_eq!(
+        data["after"]["dependency_closure_identity"],
+        serde_json::to_value(after_source.dependency_closure().identity().unwrap()).unwrap()
+    );
+    assert_ne!(
+        data["before"]["dependency_closure_identity"],
+        data["after"]["dependency_closure_identity"]
+    );
+    assert_eq!(data["before"]["findings"][0]["bone"], "hips");
+    assert_ne!(
+        data["before"]["findings"][0]["anchor"], data["before"]["findings"][1]["anchor"],
+        "distinct findings cannot produce duplicate in-document ids"
+    );
+    assert!(
+        data["after"]["findings"]
+            .as_array()
+            .expect("after findings")
+            .is_empty()
+    );
+}
+
+#[test]
+fn comparison_refuses_incompatible_named_hierarchy_before_rendering() {
+    let before_doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let mut after_doc = before_doc.clone();
+    after_doc.skeleton.bones[1].parent = None;
+    let error = animsmith_report::preflight_comparison(&before_doc, "walk", &after_doc, "walk")
+        .expect_err("different named parent must refuse");
+    assert!(matches!(
+        error,
+        animsmith_report::ComparisonError::IncompatibleSkeleton { .. }
+    ));
+}
+
+#[test]
+fn comparison_public_preflight_refuses_normalized_document_clip_ambiguity() {
+    let mut before = animsmith_testkit::comparison_report_before_doc();
+    let after = animsmith_testkit::comparison_report_before_doc();
+    before.clips.push(before.clips[0].clone());
+    assert!(matches!(
+        animsmith_report::preflight_comparison(
+            &before,
+            "acceptance-matrix",
+            &after,
+            "acceptance-matrix"
+        ),
+        Err(animsmith_report::ComparisonError::AmbiguousClip { side: "before", .. })
+    ));
+}
+
+#[test]
+fn comparison_public_input_text_boundary_accepts_max_and_refuses_n_plus_one() {
+    const LIMIT: usize = 1024 * 1024;
+    let mut before = animsmith_testkit::comparison_report_before_doc();
+    let mut after = before.clone();
+    let retained = before
+        .skeleton
+        .bones
+        .iter()
+        .skip(1)
+        .map(|bone| bone.name.len())
+        .chain(before.clips.iter().map(|clip| clip.name.len()))
+        .sum::<usize>();
+    let exact = "x".repeat(LIMIT - retained);
+    before.skeleton.bones[0].name = exact.clone();
+    after.skeleton.bones[0].name = exact;
+    animsmith_report::preflight_comparison(
+        &before,
+        "acceptance-matrix",
+        &after,
+        "acceptance-matrix",
+    )
+    .expect("exact input-text limit is admitted");
+    before.skeleton.bones[0].name.push('x');
+    after.skeleton.bones[0].name.push('x');
+    assert_eq!(
+        animsmith_report::preflight_comparison(
+            &before,
+            "acceptance-matrix",
+            &after,
+            "acceptance-matrix"
+        ),
+        Err(animsmith_report::ComparisonError::InputTextWorkExceeded {
+            side: "before",
+            bytes: LIMIT + 1,
+            limit: LIMIT,
+        })
+    );
+}
+
+#[test]
+fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides() {
+    let baseline = animsmith_testkit::comparison_report_before_doc();
+    for side in ["before", "after"] {
+        let mut duplicate = baseline.clone();
+        duplicate.skeleton.bones[2].name = duplicate.skeleton.bones[3].name.clone();
+        let result = if side == "before" {
+            animsmith_report::preflight_comparison(
+                &duplicate,
+                "acceptance-matrix",
+                &baseline,
+                "acceptance-matrix",
+            )
+        } else {
+            animsmith_report::preflight_comparison(
+                &baseline,
+                "acceptance-matrix",
+                &duplicate,
+                "acceptance-matrix",
+            )
+        };
+        assert!(
+            matches!(result, Err(animsmith_report::ComparisonError::DuplicateBoneName { side: found, .. }) if found == side)
+        );
+
+        let mut later_parent = baseline.clone();
+        later_parent.skeleton.bones[2].parent = Some(3);
+        let result = if side == "before" {
+            animsmith_report::preflight_comparison(
+                &later_parent,
+                "acceptance-matrix",
+                &baseline,
+                "acceptance-matrix",
+            )
+        } else {
+            animsmith_report::preflight_comparison(
+                &baseline,
+                "acceptance-matrix",
+                &later_parent,
+                "acceptance-matrix",
+            )
+        };
+        assert!(
+            matches!(result, Err(animsmith_report::ComparisonError::InvalidHierarchy { side: found, .. }) if found == side)
+        );
+
+        let mut invalid_parent = baseline.clone();
+        invalid_parent.skeleton.bones[2].parent = Some(usize::MAX);
+        let result = if side == "before" {
+            animsmith_report::preflight_comparison(
+                &invalid_parent,
+                "acceptance-matrix",
+                &baseline,
+                "acceptance-matrix",
+            )
+        } else {
+            animsmith_report::preflight_comparison(
+                &baseline,
+                "acceptance-matrix",
+                &invalid_parent,
+                "acceptance-matrix",
+            )
+        };
+        assert!(
+            matches!(result, Err(animsmith_report::ComparisonError::InvalidHierarchy { side: found, .. }) if found == side)
+        );
+
+        let mut unavailable = baseline.clone();
+        unavailable.clips[0].duration_s = 0.0;
+        let result = if side == "before" {
+            animsmith_report::preflight_comparison(
+                &unavailable,
+                "acceptance-matrix",
+                &baseline,
+                "acceptance-matrix",
+            )
+        } else {
+            animsmith_report::preflight_comparison(
+                &baseline,
+                "acceptance-matrix",
+                &unavailable,
+                "acceptance-matrix",
+            )
+        };
+        assert!(
+            matches!(result, Err(animsmith_report::ComparisonError::UnavailableSampleGrid { side: found, .. }) if found == side)
+        );
+    }
+
+    let mut reordered = baseline.clone();
+    reordered.skeleton.bones.swap(2, 3);
+    assert!(matches!(
+        animsmith_report::preflight_comparison(
+            &baseline,
+            "acceptance-matrix",
+            &reordered,
+            "acceptance-matrix"
+        ),
+        Err(animsmith_report::ComparisonError::IncompatibleSkeleton { .. })
+    ));
+}
+
+#[test]
+fn comparison_refuses_the_same_complete_loader_authority() {
+    let source = animsmith_gltf::load_source(&fixture()).expect("fixture loads");
+    assert_eq!(
+        animsmith_report::preflight_comparison_sources(&source, "walk", &source, "idle"),
+        Err(animsmith_report::ComparisonError::IdenticalAuthorities)
+    );
+}
+
+#[test]
+fn comparison_binds_equal_primary_bytes_to_changed_sidecar_closures() {
+    let directory = tempfile::tempdir().unwrap();
+    let source_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    let encoded = source_json["buffers"][0]["uri"]
+        .as_str()
+        .unwrap()
+        .split_once(',')
+        .unwrap()
+        .1;
+    let mut sidecar = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .unwrap();
+    let mut external = source_json;
+    external["buffers"][0]["uri"] = serde_json::Value::String("clip.bin".to_owned());
+    let primary = serde_json::to_vec(&external).unwrap();
+    let mut paths = Vec::new();
+    for name in ["before", "after"] {
+        let root = directory.path().join(name);
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("asset.gltf");
+        std::fs::write(&path, &primary).unwrap();
+        std::fs::write(root.join("clip.bin"), &sidecar).unwrap();
+        paths.push(path);
+        let last = sidecar.len() - 4;
+        sidecar[last] ^= 1;
+    }
+    let before_source = animsmith_gltf::load_source(&paths[0]).unwrap();
+    let after_source = animsmith_gltf::load_source(&paths[1]).unwrap();
+    assert_eq!(
+        before_source.dependency_closure().primary_input(),
+        after_source.dependency_closure().primary_input()
+    );
+    assert_ne!(
+        before_source.dependency_closure().identity(),
+        after_source.dependency_closure().identity()
+    );
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let html = animsmith_report::render_comparison(
+        comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
+        comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+    )
+    .unwrap();
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(data["before"]["identity"], data["after"]["identity"]);
+    assert_ne!(
+        data["before"]["dependency_closure_identity"],
+        data["after"]["dependency_closure_identity"]
+    );
+}
+
+#[test]
+fn comparison_projects_node_only_finding_subjects_from_exact_source_authority() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut source_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    let special = "hip(s)/[authored] → normalized";
+    source_json["nodes"][1]["name"] = special.into();
+    let mut paths = Vec::new();
+    for marker in ["before", "after"] {
+        source_json["asset"]["extras"] = serde_json::json!({"authority": marker});
+        let path = directory.path().join(format!("{marker}.gltf"));
+        std::fs::write(&path, serde_json::to_vec(&source_json).unwrap()).unwrap();
+        paths.push(path);
+    }
+    let before_source = animsmith_gltf::load_source(&paths[0]).unwrap();
+    let after_source = animsmith_gltf::load_source(&paths[1]).unwrap();
+    assert_eq!(before_source.document().skeleton.bones[1].name, special);
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let checks = evaluations(vec![
+        Finding::new("fixture-check", Severity::Warning, "node-only")
+            .clip("walk")
+            .node(format!("#0(root)/#1({special})")),
+        Finding::new("fixture-check", Severity::Warning, "normalized-name")
+            .clip("walk")
+            .bone(special),
+        Finding::new("fixture-check", Severity::Warning, "unprojected")
+            .clip("walk")
+            .node("#99(unprojected(special)/[])"),
+    ]);
+    let html = animsmith_report::render_comparison(
+        comparison_side(
+            &before_source,
+            &before_grids,
+            &roles,
+            &checks,
+            &config,
+            "walk",
+        ),
+        comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+    )
+    .unwrap();
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(data["before"]["findings"][0]["subject_bone"], 1);
+    assert_eq!(data["before"]["findings"][1]["subject_bone"], 1);
+    assert!(data["before"]["findings"][2]["subject_bone"].is_null());
+}
+
+#[test]
+fn identical_findings_get_side_and_occurrence_unique_navigation_anchors() {
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let identical = Finding::new("fixture-check", Severity::Warning, "identical")
+        .clip("acceptance-matrix")
+        .bone("hips")
+        .time(0.5);
+    let before_checks = evaluations(vec![identical.clone(), identical.clone()]);
+    let after_checks = evaluations(vec![identical]);
+    let html = animsmith_report::render_comparison(
+        comparison_side(
+            &before_source,
+            &before_grids,
+            &roles,
+            &before_checks,
+            &config,
+            "acceptance-matrix",
+        ),
+        comparison_side(
+            &after_source,
+            &after_grids,
+            &roles,
+            &after_checks,
+            &config,
+            "acceptance-matrix",
+        ),
+    )
+    .unwrap();
+    let data = embedded_json(&html, "comparison-report-data");
+    let first = data["before"]["findings"][0]["anchor"].as_str().unwrap();
+    let second = data["before"]["findings"][1]["anchor"].as_str().unwrap();
+    let other_side = data["after"]["findings"][0]["anchor"].as_str().unwrap();
+    assert_ne!(first, second);
+    assert_ne!(first, other_side);
+    assert_ne!(second, other_side);
+    assert!(html.contains("#(?:finding|time)-(before|after)-"));
+}
+
+#[test]
+fn comparison_public_boundary_admits_finding_max_and_refuses_n_plus_one() {
+    const LIMIT: usize = 4096;
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let finding =
+        Finding::new("fixture-check", Severity::Warning, "bounded").clip("acceptance-matrix");
+    let render = |count| {
+        let checks = evaluations(vec![finding.clone(); count]);
+        animsmith_report::render_comparison(
+            comparison_side(
+                &before_source,
+                &before_grids,
+                &roles,
+                &checks,
+                &config,
+                "acceptance-matrix",
+            ),
+            comparison_side(
+                &after_source,
+                &after_grids,
+                &roles,
+                &[],
+                &config,
+                "acceptance-matrix",
+            ),
+        )
+    };
+    render(LIMIT).expect("the exact finding limit renders");
+    assert_eq!(
+        render(LIMIT + 1).unwrap_err(),
+        animsmith_report::ComparisonError::ReportRowsExceeded {
+            side: "before",
+            kind: "findings",
+            found: LIMIT + 1,
+            limit: LIMIT,
+        }
+    );
+}
+
+#[test]
+fn comparison_public_report_text_boundary_counts_repeated_arbitrary_check_ids() {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let clip = "acceptance-matrix";
+    let empty = Finding::new("", Severity::Warning, "bounded context").clip(clip);
+    let fixed = serde_json::to_vec(&empty).unwrap().len() * 3
+        + serde_json::to_vec(&clip).unwrap().len() * 16;
+    let exact_id_bytes = (LIMIT - fixed) / 3;
+    let render = |id_bytes| {
+        let id: &'static str = Box::leak("x".repeat(id_bytes).into_boxed_str());
+        let checks = evaluations(vec![
+            Finding::new(id, Severity::Warning, "bounded context").clip(clip),
+        ]);
+        animsmith_report::render_comparison(
+            comparison_side(
+                &before_source,
+                &before_grids,
+                &roles,
+                &checks,
+                &config,
+                clip,
+            ),
+            comparison_side(&after_source, &after_grids, &roles, &[], &config, clip),
+        )
+    };
+    render(exact_id_bytes).expect("exact aggregate report-text limit is admitted");
+    assert_eq!(
+        render(exact_id_bytes + 1).unwrap_err(),
+        animsmith_report::ComparisonError::ReportTextWorkExceeded {
+            side: "before",
+            limit: LIMIT,
+        }
+    );
+}
+
+#[test]
+fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
+    const ROW_LIMIT: usize = 4096;
+    const CONTEXT_LIMIT: usize = 8192;
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let gap = CheckEvaluation::evaluated(
+        "test:gaps",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            Vec::new(),
+            vec![CoverageGap::new(CoverageGapCode::custom("test:gap"), "gap")],
+        ),
+    )
+    .unwrap();
+    let gaps = vec![gap; ROW_LIMIT + 1];
+    let render = |checks: &[CheckEvaluation], provenance| {
+        animsmith_report::render_comparison(
+            comparison_side_with_provenance(
+                &before_source,
+                &before_grids,
+                &roles,
+                checks,
+                &config,
+                provenance,
+                "acceptance-matrix",
+            ),
+            comparison_side(
+                &after_source,
+                &after_grids,
+                &roles,
+                &[],
+                &config,
+                "acceptance-matrix",
+            ),
+        )
+    };
+    assert_eq!(
+        render(&gaps, None).unwrap_err(),
+        animsmith_report::ComparisonError::ReportRowsExceeded {
+            side: "before",
+            kind: "coverage gaps",
+            found: ROW_LIMIT + 1,
+            limit: ROW_LIMIT,
+        }
+    );
+
+    let provenance = prediction_provenance_for(&before_source);
+    let prediction = prediction_check(&provenance, false, true);
+    let predictions = vec![prediction; ROW_LIMIT + 1];
+    assert_eq!(
+        render(&predictions, Some(&provenance)).unwrap_err(),
+        animsmith_report::ComparisonError::ReportRowsExceeded {
+            side: "before",
+            kind: "prediction facets",
+            found: ROW_LIMIT + 1,
+            limit: ROW_LIMIT,
+        }
+    );
+
+    for frames in [CONTEXT_LIMIT - 2, CONTEXT_LIMIT - 1] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+        let mut bytes = Vec::with_capacity(frames * 16);
+        for frame in 0..frames {
+            bytes.extend_from_slice(&(frame as f32).to_le_bytes());
+        }
+        let output_offset = bytes.len();
+        bytes.resize(output_offset + frames * 12, 0);
+        json["buffers"][0]["uri"] = format!(
+            "data:application/octet-stream;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        )
+        .into();
+        json["buffers"][0]["byteLength"] = bytes.len().into();
+        json["bufferViews"] = serde_json::json!([
+            {"buffer":0,"byteOffset":0,"byteLength":output_offset},
+            {"buffer":0,"byteOffset":output_offset,"byteLength":frames * 12}
+        ]);
+        json["accessors"] = serde_json::json!([
+            {"bufferView":0,"componentType":5126,"count":frames,"type":"SCALAR","min":[0.0],"max":[(frames - 1) as f32]},
+            {"bufferView":1,"componentType":5126,"count":frames,"type":"VEC3"}
+        ]);
+        json["animations"] = serde_json::json!([{
+            "name":"walk",
+            "samplers":[{"input":0,"output":1,"interpolation":"LINEAR"}],
+            "channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}]
+        }]);
+        let mut long_paths = Vec::new();
+        for marker in ["before", "after"] {
+            json["asset"]["extras"] = serde_json::json!({"authority": marker});
+            let path = directory.path().join(format!("{marker}.gltf"));
+            std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+            long_paths.push(path);
+        }
+        let long_before = animsmith_gltf::load_source(&long_paths[0]).unwrap();
+        let long_after = animsmith_gltf::load_source(&long_paths[1]).unwrap();
+        let long_before_grids = MetricGrids::new(long_before.document());
+        let long_after_grids = MetricGrids::new(long_after.document());
+        let long_roles = ResolvedRoles::from_names(
+            &long_before.document().skeleton,
+            [
+                (Role::Root, "root".to_owned()),
+                (Role::Hips, "hips".to_owned()),
+                (Role::LeftFoot, "foot".to_owned()),
+                (Role::RightFoot, "foot".to_owned()),
+            ],
+        );
+        let stance_scopes = ["left_foot_stance", "right_foot_stance"]
+            .map(|code| EvaluationScope::new(EvaluationScopeCode::custom(code)).subject("walk"));
+        let stance_checks = vec![
+            CheckEvaluation::evaluated(
+                "foot-slide",
+                CheckOutput::from_coverage(Vec::new(), stance_scopes.into(), Vec::new()),
+            )
+            .unwrap(),
+        ];
+        let result = animsmith_report::render_comparison(
+            comparison_side(
+                &long_before,
+                &long_before_grids,
+                &long_roles,
+                &stance_checks,
+                &config,
+                "walk",
+            ),
+            comparison_side(
+                &long_after,
+                &long_after_grids,
+                &long_roles,
+                &[],
+                &config,
+                "walk",
+            ),
+        );
+        if frames == CONTEXT_LIMIT - 2 {
+            result.expect("the exact diagnostic-context work limit renders");
+        } else {
+            assert_eq!(
+                result.unwrap_err(),
+                animsmith_report::ComparisonError::ReportRowsExceeded {
+                    side: "before",
+                    kind: "diagnostic contexts",
+                    found: CONTEXT_LIMIT + 1,
+                    limit: CONTEXT_LIMIT,
+                }
+            );
+        }
+    }
+}
+
+fn comparison_matrix_config() -> animsmith_core::Config {
+    use animsmith_core::config::{CheckSettings, ClipExpectations};
+    use animsmith_core::{MovementOwner, Pinned};
+
+    let mut config = animsmith_core::Config::default();
+    config.rig.roles = [
+        (Role::Root, "root".to_owned()),
+        (Role::Hips, "hips".to_owned()),
+        (Role::LeftFoot, "left_foot".to_owned()),
+        (Role::RightFoot, "right_foot".to_owned()),
+    ]
+    .into_iter()
+    .collect();
+    config.clips.insert(
+        "acceptance-matrix".to_owned(),
+        ClipExpectations {
+            looping: Some(true),
+            speed_mps: Some(Pinned {
+                value: 1.0,
+                tolerance: 0.1,
+            }),
+            movement_owner_xz: Some(MovementOwner::Gameplay),
+            ..Default::default()
+        },
+    );
+    config.checks.insert(
+        "foot-slide".to_owned(),
+        CheckSettings {
+            contact_height_m: Some(0.03),
+            max_slide_mps: Some(0.3),
+            ..Default::default()
+        },
+    );
+    config
+}
+
+fn matrix_evaluations<'a>(
+    grids: &'a MetricGrids<'a>,
+    roles: &'a ResolvedRoles,
+    config: &'a animsmith_core::Config,
+) -> Vec<CheckEvaluation> {
+    let context = animsmith_core::CheckCtx::new(grids, roles, config);
+    animsmith_core::evaluate_checks(
+        &context,
+        &animsmith_core::all_checks(),
+        animsmith_core::CheckSelection::All,
+    )
+    .expect("matrix checks evaluate")
+}
+
+#[test]
+fn comparison_matrix_projects_typed_visual_acceptance_context() {
+    let before_source =
+        animsmith_gltf::load_source(&comparison_fixture("before")).expect("before fixture loads");
+    let after_source =
+        animsmith_gltf::load_source(&comparison_fixture("after")).expect("after fixture loads");
+    let before_doc = before_source.document();
+    let after_doc = after_source.document();
+    let config = comparison_matrix_config();
+    let roles = ResolvedRoles::from_names(&before_doc.skeleton, config.rig.roles.clone());
+    let after_roles = ResolvedRoles::from_names(&after_doc.skeleton, config.rig.roles.clone());
+    let before_grids = MetricGrids::new(before_doc);
+    let after_grids = MetricGrids::new(after_doc);
+    let before_checks = matrix_evaluations(&before_grids, &roles, &config);
+    let after_checks = matrix_evaluations(&after_grids, &after_roles, &config);
+    let html = animsmith_report::render_comparison(
+        comparison_side(
+            &before_source,
+            &before_grids,
+            &roles,
+            &before_checks,
+            &config,
+            "acceptance-matrix",
+        ),
+        comparison_side(
+            &after_source,
+            &after_grids,
+            &after_roles,
+            &after_checks,
+            &config,
+            "acceptance-matrix",
+        ),
+    )
+    .expect("matrix comparison renders");
+    let data = embedded_json(&html, "comparison-report-data");
+
+    for side in ["before", "after"] {
+        assert_eq!(data[side]["clip"]["trails"]["root"], 0);
+        assert_eq!(data[side]["clip"]["trails"]["hips"], 1);
+        assert_eq!(data[side]["clip"]["trails"]["left_foot"], 2);
+        assert_eq!(data[side]["clip"]["trails"]["right_foot"], 3);
+        assert_eq!(
+            data[side]["contexts"]["stances"].as_array().unwrap().len(),
+            2
+        );
+        assert!(data[side]["contexts"]["gait"].is_object());
+    }
+    let before_stances = data["before"]["contexts"]["stances"]
+        .as_array()
+        .expect("before stances");
+    assert_eq!(before_stances[0]["selected_role"], "left_foot");
+    assert_eq!(before_stances[0]["runs"][0]["start_s"], 0.0);
+    assert_eq!(before_stances[0]["runs"][0]["end_s"], 0.25);
+
+    let seam = data["before"]["contexts"]["seams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["check"] == "loop-closure")
+        .expect("loop closure endpoint context");
+    assert_eq!(seam["first_frame"], 0);
+    assert_eq!(seam["last_frame"], 4);
+    assert_eq!(seam["subject_bone_name"], "left_foot");
+    assert_eq!(seam["subject_bone"], 2);
+
+    let structural = data["before"]["contexts"]["structural"]
+        .as_array()
+        .expect("before structural context");
+    assert_eq!(structural.len(), 1);
+    assert_eq!(structural[0]["check"], "constant-track");
+    assert_eq!(structural[0]["evidence_kind"], "structural");
+    assert!(
+        structural[0]["label"]
+            .as_str()
+            .unwrap()
+            .contains("poses may look unchanged")
+    );
+    assert!(
+        data["after"]["contexts"]["structural"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(html.contains("one shared uniform metres scale"));
+}
+
+#[test]
+fn constant_quaternion_track_removal_leaves_sampled_pose_positions_unchanged() {
+    let before = animsmith_testkit::comparison_report_before_doc();
+    let mut structural_after = before.clone();
+    structural_after.clips[0]
+        .tracks
+        .retain(|track| !(track.bone == 4 && track.property == animsmith_core::Property::Rotation));
+    let before_grid = MetricGrids::new(&before).grid(0).expect("before grid");
+    let after_grid = MetricGrids::new(&structural_after)
+        .grid(0)
+        .expect("structural after grid");
+
+    assert_eq!(before_grid.times, after_grid.times);
+    for frame in 0..before_grid.frame_count() {
+        for bone in 0..before_grid.bone_count() {
+            assert_eq!(
+                before_grid.model_position(frame, bone),
+                after_grid.model_position(frame, bone),
+                "constant quaternion removal changed visible position at frame {frame}, bone {bone}"
+            );
+        }
+    }
 }
 
 fn assert_self_contained(html: &str) {
@@ -112,6 +984,11 @@ fn evaluations(findings: Vec<Finding>) -> Vec<CheckEvaluation> {
 
 fn prediction_provenance() -> (animsmith_core::LoadedSource, PredictionProvenanceV1) {
     let source = animsmith_gltf::load_source(&fixture()).expect("fixture source loads");
+    let provenance = prediction_provenance_for(&source);
+    (source, provenance)
+}
+
+fn prediction_provenance_for(source: &animsmith_core::LoadedSource) -> PredictionProvenanceV1 {
     let clip_names = source
         .document()
         .clips
@@ -131,9 +1008,8 @@ fn prediction_provenance() -> (animsmith_core::LoadedSource, PredictionProvenanc
     .expect("profile selected")
     .resolve_input(source.source_facts().format(), &clip_names)
     .expect("fixture format is accepted");
-    let provenance = animsmith_engine::project_prediction_provenance_v1(&resolved, &source)
-        .expect("same-load provenance projects");
-    (source, provenance)
+    animsmith_engine::project_prediction_provenance_v1(&resolved, source)
+        .expect("same-load provenance projects")
 }
 
 fn prediction_check(
@@ -180,6 +1056,207 @@ fn prediction_check(
             .with_engine_prediction(prediction),
     )
     .expect("prediction lifecycle is valid")
+}
+
+#[test]
+fn comparison_binds_prediction_provenance_to_each_exact_side() {
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let before_provenance = prediction_provenance_for(&before_source);
+    let after_provenance = prediction_provenance_for(&after_source);
+    let before_checks = vec![prediction_check(&before_provenance, true, false)];
+    let after_checks = vec![prediction_check(&after_provenance, true, false)];
+    let render = |before_checks: &[CheckEvaluation],
+                  before_provenance: Option<&PredictionProvenanceV1>,
+                  after_checks: &[CheckEvaluation],
+                  after_provenance: Option<&PredictionProvenanceV1>| {
+        animsmith_report::render_comparison(
+            comparison_side_with_provenance(
+                &before_source,
+                &before_grids,
+                &roles,
+                before_checks,
+                &config,
+                before_provenance,
+                "acceptance-matrix",
+            ),
+            comparison_side_with_provenance(
+                &after_source,
+                &after_grids,
+                &roles,
+                after_checks,
+                &config,
+                after_provenance,
+                "acceptance-matrix",
+            ),
+        )
+    };
+    render(
+        &before_checks,
+        Some(&before_provenance),
+        &after_checks,
+        Some(&after_provenance),
+    )
+    .expect("exact side provenance renders");
+
+    for side in ["before", "after"] {
+        let result = if side == "before" {
+            render(&before_checks, None, &after_checks, Some(&after_provenance))
+        } else {
+            render(
+                &before_checks,
+                Some(&before_provenance),
+                &after_checks,
+                None,
+            )
+        };
+        assert!(matches!(
+            result,
+            Err(animsmith_report::ComparisonError::PredictionAuthorityMismatch {
+                side: found,
+                detail: "prediction attachment has no supplied provenance"
+            }) if found == side
+        ));
+
+        let result = if side == "before" {
+            render(
+                &before_checks,
+                Some(&after_provenance),
+                &after_checks,
+                Some(&after_provenance),
+            )
+        } else {
+            render(
+                &before_checks,
+                Some(&before_provenance),
+                &after_checks,
+                Some(&before_provenance),
+            )
+        };
+        assert!(matches!(
+            result,
+            Err(animsmith_report::ComparisonError::PredictionAuthorityMismatch {
+                side: found,
+                detail: "provenance dependency closure differs from the loaded source"
+            }) if found == side
+        ));
+
+        let result = if side == "before" {
+            render(
+                &after_checks,
+                Some(&before_provenance),
+                &after_checks,
+                Some(&after_provenance),
+            )
+        } else {
+            render(
+                &before_checks,
+                Some(&before_provenance),
+                &before_checks,
+                Some(&after_provenance),
+            )
+        };
+        assert!(matches!(
+            result,
+            Err(animsmith_report::ComparisonError::PredictionAuthorityMismatch {
+                side: found,
+                detail: "prediction attachment identity differs from supplied provenance"
+            }) if found == side
+        ));
+    }
+}
+
+#[test]
+fn comparison_filters_scoped_gaps_and_prediction_facets_to_selected_clip() {
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let selected_scope = EvaluationScope::new(EvaluationScopeCode::custom("test:selected"))
+        .subject("acceptance-matrix");
+    let other_scope =
+        EvaluationScope::new(EvaluationScopeCode::custom("test:other")).subject("other-clip");
+    let gaps = CheckEvaluation::evaluated(
+        "test:gaps",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            Vec::new(),
+            vec![
+                CoverageGap::new(CoverageGapCode::custom("test:selected-gap"), "selected")
+                    .scope(selected_scope.clone()),
+                CoverageGap::new(CoverageGapCode::custom("test:other-gap"), "other")
+                    .scope(other_scope.clone()),
+            ],
+        ),
+    )
+    .unwrap();
+    let provenance = prediction_provenance_for(&before_source);
+    let basis = EnginePredictionBasisV1::new(vec![
+        PredictionBasisReferenceV1::profile_fact("accepted_inputs").unwrap(),
+    ])
+    .unwrap();
+    let prediction = EnginePredictionV1::new(
+        provenance.identity().clone(),
+        vec![
+            EnginePredictionFacetV1::available(selected_scope.clone(), basis.clone()).unwrap(),
+            EnginePredictionFacetV1::available(other_scope.clone(), basis).unwrap(),
+        ],
+    )
+    .unwrap();
+    let prediction = CheckEvaluation::evaluated(
+        "test:prediction",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            vec![selected_scope.clone(), other_scope],
+            Vec::new(),
+        )
+        .with_engine_prediction(prediction),
+    )
+    .unwrap();
+    let checks = vec![gaps, prediction];
+    let html = animsmith_report::render_comparison(
+        comparison_side_with_provenance(
+            &before_source,
+            &before_grids,
+            &roles,
+            &checks,
+            &config,
+            Some(&provenance),
+            "acceptance-matrix",
+        ),
+        comparison_side(
+            &after_source,
+            &after_grids,
+            &roles,
+            &[],
+            &config,
+            "acceptance-matrix",
+        ),
+    )
+    .unwrap();
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(data["before"]["gaps"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        data["before"]["gaps"][0]["scope"]["subject"],
+        "acceptance-matrix"
+    );
+    assert_eq!(
+        data["before"]["predictions"][0]["prediction"]["facets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        data["before"]["predictions"][0]["prediction"]["facets"][0]["scope"]["subject"],
+        "acceptance-matrix"
+    );
 }
 
 #[test]

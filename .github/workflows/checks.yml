@@ -63,6 +63,27 @@ jobs:
       - name: Validate animation-pack skill and published reports
         run: ANIMSMITH_TEST_BINARY=target/debug/animsmith PYTHONDONTWRITEBYTECODE=1 python .agents/skills/evaluate-animation-packs/scripts/test_validators.py
 
+  report-browser:
+    name: generated comparison browser contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Execute Rust-generated comparison in Node browser harness
+        run: just report-browser
+
   msrv:
     name: MSRV
     runs-on: ubuntu-latest

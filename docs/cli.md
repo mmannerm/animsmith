@@ -58,6 +58,7 @@ animsmith collection generate-contact-fragment <manifest.toml> --clip <logical-i
 animsmith collection evaluate-directional-speed --policy <policy.toml> --evidence <collection-output.json> [--format json]
 animsmith collection evaluate-transition-poses <collection.toml> --families <transition-families.toml> --format json
 animsmith report <file> -o <report.html> [--clip name]
+animsmith report <before> -o <comparison.html> --compare-after <after> --before-clip <before-name> --after-clip <after-name>
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
@@ -73,6 +74,28 @@ animsmith diff <before> <after> [--format text|json]
 It inventories clips, bones, materials, and mesh-instance nodes, including each
 instance's mesh, skin status, and primitive/material context. Use those names
 when authoring `assemble` or material texture recipes.
+
+`report --compare-after` writes one offline synchronized before/after diagnostic.
+Both input files and both clip names are explicit; it refuses duplicate or
+incompatible named skeletons, missing/ambiguous clips, unavailable metric
+grids, identical or incomplete rooted dependency closures, and report work
+beyond its fixed bounds. Authored duplicate take names remain ambiguous even
+when a loader gives normalized clips distinct display suffixes. Each panel
+shows both its primary input and complete closure identity, and includes only
+selected-clip or whole-input gaps and predictions. The output cannot alias
+either primary input, a rooted sidecar, or the selected config; refusal
+preserves any existing output. The two panels synchronize by
+normalized sampled-frame phase and display both source times — that display
+mapping is not an authored time warp. Findings, coverage gaps, prediction
+provenance, and identities remain separate per side. Selecting a finding
+scrubs the linked time and highlights its uniquely mapped bone. The
+report is evidence for troubleshooting, not an artistic, gameplay, engine, or
+retargeting acceptance verdict.
+
+The checked-in [synthetic comparison walkthrough](../examples/README.md#5-converting-exports-and-generating-reports-default-features-only)
+demonstrates seam endpoints, sampled stance and foot trajectories, shared-scale
+root paths, and visually unchanged structural-track remediation. Its generated
+GLBs are byte-checked against the repository-owned fixture builder in CI.
 
 `--config animsmith.toml` is global for document-local commands. Without it, the CLI auto-loads
 `./animsmith.toml` when present and otherwise uses built-in defaults.
