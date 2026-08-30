@@ -65,6 +65,7 @@ dependencies = [
  "animsmith-core",
  "glam",
  "jsonschema",
+ "pulldown-cmark",
  "serde",
  "serde_jcs",
  "serde_json",

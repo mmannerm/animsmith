@@ -1,4 +1,5 @@
 use animsmith_core::{all_checks, mechanical_checks};
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -24,6 +25,12 @@ const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
     "ue-mannequin",
 ];
 const PIPELINE_MATRIX_MARKER: &str = "the contract grows to cover them or the team accepts them:";
+const REQUIRED_DETAIL_FIELDS: &[&str] = &[
+    "Default findings:",
+    "Prerequisites and applicability:",
+    "Config, defaults, and units:",
+    "Remediation and boundary:",
+];
 
 #[test]
 fn docs_check_ids_match_the_registered_catalog() {
@@ -83,6 +90,7 @@ fn assert_catalog_docs(
     let pipeline_matrix =
         markdown_table_after(pipeline_scenarios, PIPELINE_MATRIX_MARKER).join("\n");
     assert_no_unknown_check_ids("docs/pipeline-scenarios.md", &pipeline_matrix, &catalog);
+    assert_built_in_check_details(built_in_checks, &catalog);
     assert_built_in_check_inventory(built_in_checks, &catalog);
 }
 
@@ -338,6 +346,11 @@ fn assert_built_in_check_inventory(markdown: &str, catalog: &BTreeSet<&str>) {
             .expect("source docs imply a source checkout");
         let source = read_workspace_doc(&workspace_root, expected.source);
         assert_source_tokens(expected.id, &source, expected.severity_tokens);
+        assert_default_enablement(
+            expected.id,
+            &source,
+            !expected.default_findings.contains(&"off"),
+        );
         for (documented_key, access_token) in expected.config_access {
             if !access_token.is_empty() {
                 assert_source_tokens(expected.id, &source, &[*access_token]);
@@ -349,6 +362,85 @@ fn assert_built_in_check_inventory(markdown: &str, catalog: &BTreeSet<&str>) {
             );
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct MarkdownSection {
+    heading: String,
+    body: String,
+}
+
+fn built_in_check_sections(markdown: &str) -> Vec<MarkdownSection> {
+    let events: Vec<_> = Parser::new_ext(markdown, Options::all()).collect();
+    let mut sections = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        if !matches!(
+            event,
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H3,
+                ..
+            })
+        ) {
+            continue;
+        }
+
+        let end = (index + 1..events.len())
+            .find(|candidate| matches!(events[*candidate], Event::End(TagEnd::Heading(_))))
+            .expect("every Markdown heading must have an end event");
+        let heading = markdown_event_text(&events[index + 1..end]);
+        let body_end = (end + 1..events.len())
+            .find(|candidate| markdown_heading_at_or_above_h3(&events[*candidate]))
+            .unwrap_or(events.len());
+        let body = markdown_event_text(&events[end + 1..body_end]);
+        sections.push(MarkdownSection { heading, body });
+    }
+
+    sections
+}
+
+fn markdown_heading_at_or_above_h3(event: &Event<'_>) -> bool {
+    matches!(
+        event,
+        Event::Start(Tag::Heading {
+            level: HeadingLevel::H1 | HeadingLevel::H2 | HeadingLevel::H3,
+            ..
+        })
+    )
+}
+
+fn markdown_event_text(events: &[Event<'_>]) -> String {
+    let mut text = String::new();
+    for event in events {
+        match event {
+            Event::Text(value) | Event::Code(value) | Event::Html(value) => text.push_str(value),
+            Event::SoftBreak | Event::HardBreak => text.push('\n'),
+            _ => {}
+        }
+    }
+    text
+}
+
+fn assert_built_in_check_details(markdown: &str, catalog: &BTreeSet<&str>) {
+    let sections = built_in_check_sections(markdown);
+    let mut seen = BTreeSet::new();
+    for section in &sections {
+        if catalog.contains(section.heading.as_str()) {
+            assert!(
+                seen.insert(section.heading.as_str()),
+                "docs/built-in-checks.md has duplicate detailed section for `{}`",
+                section.heading
+            );
+            for field in REQUIRED_DETAIL_FIELDS {
+                assert!(
+                    section.body.contains(field),
+                    "docs/built-in-checks.md detailed section for `{}` is missing `{field}`",
+                    section.heading
+                );
+            }
+        }
+    }
+    assert_exact_ids("docs/built-in-checks.md detailed sections", &seen, catalog);
 }
 
 fn assert_source_tokens(id: &str, source: &str, tokens: &[&str]) {
@@ -363,6 +455,31 @@ fn assert_source_tokens(id: &str, source: &str, tokens: &[&str]) {
     }
 }
 
+fn assert_default_enablement(id: &str, source: &str, expected_enabled: bool) {
+    let compact: String = source
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let signature = "fnenabled_by_default(&self)->bool{";
+    let Some(start) = compact.find(signature) else {
+        assert!(
+            expected_enabled,
+            "implementation source for opt-in check {id} must override enabled_by_default"
+        );
+        return;
+    };
+    let body = &compact[start + signature.len()..];
+    let actual = body
+        .split('}')
+        .next()
+        .expect("enabled_by_default override must have a body");
+    let expected = if expected_enabled { "true" } else { "false" };
+    assert_eq!(
+        actual, expected,
+        "implementation source for {id} disagrees with documented default enablement"
+    );
+}
+
 #[test]
 fn source_token_helper_rejects_a_nonexistent_token() {
     let failure = std::panic::catch_unwind(|| {
@@ -375,6 +492,18 @@ fn source_token_helper_rejects_a_nonexistent_token() {
     .expect_err("a nonexistent implementation token must be rejected");
     let message = panic_message(failure);
     assert!(message.contains("not_a_real_token"), "{message}");
+}
+
+#[test]
+fn default_enablement_helper_rejects_a_mutated_opt_in_authority() {
+    let source = "fn enabled_by_default(&self) -> bool { false }";
+    let mutated = source.replacen("false", "true", 1);
+    let failure = std::panic::catch_unwind(|| {
+        assert_default_enablement("constant-nonunit-scale", &mutated, false);
+    })
+    .expect_err("a default-on mutation must be rejected for an opt-in check");
+    let message = panic_message(failure);
+    assert!(message.contains("constant-nonunit-scale"), "{message}");
 }
 
 fn assert_exact_ids(surface: &str, documented: &BTreeSet<&str>, expected: &BTreeSet<&str>) {
@@ -711,5 +840,31 @@ fn stale_or_missing_built_in_check_inventory_rows_fail_the_docs_gate() {
         message.contains("docs/built-in-checks.md inventory"),
         "{message}"
     );
+    assert!(message.contains("bind-pose"), "{message}");
+}
+
+#[test]
+fn missing_detailed_check_section_fails_even_when_inventory_is_intact() {
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+        read_source_catalog_docs()
+    else {
+        return;
+    };
+    let missing = built_in_checks.replacen("### `bind-pose`\n", "", 1);
+    assert_ne!(
+        missing, built_in_checks,
+        "mutation must remove a detailed section"
+    );
+    assert!(
+        missing.contains("| [bind-pose](#bind-pose) |"),
+        "the mutation must leave the inventory row intact"
+    );
+
+    let failure = std::panic::catch_unwind(|| {
+        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &missing);
+    })
+    .expect_err("a missing detailed section must fail the docs gate");
+    let message = panic_message(failure);
+    assert!(message.contains("detailed sections"), "{message}");
     assert!(message.contains("bind-pose"), "{message}");
 }
