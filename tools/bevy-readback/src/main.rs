@@ -85,12 +85,20 @@ enum PredictionInputError {
 }
 
 fn read_prediction(path: impl AsRef<Path>) -> Result<Vec<u8>, PredictionInputError> {
-    let file = File::open(path).map_err(|_| PredictionInputError::Io)?;
+    let path = path.as_ref();
+    let initial = fs::symlink_metadata(path).map_err(|_| PredictionInputError::Io)?;
+    if !initial.file_type().is_file() {
+        return Err(PredictionInputError::NotRegular);
+    }
+    let limit = animsmith_engine::GLTF_ADDRESSABILITY_V2_MAX_REPORT_BYTES;
+    if initial.len() > limit {
+        return Err(PredictionInputError::TooLarge);
+    }
+    let file = open_prediction(path).map_err(|_| PredictionInputError::Io)?;
     let metadata = file.metadata().map_err(|_| PredictionInputError::Io)?;
     if !metadata.file_type().is_file() {
         return Err(PredictionInputError::NotRegular);
     }
-    let limit = animsmith_engine::GLTF_ADDRESSABILITY_V2_MAX_REPORT_BYTES;
     if metadata.len() > limit {
         return Err(PredictionInputError::TooLarge);
     }
@@ -103,6 +111,20 @@ fn read_prediction(path: impl AsRef<Path>) -> Result<Vec<u8>, PredictionInputErr
         return Err(PredictionInputError::TooLarge);
     }
     Ok(bytes)
+}
+
+#[cfg(unix)]
+fn open_prediction(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_prediction(path: &Path) -> io::Result<File> {
+    File::open(path)
 }
 
 #[derive(Debug)]
@@ -165,33 +187,27 @@ impl VerifiedSnapshot {
         (primary, dependencies)
     }
 
+    fn cleanup(&self) -> io::Result<()> {
+        #[cfg(windows)]
+        for (path, _) in std::iter::once(&self.primary).chain(self.resources.iter()) {
+            let _ = make_writable(path);
+        }
+        match fs::remove_dir_all(&self.root) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
+    }
+
     #[cfg(feature = "test-support")]
     fn corrupt_primary(&self) -> io::Result<()> {
         make_writable(&self.primary.0)?;
         fs::write(&self.primary.0, b"not a glTF artifact")
     }
-
-    #[cfg(feature = "test-support")]
-    fn remove_resource(&self, key: &str) -> io::Result<()> {
-        let wanted = self.root.join(key);
-        let Some((path, _)) = self.resources.iter().find(|(path, _)| *path == wanted) else {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "snapshot resource not found",
-            ));
-        };
-        make_writable(path)?;
-        fs::remove_file(path)
-    }
 }
 
 impl Drop for VerifiedSnapshot {
     fn drop(&mut self) {
-        #[cfg(windows)]
-        for (path, _) in std::iter::once(&self.primary).chain(self.resources.iter()) {
-            let _ = make_writable(path);
-        }
-        let _ = fs::remove_dir_all(&self.root);
+        let _ = self.cleanup();
     }
 }
 
@@ -420,35 +436,43 @@ fn main() -> ExitCode {
             return operator_error("cannot inject original-dependency mutation");
         }
     }
-    #[cfg(feature = "test-support")]
-    if env::var_os("ANIMSMITH_BEVY_READBACK_TEST_CORRUPT_SNAPSHOT_PRIMARY").is_some()
-        && snapshot.corrupt_primary().is_err()
-    {
-        return operator_error("cannot inject snapshot-primary mutation");
-    }
-    #[cfg(feature = "test-support")]
-    if let Some(key) = env::var_os("ANIMSMITH_BEVY_READBACK_TEST_REMOVE_SNAPSHOT_DEPENDENCY") {
-        let Some(key) = key
-            .to_str()
-            .filter(|key| safe_relative_path(Path::new(key)))
-        else {
-            return operator_error("invalid snapshot-dependency mutation key");
-        };
-        if snapshot.remove_resource(key).is_err() {
-            return operator_error("cannot inject snapshot-dependency mutation");
-        }
-    }
     let Some(asset_root) = snapshot.root_str().map(str::to_owned) else {
         return operator_error("private snapshot root is not UTF-8");
     };
+    let provenance_schema = adapter.prediction_provenance().contract_id().into();
+    let observed_provenance_identity = adapter
+        .prediction_provenance()
+        .identity()
+        .input_identity()
+        .clone();
+    #[cfg(feature = "test-support")]
+    let mut provenance_identity = observed_provenance_identity;
+    #[cfg(not(feature = "test-support"))]
+    let provenance_identity = observed_provenance_identity;
+    #[cfg(feature = "test-support")]
+    let mut referenced_prediction = prediction_input.clone();
+    #[cfg(not(feature = "test-support"))]
+    let referenced_prediction = prediction_input.clone();
+    #[cfg(feature = "test-support")]
+    if let Ok(mismatch) = env::var("ANIMSMITH_BEVY_READBACK_TEST_REFERENCE_MISMATCH") {
+        match mismatch.as_str() {
+            "prediction_document" => {
+                referenced_prediction = animsmith_core::InputIdentity::from_bytes(
+                    b"deliberately different strict prediction document",
+                );
+            }
+            "provenance" => {
+                provenance_identity = animsmith_core::InputIdentity::from_bytes(
+                    b"deliberately different prediction provenance",
+                );
+            }
+            _ => return operator_error("invalid prediction-reference mismatch injection"),
+        }
+    }
     let reference = animsmith_engine::BevyPredictionReferenceV1::new(
-        prediction_input.clone(),
-        adapter.prediction_provenance().contract_id().into(),
-        adapter
-            .prediction_provenance()
-            .identity()
-            .input_identity()
-            .clone(),
+        referenced_prediction,
+        provenance_schema,
+        provenance_identity,
     );
     let lock = animsmith_core::InputIdentity::from_bytes(include_bytes!("../Cargo.lock"));
     let warnings = RedactedWarnings::default();
@@ -475,6 +499,14 @@ fn main() -> ExitCode {
     // `App::run` normally performs this after plugin construction. This
     // bounded manual-update harness must finish plugin registration itself.
     app.finish();
+    #[cfg(feature = "test-support")]
+    let load_asset = if env::var_os("ANIMSMITH_BEVY_READBACK_TEST_MISSING_ROOT_LABEL").is_some() {
+        format!("{asset}#MissingAuditLabel")
+    } else {
+        asset.clone()
+    };
+    #[cfg(not(feature = "test-support"))]
+    let load_asset = asset.clone();
     let handle: Handle<Gltf> = app
         .world()
         .resource::<AssetServer>()
@@ -483,7 +515,7 @@ fn main() -> ExitCode {
             settings.include_source = true;
             settings.load_animations = true;
         })
-        .load(asset.clone());
+        .load(load_asset);
     let mut inverse_handles: Option<Vec<Handle<SkinnedMeshInverseBindposes>>> = None;
     // The inclusive range starts at one so the reported count is the exact
     // number of `App::update` calls, never an off-by-one loop index.
@@ -568,7 +600,6 @@ fn main() -> ExitCode {
         let Some((warnings, warnings_truncated)) = warnings.snapshot() else {
             return operator_error("cannot read bounded warning capture");
         };
-        let (primary_verified, dependencies_verified) = snapshot.verify();
         let observation = if matches!(state, animsmith_engine::BevyTerminalStateV1::Loaded) {
             match observe(
                 &app,
@@ -577,21 +608,27 @@ fn main() -> ExitCode {
                 state,
                 warnings,
                 warnings_truncated,
-                primary_verified,
-                dependencies_verified,
+                true,
+                true,
             ) {
                 Some(observation) => observation,
                 None => return operator_error("loaded asset is unavailable for observation"),
             }
         } else {
-            empty_observation(
-                state,
-                warnings,
-                warnings_truncated,
-                primary_verified,
-                dependencies_verified,
-            )
+            empty_observation(state, warnings, warnings_truncated, true, true)
         };
+        if inject_post_observe_mutation(&snapshot).is_err() {
+            return operator_error("cannot inject post-observation snapshot mutation");
+        }
+        let integrity = snapshot.verify();
+        let cleanup = snapshot.cleanup();
+        drop(snapshot);
+        if cleanup.is_err() {
+            return operator_error("cannot remove private verified snapshot");
+        }
+        if integrity != (true, true) {
+            return conformance_error("private snapshot changed during Bevy observation");
+        }
         return match publish(
             primary,
             reference,
@@ -608,25 +645,50 @@ fn main() -> ExitCode {
     let Some((warnings, warnings_truncated)) = warnings.snapshot() else {
         return operator_error("cannot read bounded warning capture");
     };
-    let (primary_verified, dependencies_verified) = snapshot.verify();
+    let observation = empty_observation(
+        animsmith_engine::BevyTerminalStateV1::WorkLimit,
+        warnings,
+        warnings_truncated,
+        true,
+        true,
+    );
+    if inject_post_observe_mutation(&snapshot).is_err() {
+        return operator_error("cannot inject post-observation snapshot mutation");
+    }
+    let integrity = snapshot.verify();
+    let cleanup = snapshot.cleanup();
+    drop(snapshot);
+    if cleanup.is_err() {
+        return operator_error("cannot remove private verified snapshot");
+    }
+    if integrity != (true, true) {
+        return conformance_error("private snapshot changed during Bevy observation");
+    }
     match publish(
         primary,
         reference,
         lock,
         max_updates(),
-        empty_observation(
-            animsmith_engine::BevyTerminalStateV1::WorkLimit,
-            warnings,
-            warnings_truncated,
-            primary_verified,
-            dependencies_verified,
-        ),
+        observation,
         &prediction,
         &prediction_input,
     ) {
         Ok(exit) => exit,
         Err(_) => operator_error("cannot form validated readback"),
     }
+}
+
+#[cfg(feature = "test-support")]
+fn inject_post_observe_mutation(snapshot: &VerifiedSnapshot) -> io::Result<()> {
+    if env::var_os("ANIMSMITH_BEVY_READBACK_TEST_MUTATE_SNAPSHOT_AFTER_OBSERVE").is_some() {
+        snapshot.corrupt_primary()?;
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "test-support"))]
+fn inject_post_observe_mutation(_: &VerifiedSnapshot) -> io::Result<()> {
+    Ok(())
 }
 
 fn max_updates() -> u64 {

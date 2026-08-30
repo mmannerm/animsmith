@@ -70,8 +70,9 @@ terminal lifecycle, and available typed inventories. Its reader rejects unknown
 fields, malformed or oversized input, noncanonical rows, changed self-identity,
 and any stored conformance result that does not recompute from the strict V2
 prediction. The probe preserves closure-relative paths in its private,
-read-only snapshot and re-hashes that retained tree immediately before
-publication; neither the owner path nor the temporary path enters the contract.
+read-only snapshot, then re-hashes and removes that retained tree after all
+observation and before report serialization; neither the owner path nor the
+temporary path enters the contract.
 The headless Bevy executable is deliberately excluded from this Rust-1.88
 workspace because its isolated build records and enforces the exact official
 compiler identity `rustc 1.95.0 (59807616e 2026-04-14)`; see

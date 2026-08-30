@@ -26,10 +26,10 @@ pub const BEVY_READBACK_V1_MAX_UPDATES: u64 = 4_096;
 /// Exact compiler identity required by the isolated harness build script.
 pub const BEVY_READBACK_V1_RUSTC: &str = "rustc 1.95.0 (59807616e 2026-04-14)";
 /// Frozen byte count of the committed excluded-tool lock graph.
-pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = 86_365;
+pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = 86_374;
 /// Frozen SHA-256 of the committed excluded-tool lock graph.
 pub const BEVY_READBACK_V1_LOCK_SHA256: &str =
-    "6a4595b2fb8c6ab9f1abd92decbbcc9e4313619c3fa6983fb712abd23cea0c33";
+    "b674e2f74daff0a0815bfbbce258cbb76181c18b39ee5b6499c12a064a809b18";
 const MAX_TEXT_BYTES: usize = 1_024;
 
 /// Exact V2 document identity plus its canonical V4 provenance header.
@@ -881,9 +881,9 @@ mod tests {
     fn frozen_lock_identity() -> InputIdentity {
         InputIdentity::from_sha256_digest(
             [
-                0x6a, 0x45, 0x95, 0xb2, 0xfb, 0x8c, 0x6a, 0xb9, 0xf1, 0xab, 0xd9, 0x2d, 0xec, 0xbb,
-                0xcc, 0x9e, 0x43, 0x13, 0x61, 0x9c, 0x3f, 0xa6, 0x98, 0x3f, 0xb7, 0x12, 0xab, 0xd2,
-                0x3c, 0xea, 0x0c, 0x33,
+                0xb6, 0x74, 0xe2, 0xf7, 0x4d, 0xaf, 0xf0, 0xa0, 0x81, 0x5b, 0xfb, 0xbc, 0xe2, 0x58,
+                0xcb, 0xb7, 0x61, 0x81, 0xc1, 0x8b, 0x39, 0xee, 0x5b, 0x64, 0x99, 0xc1, 0x2a, 0x06,
+                0x4a, 0x80, 0x9b, 0x18,
             ],
             BEVY_READBACK_V1_LOCK_BYTES,
         )
@@ -1007,6 +1007,64 @@ mod tests {
         }
         let bytes = serde_json::to_vec(&source).unwrap();
         assert!(GltfAddressabilityV2::read_from(bytes.as_slice()).is_err());
+    }
+
+    #[test]
+    fn strict_reader_then_prediction_recomputation_rejects_wrong_conformance() {
+        let mut prediction_json = crate::addressability_v2::tests::adapter_report_json(Some(
+            crate::TargetPointerWidth::Bits64,
+        ));
+        prediction_json["bevy"] = serde_json::Value::Null;
+        let prediction_bytes = serde_json::to_vec(&prediction_json).unwrap();
+        let prediction_input = InputIdentity::from_bytes(&prediction_bytes);
+        let prediction = GltfAddressabilityV2::read_from(prediction_bytes.as_slice()).unwrap();
+        let deliberately_wrong = BevyReadbackV1::new(
+            BevyHarnessIdentityV1::new(
+                "0.1.0".into(),
+                BEVY_READBACK_V1_RUSTC.into(),
+                true,
+                true,
+                frozen_lock_identity(),
+                1,
+            ),
+            prediction.input().clone(),
+            BevyPredictionReferenceV1::new(
+                prediction_input.clone(),
+                animsmith_core::PREDICTION_PROVENANCE_V4_ID.into(),
+                InputIdentity::from_bytes(b"adapter unavailable has no V4 reference"),
+            ),
+            BevyObservationV1::new(
+                BevyTerminalStateV1::Loaded,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                None,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                false,
+                true,
+                true,
+            ),
+            BevyConformanceV1::Exact,
+        )
+        .unwrap();
+        let bytes = serde_json::to_vec(&deliberately_wrong).unwrap();
+        let strict = validate_bevy_readback_v1(bytes.as_slice()).unwrap();
+        assert_eq!(
+            compare_bevy_readback_v1(&strict, &prediction, &prediction_input),
+            BevyConformanceV1::NotExact {
+                mismatch_codes: vec![BevyConformanceCodeV1::BevyAdapterUnavailable],
+                unavailable_codes: vec![],
+            }
+        );
+        assert!(
+            validate_bevy_readback_prediction_v1(&strict, &prediction, &prediction_input).is_err()
+        );
     }
 
     #[test]

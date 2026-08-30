@@ -17,6 +17,9 @@ expect() { local want="$1" got; shift; set +e; "$@" > /dev/null; got=$?; set -e;
 readback_status() { local want="$1" output="$2" got; shift 2; set +e; "$@" > "$output"; got=$?; set -e; test "$got" = "$want" || { echo "expected exit $want, got $got" >&2; exit 1; }; }
 cp examples/assets/clip.glb "$work/fixture.glb"
 predict "$work/fixture.glb" "$work/glb.json"
+mkfifo "$work/prediction.fifo"
+readback_status 2 "$work/fifo.stdout" timeout 2 "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/prediction.fifo"
+test ! -s "$work/fifo.stdout"
 "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/glb.json" > "$work/glb.readback.json"
 jq -e '.conformance.state == "exact" and .harness.rust_toolchain == "rustc 1.95.0 (59807616e 2026-04-14)" and .harness.bevy_animation_feature == true and .harness.load_animations == true and .observation.terminal.state == "loaded" and (.harness.updates >= 1 and .harness.updates <= 4096) and .observation.primary_verified == true and .observation.dependencies_verified == true and .observation.default_scene == 0 and (.observation.nodes | length) == 2 and (.observation.skins | length) == 0 and (.observation.inverse_bind_matrices | length) == 0 and (.observation.targets | length) == 1 and (.observation.warnings | length) >= 1 and (.observation.warnings_truncated == false)' "$work/glb.readback.json" >/dev/null
 cp examples/assets/clip.glb "$work/race.glb"
@@ -24,6 +27,9 @@ predict "$work/race.glb" "$work/race.json"
 ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_AFTER_SNAPSHOT=1 "$probe" --asset-root "$work" --asset race.glb --prediction "$work/race.json" > "$work/race.readback.json"
 jq -e '.conformance.state == "exact" and .observation.primary_verified == true and .observation.dependencies_verified == true' "$work/race.readback.json" >/dev/null
 test "$(wc -c < "$work/race.glb")" -gt "$(jq -r '.input.bytes' "$work/race.readback.json")"
+readback_status 1 "$work/post-observe-mutation.stdout" env ANIMSMITH_BEVY_READBACK_TEST_MUTATE_SNAPSHOT_AFTER_OBSERVE=1 "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/glb.json"
+test ! -s "$work/post-observe-mutation.stdout"
+test -z "$(find "$snapshot_tmp" -maxdepth 1 -type d -name '.animsmith-bevy-readback-*' -print -quit)"
 jq '.animations += [.animations[0], .animations[0]] | .animations[1] |= del(.name) | .animations[2].name = .animations[0].name | .scenes[0].name = "SceneName"' crates/animsmith-gltf/testdata/rig.gltf > "$work/fixture.gltf"
 predict "$work/fixture.gltf" "$work/gltf.json"
 "$probe" --asset-root "$work" --asset fixture.gltf --prediction "$work/gltf.json" > "$work/gltf.readback.json"
@@ -53,13 +59,13 @@ expect 1 "$probe" --asset-root "$work" --asset dependency.gltf --prediction "$wo
 printf x >> "$work/fixture.glb"
 expect 1 "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/glb.json"
 cp examples/assets/clip.glb "$work/fixture.glb"
-readback_status 1 "$work/root-failure.readback.json" env ANIMSMITH_BEVY_READBACK_TEST_CORRUPT_SNAPSHOT_PRIMARY=1 "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/glb.json"
-jq -e '.conformance.state == "not_exact" and (.conformance.mismatch_codes | index("input_identity_mismatch")) and (.conformance.mismatch_codes | index("load_did_not_succeed")) and .observation.terminal.state == "root_failure" and .observation.terminal.error == "loader" and (.harness.updates >= 1 and .harness.updates <= 4096) and .observation.primary_verified == false and .observation.dependencies_verified == true' "$work/root-failure.readback.json" >/dev/null
-printf '%s' '{"asset":{"version":"2.0"},"images":[{"uri":"missing-after-snapshot.png"}],"textures":[{"source":0}]}' > "$work/dependency-failure.gltf"
-printf 'not an image, but present during prediction and snapshot' > "$work/missing-after-snapshot.png"
+readback_status 1 "$work/root-failure.readback.json" env ANIMSMITH_BEVY_READBACK_TEST_MISSING_ROOT_LABEL=1 "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/glb.json"
+jq -e '.conformance.state == "not_exact" and (.conformance.mismatch_codes | index("load_did_not_succeed")) and .observation.terminal.state == "root_failure" and .observation.terminal.error == "missing_label" and (.harness.updates >= 1 and .harness.updates <= 4096) and .observation.primary_verified == true and .observation.dependencies_verified == true' "$work/root-failure.readback.json" >/dev/null
+printf '%s' '{"asset":{"version":"2.0"},"images":[{"uri":"unsupported.png"}],"textures":[{"source":0}]}' > "$work/dependency-failure.gltf"
+printf 'not an image, but present and identity-verified' > "$work/unsupported.png"
 predict "$work/dependency-failure.gltf" "$work/dependency-failure.json"
-readback_status 1 "$work/dependency-failure.readback.json" env ANIMSMITH_BEVY_READBACK_TEST_REMOVE_SNAPSHOT_DEPENDENCY=missing-after-snapshot.png "$probe" --asset-root "$work" --asset dependency-failure.gltf --prediction "$work/dependency-failure.json"
-jq -e '.conformance.state == "not_exact" and (.conformance.mismatch_codes | index("dependency_identity_mismatch")) and (.conformance.mismatch_codes | index("load_did_not_succeed")) and .observation.terminal.state == "dependency_failure" and .observation.terminal.error == "missing_asset_loader" and (.harness.updates >= 1 and .harness.updates <= 4096) and .observation.primary_verified == true and .observation.dependencies_verified == false' "$work/dependency-failure.readback.json" >/dev/null
+readback_status 1 "$work/dependency-failure.readback.json" "$probe" --asset-root "$work" --asset dependency-failure.gltf --prediction "$work/dependency-failure.json"
+jq -e '.conformance.state == "not_exact" and (.conformance.mismatch_codes | index("load_did_not_succeed")) and .observation.terminal.state == "dependency_failure" and .observation.terminal.error == "missing_asset_loader" and (.harness.updates >= 1 and .harness.updates <= 4096) and .observation.primary_verified == true and .observation.dependencies_verified == true' "$work/dependency-failure.readback.json" >/dev/null
 readback_status 1 "$work/work-limit.readback.json" env ANIMSMITH_BEVY_READBACK_TEST_MAX_UPDATES=0 "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/glb.json"
 jq -e '.conformance.state == "not_exact" and (.conformance.mismatch_codes | index("load_did_not_succeed")) and .observation.terminal.state == "work_limit" and .harness.updates == 0 and .observation.primary_verified == true and .observation.dependencies_verified == true' "$work/work-limit.readback.json" >/dev/null
 
@@ -73,6 +79,12 @@ readback_status 1 "$work/named-mismatch.readback.json" env ANIMSMITH_BEVY_READBA
 jq -e '.conformance.state == "not_exact" and (.conformance.mismatch_codes | index("named_winner_mismatch"))' "$work/named-mismatch.readback.json" >/dev/null
 readback_status 1 "$work/skin-mismatch.readback.json" env ANIMSMITH_BEVY_READBACK_TEST_MUTATE_OBSERVATION=skin "$probe" --asset-root "$work" --asset attached-skins.gltf --prediction "$work/attached-skins.json"
 jq -e '.conformance.state == "not_exact" and (.conformance.mismatch_codes | index("skin_mismatch"))' "$work/skin-mismatch.readback.json" >/dev/null
+for reference_and_code in prediction_document:prediction_document_mismatch provenance:provenance_mismatch; do
+    reference="${reference_and_code%%:*}"
+    code="${reference_and_code#*:}"
+    readback_status 1 "$work/$reference-mismatch.readback.json" env ANIMSMITH_BEVY_READBACK_TEST_REFERENCE_MISMATCH="$reference" "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/glb.json"
+    jq -e --arg code "$code" '.conformance.state == "not_exact" and (.conformance.mismatch_codes | index($code))' "$work/$reference-mismatch.readback.json" >/dev/null
+done
 cp examples/bevy-v3.animsmith.toml "$work/unavailable.toml"
 sed -i 's/bevy_animation_feature = true/bevy_animation_feature = false/' "$work/unavailable.toml"
 "$cli" --config "$work/unavailable.toml" generate addressability --target-pointer-width 64 "$work/fixture.glb" > "$work/unavailable.json" || true

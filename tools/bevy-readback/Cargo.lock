@@ -73,6 +73,7 @@ dependencies = [
  "animsmith-core",
  "animsmith-engine",
  "bevy",
+ "libc",
  "serde_json",
  "sha2",
  "tracing",

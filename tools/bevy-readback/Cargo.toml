@@ -20,6 +20,7 @@ animsmith-core = { path = "../../crates/animsmith-core" }
 # animation feature into `bevy_gltf`; without it `Gltf::{animations,
 # named_animations}` is deliberately absent.
 bevy = { version = "=0.19.0", default-features = false, features = ["std", "default_app", "bevy_gltf", "gltf_animation", "multi_threaded"] }
+libc = "0.2"
 serde_json = "1"
 sha2 = "0.11"
 tracing = "0.1"
