@@ -2,7 +2,7 @@ use animsmith_core::metrics::{MetricGrids, metric_frame_count};
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::sample_clip;
 use animsmith_core::{
-    CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode, Finding, Severity,
+    CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode, Finding, InputIdentity, Severity,
 };
 use animsmith_core::{
     EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionV1, EvaluationScope,
@@ -18,7 +18,10 @@ fn fixture() -> PathBuf {
 }
 
 fn report_data(html: &str) -> Value {
-    let id = "report-data";
+    embedded_json(html, "report-data")
+}
+
+fn embedded_json(html: &str, id: &str) -> Value {
     let id_pos = html.find(id).expect("report data script id");
     let script_start = html[..id_pos].rfind("<script").expect("report data script");
     let start = html[id_pos..].find('>').expect("script tag close") + id_pos + 1;
@@ -28,6 +31,93 @@ fn report_data(html: &str) -> Value {
     );
     let end = html[start..].find("</script>").expect("script close") + start;
     serde_json::from_str(&html[start..end]).expect("report data JSON")
+}
+
+fn comparison_side<'a>(
+    doc: &'a animsmith_core::Document,
+    identity: &'a InputIdentity,
+    grids: &'a MetricGrids<'a>,
+    roles: &'a ResolvedRoles,
+    checks: &'a [CheckEvaluation],
+    clip: &'a str,
+) -> animsmith_report::ComparisonSide<'a> {
+    let _ = doc;
+    animsmith_report::ComparisonSide {
+        identity,
+        grids,
+        roles,
+        checks,
+        prediction_provenance: None,
+        clip,
+    }
+}
+
+#[test]
+fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
+    let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let source = std::fs::read(fixture()).expect("fixture bytes");
+    let identity = InputIdentity::from_bytes(&source);
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::default();
+    let checks = evaluations(vec![
+        Finding::new(
+            "fixture-check",
+            Severity::Warning,
+            "</script><img onerror=alert(1)>",
+        )
+        .clip("walk")
+        .bone("hips")
+        .time(0.5),
+    ]);
+    let before = comparison_side(&doc, &identity, &grids, &roles, &checks, "walk");
+    let after = comparison_side(&doc, &identity, &grids, &roles, &checks, "idle");
+    let first = animsmith_report::render_comparison(before, after).expect("comparison renders");
+    let second = animsmith_report::render_comparison(before, after)
+        .expect("comparison renders deterministically");
+
+    assert_eq!(first, second);
+    assert_self_contained(&first);
+    assert!(
+        !first.contains("</script><img"),
+        "untrusted HTML must stay JSON data"
+    );
+    assert!(
+        first.contains("item.id ="),
+        "viewer gives findings stable in-document anchors"
+    );
+    let data = embedded_json(&first, "comparison-report-data");
+    assert_eq!(data["kind"], "animsmith-comparison-v1");
+    assert_eq!(data["correspondence"]["before_clip"], "walk");
+    assert_eq!(data["correspondence"]["after_clip"], "idle");
+    assert_eq!(data["before"]["identity"]["sha256"], identity.sha256());
+    assert_eq!(data["after"]["identity"]["sha256"], identity.sha256());
+    assert_eq!(data["before"]["findings"][0]["bone"], "hips");
+    assert!(
+        data["after"]["findings"]
+            .as_array()
+            .expect("after findings")
+            .is_empty()
+    );
+}
+
+#[test]
+fn comparison_refuses_incompatible_named_hierarchy_before_rendering() {
+    let before_doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let mut after_doc = before_doc.clone();
+    after_doc.skeleton.bones[1].parent = None;
+    let identity = InputIdentity::from_bytes(b"self-authored comparison identity");
+    let before_grids = MetricGrids::new(&before_doc);
+    let after_grids = MetricGrids::new(&after_doc);
+    let roles = ResolvedRoles::default();
+    let error = animsmith_report::render_comparison(
+        comparison_side(&before_doc, &identity, &before_grids, &roles, &[], "walk"),
+        comparison_side(&after_doc, &identity, &after_grids, &roles, &[], "walk"),
+    )
+    .expect_err("different named parent must refuse");
+    assert!(matches!(
+        error,
+        animsmith_report::ComparisonError::IncompatibleSkeleton { .. }
+    ));
 }
 
 fn assert_self_contained(html: &str) {

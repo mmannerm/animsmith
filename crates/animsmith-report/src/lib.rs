@@ -40,12 +40,411 @@
 use animsmith_core::metrics::MetricGrids;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::PoseGrid;
-use animsmith_core::{CheckEvaluation, PredictionProvenanceV1};
+use animsmith_core::{CheckEvaluation, InputIdentity, PredictionProvenanceV1};
 use base64::Engine as _;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::io::{self, Write};
 
 const VIEWER_JS: &str = include_str!("../assets/viewer.js");
 const VIEWER_CSS: &str = include_str!("../assets/viewer.css");
+const COMPARISON_VIEWER_JS: &str = include_str!("../assets/comparison.js");
+
+/// Maximum pose-data bytes embedded by one side of a comparison report.
+///
+/// The bound is checked before the renderer allocates its binary pose buffer.
+pub const MAX_COMPARISON_POSE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_COMPARISON_JSON_BYTES: usize = 48 * 1024 * 1024;
+
+/// One explicit input to [`render_comparison`].
+#[derive(Clone, Copy)]
+pub struct ComparisonSide<'a> {
+    /// Immutable identity of the bytes loaded for this side.
+    pub identity: &'a InputIdentity,
+    /// Metric pose grids computed from this side's loaded document.
+    pub grids: &'a MetricGrids<'a>,
+    /// Resolved roles for this side.
+    pub roles: &'a ResolvedRoles,
+    /// Typed check evaluations for this side.
+    pub checks: &'a [CheckEvaluation],
+    /// Optional engine-prediction provenance for this side.
+    pub prediction_provenance: Option<&'a PredictionProvenanceV1>,
+    /// Exact, caller-declared clip name to compare.
+    pub clip: &'a str,
+}
+
+/// Refusal returned before a comparison report is published.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ComparisonError {
+    /// The declared clip was absent from one input.
+    #[error("{side} clip {clip:?} was not found")]
+    ClipNotFound {
+        /// Input side that did not contain the clip.
+        side: &'static str,
+        /// Explicit clip correspondence member that was absent.
+        clip: String,
+    },
+    /// A document had more than one clip with the declared name.
+    #[error("{side} clip {clip:?} is ambiguous")]
+    AmbiguousClip {
+        /// Input side containing duplicate clip names.
+        side: &'static str,
+        /// Explicit clip correspondence member that was ambiguous.
+        clip: String,
+    },
+    /// A skeleton needs a unique bone name before cross-document mapping is safe.
+    #[error("{side} skeleton has duplicate bone name {name:?}")]
+    DuplicateBoneName {
+        /// Input side containing the duplicate.
+        side: &'static str,
+        /// Duplicate bone name.
+        name: String,
+    },
+    /// A skeleton violated its parent-before-child representation invariant.
+    #[error("{side} skeleton has an invalid parent for bone {bone:?}")]
+    InvalidHierarchy {
+        /// Input side with the malformed hierarchy.
+        side: &'static str,
+        /// Bone that named a missing or later parent.
+        bone: String,
+    },
+    /// The inputs do not have the same named skeleton.
+    #[error("skeleton correspondence refused: {detail}")]
+    IncompatibleSkeleton {
+        /// Stable, operator-readable reason for refusal.
+        detail: String,
+    },
+    /// The declared clip cannot supply its existing metric sample grid.
+    #[error("{side} clip {clip:?} has no available metric sample grid")]
+    UnavailableSampleGrid {
+        /// Input side lacking the grid.
+        side: &'static str,
+        /// Declared clip that lacked the grid.
+        clip: String,
+    },
+    /// Embedding one side's exact sampled poses would exceed the fixed budget.
+    #[error("{side} pose grid requires {bytes} bytes, above the {limit}-byte comparison limit")]
+    PoseWorkExceeded {
+        /// Input side exceeding the limit.
+        side: &'static str,
+        /// Exact requested byte count, or `u128::MAX` on arithmetic overflow.
+        bytes: u128,
+        /// Fixed comparison budget.
+        limit: usize,
+    },
+    /// Serializing comparison JSON would exceed the fixed report budget.
+    #[error("comparison report JSON exceeds the {limit}-byte limit")]
+    ReportWorkExceeded {
+        /// Fixed comparison JSON budget.
+        limit: usize,
+    },
+}
+
+/// Render a self-contained, synchronized before/after HTML diagnostic.
+///
+/// The caller declares the clip correspondence by supplying exactly one clip
+/// name for each side.  The renderer refuses duplicate bone names, mismatched
+/// named parent hierarchies, absent/ambiguous clips, unavailable metric grids,
+/// or pose/report work beyond its fixed budgets.  It deliberately uses
+/// normalized frame phase for unequal durations and labels both source times;
+/// it does not infer an authored time warp.
+pub fn render_comparison(
+    before: ComparisonSide<'_>,
+    after: ComparisonSide<'_>,
+) -> Result<String, ComparisonError> {
+    let before_doc = before.grids.document();
+    let after_doc = after.grids.document();
+    validate_skeletons(before_doc, after_doc)?;
+    let before_clip = select_clip(before_doc, before.clip, "before")?;
+    let after_clip = select_clip(after_doc, after.clip, "after")?;
+    let before_grid =
+        before
+            .grids
+            .grid(before_clip.0)
+            .ok_or_else(|| ComparisonError::UnavailableSampleGrid {
+                side: "before",
+                clip: before.clip.to_owned(),
+            })?;
+    let after_grid =
+        after
+            .grids
+            .grid(after_clip.0)
+            .ok_or_else(|| ComparisonError::UnavailableSampleGrid {
+                side: "after",
+                clip: after.clip.to_owned(),
+            })?;
+
+    let bones = comparison_bones(before_doc);
+    let before_side = comparison_side_json(
+        before,
+        before_clip.1.name.as_str(),
+        before_clip.1.duration_s,
+        before_grid.as_ref(),
+        "before",
+    )?;
+    let after_side = comparison_side_json(
+        after,
+        after_clip.1.name.as_str(),
+        after_clip.1.duration_s,
+        after_grid.as_ref(),
+        "after",
+    )?;
+    let data = json!({
+        "kind": "animsmith-comparison-v1",
+        "correspondence": {
+            "kind": "explicit_clip_names",
+            "before_clip": before.clip,
+            "after_clip": after.clip,
+            "mapping": "normalized_phase",
+            "disclosure": "Panels synchronize by normalized sampled-frame phase. Source times remain separate; this is not an authored time warp.",
+        },
+        "bones": bones,
+        "before": before_side,
+        "after": after_side,
+    });
+    let data = bounded_json(&data)?;
+    // A `</script>`-bearing string inside data cannot terminate this element.
+    let data = data.replace('<', "\\u003c");
+    Ok(format!(
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+         <title>animsmith — visual comparison</title><style>{COMPARISON_CSS}</style></head>\n\
+         <body><header><h1>animsmith visual comparison</h1><p id=\"mapping\"></p>\n\
+         <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></header>\n\
+         <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"></label><span id=\"times\"></span></section>\n\
+         <main><section class=\"side\" id=\"before-panel\"><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><canvas id=\"before-gl\"></canvas><svg id=\"before-path\" viewBox=\"0 0 360 150\"></svg><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
+         <section class=\"side\" id=\"after-panel\"><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><canvas id=\"after-gl\"></canvas><svg id=\"after-path\" viewBox=\"0 0 360 150\"></svg><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
+         <script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
+    ))
+}
+
+const COMPARISON_CSS: &str = r#"
+:root{--bg:#17171f;--panel:#1e1e2a;--text:#d5d9e5;--muted:#aab1c5;--accent:#7aa2f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}header,.sync{padding:.8rem 1rem}h1,h2,h3{color:var(--accent)}h1{font-size:1.1rem}.warning{color:#f0cb83}.sync{background:#20202c;display:flex;gap:1rem;align-items:center}.sync input{min-width:20rem}main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;padding:1rem}@media(max-width:900px){main{grid-template-columns:1fr}}.side{background:var(--panel);border-radius:8px;padding:.8rem}canvas{width:100%;aspect-ratio:4/3;background:#12121a;border-radius:5px}svg{width:100%;background:#12121a;border-radius:5px;margin-top:.6rem}ul{padding-left:1.3rem;max-height:13rem;overflow:auto}.finding{cursor:pointer;padding:.3rem;margin:.2rem 0;background:#272738;border-radius:4px}.finding:hover{background:#34344a}pre{white-space:pre-wrap;word-break:break-word;color:var(--muted)}.selected{outline:2px solid #f0cb83}
+"#;
+
+fn select_clip<'a>(
+    doc: &'a animsmith_core::Document,
+    name: &str,
+    side: &'static str,
+) -> Result<(usize, &'a animsmith_core::Clip), ComparisonError> {
+    let mut matches = doc
+        .clips
+        .iter()
+        .enumerate()
+        .filter(|(_, clip)| clip.name == name);
+    let Some(found) = matches.next() else {
+        return Err(ComparisonError::ClipNotFound {
+            side,
+            clip: name.to_owned(),
+        });
+    };
+    if matches.next().is_some() {
+        return Err(ComparisonError::AmbiguousClip {
+            side,
+            clip: name.to_owned(),
+        });
+    }
+    Ok(found)
+}
+
+fn validate_skeletons(
+    before: &animsmith_core::Document,
+    after: &animsmith_core::Document,
+) -> Result<(), ComparisonError> {
+    let before_names = skeleton_names(&before.skeleton, "before")?;
+    let after_names = skeleton_names(&after.skeleton, "after")?;
+    if before_names.len() != after_names.len() {
+        return Err(ComparisonError::IncompatibleSkeleton {
+            detail: "bone counts differ".into(),
+        });
+    }
+    for (name, before_index) in &before_names {
+        let Some(after_index) = after_names.get(name) else {
+            return Err(ComparisonError::IncompatibleSkeleton {
+                detail: format!("bone {name:?} is absent after"),
+            });
+        };
+        // The offline viewer uses one shared bone-index array for both pose
+        // buffers. Refuse instead of silently drawing an after pose under the
+        // before bone's label when two otherwise equivalent hierarchies were
+        // serialized in different orders.
+        if before_index != after_index {
+            return Err(ComparisonError::IncompatibleSkeleton {
+                detail: format!("bone {name:?} has a different index"),
+            });
+        }
+        let before_parent = before.skeleton.bones[*before_index]
+            .parent
+            .map(|p| before.skeleton.bones[p].name.as_str());
+        let after_parent = after.skeleton.bones[*after_index]
+            .parent
+            .map(|p| after.skeleton.bones[p].name.as_str());
+        if before_parent != after_parent {
+            return Err(ComparisonError::IncompatibleSkeleton {
+                detail: format!("bone {name:?} has a different parent"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn skeleton_names<'a>(
+    skeleton: &'a animsmith_core::Skeleton,
+    side: &'static str,
+) -> Result<BTreeMap<&'a str, usize>, ComparisonError> {
+    let mut names = BTreeMap::new();
+    for (index, bone) in skeleton.bones.iter().enumerate() {
+        if bone.parent.is_some_and(|parent| parent >= index) {
+            return Err(ComparisonError::InvalidHierarchy {
+                side,
+                bone: bone.name.clone(),
+            });
+        }
+        if names.insert(bone.name.as_str(), index).is_some() {
+            return Err(ComparisonError::DuplicateBoneName {
+                side,
+                name: bone.name.clone(),
+            });
+        }
+    }
+    Ok(names)
+}
+
+fn comparison_bones(doc: &animsmith_core::Document) -> Vec<Value> {
+    doc.skeleton
+        .bones
+        .iter()
+        .map(|bone| {
+            json!({
+                "name": bone.name,
+                "parent": bone.parent.map(|parent| parent as i64).unwrap_or(-1),
+            })
+        })
+        .collect()
+}
+
+fn comparison_side_json(
+    side: ComparisonSide<'_>,
+    clip_name: &str,
+    duration_s: f64,
+    grid: &PoseGrid,
+    side_name: &'static str,
+) -> Result<Value, ComparisonError> {
+    let frames = grid.frame_count();
+    let bones = side.grids.document().skeleton.bones.len();
+    let bytes = comparison_pose_bytes(frames, bones, side_name)?;
+    let mut positions = Vec::with_capacity(bytes as usize);
+    for frame in 0..frames {
+        for bone in 0..bones {
+            let point = grid.model_position(frame, bone);
+            positions.extend_from_slice(&point.x.to_le_bytes());
+            positions.extend_from_slice(&point.y.to_le_bytes());
+            positions.extend_from_slice(&point.z.to_le_bytes());
+        }
+    }
+    let trails: Value = [
+        (Role::Root, "root"),
+        (Role::Hips, "hips"),
+        (Role::LeftFoot, "left_foot"),
+        (Role::RightFoot, "right_foot"),
+    ]
+    .iter()
+    .filter_map(|(role, name)| {
+        side.roles
+            .get(*role)
+            .map(|index| (name.to_string(), json!(index)))
+    })
+    .collect::<serde_json::Map<_, _>>()
+    .into();
+    let findings = side.checks.iter().flat_map(CheckEvaluation::findings)
+        .filter(|finding| finding.clip.as_deref() == Some(clip_name) || finding.clip.is_none())
+        .map(|finding| json!({"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"time":finding.time_s,"message":finding.message}))
+        .collect::<Vec<_>>();
+    let gaps = side.checks.iter().flat_map(|check| check.gaps().iter().map(move |gap| (check.check_id(), gap)))
+        .map(|(check_id, gap)| json!({"check_id":check_id,"code":gap.code,"message":gap.message,"scope":gap.scope}))
+        .collect::<Vec<_>>();
+    let predictions = side
+        .checks
+        .iter()
+        .filter_map(|check| {
+            check
+                .engine_prediction()
+                .map(|prediction| json!({"check_id":check.check_id(),"prediction":prediction}))
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "identity": {"sha256": side.identity.sha256(), "bytes": side.identity.bytes()},
+        "clip": {"name":clip_name,"duration":duration_s,"frames":frames,"positions":base64::engine::general_purpose::STANDARD.encode(positions),"trails":trails},
+        "findings":findings,"gaps":gaps,"prediction_provenance":side.prediction_provenance,"predictions":predictions,
+    }))
+}
+
+fn comparison_pose_bytes(
+    frames: usize,
+    bones: usize,
+    side: &'static str,
+) -> Result<u128, ComparisonError> {
+    let bytes = (frames as u128)
+        .saturating_mul(bones as u128)
+        .saturating_mul(3)
+        .saturating_mul(4);
+    if bytes > MAX_COMPARISON_POSE_BYTES as u128 {
+        return Err(ComparisonError::PoseWorkExceeded {
+            side,
+            bytes,
+            limit: MAX_COMPARISON_POSE_BYTES,
+        });
+    }
+    Ok(bytes)
+}
+
+struct BoundedCounter {
+    bytes: usize,
+}
+impl Write for BoundedCounter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.bytes = self
+            .bytes
+            .checked_add(data.len())
+            .ok_or_else(|| io::Error::other("comparison report limit"))?;
+        if self.bytes > MAX_COMPARISON_JSON_BYTES {
+            return Err(io::Error::other("comparison report limit"));
+        }
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+fn bounded_json(data: &Value) -> Result<String, ComparisonError> {
+    serde_json::to_writer(BoundedCounter { bytes: 0 }, data).map_err(|_| {
+        ComparisonError::ReportWorkExceeded {
+            limit: MAX_COMPARISON_JSON_BYTES,
+        }
+    })?;
+    serde_json::to_string(data).map_err(|_| ComparisonError::ReportWorkExceeded {
+        limit: MAX_COMPARISON_JSON_BYTES,
+    })
+}
+
+#[cfg(test)]
+mod comparison_tests {
+    use super::*;
+
+    #[test]
+    fn comparison_pose_budget_refuses_before_allocation() {
+        let error = comparison_pose_bytes(MAX_COMPARISON_POSE_BYTES, 2, "before")
+            .expect_err("two bones at this frame count exceed the fixed limit");
+        assert_eq!(
+            error,
+            ComparisonError::PoseWorkExceeded {
+                side: "before",
+                bytes: (MAX_COMPARISON_POSE_BYTES as u128) * 2 * 3 * 4,
+                limit: MAX_COMPARISON_POSE_BYTES,
+            }
+        );
+    }
+}
 
 /// Escape untrusted text (clip/bone names, paths from the linted
 /// asset) for interpolation into HTML markup and attributes.

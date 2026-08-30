@@ -124,6 +124,7 @@ dependencies = [
  "animsmith-gltf",
  "base64",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]

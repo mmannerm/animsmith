@@ -1,0 +1,49 @@
+// animsmith comparison viewer: hand-written, offline, and driven only by
+// Rust-sampled metric frames. Shared phase is a display mapping, not a retime.
+"use strict";
+const data = JSON.parse(document.getElementById("comparison-report-data").textContent);
+const q = (id) => document.getElementById(id);
+const decode = (encoded) => {
+  const raw = atob(encoded), bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return new Float32Array(bytes.buffer);
+};
+for (const side of [data.before, data.after]) side.clip.pos = decode(side.clip.positions);
+q("mapping").textContent = data.correspondence.disclosure;
+const parents = data.bones.map((bone) => bone.parent);
+const namedBone = new Map(data.bones.map((bone, index) => [bone.name, index]));
+
+function drawSide(name, phase, highlighted) {
+  const side = data[name], canvas = q(`${name}-gl`), context = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1, width = canvas.clientWidth * dpr, height = canvas.clientHeight * dpr;
+  if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+  context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  const frame = Math.round(phase * Math.max(0, side.clip.frames - 1)), base = frame * data.bones.length * 3;
+  const point = (bone) => [side.clip.pos[base + bone * 3], side.clip.pos[base + bone * 3 + 1], side.clip.pos[base + bone * 3 + 2]];
+  const all = data.bones.map((_, bone) => point(bone));
+  const xs = all.map((p) => p[0]), ys = all.map((p) => p[1]), minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const scale = Math.min(canvas.clientWidth / Math.max(.1, maxX - minX), canvas.clientHeight / Math.max(.1, maxY - minY)) * .72;
+  const project = (p) => [canvas.clientWidth / 2 + (p[0] - (minX + maxX) / 2) * scale, canvas.clientHeight / 2 - (p[1] - (minY + maxY) / 2) * scale];
+  context.lineWidth = 2; context.strokeStyle = "#8e99bc";
+  for (let bone = 0; bone < parents.length; bone++) if (parents[bone] >= 0) { const a = project(point(parents[bone])), b = project(point(bone)); context.beginPath(); context.moveTo(...a); context.lineTo(...b); context.stroke(); }
+  for (let bone = 0; bone < all.length; bone++) { const p = project(all[bone]); context.fillStyle = bone === highlighted ? "#f0cb83" : "#d5d9e5"; context.beginPath(); context.arc(...p, bone === highlighted ? 6 : 3, 0, Math.PI * 2); context.fill(); }
+  return frame;
+}
+function drawPath(name, phase) {
+  const side = data[name], svg = q(`${name}-path`), root = side.clip.trails.root;
+  svg.replaceChildren(); if (root == null) { svg.textContent = "root path unavailable"; return; }
+  const points = Array.from({ length: side.clip.frames }, (_, frame) => { const base = frame * data.bones.length * 3 + root * 3; return [side.clip.pos[base], side.clip.pos[base + 2]]; });
+  const xs = points.map((point) => point[0]), ys = points.map((point) => point[1]), minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const map = (point) => [18 + (point[0] - minX) * 324 / Math.max(.001, maxX - minX), 132 - (point[1] - minY) * 114 / Math.max(.001, maxY - minY)];
+  const svgNs = "http:" + "//www.w3.org/2000/svg";
+  const path = document.createElementNS(svgNs, "path"); path.setAttribute("d", points.map((point, index) => `${index ? "L" : "M"}${map(point).join(",")}`).join("")); path.setAttribute("fill", "none"); path.setAttribute("stroke", "#7aa2f7"); path.setAttribute("stroke-width", "2"); svg.append(path);
+  const dot = document.createElementNS(svgNs, "circle"), selected = map(points[Math.round(phase * Math.max(0, points.length - 1))]); dot.setAttribute("cx", selected[0]); dot.setAttribute("cy", selected[1]); dot.setAttribute("r", "4"); dot.setAttribute("fill", "#f0cb83"); svg.append(dot);
+}
+let highlight = { before: null, after: null };
+function update() { const phase = Number(q("scrub").value) / 1000; const beforeFrame = drawSide("before", phase, highlight.before), afterFrame = drawSide("after", phase, highlight.after); drawPath("before", phase); drawPath("after", phase); const time = (side, frame) => (frame / Math.max(1, side.clip.frames - 1) * side.clip.duration).toFixed(3); q("times").textContent = `before ${time(data.before, beforeFrame)}s · after ${time(data.after, afterFrame)}s (normalized phase; not a time warp)`; }
+function summary(side) { return `${side.identity.sha256} · ${side.identity.bytes} bytes · clip ${side.clip.name}`; }
+function selectFinding(name, index) { const row = data[name].findings[index], side = data[name]; if (!row) return; q("scrub").value = Math.round(1000 * (row.time == null ? 0 : row.time / Math.max(.000001, side.clip.duration))); highlight[name] = row.bone && namedBone.has(row.bone) ? namedBone.get(row.bone) : null; update(); }
+function list(name, kind) { const side = data[name], target = q(`${name}-${kind}`), rows = side[kind]; if (!rows.length) { target.textContent = kind === "findings" ? "no findings" : "none"; return; } rows.forEach((row, index) => { const item = document.createElement("li"); item.id = `${kind.slice(0, -1)}-${name}-${index}`; item.textContent = kind === "findings" ? `${row.severity} · ${row.check} · ${row.bone || row.node || "no mapped subject"}${row.time == null ? "" : ` @${row.time.toFixed(3)}s`} — ${row.message}` : `${row.check_id} · ${row.code} — ${row.message}`; if (kind === "findings") { const timeAnchor = document.createElement("span"); timeAnchor.id = `time-${name}-${index}`; item.append(timeAnchor); item.className = "finding"; item.addEventListener("click", () => { selectFinding(name, index); item.scrollIntoView({ block: "nearest" }); }); } target.append(item); }); }
+for (const name of ["before", "after"]) { q(`${name}-identity`).textContent = summary(data[name]); list(name, "findings"); list(name, "gaps"); q(`${name}-predictions`).textContent = JSON.stringify({ provenance: data[name].prediction_provenance, predictions: data[name].predictions }, null, 2); }
+function selectHash() { const match = location.hash.match(/^#(?:finding|time)-(before|after)-(\d+)$/); if (match) selectFinding(match[1], Number(match[2])); }
+q("scrub").addEventListener("input", update); window.addEventListener("resize", update); window.addEventListener("hashchange", selectHash); selectHash(); update();

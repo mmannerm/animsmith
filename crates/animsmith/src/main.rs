@@ -157,7 +157,7 @@ enum Cmd {
     )]
     #[cfg(feature = "report")]
     Report {
-        /// Input .glb, .gltf, or .fbx file.
+        /// Input .glb, .gltf, or .fbx file. In comparison mode this is the immutable before input.
         file: PathBuf,
         /// Output HTML report path.
         #[arg(short, long)]
@@ -165,6 +165,15 @@ enum Cmd {
         /// Restrict the report to one clip.
         #[arg(long)]
         clip: Option<String>,
+        /// Immutable after input for a synchronized visual comparison.
+        #[arg(long, value_name = "FILE")]
+        compare_after: Option<PathBuf>,
+        /// Exact before clip in comparison mode; no correspondence is inferred.
+        #[arg(long, value_name = "CLIP")]
+        before_clip: Option<String>,
+        /// Exact after clip in comparison mode; no correspondence is inferred.
+        #[arg(long, value_name = "CLIP")]
+        after_clip: Option<String>,
     },
     /// Apply mechanical clip transforms.
     #[command(
@@ -812,6 +821,24 @@ fn main() -> ExitCode {
         Err(error) => error.exit(),
     };
     finish_run(run(cli))
+}
+
+#[cfg(feature = "report")]
+fn write_report(
+    output: &Path,
+    doc: &Document,
+    finding_count: usize,
+    html: String,
+) -> Result<ExitCode, String> {
+    std::fs::write(output, &html)
+        .map_err(|error| format!("cannot write {}: {error}", output.display()))?;
+    publish::emit_text(&render::render_report_written(
+        output,
+        doc.clips.len(),
+        finding_count,
+        html.len(),
+    ));
+    Ok(ExitCode::SUCCESS)
 }
 
 fn finish_run(result: Result<ExitCode, String>) -> ExitCode {
@@ -1799,7 +1826,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
         }
         #[cfg(feature = "report")]
-        Cmd::Report { file, output, clip } => {
+        Cmd::Report {
+            file,
+            output,
+            clip,
+            compare_after,
+            before_clip,
+            after_clip,
+        } => {
             let loaded_config = load_config(cli.config.as_deref())?;
             full_check_ids()?;
             let loaded = load_with_config(&file, &loaded_config)?;
@@ -1825,23 +1859,88 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 evaluate_checks(&ctx, &checks, CheckSelection::All)
                     .map_err(|error| error.to_string())?
             };
-            let finding_count = evaluations.iter().map(|check| check.findings().len()).sum();
-            let html = animsmith_report::render(
-                &grids,
-                &roles,
-                &evaluations,
-                prediction_provenance.as_ref(),
-                clip.as_deref(),
-            );
-            std::fs::write(&output, &html)
-                .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
-            publish::emit_text(&render::render_report_written(
-                &output,
-                doc.clips.len(),
-                finding_count,
-                html.len(),
-            ));
-            Ok(ExitCode::SUCCESS)
+            let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
+            let html = match compare_after {
+                None => {
+                    if before_clip.is_some() || after_clip.is_some() {
+                        return Err("--before-clip and --after-clip require --compare-after".into());
+                    }
+                    animsmith_report::render(
+                        &grids,
+                        &roles,
+                        &evaluations,
+                        prediction_provenance.as_ref(),
+                        clip.as_deref(),
+                    )
+                }
+                Some(after_path) => {
+                    if clip.is_some() {
+                        return Err("--clip cannot be used with --compare-after; declare both --before-clip and --after-clip".into());
+                    }
+                    let before_clip = before_clip
+                        .ok_or_else(|| "--compare-after requires --before-clip".to_string())?;
+                    let after_clip = after_clip
+                        .ok_or_else(|| "--compare-after requires --after-clip".to_string())?;
+                    let after_loaded = load_with_config(&after_path, &loaded_config)?;
+                    let after_prediction_provenance = after_loaded
+                        .engine
+                        .as_ref()
+                        .map(|profile| {
+                            animsmith_engine::project_prediction_provenance_v1(
+                                profile,
+                                &after_loaded.source,
+                            )
+                        })
+                        .transpose()
+                        .map_err(|error| error.to_string())?;
+                    let after_doc = after_loaded.document();
+                    let after_roles = resolve_configured_roles(&after_doc.skeleton, &config.rig);
+                    let after_grids = MetricGrids::new(after_doc);
+                    let after_ctx = CheckCtx::new(&after_grids, &after_roles, config);
+                    let after_evaluations = {
+                        let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
+                        checks.push(Box::new(
+                            EngineAddressabilityCheck::new(
+                                &after_loaded.source,
+                                after_prediction_provenance.as_ref(),
+                            )
+                            .map_err(|error| error.to_string())?,
+                        ));
+                        evaluate_checks(&after_ctx, &checks, CheckSelection::All)
+                            .map_err(|error| error.to_string())?
+                    };
+                    let html = animsmith_report::render_comparison(
+                        animsmith_report::ComparisonSide {
+                            identity: loaded.input(),
+                            grids: &grids,
+                            roles: &roles,
+                            checks: &evaluations,
+                            prediction_provenance: prediction_provenance.as_ref(),
+                            clip: &before_clip,
+                        },
+                        animsmith_report::ComparisonSide {
+                            identity: after_loaded.input(),
+                            grids: &after_grids,
+                            roles: &after_roles,
+                            checks: &after_evaluations,
+                            prediction_provenance: after_prediction_provenance.as_ref(),
+                            clip: &after_clip,
+                        },
+                    )
+                    .map_err(|error| error.to_string())?;
+                    return write_report(
+                        &output,
+                        doc,
+                        finding_count
+                            + after_evaluations
+                                .iter()
+                                .map(|check| check.findings().len())
+                                .sum::<usize>(),
+                        html,
+                    );
+                }
+            };
+            write_report(&output, doc, finding_count, html)
         }
         Cmd::Transform {
             input,
