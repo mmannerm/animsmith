@@ -444,7 +444,7 @@ fn comparison_side_json(
     .into();
     let findings = side.checks.iter().flat_map(CheckEvaluation::findings)
         .filter(|finding| finding.clip.as_deref() == Some(clip_name) || finding.clip.is_none())
-        .map(|finding| json!({"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"time":finding.time_s,"message":finding.message}))
+        .map(|finding| json!({"anchor":finding_anchor(finding),"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"time":finding.time_s,"message":finding.message}))
         .collect::<Vec<_>>();
     let gaps = side.checks.iter().flat_map(|check| check.gaps().iter().map(move |gap| (check.check_id(), gap)))
         .map(|(check_id, gap)| json!({"check_id":check_id,"code":gap.code,"message":gap.message,"scope":gap.scope}))
@@ -463,6 +463,21 @@ fn comparison_side_json(
         "clip": {"name":clip_name,"duration":duration_s,"frames":frames,"times":grid.times,"positions":base64::engine::general_purpose::STANDARD.encode(positions),"trails":trails},
         "findings":findings,"gaps":gaps,"prediction_provenance":side.prediction_provenance,"predictions":predictions,
     }))
+}
+
+fn finding_anchor(finding: &animsmith_core::Finding) -> String {
+    let material = format!(
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{:?}",
+        finding.check_id,
+        finding.clip.as_deref().unwrap_or(""),
+        finding.bone.as_deref().unwrap_or(""),
+        finding.node.as_deref().unwrap_or(""),
+        finding.time_s
+    );
+    format!(
+        "finding-{}",
+        &animsmith_core::sha256_hex(material.as_bytes())[..16]
+    )
 }
 
 fn comparison_pose_bytes(
