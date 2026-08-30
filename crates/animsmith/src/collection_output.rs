@@ -1108,46 +1108,38 @@ impl CollectionOutputInput {
             .clips
             .iter()
             .map(|clip| {
-                let (availability, check_key) = match &clip.binding {
+                let availability = match &clip.binding {
                     ClipBindingStateWire::Established {
                         check_reference, ..
                     } => match check_reference {
-                        CheckReferenceStateWire::Available { reference } => {
-                            ("established", Some(reference.measurement_key.clone()))
-                        }
-                        CheckReferenceStateWire::Unavailable { reason } => (
-                            match reason {
-                                CheckReferenceUnavailableReason::DuplicateEmbeddedTakeName => {
-                                    "duplicate_embedded_take_name"
-                                }
-                                CheckReferenceUnavailableReason::NestedOutputUnavailable => {
-                                    "nested_output_unavailable"
-                                }
-                            },
-                            None,
-                        ),
-                    },
-                    ClipBindingStateWire::Unavailable { reason } => (
-                        match reason {
-                            ClipUnavailableReason::SourceUnavailable => "source_unavailable",
-                            ClipUnavailableReason::DigestMismatched => "digest_mismatched",
-                            ClipUnavailableReason::LoaderUnavailable => "loader_unavailable",
-                            ClipUnavailableReason::DependencyClosureIncomplete => {
-                                "dependency_closure_incomplete"
+                        CheckReferenceStateWire::Available { .. } => "established",
+                        CheckReferenceStateWire::Unavailable { reason } => match reason {
+                            CheckReferenceUnavailableReason::DuplicateEmbeddedTakeName => {
+                                "duplicate_embedded_take_name"
                             }
-                            ClipUnavailableReason::DocumentUnavailable => "document_unavailable",
-                            ClipUnavailableReason::TakeInventoryUnavailable => {
-                                "take_inventory_unavailable"
-                            }
-                            ClipUnavailableReason::TakeIndexMissing => "take_index_missing",
-                            ClipUnavailableReason::TakeNameUnavailable => "take_name_unavailable",
-                            ClipUnavailableReason::TakeNameMismatched => "take_name_mismatched",
-                            ClipUnavailableReason::NormalizedClipUnavailable => {
-                                "normalized_clip_unavailable"
+                            CheckReferenceUnavailableReason::NestedOutputUnavailable => {
+                                "nested_output_unavailable"
                             }
                         },
-                        None,
-                    ),
+                    },
+                    ClipBindingStateWire::Unavailable { reason } => match reason {
+                        ClipUnavailableReason::SourceUnavailable => "source_unavailable",
+                        ClipUnavailableReason::DigestMismatched => "digest_mismatched",
+                        ClipUnavailableReason::LoaderUnavailable => "loader_unavailable",
+                        ClipUnavailableReason::DependencyClosureIncomplete => {
+                            "dependency_closure_incomplete"
+                        }
+                        ClipUnavailableReason::DocumentUnavailable => "document_unavailable",
+                        ClipUnavailableReason::TakeInventoryUnavailable => {
+                            "take_inventory_unavailable"
+                        }
+                        ClipUnavailableReason::TakeIndexMissing => "take_index_missing",
+                        ClipUnavailableReason::TakeNameUnavailable => "take_name_unavailable",
+                        ClipUnavailableReason::TakeNameMismatched => "take_name_mismatched",
+                        ClipUnavailableReason::NormalizedClipUnavailable => {
+                            "normalized_clip_unavailable"
+                        }
+                    },
                 };
                 CollectionDashboardClipInput {
                     id: clip.id.clone(),
@@ -1155,7 +1147,6 @@ impl CollectionOutputInput {
                     take_index: clip.take_index,
                     take_name: clip.take_name.clone(),
                     availability,
-                    check_key,
                 }
             })
             .collect();
@@ -1709,9 +1700,6 @@ pub(crate) struct CollectionDashboardClipInput {
     pub(crate) take_index: u32,
     pub(crate) take_name: String,
     pub(crate) availability: &'static str,
-    /// The nested lint result is name-addressed.  A missing key deliberately
-    /// means this physical member cannot truthfully inherit check results.
-    pub(crate) check_key: Option<String>,
 }
 
 #[cfg(feature = "report")]
@@ -1944,16 +1932,25 @@ fn dashboard_document_facts(
     // scopes, so an active complete check covers every observed normalized
     // take. This also makes simultaneous checks additive rather than
     // last-write-wins.
-    let known = observed_takes
+    let mut normalized_name_counts = BTreeMap::<String, usize>::new();
+    for name in observed_takes
         .iter()
         .filter_map(|take| match &take.normalized {
-            NormalizedClipState::Available { name, .. } => Some(name.clone()),
+            NormalizedClipState::Available { name, .. } => Some(name),
             NormalizedClipState::Unavailable => None,
         })
-        .collect::<BTreeSet<_>>();
-    let mut evidence = known
-        .iter()
-        .cloned()
+    {
+        let count = normalized_name_counts.entry(name.clone()).or_default();
+        *count = count
+            .checked_add(1)
+            .ok_or(CollectionOutputError::Malformed)?;
+    }
+    // Nested lint facts are addressed only by normalized name. A duplicate
+    // name within one source is therefore not an exact physical witness: do
+    // not seed a record that could be copied onto multiple takes or clips.
+    let mut evidence = normalized_name_counts
+        .into_iter()
+        .filter_map(|(name, count)| (count == 1).then_some(name))
         .map(|key| (key, CollectionDashboardClipEvidence::default()))
         .collect::<BTreeMap<_, _>>();
     let mut unscoped_findings = 0_usize;

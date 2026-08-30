@@ -29,6 +29,17 @@ fn collection(manifest: &Path) -> Output {
         .expect("collection lint runs")
 }
 
+fn stabilize_collection_serialized_bytes(evidence: &mut Value) {
+    for _ in 0..8 {
+        let bytes = serde_json::to_vec(evidence).unwrap().len() as u64;
+        if evidence["work"]["serialized_bytes"].as_u64() == Some(bytes) {
+            return;
+        }
+        evidence["work"]["serialized_bytes"] = bytes.into();
+    }
+    panic!("collection serialized byte count did not converge");
+}
+
 fn rendered_dashboard_state(html: &Path, filters: &Value) -> Value {
     let script = r#"
 const fs=require('fs'),html=fs.readFileSync(process.argv[1],'utf8'),filters=JSON.parse(process.argv[2]);
@@ -664,6 +675,153 @@ fn dashboard_keeps_current_unavailable_collection_rows_visible() {
     assert!(take_table.contains("unbound"));
     assert!(take_table.contains("Take 001"));
     assert!(take_table.contains("with_findings"));
+}
+
+#[test]
+fn dashboard_does_not_guess_name_addressed_evidence_across_duplicate_physical_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let evidence = collection(&spike_path("collection.toml"));
+    assert_eq!(evidence.status.code(), Some(0));
+    let mut current: Value = serde_json::from_slice(&evidence.stdout).unwrap();
+    let source = current["sources"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|source| source["key"] == "multi")
+        .unwrap();
+    let duplicate_name = source["observed_takes"][0]["normalized"]["name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    source["observed_takes"][1]["normalized"]["name"] = duplicate_name.clone().into();
+    for clip in current["clips"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .filter(|clip| clip["source"] == "multi")
+    {
+        clip["binding"]["check_reference"] = serde_json::json!({
+            "state": "unavailable",
+            "reason": "duplicate_embedded_take_name"
+        });
+    }
+    let multi = current["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["key"] == "multi")
+        .unwrap();
+    assert!(
+        multi["observed_takes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|take| take["normalized"]["name"] == duplicate_name),
+        "fixture must be a strict V11 same-source normalized-name collision"
+    );
+    let nested_findings = multi["result"]["envelope"]["files"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|check| check["findings"].as_array().unwrap().len())
+        .sum::<usize>();
+    assert!(
+        nested_findings > 0,
+        "fixture must carry name-addressed evidence"
+    );
+    assert!(
+        multi["result"]["envelope"]["files"][0]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|check| check["findings"].as_array().into_iter().flatten())
+            .any(|finding| finding["clip"] == duplicate_name),
+        "fixture must contain evidence addressed by the ambiguous name"
+    );
+    stabilize_collection_serialized_bytes(&mut current);
+
+    let collection_path = temp.path().join("collection-output.json");
+    let html = temp.path().join("dashboard.html");
+    let authority_path = temp.path().join("dashboard.json");
+    fs::write(&collection_path, serde_json::to_vec(&current).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .args([
+            "collection",
+            "dashboard",
+            "--collection",
+            collection_path.to_str().unwrap(),
+            "--output",
+            html.to_str().unwrap(),
+            "--authority",
+            authority_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let authority: Value = serde_json::from_slice(&fs::read(&authority_path).unwrap()).unwrap();
+    let schema: Value = serde_json::from_str(DASHBOARD_SCHEMA).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let errors = validator.iter_errors(&authority).collect::<Vec<_>>();
+    assert!(errors.is_empty(), "dashboard schema errors: {errors:?}");
+    let source = authority["view"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["key"] == "multi")
+        .unwrap();
+    let takes = source["takes"].as_array().unwrap();
+    assert_eq!(takes.len(), 2);
+    for take in takes {
+        assert_eq!(take["availability"], "duplicate_normalized_clip_name");
+        assert_eq!(take["outcome"], "unavailable");
+        assert_eq!(take["findings"], 0);
+        assert_eq!(take["coverage_gaps"], 0);
+        assert_eq!(take["prediction_unavailable"], 0);
+    }
+    for clip in authority["view"]["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|clip| clip["source"] == "multi")
+    {
+        assert_eq!(clip["availability"], "duplicate_embedded_take_name");
+        assert_eq!(clip["outcome"], "unavailable");
+        assert_eq!(clip["findings"], 0);
+    }
+    assert_eq!(
+        source["unscoped_findings"].as_u64(),
+        Some(nested_findings as u64)
+    );
+    let physical_findings = authority["view"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|source| source["takes"].as_array().unwrap())
+        .map(|take| take["findings"].as_u64().unwrap())
+        .sum::<u64>();
+    let unscoped_findings = authority["view"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|source| source["unscoped_findings"].as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(
+        authority["summary"]["findings"].as_u64(),
+        Some(physical_findings + unscoped_findings),
+        "each nested finding is retained once, not copied to either take or clip"
+    );
+    let state = rendered_dashboard_state(&html, &serde_json::json!({}));
+    assert!(
+        state["takes"]
+            .as_str()
+            .unwrap()
+            .contains("duplicate_normalized_clip_name")
+    );
 }
 
 #[test]

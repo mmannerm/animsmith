@@ -103,10 +103,18 @@ rows are navigation projections and are not counted a second time.
 Source/document findings without an exact clip match
 remain explicit unscoped source findings and still contribute to the unfiltered
 finding total; they are never guessed onto a clip row.
+When one source contains the same normalized name at multiple physical indices,
+name-addressed nested evidence has no unique witness. The dashboard retains each
+finding once as unscoped source evidence and marks the affected physical rows
+`duplicate_normalized_clip_name`; it does not copy findings, gaps, or predictions
+onto either take or logical row.
 Optional transition members carry a logical clip only when their source-input
 identity plus take index/name uniquely match one dashboard declaration. Strict
 readback rederives that relationship and rejects missing, forged, or ambiguous
 logical resolution.
+Every logical row whose availability is `established` must also reconcile its
+source, source-take index/name, evidence, coverage, and outcome with exactly one
+source-owned established physical row. Strict readback rejects contradictions.
 
 `evaluate-transition-poses` is a JSON-only, single-result transition-family
 contract, not a lint/check stream. It evaluates exact named/indexed takes in

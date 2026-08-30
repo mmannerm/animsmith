@@ -110,6 +110,15 @@ that have no matching clip are retained as source-level unscoped findings and
 included in the dashboard finding total; the projection never assigns them to
 an arbitrary clip.
 
+Nested check evidence is normalized-name addressed. If one source has that same
+normalized name at multiple physical indices, neither index is a unique witness:
+the physical rows carry `duplicate_normalized_clip_name`, name-addressed findings
+are counted once at source scope, and no findings, gaps, or predictions are
+guessed onto either physical or logical row. An `established` logical row must
+instead identify exactly one source-owned established physical row by source,
+source-take index, and take name, and its evidence/coverage/outcome must match
+that row during strict readback.
+
 When transition evidence is present, a member's optional `logical_clip` is
 required exactly when its `source_input`, `take_index`, and `take_name` resolve
 uniquely through the dashboard source identities and logical declarations.

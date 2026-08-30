@@ -372,6 +372,38 @@ fn resolve_logical_clip<'a>(
     resolved
 }
 
+/// An established logical row is only meaningful when its declared source,
+/// source-take index, and take name identify exactly one established physical
+/// row. Projection and strict readback share this lookup.
+fn reconciled_established_physical_take<'a>(
+    source_key: &str,
+    take_index: u64,
+    take_name: &str,
+    availability: &str,
+    sources: &'a [CollectionDashboardSourceV1],
+) -> Result<Option<&'a CollectionDashboardPhysicalTakeV1>, String> {
+    if availability != "established" {
+        return Ok(None);
+    }
+    let mut source_matches = sources.iter().filter(|source| source.key == source_key);
+    let source = source_matches
+        .next()
+        .ok_or_else(|| "established dashboard clip has no physical source".to_owned())?;
+    if source_matches.next().is_some() {
+        return Err("established dashboard clip has an ambiguous physical source".to_owned());
+    }
+    let mut take_matches = source.takes.iter().filter(|take| {
+        take.source_take_index == take_index && take.take_name.as_deref() == Some(take_name)
+    });
+    let take = take_matches
+        .next()
+        .ok_or_else(|| "established dashboard clip has no exact physical take".to_owned())?;
+    if take_matches.next().is_some() || take.availability != "established" {
+        return Err("established dashboard clip has an ambiguous physical take".to_owned());
+    }
+    Ok(Some(take))
+}
+
 fn build_authority(
     collection_output: InputIdentity,
     collection: &collection_output::CollectionDashboardInput,
@@ -395,50 +427,65 @@ fn build_authority(
     let sources = collection
         .sources
         .iter()
-        .map(|source| CollectionDashboardSourceV1 {
-            key: source.key.clone(),
-            locator: source.locator.clone(),
-            input: source.input.as_ref().map(IdentityWire::from_input_identity),
-            availability: source.availability.to_owned(),
-            loader: source.loader.to_owned(),
-            dependency_closure: source.dependency_closure.to_owned(),
-            takes: source
+        .map(|source| {
+            let mut normalized_name_counts = BTreeMap::<&str, usize>::new();
+            for name in source
                 .takes
                 .iter()
-                .map(|take| {
-                    let facts = take
-                        .normalized_clip
-                        .as_ref()
-                        .and_then(|(_, name)| source.evidence.get(name));
-                    let availability = match (&take.take_name, &take.normalized_clip) {
-                        (Some(_), Some(_)) => "established",
-                        (None, _) => "take_name_unavailable",
-                        (Some(_), None) => "normalized_clip_unavailable",
-                    };
-                    let evidence = project_evidence(facts, availability);
-                    CollectionDashboardPhysicalTakeV1 {
-                        source_take_index: u64::from(take.source_take_index),
-                        take_name: take.take_name.clone(),
-                        normalized_clip_index: take
+                .filter_map(|take| take.normalized_clip.as_ref().map(|(_, name)| name.as_str()))
+            {
+                *normalized_name_counts.entry(name).or_default() += 1;
+            }
+            CollectionDashboardSourceV1 {
+                key: source.key.clone(),
+                locator: source.locator.clone(),
+                input: source.input.as_ref().map(IdentityWire::from_input_identity),
+                availability: source.availability.to_owned(),
+                loader: source.loader.to_owned(),
+                dependency_closure: source.dependency_closure.to_owned(),
+                takes: source
+                    .takes
+                    .iter()
+                    .map(|take| {
+                        let facts = take
                             .normalized_clip
                             .as_ref()
-                            .map(|(index, _)| u64::from(*index)),
-                        normalized_clip_name: take
-                            .normalized_clip
-                            .as_ref()
-                            .map(|(_, name)| name.clone()),
-                        availability: availability.to_owned(),
-                        outcome: evidence.outcome,
-                        findings: evidence.findings,
-                        severities: evidence.severities,
-                        coverage_gaps: evidence.coverage_gaps,
-                        prediction_unavailable: evidence.prediction_unavailable,
-                        coverage: evidence.coverage,
-                    }
-                })
-                .collect(),
-            unscoped_findings: source.unscoped_findings,
-            unscoped_severities: source.unscoped_severities.iter().cloned().collect(),
+                            .and_then(|(_, name)| source.evidence.get(name));
+                        let availability = match (&take.take_name, &take.normalized_clip) {
+                            (_, Some((_, name)))
+                                if normalized_name_counts.get(name.as_str()) != Some(&1) =>
+                            {
+                                "duplicate_normalized_clip_name"
+                            }
+                            (Some(_), Some(_)) => "established",
+                            (None, _) => "take_name_unavailable",
+                            (Some(_), None) => "normalized_clip_unavailable",
+                        };
+                        let evidence = project_evidence(facts, availability);
+                        CollectionDashboardPhysicalTakeV1 {
+                            source_take_index: u64::from(take.source_take_index),
+                            take_name: take.take_name.clone(),
+                            normalized_clip_index: take
+                                .normalized_clip
+                                .as_ref()
+                                .map(|(index, _)| u64::from(*index)),
+                            normalized_clip_name: take
+                                .normalized_clip
+                                .as_ref()
+                                .map(|(_, name)| name.clone()),
+                            availability: availability.to_owned(),
+                            outcome: evidence.outcome,
+                            findings: evidence.findings,
+                            severities: evidence.severities,
+                            coverage_gaps: evidence.coverage_gaps,
+                            prediction_unavailable: evidence.prediction_unavailable,
+                            coverage: evidence.coverage,
+                        }
+                    })
+                    .collect(),
+                unscoped_findings: source.unscoped_findings,
+                unscoped_severities: source.unscoped_severities.iter().cloned().collect(),
+            }
         })
         .collect::<Vec<_>>();
     let clips = collection
@@ -448,11 +495,16 @@ fn build_authority(
             let source = source_by_key
                 .get(clip.source.as_str())
                 .ok_or_else(|| "validated collection has missing source".to_owned())?;
-            let facts = clip
-                .check_key
-                .as_ref()
-                .and_then(|key| source.evidence.get(key));
-            let evidence = project_evidence(facts, clip.availability);
+            let evidence = match reconciled_established_physical_take(
+                &clip.source,
+                u64::from(clip.take_index),
+                &clip.take_name,
+                clip.availability,
+                &sources,
+            )? {
+                Some(take) => project_physical_evidence(take),
+                None => project_evidence(None, clip.availability),
+            };
             Ok(CollectionDashboardClipV1 {
                 id: clip.id.clone(),
                 source: clip.source.clone(),
@@ -501,6 +553,19 @@ struct DashboardEvidenceProjection {
     coverage_gaps: usize,
     prediction_unavailable: usize,
     coverage: DashboardCoverageV1,
+}
+
+fn project_physical_evidence(
+    take: &CollectionDashboardPhysicalTakeV1,
+) -> DashboardEvidenceProjection {
+    DashboardEvidenceProjection {
+        outcome: take.outcome.clone(),
+        findings: take.findings,
+        severities: take.severities.clone(),
+        coverage_gaps: take.coverage_gaps,
+        prediction_unavailable: take.prediction_unavailable,
+        coverage: take.coverage.clone(),
+    }
 }
 
 fn project_evidence(
@@ -688,7 +753,7 @@ struct CollectionDashboardClipV1 {
     report_link: Option<String>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DashboardCoverageV1 {
     complete: usize,
@@ -749,6 +814,22 @@ impl CollectionDashboardAuthorityV1 {
             if clip.id.chars().count() > 4096
                 || clip.source.chars().count() > 4096
                 || clip.take_name.chars().count() > 4096
+                || !matches!(
+                    clip.availability.as_str(),
+                    "established"
+                        | "duplicate_embedded_take_name"
+                        | "nested_output_unavailable"
+                        | "source_unavailable"
+                        | "digest_mismatched"
+                        | "loader_unavailable"
+                        | "dependency_closure_incomplete"
+                        | "document_unavailable"
+                        | "take_inventory_unavailable"
+                        | "take_index_missing"
+                        | "take_name_unavailable"
+                        | "take_name_mismatched"
+                        | "normalized_clip_unavailable"
+                )
                 || clip.roles.len() > 4096
                 || clip.severities.len() > 4096
                 || clip.runtime_sets.len() > 4096
@@ -825,6 +906,14 @@ impl CollectionDashboardAuthorityV1 {
             }
             let mut source_take_indices = BTreeSet::new();
             let mut normalized_clip_indices = BTreeSet::new();
+            let mut normalized_name_counts = BTreeMap::<&str, usize>::new();
+            for name in source
+                .takes
+                .iter()
+                .filter_map(|take| take.normalized_clip_name.as_deref())
+            {
+                *normalized_name_counts.entry(name).or_default() += 1;
+            }
             for take in &source.takes {
                 let normalized_identity_present =
                     take.normalized_clip_index.is_some() && take.normalized_clip_name.is_some();
@@ -838,6 +927,12 @@ impl CollectionDashboardAuthorityV1 {
                         .as_ref()
                         .is_some_and(|name| name.is_empty() || name.chars().count() > 4101)
                     || take.normalized_clip_index.is_some() != take.normalized_clip_name.is_some()
+                    || take.normalized_clip_name.as_ref().is_some_and(|name| {
+                        let duplicate = normalized_name_counts
+                            .get(name.as_str())
+                            .is_some_and(|count| *count > 1);
+                        (take.availability == "duplicate_normalized_clip_name") != duplicate
+                    })
                     || take
                         .normalized_clip_index
                         .is_some_and(|index| !normalized_clip_indices.insert(index))
@@ -848,6 +943,8 @@ impl CollectionDashboardAuthorityV1 {
                             normalized_identity_present
                         ),
                         ("established", true, true)
+                            | ("duplicate_normalized_clip_name", true, true)
+                            | ("duplicate_normalized_clip_name", false, true)
                             | ("take_name_unavailable", false, false)
                             | ("take_name_unavailable", false, true)
                             | ("normalized_clip_unavailable", true, false)
@@ -903,6 +1000,26 @@ impl CollectionDashboardAuthorityV1 {
             .any(|clip| !source_keys.contains(clip.source.as_str()))
         {
             return Err("dashboard clip references an unknown source".to_owned());
+        }
+        for clip in &self.view.clips {
+            if let Some(take) = reconciled_established_physical_take(
+                &clip.source,
+                clip.take_index,
+                &clip.take_name,
+                &clip.availability,
+                &self.view.sources,
+            )? && (clip.outcome != take.outcome
+                || clip.findings != take.findings
+                || clip.severities != take.severities
+                || clip.coverage_gaps != take.coverage_gaps
+                || clip.prediction_unavailable != take.prediction_unavailable
+                || clip.coverage != take.coverage)
+            {
+                return Err(
+                    "established dashboard clip evidence does not reconcile with its physical take"
+                        .to_owned(),
+                );
+            }
         }
         let source_inputs = self
             .view
@@ -1611,14 +1728,21 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "schema":"urn:animsmith:schema:collection-dashboard:1", "schema_version":1,
             "collection_output":identity,
-            "summary":{"sources":1,"physical_takes":1,"clips":6,"runtime_sets":1,"findings":2,"unscoped_findings":0,"coverage_gaps":3,"prediction_unavailable":4,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
+            "summary":{"sources":1,"physical_takes":6,"clips":6,"runtime_sets":1,"findings":2,"unscoped_findings":0,"coverage_gaps":3,"prediction_unavailable":4,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
             "evaluation":{"input":{"sha256":"0".repeat(64),"bytes":0},"status":"complete","decision":"finding","families":[{"id":"family","status":"complete","decision":"finding","members":[{"take_index":0,"take_name":"Finding","source_input":{"sha256":"0".repeat(64),"bytes":0},"logical_clip":"finding"},{"take_index":1,"take_name":"Partial","source_input":{"sha256":"0".repeat(64),"bytes":0},"logical_clip":"partial"}],"pair_findings":[{"member_indices":[0,1],"boundary":"entry","translation_offenders":[{"bone_ordinal":0,"bone_name":"root","delta":0.25}],"rotation_offenders":[]}]}]},
-            "view":{"sources":[{"key":"source","locator":"source.gltf","input":{"sha256":"0".repeat(64),"bytes":0},"availability":"available","loader":"ready","dependency_closure":"complete","takes":[{"source_take_index":0,"take_name":"Finding","normalized_clip_index":0,"normalized_clip_name":"Finding","availability":"established","outcome":"with_findings","findings":2,"severities":["error"],"coverage_gaps":3,"prediction_unavailable":4,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0}}],"unscoped_findings":0,"unscoped_severities":[]}],"clips":[
+            "view":{"sources":[{"key":"source","locator":"source.gltf","input":{"sha256":"0".repeat(64),"bytes":0},"availability":"available","loader":"ready","dependency_closure":"complete","takes":[
+                {"source_take_index":0,"take_name":"Finding","normalized_clip_index":0,"normalized_clip_name":"Finding","availability":"established","outcome":"with_findings","findings":2,"severities":["error"],"coverage_gaps":3,"prediction_unavailable":4,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0}},
+                {"source_take_index":1,"take_name":"Partial","normalized_clip_index":1,"normalized_clip_name":"Partial","availability":"established","outcome":"partial","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":1,"excluded":0,"not_evaluated":0}},
+                {"source_take_index":2,"take_name":"Evaluated","normalized_clip_index":2,"normalized_clip_name":"Evaluated","availability":"established","outcome":"evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0}},
+                {"source_take_index":3,"take_name":"Excluded","normalized_clip_index":3,"normalized_clip_name":"Excluded","availability":"established","outcome":"excluded","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":1,"not_evaluated":0}},
+                {"source_take_index":4,"take_name":"Unavailable","availability":"normalized_clip_unavailable","outcome":"unavailable","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":0}},
+                {"source_take_index":5,"take_name":"Not evaluated","normalized_clip_index":5,"normalized_clip_name":"Not evaluated","availability":"established","outcome":"not_evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":1}}
+            ],"unscoped_findings":0,"unscoped_severities":[]}],"clips":[
                 {"id":"finding","source":"source","take_index":0,"take_name":"Finding","roles":["locomotion"],"availability":"established","outcome":"with_findings","findings":2,"severities":["error"],"coverage_gaps":3,"prediction_unavailable":4,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
                 {"id":"partial","source":"source","take_index":1,"take_name":"Partial","roles":["locomotion","combat"],"availability":"established","outcome":"partial","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":1,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
                 {"id":"evaluated","source":"source","take_index":2,"take_name":"Evaluated","roles":[],"availability":"established","outcome":"evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
                 {"id":"excluded","source":"source","take_index":3,"take_name":"Excluded","roles":[],"availability":"established","outcome":"excluded","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":1,"not_evaluated":0},"runtime_sets":[]},
-                {"id":"unavailable","source":"source","take_index":4,"take_name":"Unavailable","roles":[],"availability":"source_unavailable","outcome":"unavailable","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
+                {"id":"unavailable","source":"source","take_index":4,"take_name":"Unavailable","roles":[],"availability":"normalized_clip_unavailable","outcome":"unavailable","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
                 {"id":"not-evaluated","source":"source","take_index":5,"take_name":"Not evaluated","roles":[],"availability":"established","outcome":"not_evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":1},"runtime_sets":[]}],"runtime_sets":[{"id":"set","lifecycle":"complete","members":["finding","partial"],"gaps":["missing_member"]}]}
         }))
         .unwrap()
@@ -1636,6 +1760,53 @@ mod tests {
         unknown_source.view.clips[0].source = "missing".to_owned();
         assert!(
             validate_authority_readback(&serde_json::to_vec(&unknown_source).unwrap()).is_err()
+        );
+        let mut wrong_take_index = rich_authority();
+        wrong_take_index.view.clips[0].take_index = 99;
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&wrong_take_index).unwrap()).is_err()
+        );
+        let mut wrong_take_name = rich_authority();
+        wrong_take_name.view.clips[0].take_name = "Wrong".to_owned();
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&wrong_take_name).unwrap()).is_err()
+        );
+        let mut forged_nonestablished_availability = rich_authority();
+        forged_nonestablished_availability.view.clips[0].availability = "forged".to_owned();
+        assert!(
+            validate_authority_readback(
+                &serde_json::to_vec(&forged_nonestablished_availability).unwrap()
+            )
+            .is_err()
+        );
+        let mut missing_physical_take = rich_authority();
+        missing_physical_take.view.sources[0].takes.remove(0);
+        missing_physical_take.summary.physical_takes = 5;
+        missing_physical_take.summary.findings = 0;
+        missing_physical_take.summary.coverage_gaps = 0;
+        missing_physical_take.summary.prediction_unavailable = 0;
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&missing_physical_take).unwrap())
+                .is_err()
+        );
+        let mut mismatched_logical_evidence = rich_authority();
+        mismatched_logical_evidence.view.clips[0].findings = 1;
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&mismatched_logical_evidence).unwrap())
+                .is_err()
+        );
+        let mut mismatched_logical_outcome = rich_authority();
+        let clip = &mut mismatched_logical_outcome.view.clips[0];
+        clip.findings = 0;
+        clip.severities.clear();
+        clip.coverage_gaps = 0;
+        clip.prediction_unavailable = 0;
+        clip.outcome = "evaluated".to_owned();
+        mismatched_logical_outcome.summary.with_findings = 0;
+        mismatched_logical_outcome.summary.evaluated = 2;
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&mismatched_logical_outcome).unwrap())
+                .is_err()
         );
         let mut asymmetric_membership = rich_authority();
         asymmetric_membership.view.clips[0].runtime_sets.clear();
@@ -1716,6 +1887,20 @@ mod tests {
                 &serde_json::to_vec(&contradictory_physical_outcome).unwrap()
             )
             .is_err()
+        );
+        let mut false_duplicate_reason = rich_authority();
+        false_duplicate_reason.view.sources[0].takes[1].availability =
+            "duplicate_normalized_clip_name".to_owned();
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&false_duplicate_reason).unwrap())
+                .is_err()
+        );
+        let mut hidden_duplicate_name = rich_authority();
+        hidden_duplicate_name.view.sources[0].takes[1].normalized_clip_name =
+            Some("Finding".to_owned());
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&hidden_duplicate_name).unwrap())
+                .is_err()
         );
 
         let mut missing_source_identity = rich_authority();

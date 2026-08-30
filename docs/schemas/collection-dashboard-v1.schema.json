@@ -184,8 +184,10 @@
           "$ref": "#/$defs/identity"
         },
         "availability": {
-          "type": "string",
-          "maxLength": 128
+          "enum": [
+            "available",
+            "unavailable"
+          ]
         },
         "loader": {
           "type": "string",
@@ -256,6 +258,7 @@
         "availability": {
           "enum": [
             "established",
+            "duplicate_normalized_clip_name",
             "take_name_unavailable",
             "normalized_clip_unavailable"
           ]
@@ -338,8 +341,21 @@
           }
         },
         "availability": {
-          "type": "string",
-          "maxLength": 128
+          "enum": [
+            "established",
+            "duplicate_embedded_take_name",
+            "nested_output_unavailable",
+            "source_unavailable",
+            "digest_mismatched",
+            "loader_unavailable",
+            "dependency_closure_incomplete",
+            "document_unavailable",
+            "take_inventory_unavailable",
+            "take_index_missing",
+            "take_name_unavailable",
+            "take_name_mismatched",
+            "normalized_clip_unavailable"
+          ]
         },
         "outcome": {
           "enum": [
