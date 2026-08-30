@@ -16,7 +16,11 @@ certification.
 The facade dependency is exactly `bevy = 0.19.0`; the committed `Cargo.lock`
 is the authority for its resolved graph, including internal Bevy `0.19.1`
 crates where Cargo resolves them. The harness records the lock identity and
-the engine-neutral reader pins it with a drift test. The tool uses Bevy's
+the engine-neutral reader pins it with a drift test. A build script records
+the compiler selected by Cargo and refuses compilation unless it is the exact
+official `rustc 1.95.0 (59807616e 2026-04-14)` build; the readback validates
+that observed compiler identity rather than filling a version string at run
+time. The tool uses Bevy's
 `gltf_animation` feature: `bevy_animation` alone does not enable the optional
 animation fields on `bevy_gltf::Gltf`.
 
@@ -34,12 +38,19 @@ The asset argument must be a relative `.gltf` or `.glb` path under
 `--asset-root`. The prediction must be AnimSmith's strict rich addressability
 V2 output for the same immutable primary input and dependency closure.
 
-Before Bevy starts, the probe canonicalizes the owner-provided root, hashes the
-primary bytes it will ask `AssetServer` to load, and requires that identity to
-equal both the V2 root input and its V4 provenance primary input. For a
-`.gltf`, it also re-hashes every complete-closure external-resource key below
-that root. A stale or cross-asset prediction exits `1` before engine
-observation.
+Before Bevy starts, the probe canonicalizes the owner-provided root and streams
+the exact primary plus every complete-closure external resource into a private,
+read-only temporary snapshot while verifying their recorded identities. It
+preserves each safe source-relative key, points `AssetServer` only at that
+snapshot, retains the snapshot through observation and publication, and
+re-hashes it immediately before forming the readback. The original authorized
+paths are therefore not a second mutable read after verification. A stale or
+cross-asset prediction exits `1` before engine observation, and the snapshot's
+host path is never emitted.
+
+The prediction path must name a regular file. Its metadata size is rejected
+above the V2 256 MiB cap before allocating a corresponding buffer, and a
+bounded N+1 read still catches concurrent growth before strict decoding.
 
 The JSON root is `urn:animsmith:schema:bevy-readback:1`, is self-identifying,
 and contains no local paths or formatted loader errors. Exit `0` means every

@@ -23,11 +23,13 @@ pub const BEVY_READBACK_V1_MAX_ROWS: usize = 4_096;
 pub const BEVY_READBACK_V1_MAX_WORK: usize = 65_536;
 /// Maximum `App::update` calls before the harness stops.
 pub const BEVY_READBACK_V1_MAX_UPDATES: u64 = 4_096;
+/// Exact compiler identity required by the isolated harness build script.
+pub const BEVY_READBACK_V1_RUSTC: &str = "rustc 1.95.0 (59807616e 2026-04-14)";
 /// Frozen byte count of the committed excluded-tool lock graph.
-pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = 86_356;
+pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = 86_365;
 /// Frozen SHA-256 of the committed excluded-tool lock graph.
 pub const BEVY_READBACK_V1_LOCK_SHA256: &str =
-    "a725b28e1e43e4b60ace6228a7bdba95205af5f07957756f6925baf5193166e3";
+    "6a4595b2fb8c6ab9f1abd92decbbcc9e4313619c3fa6983fb712abd23cea0c33";
 const MAX_TEXT_BYTES: usize = 1_024;
 
 /// Exact V2 document identity plus its canonical V4 provenance header.
@@ -73,6 +75,8 @@ pub struct BevyHarnessIdentityV1 {
     engine_version: String,
     tool_version: String,
     rust_toolchain: String,
+    bevy_animation_feature: bool,
+    load_animations: bool,
     lock_identity: InputIdentity,
     updates: u64,
 }
@@ -81,6 +85,8 @@ impl BevyHarnessIdentityV1 {
     pub fn new(
         tool_version: String,
         rust_toolchain: String,
+        bevy_animation_feature: bool,
+        load_animations: bool,
         lock_identity: InputIdentity,
         updates: u64,
     ) -> Self {
@@ -89,6 +95,8 @@ impl BevyHarnessIdentityV1 {
             engine_version: "0.19.0".into(),
             tool_version,
             rust_toolchain,
+            bevy_animation_feature,
+            load_animations,
             lock_identity,
             updates,
         }
@@ -106,6 +114,10 @@ impl BevyIndexedLabelV1 {
     /// Construct an indexed label.
     pub fn new(index: u32, label: String) -> Self {
         Self { index, label }
+    }
+    /// Observed source-array index.
+    pub const fn index(&self) -> u32 {
+        self.index
     }
 }
 
@@ -308,6 +320,8 @@ pub enum BevyConformanceCodeV1 {
     RequiredPredictionUnavailable,
     /// Loading did not reach `Loaded`.
     LoadDidNotSucceed,
+    /// The compiled feature or loader setting differs.
+    SettingsMismatch,
     /// Typed inventory differs.
     InventoryMismatch,
     /// Typed scene inventory differs.
@@ -407,7 +421,9 @@ impl BevyReadbackV1 {
         if h.engine != "bevy"
             || h.engine_version != "0.19.0"
             || !safe(&h.tool_version)
-            || !safe(&h.rust_toolchain)
+            || h.rust_toolchain != BEVY_READBACK_V1_RUSTC
+            || !h.bevy_animation_feature
+            || !h.load_animations
             || h.lock_identity.bytes() != BEVY_READBACK_V1_LOCK_BYTES
             || h.lock_identity.sha256() != BEVY_READBACK_V1_LOCK_SHA256
             || h.updates > BEVY_READBACK_V1_MAX_UPDATES
@@ -528,6 +544,11 @@ pub fn compare_bevy_readback_v1(
         mismatch.push(BevyConformanceCodeV1::LoadDidNotSucceed);
     }
     let projection = adapter.projection();
+    if readback.harness.bevy_animation_feature != adapter.settings().bevy_animation_feature()
+        || readback.harness.load_animations != adapter.settings().load_animations()
+    {
+        mismatch.push(BevyConformanceCodeV1::SettingsMismatch);
+    }
     if prediction
         .inventory()
         .animations()
@@ -595,22 +616,23 @@ pub fn compare_bevy_readback_v1(
     } else {
         unavailable.push(BevyConformanceCodeV1::RequiredPredictionUnavailable);
     }
-    if raw.skin_coverage().is_complete() {
-        let expected = raw
-            .skins()
-            .iter()
-            .map(|row| {
-                BevyIndexedLabelV1::new(
-                    row.source_skin_index() as u32,
-                    format!("Skin{}", row.source_skin_index()),
-                )
-            })
-            .collect::<Vec<_>>();
-        if expected != readback.observation.skins {
-            mismatch.push(BevyConformanceCodeV1::SkinMismatch);
+    let mut expected_skins = Vec::new();
+    for skin in projection.skins() {
+        match skin.skin_label() {
+            GltfAddressabilityProjectionV2::Available { value } => {
+                expected_skins.push(BevyIndexedLabelV1::new(
+                    skin.source_skin_index() as u32,
+                    value.clone(),
+                ));
+            }
+            GltfAddressabilityProjectionV2::ProvenAbsent => {}
+            GltfAddressabilityProjectionV2::RequiredUnavailable { .. } => {
+                unavailable.push(BevyConformanceCodeV1::RequiredPredictionUnavailable);
+            }
         }
-    } else {
-        unavailable.push(BevyConformanceCodeV1::RequiredPredictionUnavailable);
+    }
+    if expected_skins != readback.observation.skins {
+        mismatch.push(BevyConformanceCodeV1::SkinMismatch);
     }
     match projection.default_scene_route() {
         GltfAddressabilityProjectionV2::Available { value } => {
@@ -859,9 +881,9 @@ mod tests {
     fn frozen_lock_identity() -> InputIdentity {
         InputIdentity::from_sha256_digest(
             [
-                0xa7, 0x25, 0xb2, 0x8e, 0x1e, 0x43, 0xe4, 0xb6, 0x0a, 0xce, 0x62, 0x28, 0xa7, 0xbd,
-                0xba, 0x95, 0x20, 0x5a, 0xf5, 0xf0, 0x79, 0x57, 0x75, 0x6f, 0x69, 0x25, 0xba, 0xf5,
-                0x19, 0x31, 0x66, 0xe3,
+                0x6a, 0x45, 0x95, 0xb2, 0xfb, 0x8c, 0x6a, 0xb9, 0xf1, 0xab, 0xd9, 0x2d, 0xec, 0xbb,
+                0xcc, 0x9e, 0x43, 0x13, 0x61, 0x9c, 0x3f, 0xa6, 0x98, 0x3f, 0xb7, 0x12, 0xab, 0xd2,
+                0x3c, 0xea, 0x0c, 0x33,
             ],
             BEVY_READBACK_V1_LOCK_BYTES,
         )
@@ -871,7 +893,9 @@ mod tests {
         BevyReadbackV1::new(
             BevyHarnessIdentityV1::new(
                 "0.1.0".into(),
-                "rustc 1.95.0".into(),
+                BEVY_READBACK_V1_RUSTC.into(),
+                true,
+                true,
                 frozen_lock_identity(),
                 1,
             ),
@@ -908,7 +932,9 @@ mod tests {
         let v = BevyReadbackV1::new(
             BevyHarnessIdentityV1::new(
                 "0.1.0".into(),
-                "rustc 1.95.0".into(),
+                BEVY_READBACK_V1_RUSTC.into(),
+                true,
+                true,
                 InputIdentity::from_bytes(b"not-the-tool-lock"),
                 1,
             ),
@@ -957,6 +983,8 @@ mod tests {
             ("/schema", serde_json::json!("urn:animsmith:schema:other:1")),
             ("/harness/engine", serde_json::json!("other")),
             ("/harness/tool_version", serde_json::json!("0.1.1")),
+            ("/harness/rust_toolchain", serde_json::json!("rustc 1.95.0")),
+            ("/harness/load_animations", serde_json::json!(false)),
             ("/harness/lock_identity/sha256", serde_json::json!("00")),
             ("/input/sha256", serde_json::json!("00")),
             ("/prediction/provenance_schema", serde_json::json!("other")),
@@ -994,7 +1022,9 @@ mod tests {
             let readback = BevyReadbackV1::new(
                 BevyHarnessIdentityV1::new(
                     "0.1.0".into(),
-                    "rustc 1.95.0".into(),
+                    BEVY_READBACK_V1_RUSTC.into(),
+                    true,
+                    true,
                     frozen_lock_identity(),
                     1,
                 ),

@@ -74,6 +74,7 @@ dependencies = [
  "animsmith-engine",
  "bevy",
  "serde_json",
+ "sha2",
  "tracing",
  "tracing-subscriber",
 ]
