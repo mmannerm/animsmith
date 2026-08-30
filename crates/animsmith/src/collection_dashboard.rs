@@ -412,7 +412,7 @@ fn build_authority(
         collection_output: IdentityWire::from_input_identity(&collection_output),
         evaluation,
         summary: DashboardSummaryV1::from_rows(
-            collection.sources.len(),
+            &collection.sources,
             &clips,
             &collection.runtime_sets,
         ),
@@ -423,9 +423,12 @@ fn build_authority(
                 .map(|source| CollectionDashboardSourceV1 {
                     key: source.key.clone(),
                     locator: source.locator.clone(),
+                    input: source.input.as_ref().map(IdentityWire::from_input_identity),
                     availability: source.availability.to_owned(),
                     loader: source.loader.to_owned(),
                     dependency_closure: source.dependency_closure.to_owned(),
+                    unscoped_findings: source.unscoped_findings,
+                    unscoped_severities: source.unscoped_severities.iter().cloned().collect(),
                 })
                 .collect(),
             clips,
@@ -482,6 +485,7 @@ struct DashboardSummaryV1 {
     clips: usize,
     runtime_sets: usize,
     findings: usize,
+    unscoped_findings: usize,
     coverage_gaps: usize,
     prediction_unavailable: usize,
     with_findings: usize,
@@ -493,15 +497,20 @@ struct DashboardSummaryV1 {
 }
 impl DashboardSummaryV1 {
     fn from_rows(
-        sources: usize,
+        sources: &[collection_output::CollectionDashboardSourceInput],
         clips: &[CollectionDashboardClipV1],
         sets: &[collection_output::CollectionDashboardRuntimeSetInput],
     ) -> Self {
+        let unscoped_findings = sources
+            .iter()
+            .map(|source| source.unscoped_findings)
+            .sum::<usize>();
         let mut value = Self {
-            sources,
+            sources: sources.len(),
             clips: clips.len(),
             runtime_sets: sets.len(),
-            findings: 0,
+            findings: unscoped_findings,
+            unscoped_findings,
             coverage_gaps: 0,
             prediction_unavailable: 0,
             with_findings: 0,
@@ -542,9 +551,13 @@ struct CollectionDashboardViewV1 {
 struct CollectionDashboardSourceV1 {
     key: String,
     locator: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input: Option<IdentityWire>,
     availability: String,
     loader: String,
     dependency_closure: String,
+    unscoped_findings: usize,
+    unscoped_severities: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -604,6 +617,7 @@ impl CollectionDashboardAuthorityV1 {
             clips: self.view.clips.len(),
             runtime_sets: self.view.runtime_sets.len(),
             findings: 0,
+            unscoped_findings: 0,
             coverage_gaps: 0,
             prediction_unavailable: 0,
             with_findings: 0,
@@ -695,15 +709,40 @@ impl CollectionDashboardAuthorityV1 {
         for source in &self.view.sources {
             if source.key.chars().count() > 4096
                 || source.locator.chars().count() > 4096
+                || source
+                    .input
+                    .as_ref()
+                    .is_some_and(|input| !input.valid(None))
+                || (source.availability == "available") != source.input.is_some()
                 || !matches!(source.availability.as_str(), "available" | "unavailable")
                 || !matches!(source.loader.as_str(), "ready" | "unavailable")
                 || !matches!(
                     source.dependency_closure.as_str(),
                     "complete" | "partial" | "unavailable"
                 )
+                || source.unscoped_severities.len() > 4096
+                || source
+                    .unscoped_severities
+                    .iter()
+                    .any(|severity| !matches!(severity.as_str(), "error" | "warning" | "note"))
+                || source
+                    .unscoped_severities
+                    .iter()
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    != source.unscoped_severities.len()
+                || (source.unscoped_findings == 0) != source.unscoped_severities.is_empty()
             {
                 return Err("dashboard authority has an invalid source".to_owned());
             }
+            summary.findings = summary
+                .findings
+                .checked_add(source.unscoped_findings)
+                .ok_or_else(|| "dashboard summary overflows".to_owned())?;
+            summary.unscoped_findings = summary
+                .unscoped_findings
+                .checked_add(source.unscoped_findings)
+                .ok_or_else(|| "dashboard summary overflows".to_owned())?;
         }
         if self
             .view
@@ -767,6 +806,7 @@ impl CollectionDashboardAuthorityV1 {
             || self.summary.clips != summary.clips
             || self.summary.runtime_sets != summary.runtime_sets
             || self.summary.findings != summary.findings
+            || self.summary.unscoped_findings != summary.unscoped_findings
             || self.summary.coverage_gaps != summary.coverage_gaps
             || self.summary.prediction_unavailable != summary.prediction_unavailable
             || self.summary.with_findings != summary.with_findings
@@ -1098,7 +1138,7 @@ impl TransitionPoseFamilyWire {
                 ._skeleton_basis_input
                 .as_ref()
                 .is_some_and(|identity| identity.valid(None))
-            && !self.pairs.is_empty()
+            && self.has_canonical_complete_pair_coverage()
             && self.pairs.iter().all(|pair| {
                 pair.translation_offenders.is_empty() && pair.rotation_offenders.is_empty()
             }))
@@ -1109,7 +1149,7 @@ impl TransitionPoseFamilyWire {
                     ._skeleton_basis_input
                     .as_ref()
                     .is_some_and(|identity| identity.valid(None))
-                && !self.pairs.is_empty()
+                && self.has_canonical_complete_pair_coverage()
                 && self.pairs.iter().any(|pair| {
                     !pair.translation_offenders.is_empty() || !pair.rotation_offenders.is_empty()
                 }))
@@ -1120,6 +1160,48 @@ impl TransitionPoseFamilyWire {
         valid
             .then_some(())
             .ok_or_else(|| "transition-pose evaluation has contradictory family state".to_owned())
+    }
+
+    /// The V1 producer compares every unordered member pair in ascending
+    /// member order, then emits entry before exit when both boundaries were
+    /// declared. The result does not repeat the declaration boundary, so the
+    /// three canonical producer shapes are entry-only, exit-only, or both.
+    fn has_canonical_complete_pair_coverage(&self) -> bool {
+        let Some(pair_count) = self
+            .members
+            .len()
+            .checked_mul(self.members.len().saturating_sub(1))
+            .map(|value| value / 2)
+        else {
+            return false;
+        };
+        let boundaries: &[&str] = match (
+            self.pairs.len(),
+            self.pairs.first().map(|pair| pair.boundary.as_str()),
+        ) {
+            (length, Some("entry")) if length == pair_count => &["entry"],
+            (length, Some("exit")) if length == pair_count => &["exit"],
+            (length, Some("entry")) if pair_count.checked_mul(2) == Some(length) => {
+                &["entry", "exit"]
+            }
+            _ => return false,
+        };
+        let mut actual = self.pairs.iter();
+        for left in 0..self.members.len() {
+            for right in left + 1..self.members.len() {
+                for boundary in boundaries {
+                    let Some(pair) = actual.next() else {
+                        return false;
+                    };
+                    if pair.member_indices != [left as u64, right as u64]
+                        || pair.boundary != *boundary
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        actual.next().is_none()
     }
 }
 
@@ -1323,7 +1405,7 @@ mod tests {
     #[test]
     fn authority_readback_rejects_schema_and_summary_mutations() {
         let identity = "0".repeat(64);
-        let value = serde_json::json!({"schema":"urn:animsmith:schema:collection-dashboard:1","schema_version":1,"collection_output":{"sha256":identity,"bytes":0},"summary":{"sources":0,"clips":0,"runtime_sets":0,"findings":0,"coverage_gaps":0,"prediction_unavailable":0,"with_findings":0,"evaluated":0,"partial":0,"excluded":0,"unavailable":0,"not_evaluated":0},"view":{"sources":[],"clips":[],"runtime_sets":[]}});
+        let value = serde_json::json!({"schema":"urn:animsmith:schema:collection-dashboard:1","schema_version":1,"collection_output":{"sha256":identity,"bytes":0},"summary":{"sources":0,"clips":0,"runtime_sets":0,"findings":0,"unscoped_findings":0,"coverage_gaps":0,"prediction_unavailable":0,"with_findings":0,"evaluated":0,"partial":0,"excluded":0,"unavailable":0,"not_evaluated":0},"view":{"sources":[],"clips":[],"runtime_sets":[]}});
         let bytes = serde_json::to_vec(&value).unwrap();
         assert!(validate_authority_readback(&bytes).is_ok());
         let mut mismatch = value.clone();
@@ -1339,9 +1421,9 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "schema":"urn:animsmith:schema:collection-dashboard:1", "schema_version":1,
             "collection_output":identity,
-            "summary":{"sources":1,"clips":6,"runtime_sets":1,"findings":2,"coverage_gaps":3,"prediction_unavailable":4,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
+            "summary":{"sources":1,"clips":6,"runtime_sets":1,"findings":2,"unscoped_findings":0,"coverage_gaps":3,"prediction_unavailable":4,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
             "evaluation":{"input":{"sha256":"0".repeat(64),"bytes":0},"status":"complete","decision":"finding","families":[{"id":"family","status":"complete","decision":"finding","members":[{"take_index":0,"take_name":"Finding","logical_clip":"finding"},{"take_index":1,"take_name":"Partial","logical_clip":"partial"}],"pair_findings":[{"member_indices":[0,1],"boundary":"entry","translation_offenders":[{"bone_ordinal":0,"bone_name":"root","delta":0.25}],"rotation_offenders":[]}]}]},
-            "view":{"sources":[{"key":"source","locator":"source.gltf","availability":"available","loader":"ready","dependency_closure":"complete"}],"clips":[
+            "view":{"sources":[{"key":"source","locator":"source.gltf","input":{"sha256":"0".repeat(64),"bytes":0},"availability":"available","loader":"ready","dependency_closure":"complete","unscoped_findings":0,"unscoped_severities":[]}],"clips":[
                 {"id":"finding","source":"source","take_index":0,"take_name":"Finding","roles":["locomotion"],"availability":"established","outcome":"with_findings","findings":2,"severities":["error"],"coverage_gaps":3,"prediction_unavailable":4,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
                 {"id":"partial","source":"source","take_index":1,"take_name":"Partial","roles":["locomotion","combat"],"availability":"established","outcome":"partial","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":1,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
                 {"id":"evaluated","source":"source","take_index":2,"take_name":"Evaluated","roles":[],"availability":"established","outcome":"evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
@@ -1381,6 +1463,27 @@ mod tests {
         let mut bad_severity = rich_authority();
         bad_severity.view.clips[0].severities = vec!["fatal".to_owned()];
         assert!(validate_authority_readback(&serde_json::to_vec(&bad_severity).unwrap()).is_err());
+
+        let mut missing_source_identity = rich_authority();
+        missing_source_identity.view.sources[0].input = None;
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&missing_source_identity).unwrap())
+                .is_err()
+        );
+        let mut orphaned_unscoped_severity = rich_authority();
+        orphaned_unscoped_severity.view.sources[0].unscoped_severities = vec!["error".to_owned()];
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&orphaned_unscoped_severity).unwrap())
+                .is_err()
+        );
+        let mut unscoped_finding = rich_authority();
+        unscoped_finding.view.sources[0].unscoped_findings = 1;
+        unscoped_finding.view.sources[0].unscoped_severities = vec!["warning".to_owned()];
+        unscoped_finding.summary.findings = 3;
+        unscoped_finding.summary.unscoped_findings = 1;
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&unscoped_finding).unwrap()).is_ok()
+        );
     }
 
     #[test]

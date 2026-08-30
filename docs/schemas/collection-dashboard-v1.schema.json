@@ -88,6 +88,7 @@
         "clips",
         "runtime_sets",
         "findings",
+        "unscoped_findings",
         "coverage_gaps",
         "prediction_unavailable",
         "with_findings",
@@ -111,6 +112,10 @@
           "minimum": 0
         },
         "findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unscoped_findings": {
           "type": "integer",
           "minimum": 0
         },
@@ -156,7 +161,9 @@
         "locator",
         "availability",
         "loader",
-        "dependency_closure"
+        "dependency_closure",
+        "unscoped_findings",
+        "unscoped_severities"
       ],
       "properties": {
         "key": {
@@ -166,6 +173,9 @@
         "locator": {
           "type": "string",
           "maxLength": 4096
+        },
+        "input": {
+          "$ref": "#/$defs/identity"
         },
         "availability": {
           "type": "string",
@@ -178,6 +188,21 @@
         "dependency_closure": {
           "type": "string",
           "maxLength": 128
+        },
+        "unscoped_findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unscoped_severities": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "enum": [
+              "error",
+              "warning",
+              "note"
+            ]
+          }
         }
       }
     },

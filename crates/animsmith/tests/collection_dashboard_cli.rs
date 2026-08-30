@@ -33,15 +33,25 @@ fn rendered_dashboard_state(html: &Path, filters: &Value) -> Value {
     let script = r#"
 const fs=require('fs'),html=fs.readFileSync(process.argv[1],'utf8'),filters=JSON.parse(process.argv[2]);
 let data=html.match(/<script type="application\/json" id="collection-dashboard-data">([\s\S]*?)<\/script>/)[1];
-if(filters.hostile){const d=JSON.parse(data),c=d.view.clips[0];c.id='</td><img src=x>';c.source='<source>';c.take_name='"quoted"';c.report_link='reports/a&b.html';data=JSON.stringify(d)}
+if(filters.client_fixture){const d=JSON.parse(data);d.view.sources=[
+  {key:'source-a',locator:'source-a.gltf',input:d.collection_output,availability:'available',loader:'ready',dependency_closure:'complete',unscoped_findings:0,unscoped_severities:[]},
+  {key:'source-b',locator:'source-b.gltf',input:d.collection_output,availability:'available',loader:'unavailable',dependency_closure:'unavailable',unscoped_findings:0,unscoped_severities:[]},
+  {key:'source-c',locator:'source-c.gltf',availability:'unavailable',loader:'unavailable',dependency_closure:'unavailable',unscoped_findings:0,unscoped_severities:[]}
+];d.view.clips=[
+  {id:'clip-a',source:'source-a',take_index:0,take_name:'A',roles:['root'],availability:'established',outcome:'with_findings',findings:1,severities:['error'],coverage_gaps:0,prediction_unavailable:0,coverage:{complete:1,partial:0,excluded:0,not_evaluated:0},runtime_sets:['set-a']},
+  {id:'clip-b',source:'source-b',take_index:1,take_name:'B',roles:['hips'],availability:'loader_unavailable',outcome:'partial',findings:0,severities:['warning'],coverage_gaps:1,prediction_unavailable:0,coverage:{complete:0,partial:1,excluded:0,not_evaluated:0},runtime_sets:['set-b']},
+  {id:'clip-c',source:'source-c',take_index:2,take_name:'C',roles:[],availability:'source_unavailable',outcome:'unavailable',findings:0,severities:[],coverage_gaps:0,prediction_unavailable:1,coverage:{complete:0,partial:0,excluded:0,not_evaluated:1},runtime_sets:[]}
+];d.view.runtime_sets=[{id:'set-a',lifecycle:'complete',members:['clip-a'],gaps:[]},{id:'set-b',lifecycle:'incomplete',members:['clip-b'],gaps:['member_unavailable']}];d.summary={sources:3,clips:3,runtime_sets:2,findings:1,unscoped_findings:0,coverage_gaps:1,prediction_unavailable:1,with_findings:1,evaluated:0,partial:1,excluded:0,unavailable:1,not_evaluated:0};data=JSON.stringify(d)}
+if(filters.hostile){const d=JSON.parse(data),c=d.view.clips[0],s=d.view.sources[0];c.id='</td><img src=x>';c.source='<source>';c.take_name='"quoted"';c.report_link='reports/a&b.html';s.key='</td><img src=source>';s.locator='<source-path>';data=JSON.stringify(d)}
 const code=html.match(/<script>\s*([\s\S]*?)<\/script><\/body>/)[1];
 const elements=new Map();
 function element(id){if(!elements.has(id)){elements.set(id,{id,value:id==='group'?'source':'',children:[],append(value){this.children.push(value)}})}return elements.get(id)}
 global.document={getElementById:id=>id==='collection-dashboard-data'?{textContent:data}:element(id),createElement:()=>({})};
 new Function(code)();
-for(const [id,value] of Object.entries(filters)){element(id).value=value}
+const initialSummary=element('summary').textContent;
+for(const [id,value] of Object.entries(filters)){if(!['client_fixture','hostile'].includes(id))element(id).value=value}
 element('group').onchange();
-console.log(JSON.stringify({count:element('count').textContent,groups:element('groups').textContent,roles:element('role').children.map(x=>x.value),clips:element('clips').innerHTML}));
+console.log(JSON.stringify({count:element('count').textContent,groups:element('groups').textContent,summary:element('summary').textContent,initialSummary,roles:element('role').children.map(x=>x.value),clips:element('clips').innerHTML,sources:element('sources').innerHTML,sourceCount:element('source-count').textContent}));
 "#;
     let output = Command::new("node")
         .args(["-e", script, html.to_str().unwrap(), &filters.to_string()])
@@ -131,6 +141,11 @@ fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
     assert_eq!(clips[0]["take_name"], "Take 001");
     assert_eq!(clips[1]["take_name"], "Take 001");
     assert_eq!(clips[0]["report_link"], "reports/walk-a.html");
+    let current: Value = serde_json::from_slice(&evidence.stdout).unwrap();
+    assert_eq!(
+        value["view"]["sources"][0]["input"],
+        current["sources"][0]["input"]["input"]
+    );
     assert_eq!(
         value["view"]["runtime_sets"][0]["members"][0],
         clips[0]["id"]
@@ -142,10 +157,8 @@ fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
     let rendered = fs::read_to_string(&html).unwrap();
     assert!(rendered.contains("filters do not change collection completeness"));
     assert!(rendered.contains("id=\"group\""));
-    assert!(rendered.contains("Object.entries(counts)"));
+    assert!(rendered.contains("id=\"sources\""));
     assert!(rendered.contains("collection-dashboard-data"));
-    assert!(rendered.contains("facet=(item,key)"));
-    assert!(!rendered.contains("localeCompare"));
     for forbidden in ["https://", "http://", "<script src=", "<link "] {
         assert!(
             !rendered.to_ascii_lowercase().contains(forbidden),
@@ -165,11 +178,97 @@ fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
         "com.example.collection-spike/sets/cross-file-gait: 1 · com.example.collection-spike/sets/cross-file-sync: 1"
     );
     assert_eq!(state["roles"], serde_json::json!(["none"]));
+
+    let unfiltered = rendered_dashboard_state(
+        &html,
+        &serde_json::json!({"client_fixture":true, "group":"source"}),
+    );
+    assert_eq!(
+        unfiltered["count"],
+        "showing 3 of 3 declared clips; filters do not change collection completeness"
+    );
+    assert_eq!(unfiltered["summary"], unfiltered["initialSummary"]);
+    assert!(
+        unfiltered["summary"]
+            .as_str()
+            .unwrap()
+            .contains("3 sources · 3 clips · 2 runtime sets · 1 findings (0 unscoped)")
+    );
+    for (filter, value) in [
+        ("source", "source-a"),
+        ("role", "root"),
+        ("set", "set-a"),
+        ("severity", "error"),
+        ("outcome", "with_findings"),
+        ("availability", "established"),
+    ] {
+        let mut filters = serde_json::json!({"client_fixture":true});
+        filters[filter] = Value::String(value.to_owned());
+        let filtered = rendered_dashboard_state(&html, &filters);
+        assert_eq!(
+            filtered["count"],
+            "showing 1 of 3 declared clips; filters do not change collection completeness",
+            "filter {filter}"
+        );
+        assert_eq!(
+            filtered["summary"], unfiltered["summary"],
+            "filter {filter}"
+        );
+        let rows = filtered["clips"].as_str().unwrap();
+        assert!(rows.contains("clip-a"), "filter {filter}");
+        assert!(!rows.contains("clip-b"), "filter {filter}");
+        assert!(!rows.contains("clip-c"), "filter {filter}");
+    }
+    for (group, expected) in [
+        ("source", "source-a: 1 · source-b: 1 · source-c: 1"),
+        ("roles", "hips: 1 · none: 1 · root: 1"),
+        ("runtime_sets", "none: 1 · set-a: 1 · set-b: 1"),
+        ("severities", "error: 1 · none: 1 · warning: 1"),
+        ("outcome", "partial: 1 · unavailable: 1 · with_findings: 1"),
+        (
+            "availability",
+            "established: 1 · loader_unavailable: 1 · source_unavailable: 1",
+        ),
+    ] {
+        let grouped = rendered_dashboard_state(
+            &html,
+            &serde_json::json!({"client_fixture":true, "group":group}),
+        );
+        assert_eq!(grouped["groups"], expected, "group {group}");
+        assert_eq!(grouped["count"], unfiltered["count"], "group {group}");
+    }
+    let explicit_none = rendered_dashboard_state(
+        &html,
+        &serde_json::json!({"client_fixture":true, "role":"none"}),
+    );
+    assert_eq!(
+        explicit_none["roles"],
+        serde_json::json!(["hips", "none", "root"])
+    );
+    assert_eq!(
+        explicit_none["count"],
+        "showing 1 of 3 declared clips; filters do not change collection completeness"
+    );
+    let no_match = rendered_dashboard_state(
+        &html,
+        &serde_json::json!({"client_fixture":true, "source":"not-declared"}),
+    );
+    assert_eq!(
+        no_match["count"],
+        "showing 0 of 3 declared clips; filters do not change collection completeness"
+    );
+    assert_eq!(no_match["groups"], "no matching declared clips");
+    assert_eq!(no_match["summary"], unfiltered["summary"]);
+
     let hostile = rendered_dashboard_state(&html, &serde_json::json!({"hostile":true}));
     let table = hostile["clips"].as_str().unwrap();
     assert!(table.contains("&lt;/td&gt;&lt;img src=x&gt;"));
     assert!(table.contains("href=\"reports/a&amp;b.html\""));
     assert!(!table.contains("<img src=x>"));
+    let source_table = hostile["sources"].as_str().unwrap();
+    assert!(source_table.contains("&lt;/td&gt;&lt;img src=source&gt;"));
+    assert!(source_table.contains("&lt;source-path&gt;"));
+    assert!(!source_table.contains("<img src=source>"));
 }
 
 #[test]
@@ -287,13 +386,162 @@ fn dashboard_accepts_only_exact_manifest_bound_transition_authority() {
 }
 
 #[test]
+fn dashboard_transition_reader_requires_canonical_complete_pair_coverage() {
+    fn pair(left: u64, right: u64, boundary: &str) -> Value {
+        serde_json::json!({
+            "member_indices":[left,right], "boundary":boundary,
+            "max_translation_delta_m":0.0, "max_rotation_delta_deg":0.0,
+            "translation_tolerance_m":0.01, "rotation_tolerance_deg":1.0,
+            "translation_offenders":[], "rotation_offenders":[]
+        })
+    }
+
+    let evidence = collection(&spike_path("collection.toml"));
+    assert_eq!(evidence.status.code(), Some(0));
+    let temp = tempfile::tempdir().unwrap();
+    let collection_path = temp.path().join("collection-output.json");
+    fs::write(&collection_path, &evidence.stdout).unwrap();
+    let collection: Value = serde_json::from_slice(&evidence.stdout).unwrap();
+    let identity = collection["manifest"]["input"].clone();
+    let sources = collection["sources"].as_array().unwrap();
+    let source_identity = |key: &str| {
+        sources.iter().find(|source| source["key"] == key).unwrap()["input"]["input"].clone()
+    };
+    let members = [
+        (0_u64, "Take 001", source_identity("walk-a")),
+        (0_u64, "Take 001", source_identity("walk-b")),
+        (0_u64, "Take 001", source_identity("multi")),
+    ]
+    .into_iter()
+    .map(|(take_index, take_name, input)| {
+        let closure = input.clone();
+        serde_json::json!({
+            "take_index":take_index, "take_name":take_name,
+            "source_input":input, "source_dependency_closure_identity":closure
+        })
+    })
+    .collect::<Vec<_>>();
+    let canonical_pairs = vec![
+        pair(0, 1, "entry"),
+        pair(0, 1, "exit"),
+        pair(0, 2, "entry"),
+        pair(0, 2, "exit"),
+        pair(1, 2, "entry"),
+        pair(1, 2, "exit"),
+    ];
+    let canonical = serde_json::json!({
+        "schema":"urn:animsmith:schema:transition-pose-evaluation:1", "schema_version":1,
+        "status":"complete", "decision":"pass",
+        "declaration_input":identity, "declaration_normalized":collection["manifest"]["input"].clone(),
+        "subject_input":collection["manifest"]["input"].clone(),
+        "families":[{
+            "family_id":"com.example.collection-spike/transition/canonical",
+            "status":"complete", "decision":"pass", "members":members,
+            "skeleton_basis_input":collection["manifest"]["input"].clone(),
+            "pairs":canonical_pairs
+        }]
+    });
+    let evaluation_path = temp.path().join("canonical.json");
+    fs::write(&evaluation_path, serde_json::to_vec(&canonical).unwrap()).unwrap();
+    let accepted = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .args([
+            "collection",
+            "dashboard",
+            "--collection",
+            collection_path.to_str().unwrap(),
+            "--output",
+            temp.path().join("canonical.html").to_str().unwrap(),
+            "--authority",
+            temp.path()
+                .join("canonical-authority.json")
+                .to_str()
+                .unwrap(),
+            "--evaluation",
+            evaluation_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        accepted.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    let mut mutations = Vec::new();
+    let mut self_pair = canonical.clone();
+    self_pair["families"][0]["pairs"][0]["member_indices"] = serde_json::json!([0, 0]);
+    mutations.push(("self-pair", self_pair));
+    let mut reversed = canonical.clone();
+    reversed["families"][0]["pairs"][0]["member_indices"] = serde_json::json!([1, 0]);
+    mutations.push(("reversed-pair", reversed));
+    let mut duplicate = canonical.clone();
+    let repeated_pair = duplicate["families"][0]["pairs"][0].clone();
+    duplicate["families"][0]["pairs"][2] = repeated_pair;
+    mutations.push(("duplicate-pair", duplicate));
+    let mut omitted = canonical.clone();
+    omitted["families"][0]["pairs"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    mutations.push(("omitted-pair", omitted));
+    let mut pair_order = canonical.clone();
+    pair_order["families"][0]["pairs"]
+        .as_array_mut()
+        .unwrap()
+        .swap(2, 4);
+    mutations.push(("pair-order", pair_order));
+    let mut boundary_order = canonical;
+    boundary_order["families"][0]["pairs"]
+        .as_array_mut()
+        .unwrap()
+        .swap(0, 1);
+    mutations.push(("boundary-order", boundary_order));
+
+    for (name, mutation) in mutations {
+        let evaluation_path = temp.path().join(format!("{name}.json"));
+        let html = temp.path().join(format!("{name}.html"));
+        let authority = temp.path().join(format!("{name}-authority.json"));
+        fs::write(&evaluation_path, serde_json::to_vec(&mutation).unwrap()).unwrap();
+        let rejected = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+            .args([
+                "collection",
+                "dashboard",
+                "--collection",
+                collection_path.to_str().unwrap(),
+                "--output",
+                html.to_str().unwrap(),
+                "--authority",
+                authority.to_str().unwrap(),
+                "--evaluation",
+                evaluation_path.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(
+            rejected.status.code(),
+            Some(2),
+            "mutation {name} unexpectedly accepted: {}",
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+        assert!(!html.exists(), "mutation {name} staged HTML");
+        assert!(!authority.exists(), "mutation {name} staged authority");
+    }
+}
+
+#[test]
 fn dashboard_keeps_current_unavailable_collection_rows_visible() {
     let temp = tempfile::tempdir().unwrap();
     let manifest = temp.path().join("collection.toml");
     fs::create_dir(temp.path().join("source")).unwrap();
+    fs::copy(
+        spike_path("source/walk-a.gltf"),
+        temp.path().join("source/present.gltf"),
+    )
+    .unwrap();
     fs::write(
         &manifest,
-        "schema = \"urn:animsmith:schema:collection-manifest:1\"\nschema_version = 1\ncollection_id = \"com.example.dashboard-unavailable\"\ninput_root = \"source\"\n\n[[sources]]\nkey = \"missing\"\npath = \"missing.gltf\"\n\n[[clips]]\nid = \"com.example.dashboard-unavailable/missing\"\nsource = \"missing\"\ntake_index = 0\ntake_name = \"Take 001\"\n",
+        "schema = \"urn:animsmith:schema:collection-manifest:1\"\nschema_version = 1\ncollection_id = \"com.example.dashboard-unavailable\"\ninput_root = \"source\"\n\n[[sources]]\nkey = \"missing\"\npath = \"missing.gltf\"\n\n[[sources]]\nkey = \"present\"\npath = \"present.gltf\"\n\n[[clips]]\nid = \"com.example.dashboard-unavailable/present\"\nsource = \"present\"\ntake_index = 0\ntake_name = \"Take 001\"\n",
     )
     .unwrap();
     let evidence = collection(&manifest);
@@ -308,7 +556,8 @@ fn dashboard_keeps_current_unavailable_collection_rows_visible() {
         current["schema"],
         "urn:animsmith:schema:collection-output:11"
     );
-    assert_eq!(current["clips"][0]["binding"]["state"], "unavailable");
+    assert_eq!(current["sources"][0]["key"], "missing");
+    assert_eq!(current["clips"].as_array().unwrap().len(), 1);
     let collection_path = temp.path().join("collection-output.json");
     let html = temp.path().join("dashboard.html");
     let authority = temp.path().join("dashboard.json");
@@ -333,21 +582,120 @@ fn dashboard_keeps_current_unavailable_collection_rows_visible() {
         String::from_utf8_lossy(&dashboard.stderr)
     );
     let authority: Value = serde_json::from_slice(&fs::read(authority).unwrap()).unwrap();
+    let missing = authority["view"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["key"] == "missing")
+        .unwrap();
+    assert_eq!(missing["availability"], "unavailable");
+    assert!(missing.get("input").is_none());
+    assert_eq!(missing["loader"], "unavailable");
+    assert_eq!(missing["dependency_closure"], "unavailable");
+    assert_eq!(authority["summary"]["sources"], 2);
+    assert_eq!(authority["summary"]["clips"], 1);
+    let state = rendered_dashboard_state(&html, &serde_json::json!({}));
     assert_eq!(
-        authority["view"]["sources"][0]["availability"],
-        "unavailable"
+        state["count"],
+        "showing 1 of 1 declared clips; filters do not change collection completeness"
     );
     assert_eq!(
-        authority["view"]["clips"][0]["availability"],
-        "source_unavailable"
+        state["sourceCount"],
+        "2 declared sources; sources with zero logical clips remain listed"
     );
-    assert_eq!(authority["view"]["clips"][0]["outcome"], "unavailable");
-    assert_eq!(authority["summary"]["unavailable"], 1);
+    let source_table = state["sources"].as_str().unwrap();
+    assert!(source_table.contains("missing"));
+    assert!(source_table.contains("missing.gltf"));
+    assert!(source_table.contains("unavailable"));
+    assert!(source_table.contains("<td>0</td>"));
+}
+
+#[test]
+fn dashboard_retains_real_unscoped_required_bones_findings_at_source_level() {
+    let temp = tempfile::tempdir().unwrap();
+    let source_dir = temp.path().join("source");
+    fs::create_dir(&source_dir).unwrap();
+    fs::copy(
+        spike_path("source/walk-a.gltf"),
+        source_dir.join("rig.gltf"),
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("required.animsmith.toml"),
+        "[rig]\nrequired_bones = [\"missing_socket\"]\n",
+    )
+    .unwrap();
+    let manifest = temp.path().join("collection.toml");
+    fs::write(
+        &manifest,
+        "schema = \"urn:animsmith:schema:collection-manifest:1\"\nschema_version = 1\ncollection_id = \"com.example.dashboard-unscoped\"\ninput_root = \"source\"\n\n[[sources]]\nkey = \"rig\"\npath = \"rig.gltf\"\nconfig = \"required.animsmith.toml\"\n\n[[clips]]\nid = \"com.example.dashboard-unscoped/take\"\nsource = \"rig\"\ntake_index = 0\ntake_name = \"Take 001\"\n",
+    )
+    .unwrap();
+    let evidence = collection(&manifest);
+    assert_eq!(
+        evidence.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&evidence.stderr)
+    );
+    let current: Value = serde_json::from_slice(&evidence.stdout).unwrap();
+    let required_bones = current["sources"][0]["result"]["envelope"]["files"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["check_id"] == "required-bones")
+        .expect("required-bones check is present and enabled");
+    assert_eq!(required_bones["evaluation"], "complete");
+    assert_eq!(required_bones["findings"].as_array().unwrap().len(), 1);
+    assert!(required_bones["findings"][0].get("clip").is_none());
+
+    let collection_path = temp.path().join("collection-output.json");
+    let html = temp.path().join("dashboard.html");
+    let authority_path = temp.path().join("dashboard.json");
+    fs::write(&collection_path, &evidence.stdout).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .args([
+            "collection",
+            "dashboard",
+            "--collection",
+            collection_path.to_str().unwrap(),
+            "--output",
+            html.to_str().unwrap(),
+            "--authority",
+            authority_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let authority: Value = serde_json::from_slice(&fs::read(&authority_path).unwrap()).unwrap();
+    let source = &authority["view"]["sources"][0];
+    assert_eq!(source["key"], "rig");
+    assert_eq!(source["unscoped_findings"], 1);
+    assert_eq!(source["unscoped_severities"], serde_json::json!(["error"]));
+    assert_eq!(authority["summary"]["unscoped_findings"], 1);
+    let clip_findings = authority["view"]["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|clip| clip["findings"].as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(
+        authority["summary"]["findings"].as_u64().unwrap(),
+        clip_findings + 1
+    );
+    let state = rendered_dashboard_state(&html, &serde_json::json!({}));
     assert!(
-        fs::read_to_string(html)
+        state["summary"]
+            .as_str()
             .unwrap()
-            .contains("source_unavailable")
+            .contains("findings (1 unscoped)")
     );
+    assert!(state["sources"].as_str().unwrap().contains("1 (error)"));
 }
 
 #[test]

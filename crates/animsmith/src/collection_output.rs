@@ -1052,11 +1052,13 @@ impl CollectionOutputInput {
     ) -> Result<CollectionDashboardInput, CollectionOutputError> {
         let mut sources = Vec::with_capacity(self.wire.sources.len());
         for source in &self.wire.sources {
-            let (roles, evidence) = match &source.result {
+            let (roles, evidence, unscoped_findings, unscoped_severities) = match &source.result {
                 DocumentResultWire::Available { envelope } => {
                     dashboard_document_facts(envelope, &source.observed_takes)?
                 }
-                DocumentResultWire::Unavailable { .. } => (Vec::new(), BTreeMap::new()),
+                DocumentResultWire::Unavailable { .. } => {
+                    (Vec::new(), BTreeMap::new(), 0, BTreeSet::new())
+                }
             };
             sources.push(CollectionDashboardSourceInput {
                 key: source.key.clone(),
@@ -1082,6 +1084,8 @@ impl CollectionOutputInput {
                 },
                 roles,
                 evidence,
+                unscoped_findings,
+                unscoped_severities,
             });
         }
         let clips = self
@@ -1664,6 +1668,12 @@ pub(crate) struct CollectionDashboardSourceInput {
     pub(crate) dependency_closure: &'static str,
     pub(crate) roles: Vec<String>,
     pub(crate) evidence: BTreeMap<String, CollectionDashboardClipEvidence>,
+    /// Valid findings that cannot truthfully be assigned to one logical clip.
+    /// This includes document/source findings and clip names that do not match
+    /// the normalized take inventory; the dashboard must retain them without
+    /// guessing a clip.
+    pub(crate) unscoped_findings: usize,
+    pub(crate) unscoped_severities: BTreeSet<String>,
 }
 
 #[cfg(feature = "report")]
@@ -1774,7 +1784,6 @@ struct DashboardCheckWire {
 }
 #[cfg(feature = "report")]
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct DashboardFindingWire {
     #[serde(rename = "check_id")]
     _check_id: String,
@@ -1783,8 +1792,6 @@ struct DashboardFindingWire {
     _message: String,
     #[serde(default)]
     clip: Option<String>,
-    #[serde(flatten)]
-    _detail: BTreeMap<String, Box<RawValue>>,
 }
 #[cfg(feature = "report")]
 #[derive(Deserialize)]
@@ -1889,6 +1896,8 @@ fn dashboard_document_facts(
     (
         Vec<String>,
         BTreeMap<String, CollectionDashboardClipEvidence>,
+        usize,
+        BTreeSet<String>,
     ),
     CollectionOutputError,
 > {
@@ -1920,6 +1929,8 @@ fn dashboard_document_facts(
         .cloned()
         .map(|key| (key, CollectionDashboardClipEvidence::default()))
         .collect::<BTreeMap<_, _>>();
+    let mut unscoped_findings = 0_usize;
+    let mut unscoped_severities = BTreeSet::new();
     for check in file.checks {
         let inactive = check.selection == DashboardSelection::Unselected
             || check.configuration == DashboardConfiguration::Disabled
@@ -1967,15 +1978,21 @@ fn dashboard_document_facts(
             }
         }
         for finding in check.findings {
-            if let Some(clip) = finding.clip {
-                let Some(item) = evidence.get_mut(&clip) else {
-                    continue;
-                };
+            if let Some(item) = finding
+                .clip
+                .as_ref()
+                .and_then(|clip| evidence.get_mut(clip))
+            {
                 item.findings = item
                     .findings
                     .checked_add(1)
                     .ok_or(CollectionOutputError::Malformed)?;
                 item.severities.insert(finding.severity.as_str().to_owned());
+            } else {
+                unscoped_findings = unscoped_findings
+                    .checked_add(1)
+                    .ok_or(CollectionOutputError::Malformed)?;
+                unscoped_severities.insert(finding.severity.as_str().to_owned());
             }
         }
         for gap in check.gaps {
@@ -1991,7 +2008,12 @@ fn dashboard_document_facts(
         }
         dashboard_prediction_facts(check.prediction.as_ref(), &mut evidence)?;
     }
-    Ok((file.rig.resolved_roles.into_keys().collect(), evidence))
+    Ok((
+        file.rig.resolved_roles.into_keys().collect(),
+        evidence,
+        unscoped_findings,
+        unscoped_severities,
+    ))
 }
 
 #[cfg(feature = "report")]
@@ -4264,7 +4286,8 @@ mod tests {
                 name: "Take 001#0".to_owned(),
             },
         }];
-        let (_, facts) = dashboard_document_facts(&envelope, &takes).unwrap();
+        let (_, facts, unscoped_findings, unscoped_severities) =
+            dashboard_document_facts(&envelope, &takes).unwrap();
         let coverage = &facts["Take 001#0"].coverage;
         assert_eq!(coverage.complete, 1, "complete V11 checks need no scopes");
         assert_eq!(
@@ -4273,5 +4296,7 @@ mod tests {
         );
         assert_eq!(coverage.partial, 0);
         assert_eq!(coverage.not_evaluated, 0);
+        assert_eq!(unscoped_findings, 0);
+        assert!(unscoped_severities.is_empty());
     }
 }

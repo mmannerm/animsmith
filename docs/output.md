@@ -99,6 +99,13 @@ result must be transition-pose-evaluation V1 bound to the same manifest input;
 other evaluation contracts remain separate rather than being guessed into a
 per-member dashboard projection.
 
+Every declared source has its own inventory row even when no logical clip
+binds to it. The row retains its safe locator, optional observed input identity,
+availability, loader state, and dependency-closure state. Valid nested findings
+that have no matching clip are retained as source-level unscoped findings and
+included in the dashboard finding total; the projection never assigns them to
+an arbitrary clip.
+
 The dashboard is inventory and evidence navigation only. It has no quality
 score and does not establish engine loading/playback, retargeting, contacts,
 visual or artistic quality, or gameplay acceptance. Caller-supplied per-asset

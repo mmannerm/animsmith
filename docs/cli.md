@@ -93,6 +93,11 @@ the dashboard links it but never embeds source assets or samples. Its `role`
 filter means already-recorded resolved skeletal roles, not inferred gameplay or
 clip semantics. Filtering only hides rows locally: it cannot turn partial,
 unavailable, excluded, or incomplete evidence into a complete collection.
+The separate declared-source inventory remains visible even for sources with
+zero logical clips and retains observed identity plus availability, loader, and
+dependency-closure states. Source/document findings without an exact clip match
+remain explicit unscoped source findings and still contribute to the unfiltered
+finding total; they are never guessed onto a clip row.
 
 `evaluate-transition-poses` is a JSON-only, single-result transition-family
 contract, not a lint/check stream. It evaluates exact named/indexed takes in
