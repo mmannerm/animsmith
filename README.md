@@ -443,22 +443,28 @@ for a contract-style example.
 
 ## More Documentation
 
-The [documentation index](https://github.com/mmannerm/animsmith/tree/main/docs)
-lists every guide and reference by task. Four useful next stops:
+The [documentation site](https://mmannerm.github.io/animsmith/)
+lists every guide and reference by task. The site root is the latest released
+documentation; [development documentation](https://mmannerm.github.io/animsmith/dev/)
+tracks the default development branch. Four useful next stops:
 
-- [Game-ready clips guide](https://github.com/mmannerm/animsmith/blob/main/docs/game-ready-clips.md)
+- [Game-ready clips guide](https://mmannerm.github.io/animsmith/docs/game-ready-clips.html)
   — why each check exists, failure mode by failure mode.
-- [Engine profile guides](https://github.com/mmannerm/animsmith/tree/main/docs)
+- [Engine profile guides](https://mmannerm.github.io/animsmith/docs/)
   — exact Unity, Unreal, Godot, Bevy, and generic glTF importer boundaries,
   settings, scale guidance, and downstream responsibilities.
-- [Static asset workflow guide](https://github.com/mmannerm/animsmith/blob/main/docs/static-asset-workflows.md)
+- [Static asset workflow guide](https://mmannerm.github.io/animsmith/docs/static-asset-workflows.html)
   — bounds and transform domains, normal maps, static baking, texture recipes,
   and what still needs target-engine validation.
-- [Scaling glTF safely](https://github.com/mmannerm/animsmith/blob/main/docs/scale.md)
+- [Scaling glTF safely](https://mmannerm.github.io/animsmith/docs/scale.html)
   — choose the right scale operation and follow its exact-source rewrite,
   reload, proof, and paired evidence workflow.
-- [Examples cookbook](https://github.com/mmannerm/animsmith/tree/main/examples)
+- [Examples cookbook](https://mmannerm.github.io/animsmith/examples/)
   — runnable, copy-into-your-project workflows.
+- [CLI reference](https://mmannerm.github.io/animsmith/docs/cli.html)
+  — commands, flags, output formats, and exit codes.
+- [Rust embedding guide](https://mmannerm.github.io/animsmith/docs/embedding.html)
+  — library-crate boundaries and the embedded gate flow.
 
 ## Contributing
 

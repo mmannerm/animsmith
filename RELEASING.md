@@ -174,6 +174,30 @@ docs. For now this is accepted so reference docs stay simple while the
 API is still settling; the machine-readable JSON schema remains protected
 separately by `scripts/check-schema-id.sh`.
 
+## GitHub Pages documentation
+
+GitHub Pages publishes two deliberately different snapshots through the
+official artifact deployment workflow in `.github/workflows/docs-pages.yml`.
+The site root, `https://mmannerm.github.io/animsmith/`, is rebuilt from the
+latest published release tag. `https://mmannerm.github.io/animsmith/dev/` is
+rebuilt from protected `main` at the same deployment, so contributors can link
+to unreleased work without relabeling it as released documentation.
+
+The workflow source is the default branch; pull requests only retain a rendered
+preview artifact and never deploy. The release root is selected from GitHub's
+latest published release, rather than from an assumed version prefix. Its
+mdBook executable is installed from that selected tag's `.mdbook-version`;
+the `/dev/` subtree separately uses the default branch pin. If no published
+release exists, do not enable Pages deployment: publish the first release
+first, then run the default-branch workflow.
+
+`docs/README.md` is the canonical task index. Its category column generates
+the mdBook navigation during clean staging; do not add a hand-maintained
+`SUMMARY.md`, generated HTML, or symlink-based publication tree. `docs.rs`
+remains the Rust API reference and must remain prominent in the Pages index and
+README. Use `just docs-check` before changing the Pages source; it verifies the
+pinned mdBook build and parser-validates the staged Markdown tree.
+
 If a future release needs version-pinned README links, update the
 READMEs, this section, and `scripts/check-package-inventory.sh` in the
 same release-oriented PR. Do not add release-time rewriting without a

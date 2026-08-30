@@ -228,13 +228,15 @@ fn split_fragment(url: &str) -> (&str, Option<&str>) {
 /// README routes that must appear as rendered links. A fragment does
 /// not change the route: the previous shell assertions intentionally
 /// accepted links such as `docs/cli.md#install`.
-fn required_readme_link_routes() -> [String; 5] {
+fn required_readme_link_routes() -> [String; 7] {
     [
-        format!("{REPO_TREE_URL}docs"),
-        format!("{REPO_BLOB_URL}docs/cli.md"),
-        format!("{REPO_BLOB_URL}docs/embedding.md"),
+        "https://mmannerm.github.io/animsmith/".to_owned(),
+        "https://mmannerm.github.io/animsmith/dev/".to_owned(),
+        "https://mmannerm.github.io/animsmith/docs/cli.html".to_owned(),
+        "https://mmannerm.github.io/animsmith/docs/embedding.html".to_owned(),
         format!("{REPO_BLOB_URL}CONTRIBUTING.md"),
         format!("{REPO_BLOB_URL}DEVELOPMENT.md"),
+        "https://docs.rs/animsmith-core".to_owned(),
     ]
 }
 
@@ -504,13 +506,15 @@ fn root_readme_renders_required_routing_links_and_decoys_do_not_count() {
     assert_eq!(
         required_routes,
         [
-            "https://github.com/mmannerm/animsmith/tree/main/docs".to_owned(),
-            "https://github.com/mmannerm/animsmith/blob/main/docs/cli.md".to_owned(),
-            "https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md".to_owned(),
+            "https://mmannerm.github.io/animsmith/".to_owned(),
+            "https://mmannerm.github.io/animsmith/dev/".to_owned(),
+            "https://mmannerm.github.io/animsmith/docs/cli.html".to_owned(),
+            "https://mmannerm.github.io/animsmith/docs/embedding.html".to_owned(),
             "https://github.com/mmannerm/animsmith/blob/main/CONTRIBUTING.md".to_owned(),
             "https://github.com/mmannerm/animsmith/blob/main/DEVELOPMENT.md".to_owned(),
+            "https://docs.rs/animsmith-core".to_owned(),
         ],
-        "the README routing contract must retain all five routes"
+        "the README routing contract must retain all required routes"
     );
 
     let anchored_routes_fixture = required_routes
