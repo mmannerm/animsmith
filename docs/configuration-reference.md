@@ -1,8 +1,9 @@
 # `animsmith.toml` configuration reference
 
 `animsmith.toml` is an optional, strict project contract. Document-local
-commands (`lint`, `measure`, `inspect`, `report`, `transform`, `fix`, and
-`generate`) use `--config FILE`, or auto-load `./animsmith.toml`; no file means
+commands (`lint`, `measure`, `inspect`, `report`, `transform`, `fix`,
+`generate`, and `evaluate-transition-poses`) use `--config FILE`, or auto-load
+`./animsmith.toml`; no file means
 built-in defaults. Collection commands have their own control-file rules (see
 [`cli.md`](cli.md)). Unknown tables and keys are errors. The parser validates
 finite numeric domains; embedded callers should also call
@@ -34,14 +35,14 @@ selector lists declare no policy. Group member names are exact (not globs).
 
 | Table/key | Type; default; units; allowed values | Omission and consumer | Prerequisite / precedence |
 |---|---|---|---|
-| `[rig]` | table; `{ profile = "auto", roles = {}, required_bones = none }` | Optional. Role-aware checks, measurements, `inspect`, assembly, and engine paths consume resolved roles. | `auto` scores built-ins; explicit profile or inline roles are resolved by the frontend before checks. |
-| `[checks.<id>]` | map of check id → table; absent settings use each check's built-in defaults | Check runner and the owning check consume only their documented fields. | `--select` narrows the catalog; severity is evaluated after selection. |
-| `[runtime_nodes]` | table; absent; `selectors` is an optional string array | `rest-world-scale` consumes the shared runtime-node policy. | If present it wins over legacy `checks.rest-world-scale.node_selectors`; both is an error. |
-| `[clips."selector"]` | map of exact clip name or `*` glob → table; all fields omitted by default | Clip-aware checks and transforms consume effective expectations. | Glob overlay then exact overlay; omission means “inherit/no declaration”, not false or zero. |
-| `[gait_groups."name"]` | named table; no groups by default | `gait-group` checks exact member existence and gait phase coherence. | Needs declared members, resolved feet, and measurable gait evidence; missing work is a coverage gap. |
-| `[sync_groups."name"]` | named table; no groups by default | `sync-group` compares same-time duration, frame count, FPS, and endpoint surfaces. | Needs exact member clips and usable timing; optional `time_complement` adds a phase diagnostic. |
-| `[engine]` | CLI-only table; absent means no engine prediction/advice | `generate addressability`, `generate import-advice`, and engine checks consume the exact profile tuple. | `profile`, `profile_revision`, `engine_version`, and `importer` are all required when any selection field is present. Unsupported tuples/settings fail closed. |
-| `[transition_families."id"]` | CLI-only strict document declaration; absent/empty means no families | Transition-pose commands consume it; it is not part of core `Config`. | Exact schema/scope and bounded declaration; see [`collection-contracts.md`](collection-contracts.md#transition-families-148). |
+| `[rig]` | table; `{ profile = "auto", roles = {}, required_bones = none }` | Optional. `Config::rig` feeds role-aware checks, measurements, `inspect`, assembly, and engine paths. | `auto` scores built-ins; explicit profile or inline roles are resolved by the frontend before checks. |
+| `[checks.<id>]` | map of check id → table; absent settings use each check's built-in defaults | `Config::checks` is consumed by the check runner and owning check. | `--select` narrows the catalog; severity is evaluated after selection. |
+| `[runtime_nodes]` | table; absent; `selectors` is an optional string array | `Config::runtime_nodes` supplies the shared runtime-node policy. | If present it wins over legacy `checks.rest-world-scale.node_selectors`; both is an error. |
+| `[clips."selector"]` | map of exact clip name or `*` glob → table; all fields omitted by default | `Config::clips` supplies effective expectations to clip-aware checks and transforms. | Glob overlay then exact overlay; omission means “inherit/no declaration”, not false or zero. |
+| `[gait_groups."name"]` | named table; no groups by default | `Config::gait_groups` is consumed by `gait-group`. | Needs declared members, resolved feet, and measurable gait evidence; missing work is a coverage gap. |
+| `[sync_groups."name"]` | named table; no groups by default | `Config::sync_groups` is consumed by `sync-group`. | Needs exact member clips and usable timing; optional `time_complement` adds a phase diagnostic. |
+| `[engine]` | CLI-only table; absent means no engine prediction/advice | `EngineToml` supplies profile selection and settings to `generate addressability`, `generate import-advice`, and engine checks. | `profile`, `profile_revision`, `engine_version`, and `importer` are all required when any selection field is present. Unsupported tuples/settings fail closed. |
+| `[transition_families."id"]` | CLI-only strict document declaration; absent/empty means no families | `evaluate-transition-poses` consumes `transition_families`; the collection variant consumes its `--families` control file. It is not part of core `Config`. | Exact schema/scope and bounded declaration; see [`collection-contracts.md`](collection-contracts.md#transition-families-148). |
 
 ## Rig selection
 
@@ -85,16 +86,16 @@ table, but a misspelled field is rejected by `deny_unknown_fields`.
 | Key | Type; default; units/allowed values | Consumer, omission, and prerequisites |
 |---|---|---|
 | `clips.<selector>.loop` | optional bool; omitted; `true`/`false` | Declares cyclic intent. `true` activates loop checks; omission is not false evidence for other checks. |
-| `max_loop_position_delta_m` | optional finite non-negative float; omitted; metres | Per-selector `loop-closure` cap; inherits global then `0.01`. |
-| `max_loop_rotation_delta_deg` | optional finite non-negative float; omitted; degrees | Per-selector `loop-closure` cap; inherits global then `1.0`. |
-| `max_loop_velocity_delta_mps` | optional finite non-negative float; omitted; metres/second | Per-selector `loop-seam-vel` cap; inherits global then `0.1`. |
-| `max_loop_angular_velocity_delta_degps` | optional finite non-negative float; omitted; degrees/second | Per-selector `loop-seam-rot` cap; inherits global then `5.0`. |
-| `duration_s` | optional `{ value: finite positive float, tolerance: finite non-negative float }`; omitted; seconds | `duration-sanity` pin. Omission means no duration contract, not zero. |
-| `speed_mps` | optional pinned value/tolerance; omitted; metres/second; value positive, tolerance non-negative | Root-motion speed and `foot-slide`; the latter is not applicable without this declaration. |
-| `movement_owner_xz`, `movement_owner_y`, `movement_owner_yaw` | optional enum; omitted; `gameplay` or `animation` | In-place/root-motion checks and downstream transform intent. Each axis is independent; omission is never inferred. |
-| `in_place` | optional bool; omitted; `true` = gameplay XZ, `false` = animation XZ | Legacy XZ alias for `movement_owner_xz`. Cannot coexist with it in one entry; across layers it is normalized before overlay. |
-| `fps` | optional finite positive float; omitted; frames/second | `fps` and `sync-group`; omission means no authored frame-grid contract. |
-| `animates_bones` | optional string array; omitted; bone names | `missing-bones` requires keys and `frozen-bone` requires actual rotation movement. Distinct from `rig.required_bones`. |
+| `clips.<selector>.max_loop_position_delta_m` | optional finite non-negative float; omitted; metres | Per-selector `loop-closure` cap; inherits global then `0.01`. |
+| `clips.<selector>.max_loop_rotation_delta_deg` | optional finite non-negative float; omitted; degrees | Per-selector `loop-closure` cap; inherits global then `1.0`. |
+| `clips.<selector>.max_loop_velocity_delta_mps` | optional finite non-negative float; omitted; metres/second | Per-selector `loop-seam-vel` cap; inherits global then `0.1`. |
+| `clips.<selector>.max_loop_angular_velocity_delta_degps` | optional finite non-negative float; omitted; degrees/second | Per-selector `loop-seam-rot` cap; inherits global then `5.0`. |
+| `clips.<selector>.duration_s` | optional `{ value: finite positive float, tolerance: finite non-negative float }`; omitted; seconds | `duration-sanity` pin. Omission means no duration contract, not zero. |
+| `clips.<selector>.speed_mps` | optional pinned value/tolerance; omitted; metres/second; value positive, tolerance non-negative | Root-motion speed and `foot-slide`; the latter is not applicable without this declaration. |
+| `clips.<selector>.movement_owner_xz`, `clips.<selector>.movement_owner_y`, `clips.<selector>.movement_owner_yaw` | optional enum; omitted; `gameplay` or `animation` | In-place/root-motion checks and downstream transform intent. Each axis is independent; omission is never inferred. |
+| `clips.<selector>.in_place` | optional bool; omitted; `true` = gameplay XZ, `false` = animation XZ | Legacy XZ alias for `clips.<selector>.movement_owner_xz`. Cannot coexist with it in one entry; across layers it is normalized before overlay. |
+| `clips.<selector>.fps` | optional finite positive float; omitted; frames/second | `fps` and `sync-group`; omission means no authored frame-grid contract. |
+| `clips.<selector>.animates_bones` | optional string array; omitted; bone names | `missing-bones` requires keys and `frozen-bone` requires actual rotation movement. Distinct from `rig.required_bones`. |
 
 ## Runtime nodes and globs
 
@@ -116,33 +117,43 @@ cross node and bone namespaces, and do not infer a node from a rig role.
 | `sync_groups.<name>.max_frame_count_delta` | unsigned integer; required; key-count difference | Largest permitted longest-channel key-count range. |
 | `sync_groups.<name>.max_fps_delta` | finite non-negative float; required; frames/second | Largest permitted declared-FPS range. |
 | `sync_groups.<name>.time_complement` | optional table; omitted disables diagnostic | Adds reflected-time phase comparison for each configured-order unordered pair. |
-| `time_complement.min_reflected_time_advantage` | finite float `[0, 1]`; required; score | Minimum reflected-minus-same phase similarity advantage. |
-| `time_complement.min_lr_amplitude_m` | finite non-negative float; required; metres | Minimum evidence amplitude before phase comparison. |
+| `sync_groups.<name>.time_complement.min_reflected_time_advantage` | finite float `[0, 1]`; required; score | Minimum reflected-minus-same phase similarity advantage. |
+| `sync_groups.<name>.time_complement.min_lr_amplitude_m` | finite non-negative float; required; metres | Minimum evidence amplitude before phase comparison. |
 
 ## Engine profiles (CLI)
 
-The four selection keys have no implicit default: `profile`,
-`profile_revision`, `engine_version`, and `importer`. Either omit `[engine]`
+The four selection keys have no implicit default: `engine.profile`,
+`engine.profile_revision`, `engine.engine_version`, and `engine.importer`. Either omit `[engine]`
 or specify all four. Exact supported tuples and setting defaults are owned by
 the versioned [`animsmith-engine` profiles](https://docs.rs/animsmith-engine/latest/animsmith_engine/).
 The profile is evidence about importer behavior, not a claim that an engine
 loaded or played the asset.
 
-`[engine.settings]` accepts profile-defined keys; unknown keys or values are
+`engine.settings` accepts profile-defined keys; unknown keys or values are
 rejected when the selected profile resolves. Common revision-1 settings are
-`convert_units` (bool), `bake_axis_conversion` (bool), `root_motion_source`
-(string path), and per-clip `clips.<selector>.engine_settings` keys
-`root_rotation`, `root_position_y`, and `root_position_xz` (`bake` or
-`extract`). Revision-2 profiles may define `animation_type`
-(`generic|humanoid|legacy`), `avatar_setup`
-(`create_from_this_model|copy_from_other_avatar`), `import_animation` (bool),
-`root_motion_source` (string), `root_rotation`, `root_position_y`,
-`root_position_xz` (`bake|extract`), `rotate_scene_entity` (bool),
-`rotate_meshes` (bool), `load_meshes` (`empty|nonempty`),
-`extension_handler_environment` (`bare_empty|bevy_pbr_stock_0_19`),
-`bevy_animation_feature` (bool), `load_animations` (bool), `animation_fps`
-(positive integer), `animation_trimming` (bool), and `sample_rate`
-(`default_30`, `source_determined`, or `custom_hz(N)`). A setting is either
+`engine.settings.convert_units` (bool), `engine.settings.bake_axis_conversion`
+(bool), and `engine.settings.root_motion_source` (string path), plus per-clip
+`clips.<selector>.engine_settings.root_rotation`,
+`clips.<selector>.engine_settings.root_position_y`, and
+`clips.<selector>.engine_settings.root_position_xz` (`bake` or `extract`).
+Revision-2 profiles may define `engine.settings.animation_type`
+(`generic|humanoid|legacy`), `engine.settings.avatar_setup`
+(`create_from_this_model|copy_from_other_avatar`),
+`engine.settings.import_animation` (bool),
+`engine.settings.root_motion_source` (string),
+`engine.settings.root_rotation`, `engine.settings.root_position_y`,
+`engine.settings.root_position_xz` (`bake|extract`),
+`engine.settings.rotate_scene_entity` (bool), `engine.settings.rotate_meshes`
+(bool), `engine.settings.load_meshes` (`empty|nonempty`),
+`engine.settings.extension_handler_environment`
+(`bare_empty|bevy_pbr_stock_0_19`), `engine.settings.bevy_animation_feature`
+(bool), `engine.settings.load_animations` (bool),
+`engine.settings.animation_fps` (positive integer),
+`engine.settings.animation_trimming` (bool), and `engine.settings.sample_rate`
+(`default_30`, `source_determined`, or `custom_hz(N)`). Per-clip revision-2
+root policies use the same `clips.<selector>.engine_settings.root_rotation`,
+`clips.<selector>.engine_settings.root_position_y`, and
+`clips.<selector>.engine_settings.root_position_xz` paths. A setting is either
 explicit or the profile's verified default; no generic default is invented.
 
 ## Transition families

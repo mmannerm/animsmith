@@ -2713,6 +2713,332 @@ fn contact_producer_load_failure(error: InputLoadError) -> producer::Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pulldown_cmark::{Event, Options, Parser};
+
+    struct ConfigurationReferenceEntry {
+        path: &'static str,
+        authority: &'static str,
+    }
+
+    // Keep this inventory explicit and source-bound.  The Markdown parser
+    // below checks rendered code spans, while the authority labels make a
+    // newly added serde field or CLI setting require an intentional review of
+    // this list instead of allowing a loose substring to satisfy the gate.
+    const CONFIGURATION_REFERENCE_INVENTORY: &[ConfigurationReferenceEntry] = &[
+        ConfigurationReferenceEntry {
+            path: "Config::rig",
+            authority: "Config::rig",
+        },
+        ConfigurationReferenceEntry {
+            path: "Config::checks",
+            authority: "Config::checks",
+        },
+        ConfigurationReferenceEntry {
+            path: "Config::runtime_nodes",
+            authority: "Config::runtime_nodes",
+        },
+        ConfigurationReferenceEntry {
+            path: "Config::clips",
+            authority: "Config::clips",
+        },
+        ConfigurationReferenceEntry {
+            path: "Config::gait_groups",
+            authority: "Config::gait_groups",
+        },
+        ConfigurationReferenceEntry {
+            path: "Config::sync_groups",
+            authority: "Config::sync_groups",
+        },
+        ConfigurationReferenceEntry {
+            path: "rig.profile",
+            authority: "RigConfig::profile",
+        },
+        ConfigurationReferenceEntry {
+            path: "rig.roles.<role>",
+            authority: "RigConfig::roles",
+        },
+        ConfigurationReferenceEntry {
+            path: "rig.required_bones",
+            authority: "RigConfig::required_bones",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.<id>.severity",
+            authority: "CheckSettings::severity",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.loop-seam.max_ratio",
+            authority: "CheckSettings::max_ratio",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.loop-seam.min_stride_step_m",
+            authority: "CheckSettings::min_stride_step_m",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.loop-closure.max_position_delta_m",
+            authority: "CheckSettings::max_position_delta_m",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.loop-closure.max_rotation_delta_deg",
+            authority: "CheckSettings::max_rotation_delta_deg",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.loop-seam-vel.max_velocity_delta_mps",
+            authority: "CheckSettings::max_velocity_delta_mps",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.loop-seam-rot.max_angular_velocity_delta_degps",
+            authority: "CheckSettings::max_angular_velocity_delta_degps",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.frozen-bone.min_rotation_deg",
+            authority: "CheckSettings::min_rotation_deg",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.bind-pose.max_mean_rest_delta_deg",
+            authority: "CheckSettings::max_mean_rest_delta_deg",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.foot-slide.contact_height_m",
+            authority: "CheckSettings::contact_height_m",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.foot-slide.max_slide_mps",
+            authority: "CheckSettings::max_slide_mps",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.rest-world-scale.expected_uniform_scale",
+            authority: "CheckSettings::expected_uniform_scale",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.rest-world-scale.uniform_scale_tolerance",
+            authority: "CheckSettings::uniform_scale_tolerance",
+        },
+        ConfigurationReferenceEntry {
+            path: "checks.rest-world-scale.node_selectors",
+            authority: "CheckSettings::node_selectors",
+        },
+        ConfigurationReferenceEntry {
+            path: "runtime_nodes.selectors",
+            authority: "RuntimeNodesConfig::selectors",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.loop",
+            authority: "ClipExpectations::looping",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.max_loop_position_delta_m",
+            authority: "ClipExpectations::max_loop_position_delta_m",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.max_loop_rotation_delta_deg",
+            authority: "ClipExpectations::max_loop_rotation_delta_deg",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.max_loop_velocity_delta_mps",
+            authority: "ClipExpectations::max_loop_velocity_delta_mps",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.max_loop_angular_velocity_delta_degps",
+            authority: "ClipExpectations::max_loop_angular_velocity_delta_degps",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.duration_s",
+            authority: "ClipExpectations::duration_s",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.speed_mps",
+            authority: "ClipExpectations::speed_mps",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.movement_owner_xz",
+            authority: "ClipExpectations::movement_owner_xz",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.movement_owner_y",
+            authority: "ClipExpectations::movement_owner_y",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.movement_owner_yaw",
+            authority: "ClipExpectations::movement_owner_yaw",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.in_place",
+            authority: "ClipExpectations::in_place",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.fps",
+            authority: "ClipExpectations::fps",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.animates_bones",
+            authority: "ClipExpectations::animates_bones",
+        },
+        ConfigurationReferenceEntry {
+            path: "gait_groups.<name>.clips",
+            authority: "GaitGroup::clips",
+        },
+        ConfigurationReferenceEntry {
+            path: "gait_groups.<name>.max_gait_phase_spread",
+            authority: "GaitGroup::max_gait_phase_spread",
+        },
+        ConfigurationReferenceEntry {
+            path: "gait_groups.<name>.min_lr_amplitude_m",
+            authority: "GaitGroup::min_lr_amplitude_m",
+        },
+        ConfigurationReferenceEntry {
+            path: "sync_groups.<name>.clips",
+            authority: "SyncGroup::clips",
+        },
+        ConfigurationReferenceEntry {
+            path: "sync_groups.<name>.max_duration_delta_s",
+            authority: "SyncGroup::max_duration_delta_s",
+        },
+        ConfigurationReferenceEntry {
+            path: "sync_groups.<name>.max_frame_count_delta",
+            authority: "SyncGroup::max_frame_count_delta",
+        },
+        ConfigurationReferenceEntry {
+            path: "sync_groups.<name>.max_fps_delta",
+            authority: "SyncGroup::max_fps_delta",
+        },
+        ConfigurationReferenceEntry {
+            path: "sync_groups.<name>.time_complement",
+            authority: "SyncGroup::time_complement",
+        },
+        ConfigurationReferenceEntry {
+            path: "sync_groups.<name>.time_complement.min_reflected_time_advantage",
+            authority: "TimeComplementSettings::min_reflected_time_advantage",
+        },
+        ConfigurationReferenceEntry {
+            path: "sync_groups.<name>.time_complement.min_lr_amplitude_m",
+            authority: "TimeComplementSettings::min_lr_amplitude_m",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.profile",
+            authority: "EngineToml::profile",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.profile_revision",
+            authority: "EngineToml::profile_revision",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.engine_version",
+            authority: "EngineToml::engine_version",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.importer",
+            authority: "EngineToml::importer",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings",
+            authority: "EngineToml::settings",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.convert_units",
+            authority: "SettingId::ConvertUnits",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.bake_axis_conversion",
+            authority: "SettingId::BakeAxisConversion",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.root_motion_source",
+            authority: "SettingId(V2)::RootMotionSource",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.animation_type",
+            authority: "SettingIdV2::AnimationType",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.avatar_setup",
+            authority: "SettingIdV2::AvatarSetup",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.import_animation",
+            authority: "SettingIdV2::ImportAnimation",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.root_rotation",
+            authority: "SettingIdV2::RootRotation",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.root_position_y",
+            authority: "SettingIdV2::RootPositionY",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.root_position_xz",
+            authority: "SettingIdV2::RootPositionXz",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.rotate_scene_entity",
+            authority: "SettingIdV2::RotateSceneEntity",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.rotate_meshes",
+            authority: "SettingIdV2::RotateMeshes",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.load_meshes",
+            authority: "SettingIdV2::LoadMeshes",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.extension_handler_environment",
+            authority: "SettingIdV2::ExtensionHandlerEnvironment",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.bevy_animation_feature",
+            authority: "SettingIdV2::BevyAnimationFeature",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.load_animations",
+            authority: "SettingIdV2::LoadAnimations",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.animation_fps",
+            authority: "SettingIdV2::AnimationFps",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.animation_trimming",
+            authority: "SettingIdV2::AnimationTrimming",
+        },
+        ConfigurationReferenceEntry {
+            path: "engine.settings.sample_rate",
+            authority: "SettingIdV2::SampleRate",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.engine_settings.root_rotation",
+            authority: "engine_setting_map(_v2)",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.engine_settings.root_position_y",
+            authority: "engine_setting_map(_v2)",
+        },
+        ConfigurationReferenceEntry {
+            path: "clips.<selector>.engine_settings.root_position_xz",
+            authority: "engine_setting_map(_v2)",
+        },
+    ];
+
+    fn configuration_reference_code_tokens(markdown: &str) -> BTreeSet<String> {
+        let mut options = Options::empty();
+        options.insert(Options::ENABLE_TABLES);
+        Parser::new_ext(markdown, options)
+            .filter_map(|event| match event {
+                Event::Code(code) => Some(code.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn missing_configuration_reference_entries(
+        markdown: &str,
+    ) -> Vec<&'static ConfigurationReferenceEntry> {
+        let tokens = configuration_reference_code_tokens(markdown);
+        CONFIGURATION_REFERENCE_INVENTORY
+            .iter()
+            .filter(|entry| !tokens.contains(entry.path))
+            .collect()
+    }
 
     fn document_transition_family() -> &'static str {
         r#"
@@ -3350,54 +3676,16 @@ min_lr_amplitude_m = 0.03
             "/../../docs/configuration-reference.md"
         ))
         .expect("configuration reference exists");
-        for key in [
-            "rig.profile",
-            "rig.roles",
-            "rig.required_bones",
-            "checks.<id>.severity",
-            "max_ratio",
-            "min_stride_step_m",
-            "max_position_delta_m",
-            "max_rotation_delta_deg",
-            "max_velocity_delta_mps",
-            "max_angular_velocity_delta_degps",
-            "min_rotation_deg",
-            "max_mean_rest_delta_deg",
-            "contact_height_m",
-            "max_slide_mps",
-            "expected_uniform_scale",
-            "uniform_scale_tolerance",
-            "node_selectors",
-            "clips.<selector>.loop",
-            "max_loop_position_delta_m",
-            "max_loop_rotation_delta_deg",
-            "max_loop_velocity_delta_mps",
-            "max_loop_angular_velocity_delta_degps",
-            "duration_s",
-            "speed_mps",
-            "movement_owner_xz",
-            "movement_owner_y",
-            "movement_owner_yaw",
-            "in_place",
-            "fps",
-            "animates_bones",
-            "gait_groups.<name>.clips",
-            "max_gait_phase_spread",
-            "min_lr_amplitude_m",
-            "sync_groups.<name>.clips",
-            "max_duration_delta_s",
-            "max_frame_count_delta",
-            "max_fps_delta",
-            "time_complement",
-            "min_reflected_time_advantage",
-            "engine",
-            "transition_families",
-        ] {
-            assert!(
-                docs.contains(key),
-                "documented configuration key missing: {key}"
-            );
-        }
+        let missing = missing_configuration_reference_entries(&docs);
+        assert!(
+            missing.is_empty(),
+            "configuration reference is missing exact documented paths: {}",
+            missing
+                .iter()
+                .map(|entry| format!("{} ({})", entry.path, entry.authority))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples"))
             .expect("examples directory")
             .filter_map(Result::ok)
@@ -3407,5 +3695,21 @@ min_lr_amplitude_m = 0.03
             let bytes = std::fs::read(&path).expect("example readable");
             parse_config(&bytes).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         }
+    }
+
+    #[test]
+    fn configuration_reference_inventory_detects_removed_nested_paths() {
+        let docs = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/configuration-reference.md"
+        ))
+        .expect("configuration reference exists");
+        let mutated = docs.replace("`runtime_nodes.selectors`", "runtime_nodes.selectors");
+        let missing = missing_configuration_reference_entries(&mutated);
+        assert_eq!(
+            missing.iter().map(|entry| entry.path).collect::<Vec<_>>(),
+            vec!["runtime_nodes.selectors"],
+            "removing one exact nested code span must fail the maintenance inventory"
+        );
     }
 }
