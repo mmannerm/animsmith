@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use animsmith_core::InputIdentity;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const DASHBOARD_SCHEMA: &str =
     include_str!("../../../docs/schemas/collection-dashboard-v1.schema.json");
@@ -29,6 +29,72 @@ fn collection(manifest: &Path) -> Output {
         .expect("collection lint runs")
 }
 
+fn write_bevy_v3_track_config(
+    dir: &Path,
+    name: &str,
+    bevy_animation_feature: bool,
+    load_animations: bool,
+) -> PathBuf {
+    let path = dir.join(format!("{name}.animsmith.toml"));
+    fs::write(
+        &path,
+        format!(
+            r#"
+[engine]
+profile = "bevy"
+profile_revision = 3
+engine_version = "0.19.0"
+importer = "gltf-asset-loader"
+
+[engine.settings]
+extension_handler_environment = "bare_empty"
+bevy_animation_feature = {bevy_animation_feature}
+load_animations = {load_animations}
+"#
+        ),
+    )
+    .unwrap();
+    path
+}
+
+fn write_track_support_gltf(path: &Path, channels_per_animation: &[usize]) {
+    let animations = channels_per_animation
+        .iter()
+        .enumerate()
+        .map(|(index, &channel_count)| {
+            let channels = (0..channel_count)
+                .map(|_| json!({ "sampler": 0, "target": { "node": 0, "path": "translation" } }))
+                .collect::<Vec<_>>();
+            json!({
+                "name": format!("Take {:03}", index + 1),
+                "samplers": if channel_count == 0 { vec![] } else { vec![json!({ "input": 0, "output": 1 })] },
+                "channels": channels,
+            })
+        })
+        .collect::<Vec<_>>();
+    fs::write(
+        path,
+        serde_json::to_vec(&json!({
+            "asset": { "version": "2.0" },
+            "buffers": [{
+                "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "byteLength": 24
+            }],
+            "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": 24 }],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0] },
+                { "bufferView": 0, "componentType": 5126, "count": 2, "type": "VEC3" }
+            ],
+            "nodes": [{ "name": "root" }],
+            "animations": animations,
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
 fn stabilize_collection_serialized_bytes(evidence: &mut Value) {
     for _ in 0..8 {
         let bytes = serde_json::to_vec(evidence).unwrap().len() as u64;
@@ -45,14 +111,14 @@ fn rendered_dashboard_state(html: &Path, filters: &Value) -> Value {
 const fs=require('fs'),html=fs.readFileSync(process.argv[1],'utf8'),filters=JSON.parse(process.argv[2]);
 let data=html.match(/<script type="application\/json" id="collection-dashboard-data">([\s\S]*?)<\/script>/)[1];
 if(filters.client_fixture){const d=JSON.parse(data);d.view.sources=[
-  {key:'source-a',locator:'source-a.gltf',input:d.collection_output,availability:'available',loader:'ready',dependency_closure:'complete',takes:[{source_take_index:0,take_name:'A',normalized_clip_index:0,normalized_clip_name:'A',availability:'established',outcome:'with_findings',findings:1,severities:['error'],coverage_gaps:0,prediction_unavailable:0,coverage:{complete:1,partial:0,excluded:0,not_evaluated:0}}],unscoped_findings:0,unscoped_severities:[]},
-  {key:'source-b',locator:'source-b.gltf',input:d.collection_output,availability:'available',loader:'unavailable',dependency_closure:'unavailable',takes:[{source_take_index:1,take_name:'B',normalized_clip_index:1,normalized_clip_name:'B',availability:'established',outcome:'partial',findings:0,severities:[],coverage_gaps:1,prediction_unavailable:0,coverage:{complete:0,partial:1,excluded:0,not_evaluated:0}}],unscoped_findings:0,unscoped_severities:[]},
-  {key:'source-c',locator:'source-c.gltf',availability:'unavailable',loader:'unavailable',dependency_closure:'unavailable',takes:[],unscoped_findings:0,unscoped_severities:[]}
+  {key:'source-a',locator:'source-a.gltf',input:d.collection_output,availability:'available',loader:'ready',dependency_closure:'complete',takes:[{source_take_index:0,take_name:'A',normalized_clip_index:0,normalized_clip_name:'A',availability:'established',outcome:'with_findings',findings:1,severities:['error'],coverage_gaps:0,prediction_unavailable:0,coverage:{complete:1,partial:0,excluded:0,not_evaluated:0}}],unscoped_findings:0,unscoped_severities:[],unscoped_prediction_unavailable:0,unscoped_prediction_reasons:[]},
+  {key:'source-b',locator:'source-b.gltf',input:d.collection_output,availability:'available',loader:'unavailable',dependency_closure:'unavailable',takes:[{source_take_index:1,take_name:'B',normalized_clip_index:1,normalized_clip_name:'B',availability:'established',outcome:'partial',findings:0,severities:[],coverage_gaps:1,prediction_unavailable:0,coverage:{complete:0,partial:1,excluded:0,not_evaluated:0}}],unscoped_findings:0,unscoped_severities:[],unscoped_prediction_unavailable:0,unscoped_prediction_reasons:[]},
+  {key:'source-c',locator:'source-c.gltf',availability:'unavailable',loader:'unavailable',dependency_closure:'unavailable',takes:[],unscoped_findings:0,unscoped_severities:[],unscoped_prediction_unavailable:1,unscoped_prediction_reasons:['runtime_animation_survival_unavailable']}
 ];d.view.clips=[
   {id:'clip-a',source:'source-a',take_index:0,take_name:'A',roles:['root'],availability:'established',outcome:'with_findings',findings:1,severities:['error'],coverage_gaps:0,prediction_unavailable:0,coverage:{complete:1,partial:0,excluded:0,not_evaluated:0},runtime_sets:['set-a']},
   {id:'clip-b',source:'source-b',take_index:1,take_name:'B',roles:['hips'],availability:'loader_unavailable',outcome:'partial',findings:0,severities:['warning'],coverage_gaps:1,prediction_unavailable:0,coverage:{complete:0,partial:1,excluded:0,not_evaluated:0},runtime_sets:['set-b']},
-  {id:'clip-c',source:'source-c',take_index:2,take_name:'C',roles:[],availability:'source_unavailable',outcome:'unavailable',findings:0,severities:[],coverage_gaps:0,prediction_unavailable:1,coverage:{complete:0,partial:0,excluded:0,not_evaluated:1},runtime_sets:[]}
-];d.view.runtime_sets=[{id:'set-a',lifecycle:'complete',members:['clip-a'],gaps:[]},{id:'set-b',lifecycle:'incomplete',members:['clip-b'],gaps:['member_unavailable']}];d.summary={sources:3,physical_takes:2,clips:3,runtime_sets:2,findings:1,unscoped_findings:0,coverage_gaps:1,prediction_unavailable:0,with_findings:1,evaluated:0,partial:1,excluded:0,unavailable:1,not_evaluated:0};data=JSON.stringify(d)}
+  {id:'clip-c',source:'source-c',take_index:2,take_name:'C',roles:[],availability:'source_unavailable',outcome:'unavailable',findings:0,severities:[],coverage_gaps:0,prediction_unavailable:0,coverage:{complete:0,partial:0,excluded:0,not_evaluated:1},runtime_sets:[]}
+];d.view.runtime_sets=[{id:'set-a',lifecycle:'complete',members:['clip-a'],gaps:[]},{id:'set-b',lifecycle:'incomplete',members:['clip-b'],gaps:['member_unavailable']}];d.summary={sources:3,physical_takes:2,clips:3,runtime_sets:2,findings:1,unscoped_findings:0,coverage_gaps:1,prediction_unavailable:1,unscoped_prediction_unavailable:1,with_findings:1,evaluated:0,partial:1,excluded:0,unavailable:1,not_evaluated:0};data=JSON.stringify(d)}
 if(filters.hostile){const d=JSON.parse(data),c=d.view.clips[0],s=d.view.sources[0];c.id='</td><img src=x>';c.source='<source>';c.take_name='"quoted"';c.report_link='reports/a&b.html';s.key='</td><img src=source>';s.locator='<source-path>';data=JSON.stringify(d)}
 const code=html.match(/<script>\s*([\s\S]*?)<\/script><\/body>/)[1];
 const elements=new Map();
@@ -202,6 +268,14 @@ fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
     assert!(unfiltered["summary"].as_str().unwrap().contains(
         "3 sources · 2 physical takes · 3 clips · 2 runtime sets · 1 findings (0 unscoped)"
     ));
+    assert!(
+        unfiltered["summary"]
+            .as_str()
+            .unwrap()
+            .contains("1 prediction unavailable (1 unscoped)")
+    );
+    let source_table = unfiltered["sources"].as_str().unwrap();
+    assert!(source_table.contains("1 (runtime_animation_survival_unavailable)"));
     for (filter, value) in [
         ("source", "source-a"),
         ("role", "root"),
@@ -910,6 +984,130 @@ fn dashboard_retains_real_unscoped_required_bones_findings_at_source_level() {
             .contains("findings (1 unscoped)")
     );
     assert!(state["sources"].as_str().unwrap().contains("1 (error)"));
+}
+
+#[test]
+fn dashboard_retains_real_unmapped_prediction_unavailable_at_source_level() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("track.gltf");
+    write_track_support_gltf(&source, &[1]);
+    let config = write_bevy_v3_track_config(temp.path(), "track-support", true, true);
+    let manifest = temp.path().join("collection.toml");
+    fs::write(
+        &manifest,
+        format!(
+            "schema = \"urn:animsmith:schema:collection-manifest:1\"\nschema_version = 1\ncollection_id = \"com.example.dashboard-unscoped-prediction\"\n\n[[sources]]\nkey = \"track\"\npath = \"{}\"\nconfig = \"{}\"\n\n[[clips]]\nid = \"com.example.dashboard-unscoped-prediction/track\"\nsource = \"track\"\ntake_index = 0\ntake_name = \"Take 001\"\n",
+            source.file_name().unwrap().to_str().unwrap(),
+            config.file_name().unwrap().to_str().unwrap(),
+        ),
+    )
+    .unwrap();
+    let evidence = collection(&manifest);
+    assert_eq!(
+        evidence.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&evidence.stderr)
+    );
+    let current: Value = serde_json::from_slice(&evidence.stdout).unwrap();
+    let track_support = current["sources"][0]["result"]["envelope"]["files"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["check_id"] == "engine-track-support")
+        .expect("track-support check is present and enabled");
+    assert_eq!(track_support["evaluation"], "not_evaluated");
+    assert_eq!(track_support["findings"], json!([]));
+    let facets = track_support["prediction"]["prediction"]["facets"]
+        .as_array()
+        .expect("track-support prediction facets");
+    assert!(!facets.is_empty());
+    for facet in facets {
+        assert_eq!(facet["state"], "required_prediction_unavailable");
+        assert_eq!(
+            facet["reasons"],
+            json!(["runtime_animation_survival_unavailable"])
+        );
+        assert!(
+            facet["scope"]["code"]
+                .as_str()
+                .is_some_and(|code| code.starts_with("engine-track-support:animation")),
+            "{facet:#}"
+        );
+        assert!(
+            facet["scope"]["subject"]
+                .as_str()
+                .is_some_and(|subject| subject.starts_with("source_animation:0")),
+            "{facet:#}"
+        );
+    }
+
+    let collection_path = temp.path().join("collection-output.json");
+    let html = temp.path().join("dashboard.html");
+    let authority_path = temp.path().join("dashboard.json");
+    fs::write(&collection_path, &evidence.stdout).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .args([
+            "collection",
+            "dashboard",
+            "--collection",
+            collection_path.to_str().unwrap(),
+            "--output",
+            html.to_str().unwrap(),
+            "--authority",
+            authority_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let authority: Value = serde_json::from_slice(&fs::read(&authority_path).unwrap()).unwrap();
+    let schema: Value = serde_json::from_str(DASHBOARD_SCHEMA).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let errors = validator.iter_errors(&authority).collect::<Vec<_>>();
+    assert!(errors.is_empty(), "dashboard schema errors: {errors:?}");
+    assert_eq!(authority["summary"]["clips"], 1);
+    assert_eq!(
+        authority["summary"]["prediction_unavailable"].as_u64(),
+        Some(facets.len() as u64)
+    );
+    assert_eq!(
+        authority["summary"]["unscoped_prediction_unavailable"].as_u64(),
+        Some(facets.len() as u64)
+    );
+    let source = &authority["view"]["sources"][0];
+    assert_eq!(source["key"], "track");
+    assert_eq!(
+        source["unscoped_prediction_unavailable"].as_u64(),
+        Some(facets.len() as u64)
+    );
+    assert_eq!(
+        source["unscoped_prediction_reasons"],
+        json!(["runtime_animation_survival_unavailable"])
+    );
+    let takes = source["takes"].as_array().unwrap();
+    assert_eq!(takes.len(), 1);
+    assert_eq!(takes[0]["prediction_unavailable"], 0);
+    assert_eq!(authority["view"]["clips"].as_array().unwrap().len(), 1);
+    assert_eq!(authority["view"]["clips"][0]["prediction_unavailable"], 0);
+    let state = rendered_dashboard_state(&html, &json!({}));
+    assert_eq!(
+        state["count"],
+        "showing 1 of 1 declared clips; filters do not change collection completeness"
+    );
+    assert!(state["summary"].as_str().unwrap().contains(&format!(
+        "{} prediction unavailable ({} unscoped)",
+        facets.len(),
+        facets.len()
+    )));
+    assert!(state["sources"].as_str().unwrap().contains(&format!(
+        "{} (runtime_animation_survival_unavailable)",
+        facets.len()
+    )));
 }
 
 #[test]

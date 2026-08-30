@@ -132,7 +132,10 @@ decision. Its versioned machine authority is
 `urn:animsmith:schema:collection-dashboard:1`.
 Observed physical takes remain visible under their source even when no logical
 clip declaration binds them; their evidence contributes to the unfiltered
-summary without creating a logical identity.
+summary without creating a logical identity. Source-level findings and
+subjectless `required_prediction_unavailable` facets without one exact witness
+remain counted once at source scope rather than being guessed onto a take or
+logical clip row.
 
 Record intake as a coverage matrix over the representative files rather
 than one verdict per file: what was evaluated and clean, what was

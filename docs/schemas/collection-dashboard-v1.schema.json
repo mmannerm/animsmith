@@ -92,6 +92,7 @@
         "unscoped_findings",
         "coverage_gaps",
         "prediction_unavailable",
+        "unscoped_prediction_unavailable",
         "with_findings",
         "evaluated",
         "partial",
@@ -132,6 +133,10 @@
           "type": "integer",
           "minimum": 0
         },
+        "unscoped_prediction_unavailable": {
+          "type": "integer",
+          "minimum": 0
+        },
         "with_findings": {
           "type": "integer",
           "minimum": 0
@@ -169,7 +174,9 @@
         "dependency_closure",
         "takes",
         "unscoped_findings",
-        "unscoped_severities"
+        "unscoped_severities",
+        "unscoped_prediction_unavailable",
+        "unscoped_prediction_reasons"
       ],
       "properties": {
         "key": {
@@ -217,6 +224,19 @@
               "warning",
               "note"
             ]
+          }
+        },
+        "unscoped_prediction_unavailable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unscoped_prediction_reasons": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
           }
         }
       }

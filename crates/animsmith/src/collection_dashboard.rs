@@ -485,6 +485,12 @@ fn build_authority(
                     .collect(),
                 unscoped_findings: source.unscoped_findings,
                 unscoped_severities: source.unscoped_severities.iter().cloned().collect(),
+                unscoped_prediction_unavailable: source.unscoped_prediction_unavailable,
+                unscoped_prediction_reasons: source
+                    .unscoped_prediction_reasons
+                    .iter()
+                    .cloned()
+                    .collect(),
             }
         })
         .collect::<Vec<_>>();
@@ -523,6 +529,19 @@ fn build_authority(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let runtime_sets = collection
+        .runtime_sets
+        .iter()
+        .map(|set| {
+            let (lifecycle, gaps) = derive_runtime_set_state(&set.members, &clips)?;
+            Ok(CollectionDashboardRuntimeSetV1 {
+                id: set.id.clone(),
+                lifecycle: lifecycle.to_owned(),
+                members: set.members.clone(),
+                gaps,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(CollectionDashboardAuthorityV1 {
         schema: COLLECTION_DASHBOARD_V1_ID.to_owned(),
         schema_version: COLLECTION_DASHBOARD_V1_VERSION,
@@ -532,18 +551,36 @@ fn build_authority(
         view: CollectionDashboardViewV1 {
             sources,
             clips,
-            runtime_sets: collection
-                .runtime_sets
-                .iter()
-                .map(|set| CollectionDashboardRuntimeSetV1 {
-                    id: set.id.clone(),
-                    lifecycle: set.lifecycle.to_owned(),
-                    members: set.members.clone(),
-                    gaps: set.gaps.clone(),
-                })
-                .collect(),
+            runtime_sets,
         },
     })
+}
+
+fn derive_runtime_set_state(
+    members: &[String],
+    clips: &[CollectionDashboardClipV1],
+) -> Result<(&'static str, Vec<String>), String> {
+    let clips_by_id = clips
+        .iter()
+        .map(|clip| (clip.id.as_str(), clip))
+        .collect::<BTreeMap<_, _>>();
+    let mut gaps = Vec::new();
+    for member in members {
+        let clip = clips_by_id
+            .get(member.as_str())
+            .ok_or_else(|| "dashboard runtime set references an unknown logical clip".to_owned())?;
+        if clip.availability != "established" {
+            gaps.push("member_unavailable".to_owned());
+        }
+    }
+    Ok((
+        if gaps.is_empty() {
+            "complete"
+        } else {
+            "incomplete"
+        },
+        gaps,
+    ))
 }
 
 struct DashboardEvidenceProjection {
@@ -638,6 +675,7 @@ struct DashboardSummaryV1 {
     unscoped_findings: usize,
     coverage_gaps: usize,
     prediction_unavailable: usize,
+    unscoped_prediction_unavailable: usize,
     with_findings: usize,
     evaluated: usize,
     partial: usize,
@@ -664,6 +702,7 @@ impl DashboardSummaryV1 {
             unscoped_findings,
             coverage_gaps: 0,
             prediction_unavailable: 0,
+            unscoped_prediction_unavailable: 0,
             with_findings: 0,
             evaluated: 0,
             partial: 0,
@@ -675,6 +714,10 @@ impl DashboardSummaryV1 {
             value.findings += take.findings;
             value.coverage_gaps += take.coverage_gaps;
             value.prediction_unavailable += take.prediction_unavailable;
+        }
+        for source in sources {
+            value.prediction_unavailable += source.unscoped_prediction_unavailable;
+            value.unscoped_prediction_unavailable += source.unscoped_prediction_unavailable;
         }
         for clip in clips {
             match clip.outcome.as_str() {
@@ -712,6 +755,8 @@ struct CollectionDashboardSourceV1 {
     takes: Vec<CollectionDashboardPhysicalTakeV1>,
     unscoped_findings: usize,
     unscoped_severities: Vec<String>,
+    unscoped_prediction_unavailable: usize,
+    unscoped_prediction_reasons: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -794,6 +839,7 @@ impl CollectionDashboardAuthorityV1 {
             unscoped_findings: 0,
             coverage_gaps: 0,
             prediction_unavailable: 0,
+            unscoped_prediction_unavailable: 0,
             with_findings: 0,
             evaluated: 0,
             partial: 0,
@@ -890,6 +936,7 @@ impl CollectionDashboardAuthorityV1 {
                 || source.takes.len() > 4096
                 || source.availability == "unavailable" && !source.takes.is_empty()
                 || source.unscoped_severities.len() > 4096
+                || source.unscoped_prediction_reasons.len() > 4096
                 || source
                     .unscoped_severities
                     .iter()
@@ -900,7 +947,19 @@ impl CollectionDashboardAuthorityV1 {
                     .collect::<BTreeSet<_>>()
                     .len()
                     != source.unscoped_severities.len()
+                || source
+                    .unscoped_prediction_reasons
+                    .iter()
+                    .any(|reason| reason.is_empty() || reason.chars().count() > 255)
+                || source
+                    .unscoped_prediction_reasons
+                    .iter()
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    != source.unscoped_prediction_reasons.len()
                 || (source.unscoped_findings == 0) != source.unscoped_severities.is_empty()
+                || (source.unscoped_prediction_unavailable == 0)
+                    != source.unscoped_prediction_reasons.is_empty()
             {
                 return Err("dashboard authority has an invalid source".to_owned());
             }
@@ -992,6 +1051,14 @@ impl CollectionDashboardAuthorityV1 {
                 .unscoped_findings
                 .checked_add(source.unscoped_findings)
                 .ok_or_else(|| "dashboard summary overflows".to_owned())?;
+            summary.prediction_unavailable = summary
+                .prediction_unavailable
+                .checked_add(source.unscoped_prediction_unavailable)
+                .ok_or_else(|| "dashboard summary overflows".to_owned())?;
+            summary.unscoped_prediction_unavailable = summary
+                .unscoped_prediction_unavailable
+                .checked_add(source.unscoped_prediction_unavailable)
+                .ok_or_else(|| "dashboard summary overflows".to_owned())?;
         }
         if self
             .view
@@ -1068,7 +1135,10 @@ impl CollectionDashboardAuthorityV1 {
                     .members
                     .iter()
                     .any(|member| member.chars().count() > 4096)
-                || set.gaps.iter().any(|gap| gap.chars().count() > 4096)
+                || set
+                    .gaps
+                    .iter()
+                    .any(|gap| gap.chars().count() > 4096 || gap != "member_unavailable")
                 || !matches!(set.lifecycle.as_str(), "complete" | "incomplete")
             {
                 return Err("dashboard authority has an invalid runtime set".to_owned());
@@ -1091,6 +1161,14 @@ impl CollectionDashboardAuthorityV1 {
                 {
                     return Err("dashboard runtime set duplicates a logical clip".to_owned());
                 }
+            }
+            let (expected_lifecycle, expected_gaps) =
+                derive_runtime_set_state(&set.members, &self.view.clips)?;
+            if set.lifecycle != expected_lifecycle || set.gaps != expected_gaps {
+                return Err(
+                    "dashboard runtime-set lifecycle and gaps do not reconcile with member availability"
+                        .to_owned(),
+                );
             }
         }
         for clip in &self.view.clips {
@@ -1116,6 +1194,8 @@ impl CollectionDashboardAuthorityV1 {
             || self.summary.unscoped_findings != summary.unscoped_findings
             || self.summary.coverage_gaps != summary.coverage_gaps
             || self.summary.prediction_unavailable != summary.prediction_unavailable
+            || self.summary.unscoped_prediction_unavailable
+                != summary.unscoped_prediction_unavailable
             || self.summary.with_findings != summary.with_findings
             || self.summary.evaluated != summary.evaluated
             || self.summary.partial != summary.partial
@@ -1712,7 +1792,7 @@ mod tests {
     #[test]
     fn authority_readback_rejects_schema_and_summary_mutations() {
         let identity = "0".repeat(64);
-        let value = serde_json::json!({"schema":"urn:animsmith:schema:collection-dashboard:1","schema_version":1,"collection_output":{"sha256":identity,"bytes":0},"summary":{"sources":0,"physical_takes":0,"clips":0,"runtime_sets":0,"findings":0,"unscoped_findings":0,"coverage_gaps":0,"prediction_unavailable":0,"with_findings":0,"evaluated":0,"partial":0,"excluded":0,"unavailable":0,"not_evaluated":0},"view":{"sources":[],"clips":[],"runtime_sets":[]}});
+        let value = serde_json::json!({"schema":"urn:animsmith:schema:collection-dashboard:1","schema_version":1,"collection_output":{"sha256":identity,"bytes":0},"summary":{"sources":0,"physical_takes":0,"clips":0,"runtime_sets":0,"findings":0,"unscoped_findings":0,"coverage_gaps":0,"prediction_unavailable":0,"unscoped_prediction_unavailable":0,"with_findings":0,"evaluated":0,"partial":0,"excluded":0,"unavailable":0,"not_evaluated":0},"view":{"sources":[],"clips":[],"runtime_sets":[]}});
         let bytes = serde_json::to_vec(&value).unwrap();
         assert!(validate_authority_readback(&bytes).is_ok());
         let mut mismatch = value.clone();
@@ -1728,7 +1808,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "schema":"urn:animsmith:schema:collection-dashboard:1", "schema_version":1,
             "collection_output":identity,
-            "summary":{"sources":1,"physical_takes":6,"clips":6,"runtime_sets":1,"findings":2,"unscoped_findings":0,"coverage_gaps":3,"prediction_unavailable":4,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
+            "summary":{"sources":1,"physical_takes":6,"clips":6,"runtime_sets":1,"findings":2,"unscoped_findings":0,"coverage_gaps":3,"prediction_unavailable":5,"unscoped_prediction_unavailable":1,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
             "evaluation":{"input":{"sha256":"0".repeat(64),"bytes":0},"status":"complete","decision":"finding","families":[{"id":"family","status":"complete","decision":"finding","members":[{"take_index":0,"take_name":"Finding","source_input":{"sha256":"0".repeat(64),"bytes":0},"logical_clip":"finding"},{"take_index":1,"take_name":"Partial","source_input":{"sha256":"0".repeat(64),"bytes":0},"logical_clip":"partial"}],"pair_findings":[{"member_indices":[0,1],"boundary":"entry","translation_offenders":[{"bone_ordinal":0,"bone_name":"root","delta":0.25}],"rotation_offenders":[]}]}]},
             "view":{"sources":[{"key":"source","locator":"source.gltf","input":{"sha256":"0".repeat(64),"bytes":0},"availability":"available","loader":"ready","dependency_closure":"complete","takes":[
                 {"source_take_index":0,"take_name":"Finding","normalized_clip_index":0,"normalized_clip_name":"Finding","availability":"established","outcome":"with_findings","findings":2,"severities":["error"],"coverage_gaps":3,"prediction_unavailable":4,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0}},
@@ -1737,15 +1817,24 @@ mod tests {
                 {"source_take_index":3,"take_name":"Excluded","normalized_clip_index":3,"normalized_clip_name":"Excluded","availability":"established","outcome":"excluded","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":1,"not_evaluated":0}},
                 {"source_take_index":4,"take_name":"Unavailable","availability":"normalized_clip_unavailable","outcome":"unavailable","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":0}},
                 {"source_take_index":5,"take_name":"Not evaluated","normalized_clip_index":5,"normalized_clip_name":"Not evaluated","availability":"established","outcome":"not_evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":1}}
-            ],"unscoped_findings":0,"unscoped_severities":[]}],"clips":[
+            ],"unscoped_findings":0,"unscoped_severities":[],"unscoped_prediction_unavailable":1,"unscoped_prediction_reasons":["runtime_animation_survival_unavailable"]}],"clips":[
                 {"id":"finding","source":"source","take_index":0,"take_name":"Finding","roles":["locomotion"],"availability":"established","outcome":"with_findings","findings":2,"severities":["error"],"coverage_gaps":3,"prediction_unavailable":4,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
                 {"id":"partial","source":"source","take_index":1,"take_name":"Partial","roles":["locomotion","combat"],"availability":"established","outcome":"partial","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":1,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
                 {"id":"evaluated","source":"source","take_index":2,"take_name":"Evaluated","roles":[],"availability":"established","outcome":"evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
                 {"id":"excluded","source":"source","take_index":3,"take_name":"Excluded","roles":[],"availability":"established","outcome":"excluded","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":1,"not_evaluated":0},"runtime_sets":[]},
                 {"id":"unavailable","source":"source","take_index":4,"take_name":"Unavailable","roles":[],"availability":"normalized_clip_unavailable","outcome":"unavailable","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
-                {"id":"not-evaluated","source":"source","take_index":5,"take_name":"Not evaluated","roles":[],"availability":"established","outcome":"not_evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":1},"runtime_sets":[]}],"runtime_sets":[{"id":"set","lifecycle":"complete","members":["finding","partial"],"gaps":["missing_member"]}]}
+                {"id":"not-evaluated","source":"source","take_index":5,"take_name":"Not evaluated","roles":[],"availability":"established","outcome":"not_evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":1},"runtime_sets":[]}],"runtime_sets":[{"id":"set","lifecycle":"complete","members":["finding","partial"],"gaps":[]}]}
         }))
         .unwrap()
+    }
+
+    fn make_runtime_set_member_unavailable(authority: &mut super::CollectionDashboardAuthorityV1) {
+        let clip = &mut authority.view.clips[1];
+        clip.availability = "source_unavailable".to_owned();
+        clip.outcome = "unavailable".to_owned();
+        clip.coverage = super::DashboardCoverageV1::default();
+        authority.summary.partial = authority.summary.partial.saturating_sub(1);
+        authority.summary.unavailable += 1;
     }
 
     #[test]
@@ -1922,6 +2011,77 @@ mod tests {
         unscoped_finding.summary.unscoped_findings = 1;
         assert!(
             validate_authority_readback(&serde_json::to_vec(&unscoped_finding).unwrap()).is_ok()
+        );
+
+        let mut orphaned_unscoped_prediction_reason = rich_authority();
+        orphaned_unscoped_prediction_reason.view.sources[0].unscoped_prediction_unavailable = 0;
+        assert!(
+            validate_authority_readback(
+                &serde_json::to_vec(&orphaned_unscoped_prediction_reason).unwrap()
+            )
+            .is_err()
+        );
+        let mut mismatched_unscoped_prediction_summary = rich_authority();
+        mismatched_unscoped_prediction_summary
+            .summary
+            .prediction_unavailable = 4;
+        mismatched_unscoped_prediction_summary
+            .summary
+            .unscoped_prediction_unavailable = 0;
+        assert!(
+            validate_authority_readback(
+                &serde_json::to_vec(&mismatched_unscoped_prediction_summary).unwrap()
+            )
+            .is_err()
+        );
+
+        type RuntimeSetMutation = (&'static str, fn(&mut super::CollectionDashboardAuthorityV1));
+        let runtime_set_mutations: [RuntimeSetMutation; 5] = [
+            ("forged-gap-with-established-members", |authority| {
+                authority.view.runtime_sets[0]
+                    .gaps
+                    .push("member_unavailable".to_owned());
+                authority.view.runtime_sets[0].lifecycle = "incomplete".to_owned();
+            }),
+            ("forged-lifecycle-with-established-members", |authority| {
+                authority.view.runtime_sets[0].lifecycle = "incomplete".to_owned();
+            }),
+            ("member-unavailable-without-gap", |authority| {
+                make_runtime_set_member_unavailable(authority);
+            }),
+            (
+                "member-unavailable-with-gap-but-complete-lifecycle",
+                |authority| {
+                    make_runtime_set_member_unavailable(authority);
+                    authority.view.runtime_sets[0]
+                        .gaps
+                        .push("member_unavailable".to_owned());
+                },
+            ),
+            ("member-unavailable-with-extra-gap", |authority| {
+                make_runtime_set_member_unavailable(authority);
+                authority.view.runtime_sets[0].lifecycle = "incomplete".to_owned();
+                authority.view.runtime_sets[0].gaps.extend([
+                    "member_unavailable".to_owned(),
+                    "member_unavailable".to_owned(),
+                ]);
+            }),
+        ];
+        for (_, mutate) in runtime_set_mutations {
+            let mut authority = rich_authority();
+            mutate(&mut authority);
+            assert!(validate_authority_readback(&serde_json::to_vec(&authority).unwrap()).is_err());
+        }
+        let mut reconciled_unavailable_member = rich_authority();
+        make_runtime_set_member_unavailable(&mut reconciled_unavailable_member);
+        reconciled_unavailable_member.view.runtime_sets[0].lifecycle = "incomplete".to_owned();
+        reconciled_unavailable_member.view.runtime_sets[0].gaps =
+            vec!["member_unavailable".to_owned()];
+        assert!(
+            validate_authority_readback(
+                &serde_json::to_vec(&reconciled_unavailable_member).unwrap()
+            )
+            .is_ok()
         );
     }
 

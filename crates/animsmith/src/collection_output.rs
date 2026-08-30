@@ -1101,6 +1101,8 @@ impl CollectionOutputInput {
                 evidence: facts.evidence,
                 unscoped_findings: facts.unscoped_findings,
                 unscoped_severities: facts.unscoped_severities,
+                unscoped_prediction_unavailable: facts.unscoped_prediction_unavailable,
+                unscoped_prediction_reasons: facts.unscoped_prediction_reasons,
             });
         }
         let clips = self
@@ -1156,12 +1158,7 @@ impl CollectionOutputInput {
             .iter()
             .map(|set| CollectionDashboardRuntimeSetInput {
                 id: set.id.clone(),
-                lifecycle: match set.lifecycle {
-                    RuntimeSetLifecycle::Complete => "complete",
-                    RuntimeSetLifecycle::Incomplete => "incomplete",
-                },
                 members: set.members.iter().map(|member| member.id.clone()).collect(),
-                gaps: set.gaps.clone(),
             })
             .collect();
         Ok(CollectionDashboardInput {
@@ -1684,6 +1681,11 @@ pub(crate) struct CollectionDashboardSourceInput {
     /// guessing a clip.
     pub(crate) unscoped_findings: usize,
     pub(crate) unscoped_severities: BTreeSet<String>,
+    /// Required-unavailable prediction facets without one exact physical
+    /// witness stay at source scope rather than being guessed onto a take or
+    /// logical clip row.
+    pub(crate) unscoped_prediction_unavailable: usize,
+    pub(crate) unscoped_prediction_reasons: BTreeSet<String>,
 }
 
 #[cfg(feature = "report")]
@@ -1705,9 +1707,7 @@ pub(crate) struct CollectionDashboardClipInput {
 #[cfg(feature = "report")]
 pub(crate) struct CollectionDashboardRuntimeSetInput {
     pub(crate) id: String,
-    pub(crate) lifecycle: &'static str,
     pub(crate) members: Vec<String>,
-    pub(crate) gaps: Vec<String>,
 }
 
 #[derive(Default)]
@@ -1834,8 +1834,6 @@ struct DashboardPredictionWire {
     facets: Vec<DashboardFacetWire>,
     #[serde(default)]
     prediction: Option<Box<DashboardPredictionWire>>,
-    #[serde(flatten)]
-    _contract_fields: BTreeMap<String, Box<RawValue>>,
 }
 #[cfg(feature = "report")]
 #[derive(Deserialize)]
@@ -1843,8 +1841,8 @@ struct DashboardFacetWire {
     state: DashboardFacetState,
     #[serde(default)]
     scope: Option<DashboardScopeWire>,
-    #[serde(flatten)]
-    _contract_fields: BTreeMap<String, Box<RawValue>>,
+    #[serde(default)]
+    reasons: Vec<String>,
 }
 
 #[cfg(feature = "report")]
@@ -1909,6 +1907,8 @@ struct DashboardDocumentFacts {
     evidence: BTreeMap<String, CollectionDashboardClipEvidence>,
     unscoped_findings: usize,
     unscoped_severities: BTreeSet<String>,
+    unscoped_prediction_unavailable: usize,
+    unscoped_prediction_reasons: BTreeSet<String>,
 }
 
 #[cfg(feature = "report")]
@@ -1955,6 +1955,8 @@ fn dashboard_document_facts(
         .collect::<BTreeMap<_, _>>();
     let mut unscoped_findings = 0_usize;
     let mut unscoped_severities = BTreeSet::new();
+    let mut unscoped_prediction_unavailable = 0_usize;
+    let mut unscoped_prediction_reasons = BTreeSet::new();
     for check in file.checks {
         let inactive = check.selection == DashboardSelection::Unselected
             || check.configuration == DashboardConfiguration::Disabled
@@ -2030,13 +2032,20 @@ fn dashboard_document_facts(
                     .ok_or(CollectionOutputError::Malformed)?;
             }
         }
-        dashboard_prediction_facts(check.prediction.as_ref(), &mut evidence)?;
+        dashboard_prediction_facts(
+            check.prediction.as_ref(),
+            &mut evidence,
+            &mut unscoped_prediction_unavailable,
+            &mut unscoped_prediction_reasons,
+        )?;
     }
     Ok(DashboardDocumentFacts {
         roles: file.rig.resolved_roles.into_keys().collect(),
         evidence,
         unscoped_findings,
         unscoped_severities,
+        unscoped_prediction_unavailable,
+        unscoped_prediction_reasons,
     })
 }
 
@@ -2044,27 +2053,39 @@ fn dashboard_document_facts(
 fn dashboard_prediction_facts(
     prediction: Option<&DashboardPredictionWire>,
     evidence: &mut BTreeMap<String, CollectionDashboardClipEvidence>,
+    unscoped_prediction_unavailable: &mut usize,
+    unscoped_prediction_reasons: &mut BTreeSet<String>,
 ) -> Result<(), CollectionOutputError> {
     let Some(prediction) = prediction else {
         return Ok(());
     };
     for facet in &prediction.facets {
-        if facet.state == DashboardFacetState::RequiredPredictionUnavailable
-            && let Some(subject) = facet
-                .scope
-                .as_ref()
-                .and_then(|scope| scope.subject.as_ref())
+        if facet.state != DashboardFacetState::RequiredPredictionUnavailable {
+            continue;
+        }
+        if let Some(subject) = facet
+            .scope
+            .as_ref()
+            .and_then(|scope| scope.subject.as_ref())
+            && let Some(item) = evidence.get_mut(subject)
         {
-            let Some(item) = evidence.get_mut(subject) else {
-                continue;
-            };
             item.prediction_unavailable = item
                 .prediction_unavailable
                 .checked_add(1)
                 .ok_or(CollectionOutputError::Malformed)?;
+        } else {
+            *unscoped_prediction_unavailable = unscoped_prediction_unavailable
+                .checked_add(1)
+                .ok_or(CollectionOutputError::Malformed)?;
+            unscoped_prediction_reasons.extend(facet.reasons.iter().cloned());
         }
     }
-    dashboard_prediction_facts(prediction.prediction.as_deref(), evidence)
+    dashboard_prediction_facts(
+        prediction.prediction.as_deref(),
+        evidence,
+        unscoped_prediction_unavailable,
+        unscoped_prediction_reasons,
+    )
 }
 
 #[cfg(feature = "report")]
@@ -4321,5 +4342,72 @@ mod tests {
         assert_eq!(coverage.not_evaluated, 0);
         assert_eq!(facts.unscoped_findings, 0);
         assert!(facts.unscoped_severities.is_empty());
+    }
+
+    #[cfg(feature = "report")]
+    #[test]
+    fn dashboard_projection_keeps_unmapped_required_prediction_unavailable_at_source_scope() {
+        let envelope = serde_json::value::RawValue::from_string(
+            serde_json::json!({
+                "schema_version": 19, "schema": OUTPUT_SCHEMA_ID,
+                "tool": {}, "command": "lint", "summary": {},
+                "files": [{
+                    "path": "fixture.gltf",
+                    "input": {"sha256": "0".repeat(64), "bytes": 0},
+                    "rig": {"profile": "unknown", "resolution_outcome": "coverage", "resolved_role_policies": {}, "resolved_roles": {}},
+                    "measurements": {},
+                    "prediction_provenance": null,
+                    "checks": [{
+                        "check_id": "engine-track-support",
+                        "selection": "selected",
+                        "configuration": "enabled",
+                        "applicability": "applicable",
+                        "evaluation": "not_evaluated",
+                        "findings": [],
+                        "prediction": {
+                            "schema": "urn:animsmith:engine-prediction:5",
+                            "provenance_identity": {"sha256": "1".repeat(64), "bytes": 1},
+                            "prediction": {
+                                "schema": "urn:animsmith:engine-prediction:4",
+                                "provenance_identity": {"sha256": "2".repeat(64), "bytes": 2},
+                                "facets": [
+                                    {
+                                        "scope": {"code": "engine-track-support:animation", "subject": "source_animation:0"},
+                                        "state": "required_prediction_unavailable",
+                                        "basis": {"identity": {"sha256": "3".repeat(64), "bytes": 3}, "references": []},
+                                        "result": null,
+                                        "reasons": ["runtime_animation_survival_unavailable"]
+                                    },
+                                    {
+                                        "scope": {"code": "engine-track-support:animation-channel", "subject": "source_animation:0:source_channel:0"},
+                                        "state": "required_prediction_unavailable",
+                                        "basis": {"identity": {"sha256": "4".repeat(64), "bytes": 4}, "references": []},
+                                        "result": null,
+                                        "reasons": ["runtime_animation_survival_unavailable"]
+                                    }
+                                ]
+                            }
+                        }
+                    }]
+                }]
+            }).to_string()
+        ).unwrap();
+        let takes = vec![ObservedTakeWire {
+            source_take_index: 0,
+            name: TakeNameState::Available {
+                value: "Take 001".to_owned(),
+            },
+            normalized: NormalizedClipState::Available {
+                index: 0,
+                name: "Take 001".to_owned(),
+            },
+        }];
+        let facts = dashboard_document_facts(&envelope, &takes).unwrap();
+        assert_eq!(facts.evidence["Take 001"].prediction_unavailable, 0);
+        assert_eq!(facts.unscoped_prediction_unavailable, 2);
+        assert_eq!(
+            facts.unscoped_prediction_reasons,
+            BTreeSet::from(["runtime_animation_survival_unavailable".to_owned()])
+        );
     }
 }

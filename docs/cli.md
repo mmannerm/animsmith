@@ -98,11 +98,15 @@ zero logical clips and retains observed identity plus availability, loader, and
 dependency-closure states. Every observed physical take remains source-owned
 and records its source take index/name, normalized index/name state, evidence,
 and outcome even when no logical clip declares it. Global finding/gap/prediction
-totals derive from those physical rows plus unscoped source findings; logical
-rows are navigation projections and are not counted a second time.
+totals derive from those physical rows plus unscoped source findings and
+unscoped source-level `required_prediction_unavailable` facets; logical rows
+are navigation projections and are not counted a second time.
 Source/document findings without an exact clip match
 remain explicit unscoped source findings and still contribute to the unfiltered
 finding total; they are never guessed onto a clip row.
+Subjectless required-unavailable prediction facets likewise remain explicit
+source-level dashboard evidence with their recorded reasons; the dashboard does
+not invent a take or logical clip witness for them.
 When one source contains the same normalized name at multiple physical indices,
 name-addressed nested evidence has no unique witness. The dashboard retains each
 finding once as unscoped source evidence and marks the affected physical rows
@@ -114,7 +118,10 @@ readback rederives that relationship and rejects missing, forged, or ambiguous
 logical resolution.
 Every logical row whose availability is `established` must also reconcile its
 source, source-take index/name, evidence, coverage, and outcome with exactly one
-source-owned established physical row. Strict readback rejects contradictions.
+source-owned established physical row. Runtime-set `gaps` and `lifecycle` are
+also rederived from member availability: each non-`established` member requires
+one `member_unavailable` gap in member order, and `complete` is valid only when
+that derived gap list is empty. Strict readback rejects contradictions.
 
 `evaluate-transition-poses` is a JSON-only, single-result transition-family
 contract, not a lint/check stream. It evaluates exact named/indexed takes in
