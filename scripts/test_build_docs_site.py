@@ -141,7 +141,12 @@ class ExternalProxyContractTests(unittest.TestCase):
             )
             (reports / "index.html").write_text(
                 '<a href="one.html">report</a>\n'
-                '<a href="one-evidence.html">evidence</a>\n',
+                '<a href="one-evidence.html">evidence</a>\n'
+                + (
+                    '<a href="../../missing-root.html">missing root page</a>\n'
+                    if include_missing_report
+                    else ""
+                ),
                 encoding="utf-8",
             )
             (reports / "one.html").write_text("<h1>One</h1>\n", encoding="utf-8")
@@ -437,8 +442,17 @@ class ExternalProxyContractTests(unittest.TestCase):
             self.invoke_fixture_build(source, stage)
 
             book = stage / "book"
-            for alias in ["README.html", "docs/README.html", "docs/reports/README.html"]:
-                self.assertTrue((book / alias).is_file(), f"build publishes {alias}")
+            aliases = {
+                "README.html": "index.html",
+                "docs/README.html": "docs/index.html",
+                "docs/reports/README.html": "docs/reports/index.html",
+            }
+            for alias, canonical in aliases.items():
+                self.assertEqual(
+                    (book / alias).read_bytes(),
+                    (book / canonical).read_bytes(),
+                    f"build publishes {alias} as an exact compatibility copy",
+                )
             redirects = {
                 "CONTRIBUTING.html": (
                     "https://github.com/mmannerm/animsmith/blob/vfixture/CONTRIBUTING.md"
@@ -454,10 +468,30 @@ class ExternalProxyContractTests(unittest.TestCase):
                 output = (book / relative).read_text(encoding="utf-8")
                 self.assertIn(expected_url, output, f"build pins {relative} to its source ref")
                 self.assertNotIn("/main/", output)
+            self.assertEqual(
+                {
+                    path.relative_to(book).as_posix()
+                    for path in book.rglob("*.html")
+                },
+                {
+                    "index.html",
+                    "README.html",
+                    "docs/index.html",
+                    "docs/README.html",
+                    "docs/reports/index.html",
+                    "docs/reports/README.html",
+                    "docs/reports/one.html",
+                    "docs/reports/one-evidence.html",
+                    *redirects,
+                },
+                "the build publishes exactly every chapter, alias, and eligible source redirect",
+            )
             BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/dev/")
 
-            with self.assertRaisesRegex(RuntimeError, "reports/missing.html"):
+            with self.assertRaises(RuntimeError) as failure:
                 self.invoke_fixture_build(source, root / "broken-stage", include_missing_report=True)
+            self.assertIn("reports/missing.html", str(failure.exception))
+            self.assertIn("missing-root.html", str(failure.exception))
 
     def test_report_index_parser_refuses_missing_malformed_and_empty_tables(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
