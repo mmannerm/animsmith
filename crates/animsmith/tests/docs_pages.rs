@@ -468,9 +468,10 @@ fn staged_pages_tree_is_clean_and_every_rendered_local_link_resolves() {
         "staging never writes generated HTML"
     );
 
+    let link_errors = validate_staged_links(&staged);
     assert!(
-        validate_staged_links(&staged).is_empty(),
-        "staged Markdown links and anchors resolve"
+        link_errors.is_empty(),
+        "staged Markdown links and anchors resolve: {link_errors:#?}"
     );
 }
 

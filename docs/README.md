@@ -6,6 +6,10 @@ Find what you need by task — each page below owns one job.
 |---|---|---|
 | [Why animsmith](why-animsmith.md) | Decide whether animsmith fits your team — what it is, why it exists, and what it is worth by role. The canonical home of the positioning case. | Get started |
 | [README](../README.md) | Install and quickstart, plus the check and configuration reference. | Get started |
+| [Animation-author workflow](animation-author-workflow.md) | Take an authored export from immutable source through evidence-backed candidate handoff, without treating a safe mechanical edit as artistic approval. | Workflows |
+| [Game-developer intake workflow](game-developer-intake-workflow.md) | Take a pack or collection from inventory through an exact engine profile and an engine-observed gate; includes the complete Bevy 0.19.0 path. | Workflows |
+| [Animation troubleshooting](animation-troubleshooting.md) | Triage visible runtime symptoms to the right check, report evidence, and owner without duplicating the config or check contracts. | Workflows |
+| [Commercial-pack evaluation guide](commercial-pack-evaluations.md) | Read the maintained Mixamo and Protofactor technical-report/evidence pairs and separate their scoped findings from project acceptance. | Workflows |
 | [Configuration reference](configuration-reference.md) | Complete `animsmith.toml` tables, keys, defaults, precedence, validation, globs, rig profiles, and engine settings. | Reference |
 | [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder) and what animsmith validates at each level — and why a check fires: every runtime failure mode, mapped to the checks, repairs, and config that address it. | Guides |
 | [Unity 6000.3 profile guide](engine-profile-unity.md) | Configure the exact Unity Generic/Humanoid profiles, importer advice, root-motion choices, and scale boundary. | Guides |
