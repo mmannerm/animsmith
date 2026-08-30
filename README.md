@@ -145,6 +145,12 @@ The CLI crate is not the library API; it is one frontend over the same core.
 
 ## Checks
 
+The tables below stay intentionally compact. For the current per-check
+reference covering defaults, prerequisites, config keys, skip and
+coverage-gap behavior, remediation guidance, and docs.rs API links, see the
+[built-in check
+reference](https://github.com/mmannerm/animsmith/blob/main/docs/built-in-checks.md).
+
 Mechanical checks:
 
 | id | severity | what |
@@ -203,7 +209,9 @@ than guessing or manufacturing a content finding.
 ## Configuration
 
 `animsmith.toml` is auto-loaded from the working directory, or passed
-with `--config`:
+with `--config`. The detailed check-by-check cross-reference for the keys below
+is in the [built-in check
+reference](https://github.com/mmannerm/animsmith/blob/main/docs/built-in-checks.md):
 
 ```toml
 [rig]

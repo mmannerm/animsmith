@@ -17,6 +17,9 @@ when one is violated. Each symptom section explains the mechanics and
 maps them to the animsmith checks, repairs, and configuration that
 address them. If you want runnable commands, each symptom links into
 the [examples cookbook](../examples/README.md); if you want the
+current per-check reference for IDs, default findings, prerequisites,
+config keys, coverage gaps, and remediation boundaries, see the
+[built-in check reference](built-in-checks.md); if you want the
 reasoning behind the tool itself — why it exists and what it is worth
 to your team — see [why animsmith](why-animsmith.md).
 

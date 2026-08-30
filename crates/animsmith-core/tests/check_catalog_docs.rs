@@ -1,5 +1,5 @@
 use animsmith_core::{all_checks, mechanical_checks};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 const NON_CHECK_ID_LIKE_TOKENS: &[&str] = &[
@@ -27,15 +27,27 @@ const PIPELINE_MATRIX_MARKER: &str = "the contract grows to cover them or the te
 
 #[test]
 fn docs_check_ids_match_the_registered_catalog() {
-    let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+        read_source_catalog_docs()
+    else {
         // Published crates intentionally exclude repository-level docs.
         return;
     };
 
-    assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios);
+    assert_catalog_docs(
+        &readme,
+        &game_ready_clips,
+        &pipeline_scenarios,
+        &built_in_checks,
+    );
 }
 
-fn assert_catalog_docs(readme: &str, game_ready_clips: &str, pipeline_scenarios: &str) {
+fn assert_catalog_docs(
+    readme: &str,
+    game_ready_clips: &str,
+    pipeline_scenarios: &str,
+    built_in_checks: &str,
+) {
     let catalog = registered_check_ids();
     let mechanical = registered_mechanical_check_ids();
     let contract_aware: BTreeSet<_> = catalog.difference(&mechanical).copied().collect();
@@ -71,6 +83,7 @@ fn assert_catalog_docs(readme: &str, game_ready_clips: &str, pipeline_scenarios:
     let pipeline_matrix =
         markdown_table_after(pipeline_scenarios, PIPELINE_MATRIX_MARKER).join("\n");
     assert_no_unknown_check_ids("docs/pipeline-scenarios.md", &pipeline_matrix, &catalog);
+    assert_built_in_check_inventory(built_in_checks, &catalog);
 }
 
 #[test]
@@ -111,13 +124,344 @@ fn read_workspace_doc(workspace_root: &Path, relative_path: &str) -> String {
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
 }
 
-fn read_source_catalog_docs() -> Option<(String, String, String)> {
+fn read_source_catalog_docs() -> Option<(String, String, String, String)> {
     let workspace_root = source_workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))?;
     Some((
         read_workspace_doc(&workspace_root, "README.md"),
         read_workspace_doc(&workspace_root, "docs/game-ready-clips.md"),
         read_workspace_doc(&workspace_root, "docs/pipeline-scenarios.md"),
+        read_workspace_doc(&workspace_root, "docs/built-in-checks.md"),
     ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MarkdownTable {
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CheckReferenceInventoryRow {
+    id: &'static str,
+    default_findings: &'static [&'static str],
+    config_keys: &'static [&'static str],
+}
+
+fn built_in_check_inventory_rows() -> Vec<CheckReferenceInventoryRow> {
+    vec![
+        CheckReferenceInventoryRow {
+            id: "nan",
+            default_findings: &["error"],
+            config_keys: &["severity"],
+        },
+        CheckReferenceInventoryRow {
+            id: "time-monotonic",
+            default_findings: &["error", "note"],
+            config_keys: &["severity"],
+        },
+        CheckReferenceInventoryRow {
+            id: "quat-norm",
+            default_findings: &["error"],
+            config_keys: &["severity"],
+        },
+        CheckReferenceInventoryRow {
+            id: "quat-flip",
+            default_findings: &["warning"],
+            config_keys: &["severity"],
+        },
+        CheckReferenceInventoryRow {
+            id: "duration-sanity",
+            default_findings: &["error", "warning"],
+            config_keys: &[
+                "severity",
+                "clips.<name>.duration_s.value",
+                "clips.<name>.duration_s.tolerance",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "scale-keys",
+            default_findings: &["warning"],
+            config_keys: &["severity"],
+        },
+        CheckReferenceInventoryRow {
+            id: "non-uniform-scale",
+            default_findings: &["warning"],
+            config_keys: &["severity"],
+        },
+        CheckReferenceInventoryRow {
+            id: "constant-nonunit-scale",
+            default_findings: &["off", "note"],
+            config_keys: &["severity"],
+        },
+        CheckReferenceInventoryRow {
+            id: "constant-track",
+            default_findings: &["note"],
+            config_keys: &["severity"],
+        },
+        CheckReferenceInventoryRow {
+            id: "required-bones",
+            default_findings: &["error"],
+            config_keys: &["severity", "rig.required_bones"],
+        },
+        CheckReferenceInventoryRow {
+            id: "rest-world-scale",
+            default_findings: &["warning"],
+            config_keys: &[
+                "severity",
+                "runtime_nodes.selectors",
+                "checks.rest-world-scale.node_selectors",
+                "expected_uniform_scale",
+                "uniform_scale_tolerance",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "missing-bones",
+            default_findings: &["error"],
+            config_keys: &["severity", "clips.<name>.animates_bones"],
+        },
+        CheckReferenceInventoryRow {
+            id: "frozen-bone",
+            default_findings: &["error"],
+            config_keys: &[
+                "severity",
+                "min_rotation_deg",
+                "clips.<name>.animates_bones",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "duplicate-loop-endpoint",
+            default_findings: &["warning"],
+            config_keys: &["severity", "clips.<name>.loop"],
+        },
+        CheckReferenceInventoryRow {
+            id: "loop-closure",
+            default_findings: &["error"],
+            config_keys: &[
+                "severity",
+                "max_position_delta_m",
+                "max_rotation_delta_deg",
+                "clips.<name>.loop",
+                "clips.<name>.max_loop_position_delta_m",
+                "clips.<name>.max_loop_rotation_delta_deg",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "loop-seam",
+            default_findings: &["error"],
+            config_keys: &[
+                "severity",
+                "max_ratio",
+                "min_stride_step_m",
+                "clips.<name>.loop",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "loop-seam-vel",
+            default_findings: &["error"],
+            config_keys: &[
+                "severity",
+                "max_velocity_delta_mps",
+                "clips.<name>.loop",
+                "clips.<name>.max_loop_velocity_delta_mps",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "loop-seam-rot",
+            default_findings: &["error"],
+            config_keys: &[
+                "severity",
+                "max_angular_velocity_delta_degps",
+                "clips.<name>.loop",
+                "clips.<name>.max_loop_angular_velocity_delta_degps",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "root-motion-speed",
+            default_findings: &["error"],
+            config_keys: &[
+                "severity",
+                "clips.<name>.speed_mps.value",
+                "clips.<name>.speed_mps.tolerance",
+                "clips.<name>.movement_owner_xz",
+                "clips.<name>.in_place",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "gait-group",
+            default_findings: &["error"],
+            config_keys: &[
+                "severity",
+                "gait_groups.<name>.clips",
+                "gait_groups.<name>.max_gait_phase_spread",
+                "gait_groups.<name>.min_lr_amplitude_m",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "sync-group",
+            default_findings: &["error"],
+            config_keys: &[
+                "severity",
+                "sync_groups.<name>.clips",
+                "sync_groups.<name>.max_duration_delta_s",
+                "sync_groups.<name>.max_frame_count_delta",
+                "sync_groups.<name>.max_fps_delta",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "time-complement",
+            default_findings: &["warning"],
+            config_keys: &[
+                "severity",
+                "sync_groups.<name>.clips",
+                "sync_groups.<name>.time_complement.min_reflected_time_advantage",
+                "sync_groups.<name>.time_complement.min_lr_amplitude_m",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "in-place",
+            default_findings: &["error"],
+            config_keys: &[
+                "severity",
+                "clips.<name>.movement_owner_xz",
+                "clips.<name>.in_place",
+            ],
+        },
+        CheckReferenceInventoryRow {
+            id: "fps",
+            default_findings: &["warning"],
+            config_keys: &["severity", "clips.<name>.fps"],
+        },
+        CheckReferenceInventoryRow {
+            id: "bind-pose",
+            default_findings: &["warning"],
+            config_keys: &["severity", "max_mean_rest_delta_deg"],
+        },
+        CheckReferenceInventoryRow {
+            id: "foot-slide",
+            default_findings: &["warning"],
+            config_keys: &[
+                "severity",
+                "contact_height_m",
+                "max_slide_mps",
+                "clips.<name>.speed_mps.value",
+                "clips.<name>.speed_mps.tolerance",
+                "clips.<name>.movement_owner_xz",
+                "clips.<name>.in_place",
+            ],
+        },
+    ]
+}
+
+fn split_markdown_table_row(row: &str) -> Vec<String> {
+    row.trim()
+        .trim_matches('|')
+        .split('|')
+        .map(|cell| cell.trim().to_owned())
+        .collect()
+}
+
+fn markdown_link_label(cell: &str) -> &str {
+    let Some(stripped) = cell.strip_prefix('[') else {
+        return cell;
+    };
+    let Some((label, rest)) = stripped.split_once(']') else {
+        return cell;
+    };
+    if rest.starts_with('(') && rest.ends_with(')') {
+        label
+    } else {
+        cell
+    }
+}
+
+fn inventory_table(markdown: &str) -> MarkdownTable {
+    let rows = markdown_table_after(markdown, "## Inventory");
+    assert!(
+        rows.len() >= 2,
+        "docs/built-in-checks.md must contain the inventory table"
+    );
+    let headers = split_markdown_table_row(rows[0]);
+    assert_eq!(
+        headers,
+        vec![
+            "id".to_owned(),
+            "class".to_owned(),
+            "default findings".to_owned(),
+            "declarations or prerequisites".to_owned(),
+            "config keys".to_owned(),
+            "tooling".to_owned(),
+        ],
+        "docs/built-in-checks.md inventory headers drifted"
+    );
+    MarkdownTable {
+        headers,
+        rows: rows
+            .into_iter()
+            .skip(2)
+            .map(split_markdown_table_row)
+            .collect(),
+    }
+}
+
+fn cell_tokens(cell: &str) -> BTreeSet<&str> {
+    cell.split(',')
+        .map(|token| token.trim().trim_matches('`'))
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+fn assert_built_in_check_inventory(markdown: &str, catalog: &BTreeSet<&str>) {
+    let table = inventory_table(markdown);
+    let row_by_id = table
+        .rows
+        .iter()
+        .map(|row| {
+            assert_eq!(
+                row.len(),
+                6,
+                "docs/built-in-checks.md inventory rows must keep six columns"
+            );
+            (markdown_link_label(&row[0]).to_owned(), row)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let documented_ids = row_by_id
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_exact_ids(
+        "docs/built-in-checks.md inventory",
+        &documented_ids,
+        catalog,
+    );
+
+    let expected_rows = built_in_check_inventory_rows();
+    let expected_ids = expected_rows
+        .iter()
+        .map(|row| row.id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        expected_ids, *catalog,
+        "inventory expectations must cover the exact registered catalog"
+    );
+
+    for expected in expected_rows {
+        let row = row_by_id
+            .get(expected.id)
+            .unwrap_or_else(|| panic!("missing inventory row for {}", expected.id));
+        assert_eq!(
+            cell_tokens(&row[2]),
+            expected.default_findings.iter().copied().collect(),
+            "docs/built-in-checks.md default findings drifted for {}",
+            expected.id
+        );
+        assert_eq!(
+            cell_tokens(&row[4]),
+            expected.config_keys.iter().copied().collect(),
+            "docs/built-in-checks.md config keys drifted for {}",
+            expected.id
+        );
+    }
 }
 
 fn assert_exact_ids(surface: &str, documented: &BTreeSet<&str>, expected: &BTreeSet<&str>) {
@@ -268,7 +612,9 @@ fn panic_message(failure: Box<dyn std::any::Any + Send>) -> String {
 
 #[test]
 fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catalog() {
-    let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+        read_source_catalog_docs()
+    else {
         return;
     };
     let catalog = registered_check_ids();
@@ -284,7 +630,12 @@ fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catal
         "the matrix must remain a partial catalog reference"
     );
     let partial_result = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios);
+        assert_catalog_docs(
+            &readme,
+            &game_ready_clips,
+            &pipeline_scenarios,
+            &built_in_checks,
+        );
     });
     assert!(
         partial_result.is_ok(),
@@ -299,7 +650,12 @@ fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catal
         let stale_pipeline = format!("{PIPELINE_MATRIX_MARKER}\n\n{stale_matrix}");
 
         let failure = std::panic::catch_unwind(|| {
-            assert_catalog_docs(&readme, &game_ready_clips, &stale_pipeline);
+            assert_catalog_docs(
+                &readme,
+                &game_ready_clips,
+                &stale_pipeline,
+                &built_in_checks,
+            );
         })
         .expect_err("a stale partial-doc check id must fail the docs gate");
         let message = panic_message(failure);
@@ -311,7 +667,9 @@ fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catal
 
 #[test]
 fn both_readme_partition_directions_fail_the_complete_docs_gate() {
-    let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+        read_source_catalog_docs()
+    else {
         return;
     };
     for (documented, misplaced, surface, offending) in [
@@ -332,7 +690,12 @@ fn both_readme_partition_directions_fail_the_complete_docs_gate() {
         assert_ne!(misplaced_readme, readme, "mutation must apply");
 
         let failure = std::panic::catch_unwind(|| {
-            assert_catalog_docs(&misplaced_readme, &game_ready_clips, &pipeline_scenarios);
+            assert_catalog_docs(
+                &misplaced_readme,
+                &game_ready_clips,
+                &pipeline_scenarios,
+                &built_in_checks,
+            );
         })
         .expect_err("putting an id in the wrong README partition must fail");
         let message = panic_message(failure);
@@ -355,7 +718,12 @@ fn both_readme_partition_directions_fail_the_complete_docs_gate() {
         );
     assert_ne!(swapped_readme, readme, "swap mutation must apply");
     let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&swapped_readme, &game_ready_clips, &pipeline_scenarios);
+        assert_catalog_docs(
+            &swapped_readme,
+            &game_ready_clips,
+            &pipeline_scenarios,
+            &built_in_checks,
+        );
     })
     .expect_err("swapping ids across README partitions must fail");
     let message = panic_message(failure);
@@ -368,7 +736,9 @@ fn both_readme_partition_directions_fail_the_complete_docs_gate() {
 
 #[test]
 fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
-    let Some((readme, game_ready_clips, pipeline_scenarios)) = read_source_catalog_docs() else {
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+        read_source_catalog_docs()
+    else {
         return;
     };
     let file_ready = markdown_between(&game_ready_clips, "1. **File-ready**", "2. **Clip-ready**");
@@ -378,7 +748,12 @@ fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
         let misplaced_guide = game_ready_clips.replacen(file_ready, &misplaced_file_ready, 1);
 
         let failure = std::panic::catch_unwind(|| {
-            assert_catalog_docs(&readme, &misplaced_guide, &pipeline_scenarios);
+            assert_catalog_docs(
+                &readme,
+                &misplaced_guide,
+                &pipeline_scenarios,
+                &built_in_checks,
+            );
         })
         .expect_err("File-ready partition drift must fail");
         let message = panic_message(failure);
@@ -389,4 +764,39 @@ fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
         );
         assert!(message.contains(offending), "{message}");
     }
+}
+
+#[test]
+fn stale_or_missing_built_in_check_inventory_rows_fail_the_docs_gate() {
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+        read_source_catalog_docs()
+    else {
+        return;
+    };
+
+    let stale = built_in_checks.replacen("`max_slide_mps`", "`max_slide_speed_mps`", 1);
+    assert_ne!(stale, built_in_checks, "mutation must apply");
+    let failure = std::panic::catch_unwind(|| {
+        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &stale);
+    })
+    .expect_err("stale inventory config keys must fail");
+    let message = panic_message(failure);
+    assert!(message.contains("foot-slide"), "{message}");
+
+    let missing = built_in_checks
+        .lines()
+        .filter(|line| !line.starts_with("| [bind-pose](#bind-pose) |"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(missing, built_in_checks, "mutation must apply");
+    let failure = std::panic::catch_unwind(|| {
+        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &missing);
+    })
+    .expect_err("missing inventory rows must fail");
+    let message = panic_message(failure);
+    assert!(
+        message.contains("docs/built-in-checks.md inventory"),
+        "{message}"
+    );
+    assert!(message.contains("bind-pose"), "{message}");
 }
