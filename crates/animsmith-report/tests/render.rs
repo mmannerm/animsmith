@@ -39,6 +39,7 @@ fn comparison_side<'a>(
     grids: &'a MetricGrids<'a>,
     roles: &'a ResolvedRoles,
     checks: &'a [CheckEvaluation],
+    config: &'a animsmith_core::Config,
     clip: &'a str,
 ) -> animsmith_report::ComparisonSide<'a> {
     let _ = doc;
@@ -47,6 +48,7 @@ fn comparison_side<'a>(
         grids,
         roles,
         checks,
+        config,
         prediction_provenance: None,
         clip,
     }
@@ -59,6 +61,7 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
     let identity = InputIdentity::from_bytes(&source);
     let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
     let checks = evaluations(vec![
         Finding::new(
             "fixture-check",
@@ -68,9 +71,17 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
         .clip("walk")
         .bone("hips")
         .time(0.5),
+        Finding::new(
+            "fixture-check",
+            Severity::Warning,
+            "second semantic at the same subject and time",
+        )
+        .clip("walk")
+        .bone("hips")
+        .time(0.5),
     ]);
-    let before = comparison_side(&doc, &identity, &grids, &roles, &checks, "walk");
-    let after = comparison_side(&doc, &identity, &grids, &roles, &checks, "idle");
+    let before = comparison_side(&doc, &identity, &grids, &roles, &checks, &config, "walk");
+    let after = comparison_side(&doc, &identity, &grids, &roles, &checks, &config, "idle");
     let first = animsmith_report::render_comparison(before, after).expect("comparison renders");
     let second = animsmith_report::render_comparison(before, after)
         .expect("comparison renders deterministically");
@@ -92,6 +103,10 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
     assert_eq!(data["before"]["identity"]["sha256"], identity.sha256());
     assert_eq!(data["after"]["identity"]["sha256"], identity.sha256());
     assert_eq!(data["before"]["findings"][0]["bone"], "hips");
+    assert_ne!(
+        data["before"]["findings"][0]["anchor"], data["before"]["findings"][1]["anchor"],
+        "distinct findings cannot produce duplicate in-document ids"
+    );
     assert!(
         data["after"]["findings"]
             .as_array()
@@ -109,15 +124,192 @@ fn comparison_refuses_incompatible_named_hierarchy_before_rendering() {
     let before_grids = MetricGrids::new(&before_doc);
     let after_grids = MetricGrids::new(&after_doc);
     let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
     let error = animsmith_report::render_comparison(
-        comparison_side(&before_doc, &identity, &before_grids, &roles, &[], "walk"),
-        comparison_side(&after_doc, &identity, &after_grids, &roles, &[], "walk"),
+        comparison_side(
+            &before_doc,
+            &identity,
+            &before_grids,
+            &roles,
+            &[],
+            &config,
+            "walk",
+        ),
+        comparison_side(
+            &after_doc,
+            &identity,
+            &after_grids,
+            &roles,
+            &[],
+            &config,
+            "walk",
+        ),
     )
     .expect_err("different named parent must refuse");
     assert!(matches!(
         error,
         animsmith_report::ComparisonError::IncompatibleSkeleton { .. }
     ));
+}
+
+fn comparison_matrix_config() -> animsmith_core::Config {
+    use animsmith_core::config::{CheckSettings, ClipExpectations};
+    use animsmith_core::{MovementOwner, Pinned};
+
+    let mut config = animsmith_core::Config::default();
+    config.rig.roles = [
+        (Role::Root, "root".to_owned()),
+        (Role::Hips, "hips".to_owned()),
+        (Role::LeftFoot, "left_foot".to_owned()),
+        (Role::RightFoot, "right_foot".to_owned()),
+    ]
+    .into_iter()
+    .collect();
+    config.clips.insert(
+        "acceptance-matrix".to_owned(),
+        ClipExpectations {
+            looping: Some(true),
+            speed_mps: Some(Pinned {
+                value: 1.0,
+                tolerance: 0.1,
+            }),
+            movement_owner_xz: Some(MovementOwner::Gameplay),
+            ..Default::default()
+        },
+    );
+    config.checks.insert(
+        "foot-slide".to_owned(),
+        CheckSettings {
+            contact_height_m: Some(0.03),
+            max_slide_mps: Some(0.3),
+            ..Default::default()
+        },
+    );
+    config
+}
+
+fn matrix_evaluations<'a>(
+    grids: &'a MetricGrids<'a>,
+    roles: &'a ResolvedRoles,
+    config: &'a animsmith_core::Config,
+) -> Vec<CheckEvaluation> {
+    let context = animsmith_core::CheckCtx::new(grids, roles, config);
+    animsmith_core::evaluate_checks(
+        &context,
+        &animsmith_core::all_checks(),
+        animsmith_core::CheckSelection::All,
+    )
+    .expect("matrix checks evaluate")
+}
+
+#[test]
+fn comparison_matrix_projects_typed_visual_acceptance_context() {
+    let before_doc = animsmith_testkit::comparison_report_before_doc();
+    let after_doc = animsmith_testkit::comparison_report_after_doc();
+    let config = comparison_matrix_config();
+    let roles = ResolvedRoles::from_names(&before_doc.skeleton, config.rig.roles.clone());
+    let after_roles = ResolvedRoles::from_names(&after_doc.skeleton, config.rig.roles.clone());
+    let before_grids = MetricGrids::new(&before_doc);
+    let after_grids = MetricGrids::new(&after_doc);
+    let before_checks = matrix_evaluations(&before_grids, &roles, &config);
+    let after_checks = matrix_evaluations(&after_grids, &after_roles, &config);
+    let before_identity = InputIdentity::from_bytes(b"self-authored matrix before");
+    let after_identity = InputIdentity::from_bytes(b"self-authored matrix after");
+    let html = animsmith_report::render_comparison(
+        comparison_side(
+            &before_doc,
+            &before_identity,
+            &before_grids,
+            &roles,
+            &before_checks,
+            &config,
+            "acceptance-matrix",
+        ),
+        comparison_side(
+            &after_doc,
+            &after_identity,
+            &after_grids,
+            &after_roles,
+            &after_checks,
+            &config,
+            "acceptance-matrix",
+        ),
+    )
+    .expect("matrix comparison renders");
+    let data = embedded_json(&html, "comparison-report-data");
+
+    for side in ["before", "after"] {
+        assert_eq!(data[side]["clip"]["trails"]["root"], 0);
+        assert_eq!(data[side]["clip"]["trails"]["hips"], 1);
+        assert_eq!(data[side]["clip"]["trails"]["left_foot"], 2);
+        assert_eq!(data[side]["clip"]["trails"]["right_foot"], 3);
+        assert_eq!(
+            data[side]["contexts"]["stances"].as_array().unwrap().len(),
+            2
+        );
+        assert!(data[side]["contexts"]["gait"].is_object());
+    }
+    let before_stances = data["before"]["contexts"]["stances"]
+        .as_array()
+        .expect("before stances");
+    assert_eq!(before_stances[0]["selected_role"], "left_foot");
+    assert_eq!(before_stances[0]["runs"][0]["start_s"], 0.0);
+    assert_eq!(before_stances[0]["runs"][0]["end_s"], 0.25);
+
+    let seam = data["before"]["contexts"]["seams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["check"] == "loop-closure")
+        .expect("loop closure endpoint context");
+    assert_eq!(seam["first_frame"], 0);
+    assert_eq!(seam["last_frame"], 4);
+    assert_eq!(seam["subject_bone_name"], "left_foot");
+    assert_eq!(seam["subject_bone"], 2);
+
+    let structural = data["before"]["contexts"]["structural"]
+        .as_array()
+        .expect("before structural context");
+    assert_eq!(structural.len(), 1);
+    assert_eq!(structural[0]["check"], "constant-track");
+    assert_eq!(structural[0]["evidence_kind"], "structural");
+    assert!(
+        structural[0]["label"]
+            .as_str()
+            .unwrap()
+            .contains("poses may look unchanged")
+    );
+    assert!(
+        data["after"]["contexts"]["structural"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(html.contains("one shared uniform metres scale"));
+}
+
+#[test]
+fn constant_quaternion_track_removal_leaves_sampled_pose_positions_unchanged() {
+    let before = animsmith_testkit::comparison_report_before_doc();
+    let mut structural_after = before.clone();
+    structural_after.clips[0]
+        .tracks
+        .retain(|track| !(track.bone == 4 && track.property == animsmith_core::Property::Rotation));
+    let before_grid = MetricGrids::new(&before).grid(0).expect("before grid");
+    let after_grid = MetricGrids::new(&structural_after)
+        .grid(0)
+        .expect("structural after grid");
+
+    assert_eq!(before_grid.times, after_grid.times);
+    for frame in 0..before_grid.frame_count() {
+        for bone in 0..before_grid.bone_count() {
+            assert_eq!(
+                before_grid.model_position(frame, bone),
+                after_grid.model_position(frame, bone),
+                "constant quaternion removal changed visible position at frame {frame}, bone {bone}"
+            );
+        }
+    }
 }
 
 fn assert_self_contained(html: &str) {

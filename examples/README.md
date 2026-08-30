@@ -888,6 +888,33 @@ $ animsmith report clip.glb -o report.html
 $ animsmith diff old.glb clip.glb
 ```
 
+The repository also carries a byte-checked, self-authored visual-comparison
+pair. It exercises the report's acceptance context without a commercial or
+private source asset:
+
+```console
+$ animsmith --config examples/report-comparison.animsmith.toml report \
+    examples/assets/report-comparison-before.glb \
+    --compare-after examples/assets/report-comparison-after.glb \
+    --before-clip acceptance-matrix --after-clip acceptance-matrix \
+    -o comparison.html
+```
+
+In `comparison.html`, select the before-side loop finding to see the exact
+first and last judged poses overlaid with the affected bone highlighted.
+The trajectory panels disclose root, hips, and bilateral-foot trails; the
+gait panel shades the typed `foot-slide` stance intervals and names the
+selected role. The combined root chart uses one metres scale and distinct
+before/after legends. The before-side `constant-track` row is explicitly
+structural evidence: its quaternion keys can be removed while the sampled
+poses look unchanged. Neither the fixture nor the report certifies artistic,
+gameplay, importer, or engine acceptance.
+
+`cargo run -p animsmith --example gen_example_assets` regenerates both inputs.
+The `example_assets_match_generator_output` integration test rebuilds every
+committed example and compares its bytes, so CI catches hand edits or generator
+drift.
+
 When one authoritative skinned base and its animation takes live in separate
 files, use the versioned [`character-assembly.toml`](character-assembly.toml)
 recipe instead. `assemble` produces one GLB and evidence pair; source-package

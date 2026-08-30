@@ -1895,7 +1895,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let loaded_config = load_config(cli.config.as_deref())?;
             full_check_ids()?;
             let loaded = load_with_config(&file, &loaded_config)?;
-            if let Some(after_path) = compare_after.as_ref() {
+            let comparison_after = if let Some(after_path) = compare_after.as_ref() {
                 if clip.is_some() {
                     return Err("--clip cannot be used with --compare-after; declare both --before-clip and --after-clip".into());
                 }
@@ -1905,18 +1905,21 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let after_name = after_clip
                     .as_deref()
                     .ok_or_else(|| "--compare-after requires --after-clip".to_string())?;
-                let preflight_after = load_with_config(after_path, &loaded_config)?;
+                let after_loaded = load_with_config(after_path, &loaded_config)?;
                 animsmith_report::preflight_comparison(
                     loaded.document(),
                     before_name,
-                    preflight_after.document(),
+                    after_loaded.document(),
                     after_name,
                 )
                 .map_err(|error| error.to_string())?;
                 require_comparison_output_distinct(&output, &file, after_path)?;
+                Some(after_loaded)
             } else if before_clip.is_some() || after_clip.is_some() {
                 return Err("--before-clip and --after-clip require --compare-after".into());
-            }
+            } else {
+                None
+            };
             let config = &loaded_config.config;
             let prediction_provenance = loaded
                 .engine
@@ -1940,7 +1943,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     .map_err(|error| error.to_string())?
             };
             let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
-            let html = match compare_after {
+            let html = match comparison_after {
                 None => animsmith_report::render(
                     &grids,
                     &roles,
@@ -1948,7 +1951,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     prediction_provenance.as_ref(),
                     clip.as_deref(),
                 ),
-                Some(after_path) => {
+                Some(after_loaded) => {
                     if clip.is_some() {
                         return Err("--clip cannot be used with --compare-after; declare both --before-clip and --after-clip".into());
                     }
@@ -1956,7 +1959,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         .ok_or_else(|| "--compare-after requires --before-clip".to_string())?;
                     let after_clip = after_clip
                         .ok_or_else(|| "--compare-after requires --after-clip".to_string())?;
-                    let after_loaded = load_with_config(&after_path, &loaded_config)?;
+                    let after_path = compare_after
+                        .as_ref()
+                        .expect("comparison load is paired with its path");
                     let after_prediction_provenance = after_loaded
                         .engine
                         .as_ref()
@@ -1990,6 +1995,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             grids: &grids,
                             roles: &roles,
                             checks: &evaluations,
+                            config,
                             prediction_provenance: prediction_provenance.as_ref(),
                             clip: &before_clip,
                         },
@@ -1998,6 +2004,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             grids: &after_grids,
                             roles: &after_roles,
                             checks: &after_evaluations,
+                            config,
                             prediction_provenance: after_prediction_provenance.as_ref(),
                             clip: &after_clip,
                         },
@@ -2008,7 +2015,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             .iter()
                             .map(|check| check.findings().len())
                             .sum::<usize>();
-                    publish_comparison_report(&output, &file, &after_path, &html)?;
+                    publish_comparison_report(&output, &file, after_path, &html)?;
                     publish::emit_text(&render::render_report_written(
                         &output,
                         doc.clips.len(),

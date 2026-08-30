@@ -11,6 +11,8 @@ time.
 | `clip-dirty.glb` | The same clip with two deliberate, repairable defects: one non-unit rotation key (`quat-norm`) and one sign-flipped key (`quat-flip`). Everything else is identical, so `fix` restores it exactly and `diff` reports no measurement drift. |
 | `walk.glb` | A hips + two-foot rig (`pelvis` / `foot_l` / `foot_r`, resolving the `ue-mannequin` profile) with a 1 s walk cycle that closes exactly. Fires the semantic checks; passes [`walk.animsmith.toml`](../walk.animsmith.toml). |
 | `walk-dirty.glb` | The same walk cut a quarter-cycle short, so the feet don't return to their first-frame pose — a popped loop seam. Fails `loop-seam` under the same contract. |
+| `report-comparison-before.glb` | A five-bone synthetic gait with a left-foot endpoint seam, sampled stance slide, a closed root path, and a redundant constant quaternion track. |
+| `report-comparison-after.glb` | The paired synthetic gait with closed foot endpoints, corrected stance trajectories, a distinct closed root path, and the redundant quaternion track removed. |
 
 `clip-dirty.glb` is a `.glb` (not `.gltf`) on purpose: `fix` is
 byte-surgical over a GLB binary chunk and skips the data-URI buffers a
@@ -30,7 +32,8 @@ Pass an output directory to write elsewhere:
 cargo run -p animsmith --example gen_example_assets -- /some/dir
 ```
 
-Both the generator and `example_assets_match_generator_output` in
+All six assets are deterministic. Both the generator and
+`example_assets_match_generator_output` in
 [`crates/animsmith/tests/examples_cookbook.rs`](../../crates/animsmith/tests/examples_cookbook.rs)
 write these assets through the same `write_example_assets` wiring in
 [`animsmith-testkit`](../../crates/animsmith-testkit), so changing that

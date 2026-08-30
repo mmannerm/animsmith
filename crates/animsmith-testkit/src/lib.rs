@@ -151,14 +151,172 @@ fn example_walk_dirty_doc() -> Document {
     walk_doc(&WALK_BONES, "walk", 0.75, WALK_STRIDE, libm::sin)
 }
 
+// --- Synchronized report acceptance matrix -------------------------------
+
+const COMPARISON_TIMES: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+
+fn comparison_skeleton() -> Skeleton {
+    Skeleton {
+        bones: vec![
+            Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            },
+            Bone {
+                name: "hips".into(),
+                parent: Some(0),
+                rest: Transform {
+                    translation: Vec3::Y,
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+            Bone {
+                name: "left_foot".into(),
+                parent: Some(1),
+                rest: Transform {
+                    translation: Vec3::new(-0.2, -1.0, 0.0),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+            Bone {
+                name: "right_foot".into(),
+                parent: Some(1),
+                rest: Transform {
+                    translation: Vec3::new(0.2, -1.0, 0.0),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+            Bone {
+                name: "hand".into(),
+                parent: Some(1),
+                rest: Transform {
+                    translation: Vec3::new(0.5, 0.5, 0.0),
+                    ..Transform::IDENTITY
+                },
+                inverse_bind: None,
+            },
+        ],
+    }
+}
+
+fn comparison_translation_track(bone: usize, values: [Vec3; 5]) -> Track {
+    Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: COMPARISON_TIMES.to_vec(),
+        values: TrackValues::Vec3s(values.to_vec()),
+    }
+}
+
+fn comparison_document(after: bool) -> Document {
+    let root = if after {
+        [
+            Vec3::ZERO,
+            Vec3::new(0.04, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.04),
+            Vec3::new(-0.04, 0.0, 0.0),
+            Vec3::ZERO,
+        ]
+    } else {
+        [
+            Vec3::ZERO,
+            Vec3::new(0.02, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.02),
+            Vec3::new(-0.02, 0.0, 0.0),
+            Vec3::ZERO,
+        ]
+    };
+    let left = if after {
+        [
+            Vec3::ZERO,
+            Vec3::new(-0.25, 0.0, 0.0),
+            Vec3::new(-0.5, 0.2, 0.0),
+            Vec3::new(0.25, 0.0, 0.0),
+            Vec3::ZERO,
+        ]
+    } else {
+        [
+            Vec3::ZERO,
+            Vec3::new(0.05, 0.0, 0.0),
+            Vec3::new(0.1, 0.2, 0.0),
+            Vec3::new(0.2, 0.3, 0.0),
+            Vec3::new(0.4, 0.0, 0.0),
+        ]
+    };
+    let right = if after {
+        [
+            Vec3::ZERO,
+            Vec3::new(-0.25, 0.0, 0.0),
+            Vec3::new(0.5, 0.3, 0.0),
+            Vec3::new(0.25, 0.0, 0.0),
+            Vec3::ZERO,
+        ]
+    } else {
+        [
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.3, 0.0),
+            Vec3::ZERO,
+            Vec3::new(0.05, 0.0, 0.0),
+            Vec3::ZERO,
+        ]
+    };
+    let mut tracks = vec![
+        comparison_translation_track(0, root),
+        comparison_translation_track(2, left),
+        comparison_translation_track(3, right),
+    ];
+    if !after {
+        tracks.push(Track {
+            bone: 4,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: COMPARISON_TIMES.to_vec(),
+            values: TrackValues::Quats(vec![Quat::IDENTITY; COMPARISON_TIMES.len()]),
+        });
+    }
+    Document {
+        skeleton: comparison_skeleton(),
+        clips: vec![Clip {
+            name: "acceptance-matrix".into(),
+            duration_s: 1.0,
+            tracks,
+        }],
+        assets: Default::default(),
+        source: SourceInfo::default(),
+    }
+}
+
+/// Self-authored comparison input with a loop seam, foot slide, and a
+/// redundant constant quaternion track.
+pub fn comparison_report_before_doc() -> Document {
+    comparison_document(false)
+}
+
+/// Self-authored comparison input whose seam and stance motion are repaired
+/// and whose redundant quaternion track is removed.
+pub fn comparison_report_after_doc() -> Document {
+    comparison_document(true)
+}
+
 /// The committed example assets under `examples/assets/`, as
 /// `(filename, document)` pairs — the single filename↔document wiring.
-fn example_assets() -> [(&'static str, Document); 4] {
+fn example_assets() -> [(&'static str, Document); 6] {
     [
         ("clip.glb", example_clean_doc()),
         ("clip-dirty.glb", example_dirty_doc()),
         ("walk.glb", example_walk_doc()),
         ("walk-dirty.glb", example_walk_dirty_doc()),
+        (
+            "report-comparison-before.glb",
+            comparison_report_before_doc(),
+        ),
+        ("report-comparison-after.glb", comparison_report_after_doc()),
     ]
 }
 

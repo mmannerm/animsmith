@@ -18,11 +18,21 @@ when a finding names a frame, the viewer scrubs to that judged frame.
 
 `render_comparison` is the deliberately narrow before/after companion. Call
 `preflight_comparison` before evaluating checks, then pass two explicit clip
-names and their immutable input identities. It refuses ambiguous clips and
+names, their immutable input identities, and the exact configuration used for
+their checks. It refuses ambiguous clips and
 non-identical named/indexed skeleton correspondence, embeds bounded sampled
 poses, and writes separate finding, gap, and prediction-provenance records for
 each side. Its normalized-phase display labels both source times and does not
 claim an authored retime or artistic/engine acceptance.
+
+The comparison view reuses typed seam findings and `foot-slide` evaluated
+scopes. The latter are projected through the shared sampled-stance classifier
+with the run's effective contact threshold, so the report can show endpoint
+poses, selected feet, and stance intervals without parsing finding messages.
+Root, hips, and bilateral-foot trajectories come from the same exact pose grid;
+the combined before/after root chart uses one metres scale. Quaternion and
+constant-track findings are labeled structural evidence because redundant
+track remediation may leave the visible pose unchanged.
 
 ## Install
 

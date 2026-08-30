@@ -59,7 +59,14 @@ fn example_assets_match_generator_output() {
     })
     .expect("writes example assets");
 
-    for name in ["clip.glb", "clip-dirty.glb", "walk.glb", "walk-dirty.glb"] {
+    for name in [
+        "clip.glb",
+        "clip-dirty.glb",
+        "walk.glb",
+        "walk-dirty.glb",
+        "report-comparison-before.glb",
+        "report-comparison-after.glb",
+    ] {
         let committed = std::fs::read(asset(name)).expect("reads committed asset");
         let regenerated = std::fs::read(tmp.path().join(name))
             .unwrap_or_else(|e| panic!("generator did not write {name}: {e}"));
@@ -249,6 +256,101 @@ fn cookbook_transform() {
     let (code, out) = run(&["diff", clean, held]);
     assert_eq!(code, Some(1), "hold-extend changes the clip, diff exits 1");
     assert!(out.contains("moved"), "diff lists the moved metrics: {out}");
+}
+
+#[test]
+fn cookbook_synchronized_report_acceptance_matrix() {
+    let before = asset("report-comparison-before.glb");
+    let after = asset("report-comparison-after.glb");
+    let config = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/report-comparison.animsmith.toml");
+    let tmp = unique_temp_dir("report-comparison");
+    let report = tmp.path().join("comparison.html");
+    let output = animsmith()
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "report",
+            before.to_str().unwrap(),
+            "--compare-after",
+            after.to_str().unwrap(),
+            "--before-clip",
+            "acceptance-matrix",
+            "--after-clip",
+            "acceptance-matrix",
+            "--output",
+            report.to_str().unwrap(),
+        ])
+        .output()
+        .expect("runs documented comparison report");
+    assert!(
+        output.status.success(),
+        "comparison report stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let html = std::fs::read_to_string(&report).expect("reads comparison report");
+    let marker = r#"<script type="application/json" id="comparison-report-data">"#;
+    let data_start = html.find(marker).expect("comparison data marker") + marker.len();
+    let data_end = html[data_start..]
+        .find("</script>")
+        .expect("comparison data close")
+        + data_start;
+    let data: Value =
+        serde_json::from_str(&html[data_start..data_end]).expect("comparison data JSON");
+    let before_findings = data["before"]["findings"]
+        .as_array()
+        .expect("before findings");
+    assert!(
+        before_findings
+            .iter()
+            .any(|row| { row["check"] == "loop-closure" && row["bone"] == "left_foot" })
+    );
+    assert!(
+        before_findings
+            .iter()
+            .any(|row| { row["check"] == "foot-slide" && row["bone"] == "left_foot" })
+    );
+    assert!(
+        before_findings
+            .iter()
+            .any(|row| row["check"] == "constant-track" && row["bone"] == "hand")
+    );
+    assert_eq!(
+        data["before"]["contexts"]["stances"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        data["before"]["contexts"]["seams"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["subject_bone_name"] == "left_foot")
+    );
+    assert_eq!(
+        data["before"]["contexts"]["structural"][0]["evidence_kind"],
+        "structural"
+    );
+    assert!(
+        data["after"]["contexts"]["structural"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        data["after"]["findings"].as_array().unwrap().is_empty(),
+        "the repaired example side should be matrix-clean"
+    );
+
+    let (code, diff) = run(&["diff", before.to_str().unwrap(), after.to_str().unwrap()]);
+    assert_eq!(code, Some(1), "fixture pair intentionally changes motion");
+    assert!(
+        diff.contains("moved") || diff.contains("appeared") || diff.contains("disappeared"),
+        "typed diff still reports measurement movement independently: {diff}"
+    );
 }
 
 #[test]

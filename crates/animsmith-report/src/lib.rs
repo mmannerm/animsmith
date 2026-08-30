@@ -40,7 +40,8 @@
 use animsmith_core::metrics::{MetricGrids, metric_frame_count};
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::PoseGrid;
-use animsmith_core::{CheckEvaluation, InputIdentity, PredictionProvenanceV1};
+use animsmith_core::stance_support::{StanceSideV1, resolve_stance_support_v1};
+use animsmith_core::{CheckEvaluation, Config, InputIdentity, PredictionProvenanceV1};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -81,6 +82,11 @@ pub struct ComparisonSide<'a> {
     pub roles: &'a ResolvedRoles,
     /// Typed check evaluations for this side.
     pub checks: &'a [CheckEvaluation],
+    /// Exact configuration used to produce `checks`.
+    ///
+    /// The comparison reuses its effective `foot-slide` contact threshold
+    /// when projecting typed stance scopes into sampled support runs.
+    pub config: &'a Config,
     /// Optional engine-prediction provenance for this side.
     pub prediction_provenance: Option<&'a PredictionProvenanceV1>,
     /// Exact, caller-declared clip name to compare.
@@ -271,14 +277,15 @@ pub fn render_comparison(
          <body><header><h1>animsmith visual comparison</h1><p id=\"mapping\"></p>\n\
          <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></header>\n\
          <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"></label><span id=\"times\"></span></section>\n\
-         <main><section class=\"side\" id=\"before-panel\"><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><canvas id=\"before-gl\"></canvas><svg id=\"before-path\" viewBox=\"0 0 360 150\"></svg><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
-         <section class=\"side\" id=\"after-panel\"><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><canvas id=\"after-gl\"></canvas><svg id=\"after-path\" viewBox=\"0 0 360 150\"></svg><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
+         <section class=\"shared-chart\"><h2>Before/after root trajectory</h2><svg id=\"comparison-root-path\" viewBox=\"0 0 720 220\"></svg></section>\n\
+         <main><section class=\"side\" id=\"before-panel\"><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><canvas id=\"before-gl\"></canvas><p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"before-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"before-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
+         <section class=\"side\" id=\"after-panel\"><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><canvas id=\"after-gl\"></canvas><p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"after-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"after-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
          <script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
     ))
 }
 
 const COMPARISON_CSS: &str = r#"
-:root{--bg:#17171f;--panel:#1e1e2a;--text:#d5d9e5;--muted:#aab1c5;--accent:#7aa2f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}header,.sync{padding:.8rem 1rem}h1,h2,h3{color:var(--accent)}h1{font-size:1.1rem}.warning{color:#f0cb83}.sync{background:#20202c;display:flex;gap:1rem;align-items:center}.sync input{min-width:20rem}main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;padding:1rem}@media(max-width:900px){main{grid-template-columns:1fr}}.side{background:var(--panel);border-radius:8px;padding:.8rem}canvas{width:100%;aspect-ratio:4/3;background:#12121a;border-radius:5px}svg{width:100%;background:#12121a;border-radius:5px;margin-top:.6rem}ul{padding-left:1.3rem;max-height:13rem;overflow:auto}.finding{cursor:pointer;padding:.3rem;margin:.2rem 0;background:#272738;border-radius:4px}.finding:hover{background:#34344a}pre{white-space:pre-wrap;word-break:break-word;color:var(--muted)}.selected{outline:2px solid #f0cb83}
+:root{--bg:#17171f;--panel:#1e1e2a;--text:#d5d9e5;--muted:#aab1c5;--accent:#7aa2f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}header,.sync,.shared-chart{padding:.8rem 1rem}h1,h2,h3{color:var(--accent)}h1{font-size:1.1rem}.warning{color:#f0cb83}.sync{background:#20202c;display:flex;gap:1rem;align-items:center}.sync input{min-width:20rem}.shared-chart{margin:0 1rem;background:var(--panel);border-radius:8px}.shared-chart h2{font-size:1rem;margin:.2rem 0}main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;padding:1rem}@media(max-width:900px){main{grid-template-columns:1fr}.sync input{min-width:10rem}}.side{background:var(--panel);border-radius:8px;padding:.8rem}canvas{width:100%;aspect-ratio:4/3;background:#12121a;border-radius:5px}svg{width:100%;background:#12121a;border-radius:5px;margin-top:.6rem}ul{padding-left:1.3rem;max-height:13rem;overflow:auto}.finding{cursor:pointer;padding:.3rem;margin:.2rem 0;background:#272738;border-radius:4px}.finding:hover{background:#34344a}.context-label,.context{color:var(--muted)}.structural{border-left:3px solid #bb9af7;padding-left:.5rem}pre{white-space:pre-wrap;word-break:break-word;color:var(--muted)}.selected{outline:2px solid #f0cb83}
 "#;
 
 fn select_clip<'a>(
@@ -444,7 +451,7 @@ fn comparison_side_json(
     .into();
     let findings = side.checks.iter().flat_map(CheckEvaluation::findings)
         .filter(|finding| finding.clip.as_deref() == Some(clip_name) || finding.clip.is_none())
-        .map(|finding| json!({"anchor":finding_anchor(finding),"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"time":finding.time_s,"message":finding.message}))
+        .map(|finding| json!({"anchor":finding_anchor(finding),"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"time":finding.time_s,"measured":finding.measured,"expected":finding.expected,"members":finding.members,"prediction_scope":finding.prediction_scope,"message":finding.message}))
         .collect::<Vec<_>>();
     let gaps = side.checks.iter().flat_map(|check| check.gaps().iter().map(move |gap| (check.check_id(), gap)))
         .map(|(check_id, gap)| json!({"check_id":check_id,"code":gap.code,"message":gap.message,"scope":gap.scope}))
@@ -460,22 +467,172 @@ fn comparison_side_json(
         .collect::<Vec<_>>();
     Ok(json!({
         "identity": {"sha256": side.identity.sha256(), "bytes": side.identity.bytes()},
-        "clip": {"name":clip_name,"duration":duration_s,"frames":frames,"times":grid.times,"positions":base64::engine::general_purpose::STANDARD.encode(positions),"trails":trails},
+        "clip": {"anchor":semantic_anchor("clip", clip_name),"name":clip_name,"duration":duration_s,"frames":frames,"times":grid.times,"positions":base64::engine::general_purpose::STANDARD.encode(positions),"trails":trails},
+        "contexts": comparison_contexts(side, clip_name, grid),
         "findings":findings,"gaps":gaps,"prediction_provenance":side.prediction_provenance,"predictions":predictions,
     }))
 }
 
+fn comparison_contexts(side: ComparisonSide<'_>, clip_name: &str, grid: &PoseGrid) -> Value {
+    let left_gait_role = side
+        .roles
+        .get(Role::LeftFoot)
+        .map(|bone| (Role::LeftFoot, bone))
+        .or_else(|| {
+            side.roles
+                .get(Role::LeftToe)
+                .map(|bone| (Role::LeftToe, bone))
+        });
+    let right_gait_role = side
+        .roles
+        .get(Role::RightFoot)
+        .map(|bone| (Role::RightFoot, bone))
+        .or_else(|| {
+            side.roles
+                .get(Role::RightToe)
+                .map(|bone| (Role::RightToe, bone))
+        });
+    let gait = match (side.roles.get(Role::Hips), left_gait_role, right_gait_role) {
+        (Some(hips), Some((left_role, left)), Some((right_role, right))) => json!({
+            "source": "exact sampled pose-grid model-space selected foot/toe heights relative to hips",
+            "hips": hips,
+            "left": left,
+            "left_role": left_role.as_str(),
+            "right": right,
+            "right_role": right_role.as_str(),
+        }),
+        _ => Value::Null,
+    };
+
+    let contact_height_m = side
+        .config
+        .check_settings("foot-slide")
+        .contact_height_m
+        .unwrap_or(animsmith_core::DEFAULT_CONTACT_HEIGHT_M);
+    let stances = [
+        (StanceSideV1::Left, "left", "left_foot_stance"),
+        (StanceSideV1::Right, "right", "right_foot_stance"),
+    ]
+    .into_iter()
+    .filter(|(_, _, scope_code)| {
+        side.checks.iter().any(|check| {
+            check.check_id() == "foot-slide"
+                && check.evaluated_scopes().iter().any(|scope| {
+                    scope.code.as_str() == *scope_code
+                        && scope.subject.as_deref() == Some(clip_name)
+                })
+        })
+    })
+    .filter_map(|(stance_side, label, scope_code)| {
+        let stance = resolve_stance_support_v1(grid, side.roles, stance_side, contact_height_m)?;
+        let bone = stance.bone();
+        let bone_name = side
+            .grids
+            .document()
+            .skeleton
+            .bones
+            .get(bone)?
+            .name
+            .as_str();
+        let runs = stance
+            .retained_runs()
+            .map(|run| {
+                json!({
+                    "start_frame": run.start_frame,
+                    "end_frame": run.end_frame,
+                    "start_s": grid.times[run.start_frame],
+                    "end_s": grid.times[run.end_frame],
+                })
+            })
+            .collect::<Vec<_>>();
+        Some(json!({
+            "source": "typed foot-slide evaluated scope plus shared V1 sampled stance classifier",
+            "scope": scope_code,
+            "side": label,
+            "selected_role": stance.role().as_str(),
+            "bone": bone,
+            "bone_name": bone_name,
+            "contact_height_m": contact_height_m,
+            "runs": runs,
+        }))
+    })
+    .collect::<Vec<_>>();
+
+    let findings = side
+        .checks
+        .iter()
+        .flat_map(CheckEvaluation::findings)
+        .filter(|finding| finding.clip.as_deref() == Some(clip_name));
+    let mut seams = Vec::new();
+    let mut structural = Vec::new();
+    for finding in findings {
+        let anchor = finding_anchor(finding);
+        if matches!(
+            finding.check_id,
+            "loop-closure" | "loop-seam" | "loop-seam-vel" | "loop-seam-rot"
+        ) {
+            let subject_bone = finding.bone.as_ref().and_then(|name| {
+                side.grids
+                    .document()
+                    .skeleton
+                    .bones
+                    .iter()
+                    .position(|bone| bone.name == *name)
+            });
+            seams.push(json!({
+                "source": "typed seam finding on exact sampled endpoint poses",
+                "finding_anchor": anchor,
+                "check": finding.check_id,
+                "first_frame": 0,
+                "last_frame": grid.frame_count() - 1,
+                "first_s": grid.times[0],
+                "last_s": grid.times[grid.frame_count() - 1],
+                "subject_bone": subject_bone,
+                "subject_bone_name": finding.bone,
+            }));
+        }
+        if matches!(
+            finding.check_id,
+            "constant-track" | "quat-flip" | "quat-norm"
+        ) {
+            structural.push(json!({
+                "source": "typed check finding; no visual pose difference is implied",
+                "finding_anchor": anchor,
+                "check": finding.check_id,
+                "evidence_kind": "structural",
+                "subject_bone_name": finding.bone,
+                "label": "structural evidence — poses may look unchanged",
+            }));
+        }
+    }
+
+    json!({
+        "gait": gait,
+        "stances": stances,
+        "seams": seams,
+        "structural": structural,
+    })
+}
+
 fn finding_anchor(finding: &animsmith_core::Finding) -> String {
     let material = format!(
-        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{:?}",
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{:?}\u{1f}{}",
         finding.check_id,
         finding.clip.as_deref().unwrap_or(""),
         finding.bone.as_deref().unwrap_or(""),
         finding.node.as_deref().unwrap_or(""),
-        finding.time_s
+        finding.time_s,
+        finding.message,
     );
     format!(
         "finding-{}",
+        &animsmith_core::sha256_hex(material.as_bytes())[..16]
+    )
+}
+
+fn semantic_anchor(kind: &str, material: &str) -> String {
+    format!(
+        "{kind}-{}",
         &animsmith_core::sha256_hex(material.as_bytes())[..16]
     )
 }
