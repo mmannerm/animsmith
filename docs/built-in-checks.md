@@ -297,7 +297,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Prerequisites and applicability: active only on clips that declare
   `animates_bones`. The bone must exist and carry at least one keyed track.
 - Config, defaults, and units: `[checks.frozen-bone] severity`,
-  `min_rotation_deg` default `1.0`, and `clips.<name>.animates_bones`.
+  `min_rotation_deg` default `1.0` degrees, and `clips.<name>.animates_bones`.
 - Inactive, not-applicable, and coverage gaps: `not_applicable` on clips
   without `animates_bones`; no typed gaps once the declaration exists. Missing
   bones themselves belong to `missing-bones`.

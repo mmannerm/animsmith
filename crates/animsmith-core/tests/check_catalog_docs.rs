@@ -359,6 +359,7 @@ fn assert_built_in_check_inventory(markdown: &str, catalog: &BTreeSet<&str>) {
 struct MarkdownSection {
     heading: String,
     body: String,
+    code_spans: Vec<String>,
 }
 
 fn built_in_check_sections(markdown: &str) -> Vec<MarkdownSection> {
@@ -383,8 +384,20 @@ fn built_in_check_sections(markdown: &str) -> Vec<MarkdownSection> {
         let body_end = (end + 1..events.len())
             .find(|candidate| markdown_heading_at_or_above_h3(&events[*candidate]))
             .unwrap_or(events.len());
-        let body = markdown_event_text(&events[end + 1..body_end]);
-        sections.push(MarkdownSection { heading, body });
+        let body_events = &events[end + 1..body_end];
+        let body = markdown_event_text(body_events);
+        let code_spans = body_events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Code(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .collect();
+        sections.push(MarkdownSection {
+            heading,
+            body,
+            code_spans,
+        });
     }
 
     sections
@@ -454,6 +467,9 @@ fn markdown_event_text(events: &[Event<'_>]) -> String {
 
 fn assert_built_in_check_details(markdown: &str, catalog: &BTreeSet<&str>) {
     let sections = built_in_check_sections(markdown);
+    let workspace_root = source_workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))
+        .expect("source docs imply a source checkout");
+    let inventory_rows = built_in_check_inventory_rows();
     let mut seen = BTreeSet::new();
     for section in &sections {
         if catalog.contains(section.heading.as_str()) {
@@ -469,9 +485,142 @@ fn assert_built_in_check_details(markdown: &str, catalog: &BTreeSet<&str>) {
                     section.heading
                 );
             }
+            let source_path = inventory_rows
+                .iter()
+                .find(|row| row.id == section.heading)
+                .map(|row| row.source)
+                .expect("every registered check has an implementation source");
+            let source = read_workspace_doc(&workspace_root, source_path);
+            assert_documented_numeric_defaults(section, &source);
         }
     }
     assert_exact_ids("docs/built-in-checks.md detailed sections", &seen, catalog);
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NumericDefault {
+    constant: &'static str,
+    key: &'static str,
+    unit: &'static str,
+    literal: &'static str,
+}
+
+fn numeric_defaults(id: &str) -> &'static [NumericDefault] {
+    match id {
+        "bind-pose" => &[NumericDefault {
+            constant: "DEFAULT_MAX_MEAN_REST_DELTA_DEG",
+            key: "max_mean_rest_delta_deg",
+            unit: "degrees",
+            literal: "45.0",
+        }],
+        "foot-slide" => &[
+            NumericDefault {
+                constant: "DEFAULT_CONTACT_HEIGHT_M",
+                key: "contact_height_m",
+                unit: "metres",
+                literal: "0.03",
+            },
+            NumericDefault {
+                constant: "DEFAULT_MAX_SLIDE_MPS",
+                key: "max_slide_mps",
+                unit: "metres per second",
+                literal: "0.3",
+            },
+        ],
+        "frozen-bone" => &[NumericDefault {
+            constant: "DEFAULT_MIN_ROTATION_DEG",
+            key: "min_rotation_deg",
+            unit: "degrees",
+            literal: "1.0",
+        }],
+        "loop-closure" => &[
+            NumericDefault {
+                constant: "DEFAULT_MAX_POSITION_DELTA_M",
+                key: "max_position_delta_m",
+                unit: "metres",
+                literal: "0.01",
+            },
+            NumericDefault {
+                constant: "DEFAULT_MAX_ROTATION_DELTA_DEG",
+                key: "max_rotation_delta_deg",
+                unit: "degrees",
+                literal: "1.0",
+            },
+        ],
+        "loop-seam" => &[NumericDefault {
+            constant: "DEFAULT_MAX_RATIO",
+            key: "max_ratio",
+            unit: "",
+            literal: "1.5",
+        }],
+        "loop-seam-rot" => &[NumericDefault {
+            constant: "DEFAULT_MAX_ANGULAR_VELOCITY_DELTA_DEGPS",
+            key: "max_angular_velocity_delta_degps",
+            unit: "degrees per second",
+            literal: "5.0",
+        }],
+        "loop-seam-vel" => &[NumericDefault {
+            constant: "DEFAULT_MAX_VELOCITY_DELTA_MPS",
+            key: "max_velocity_delta_mps",
+            unit: "metres per second",
+            literal: "0.1",
+        }],
+        "rest-world-scale" => &[
+            NumericDefault {
+                constant: "DEFAULT_EXPECTED_UNIFORM_SCALE",
+                key: "expected_uniform_scale",
+                unit: "",
+                literal: "1.0",
+            },
+            NumericDefault {
+                constant: "DEFAULT_UNIFORM_SCALE_TOLERANCE",
+                key: "uniform_scale_tolerance",
+                unit: "",
+                literal: "1.0e-4",
+            },
+        ],
+        _ => &[],
+    }
+}
+
+fn assert_documented_numeric_defaults(section: &MarkdownSection, source: &str) {
+    for default in numeric_defaults(&section.heading) {
+        let implementation_value = source_default_constant_value(source, default.constant);
+        let key_index = section
+            .code_spans
+            .iter()
+            .position(|span| span == default.key)
+            .unwrap_or_else(|| {
+                panic!(
+                    "detailed section for {} is missing config key `{}`",
+                    section.heading, default.key
+                )
+            });
+        let documented_value = section
+            .code_spans
+            .get(key_index + 1)
+            .and_then(|span| span.parse::<f64>().ok())
+            .unwrap_or_else(|| {
+                panic!(
+                    "detailed section for {} must put a numeric default immediately after `{}`",
+                    section.heading, default.key
+                )
+            });
+        assert_eq!(
+            documented_value, implementation_value,
+            "documented default for {} drifted from {}",
+            default.key, default.constant
+        );
+        if !default.unit.is_empty() {
+            assert!(
+                section.body.contains(default.unit),
+                "detailed section for {} is missing unit `{}` for `{}`",
+                section.heading,
+                default.unit,
+                default.key
+            );
+        }
+    }
 }
 
 fn assert_source_contains_tokens(id: &str, source: &str, tokens: &[&str]) {
@@ -541,27 +690,24 @@ fn assert_default_enablement(id: &str, source: &str, expected_enabled: bool) {
     );
 }
 
-fn expected_default_constants(id: &str) -> &'static [(&'static str, &'static str)] {
-    match id {
-        "bind-pose" => &[("DEFAULT_MAX_MEAN_REST_DELTA_DEG", "45.0")],
-        "foot-slide" => &[
-            ("DEFAULT_CONTACT_HEIGHT_M", "0.03"),
-            ("DEFAULT_MAX_SLIDE_MPS", "0.3"),
-        ],
-        "frozen-bone" => &[("DEFAULT_MIN_ROTATION_DEG", "1.0")],
-        "loop-closure" => &[
-            ("DEFAULT_MAX_POSITION_DELTA_M", "0.01"),
-            ("DEFAULT_MAX_ROTATION_DELTA_DEG", "1.0"),
-        ],
-        "loop-seam" => &[("DEFAULT_MAX_RATIO", "1.5")],
-        "loop-seam-rot" => &[("DEFAULT_MAX_ANGULAR_VELOCITY_DELTA_DEGPS", "5.0")],
-        "loop-seam-vel" => &[("DEFAULT_MAX_VELOCITY_DELTA_MPS", "0.1")],
-        "rest-world-scale" => &[
-            ("DEFAULT_EXPECTED_UNIFORM_SCALE", "1.0"),
-            ("DEFAULT_UNIFORM_SCALE_TOLERANCE", "1.0e-4"),
-        ],
-        _ => &[],
-    }
+fn source_default_constant_value(source: &str, name: &str) -> f64 {
+    let compact: String = source
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let declaration = format!("pubconst{name}:");
+    let start = compact
+        .find(&declaration)
+        .unwrap_or_else(|| panic!("implementation source is missing default constant {name}"));
+    let rest = &compact[start + declaration.len()..];
+    let literal = rest
+        .strip_prefix("f32=")
+        .or_else(|| rest.strip_prefix("f64="))
+        .and_then(|value| value.split(';').next())
+        .unwrap_or_else(|| panic!("default constant {name} has an unexpected type"));
+    literal
+        .parse()
+        .unwrap_or_else(|_| panic!("default constant {name} is not numeric"))
 }
 
 fn assert_default_constants(id: &str, source: &str) {
@@ -569,19 +715,18 @@ fn assert_default_constants(id: &str, source: &str) {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
-    for (name, value) in expected_default_constants(id) {
+    for default in numeric_defaults(id) {
+        let name = default.constant;
         let declaration = format!("pubconst{name}:");
         let start = compact.find(&declaration).unwrap_or_else(|| {
             panic!("implementation source for {id} is missing default constant {name}")
         });
-        let rest = &compact[start + declaration.len()..];
-        let actual = rest
-            .strip_prefix("f32=")
-            .or_else(|| rest.strip_prefix("f64="))
-            .and_then(|value| value.split(';').next())
-            .unwrap_or_else(|| panic!("default constant {name} for {id} has an unexpected type"));
+        let actual = source_default_constant_value(source, name);
+        let expected_value = default.literal.parse::<f64>().unwrap_or_else(|_| {
+            panic!("test authority for default constant {name} is not numeric")
+        });
         assert_eq!(
-            actual, *value,
+            actual, expected_value,
             "implementation default constant {name} for {id} drifted from the documented value"
         );
         assert!(
@@ -964,6 +1109,31 @@ fn stale_or_missing_built_in_check_inventory_rows_fail_the_docs_gate() {
         "{message}"
     );
     assert!(message.contains("bind-pose"), "{message}");
+}
+
+#[test]
+fn numeric_default_drift_in_a_detail_section_fails_the_docs_gate() {
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+        read_source_catalog_docs()
+    else {
+        return;
+    };
+    let mutated = built_in_checks.replacen(
+        "`max_slide_mps` default `0.3`",
+        "`max_slide_mps` default `0.4`",
+        1,
+    );
+    assert_ne!(
+        mutated, built_in_checks,
+        "mutation must change a documented default"
+    );
+
+    let failure = std::panic::catch_unwind(|| {
+        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &mutated);
+    })
+    .expect_err("a documented numeric default drift must fail the docs gate");
+    let message = panic_message(failure);
+    assert!(message.contains("max_slide_mps"), "{message}");
 }
 
 #[test]
