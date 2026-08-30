@@ -17,6 +17,9 @@ when one is violated. Each symptom section explains the mechanics and
 maps them to the animsmith checks, repairs, and configuration that
 address them. If you want runnable commands, each symptom links into
 the [examples cookbook](../examples/README.md); if you want the
+current per-check reference for IDs, default findings, prerequisites,
+config keys, coverage gaps, and remediation boundaries, see the
+[built-in check reference](built-in-checks.md); if you want the
 reasoning behind the tool itself — why it exists and what it is worth
 to your team — see [why animsmith](why-animsmith.md).
 
@@ -525,7 +528,8 @@ in the world for a root-motion clip. Deviation is the skate that
 runtime IK and blend band-aids exist to hide.
 
 The `foot-slide` check measures stance-phase foot velocity against the
-declaration. It is the research-grade check of the catalog: contact
+declared `speed_mps` and the clip's measured horizontal root speed. It is the
+research-grade check of the catalog: contact
 detection is heuristic, so it ships as a warning with generous
 defaults, and is judged only on clips that declare `speed_mps`.
 

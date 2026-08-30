@@ -22,6 +22,7 @@ Find what you need by task — each page below owns one job.
 | [Material texture recipes](material-texture-recipes.md) | Attach explicit BaseColor, normal, metallic-roughness, and occlusion images during conversion with deterministic resizing and provenance evidence. | Guides |
 | [Multi-source character assembly](character-assembly.md) | Combine an authoritative skinned base with exact takes and timeline windows from separate inputs, producing one deterministic GLB plus evidence. | Guides |
 | [Collection contract extensions](collection-contracts.md) | Read the contact-fragment and transition-family contracts, including the strict standalone and manifest-selected contact-fragment producer. | Guides |
+| [Built-in check reference](built-in-checks.md) | Look up every registered built-in check: current IDs, default findings, prerequisites, config keys, gap semantics, and remediation boundaries. | Reference |
 | [cli.md](cli.md) | Look up a command, flag, or exit code. | Reference |
 | [output.md](output.md) | Parse versioned `--format json` reports, glTF animation-addressability inventories, engine import advice, and producer evidence in a pipeline, validated by the JSON Schema under [`schemas/`](schemas/). | Reference |
 | [embedding.md](embedding.md) | Choose library crates and integration boundaries, then follow the embedded gate flow with the runnable [`embed`](../crates/animsmith/examples/embed.rs) example. | Rust integration |

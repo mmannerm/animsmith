@@ -145,6 +145,12 @@ The CLI crate is not the library API; it is one frontend over the same core.
 
 ## Checks
 
+The tables below stay intentionally compact. For the current per-check
+reference covering defaults, prerequisites, config keys, skip and
+coverage-gap behavior, remediation guidance, and docs.rs API links, see the
+[built-in check
+reference](https://github.com/mmannerm/animsmith/blob/main/docs/built-in-checks.md).
+
 Mechanical checks:
 
 | id | severity | what |
@@ -178,7 +184,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `sync-group` | error | same-time blend members must share duration, frame grid, and endpoint convention |
 | `time-complement` | warning | same-time blend pairs whose gait phase aligns substantially better under reflected time |
 | `root-motion-speed` | error | measured horizontal root travel vs a declared speed pin |
-| `foot-slide` | warning | stance feet must move consistently with declared travel |
+| `foot-slide` | warning | stance feet must move consistently with the declared `speed_mps` and measured root speed |
 | `missing-bones` | error | declared animated bones missing from the skeleton or carrying no keys |
 | `required-bones` | error | declared rig bones missing from the skeleton, even when no clip is expected to animate them |
 | `rest-world-scale` | warning | selected source nodes have an unexpected effective rest-world scale or affine class |
@@ -203,7 +209,9 @@ than guessing or manufacturing a content finding.
 ## Configuration
 
 `animsmith.toml` is auto-loaded from the working directory, or passed
-with `--config`:
+with `--config`. The detailed check-by-check cross-reference for the keys below
+is in the [built-in check
+reference](https://github.com/mmannerm/animsmith/blob/main/docs/built-in-checks.md):
 
 The complete table/key reference, defaults, precedence, validation domains,
 and engine-profile settings live in the [configuration reference](https://github.com/mmannerm/animsmith/blob/main/docs/configuration-reference.md).
