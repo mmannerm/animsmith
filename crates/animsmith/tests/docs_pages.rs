@@ -646,17 +646,23 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
             .expect("runs Pages composition")
             .success()
     );
-    assert!(
-        std::fs::read_to_string(output.join("index.html"))
-            .expect("reads release root")
-            .contains("RELEASE ROOT\nmdbook=release-mdbook\npin=0.4.51"),
-        "the Pages root uses the selected release checkout and its mdBook pin"
+    let release_root =
+        std::fs::read_to_string(output.join("index.html")).expect("reads release root");
+    assert_eq!(
+        strict_lines(&release_root),
+        ["# RELEASE ROOT", "mdbook=release-mdbook", "pin=0.4.51"],
+        "the Pages root uses the selected release checkout and its mdBook pin:\n{release_root}"
     );
-    assert!(
-        std::fs::read_to_string(output.join("dev/index.html"))
-            .expect("reads development subtree")
-            .contains("MAIN DEVELOPMENT\nmdbook=development-mdbook\npin=0.4.52"),
-        "the /dev subtree uses current main and its independent mdBook pin"
+    let development_root =
+        std::fs::read_to_string(output.join("dev/index.html")).expect("reads development subtree");
+    assert_eq!(
+        strict_lines(&development_root),
+        [
+            "# MAIN DEVELOPMENT",
+            "mdbook=development-mdbook",
+            "pin=0.4.52"
+        ],
+        "the /dev subtree uses current main and its independent mdBook pin:\n{development_root}"
     );
     assert_eq!(
         strict_lines(
