@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- preflight Pages composition paths
+- *(engine)* remove unreachable non-Windows fallback
 - *(report)* bind comparison evidence authorities
 - *(report)* harden comparison authority boundaries
 - *(report)* preflight and publish comparisons safely
