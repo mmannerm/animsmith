@@ -13,7 +13,6 @@ use std::process::ExitCode;
 
 use animsmith_core::InputIdentity;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::{collection_output, publish, render};
 
@@ -91,17 +90,6 @@ fn serialize_authority_bounded(
 }
 
 fn validate_authority_readback(bytes: &[u8]) -> Result<(), String> {
-    let value: Value = serde_json::from_slice(bytes)
-        .map_err(|_| "dashboard authority serialization is invalid JSON".to_owned())?;
-    let schema: Value = serde_json::from_str(include_str!(
-        "../../../docs/schemas/collection-dashboard-v1.schema.json"
-    ))
-    .map_err(|_| "dashboard authority schema is invalid".to_owned())?;
-    let validator = jsonschema::validator_for(&schema)
-        .map_err(|_| "dashboard authority schema cannot compile".to_owned())?;
-    if validator.iter_errors(&value).next().is_some() {
-        return Err("dashboard authority fails its V1 schema".to_owned());
-    }
     let readback = serde_json::from_slice::<DashboardAuthorityReadback>(bytes)
         .map_err(|_| "dashboard authority fails typed V1 readback".to_owned())?;
     readback.validate_semantics()?;
@@ -268,18 +256,7 @@ fn read_compatible_evaluation(
     collection: &collection_output::CollectionDashboardInput,
 ) -> Result<EvaluationAuthorityV1, String> {
     let bytes = read_bounded(path, MAX_EVALUATION_BYTES, "transition-pose evaluation")?;
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|_| "transition-pose evaluation JSON is invalid".to_owned())?;
-    let schema: Value = serde_json::from_str(include_str!(
-        "../../../docs/schemas/transition-pose-evaluation-v1.schema.json"
-    ))
-    .map_err(|_| "transition-pose evaluation schema is invalid".to_owned())?;
-    let validator = jsonschema::validator_for(&schema)
-        .map_err(|_| "transition-pose evaluation schema cannot compile".to_owned())?;
-    if validator.iter_errors(&value).next().is_some() {
-        return Err("transition-pose evaluation violates its strict V1 schema".to_owned());
-    }
-    let wire: TransitionPoseEvaluationWire = serde_json::from_value(value)
+    let wire: TransitionPoseEvaluationWire = serde_json::from_slice(&bytes)
         .map_err(|_| "transition-pose evaluation has an unsupported V1 shape".to_owned())?;
     if wire.schema != TRANSITION_POSE_V1_ID
         || wire.schema_version != 1
@@ -289,6 +266,7 @@ fn read_compatible_evaluation(
             "transition-pose evaluation is not compatible with this collection output".to_owned(),
         );
     }
+    wire.validate()?;
     Ok(EvaluationAuthorityV1 {
         input: InputIdentity::from_bytes(&bytes),
         status: wire.status,
@@ -346,8 +324,16 @@ fn read_compatible_evaluation(
                         .then_some(EvaluationPairFindingV1 {
                             member_indices: pair.member_indices,
                             boundary: pair.boundary,
-                            translation_offenders: pair.translation_offenders,
-                            rotation_offenders: pair.rotation_offenders,
+                            translation_offenders: pair
+                                .translation_offenders
+                                .into_iter()
+                                .map(TransitionPoseOffenderWire::translation)
+                                .collect(),
+                            rotation_offenders: pair
+                                .rotation_offenders
+                                .into_iter()
+                                .map(TransitionPoseOffenderWire::rotation)
+                                .collect(),
                         })
                     })
                     .collect(),
@@ -598,8 +584,15 @@ impl DashboardAuthorityReadback {
     fn validate_semantics(&self) -> Result<(), String> {
         if self.schema != COLLECTION_DASHBOARD_V1_ID
             || self.schema_version != COLLECTION_DASHBOARD_V1_VERSION
+            || !self.collection_output.valid(None)
+            || self.view.sources.len() > 4096
+            || self.view.clips.len() > 4096
+            || self.view.runtime_sets.len() > 4096
         {
             return Err("dashboard authority has the wrong V1 identity".to_owned());
+        }
+        if let Some(evaluation) = &self.evaluation {
+            evaluation.validate()?;
         }
         let mut summary = DashboardSummaryReadback {
             sources: self.view.sources.len(),
@@ -625,6 +618,28 @@ impl DashboardAuthorityReadback {
             return Err("dashboard authority duplicates a logical clip".to_owned());
         }
         for clip in &self.view.clips {
+            if clip.id.chars().count() > 4096
+                || clip.source.chars().count() > 4096
+                || clip.take_name.chars().count() > 4096
+                || clip.roles.len() > 4096
+                || clip.severities.len() > 4096
+                || clip.runtime_sets.len() > 4096
+                || clip.roles.iter().any(|role| role.chars().count() > 4096)
+                || clip
+                    .runtime_sets
+                    .iter()
+                    .any(|set| set.chars().count() > 4096)
+                || clip
+                    .severities
+                    .iter()
+                    .any(|severity| !matches!(severity.as_str(), "error" | "warning" | "note"))
+                || clip
+                    .report_link
+                    .as_ref()
+                    .is_some_and(|link| !safe_relative_report_reference(link))
+            {
+                return Err("dashboard authority has an invalid bounded row".to_owned());
+            }
             summary.findings = summary
                 .findings
                 .checked_add(clip.findings)
@@ -664,12 +679,37 @@ impl DashboardAuthorityReadback {
             }
         }
         for set in &self.view.runtime_sets {
+            if set.id.chars().count() > 4096
+                || set.members.len() > 4096
+                || set.gaps.len() > 4096
+                || set
+                    .members
+                    .iter()
+                    .any(|member| member.chars().count() > 4096)
+                || set.gaps.iter().any(|gap| gap.chars().count() > 4096)
+                || !matches!(set.lifecycle.as_str(), "complete" | "incomplete")
+            {
+                return Err("dashboard authority has an invalid runtime set".to_owned());
+            }
             if set
                 .members
                 .iter()
                 .any(|member| !clip_ids.contains(member.as_str()))
             {
                 return Err("dashboard runtime set references an unknown logical clip".to_owned());
+            }
+        }
+        for source in &self.view.sources {
+            if source.key.chars().count() > 4096
+                || source.locator.chars().count() > 4096
+                || !matches!(source.availability.as_str(), "available" | "unavailable")
+                || !matches!(source.loader.as_str(), "ready" | "unavailable")
+                || !matches!(
+                    source.dependency_closure.as_str(),
+                    "complete" | "partial" | "unavailable"
+                )
+            {
+                return Err("dashboard authority has an invalid source".to_owned());
             }
         }
         if self.summary.sources != summary.sources
@@ -795,6 +835,24 @@ struct DashboardEvaluationReadback {
     reason: Option<String>,
     families: Vec<DashboardEvaluationFamilyReadback>,
 }
+impl DashboardEvaluationReadback {
+    fn validate(&self) -> Result<(), String> {
+        if !self.input.valid(Some(MAX_EVALUATION_BYTES))
+            || !matches!(self.status.as_str(), "complete" | "incomplete")
+            || !matches!(self.decision.as_str(), "pass" | "finding" | "not_evaluated")
+            || self.reason.as_deref().is_some_and(|reason| {
+                !valid_transition_reason(reason) && reason != "no_configured_families"
+            })
+            || self.families.len() > 4096
+        {
+            return Err("dashboard authority has invalid transition evaluation".to_owned());
+        }
+        for family in &self.families {
+            family.validate()?;
+        }
+        Ok(())
+    }
+}
 #[allow(
     dead_code,
     reason = "strict dashboard authority readback validates these fields"
@@ -809,6 +867,42 @@ struct DashboardEvaluationFamilyReadback {
     reason: Option<String>,
     members: Vec<DashboardEvaluationMemberReadback>,
     pair_findings: Vec<DashboardEvaluationPairFindingReadback>,
+}
+impl DashboardEvaluationFamilyReadback {
+    fn validate(&self) -> Result<(), String> {
+        if self.id.is_empty()
+            || self.id.chars().count() > 255
+            || !matches!(self.status.as_str(), "complete" | "incomplete")
+            || !matches!(self.decision.as_str(), "pass" | "finding" | "not_evaluated")
+            || self
+                .reason
+                .as_deref()
+                .is_some_and(|reason| !valid_transition_reason(reason))
+            || self.members.len() > 4096
+            || self.pair_findings.len() > 4096
+        {
+            return Err("dashboard authority has invalid transition family".to_owned());
+        }
+        for member in &self.members {
+            if member.take_name.is_empty()
+                || member.take_name.chars().count() > 4096
+                || member
+                    .source_input
+                    .as_ref()
+                    .is_some_and(|input| !input.valid(None))
+                || member
+                    .logical_clip
+                    .as_ref()
+                    .is_some_and(|clip| clip.chars().count() > 4096)
+            {
+                return Err("dashboard authority has invalid transition member".to_owned());
+            }
+        }
+        for pair in &self.pair_findings {
+            pair.validate(self.members.len())?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -862,8 +956,31 @@ struct EvaluationFamilyV1 {
 struct DashboardEvaluationPairFindingReadback {
     member_indices: [u64; 2],
     boundary: String,
-    translation_offenders: Vec<TransitionPoseOffenderWire>,
-    rotation_offenders: Vec<TransitionPoseOffenderWire>,
+    translation_offenders: Vec<TranslationOffenderWire>,
+    rotation_offenders: Vec<RotationOffenderWire>,
+}
+impl DashboardEvaluationPairFindingReadback {
+    fn validate(&self, members: usize) -> Result<(), String> {
+        if self.member_indices[0] == self.member_indices[1]
+            || self
+                .member_indices
+                .iter()
+                .any(|index| *index >= members as u64)
+            || !matches!(self.boundary.as_str(), "entry" | "exit")
+            || self.translation_offenders.len() > 16
+            || self.rotation_offenders.len() > 16
+            || self.translation_offenders.is_empty() && self.rotation_offenders.is_empty()
+        {
+            return Err("dashboard authority has invalid transition pair finding".to_owned());
+        }
+        for offender in &self.translation_offenders {
+            offender.validate()?;
+        }
+        for offender in &self.rotation_offenders {
+            offender.validate()?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -883,6 +1000,17 @@ struct EvaluationMemberV1 {
 struct IdentityWire {
     sha256: String,
     bytes: u64,
+}
+
+impl IdentityWire {
+    fn valid(&self, max_bytes: Option<u64>) -> bool {
+        self.sha256.len() == 64
+            && self
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte <= b'f'))
+            && max_bytes.is_none_or(|maximum| self.bytes <= maximum)
+    }
 }
 
 impl IdentityWire {
@@ -913,6 +1041,62 @@ struct TransitionPoseEvaluationWire {
     families: Vec<TransitionPoseFamilyWire>,
 }
 
+impl TransitionPoseEvaluationWire {
+    fn validate(&self) -> Result<(), String> {
+        if self.schema != TRANSITION_POSE_V1_ID
+            || self.schema_version != 1
+            || !self._declaration_input.valid(Some(MAX_EVALUATION_BYTES))
+            || !self
+                ._declaration_normalized
+                .valid(Some(MAX_EVALUATION_BYTES))
+            || !self.subject_input.valid(None)
+            || self
+                ._subject_dependency_closure_identity
+                .as_ref()
+                .is_some_and(|value| !value.valid(None))
+            || self.families.len() > 4096
+        {
+            return Err("transition-pose evaluation has an unsupported V1 shape".to_owned());
+        }
+        for family in &self.families {
+            family.validate()?;
+        }
+        let complete_pass = self.status == "complete" && self.decision == "pass";
+        let complete_finding = self.status == "complete" && self.decision == "finding";
+        let incomplete = self.status == "incomplete" && self.decision == "not_evaluated";
+        let valid = (complete_pass
+            && ((self.reason.as_deref() == Some("no_configured_families")
+                && self.families.is_empty())
+                || (self.reason.is_none()
+                    && !self.families.is_empty()
+                    && self
+                        .families
+                        .iter()
+                        .all(|family| family.status == "complete" && family.decision == "pass"))))
+            || (complete_finding
+                && self.reason.is_none()
+                && !self.families.is_empty()
+                && self
+                    .families
+                    .iter()
+                    .all(|family| family.status == "complete")
+                && self
+                    .families
+                    .iter()
+                    .any(|family| family.decision == "finding"))
+            || (incomplete
+                && self.reason.is_none()
+                && !self.families.is_empty()
+                && self
+                    .families
+                    .iter()
+                    .any(|family| family.status == "incomplete"));
+        valid
+            .then_some(())
+            .ok_or_else(|| "transition-pose evaluation has contradictory V1 state".to_owned())
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TransitionPoseFamilyWire {
@@ -927,6 +1111,70 @@ struct TransitionPoseFamilyWire {
     pairs: Vec<TransitionPosePairWire>,
 }
 
+impl TransitionPoseFamilyWire {
+    fn validate(&self) -> Result<(), String> {
+        if self.family_id.is_empty()
+            || self.family_id.chars().count() > 255
+            || self.members.len() < 2
+            || self.members.len() > 4096
+            || self.pairs.len() > 4096
+        {
+            return Err("transition-pose evaluation has an unsupported V1 shape".to_owned());
+        }
+        for member in &self.members {
+            member.validate()?;
+        }
+        for pair in &self.pairs {
+            pair.validate(self.members.len())?;
+        }
+        let complete_pass = self.status == "complete" && self.decision == "pass";
+        let complete_finding = self.status == "complete" && self.decision == "finding";
+        let incomplete = self.status == "incomplete" && self.decision == "not_evaluated";
+        let all_available = self.members.iter().all(|member| {
+            member.source_input.is_some() && member._source_dependency_closure_identity.is_some()
+        });
+        let incomplete_members_valid = match self.reason.as_deref() {
+            Some("dependency_closure_incomplete") => self
+                .members
+                .iter()
+                .any(|member| member._source_dependency_closure_identity.is_none()),
+            Some("member_unavailable") => true,
+            Some(_) => all_available,
+            None => false,
+        };
+        let valid = (complete_pass
+            && self.reason.is_none()
+            && all_available
+            && self
+                ._skeleton_basis_input
+                .as_ref()
+                .is_some_and(|identity| identity.valid(None))
+            && !self.pairs.is_empty()
+            && self.pairs.iter().all(|pair| {
+                pair.translation_offenders.is_empty() && pair.rotation_offenders.is_empty()
+            }))
+            || (complete_finding
+                && self.reason.is_none()
+                && all_available
+                && self
+                    ._skeleton_basis_input
+                    .as_ref()
+                    .is_some_and(|identity| identity.valid(None))
+                && !self.pairs.is_empty()
+                && self.pairs.iter().any(|pair| {
+                    !pair.translation_offenders.is_empty() || !pair.rotation_offenders.is_empty()
+                }))
+            || (incomplete
+                && self.reason.as_deref().is_some_and(valid_transition_reason)
+                && self.pairs.is_empty()
+                && self._skeleton_basis_input.is_none()
+                && incomplete_members_valid);
+        valid
+            .then_some(())
+            .ok_or_else(|| "transition-pose evaluation has contradictory family state".to_owned())
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TransitionPoseMemberWire {
@@ -935,6 +1183,28 @@ struct TransitionPoseMemberWire {
     source_input: Option<IdentityWire>,
     #[serde(default, rename = "source_dependency_closure_identity")]
     _source_dependency_closure_identity: Option<IdentityWire>,
+}
+
+impl TransitionPoseMemberWire {
+    fn validate(&self) -> Result<(), String> {
+        if self.take_name.is_empty()
+            || self.take_name.chars().count() > 4096
+            || self
+                .source_input
+                .as_ref()
+                .is_some_and(|identity| !identity.valid(None))
+            || self
+                ._source_dependency_closure_identity
+                .as_ref()
+                .is_some_and(|identity| !identity.valid(None))
+        {
+            return Err("transition-pose evaluation has an unsupported V1 shape".to_owned());
+        }
+        if self.source_input.is_none() && self._source_dependency_closure_identity.is_some() {
+            return Err("transition-pose evaluation has contradictory member identity".to_owned());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Deserialize)]
@@ -950,19 +1220,128 @@ struct TransitionPosePairWire {
     _translation_tolerance_m: f64,
     #[serde(rename = "rotation_tolerance_deg")]
     _rotation_tolerance_deg: f64,
-    translation_offenders: Vec<TransitionPoseOffenderWire>,
-    rotation_offenders: Vec<TransitionPoseOffenderWire>,
+    translation_offenders: Vec<TranslationOffenderWire>,
+    rotation_offenders: Vec<RotationOffenderWire>,
+}
+
+impl TransitionPosePairWire {
+    fn validate(&self, members: usize) -> Result<(), String> {
+        if self.member_indices[0] == self.member_indices[1]
+            || self
+                .member_indices
+                .iter()
+                .any(|index| *index >= members as u64)
+            || !matches!(self.boundary.as_str(), "entry" | "exit")
+            || self.translation_offenders.len() > 16
+            || self.rotation_offenders.len() > 16
+        {
+            return Err("transition-pose evaluation has an unsupported pair".to_owned());
+        }
+        if !self._max_translation_delta_m.is_finite()
+            || self._max_translation_delta_m < 0.0
+            || !self._max_rotation_delta_deg.is_finite()
+            || self._max_rotation_delta_deg < 0.0
+            || !self._translation_tolerance_m.is_finite()
+            || self._translation_tolerance_m < 0.0
+            || !self._rotation_tolerance_deg.is_finite()
+            || self._rotation_tolerance_deg < 0.0
+        {
+            return Err("transition-pose evaluation has non-finite pair values".to_owned());
+        }
+        for offender in &self.translation_offenders {
+            offender.validate()?;
+        }
+        for offender in &self.rotation_offenders {
+            offender.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TranslationOffenderWire {
+    bone_ordinal: u64,
+    bone_name: String,
+    delta_m: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RotationOffenderWire {
+    bone_ordinal: u64,
+    bone_name: String,
+    delta_deg: f64,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TransitionPoseOffenderWire {
-    #[serde(rename = "bone_ordinal")]
     bone_ordinal: u64,
-    #[serde(rename = "bone_name")]
     bone_name: String,
-    #[serde(rename = "delta", alias = "delta_m", alias = "delta_deg")]
     delta: f64,
+}
+
+impl TransitionPoseOffenderWire {
+    fn translation(value: TranslationOffenderWire) -> Self {
+        Self {
+            bone_ordinal: value.bone_ordinal,
+            bone_name: value.bone_name,
+            delta: value.delta_m,
+        }
+    }
+    fn rotation(value: RotationOffenderWire) -> Self {
+        Self {
+            bone_ordinal: value.bone_ordinal,
+            bone_name: value.bone_name,
+            delta: value.delta_deg,
+        }
+    }
+    fn validate(&self) -> Result<(), String> {
+        if self.bone_ordinal > 4095 || !self.delta.is_finite() || self.delta < 0.0 {
+            return Err("transition-pose evaluation has invalid offender values".to_owned());
+        }
+        Ok(())
+    }
+}
+
+impl TranslationOffenderWire {
+    fn validate(&self) -> Result<(), String> {
+        TransitionPoseOffenderWire::translation(TranslationOffenderWire {
+            bone_ordinal: self.bone_ordinal,
+            bone_name: self.bone_name.clone(),
+            delta_m: self.delta_m,
+        })
+        .validate()
+    }
+}
+
+impl RotationOffenderWire {
+    fn validate(&self) -> Result<(), String> {
+        TransitionPoseOffenderWire::rotation(RotationOffenderWire {
+            bone_ordinal: self.bone_ordinal,
+            bone_name: self.bone_name.clone(),
+            delta_deg: self.delta_deg,
+        })
+        .validate()
+    }
+}
+
+fn valid_transition_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "dependency_closure_incomplete"
+            | "member_unavailable"
+            | "zero_duration"
+            | "skeleton_basis_mismatch"
+            | "time_tolerance_unsupported"
+            | "unsupported_sampling"
+            | "input_limit"
+            | "family_work_limit"
+            | "aggregate_work_limit"
+            | "retention_limit"
+            | "result_limit"
+    )
 }
 
 #[cfg(test)]
@@ -1003,12 +1382,7 @@ mod tests {
     #[test]
     fn authority_readback_rejects_schema_and_summary_mutations() {
         let identity = "0".repeat(64);
-        let value = serde_json::json!({
-            "schema": "urn:animsmith:schema:collection-dashboard:1", "schema_version": 1,
-            "collection_output": {"sha256": identity, "bytes": 0},
-            "summary": {"sources": 0, "clips": 0, "runtime_sets": 0, "findings": 0, "coverage_gaps": 0, "prediction_unavailable": 0, "with_findings": 0, "evaluated": 0, "partial": 0, "excluded": 0, "unavailable": 0, "not_evaluated": 0},
-            "view": {"sources": [], "clips": [], "runtime_sets": []}
-        });
+        let value = serde_json::json!({"schema":"urn:animsmith:schema:collection-dashboard:1","schema_version":1,"collection_output":{"sha256":identity,"bytes":0},"summary":{"sources":0,"clips":0,"runtime_sets":0,"findings":0,"coverage_gaps":0,"prediction_unavailable":0,"with_findings":0,"evaluated":0,"partial":0,"excluded":0,"unavailable":0,"not_evaluated":0},"view":{"sources":[],"clips":[],"runtime_sets":[]}});
         let bytes = serde_json::to_vec(&value).unwrap();
         assert!(validate_authority_readback(&bytes).is_ok());
         let mut mismatch = value.clone();
@@ -1017,5 +1391,22 @@ mod tests {
         let mut unknown = value;
         unknown["unexpected"] = true.into();
         assert!(validate_authority_readback(&serde_json::to_vec(&unknown).unwrap()).is_err());
+    }
+
+    #[test]
+    fn transition_reader_rejects_closure_and_delta_cross_contract_mutations() {
+        let identity = serde_json::json!({"sha256": "0".repeat(64), "bytes": 0});
+        let value = serde_json::json!({
+            "schema":"urn:animsmith:schema:transition-pose-evaluation:1", "schema_version":1,
+            "status":"incomplete", "decision":"not_evaluated",
+            "declaration_input":identity, "declaration_normalized":{"sha256":"0".repeat(64),"bytes":0}, "subject_input":{"sha256":"0".repeat(64),"bytes":0},
+            "families":[{"family_id":"family","status":"incomplete","decision":"not_evaluated","reason":"dependency_closure_incomplete","members":[
+                {"take_index":0,"take_name":"a","source_input":{"sha256":"0".repeat(64),"bytes":0},"source_dependency_closure_identity":{"sha256":"0".repeat(64),"bytes":0}},
+                {"take_index":1,"take_name":"b","source_input":{"sha256":"0".repeat(64),"bytes":0},"source_dependency_closure_identity":{"sha256":"0".repeat(64),"bytes":0}}],"pairs":[]}]
+        });
+        let wire: super::TransitionPoseEvaluationWire = serde_json::from_value(value).unwrap();
+        assert!(wire.validate().is_err());
+        let pair = serde_json::json!({"member_indices":[0,1],"boundary":"entry","max_translation_delta_m":0.0,"max_rotation_delta_deg":0.0,"translation_tolerance_m":0.0,"rotation_tolerance_deg":0.0,"translation_offenders":[{"bone_ordinal":0,"bone_name":"bone","delta":0.0}],"rotation_offenders":[]});
+        assert!(serde_json::from_value::<super::TransitionPosePairWire>(pair).is_err());
     }
 }
