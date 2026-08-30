@@ -528,7 +528,8 @@ in the world for a root-motion clip. Deviation is the skate that
 runtime IK and blend band-aids exist to hide.
 
 The `foot-slide` check measures stance-phase foot velocity against the
-declaration. It is the research-grade check of the catalog: contact
+declared `speed_mps` and the clip's measured horizontal root speed. It is the
+research-grade check of the catalog: contact
 detection is heuristic, so it ships as a warning with generous
 defaults, and is judged only on clips that declare `speed_mps`.
 

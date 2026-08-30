@@ -184,7 +184,7 @@ Contract-aware checks use declared expectations and, where needed, rig roles:
 | `sync-group` | error | same-time blend members must share duration, frame grid, and endpoint convention |
 | `time-complement` | warning | same-time blend pairs whose gait phase aligns substantially better under reflected time |
 | `root-motion-speed` | error | measured horizontal root travel vs a declared speed pin |
-| `foot-slide` | warning | stance feet must move consistently with declared travel |
+| `foot-slide` | warning | stance feet must move consistently with the declared `speed_mps` and measured root speed |
 | `missing-bones` | error | declared animated bones missing from the skeleton or carrying no keys |
 | `required-bones` | error | declared rig bones missing from the skeleton, even when no clip is expected to animate them |
 | `rest-world-scale` | warning | selected source nodes have an unexpected effective rest-world scale or affine class |

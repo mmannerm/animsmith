@@ -144,211 +144,78 @@ struct MarkdownTable {
 struct CheckReferenceInventoryRow {
     id: &'static str,
     default_findings: &'static [&'static str],
-    config_keys: &'static [&'static str],
+    source: &'static str,
+    severity_tokens: &'static [&'static str],
+    config_access: &'static [(&'static str, &'static str)],
 }
 
 fn built_in_check_inventory_rows() -> Vec<CheckReferenceInventoryRow> {
+    macro_rules! finding_name {
+        (Error) => {
+            "error"
+        };
+        (Warning) => {
+            "warning"
+        };
+        (Note) => {
+            "note"
+        };
+        (Off) => {
+            "off"
+        };
+    }
+    macro_rules! severity_token {
+        (Error) => {
+            "Severity::Error"
+        };
+        (Warning) => {
+            "Severity::Warning"
+        };
+        (Note) => {
+            "Severity::Note"
+        };
+        (Off) => {
+            ""
+        };
+    }
+    macro_rules! row {
+        ($id:literal, $source:literal, [$($severity:ident),+], {$($key:literal => $access:literal),* $(,)?}) => {
+            CheckReferenceInventoryRow {
+                id: $id,
+                default_findings: &[$(finding_name!($severity)),+],
+                source: $source,
+                severity_tokens: &[$(severity_token!($severity)),+],
+                config_access: &[$(($key, $access)),*],
+            }
+        };
+    }
     vec![
-        CheckReferenceInventoryRow {
-            id: "nan",
-            default_findings: &["error"],
-            config_keys: &["severity"],
-        },
-        CheckReferenceInventoryRow {
-            id: "time-monotonic",
-            default_findings: &["error", "note"],
-            config_keys: &["severity"],
-        },
-        CheckReferenceInventoryRow {
-            id: "quat-norm",
-            default_findings: &["error"],
-            config_keys: &["severity"],
-        },
-        CheckReferenceInventoryRow {
-            id: "quat-flip",
-            default_findings: &["warning"],
-            config_keys: &["severity"],
-        },
-        CheckReferenceInventoryRow {
-            id: "duration-sanity",
-            default_findings: &["error", "warning"],
-            config_keys: &[
-                "severity",
-                "clips.<name>.duration_s.value",
-                "clips.<name>.duration_s.tolerance",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "scale-keys",
-            default_findings: &["warning"],
-            config_keys: &["severity"],
-        },
-        CheckReferenceInventoryRow {
-            id: "non-uniform-scale",
-            default_findings: &["warning"],
-            config_keys: &["severity"],
-        },
-        CheckReferenceInventoryRow {
-            id: "constant-nonunit-scale",
-            default_findings: &["off", "note"],
-            config_keys: &["severity"],
-        },
-        CheckReferenceInventoryRow {
-            id: "constant-track",
-            default_findings: &["note"],
-            config_keys: &["severity"],
-        },
-        CheckReferenceInventoryRow {
-            id: "required-bones",
-            default_findings: &["error"],
-            config_keys: &["severity", "rig.required_bones"],
-        },
-        CheckReferenceInventoryRow {
-            id: "rest-world-scale",
-            default_findings: &["warning"],
-            config_keys: &[
-                "severity",
-                "runtime_nodes.selectors",
-                "checks.rest-world-scale.node_selectors",
-                "expected_uniform_scale",
-                "uniform_scale_tolerance",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "missing-bones",
-            default_findings: &["error"],
-            config_keys: &["severity", "clips.<name>.animates_bones"],
-        },
-        CheckReferenceInventoryRow {
-            id: "frozen-bone",
-            default_findings: &["error"],
-            config_keys: &[
-                "severity",
-                "min_rotation_deg",
-                "clips.<name>.animates_bones",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "duplicate-loop-endpoint",
-            default_findings: &["warning"],
-            config_keys: &["severity", "clips.<name>.loop"],
-        },
-        CheckReferenceInventoryRow {
-            id: "loop-closure",
-            default_findings: &["error"],
-            config_keys: &[
-                "severity",
-                "max_position_delta_m",
-                "max_rotation_delta_deg",
-                "clips.<name>.loop",
-                "clips.<name>.max_loop_position_delta_m",
-                "clips.<name>.max_loop_rotation_delta_deg",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "loop-seam",
-            default_findings: &["error"],
-            config_keys: &[
-                "severity",
-                "max_ratio",
-                "min_stride_step_m",
-                "clips.<name>.loop",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "loop-seam-vel",
-            default_findings: &["error"],
-            config_keys: &[
-                "severity",
-                "max_velocity_delta_mps",
-                "clips.<name>.loop",
-                "clips.<name>.max_loop_velocity_delta_mps",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "loop-seam-rot",
-            default_findings: &["error"],
-            config_keys: &[
-                "severity",
-                "max_angular_velocity_delta_degps",
-                "clips.<name>.loop",
-                "clips.<name>.max_loop_angular_velocity_delta_degps",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "root-motion-speed",
-            default_findings: &["error"],
-            config_keys: &[
-                "severity",
-                "clips.<name>.speed_mps.value",
-                "clips.<name>.speed_mps.tolerance",
-                "clips.<name>.movement_owner_xz",
-                "clips.<name>.in_place",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "gait-group",
-            default_findings: &["error"],
-            config_keys: &[
-                "severity",
-                "gait_groups.<name>.clips",
-                "gait_groups.<name>.max_gait_phase_spread",
-                "gait_groups.<name>.min_lr_amplitude_m",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "sync-group",
-            default_findings: &["error"],
-            config_keys: &[
-                "severity",
-                "sync_groups.<name>.clips",
-                "sync_groups.<name>.max_duration_delta_s",
-                "sync_groups.<name>.max_frame_count_delta",
-                "sync_groups.<name>.max_fps_delta",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "time-complement",
-            default_findings: &["warning"],
-            config_keys: &[
-                "severity",
-                "sync_groups.<name>.clips",
-                "sync_groups.<name>.time_complement.min_reflected_time_advantage",
-                "sync_groups.<name>.time_complement.min_lr_amplitude_m",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "in-place",
-            default_findings: &["error"],
-            config_keys: &[
-                "severity",
-                "clips.<name>.movement_owner_xz",
-                "clips.<name>.in_place",
-            ],
-        },
-        CheckReferenceInventoryRow {
-            id: "fps",
-            default_findings: &["warning"],
-            config_keys: &["severity", "clips.<name>.fps"],
-        },
-        CheckReferenceInventoryRow {
-            id: "bind-pose",
-            default_findings: &["warning"],
-            config_keys: &["severity", "max_mean_rest_delta_deg"],
-        },
-        CheckReferenceInventoryRow {
-            id: "foot-slide",
-            default_findings: &["warning"],
-            config_keys: &[
-                "severity",
-                "contact_height_m",
-                "max_slide_mps",
-                "clips.<name>.speed_mps.value",
-                "clips.<name>.speed_mps.tolerance",
-                "clips.<name>.movement_owner_xz",
-                "clips.<name>.in_place",
-            ],
-        },
+        row!("nan", "crates/animsmith-core/src/checks/nan.rs", [Error], {"severity" => ""}),
+        row!("time-monotonic", "crates/animsmith-core/src/checks/time_monotonic.rs", [Error, Note], {"severity" => ""}),
+        row!("quat-norm", "crates/animsmith-core/src/checks/quat_norm.rs", [Error], {"severity" => ""}),
+        row!("quat-flip", "crates/animsmith-core/src/checks/quat_flip.rs", [Warning], {"severity" => ""}),
+        row!("duration-sanity", "crates/animsmith-core/src/checks/duration_sanity.rs", [Error, Warning], {"severity" => "", "clips.<name>.duration_s.value" => "duration_s", "clips.<name>.duration_s.tolerance" => "tolerance"}),
+        row!("scale-keys", "crates/animsmith-core/src/checks/scale_keys.rs", [Warning], {"severity" => ""}),
+        row!("non-uniform-scale", "crates/animsmith-core/src/checks/non_uniform_scale.rs", [Warning], {"severity" => ""}),
+        row!("constant-nonunit-scale", "crates/animsmith-core/src/checks/constant_nonunit_scale.rs", [Off, Note], {"severity" => ""}),
+        row!("constant-track", "crates/animsmith-core/src/checks/constant_track.rs", [Note], {"severity" => ""}),
+        row!("required-bones", "crates/animsmith-core/src/checks/required_bones.rs", [Error], {"severity" => "", "rig.required_bones" => "required_bones"}),
+        row!("rest-world-scale", "crates/animsmith-core/src/checks/rest_world_scale.rs", [Warning], {"severity" => "", "runtime_nodes.selectors" => "runtime_node_selectors", "checks.rest-world-scale.node_selectors" => "node_selectors", "expected_uniform_scale" => "expected_uniform_scale", "uniform_scale_tolerance" => "uniform_scale_tolerance"}),
+        row!("missing-bones", "crates/animsmith-core/src/checks/missing_bones.rs", [Error], {"severity" => "", "clips.<name>.animates_bones" => "animates_bones"}),
+        row!("frozen-bone", "crates/animsmith-core/src/checks/frozen_bone.rs", [Error], {"severity" => "", "min_rotation_deg" => "min_rotation_deg", "clips.<name>.animates_bones" => "animates_bones"}),
+        row!("duplicate-loop-endpoint", "crates/animsmith-core/src/checks/duplicate_loop_endpoint.rs", [Warning], {"severity" => "", "clips.<name>.loop" => "looping"}),
+        row!("loop-closure", "crates/animsmith-core/src/checks/loop_closure.rs", [Error], {"severity" => "", "max_position_delta_m" => "max_position_delta_m", "max_rotation_delta_deg" => "max_rotation_delta_deg", "clips.<name>.loop" => "looping", "clips.<name>.max_loop_position_delta_m" => "max_loop_position_delta_m", "clips.<name>.max_loop_rotation_delta_deg" => "max_loop_rotation_delta_deg"}),
+        row!("loop-seam", "crates/animsmith-core/src/checks/loop_seam.rs", [Error], {"severity" => "", "max_ratio" => "max_ratio", "min_stride_step_m" => "loop_seam_min_stride_step_m", "clips.<name>.loop" => "looping"}),
+        row!("loop-seam-vel", "crates/animsmith-core/src/checks/loop_seam_vel.rs", [Error], {"severity" => "", "max_velocity_delta_mps" => "max_velocity_delta_mps", "clips.<name>.loop" => "looping", "clips.<name>.max_loop_velocity_delta_mps" => "max_loop_velocity_delta_mps"}),
+        row!("loop-seam-rot", "crates/animsmith-core/src/checks/loop_seam_rot.rs", [Error], {"severity" => "", "max_angular_velocity_delta_degps" => "max_angular_velocity_delta_degps", "clips.<name>.loop" => "looping", "clips.<name>.max_loop_angular_velocity_delta_degps" => "max_loop_angular_velocity_delta_degps"}),
+        row!("root-motion-speed", "crates/animsmith-core/src/checks/root_motion_speed.rs", [Error], {"severity" => "", "clips.<name>.speed_mps.value" => "speed_mps", "clips.<name>.speed_mps.tolerance" => "tolerance", "clips.<name>.movement_owner_xz" => "movement_owner_xz", "clips.<name>.in_place" => "movement_owner_xz"}),
+        row!("gait-group", "crates/animsmith-core/src/checks/gait_group.rs", [Error], {"severity" => "", "gait_groups.<name>.clips" => "gait_groups", "gait_groups.<name>.max_gait_phase_spread" => "max_gait_phase_spread", "gait_groups.<name>.min_lr_amplitude_m" => "min_lr_amplitude_m"}),
+        row!("sync-group", "crates/animsmith-core/src/checks/sync_group.rs", [Error], {"severity" => "", "sync_groups.<name>.clips" => "sync_groups", "sync_groups.<name>.max_duration_delta_s" => "max_duration_delta_s", "sync_groups.<name>.max_frame_count_delta" => "max_frame_count_delta", "sync_groups.<name>.max_fps_delta" => "max_fps_delta"}),
+        row!("time-complement", "crates/animsmith-core/src/checks/time_complement.rs", [Warning], {"severity" => "", "sync_groups.<name>.clips" => "sync_groups", "sync_groups.<name>.time_complement.min_reflected_time_advantage" => "min_reflected_time_advantage", "sync_groups.<name>.time_complement.min_lr_amplitude_m" => "min_lr_amplitude_m"}),
+        row!("in-place", "crates/animsmith-core/src/checks/in_place.rs", [Error], {"severity" => "", "clips.<name>.movement_owner_xz" => "movement_owner_xz", "clips.<name>.in_place" => "movement_owner_xz"}),
+        row!("fps", "crates/animsmith-core/src/checks/fps.rs", [Warning], {"severity" => "", "clips.<name>.fps" => "fps"}),
+        row!("bind-pose", "crates/animsmith-core/src/checks/bind_pose.rs", [Warning], {"severity" => "", "max_mean_rest_delta_deg" => "max_mean_rest_delta_deg"}),
+        row!("foot-slide", "crates/animsmith-core/src/checks/foot_slide.rs", [Warning], {"severity" => "", "contact_height_m" => "contact_height_m", "max_slide_mps" => "max_slide_mps"}),
     ]
 }
 
@@ -455,13 +322,59 @@ fn assert_built_in_check_inventory(markdown: &str, catalog: &BTreeSet<&str>) {
             "docs/built-in-checks.md default findings drifted for {}",
             expected.id
         );
+        let documented_config = cell_tokens(&row[4]);
+        let expected_config = expected
+            .config_access
+            .iter()
+            .map(|(key, _)| *key)
+            .collect::<BTreeSet<_>>();
         assert_eq!(
-            cell_tokens(&row[4]),
-            expected.config_keys.iter().copied().collect(),
+            documented_config, expected_config,
             "docs/built-in-checks.md config keys drifted for {}",
             expected.id
         );
+
+        let workspace_root = source_workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))
+            .expect("source docs imply a source checkout");
+        let source = read_workspace_doc(&workspace_root, expected.source);
+        assert_source_tokens(expected.id, &source, expected.severity_tokens);
+        for (documented_key, access_token) in expected.config_access {
+            if !access_token.is_empty() {
+                assert_source_tokens(expected.id, &source, &[*access_token]);
+            }
+            assert!(
+                documented_config.contains(documented_key),
+                "missing documented config key {documented_key} for {}",
+                expected.id
+            );
+        }
     }
+}
+
+fn assert_source_tokens(id: &str, source: &str, tokens: &[&str]) {
+    for token in tokens {
+        if token.is_empty() {
+            continue;
+        }
+        assert!(
+            source.contains(token),
+            "implementation source for {id} does not contain expected token {token:?}"
+        );
+    }
+}
+
+#[test]
+fn source_token_helper_rejects_a_nonexistent_token() {
+    let failure = std::panic::catch_unwind(|| {
+        assert_source_tokens(
+            "fixture",
+            "Finding::new(Severity::Warning)",
+            &["not_a_real_token"],
+        );
+    })
+    .expect_err("a nonexistent implementation token must be rejected");
+    let message = panic_message(failure);
+    assert!(message.contains("not_a_real_token"), "{message}");
 }
 
 fn assert_exact_ids(surface: &str, documented: &BTreeSet<&str>, expected: &BTreeSet<&str>) {

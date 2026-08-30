@@ -45,7 +45,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 | [in-place](#in-place) | contract-aware | `error` | `clips.<name>.movement_owner_xz` or `clips.<name>.in_place`, root/hips role, sampled root travel | `severity`, `clips.<name>.movement_owner_xz`, `clips.<name>.in_place` | DCC/export repair |
 | [fps](#fps) | contract-aware | `warning` | `clips.<name>.fps` | `severity`, `clips.<name>.fps` | DCC/export repair, `transform --slice` |
 | [bind-pose](#bind-pose) | contract-aware | `warning` | clips with at least three usable first-frame rotation tracks | `severity`, `max_mean_rest_delta_deg` | DCC/export repair |
-| [foot-slide](#foot-slide) | contract-aware | `warning` | `clips.<name>.speed_mps`, root/hips role, resolved foot or toe roles, sampled stance windows | `severity`, `contact_height_m`, `max_slide_mps`, `clips.<name>.speed_mps.value`, `clips.<name>.speed_mps.tolerance`, `clips.<name>.movement_owner_xz`, `clips.<name>.in_place` | DCC/export repair, engine review |
+| [foot-slide](#foot-slide) | contract-aware | `warning` | `clips.<name>.speed_mps`, root/hips role, resolved foot or toe roles, sampled stance windows | `severity`, `contact_height_m`, `max_slide_mps` | DCC/export repair, engine review |
 
 ## Mechanical checks
 
@@ -576,21 +576,21 @@ only after an explicit `note`, `warn`, or `error` severity.
 
 - Default findings: `warning`.
 - Measurement and finding: checks whether each stance foot moves consistently
-  with the declared clip travel mode and speed.
+  with the declared `speed_mps` and the clip's measured horizontal root speed.
 - Prerequisites and applicability: active only on clips that declare
   `speed_mps`. Root or hips roles must resolve, the clip must be long enough to
   sample stance, and a foot or toe role must resolve for each judged side.
 - Config, defaults, and units: `[checks.foot-slide] severity`,
   `contact_height_m` default `0.03` metres, `max_slide_mps` default `0.3`
-  metres per second, plus `clips.<name>.speed_mps.value`,
-  `clips.<name>.speed_mps.tolerance`, and the XZ owner via
-  `clips.<name>.movement_owner_xz` or `clips.<name>.in_place`.
+  metres per second. The clip-level `speed_mps` declaration is the
+  prerequisite, not a foot-slide check setting.
 - Inactive, not-applicable, and coverage gaps: `not_applicable` with no speed
   pin. Gaps report unresolved root or hips roles, clips too short to sample
   stance, unavailable root-motion speed, or unresolved foot or toe roles.
 - Remediation and boundary: fix foot plants, root travel, or the declared
-  contract in the DCC/export path and then review the runtime blend setup. This
-  heuristic check intentionally does not auto-rewrite contact.
+  speed pin in the DCC/export path and then review the runtime blend setup.
+  This heuristic check intentionally does not auto-rewrite contact or infer
+  movement ownership.
 - Runtime and references: failed stance motion shows up as skating or slipping
   feet in motion or blends. See [Feet slide within one
   clip](game-ready-clips.md#feet-slide-within-one-clip) and [API:
