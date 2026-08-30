@@ -11,6 +11,7 @@ use animsmith_core::{
 use animsmith_engine::{
     BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2, EngineDeclarationV2, EngineUnitScaleCheck,
     ProfileSelection, SettingValueV2, project_prediction_provenance_v4, resolve_static_v2,
+    validate_bevy_readback_v1,
 };
 use animsmith_gltf::fix::{FixSession, Repair as GltfRepair};
 use animsmith_testkit::{quats_from_angles, scaled_quat, two_bone_rotation_doc};
@@ -2572,6 +2573,7 @@ importer = "resource-importer-scene"
             .into_report()
             .expect("strict neutral readback");
     assert!(neutral_readback.bevy().is_none());
+    assert!(validate_bevy_readback_v1(neutral.stdout.as_slice()).is_err());
 
     let godot = run(Some(&godot_config));
     assert_eq!(godot.status.code(), Some(0), "{}", stderr(&godot));

@@ -3784,6 +3784,10 @@ mod tests {
     #[test]
     fn adapter_strict_readback_rejects_each_authority_projection_and_check_mutation() {
         let complete = adapter_report_json(Some(TargetPointerWidth::Bits64));
+        assert!(
+            crate::validate_bevy_readback_v1(serde_json::to_vec(&complete).unwrap().as_slice())
+                .is_err()
+        );
         let reject = |value: serde_json::Value| {
             let bytes = serde_json::to_vec(&value).unwrap();
             assert!(GltfAddressabilityV2::read_from(Cursor::new(bytes)).is_err());

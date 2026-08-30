@@ -630,12 +630,14 @@ pub fn compare_bevy_readback_v1(
     let expected_inverse = projection
         .skins()
         .iter()
-        .filter_map(|skin| match skin.skin_label() {
-            GltfAddressabilityProjectionV2::Available { .. } => Some(BevyIndexedLabelV1::new(
+        // V3 makes inverse-bind labels eager for every source skin, even
+        // when its conditional `Skin{i}` asset label is absent because no
+        // node attaches that skin.
+        .map(|skin| {
+            BevyIndexedLabelV1::new(
                 skin.source_skin_index() as u32,
                 skin.inverse_bind_matrices_label().into(),
-            )),
-            _ => None,
+            )
         })
         .collect::<Vec<_>>();
     if expected_inverse != readback.observation.inverse_bind_matrices {
@@ -852,6 +854,7 @@ fn safe(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::GltfAddressabilityV2;
 
     fn frozen_lock_identity() -> InputIdentity {
         InputIdentity::from_sha256_digest(
@@ -944,5 +947,97 @@ mod tests {
         let mut value = serde_json::to_value(readback).unwrap();
         value["observation"]["warnings_truncated"] = serde_json::Value::Bool(false);
         assert!(validate_bevy_readback_v1(serde_json::to_vec(&value).unwrap().as_slice()).is_err());
+    }
+
+    #[test]
+    fn strict_reader_rejects_mutated_public_contract_fields() {
+        let source = serde_json::to_value(valid_readback(false)).unwrap();
+        for (pointer, replacement) in [
+            ("/schema_version", serde_json::json!(2)),
+            ("/schema", serde_json::json!("urn:animsmith:schema:other:1")),
+            ("/harness/engine", serde_json::json!("other")),
+            ("/harness/tool_version", serde_json::json!("0.1.1")),
+            ("/harness/lock_identity/sha256", serde_json::json!("00")),
+            ("/input/sha256", serde_json::json!("00")),
+            ("/prediction/provenance_schema", serde_json::json!("other")),
+            (
+                "/observation/terminal",
+                serde_json::json!({"state":"work_limit"}),
+            ),
+            (
+                "/observation/animations",
+                serde_json::json!([{"index": 0, "label": "Animation0"}]),
+            ),
+        ] {
+            let mut changed = source.clone();
+            *changed.pointer_mut(pointer).unwrap() = replacement;
+            let bytes = serde_json::to_vec(&changed).unwrap();
+            assert!(
+                validate_bevy_readback_v1(bytes.as_slice()).is_err(),
+                "{pointer}"
+            );
+        }
+        let bytes = serde_json::to_vec(&source).unwrap();
+        assert!(GltfAddressabilityV2::read_from(bytes.as_slice()).is_err());
+    }
+
+    #[test]
+    fn terminal_failure_readbacks_are_strict_and_non_exact() {
+        for terminal in [
+            BevyTerminalStateV1::RootFailure {
+                error: BevyLoadErrorCodeV1::AssetReader,
+            },
+            BevyTerminalStateV1::DependencyFailure {
+                error: BevyLoadErrorCodeV1::AssetReader,
+            },
+        ] {
+            let readback = BevyReadbackV1::new(
+                BevyHarnessIdentityV1::new(
+                    "0.1.0".into(),
+                    "rustc 1.95.0".into(),
+                    frozen_lock_identity(),
+                    1,
+                ),
+                InputIdentity::from_bytes(b"asset"),
+                BevyPredictionReferenceV1::new(
+                    InputIdentity::from_bytes(b"p"),
+                    animsmith_core::PREDICTION_PROVENANCE_V4_ID.into(),
+                    InputIdentity::from_bytes(b"q"),
+                ),
+                BevyObservationV1::new(
+                    terminal,
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
+                    None,
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
+                    false,
+                    true,
+                    true,
+                ),
+                BevyConformanceV1::NotExact {
+                    mismatch_codes: vec![BevyConformanceCodeV1::LoadDidNotSucceed],
+                    unavailable_codes: vec![],
+                },
+            )
+            .unwrap();
+            let bytes = serde_json::to_vec(&readback).unwrap();
+            let parsed = validate_bevy_readback_v1(bytes.as_slice()).unwrap();
+            assert!(matches!(
+                parsed.conformance(),
+                BevyConformanceV1::NotExact { .. }
+            ));
+            assert!(matches!(
+                parsed.observation.terminal,
+                BevyTerminalStateV1::RootFailure { .. }
+                    | BevyTerminalStateV1::DependencyFailure { .. }
+            ));
+        }
     }
 }

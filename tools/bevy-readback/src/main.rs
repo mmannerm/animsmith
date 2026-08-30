@@ -5,6 +5,7 @@ use bevy::{
     asset::{AssetApp, AssetLoadError, AssetPlugin, AssetServer, Assets, LoadState, RecursiveDependencyLoadState},
     gltf::{Gltf, GltfPlugin},
     image::Image,
+    mesh::skinning::SkinnedMeshInverseBindposes,
     prelude::{AnimationClip, App, Handle},
     world_serialization::WorldSerializationPlugin,
 };
@@ -80,11 +81,14 @@ fn main() -> ExitCode {
     app.add_plugins((TaskPoolPlugin::default(), AssetPlugin { file_path: asset_root, ..Default::default() }, WorldSerializationPlugin, GltfPlugin::default()));
     app.init_asset::<AnimationClip>();
     app.init_asset::<Image>();
+    app.init_asset::<SkinnedMeshInverseBindposes>();
     // `App::run` normally performs this after plugin construction. This
     // bounded manual-update harness must finish plugin registration itself.
     app.finish();
     let handle: Handle<Gltf> = app.world().resource::<AssetServer>().load(asset);
-    for update_count in 0..=max_updates() {
+    // The inclusive range starts at one so the reported count is the exact
+    // number of `App::update` calls, never an off-by-one loop index.
+    for update_count in 1..=max_updates() {
         app.update();
         // Asset I/O runs on Bevy's task pool; avoid starving it in this loop.
         std::thread::yield_now();
@@ -183,13 +187,15 @@ mod tests {
         let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()));
         tracing::dispatcher::with_default(&dispatch, || {
             tracing::warn!(target: "fixture.warning", private_path = "/not/retained", "not retained");
+            tracing::error!(target: "fixture.error", secret = "not retained", "not retained");
             tracing::info!(target: "fixture.info", "not retained");
         });
         let (warnings, truncated) = capture.snapshot().unwrap();
-        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings.len(), 2);
         assert!(!truncated);
         let json = serde_json::to_string(&warnings).unwrap();
         assert!(json.contains("fixture.warning"));
+        assert!(json.contains("fixture.error"));
         assert!(!json.contains("not/retained"));
         assert!(!json.contains("not retained"));
     }
@@ -239,6 +245,7 @@ mod tests {
         app.add_plugins((TaskPoolPlugin::default(), AssetPlugin { file_path: root.to_str().unwrap().to_owned(), ..Default::default() }, WorldSerializationPlugin, GltfPlugin::default()));
         app.init_asset::<AnimationClip>();
         app.init_asset::<Image>();
+        app.init_asset::<SkinnedMeshInverseBindposes>();
         app.finish();
         app
     }
