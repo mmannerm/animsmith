@@ -244,6 +244,11 @@ pub struct BevyObservationV1 {
 }
 impl BevyObservationV1 {
     /// Construct one observation; V1 validation enforces its bounds and ordering.
+    ///
+    /// The direct arguments intentionally mirror the closed, flat V1 wire
+    /// fields. Grouping them would add a one-use public payload solely to
+    /// silence this lint, without a separate contract meaning.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         terminal: BevyTerminalStateV1,
         animations: Vec<BevyIndexedLabelV1>,
