@@ -1,0 +1,662 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:collection-dashboard:1",
+  "title": "AnimSmith collection dashboard V1 authority",
+  "description": "Presentation-independent current-state projection of one exact current collection-output input.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "collection_output",
+    "summary",
+    "view"
+  ],
+  "properties": {
+    "schema": {
+      "const": "urn:animsmith:schema:collection-dashboard:1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "collection_output": {
+      "$ref": "#/$defs/identity"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "evaluation": {
+      "$ref": "#/$defs/evaluation"
+    },
+    "view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "clips",
+        "runtime_sets"
+      ],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "clips": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/clip"
+          }
+        },
+        "runtime_sets": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/runtime_set"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "physical_takes",
+        "clips",
+        "runtime_sets",
+        "findings",
+        "unscoped_findings",
+        "coverage_gaps",
+        "prediction_unavailable",
+        "unscoped_prediction_unavailable",
+        "with_findings",
+        "evaluated",
+        "partial",
+        "excluded",
+        "unavailable",
+        "not_evaluated"
+      ],
+      "properties": {
+        "sources": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "physical_takes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clips": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runtime_sets": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unscoped_findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coverage_gaps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prediction_unavailable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unscoped_prediction_unavailable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "with_findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evaluated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "partial": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excluded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unavailable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_evaluated": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "locator",
+        "availability",
+        "loader",
+        "dependency_closure",
+        "takes",
+        "unscoped_findings",
+        "unscoped_severities",
+        "unscoped_prediction_unavailable",
+        "unscoped_prediction_reasons"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "locator": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "input": {
+          "$ref": "#/$defs/identity"
+        },
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable"
+          ]
+        },
+        "loader": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "dependency_closure": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "takes": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/physical_take"
+          }
+        },
+        "unscoped_findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unscoped_severities": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "enum": [
+              "error",
+              "warning",
+              "note"
+            ]
+          }
+        },
+        "unscoped_prediction_unavailable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unscoped_prediction_reasons": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        }
+      }
+    },
+    "physical_take": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_take_index",
+        "availability",
+        "outcome",
+        "findings",
+        "severities",
+        "coverage_gaps",
+        "prediction_unavailable",
+        "coverage"
+      ],
+      "properties": {
+        "source_take_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "take_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "normalized_clip_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "normalized_clip_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4101
+        },
+        "availability": {
+          "enum": [
+            "established",
+            "duplicate_normalized_clip_name",
+            "take_name_unavailable",
+            "normalized_clip_unavailable"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "with_findings",
+            "evaluated",
+            "partial",
+            "excluded",
+            "unavailable",
+            "not_evaluated"
+          ]
+        },
+        "findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "severities": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "enum": ["error", "warning", "note"]
+          }
+        },
+        "coverage_gaps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prediction_unavailable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        }
+      }
+    },
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "take_index",
+        "take_name",
+        "roles",
+        "availability",
+        "outcome",
+        "findings",
+        "severities",
+        "coverage_gaps",
+        "prediction_unavailable",
+        "coverage",
+        "runtime_sets"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "take_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "take_name": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "roles": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "availability": {
+          "enum": [
+            "established",
+            "duplicate_embedded_take_name",
+            "nested_output_unavailable",
+            "source_unavailable",
+            "digest_mismatched",
+            "loader_unavailable",
+            "dependency_closure_incomplete",
+            "document_unavailable",
+            "take_inventory_unavailable",
+            "take_index_missing",
+            "take_name_unavailable",
+            "take_name_mismatched",
+            "normalized_clip_unavailable"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "with_findings",
+            "evaluated",
+            "partial",
+            "excluded",
+            "unavailable",
+            "not_evaluated"
+          ]
+        },
+        "findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "severities": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "enum": [
+              "error",
+              "warning",
+              "note"
+            ]
+          }
+        },
+        "coverage_gaps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prediction_unavailable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        },
+        "runtime_sets": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "report_link": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "complete",
+        "partial",
+        "excluded",
+        "not_evaluated"
+      ],
+      "properties": {
+        "complete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "partial": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excluded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_evaluated": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "runtime_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "lifecycle",
+        "members",
+        "gaps"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "lifecycle": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "status",
+        "decision",
+        "families"
+      ],
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/identity"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "incomplete"
+          ]
+        },
+        "decision": {
+          "enum": [
+            "pass",
+            "finding",
+            "not_evaluated"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "families": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/evaluation_family"
+          }
+        }
+      }
+    },
+    "evaluation_family": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "decision",
+        "members",
+        "pair_findings"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 255
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "incomplete"
+          ]
+        },
+        "decision": {
+          "enum": [
+            "pass",
+            "finding",
+            "not_evaluated"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/evaluation_member"
+          }
+        },
+        "pair_findings": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/evaluation_pair_finding"
+          }
+        }
+      }
+    },
+    "evaluation_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "take_index",
+        "take_name"
+      ],
+      "properties": {
+        "take_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "take_name": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "source_input": {
+          "$ref": "#/$defs/identity"
+        },
+        "logical_clip": {
+          "type": "string"
+        }
+      }
+    },
+    "evaluation_pair_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "member_indices",
+        "boundary",
+        "translation_offenders",
+        "rotation_offenders"
+      ],
+      "properties": {
+        "member_indices": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "boundary": {
+          "enum": [
+            "entry",
+            "exit"
+          ]
+        },
+        "translation_offenders": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/evaluation_offender"
+          }
+        },
+        "rotation_offenders": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/evaluation_offender"
+          }
+        }
+      }
+    },
+    "evaluation_offender": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bone_ordinal",
+        "bone_name",
+        "delta"
+      ],
+      "properties": {
+        "bone_ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "bone_name": {
+          "type": "string"
+        },
+        "delta": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

@@ -53,6 +53,7 @@ animsmith measure <file...> [--format text|json]
 animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--allow id[,id]] [--deny-warnings]
 animsmith evaluate-transition-poses <input.glb|input.gltf|input.fbx> [--config animsmith.toml] --format json
 animsmith collection lint <collection.toml> [--format json]
+animsmith collection dashboard --collection <collection-output.json> -o <dashboard.html> --authority <dashboard.json> [--evaluation <transition-pose-evaluation.json>] [--asset-report <logical-id>=<relative-report.html>]
 animsmith collection generate-contact-fragment <manifest.toml> --clip <logical-id> -o <out.json> [--format text|json]
 animsmith collection evaluate-directional-speed --policy <policy.toml> --evidence <collection-output.json> [--format json]
 animsmith collection evaluate-transition-poses <collection.toml> --families <transition-families.toml> --format json
@@ -80,6 +81,47 @@ uses each source config declared in the collection manifest, or exact built-in
 defaults when none is declared; it never discovers an ambient
 `./animsmith.toml`. `collection evaluate-directional-speed` has no config or
 output-path option: its policy and evidence inputs fully declare its boundary.
+
+`collection dashboard` is an offline current-state view, not a second
+collection ledger. It accepts only the strict current collection-output V11
+contract, writes a self-contained HTML file and the separately versioned
+[`urn:animsmith:schema:collection-dashboard:1`](schemas/collection-dashboard-v1.schema.json)
+authority that binds the exact input bytes, and never reloads source assets.
+Its optional transition-pose evaluation must bind the same manifest bytes.
+`--asset-report` names an exact logical clip and a safe relative HTML reference;
+the dashboard links it but never embeds source assets or samples. Its `role`
+filter means already-recorded resolved skeletal roles, not inferred gameplay or
+clip semantics. Filtering only hides rows locally: it cannot turn partial,
+unavailable, excluded, or incomplete evidence into a complete collection.
+The separate declared-source inventory remains visible even for sources with
+zero logical clips and retains observed identity plus availability, loader, and
+dependency-closure states. Every observed physical take remains source-owned
+and records its source take index/name, normalized index/name state, evidence,
+and outcome even when no logical clip declares it. Global finding/gap/prediction
+totals derive from those physical rows plus unscoped source findings and
+unscoped source-level `required_prediction_unavailable` facets; logical rows
+are navigation projections and are not counted a second time.
+Source/document findings without an exact clip match
+remain explicit unscoped source findings and still contribute to the unfiltered
+finding total; they are never guessed onto a clip row.
+Subjectless required-unavailable prediction facets likewise remain explicit
+source-level dashboard evidence with their recorded reasons; the dashboard does
+not invent a take or logical clip witness for them.
+When one source contains the same normalized name at multiple physical indices,
+name-addressed nested evidence has no unique witness. The dashboard retains each
+finding once as unscoped source evidence and marks the affected physical rows
+`duplicate_normalized_clip_name`; it does not copy findings, gaps, or predictions
+onto either take or logical row.
+Optional transition members carry a logical clip only when their source-input
+identity plus take index/name uniquely match one dashboard declaration. Strict
+readback rederives that relationship and rejects missing, forged, or ambiguous
+logical resolution.
+Every logical row whose availability is `established` must also reconcile its
+source, source-take index/name, evidence, coverage, and outcome with exactly one
+source-owned established physical row. Runtime-set `gaps` and `lifecycle` are
+also rederived from member availability: each non-`established` member requires
+one `member_unavailable` gap in member order, and `complete` is valid only when
+that derived gap list is empty. Strict readback rejects contradictions.
 
 `evaluate-transition-poses` is a JSON-only, single-result transition-family
 contract, not a lint/check stream. It evaluates exact named/indexed takes in

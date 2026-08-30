@@ -85,6 +85,59 @@ exit 1; manifest, rooted-path, selected-config, serialization, and tool errors
 exit 2 with no envelope. The frontend preflights the complete control plane
 before source execution and reads sources sequentially.
 
+## Collection dashboard
+
+`animsmith collection dashboard --collection COLLECTION-OUTPUT.json -o
+DASHBOARD.html --authority DASHBOARD.json` consumes only a strict current
+collection-output V11 document. It writes a self-contained offline HTML
+presentation and the separate
+[`urn:animsmith:schema:collection-dashboard:1`](schemas/collection-dashboard-v1.schema.json)
+machine authority. That authority records the exact raw collection-output
+identity, bounded source/take/logical-clip and ordered runtime-set projection,
+and optional compatible transition-pose evaluation input/result. The optional
+result must be transition-pose-evaluation V1 bound to the same manifest input;
+other evaluation contracts remain separate rather than being guessed into a
+per-member dashboard projection.
+
+Every declared source has its own inventory row even when no logical clip
+binds to it. The row retains its safe locator, optional observed input identity,
+availability, loader state, dependency-closure state, and bounded observed-take
+inventory. Each physical take preserves its exact source-owned take index/name,
+normalized index/name state, evidence, and outcome without inventing a logical
+ID. Summary evidence totals count physical rows plus unscoped source findings
+and unscoped source-level `required_prediction_unavailable` facets; the
+logical-clip outcome partition remains a separate declared-row view. Valid
+nested findings that have no matching clip are retained as source-level
+unscoped findings and included in the dashboard finding total; the projection
+never assigns them to an arbitrary clip. Required-unavailable prediction facets
+without one exact physical witness are likewise retained once at source scope
+with their reason set rather than being guessed onto a take or logical row.
+
+Nested check evidence is normalized-name addressed. If one source has that same
+normalized name at multiple physical indices, neither index is a unique witness:
+the physical rows carry `duplicate_normalized_clip_name`, name-addressed findings
+are counted once at source scope, and no findings, gaps, or predictions are
+guessed onto either physical or logical row. An `established` logical row must
+instead identify exactly one source-owned established physical row by source,
+source-take index, and take name, and its evidence/coverage/outcome must match
+that row during strict readback.
+
+When transition evidence is present, a member's optional `logical_clip` is
+required exactly when its `source_input`, `take_index`, and `take_name` resolve
+uniquely through the dashboard source identities and logical declarations.
+Strict authority readback rederives the match rather than trusting the stored
+logical ID; absent, mismatched, and ambiguous witnesses remain unresolved.
+Runtime-set `gaps` and `lifecycle` are also rederived during strict readback
+from the declared member rows: each non-`established` member contributes one
+`member_unavailable` gap in member order, and the set is `complete` only when
+that derived gap list is empty.
+
+The dashboard is inventory and evidence navigation only. It has no quality
+score and does not establish engine loading/playback, retargeting, contacts,
+visual or artistic quality, or gameplay acceptance. Caller-supplied per-asset
+report links must be exact logical-id keyed safe relative paths; source paths,
+licensed assets, and motion samples are never embedded.
+
 ## Collection directional-speed evaluation
 
 `animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence

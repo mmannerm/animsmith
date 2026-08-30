@@ -121,6 +121,22 @@ conversion and reporting recipe for conversion and reports, the first
 CLI gate recipe for inventory and batch linting, and the project
 contract recipe once clip names and policies settle.
 
+When physical files, repeated take names, and runtime sets are declared in a
+collection manifest, retain the `collection lint` JSON and render a local
+`collection dashboard` from that exact output. The dashboard is a current-state
+inventory: it keeps unavailable and incomplete rows visible and can link
+separately generated offline per-asset reports. Keep those reports and the raw
+assets outside source control when they contain licensed material. Do not use
+the dashboard as a quality score or an engine/artistic/gameplay acceptance
+decision. Its versioned machine authority is
+`urn:animsmith:schema:collection-dashboard:1`.
+Observed physical takes remain visible under their source even when no logical
+clip declaration binds them; their evidence contributes to the unfiltered
+summary without creating a logical identity. Source-level findings and
+subjectless `required_prediction_unavailable` facets without one exact witness
+remain counted once at source scope rather than being guessed onto a take or
+logical clip row.
+
 Record intake as a coverage matrix over the representative files rather
 than one verdict per file: what was evaluated and clean, what was
 evaluated and produced findings, and what was not evaluated — because

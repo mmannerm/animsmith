@@ -1041,6 +1041,135 @@ impl CollectionOutputInput {
         self.wire.clips.len()
     }
 
+    /// Produce the deliberately small, typed fact set consumed by the
+    /// collection dashboard.  The enclosing reader has already validated the
+    /// current collection contract and every nested lint envelope; this
+    /// projection does not create a second JSON reader or expose those raw
+    /// envelopes to presentation code.
+    #[cfg(feature = "report")]
+    pub(crate) fn dashboard_input(
+        &self,
+    ) -> Result<CollectionDashboardInput, CollectionOutputError> {
+        let mut sources = Vec::with_capacity(self.wire.sources.len());
+        for source in &self.wire.sources {
+            let facts = match &source.result {
+                DocumentResultWire::Available { envelope } => {
+                    dashboard_document_facts(envelope, &source.observed_takes)?
+                }
+                DocumentResultWire::Unavailable { .. } => DashboardDocumentFacts::default(),
+            };
+            sources.push(CollectionDashboardSourceInput {
+                key: source.key.clone(),
+                locator: source.locator.clone(),
+                input: match &source.input {
+                    SourceInputStateWire::Available { input } => Some(
+                        identity_from_wire(input).map_err(|_| CollectionOutputError::Malformed)?,
+                    ),
+                    SourceInputStateWire::Unavailable { .. } => None,
+                },
+                availability: match source.input {
+                    SourceInputStateWire::Available { .. } => "available",
+                    SourceInputStateWire::Unavailable { .. } => "unavailable",
+                },
+                loader: match source.loader {
+                    LoaderStateWire::Ready => "ready",
+                    LoaderStateWire::Unavailable { .. } => "unavailable",
+                },
+                dependency_closure: match source.dependency_closure {
+                    SourceDependencyClosureStateWire::Complete { .. } => "complete",
+                    SourceDependencyClosureStateWire::Partial { .. } => "partial",
+                    SourceDependencyClosureStateWire::Unavailable { .. } => "unavailable",
+                },
+                takes: source
+                    .observed_takes
+                    .iter()
+                    .map(|take| CollectionDashboardPhysicalTakeInput {
+                        source_take_index: take.source_take_index,
+                        take_name: match &take.name {
+                            TakeNameState::Available { value } => Some(value.clone()),
+                            TakeNameState::Unavailable => None,
+                        },
+                        normalized_clip: match &take.normalized {
+                            NormalizedClipState::Available { index, name } => {
+                                Some((*index, name.clone()))
+                            }
+                            NormalizedClipState::Unavailable => None,
+                        },
+                    })
+                    .collect(),
+                roles: facts.roles,
+                evidence: facts.evidence,
+                unscoped_findings: facts.unscoped_findings,
+                unscoped_severities: facts.unscoped_severities,
+                unscoped_prediction_unavailable: facts.unscoped_prediction_unavailable,
+                unscoped_prediction_reasons: facts.unscoped_prediction_reasons,
+            });
+        }
+        let clips = self
+            .wire
+            .clips
+            .iter()
+            .map(|clip| {
+                let availability = match &clip.binding {
+                    ClipBindingStateWire::Established {
+                        check_reference, ..
+                    } => match check_reference {
+                        CheckReferenceStateWire::Available { .. } => "established",
+                        CheckReferenceStateWire::Unavailable { reason } => match reason {
+                            CheckReferenceUnavailableReason::DuplicateEmbeddedTakeName => {
+                                "duplicate_embedded_take_name"
+                            }
+                            CheckReferenceUnavailableReason::NestedOutputUnavailable => {
+                                "nested_output_unavailable"
+                            }
+                        },
+                    },
+                    ClipBindingStateWire::Unavailable { reason } => match reason {
+                        ClipUnavailableReason::SourceUnavailable => "source_unavailable",
+                        ClipUnavailableReason::DigestMismatched => "digest_mismatched",
+                        ClipUnavailableReason::LoaderUnavailable => "loader_unavailable",
+                        ClipUnavailableReason::DependencyClosureIncomplete => {
+                            "dependency_closure_incomplete"
+                        }
+                        ClipUnavailableReason::DocumentUnavailable => "document_unavailable",
+                        ClipUnavailableReason::TakeInventoryUnavailable => {
+                            "take_inventory_unavailable"
+                        }
+                        ClipUnavailableReason::TakeIndexMissing => "take_index_missing",
+                        ClipUnavailableReason::TakeNameUnavailable => "take_name_unavailable",
+                        ClipUnavailableReason::TakeNameMismatched => "take_name_mismatched",
+                        ClipUnavailableReason::NormalizedClipUnavailable => {
+                            "normalized_clip_unavailable"
+                        }
+                    },
+                };
+                CollectionDashboardClipInput {
+                    id: clip.id.clone(),
+                    source: clip.source.clone(),
+                    take_index: clip.take_index,
+                    take_name: clip.take_name.clone(),
+                    availability,
+                }
+            })
+            .collect();
+        let runtime_sets = self
+            .wire
+            .runtime_sets
+            .iter()
+            .map(|set| CollectionDashboardRuntimeSetInput {
+                id: set.id.clone(),
+                members: set.members.iter().map(|member| member.id.clone()).collect(),
+            })
+            .collect();
+        Ok(CollectionDashboardInput {
+            manifest: identity_from_wire(&self.wire.manifest.input)
+                .map_err(|_| CollectionOutputError::Malformed)?,
+            sources,
+            clips,
+            runtime_sets,
+        })
+    }
+
     /// Adapt one already strictly decoded V3 runtime set to the pure
     /// directional-speed evaluator input. This intentionally adds no second
     /// JSON authority and retains every raw root-travel field and gap.
@@ -1519,6 +1648,464 @@ struct CollectionOutputWire {
     sources: Vec<CollectionSourceWire>,
     clips: Vec<CollectionClipWire>,
     runtime_sets: Vec<RuntimeSetWire>,
+}
+
+/// Typed, presentation-neutral facts exported by the strict current reader.
+/// This stays crate-private so the collection-output contract remains the
+/// external authority.
+#[cfg(feature = "report")]
+pub(crate) struct CollectionDashboardInput {
+    pub(crate) manifest: InputIdentity,
+    pub(crate) sources: Vec<CollectionDashboardSourceInput>,
+    pub(crate) clips: Vec<CollectionDashboardClipInput>,
+    pub(crate) runtime_sets: Vec<CollectionDashboardRuntimeSetInput>,
+}
+
+#[cfg(feature = "report")]
+pub(crate) struct CollectionDashboardSourceInput {
+    pub(crate) key: String,
+    pub(crate) locator: String,
+    pub(crate) input: Option<InputIdentity>,
+    pub(crate) availability: &'static str,
+    pub(crate) loader: &'static str,
+    pub(crate) dependency_closure: &'static str,
+    /// Complete observed physical-take inventory for this source. These rows
+    /// remain independent of logical declarations, so a successfully loaded
+    /// source with zero declared clips does not disappear from the dashboard.
+    pub(crate) takes: Vec<CollectionDashboardPhysicalTakeInput>,
+    pub(crate) roles: Vec<String>,
+    pub(crate) evidence: BTreeMap<String, CollectionDashboardClipEvidence>,
+    /// Valid findings that cannot truthfully be assigned to one logical clip.
+    /// This includes document/source findings and clip names that do not match
+    /// the normalized take inventory; the dashboard must retain them without
+    /// guessing a clip.
+    pub(crate) unscoped_findings: usize,
+    pub(crate) unscoped_severities: BTreeSet<String>,
+    /// Required-unavailable prediction facets without one exact physical
+    /// witness stay at source scope rather than being guessed onto a take or
+    /// logical clip row.
+    pub(crate) unscoped_prediction_unavailable: usize,
+    pub(crate) unscoped_prediction_reasons: BTreeSet<String>,
+}
+
+#[cfg(feature = "report")]
+pub(crate) struct CollectionDashboardPhysicalTakeInput {
+    pub(crate) source_take_index: u32,
+    pub(crate) take_name: Option<String>,
+    pub(crate) normalized_clip: Option<(u32, String)>,
+}
+
+#[cfg(feature = "report")]
+pub(crate) struct CollectionDashboardClipInput {
+    pub(crate) id: String,
+    pub(crate) source: String,
+    pub(crate) take_index: u32,
+    pub(crate) take_name: String,
+    pub(crate) availability: &'static str,
+}
+
+#[cfg(feature = "report")]
+pub(crate) struct CollectionDashboardRuntimeSetInput {
+    pub(crate) id: String,
+    pub(crate) members: Vec<String>,
+}
+
+#[derive(Default)]
+#[cfg(feature = "report")]
+pub(crate) struct CollectionDashboardClipEvidence {
+    pub(crate) findings: usize,
+    pub(crate) severities: BTreeSet<String>,
+    pub(crate) coverage_gaps: usize,
+    pub(crate) prediction_unavailable: usize,
+    pub(crate) coverage: CollectionDashboardCoverage,
+}
+
+#[derive(Default)]
+#[cfg(feature = "report")]
+pub(crate) struct CollectionDashboardCoverage {
+    pub(crate) complete: usize,
+    pub(crate) partial: usize,
+    pub(crate) excluded: usize,
+    pub(crate) not_evaluated: usize,
+}
+
+// These are a narrow typed projection of a lint envelope. The strict
+// `MeasurementReportInput` read in `validate_envelope()` has already checked
+// the full schema and all semantic invariants; retaining every lint field here
+// would duplicate that authority. The types below intentionally expose only
+// dashboard facts and never cross the renderer boundary as `Value`.
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardEnvelopeWire {
+    #[serde(rename = "schema_version")]
+    _schema_version: u32,
+    #[serde(rename = "schema")]
+    _schema: String,
+    #[serde(rename = "tool")]
+    _tool: Box<RawValue>,
+    #[serde(rename = "command")]
+    _command: String,
+    #[serde(rename = "summary")]
+    _summary: Box<RawValue>,
+    files: Vec<DashboardLintFileWire>,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardLintFileWire {
+    #[serde(rename = "path")]
+    _path: String,
+    #[serde(rename = "input")]
+    _input: IdentityWire,
+    rig: DashboardRigWire,
+    #[serde(rename = "measurements")]
+    _measurements: Box<RawValue>,
+    #[serde(default)]
+    #[serde(rename = "prediction_provenance")]
+    _prediction_provenance: Option<Box<RawValue>>,
+    checks: Vec<DashboardCheckWire>,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardRigWire {
+    #[serde(rename = "profile")]
+    _profile: Option<Box<RawValue>>,
+    #[serde(rename = "resolution_outcome")]
+    _resolution_outcome: Box<RawValue>,
+    #[serde(rename = "resolved_role_policies")]
+    _resolved_role_policies: BTreeMap<String, Box<RawValue>>,
+    resolved_roles: BTreeMap<String, String>,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardCheckWire {
+    #[serde(rename = "check_id")]
+    _check_id: String,
+    selection: DashboardSelection,
+    configuration: DashboardConfiguration,
+    applicability: DashboardApplicability,
+    evaluation: DashboardEvaluation,
+    #[serde(default)]
+    evaluated_scopes: Vec<DashboardScopeWire>,
+    findings: Vec<DashboardFindingWire>,
+    #[serde(default)]
+    gaps: Vec<DashboardGapWire>,
+    #[serde(default)]
+    prediction: Option<DashboardPredictionWire>,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+struct DashboardFindingWire {
+    #[serde(rename = "check_id")]
+    _check_id: String,
+    severity: DashboardSeverity,
+    #[serde(rename = "message")]
+    _message: String,
+    #[serde(default)]
+    clip: Option<String>,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardGapWire {
+    #[serde(rename = "code")]
+    _code: String,
+    #[serde(rename = "message")]
+    _message: String,
+    #[serde(default)]
+    scope: Option<DashboardScopeWire>,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardScopeWire {
+    #[serde(rename = "code")]
+    _code: String,
+    #[serde(default)]
+    subject: Option<String>,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+struct DashboardPredictionWire {
+    #[serde(default)]
+    facets: Vec<DashboardFacetWire>,
+    #[serde(default)]
+    prediction: Option<Box<DashboardPredictionWire>>,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+struct DashboardFacetWire {
+    state: DashboardFacetState,
+    #[serde(default)]
+    scope: Option<DashboardScopeWire>,
+    #[serde(default)]
+    reasons: Vec<String>,
+}
+
+#[cfg(feature = "report")]
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DashboardSelection {
+    Selected,
+    Unselected,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DashboardConfiguration {
+    Enabled,
+    Disabled,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DashboardApplicability {
+    Applicable,
+    NotApplicable,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DashboardEvaluation {
+    Complete,
+    Partial,
+    NotEvaluated,
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DashboardSeverity {
+    Error,
+    Warning,
+    Note,
+}
+#[cfg(feature = "report")]
+impl DashboardSeverity {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Note => "note",
+        }
+    }
+}
+#[cfg(feature = "report")]
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DashboardFacetState {
+    Available,
+    RequiredPredictionUnavailable,
+}
+
+#[cfg(feature = "report")]
+#[derive(Default)]
+struct DashboardDocumentFacts {
+    roles: Vec<String>,
+    evidence: BTreeMap<String, CollectionDashboardClipEvidence>,
+    unscoped_findings: usize,
+    unscoped_severities: BTreeSet<String>,
+    unscoped_prediction_unavailable: usize,
+    unscoped_prediction_reasons: BTreeSet<String>,
+}
+
+#[cfg(feature = "report")]
+fn dashboard_document_facts(
+    envelope: &RawValue,
+    observed_takes: &[ObservedTakeWire],
+) -> Result<DashboardDocumentFacts, CollectionOutputError> {
+    // `read_current_collection_output` already established the V11 container
+    // and validated this nested current measurement/lint envelope. This
+    // closed, crate-private view consumes only the additional check facts the
+    // dashboard needs; it cannot make raw envelope data available to HTML.
+    let envelope: DashboardEnvelopeWire =
+        serde_json::from_str(envelope.get()).map_err(|_| CollectionOutputError::Malformed)?;
+    let file = envelope
+        .files
+        .into_iter()
+        .next()
+        .ok_or(CollectionOutputError::Malformed)?;
+    // Preseed from the collection's observed-take authority, not from a lint
+    // check's optional scope list. V11 complete checks normally omit those
+    // scopes, so an active complete check covers every observed normalized
+    // take. This also makes simultaneous checks additive rather than
+    // last-write-wins.
+    let mut normalized_name_counts = BTreeMap::<String, usize>::new();
+    for name in observed_takes
+        .iter()
+        .filter_map(|take| match &take.normalized {
+            NormalizedClipState::Available { name, .. } => Some(name),
+            NormalizedClipState::Unavailable => None,
+        })
+    {
+        let count = normalized_name_counts.entry(name.clone()).or_default();
+        *count = count
+            .checked_add(1)
+            .ok_or(CollectionOutputError::Malformed)?;
+    }
+    // Nested lint facts are addressed only by normalized name. A duplicate
+    // name within one source is therefore not an exact physical witness: do
+    // not seed a record that could be copied onto multiple takes or clips.
+    let mut evidence = normalized_name_counts
+        .into_iter()
+        .filter_map(|(name, count)| (count == 1).then_some(name))
+        .map(|key| (key, CollectionDashboardClipEvidence::default()))
+        .collect::<BTreeMap<_, _>>();
+    let mut unscoped_findings = 0_usize;
+    let mut unscoped_severities = BTreeSet::new();
+    let mut unscoped_prediction_unavailable = 0_usize;
+    let mut unscoped_prediction_reasons = BTreeSet::new();
+    for check in file.checks {
+        let inactive = check.selection == DashboardSelection::Unselected
+            || check.configuration == DashboardConfiguration::Disabled
+            || check.applicability == DashboardApplicability::NotApplicable;
+        if inactive {
+            for item in evidence.values_mut() {
+                item.coverage.excluded = item
+                    .coverage
+                    .excluded
+                    .checked_add(1)
+                    .ok_or(CollectionOutputError::Malformed)?;
+            }
+        } else if check.evaluation == DashboardEvaluation::Complete {
+            for item in evidence.values_mut() {
+                item.coverage.complete = item
+                    .coverage
+                    .complete
+                    .checked_add(1)
+                    .ok_or(CollectionOutputError::Malformed)?;
+            }
+        } else {
+            let mut scoped = BTreeSet::new();
+            for scope in &check.evaluated_scopes {
+                if let Some(subject) = &scope.subject {
+                    scoped.insert(subject);
+                }
+            }
+            for gap in &check.gaps {
+                if let Some(subject) = gap.scope.as_ref().and_then(|scope| scope.subject.as_ref()) {
+                    scoped.insert(subject);
+                }
+            }
+            dashboard_prediction_scopes(check.prediction.as_ref(), &mut scoped);
+            for subject in scoped {
+                if let Some(item) = evidence.get_mut(subject) {
+                    let count = match check.evaluation {
+                        DashboardEvaluation::Partial => &mut item.coverage.partial,
+                        DashboardEvaluation::NotEvaluated => &mut item.coverage.not_evaluated,
+                        DashboardEvaluation::Complete => unreachable!(),
+                    };
+                    *count = count
+                        .checked_add(1)
+                        .ok_or(CollectionOutputError::Malformed)?;
+                }
+            }
+        }
+        for finding in check.findings {
+            if let Some(item) = finding
+                .clip
+                .as_ref()
+                .and_then(|clip| evidence.get_mut(clip))
+            {
+                item.findings = item
+                    .findings
+                    .checked_add(1)
+                    .ok_or(CollectionOutputError::Malformed)?;
+                item.severities.insert(finding.severity.as_str().to_owned());
+            } else {
+                unscoped_findings = unscoped_findings
+                    .checked_add(1)
+                    .ok_or(CollectionOutputError::Malformed)?;
+                unscoped_severities.insert(finding.severity.as_str().to_owned());
+            }
+        }
+        for gap in check.gaps {
+            if let Some(subject) = gap.scope.and_then(|scope| scope.subject) {
+                let Some(item) = evidence.get_mut(&subject) else {
+                    continue;
+                };
+                item.coverage_gaps = item
+                    .coverage_gaps
+                    .checked_add(1)
+                    .ok_or(CollectionOutputError::Malformed)?;
+            }
+        }
+        dashboard_prediction_facts(
+            check.prediction.as_ref(),
+            &mut evidence,
+            &mut unscoped_prediction_unavailable,
+            &mut unscoped_prediction_reasons,
+        )?;
+    }
+    Ok(DashboardDocumentFacts {
+        roles: file.rig.resolved_roles.into_keys().collect(),
+        evidence,
+        unscoped_findings,
+        unscoped_severities,
+        unscoped_prediction_unavailable,
+        unscoped_prediction_reasons,
+    })
+}
+
+#[cfg(feature = "report")]
+fn dashboard_prediction_facts(
+    prediction: Option<&DashboardPredictionWire>,
+    evidence: &mut BTreeMap<String, CollectionDashboardClipEvidence>,
+    unscoped_prediction_unavailable: &mut usize,
+    unscoped_prediction_reasons: &mut BTreeSet<String>,
+) -> Result<(), CollectionOutputError> {
+    let Some(prediction) = prediction else {
+        return Ok(());
+    };
+    for facet in &prediction.facets {
+        if facet.state != DashboardFacetState::RequiredPredictionUnavailable {
+            continue;
+        }
+        if let Some(subject) = facet
+            .scope
+            .as_ref()
+            .and_then(|scope| scope.subject.as_ref())
+            && let Some(item) = evidence.get_mut(subject)
+        {
+            item.prediction_unavailable = item
+                .prediction_unavailable
+                .checked_add(1)
+                .ok_or(CollectionOutputError::Malformed)?;
+        } else {
+            *unscoped_prediction_unavailable = unscoped_prediction_unavailable
+                .checked_add(1)
+                .ok_or(CollectionOutputError::Malformed)?;
+            unscoped_prediction_reasons.extend(facet.reasons.iter().cloned());
+        }
+    }
+    dashboard_prediction_facts(
+        prediction.prediction.as_deref(),
+        evidence,
+        unscoped_prediction_unavailable,
+        unscoped_prediction_reasons,
+    )
+}
+
+#[cfg(feature = "report")]
+fn dashboard_prediction_scopes<'a>(
+    prediction: Option<&'a DashboardPredictionWire>,
+    scopes: &mut BTreeSet<&'a String>,
+) {
+    let Some(prediction) = prediction else {
+        return;
+    };
+    for facet in &prediction.facets {
+        if let Some(subject) = facet
+            .scope
+            .as_ref()
+            .and_then(|scope| scope.subject.as_ref())
+        {
+            scopes.insert(subject);
+        }
+    }
+    dashboard_prediction_scopes(prediction.prediction.as_deref(), scopes);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3714,5 +4301,113 @@ mod tests {
     #[test]
     fn work_is_checked() {
         assert!(CollectionWork::new(usize::MAX, 1, 0, 0, 0, 0).is_err());
+    }
+
+    #[cfg(feature = "report")]
+    #[test]
+    fn dashboard_projection_counts_clean_complete_and_excluded_checks_per_take() {
+        let envelope = serde_json::value::RawValue::from_string(
+            serde_json::json!({
+                "schema_version": 19, "schema": OUTPUT_SCHEMA_ID,
+                "tool": {}, "command": "lint", "summary": {},
+                "files": [{
+                    "path": "fixture.gltf",
+                    "input": {"sha256": "0".repeat(64), "bytes": 0},
+                    "rig": {"profile": "unknown", "resolution_outcome": "coverage", "resolved_role_policies": {}, "resolved_roles": {}},
+                    "measurements": {}, "checks": [
+                        {"check_id": "complete", "selection": "selected", "configuration": "enabled", "applicability": "applicable", "evaluation": "complete", "findings": []},
+                        {"check_id": "excluded", "selection": "unselected", "configuration": "enabled", "applicability": "applicable", "evaluation": "not_evaluated", "findings": []}
+                    ]
+                }]
+            }).to_string()
+        ).unwrap();
+        let takes = vec![ObservedTakeWire {
+            source_take_index: 0,
+            name: TakeNameState::Available {
+                value: "Take 001".to_owned(),
+            },
+            normalized: NormalizedClipState::Available {
+                index: 0,
+                name: "Take 001#0".to_owned(),
+            },
+        }];
+        let facts = dashboard_document_facts(&envelope, &takes).unwrap();
+        let coverage = &facts.evidence["Take 001#0"].coverage;
+        assert_eq!(coverage.complete, 1, "complete V11 checks need no scopes");
+        assert_eq!(
+            coverage.excluded, 1,
+            "inactive checks are simultaneous coverage"
+        );
+        assert_eq!(coverage.partial, 0);
+        assert_eq!(coverage.not_evaluated, 0);
+        assert_eq!(facts.unscoped_findings, 0);
+        assert!(facts.unscoped_severities.is_empty());
+    }
+
+    #[cfg(feature = "report")]
+    #[test]
+    fn dashboard_projection_keeps_unmapped_required_prediction_unavailable_at_source_scope() {
+        let envelope = serde_json::value::RawValue::from_string(
+            serde_json::json!({
+                "schema_version": 19, "schema": OUTPUT_SCHEMA_ID,
+                "tool": {}, "command": "lint", "summary": {},
+                "files": [{
+                    "path": "fixture.gltf",
+                    "input": {"sha256": "0".repeat(64), "bytes": 0},
+                    "rig": {"profile": "unknown", "resolution_outcome": "coverage", "resolved_role_policies": {}, "resolved_roles": {}},
+                    "measurements": {},
+                    "prediction_provenance": null,
+                    "checks": [{
+                        "check_id": "engine-track-support",
+                        "selection": "selected",
+                        "configuration": "enabled",
+                        "applicability": "applicable",
+                        "evaluation": "not_evaluated",
+                        "findings": [],
+                        "prediction": {
+                            "schema": "urn:animsmith:engine-prediction:5",
+                            "provenance_identity": {"sha256": "1".repeat(64), "bytes": 1},
+                            "prediction": {
+                                "schema": "urn:animsmith:engine-prediction:4",
+                                "provenance_identity": {"sha256": "2".repeat(64), "bytes": 2},
+                                "facets": [
+                                    {
+                                        "scope": {"code": "engine-track-support:animation", "subject": "source_animation:0"},
+                                        "state": "required_prediction_unavailable",
+                                        "basis": {"identity": {"sha256": "3".repeat(64), "bytes": 3}, "references": []},
+                                        "result": null,
+                                        "reasons": ["runtime_animation_survival_unavailable"]
+                                    },
+                                    {
+                                        "scope": {"code": "engine-track-support:animation-channel", "subject": "source_animation:0:source_channel:0"},
+                                        "state": "required_prediction_unavailable",
+                                        "basis": {"identity": {"sha256": "4".repeat(64), "bytes": 4}, "references": []},
+                                        "result": null,
+                                        "reasons": ["runtime_animation_survival_unavailable"]
+                                    }
+                                ]
+                            }
+                        }
+                    }]
+                }]
+            }).to_string()
+        ).unwrap();
+        let takes = vec![ObservedTakeWire {
+            source_take_index: 0,
+            name: TakeNameState::Available {
+                value: "Take 001".to_owned(),
+            },
+            normalized: NormalizedClipState::Available {
+                index: 0,
+                name: "Take 001".to_owned(),
+            },
+        }];
+        let facts = dashboard_document_facts(&envelope, &takes).unwrap();
+        assert_eq!(facts.evidence["Take 001"].prediction_unavailable, 0);
+        assert_eq!(facts.unscoped_prediction_unavailable, 2);
+        assert_eq!(
+            facts.unscoped_prediction_reasons,
+            BTreeSet::from(["runtime_animation_survival_unavailable".to_owned()])
+        );
     }
 }
