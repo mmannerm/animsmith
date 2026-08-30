@@ -1334,9 +1334,9 @@ mod tests {
         assert!(validate_authority_readback(&serde_json::to_vec(&unknown).unwrap()).is_err());
     }
 
-    fn rich_authority() -> serde_json::Value {
+    fn rich_authority() -> super::CollectionDashboardAuthorityV1 {
         let identity = serde_json::json!({"sha256": "0".repeat(64), "bytes": 0});
-        serde_json::json!({
+        serde_json::from_value(serde_json::json!({
             "schema":"urn:animsmith:schema:collection-dashboard:1", "schema_version":1,
             "collection_output":identity,
             "summary":{"sources":1,"clips":6,"runtime_sets":1,"findings":2,"coverage_gaps":3,"prediction_unavailable":4,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
@@ -1348,45 +1348,38 @@ mod tests {
                 {"id":"excluded","source":"source","take_index":3,"take_name":"Excluded","roles":[],"availability":"established","outcome":"excluded","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":1,"not_evaluated":0},"runtime_sets":[]},
                 {"id":"unavailable","source":"source","take_index":4,"take_name":"Unavailable","roles":[],"availability":"source_unavailable","outcome":"unavailable","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
                 {"id":"not-evaluated","source":"source","take_index":5,"take_name":"Not evaluated","roles":[],"availability":"established","outcome":"not_evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":0,"excluded":0,"not_evaluated":1},"runtime_sets":[]}],"runtime_sets":[{"id":"set","lifecycle":"complete","members":["finding","partial"],"gaps":["missing_member"]}]}
-        })
+        }))
+        .unwrap()
     }
 
     #[test]
     fn authority_readback_reconciles_every_outcome_and_relationship() {
-        let value = rich_authority();
-        let initial: super::CollectionDashboardAuthorityV1 =
-            serde_json::from_value(value.clone()).unwrap();
-        let bytes = serde_json::to_vec(&initial).unwrap();
+        let authority = rich_authority();
+        let bytes = serde_json::to_vec(&authority).unwrap();
         assert!(validate_authority_readback(&bytes).is_ok());
-        let schema = serde_json::from_str::<serde_json::Value>(include_str!(
-            "../../../docs/schemas/collection-dashboard-v1.schema.json"
-        ))
-        .unwrap();
-        let validator = jsonschema::validator_for(&schema).unwrap();
-        assert!(validator.iter_errors(&value).next().is_none());
         let parsed: super::CollectionDashboardAuthorityV1 = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(serde_json::to_vec(&parsed).unwrap(), bytes);
 
-        let mut unknown_source = value.clone();
-        unknown_source["view"]["clips"][0]["source"] = "missing".into();
+        let mut unknown_source = rich_authority();
+        unknown_source.view.clips[0].source = "missing".to_owned();
         assert!(
             validate_authority_readback(&serde_json::to_vec(&unknown_source).unwrap()).is_err()
         );
-        let mut asymmetric_membership = value.clone();
-        asymmetric_membership["view"]["clips"][0]["runtime_sets"] = serde_json::json!([]);
+        let mut asymmetric_membership = rich_authority();
+        asymmetric_membership.view.clips[0].runtime_sets.clear();
         assert!(
             validate_authority_readback(&serde_json::to_vec(&asymmetric_membership).unwrap())
                 .is_err()
         );
-        let mut dangling_resolution = value.clone();
-        dangling_resolution["evaluation"]["families"][0]["members"][0]["logical_clip"] =
-            "missing".into();
+        let mut dangling_resolution = rich_authority();
+        dangling_resolution.evaluation.as_mut().unwrap().families[0].members[0].logical_clip =
+            Some("missing".to_owned());
         assert!(
             validate_authority_readback(&serde_json::to_vec(&dangling_resolution).unwrap())
                 .is_err()
         );
-        let mut bad_severity = value;
-        bad_severity["view"]["clips"][0]["severities"] = serde_json::json!(["fatal"]);
+        let mut bad_severity = rich_authority();
+        bad_severity.view.clips[0].severities = vec!["fatal".to_owned()];
         assert!(validate_authority_readback(&serde_json::to_vec(&bad_severity).unwrap()).is_err());
     }
 
@@ -1402,7 +1395,7 @@ mod tests {
                 "unavailable"
             );
             let mut authority = rich_authority();
-            authority["view"]["clips"][4]["availability"] = availability.into();
+            authority.view.clips[4].availability = availability.to_owned();
             assert!(validate_authority_readback(&serde_json::to_vec(&authority).unwrap()).is_ok());
         }
     }

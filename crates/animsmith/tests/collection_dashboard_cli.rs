@@ -254,6 +254,10 @@ fn dashboard_accepts_only_exact_manifest_bound_transition_authority() {
         String::from_utf8_lossy(&accepted.stderr)
     );
     let dashboard: Value = serde_json::from_slice(&fs::read(&authority).unwrap()).unwrap();
+    let schema: Value = serde_json::from_str(DASHBOARD_SCHEMA).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let errors = validator.iter_errors(&dashboard).collect::<Vec<_>>();
+    assert!(errors.is_empty(), "dashboard schema errors: {errors:?}");
     let family = &dashboard["evaluation"]["families"][0];
     assert_eq!(family["reason"], "member_unavailable");
     assert!(family["members"][0].get("logical_clip").is_none());
