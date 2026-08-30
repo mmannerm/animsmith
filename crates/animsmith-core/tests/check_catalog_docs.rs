@@ -153,7 +153,6 @@ struct CheckReferenceInventoryRow {
     id: &'static str,
     default_findings: &'static [&'static str],
     source: &'static str,
-    severity_tokens: &'static [&'static str],
     config_access: &'static [(&'static str, &'static str)],
 }
 
@@ -172,27 +171,12 @@ fn built_in_check_inventory_rows() -> Vec<CheckReferenceInventoryRow> {
             "off"
         };
     }
-    macro_rules! severity_token {
-        (Error) => {
-            "Severity::Error"
-        };
-        (Warning) => {
-            "Severity::Warning"
-        };
-        (Note) => {
-            "Severity::Note"
-        };
-        (Off) => {
-            ""
-        };
-    }
     macro_rules! row {
         ($id:literal, $source:literal, [$($severity:ident),+], {$($key:literal => $access:literal),* $(,)?}) => {
             CheckReferenceInventoryRow {
                 id: $id,
                 default_findings: &[$(finding_name!($severity)),+],
                 source: $source,
-                severity_tokens: &[$(severity_token!($severity)),+],
                 config_access: &[$(($key, $access)),*],
             }
         };
@@ -345,15 +329,22 @@ fn assert_built_in_check_inventory(markdown: &str, catalog: &BTreeSet<&str>) {
         let workspace_root = source_workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))
             .expect("source docs imply a source checkout");
         let source = read_workspace_doc(&workspace_root, expected.source);
-        assert_source_tokens(expected.id, &source, expected.severity_tokens);
+        let expected_severities = expected
+            .default_findings
+            .iter()
+            .copied()
+            .filter(|severity| *severity != "off")
+            .collect::<BTreeSet<_>>();
+        assert_emitted_severities(expected.id, &source, &expected_severities);
         assert_default_enablement(
             expected.id,
             &source,
             !expected.default_findings.contains(&"off"),
         );
+        assert_default_constants(expected.id, &source);
         for (documented_key, access_token) in expected.config_access {
             if !access_token.is_empty() {
-                assert_source_tokens(expected.id, &source, &[*access_token]);
+                assert_source_contains_tokens(expected.id, &source, &[*access_token]);
             }
             assert!(
                 documented_config.contains(documented_key),
@@ -483,16 +474,46 @@ fn assert_built_in_check_details(markdown: &str, catalog: &BTreeSet<&str>) {
     assert_exact_ids("docs/built-in-checks.md detailed sections", &seen, catalog);
 }
 
-fn assert_source_tokens(id: &str, source: &str, tokens: &[&str]) {
+fn assert_source_contains_tokens(id: &str, source: &str, tokens: &[&str]) {
     for token in tokens {
-        if token.is_empty() {
-            continue;
-        }
         assert!(
             source.contains(token),
             "implementation source for {id} does not contain expected token {token:?}"
         );
     }
+}
+
+fn assert_emitted_severities(id: &str, source: &str, expected: &BTreeSet<&str>) {
+    let production = source
+        .split_once("#[cfg(test)]")
+        .map_or(source, |(production, _)| production);
+    let mut actual = BTreeSet::new();
+    let mut remaining = production;
+    while let Some(start) = remaining.find("Finding::new(") {
+        let call = &remaining[start..];
+        let Some(severity) = call
+            .find("Severity::")
+            .map(|offset| &call[offset + "Severity::".len()..])
+            .and_then(|value| {
+                value
+                    .split(|character: char| !character.is_ascii_alphabetic())
+                    .next()
+            })
+        else {
+            panic!("implementation source for {id} has a Finding::new call without severity");
+        };
+        actual.insert(match severity {
+            "Error" => "error",
+            "Warning" => "warning",
+            "Note" => "note",
+            other => panic!("implementation source for {id} has unknown severity {other:?}"),
+        });
+        remaining = &remaining[start + "Finding::new(".len()..];
+    }
+    assert_eq!(
+        actual, *expected,
+        "implementation emission severities for {id} drifted from documented defaults"
+    );
 }
 
 fn assert_default_enablement(id: &str, source: &str, expected_enabled: bool) {
@@ -520,18 +541,68 @@ fn assert_default_enablement(id: &str, source: &str, expected_enabled: bool) {
     );
 }
 
+fn expected_default_constants(id: &str) -> &'static [(&'static str, &'static str)] {
+    match id {
+        "bind-pose" => &[("DEFAULT_MAX_MEAN_REST_DELTA_DEG", "45.0")],
+        "foot-slide" => &[
+            ("DEFAULT_CONTACT_HEIGHT_M", "0.03"),
+            ("DEFAULT_MAX_SLIDE_MPS", "0.3"),
+        ],
+        "frozen-bone" => &[("DEFAULT_MIN_ROTATION_DEG", "1.0")],
+        "loop-closure" => &[
+            ("DEFAULT_MAX_POSITION_DELTA_M", "0.01"),
+            ("DEFAULT_MAX_ROTATION_DELTA_DEG", "1.0"),
+        ],
+        "loop-seam" => &[("DEFAULT_MAX_RATIO", "1.5")],
+        "loop-seam-rot" => &[("DEFAULT_MAX_ANGULAR_VELOCITY_DELTA_DEGPS", "5.0")],
+        "loop-seam-vel" => &[("DEFAULT_MAX_VELOCITY_DELTA_MPS", "0.1")],
+        "rest-world-scale" => &[
+            ("DEFAULT_EXPECTED_UNIFORM_SCALE", "1.0"),
+            ("DEFAULT_UNIFORM_SCALE_TOLERANCE", "1.0e-4"),
+        ],
+        _ => &[],
+    }
+}
+
+fn assert_default_constants(id: &str, source: &str) {
+    let compact: String = source
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    for (name, value) in expected_default_constants(id) {
+        let declaration = format!("pubconst{name}:");
+        let start = compact.find(&declaration).unwrap_or_else(|| {
+            panic!("implementation source for {id} is missing default constant {name}")
+        });
+        let rest = &compact[start + declaration.len()..];
+        let actual = rest
+            .strip_prefix("f32=")
+            .or_else(|| rest.strip_prefix("f64="))
+            .and_then(|value| value.split(';').next())
+            .unwrap_or_else(|| panic!("default constant {name} for {id} has an unexpected type"));
+        assert_eq!(
+            actual, *value,
+            "implementation default constant {name} for {id} drifted from the documented value"
+        );
+        assert!(
+            compact[start..].contains(&format!("unwrap_or({name})")),
+            "implementation default constant {name} for {id} is not a fallback authority"
+        );
+    }
+}
+
 #[test]
-fn source_token_helper_rejects_a_nonexistent_token() {
+fn emitted_severity_helper_rejects_a_mutated_warning() {
     let failure = std::panic::catch_unwind(|| {
-        assert_source_tokens(
+        assert_emitted_severities(
             "fixture",
-            "Finding::new(Severity::Warning)",
-            &["not_a_real_token"],
+            "Finding::new(self.id(), Severity::Error, \"error\");\nFinding::new(self.id(), Severity::Error, \"warning\");",
+            &["error", "warning"].into_iter().collect(),
         );
     })
-    .expect_err("a nonexistent implementation token must be rejected");
+    .expect_err("changing a warning emission to error must be rejected");
     let message = panic_message(failure);
-    assert!(message.contains("not_a_real_token"), "{message}");
+    assert!(message.contains("fixture"), "{message}");
 }
 
 #[test]
@@ -544,6 +615,18 @@ fn default_enablement_helper_rejects_a_mutated_opt_in_authority() {
     .expect_err("a default-on mutation must be rejected for an opt-in check");
     let message = panic_message(failure);
     assert!(message.contains("constant-nonunit-scale"), "{message}");
+}
+
+#[test]
+fn default_constant_helper_rejects_a_mutated_numeric_fallback() {
+    let source = "pub const DEFAULT_CONTACT_HEIGHT_M: f64 = 0.03; pub const DEFAULT_MAX_SLIDE_MPS: f64 = 0.3; let height = value.unwrap_or(DEFAULT_CONTACT_HEIGHT_M); let max = value.unwrap_or(DEFAULT_MAX_SLIDE_MPS);";
+    let mutated = source.replacen("0.3", "0.4", 1);
+    let failure = std::panic::catch_unwind(|| {
+        assert_default_constants("foot-slide", &mutated);
+    })
+    .expect_err("a changed numeric fallback must be rejected");
+    let message = panic_message(failure);
+    assert!(message.contains("DEFAULT_MAX_SLIDE_MPS"), "{message}");
 }
 
 fn assert_exact_ids(surface: &str, documented: &BTreeSet<&str>, expected: &BTreeSet<&str>) {
