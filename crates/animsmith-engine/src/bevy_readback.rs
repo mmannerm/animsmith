@@ -9,7 +9,7 @@ use crate::{
 };
 use animsmith_core::InputIdentity;
 use serde::{Deserialize, Serialize};
-use std::io::Read;
+use std::io::{self, Read, Write};
 
 /// Immutable schema identifier for Bevy readback V1.
 pub const BEVY_READBACK_V1_ID: &str = "urn:animsmith:schema:bevy-readback:1";
@@ -400,7 +400,7 @@ impl BevyReadbackV1 {
         &self.conformance
     }
     fn computed_identity(&self) -> Result<InputIdentity, BevyReadbackV1Error> {
-        serde_jcs::to_vec(&Seed {
+        bounded_jcs(&Seed {
             schema_version: self.schema_version,
             schema: &self.schema,
             harness: &self.harness,
@@ -410,7 +410,6 @@ impl BevyReadbackV1 {
             conformance: &self.conformance,
         })
         .map(|bytes| InputIdentity::from_bytes(&bytes))
-        .map_err(BevyReadbackV1Error::Canonical)
     }
     /// Validate fixed tuple, canonical identity, bounds, and closed state.
     pub fn validate(&self) -> Result<(), BevyReadbackV1Error> {
@@ -439,9 +438,19 @@ impl BevyReadbackV1 {
         }
         validate_observation(&self.observation)?;
         validate_conformance(&self.conformance)?;
+        if matches!(self.conformance, BevyConformanceV1::Exact)
+            && (!matches!(self.observation.terminal, BevyTerminalStateV1::Loaded)
+                || !self.observation.primary_verified
+                || !self.observation.dependencies_verified)
+        {
+            return Err(BevyReadbackV1Error::Contract(
+                "exact conformance requires a verified loaded observation",
+            ));
+        }
         if self.identity != self.computed_identity()? {
             return Err(BevyReadbackV1Error::Contract("self identity mismatch"));
         }
+        bounded_jcs(self)?;
         Ok(())
     }
 }
@@ -454,6 +463,56 @@ struct Seed<'a> {
     prediction: &'a BevyPredictionReferenceV1,
     observation: &'a BevyObservationV1,
     conformance: &'a BevyConformanceV1,
+}
+
+fn bounded_jcs(value: &impl Serialize) -> Result<Vec<u8>, BevyReadbackV1Error> {
+    bounded_jcs_with_limit(value, BEVY_READBACK_V1_MAX_REPORT_BYTES as usize)
+}
+
+fn bounded_jcs_with_limit(
+    value: &impl Serialize,
+    limit: usize,
+) -> Result<Vec<u8>, BevyReadbackV1Error> {
+    let mut writer = BoundedJcsWriter {
+        bytes: Vec::new(),
+        limit,
+        overflowed: false,
+    };
+    serde_jcs::to_writer(&mut writer, value).map_err(|error| {
+        if writer.overflowed {
+            BevyReadbackV1Error::CanonicalTooLarge {
+                limit: limit as u64,
+            }
+        } else {
+            BevyReadbackV1Error::Canonical(error)
+        }
+    })?;
+    Ok(writer.bytes)
+}
+
+struct BoundedJcsWriter {
+    bytes: Vec<u8>,
+    limit: usize,
+    overflowed: bool,
+}
+
+impl Write for BoundedJcsWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let Some(length) = self.bytes.len().checked_add(bytes.len()) else {
+            self.overflowed = true;
+            return Err(io::Error::other("Bevy readback canonical limit"));
+        };
+        if length > self.limit {
+            self.overflowed = true;
+            return Err(io::Error::other("Bevy readback canonical limit"));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Bounded strict-reader failure for Bevy readback V1.
@@ -475,6 +534,12 @@ pub enum BevyReadbackV1Error {
     /// Canonical serializer failed.
     #[error("cannot canonicalize Bevy readback: {0}")]
     Canonical(serde_json::Error),
+    /// Canonical V1 bytes exceed the same cap as the strict reader.
+    #[error("Bevy readback canonical bytes exceed byte limit {limit}")]
+    CanonicalTooLarge {
+        /// Immutable byte limit.
+        limit: u64,
+    },
     /// A semantic invariant failed.
     #[error("invalid Bevy readback V1 contract: {0}")]
     Contract(&'static str),
@@ -549,22 +614,13 @@ pub fn compare_bevy_readback_v1(
     {
         mismatch.push(BevyConformanceCodeV1::SettingsMismatch);
     }
-    if prediction
+    let animations_available = prediction
         .inventory()
         .animations()
         .animations()
         .coverage()
         .state()
-        != GltfAnimationCoverageStateV1::Complete
-    {
-        unavailable.push(BevyConformanceCodeV1::RequiredPredictionUnavailable);
-    }
-    if matches!(
-        projection.target_coverage(),
-        GltfAddressabilityProjectionV2::RequiredUnavailable { .. }
-    ) {
-        unavailable.push(BevyConformanceCodeV1::RequiredPredictionUnavailable);
-    }
+        == GltfAnimationCoverageStateV1::Complete;
     let expected_animations = prediction
         .inventory()
         .animations()
@@ -578,9 +634,13 @@ pub fn compare_bevy_readback_v1(
             )
         })
         .collect::<Vec<_>>();
-    if expected_animations != readback.observation.animations {
-        mismatch.push(BevyConformanceCodeV1::InventoryMismatch);
-    }
+    compare_available_prediction_facet(
+        animations_available.then_some(expected_animations),
+        &readback.observation.animations,
+        BevyConformanceCodeV1::InventoryMismatch,
+        &mut mismatch,
+        &mut unavailable,
+    );
     let raw = prediction.inventory().raw();
     if raw.scene_coverage().is_complete() {
         let expected = raw
@@ -617,6 +677,7 @@ pub fn compare_bevy_readback_v1(
         unavailable.push(BevyConformanceCodeV1::RequiredPredictionUnavailable);
     }
     let mut expected_skins = Vec::new();
+    let mut skins_available = true;
     for skin in projection.skins() {
         match skin.skin_label() {
             GltfAddressabilityProjectionV2::Available { value } => {
@@ -627,13 +688,17 @@ pub fn compare_bevy_readback_v1(
             }
             GltfAddressabilityProjectionV2::ProvenAbsent => {}
             GltfAddressabilityProjectionV2::RequiredUnavailable { .. } => {
-                unavailable.push(BevyConformanceCodeV1::RequiredPredictionUnavailable);
+                skins_available = false;
             }
         }
     }
-    if expected_skins != readback.observation.skins {
-        mismatch.push(BevyConformanceCodeV1::SkinMismatch);
-    }
+    compare_available_prediction_facet(
+        skins_available.then_some(expected_skins),
+        &readback.observation.skins,
+        BevyConformanceCodeV1::SkinMismatch,
+        &mut mismatch,
+        &mut unavailable,
+    );
     match projection.default_scene_route() {
         GltfAddressabilityProjectionV2::Available { value } => {
             if parse_label_index(value, "Scene") != readback.observation.default_scene {
@@ -721,6 +786,10 @@ pub fn compare_bevy_readback_v1(
         }
     }
     let mut expected_targets = Vec::new();
+    let mut targets_available = !matches!(
+        projection.target_coverage(),
+        GltfAddressabilityProjectionV2::RequiredUnavailable { .. }
+    );
     for target in projection.targets() {
         match target.projection() {
             GltfAddressabilityProjectionV2::Available { value } => {
@@ -732,7 +801,7 @@ pub fn compare_bevy_readback_v1(
                 }
             }
             GltfAddressabilityProjectionV2::RequiredUnavailable { .. } => {
-                unavailable.push(BevyConformanceCodeV1::RequiredPredictionUnavailable)
+                targets_available = false;
             }
             GltfAddressabilityProjectionV2::ProvenAbsent => {}
         }
@@ -740,9 +809,13 @@ pub fn compare_bevy_readback_v1(
     expected_targets
         .sort_by(|a, b| (a.animation_index, &a.target_id).cmp(&(b.animation_index, &b.target_id)));
     expected_targets.dedup();
-    if expected_targets != readback.observation.targets {
-        mismatch.push(BevyConformanceCodeV1::TargetMismatch);
-    }
+    compare_available_prediction_facet(
+        targets_available.then_some(expected_targets),
+        &readback.observation.targets,
+        BevyConformanceCodeV1::TargetMismatch,
+        &mut mismatch,
+        &mut unavailable,
+    );
     mismatch.sort();
     mismatch.dedup();
     unavailable.sort();
@@ -754,6 +827,20 @@ pub fn compare_bevy_readback_v1(
             mismatch_codes: mismatch,
             unavailable_codes: unavailable,
         }
+    }
+}
+
+fn compare_available_prediction_facet<T: PartialEq>(
+    expected: Option<T>,
+    observed: &T,
+    mismatch_code: BevyConformanceCodeV1,
+    mismatch: &mut Vec<BevyConformanceCodeV1>,
+    unavailable: &mut Vec<BevyConformanceCodeV1>,
+) {
+    match expected {
+        Some(expected) if expected != *observed => mismatch.push(mismatch_code),
+        Some(_) => {}
+        None => unavailable.push(BevyConformanceCodeV1::RequiredPredictionUnavailable),
     }
 }
 
@@ -1126,6 +1213,156 @@ mod tests {
                 BevyTerminalStateV1::RootFailure { .. }
                     | BevyTerminalStateV1::DependencyFailure { .. }
             ));
+        }
+    }
+
+    #[test]
+    fn exact_rejects_false_terminal_and_snapshot_mutation_matrix() {
+        for (terminal, primary_verified, dependencies_verified) in [
+            (BevyTerminalStateV1::Loaded, false, true),
+            (BevyTerminalStateV1::Loaded, true, false),
+            (BevyTerminalStateV1::WorkLimit, true, true),
+            (
+                BevyTerminalStateV1::RootFailure {
+                    error: BevyLoadErrorCodeV1::AssetReader,
+                },
+                true,
+                true,
+            ),
+            (
+                BevyTerminalStateV1::DependencyFailure {
+                    error: BevyLoadErrorCodeV1::AssetReader,
+                },
+                true,
+                true,
+            ),
+        ] {
+            let observation = BevyObservationV1::new(
+                terminal,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                None,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                false,
+                primary_verified,
+                dependencies_verified,
+            );
+            let result = BevyReadbackV1::new(
+                BevyHarnessIdentityV1::new(
+                    "0.1.0".into(),
+                    BEVY_READBACK_V1_RUSTC.into(),
+                    true,
+                    true,
+                    frozen_lock_identity(),
+                    1,
+                ),
+                InputIdentity::from_bytes(b"asset"),
+                BevyPredictionReferenceV1::new(
+                    InputIdentity::from_bytes(b"p"),
+                    animsmith_core::PREDICTION_PROVENANCE_V4_ID.into(),
+                    InputIdentity::from_bytes(b"q"),
+                ),
+                observation,
+                BevyConformanceV1::Exact,
+            );
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn canonical_writer_enforces_exact_limit_and_n_plus_one() {
+        let exact_payload = "x".repeat(BEVY_READBACK_V1_MAX_REPORT_BYTES as usize - 2);
+        assert_eq!(
+            bounded_jcs_with_limit(&exact_payload, BEVY_READBACK_V1_MAX_REPORT_BYTES as usize)
+                .unwrap()
+                .len() as u64,
+            BEVY_READBACK_V1_MAX_REPORT_BYTES
+        );
+        assert!(matches!(
+            bounded_jcs_with_limit(
+                &format!("{exact_payload}x"),
+                BEVY_READBACK_V1_MAX_REPORT_BYTES as usize,
+            ),
+            Err(BevyReadbackV1Error::CanonicalTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn constructor_cannot_publish_a_report_larger_than_the_strict_reader_limit() {
+        let text = "x".repeat(MAX_TEXT_BYTES - 4);
+        let labels = (0..BEVY_READBACK_V1_MAX_ROWS as u32)
+            .map(|index| BevyIndexedLabelV1::new(index, format!("{index:04}{text}")))
+            .collect::<Vec<_>>();
+        let warnings = (0..BEVY_READBACK_V1_MAX_ROWS as u32)
+            .map(|index| BevyWarningV1::new(format!("{index:04}{text}"), text.clone()))
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            BevyReadbackV1::new(
+                BevyHarnessIdentityV1::new(
+                    "0.1.0".into(),
+                    BEVY_READBACK_V1_RUSTC.into(),
+                    true,
+                    true,
+                    frozen_lock_identity(),
+                    1,
+                ),
+                InputIdentity::from_bytes(b"asset"),
+                BevyPredictionReferenceV1::new(
+                    InputIdentity::from_bytes(b"p"),
+                    animsmith_core::PREDICTION_PROVENANCE_V4_ID.into(),
+                    InputIdentity::from_bytes(b"q"),
+                ),
+                BevyObservationV1::new(
+                    BevyTerminalStateV1::Loaded,
+                    labels.clone(),
+                    vec![],
+                    vec![],
+                    vec![],
+                    None,
+                    labels.clone(),
+                    labels,
+                    vec![],
+                    vec![],
+                    vec![],
+                    warnings,
+                    false,
+                    true,
+                    true,
+                ),
+                BevyConformanceV1::Exact,
+            ),
+            Err(BevyReadbackV1Error::CanonicalTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn unavailable_facet_never_manufactures_a_mismatch_code() {
+        for mismatch_code in [
+            BevyConformanceCodeV1::InventoryMismatch,
+            BevyConformanceCodeV1::SkinMismatch,
+            BevyConformanceCodeV1::TargetMismatch,
+        ] {
+            let mut mismatch = Vec::new();
+            let mut unavailable = Vec::new();
+            compare_available_prediction_facet(
+                None::<Vec<BevyIndexedLabelV1>>,
+                &vec![BevyIndexedLabelV1::new(0, "observed".into())],
+                mismatch_code,
+                &mut mismatch,
+                &mut unavailable,
+            );
+            assert_eq!(mismatch, Vec::new());
+            assert_eq!(
+                unavailable,
+                vec![BevyConformanceCodeV1::RequiredPredictionUnavailable]
+            );
         }
     }
 }

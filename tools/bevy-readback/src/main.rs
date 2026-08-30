@@ -179,11 +179,14 @@ impl VerifiedSnapshot {
     }
 
     fn verify(&self) -> (bool, bool) {
-        let primary = file_identity(&self.primary.0).is_ok_and(|value| value == self.primary.1);
+        let primary = file_identity(&self.primary.0, self.primary.1.bytes())
+            .is_ok_and(|value| value == self.primary.1);
         let dependencies = self
             .resources
             .iter()
-            .all(|(path, expected)| file_identity(path).is_ok_and(|value| value == *expected));
+            .all(|(path, expected)| {
+                file_identity(path, expected.bytes()).is_ok_and(|value| value == *expected)
+            });
         (primary, dependencies)
     }
 
@@ -253,7 +256,8 @@ fn stage_verified_file(
 ) -> Result<(), SnapshotError> {
     let parent = destination.parent().ok_or(SnapshotError::Temporary)?;
     fs::create_dir_all(parent).map_err(|_| SnapshotError::Temporary)?;
-    let mut input = File::open(source).map_err(|_| SnapshotError::Source)?;
+    let mut input =
+        open_regular_bounded(source, expected.bytes()).map_err(|_| SnapshotError::Source)?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -287,8 +291,8 @@ fn stage_verified_file(
     make_readonly(destination).map_err(|_| SnapshotError::Temporary)
 }
 
-fn file_identity(path: &Path) -> io::Result<animsmith_core::InputIdentity> {
-    let mut file = File::open(path)?;
+fn file_identity(path: &Path, expected_bytes: u64) -> io::Result<animsmith_core::InputIdentity> {
+    let mut file = open_regular_bounded(path, expected_bytes)?;
     let mut hasher = Sha256::new();
     let mut count = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
@@ -300,12 +304,47 @@ fn file_identity(path: &Path) -> io::Result<animsmith_core::InputIdentity> {
         count = count
             .checked_add(read as u64)
             .ok_or_else(|| io::Error::other("snapshot byte count overflow"))?;
+        if count > expected_bytes {
+            return Err(io::Error::other("snapshot exceeds expected byte count"));
+        }
         hasher.update(&buffer[..read]);
     }
     Ok(animsmith_core::InputIdentity::from_sha256_digest(
         hasher.finalize().into(),
         count,
     ))
+}
+
+fn open_regular_bounded(path: &Path, expected_bytes: u64) -> io::Result<File> {
+    let file = open_no_follow_nonblocking(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.file_type().is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "snapshot source is not a regular file",
+        ));
+    }
+    if metadata.len() > expected_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "snapshot source exceeds expected byte count",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn open_no_follow_nonblocking(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_no_follow_nonblocking(path: &Path) -> io::Result<File> {
+    File::open(path)
 }
 
 fn make_readonly(path: &Path) -> io::Result<()> {
@@ -1111,6 +1150,54 @@ mod tests {
             read_prediction("/dev/zero"),
             Err(PredictionInputError::NotRegular)
         ));
+    }
+
+    #[cfg(unix)]
+    fn replace_with_fifo(path: &Path) {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        fs::remove_file(path).unwrap();
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: this test owns the NUL-free temporary path and FIFO mode.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_intake_and_reverification_reject_root_and_dependency_replacements() {
+        use std::os::unix::fs::symlink;
+        let root = test_root();
+        let outside = test_root();
+        let staged = test_root();
+        let primary = root.join("asset.gltf");
+        let dependency = root.join("buffer.bin");
+        fs::write(&primary, b"root").unwrap();
+        fs::write(&dependency, b"dependency").unwrap();
+        let primary_id = animsmith_core::InputIdentity::from_bytes(b"root");
+        let dependency_id = animsmith_core::InputIdentity::from_bytes(b"dependency");
+        let external = outside.join("external.gltf");
+        fs::write(&external, b"external").unwrap();
+        symlink(&external, root.join("external.gltf")).unwrap();
+        assert!(rooted_file(&root, Path::new("external.gltf")).is_err());
+
+        let checked_primary = rooted_file(&root, Path::new("asset.gltf")).unwrap();
+        fs::remove_file(&primary).unwrap();
+        symlink(&external, &primary).unwrap();
+        assert!(matches!(
+            stage_verified_file(&checked_primary, &staged.join("asset.gltf"), &primary_id),
+            Err(SnapshotError::Source)
+        ));
+        assert!(file_identity(&primary, primary_id.bytes()).is_err());
+
+        let checked_dependency = rooted_file(&root, Path::new("buffer.bin")).unwrap();
+        replace_with_fifo(&dependency);
+        assert!(matches!(
+            stage_verified_file(&checked_dependency, &staged.join("buffer.bin"), &dependency_id),
+            Err(SnapshotError::Source)
+        ));
+        assert!(file_identity(&dependency, dependency_id.bytes()).is_err());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        fs::remove_dir_all(staged).unwrap();
     }
 
     #[test]
