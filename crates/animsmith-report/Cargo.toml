@@ -25,5 +25,5 @@ thiserror = { workspace = true }
 [dev-dependencies]
 animsmith-engine = { workspace = true }
 animsmith-gltf = { workspace = true }
-animsmith-testkit = { workspace = true }
+animsmith-testkit = { path = "../animsmith-testkit" }
 tempfile = { workspace = true }
