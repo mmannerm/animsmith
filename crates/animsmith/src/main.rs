@@ -2713,7 +2713,7 @@ fn contact_producer_load_failure(error: InputLoadError) -> producer::Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pulldown_cmark::{Event, Options, Parser};
+    use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
     struct ConfigurationReferenceEntry {
         path: &'static str,
@@ -3735,11 +3735,11 @@ min_lr_amplitude_m = 0.03
         parse_config(document_transition_family().as_bytes())
             .expect("transition-family reference shape parses");
 
-        let docs = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../docs/configuration-reference.md"
-        ))
-        .expect("configuration reference exists");
+        let Some((workspace_root, docs)) = read_source_configuration_reference() else {
+            // Repository documentation and examples are intentionally absent
+            // from published package sources.
+            return;
+        };
         let missing = missing_configuration_reference_entries(&docs);
         assert!(
             missing.is_empty(),
@@ -3750,7 +3750,7 @@ min_lr_amplitude_m = 0.03
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples"))
+        for entry in std::fs::read_dir(workspace_root.join("examples"))
             .expect("examples directory")
             .filter_map(Result::ok)
             .filter(|entry| entry.path().to_string_lossy().ends_with(".animsmith.toml"))
@@ -3763,11 +3763,9 @@ min_lr_amplitude_m = 0.03
 
     #[test]
     fn configuration_reference_inventory_detects_removed_nested_paths() {
-        let docs = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../docs/configuration-reference.md"
-        ))
-        .expect("configuration reference exists");
+        let Some((_workspace_root, docs)) = read_source_configuration_reference() else {
+            return;
+        };
         let mutated = docs.replace("`runtime_nodes.selectors`", "runtime_nodes.selectors");
         let missing = missing_configuration_reference_entries(&mutated);
         assert_eq!(
@@ -3785,6 +3783,169 @@ min_lr_amplitude_m = 0.03
             missing.iter().map(|entry| entry.path).collect::<Vec<_>>(),
             vec!["transition_families.<id>.tolerances.translation_m"],
             "removing a transition-family nested path must fail the maintenance inventory"
+        );
+    }
+
+    #[test]
+    fn configuration_reference_enablement_wording_matches_check_authority() {
+        let Some((_workspace_root, docs)) = read_source_configuration_reference() else {
+            return;
+        };
+        assert_enablement_wording(&docs);
+    }
+
+    #[test]
+    fn configuration_reference_rejects_opt_in_time_complement_wording() {
+        let Some((_workspace_root, docs)) = read_source_configuration_reference() else {
+            return;
+        };
+        let mutated = docs.replace(
+            "`time-complement` is enabled by default",
+            "opt-in `time-complement`",
+        );
+        assert!(
+            std::panic::catch_unwind(|| assert_enablement_wording(&mutated)).is_err(),
+            "opt-in time-complement wording must fail the maintenance test"
+        );
+    }
+
+    #[test]
+    fn source_workspace_detection_distinguishes_a_packaged_layout() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        if manifest_dir.join(".cargo_vcs_info.json").is_file() {
+            assert_eq!(source_workspace_root(manifest_dir), None);
+            assert_eq!(read_source_configuration_reference_from(manifest_dir), None);
+            return;
+        }
+        assert!(
+            source_workspace_root(manifest_dir).is_some(),
+            "the source checkout must be recognized as the documentation authority"
+        );
+
+        let fixture = tempfile::tempdir().expect("create package fixture");
+        let package_root = fixture.path().join("crates/animsmith");
+        std::fs::create_dir_all(&package_root).expect("create package source layout");
+        std::fs::write(
+            package_root.join("Cargo.toml"),
+            "[package]\nname = \"animsmith\"\n",
+        )
+        .expect("write package manifest");
+        assert!(
+            source_workspace_root(&package_root).is_some(),
+            "the synthetic layout must satisfy every source-checkout condition before marking it packaged"
+        );
+        std::fs::write(package_root.join(".cargo_vcs_info.json"), "{}\n")
+            .expect("write package marker");
+        assert_eq!(source_workspace_root(&package_root), None);
+        assert_eq!(
+            read_source_configuration_reference_from(&package_root),
+            None
+        );
+    }
+
+    fn read_workspace_doc(workspace_root: &Path, relative_path: &str) -> String {
+        let path = workspace_root.join(relative_path);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
+    }
+
+    fn read_source_configuration_reference() -> Option<(PathBuf, String)> {
+        read_source_configuration_reference_from(Path::new(env!("CARGO_MANIFEST_DIR")))
+    }
+
+    fn read_source_configuration_reference_from(manifest_dir: &Path) -> Option<(PathBuf, String)> {
+        let workspace_root = source_workspace_root(manifest_dir)?;
+        let docs = read_workspace_doc(&workspace_root, "docs/configuration-reference.md");
+        Some((workspace_root, docs))
+    }
+
+    fn source_workspace_root(manifest_dir: &Path) -> Option<PathBuf> {
+        if manifest_dir.join(".cargo_vcs_info.json").is_file() {
+            return None;
+        }
+        let workspace_root = manifest_dir.join("../..");
+        let current_manifest = manifest_dir.join("Cargo.toml").canonicalize().ok()?;
+        let workspace_manifest = workspace_root
+            .join("crates/animsmith/Cargo.toml")
+            .canonicalize()
+            .ok()?;
+        (current_manifest == workspace_manifest).then_some(workspace_root)
+    }
+
+    fn assert_enablement_wording(markdown: &str) {
+        let mut options = Options::empty();
+        options.insert(pulldown_cmark::Options::ENABLE_TABLES);
+        let mut in_checks_section = false;
+        let mut in_heading = false;
+        let mut in_paragraph = false;
+        let mut heading = String::new();
+        let mut paragraph = String::new();
+        let mut paragraphs = Vec::new();
+        for event in Parser::new_ext(markdown, options) {
+            match event {
+                Event::Start(Tag::Heading {
+                    level: HeadingLevel::H2,
+                    ..
+                }) => {
+                    in_heading = true;
+                    heading.clear();
+                }
+                Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
+                    in_heading = false;
+                    if in_checks_section {
+                        break;
+                    }
+                    in_checks_section = heading == "Checks and severity";
+                }
+                Event::Start(Tag::Paragraph) if in_checks_section => {
+                    in_paragraph = true;
+                    paragraph.clear();
+                }
+                Event::End(TagEnd::Paragraph) if in_paragraph => {
+                    paragraphs.push(paragraph.split_whitespace().collect::<Vec<_>>().join(" "));
+                    in_paragraph = false;
+                }
+                Event::Text(text) | Event::Code(text) => {
+                    if in_heading {
+                        heading.push_str(&text);
+                    } else if in_paragraph {
+                        if !paragraph.is_empty() {
+                            paragraph.push(' ');
+                        }
+                        paragraph.push_str(&text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let paragraph = paragraphs
+            .iter()
+            .find(|paragraph| paragraph.contains("time-complement"))
+            .expect("checks section must explain time-complement");
+        let opt_in_ids = all_checks()
+            .into_iter()
+            .filter(|check| !check.enabled_by_default())
+            .map(|check| check.id().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            opt_in_ids,
+            vec!["constant-nonunit-scale"],
+            "built-in opt-in authority changed; update the reference wording deliberately"
+        );
+        let expected_opt_in = format!(
+            "all built-ins are enabled by default except opt-in {}",
+            opt_in_ids.join(", ")
+        );
+        assert!(
+            paragraph.contains(&expected_opt_in),
+            "checks section must name exactly the implementation-authoritative opt-in set"
+        );
+        assert!(paragraph.contains("time-complement is enabled by default"));
+        assert!(paragraph.contains("NotApplicable") || paragraph.contains("not applicable"));
+        assert!(
+            !paragraph.contains("opt-in time-complement")
+                && !paragraph.contains("time-complement is opt-in"),
+            "time-complement must not be opt-in"
         );
     }
 }

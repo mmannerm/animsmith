@@ -55,10 +55,12 @@ selector lists declare no policy. Group member names are exact (not globs).
 ## Checks and severity
 
 Every check accepts `severity = "off"`, `"note"`, `"warn"`/`"warning"`, or
-`"error"`. Omitted severity uses the check's default (all built-ins are
-enabled except opt-in `constant-nonunit-scale` and `time-complement`; an
-explicit non-off severity enables those). The runner still records
-unselected, disabled, and not-applicable checks. See
+`"error"`. Omitted severity uses the check's implementation-defined default:
+all built-ins are enabled by default except opt-in `constant-nonunit-scale`.
+`time-complement` is enabled by default, but is `NotApplicable` until a sync
+group declares a `time_complement` policy; an explicit non-off severity enables
+the opt-in scale check. The runner still records unselected, disabled, and
+not-applicable checks. See
 [`game-ready-clips.md`](game-ready-clips.md#reading-a-lint-run).
 
 | Check setting | Type; built-in default; units/domain | Consumer, activation, and skip behavior |
