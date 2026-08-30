@@ -419,6 +419,13 @@ extend the two-pack verdict to the collection as sold. Build a namespaced
 rollup manifest from the validated constituent manifests, and keep constituent
 files, motions, and runtime sets traceable to their source pack.
 
+When that manifest has a current `collection lint` output, retain the output
+outside the repository and render a local `collection dashboard` plus its
+separate JSON authority from those exact bytes. Use it to navigate current
+coverage, unavailable members, ordered runtime sets, and separately generated
+per-asset reports; it is not a quality score or a substitute for the report
+pair, engine checks, or artistic acceptance.
+
 Before concluding that two installed packages coexist safely, compare every
 overlapping logical path by digest. A same-path match is positive packaging
 evidence; a same-path byte conflict is a material integration finding. Compare

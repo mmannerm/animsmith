@@ -224,6 +224,7 @@ check_schema docs/schemas/collection-output-v8.schema.json urn:animsmith:schema:
 check_schema docs/schemas/collection-output-v9.schema.json urn:animsmith:schema:collection-output:9 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-output-v10.schema.json urn:animsmith:schema:collection-output:10 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-output-v11.schema.json urn:animsmith:schema:collection-output:11 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
+check_schema docs/schemas/collection-dashboard-v1.schema.json urn:animsmith:schema:collection-dashboard:1 crates/animsmith/src/collection_dashboard.rs docs/output.md docs/cli.md docs/pipeline-scenarios.md
 check_schema .agents/skills/evaluate-animation-packs/schemas/evaluation-model-v2.schema.json urn:animsmith:skill:animation-pack-evaluation:2 .agents/skills/evaluate-animation-packs/SKILL.md .agents/skills/evaluate-animation-packs/references/evaluation-model-v2.md .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py
 
 # A producer advance must fail this exact consumer inventory until the skill,

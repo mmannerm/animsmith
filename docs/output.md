@@ -85,6 +85,26 @@ exit 1; manifest, rooted-path, selected-config, serialization, and tool errors
 exit 2 with no envelope. The frontend preflights the complete control plane
 before source execution and reads sources sequentially.
 
+## Collection dashboard
+
+`animsmith collection dashboard --collection COLLECTION-OUTPUT.json -o
+DASHBOARD.html --authority DASHBOARD.json` consumes only a strict current
+collection-output V11 document. It writes a self-contained offline HTML
+presentation and the separate
+[`urn:animsmith:schema:collection-dashboard:1`](schemas/collection-dashboard-v1.schema.json)
+machine authority. That authority records the exact raw collection-output
+identity, bounded source/take/logical-clip and ordered runtime-set projection,
+and optional compatible transition-pose evaluation input/result. The optional
+result must be transition-pose-evaluation V1 bound to the same manifest input;
+other evaluation contracts remain separate rather than being guessed into a
+per-member dashboard projection.
+
+The dashboard is inventory and evidence navigation only. It has no quality
+score and does not establish engine loading/playback, retargeting, contacts,
+visual or artistic quality, or gameplay acceptance. Caller-supplied per-asset
+report links must be exact logical-id keyed safe relative paths; source paths,
+licensed assets, and motion samples are never embedded.
+
 ## Collection directional-speed evaluation
 
 `animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence

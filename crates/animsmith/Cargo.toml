@@ -32,7 +32,7 @@ default = ["fbx", "report"]
 # a pure-Rust glTF-only build).
 fbx = ["dep:animsmith-fbx", "dep:image"]
 # HTML report generation.
-report = ["dep:animsmith-report"]
+report = ["dep:animsmith-report", "dep:jsonschema"]
 
 [dependencies]
 animsmith-core = { workspace = true }
@@ -42,6 +42,7 @@ animsmith-fbx = { workspace = true, optional = true }
 animsmith-report = { workspace = true, optional = true }
 clap = { workspace = true }
 image = { workspace = true, optional = true }
+jsonschema = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

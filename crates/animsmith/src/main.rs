@@ -62,6 +62,8 @@ use std::process::ExitCode;
 
 #[cfg(feature = "fbx")]
 mod assembly;
+#[cfg(feature = "report")]
+mod collection_dashboard;
 mod collection_directional_speed;
 mod collection_directional_speed_policy;
 mod collection_lint;
@@ -305,6 +307,28 @@ enum CollectionCmd {
         /// Emit the collection-output V3 JSON contract.
         #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
         format: CollectionFormat,
+    },
+    /// Render a bounded current-state dashboard from strict collection evidence.
+    #[cfg(feature = "report")]
+    #[command(
+        long_about = "Render one self-contained offline current-state collection dashboard from strict current collection-output V11 evidence. The separately written collection-dashboard V1 JSON authority binds the exact collection-output bytes and any supplied compatible transition-pose evaluation. Filters only select displayed rows; they never alter incomplete or unavailable evidence. This command does not load source assets, infer clip semantics, score quality, or establish engine, retargeting, contacts, visual/artistic, or gameplay acceptance."
+    )]
+    Dashboard {
+        /// Strict current collection-output V11 JSON input.
+        #[arg(long, value_name = "COLLECTION-OUTPUT.json")]
+        collection: PathBuf,
+        /// Destination self-contained HTML dashboard.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Destination collection-dashboard V1 JSON authority.
+        #[arg(long)]
+        authority: PathBuf,
+        /// Optional compatible collection transition-pose evaluation V1 JSON.
+        #[arg(long)]
+        evaluation: Option<PathBuf>,
+        /// Exact logical clip id and safe relative per-asset report reference, as ID=PATH.
+        #[arg(long = "asset-report", value_name = "LOGICAL_ID=RELATIVE_PATH")]
+        asset_reports: Vec<String>,
     },
     /// Strictly validate one collection-output document without publishing it.
     #[command(hide = true)]
@@ -1722,6 +1746,20 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     debug_assert_eq!(format, CollectionFormat::Json);
                     collection_lint::run_collection_lint(&manifest)
                 }
+                #[cfg(feature = "report")]
+                CollectionCmd::Dashboard {
+                    collection,
+                    output,
+                    authority,
+                    evaluation,
+                    asset_reports,
+                } => collection_dashboard::run(
+                    &collection,
+                    &output,
+                    &authority,
+                    evaluation.as_deref(),
+                    &asset_reports,
+                ),
                 CollectionCmd::ValidateOutput => {
                     let stdin = std::io::stdin();
                     collection_output::read_current_collection_output(stdin.lock()).map_err(

@@ -212,6 +212,48 @@ pub fn render(
     )
 }
 
+/// Render a collection inventory dashboard from its already-validated,
+/// versioned machine authority.
+///
+/// The dashboard deliberately has no asset loader, policy evaluator, or
+/// filesystem access. The CLI constructs and writes the authority first; this
+/// presentation embeds exactly that authority as escaped JSON, so filtering
+/// cannot change its meaning or turn an incomplete collection into a pass.
+pub fn render_collection_dashboard(authority_json: &str) -> String {
+    // A `</script>`-bearing untrusted string in the authority must not escape
+    // the data element. Escaping `<` in JSON strings is lossless.
+    let data = authority_json.replace('<', "\\u003c");
+    format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>animsmith collection dashboard</title><style>
+body{{font:16px system-ui,sans-serif;margin:2rem;max-width:1200px;color:#17202a}}
+header,section{{margin-bottom:1.5rem}} label{{margin-right:1rem}}
+table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #ccd;padding:.4rem;text-align:left;vertical-align:top}}
+.warning{{background:#fff4d6}} .muted{{color:#57606a}} code{{word-break:break-word}}
+</style></head><body>
+<header><h1>animsmith collection dashboard</h1><p id="identity"></p><p id="summary" class="muted"></p><p class="warning">This is an inventory of declared evidence, not a quality score or game-ready verdict. Engine loading/playback, retargeting, contacts, visual/artistic quality, and gameplay acceptance remain separate gates.</p></header>
+<section><h2>Filters</h2><label>Source <select id="source"><option value="">all</option></select></label><label>Role <select id="role"><option value="">all</option></select></label><label>Runtime set <select id="set"><option value="">all</option></select></label><label>Severity <select id="severity"><option value="">all</option></select></label><label>Outcome <select id="outcome"><option value="">all</option></select></label><label>Availability <select id="availability"><option value="">all</option></select></label><label>Group <select id="group"><option value="source">source</option><option value="roles">role</option><option value="runtime_sets">runtime set</option><option value="severities">severity</option><option value="outcome">outcome</option><option value="availability">availability</option></select></label><p id="groups" class="muted"></p></section>
+<section><h2>Logical clips</h2><p id="count" class="muted"></p><table><thead><tr><th>Logical clip</th><th>Physical take</th><th>Roles</th><th>Availability</th><th>Outcome</th><th>Findings / gaps / prediction unavailable</th><th>Runtime sets</th><th>Per-asset report</th></tr></thead><tbody id="clips"></tbody></table></section>
+<section><h2>Runtime sets</h2><div id="sets"></div></section><section><h2>Evaluation authority</h2><pre id="evaluation"></pre></section>
+<script type="application/json" id="collection-dashboard-data">{data}</script>
+<script>
+const d=JSON.parse(document.getElementById('collection-dashboard-data').textContent);
+const q=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>\"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]));
+q('identity').textContent=`collection input ${{d.collection_output.sha256}} (${{d.collection_output.bytes}} bytes)`;
+q('summary').textContent=`${{d.summary.sources}} sources · ${{d.summary.clips}} clips · ${{d.summary.runtime_sets}} runtime sets · ${{d.summary.findings}} findings · ${{d.summary.coverage_gaps}} gaps · ${{d.summary.prediction_unavailable}} prediction unavailable · ${{d.summary.with_findings}} with findings · ${{d.summary.evaluated}} evaluated · ${{d.summary.partial}} partial · ${{d.summary.excluded}} excluded · ${{d.summary.unavailable}} unavailable · ${{d.summary.not_evaluated}} not evaluated`;
+const clips=d.view.clips,sets=d.view.runtime_sets,facet=(item,key)=>{{const value=item[key];return Array.isArray(value)?(value.length?value:['none']):[value||'none']}},values=(items,key)=>[...new Set(items.flatMap(x=>facet(x,key)))].sort();
+for(const [id,key,items] of [['source','source',clips],['role','roles',clips],['set','runtime_sets',clips],['severity','severities',clips],['outcome','outcome',clips],['availability','availability',clips]]){{for(const x of values(items,key)){{const o=document.createElement('option');o.value=o.textContent=x;q(id).append(o)}}}}
+function selected(id){{return q(id).value}}function matches(c){{return(!selected('source')||c.source===selected('source'))&&(!selected('role')||facet(c,'roles').includes(selected('role')))&&(!selected('set')||facet(c,'runtime_sets').includes(selected('set')))&&(!selected('severity')||facet(c,'severities').includes(selected('severity')))&&(!selected('outcome')||c.outcome===selected('outcome'))&&(!selected('availability')||c.availability===selected('availability'))}}
+function draw(){{const shown=clips.filter(matches);q('count').textContent=`showing ${{shown.length}} of ${{clips.length}} declared clips; filters do not change collection completeness`;const group=q('group').value;const counts={{}};for(const c of shown){{for(const key of facet(c,group)){{counts[key]=(counts[key]||0)+1}}}}q('groups').textContent=Object.entries(counts).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,count])=>`${{key}}: ${{count}}`).join(' · ')||'no matching declared clips';q('clips').innerHTML=shown.map(c=>`<tr><td><code>${{esc(c.id)}}</code></td><td><code>${{esc(c.source)}} #${{c.take_index}} ${{esc(c.take_name)}}</code></td><td>${{esc(facet(c,'roles').join(', '))}}</td><td>${{esc(c.availability)}}</td><td>${{esc(c.outcome)}}</td><td>${{c.findings}} / ${{c.coverage_gaps}} / ${{c.prediction_unavailable}}<br><small>coverage ${{c.coverage.complete}} complete / ${{c.coverage.partial}} partial / ${{c.coverage.excluded}} excluded / ${{c.coverage.not_evaluated}} not evaluated</small></td><td>${{facet(c,'runtime_sets').map(esc).join('<br>')}}</td><td>${{c.report_link?`<a href="${{esc(c.report_link)}}">open report</a>`:'—'}}</td></tr>`).join('')}}
+for(const id of ['source','role','set','severity','outcome','availability','group'])q(id).onchange=draw;draw();
+q('sets').innerHTML=sets.map(s=>`<article><h3><code>${{esc(s.id)}}</code> — ${{esc(s.lifecycle)}}</h3><ol>${{s.members.map(m=>`<li><code>${{esc(m)}}</code></li>`).join('')}}</ol><p>${{esc((s.gaps||[]).join(', ')||'no recorded set gaps')}}</p></article>`).join('');
+q('evaluation').textContent=JSON.stringify(d.evaluation,null,2);
+</script></body></html>"#,
+    )
+}
+
 /// SVG metric charts for one clip: gait signal (L/R foot heights and
 /// their difference) and the top-down root path. Rust-rendered; a JS
 /// playhead line is moved across them in sync with the 3D view.
@@ -383,6 +425,21 @@ mod tests {
         let (_, tail) = html.split_once(marker).expect("report data marker");
         let (raw, _) = tail.split_once("</script>").expect("report data close");
         serde_json::from_str(raw).expect("report data is JSON")
+    }
+
+    #[test]
+    fn collection_dashboard_escapes_authority_script_terminators() {
+        let authority = r#"{"schema":"x","text":"</script><img src=x>"}"#;
+        let html = render_collection_dashboard(authority);
+        let marker = r#"<script type="application/json" id="collection-dashboard-data">"#;
+        let (_, tail) = html.split_once(marker).expect("dashboard data marker");
+        let (raw, _) = tail.split_once("</script>").expect("dashboard data close");
+        assert!(!raw.contains("</script>"));
+        assert!(raw.contains(r#"\u003c/script>"#));
+        assert_eq!(
+            serde_json::from_str::<Value>(raw).unwrap()["text"],
+            "</script><img src=x>"
+        );
     }
 
     #[test]
