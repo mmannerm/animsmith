@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/mmannerm/animsmith/compare/v0.8.0...v0.9.0) - 2026-08-30
+
+### Added
+
+- *(report)* complete visual acceptance matrix
+- *(report)* add synchronized visual comparison
+- *(report)* add collection dashboard
+- *(core)* report canonical rest-world rotation
+- *(engine)* add isolated Bevy readback probe
+
+### Fixed
+
+- *(report)* bind comparison evidence authorities
+- *(report)* harden comparison authority boundaries
+- *(report)* preflight and publish comparisons safely
+- make configuration reference maintenance package-safe
+- *(report)* retain unmapped dashboard prediction evidence
+- *(report)* reconcile dashboard take identity
+- *(report)* retain physical take evidence
+- *(report)* preserve dashboard source evidence
+- *(report)* keep dashboard reader tests typed
+- *(report)* harden dashboard authority readback
+- *(report)* align transition dashboard readback
+- *(report)* avoid dashboard schema runtime dependency
+- harden Pages staging and pinned builds
+- contain Pages staged links
+- harden Pages external reference proxies
+- proxy external Pages navigation links
+- bind check reference docs to implementations
+- *(core)* harden rest rotation projection
+- *(core)* report polar rest-world rotation
+- report pinned measurement reader expectations
+- *(engine)* harden Windows Bevy snapshot intake
+- *(engine)* harden Bevy readback boundaries
+- *(engine)* finalize verified Bevy snapshots
+- *(engine)* harden exact Bevy readback
+- *(engine)* tighten Bevy readback audit coverage
+- *(report)* keep testkit dependency package-local
+- *(report)* bound comparison context rendering
+- *(report)* make comparison finding anchors semantic
+
 ### Changed
 
 - add canonical proper-orthogonal-polar `rotation_xyzw` rest-world and
