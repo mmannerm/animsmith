@@ -460,7 +460,7 @@ fn comparison_side_json(
         .collect::<Vec<_>>();
     Ok(json!({
         "identity": {"sha256": side.identity.sha256(), "bytes": side.identity.bytes()},
-        "clip": {"name":clip_name,"duration":duration_s,"frames":frames,"positions":base64::engine::general_purpose::STANDARD.encode(positions),"trails":trails},
+        "clip": {"name":clip_name,"duration":duration_s,"frames":frames,"times":grid.times,"positions":base64::engine::general_purpose::STANDARD.encode(positions),"trails":trails},
         "findings":findings,"gaps":gaps,"prediction_provenance":side.prediction_provenance,"predictions":predictions,
     }))
 }
