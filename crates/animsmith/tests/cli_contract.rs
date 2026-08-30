@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-const CURRENT_OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:18";
+const CURRENT_OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:19";
 const OUTPUT_V17_SCHEMA_ID: &str = "urn:animsmith:schema:output:17";
 const OUTPUT_V16_SCHEMA_ID: &str = "urn:animsmith:schema:output:16";
 const OUTPUT_V15_SCHEMA_ID: &str = "urn:animsmith:schema:output:15";
@@ -28,13 +28,14 @@ const OUTPUT_V13_SCHEMA_ID: &str = "urn:animsmith:schema:output:13";
 const OUTPUT_V10_SCHEMA_ID: &str = "urn:animsmith:schema:output:10";
 const MEASUREMENTS_V15_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:15";
 const MEASUREMENTS_V16_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
-const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:17";
+const MEASUREMENTS_V17_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:17";
+const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:18";
 const ADDRESSABILITY_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-animation-addressability:1";
 const ADDRESSABILITY_V2_SCHEMA_ID: &str = "urn:animsmith:schema:gltf-addressability:2";
 const IMPORT_ADVICE_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:1";
 const IMPORT_ADVICE_V2_SCHEMA_ID: &str = "urn:animsmith:schema:engine-import-advice:2";
 const HOSTILE_PRESENTATION_TEXT: &str = "forged\nline\u{1b}[31m\u{2028}\u{2029}\u{202e}";
-const CURRENT_OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v18.schema.json");
+const CURRENT_OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v19.schema.json");
 const OUTPUT_V17_SCHEMA: &str = include_str!("../../../docs/schemas/output-v17.schema.json");
 const OUTPUT_V16_SCHEMA: &str = include_str!("../../../docs/schemas/output-v16.schema.json");
 const OUTPUT_V15_SCHEMA: &str = include_str!("../../../docs/schemas/output-v15.schema.json");
@@ -46,7 +47,7 @@ const MEASUREMENTS_V15_SCHEMA: &str =
 const MEASUREMENTS_V16_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v16.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v17.schema.json");
+    include_str!("../../../docs/schemas/measurements-v18.schema.json");
 const ADDRESSABILITY_SCHEMA: &str =
     include_str!("../../../docs/schemas/gltf-animation-addressability-v1.schema.json");
 const ADDRESSABILITY_V2_SCHEMA: &str =
@@ -135,7 +136,7 @@ fn assert_output_schema_valid(instance: &Value) {
         .collect();
     assert!(
         errors.is_empty(),
-        "output must satisfy the published v17 schemas:\n{}\ninstance: {instance:#}",
+        "output must satisfy the published current v19 schemas:\n{}\ninstance: {instance:#}",
         errors.join("\n")
     );
 }
@@ -159,6 +160,37 @@ fn historicalize_measurements_v16(report: &mut Value) {
                 }
             }
         }
+    }
+}
+
+fn historicalize_measurements_v17(report: &mut Value) {
+    fn remove_linear_rotation(value: &mut Value) {
+        match value {
+            Value::Object(object) => {
+                if object.contains_key("classification") && object.contains_key("axis_lengths") {
+                    object.remove("rotation_xyzw");
+                }
+                for child in object.values_mut() {
+                    remove_linear_rotation(child);
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    remove_linear_rotation(child);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for file in report["files"]
+        .as_array_mut()
+        .expect("report files remain an array")
+    {
+        let measurements = &mut file["measurements"];
+        measurements["schema_version"] = json!(17);
+        measurements["schema"] = json!(MEASUREMENTS_V17_SCHEMA_ID);
+        remove_linear_rotation(measurements);
     }
 }
 
@@ -4835,9 +4867,9 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     assert_eq!(lint_json.status.code(), Some(0));
     let lint_json: Value = serde_json::from_slice(&lint_json.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&lint_json);
-    assert_eq!(lint_json["schema_version"], 18);
+    assert_eq!(lint_json["schema_version"], 19);
     assert_eq!(lint_json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
-    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 17);
+    assert_eq!(lint_json["files"][0]["measurements"]["schema_version"], 18);
     assert_eq!(
         lint_json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -5518,7 +5550,7 @@ fn help_matches_compiled_feature_set() {
         .expect("runs diff help");
     assert!(diff.status.success(), "stderr:\n{}", stderr(&diff));
     let out = stdout(&diff);
-    assert!(out.contains("output-v18"), "{out}");
+    assert!(out.contains("output-v19"), "{out}");
     assert!(out.contains("output-v16"), "{out}");
     assert!(out.contains("output-v15"), "{out}");
     assert!(out.contains("output-v13"), "{out}");
@@ -5738,7 +5770,7 @@ fn measure_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 18);
+    assert_eq!(json["schema_version"], 19);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -5769,7 +5801,7 @@ fn measure_json_uses_versioned_envelope() {
         files[0].get("checks").is_none(),
         "measure output must not carry lint checks"
     );
-    assert_eq!(files[0]["measurements"]["schema_version"], 17);
+    assert_eq!(files[0]["measurements"]["schema_version"], 18);
     assert_eq!(files[0]["measurements"]["schema"], MEASUREMENTS_SCHEMA_ID);
     assert!(files[0]["measurements"]["clips"]["walk"]["duration_s"].is_number());
     assert_eq!(
@@ -5881,7 +5913,7 @@ fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
     );
     let baseline: Value = serde_json::from_slice(&baseline.stdout).expect("valid lint JSON");
     assert_output_schema_valid(&baseline);
-    assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 17);
+    assert_eq!(baseline["files"][0]["measurements"]["schema_version"], 18);
     assert_eq!(
         baseline["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -5894,7 +5926,7 @@ fn angular_loop_seam_is_versioned_and_configurable_at_the_cli_boundary() {
         .remove("seam_angular_velocity_delta_degps");
     assert!(
         !output_validator().is_valid(&missing_angular_evidence),
-        "measurements-v17 requires angular seam evidence in every loop-continuity row"
+        "measurements-v18 requires angular seam evidence in every loop-continuity row"
     );
     let bones =
         baseline["files"][0]["measurements"]["clips"]["angular_cusp"]["loop_continuity"]["bones"]
@@ -6221,7 +6253,7 @@ fn embedded_contract_types_emit_the_published_v16_envelope() {
 }
 
 #[test]
-fn published_v17_schema_requires_matching_role_policy_provenance() {
+fn published_v19_schema_requires_matching_role_policy_provenance() {
     let output = animsmith()
         .args([
             "measure",
@@ -6616,7 +6648,7 @@ fn lint_json_uses_versioned_envelope() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 18);
+    assert_eq!(json["schema_version"], 19);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -6635,7 +6667,7 @@ fn lint_json_uses_versioned_envelope() {
     );
     assert!(json["files"][0]["prediction_provenance"].is_null());
     assert!(json["files"][0]["checks"].is_array());
-    assert_eq!(json["files"][0]["measurements"]["schema_version"], 17);
+    assert_eq!(json["files"][0]["measurements"]["schema_version"], 18);
     assert_eq!(
         json["files"][0]["measurements"]["schema"],
         MEASUREMENTS_SCHEMA_ID
@@ -6883,7 +6915,7 @@ fn lint_json_exposes_complete_clean_and_unselected_checks() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
-    assert_eq!(json["schema_version"], 18);
+    assert_eq!(json["schema_version"], 19);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     let checks = json["files"][0]["checks"].as_array().expect("checks");
     let nan = checks
@@ -7391,7 +7423,7 @@ fn diff_json_uses_versioned_envelope() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let json: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_output_schema_valid(&json);
-    assert_eq!(json["schema_version"], 18);
+    assert_eq!(json["schema_version"], 19);
     assert_eq!(json["schema"], CURRENT_OUTPUT_SCHEMA_ID);
     assert_eq!(json["tool"]["name"], "animsmith");
     assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
@@ -7480,6 +7512,45 @@ fn diff_accepts_single_file_measure_report_round_trip() {
         Some(0),
         "stdout:\n{}\nstderr:\n{}",
         stdout(&output),
+        stderr(&output)
+    );
+}
+
+#[test]
+fn diff_reads_historical_output_v18_with_its_pinned_measurements_v17() {
+    let dir = unique_temp_dir("diff-v18-measurements-v17-round-trip");
+    let asset = fixture("rig.gltf");
+    let report_path = dir.path().join("measure-v18.json");
+    let measured = animsmith()
+        .args([
+            "measure",
+            asset.to_str().expect("utf-8 fixture path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert!(measured.status.success(), "stderr:\n{}", stderr(&measured));
+
+    let mut historical: Value =
+        serde_json::from_slice(&measured.stdout).expect("current measurement output is JSON");
+    historical["schema_version"] = json!(18);
+    historical["schema"] = json!("urn:animsmith:schema:output:18");
+    historicalize_measurements_v17(&mut historical);
+    write_json(&report_path, &historical);
+
+    let output = animsmith()
+        .args([
+            "diff",
+            report_path.to_str().expect("utf-8 report path"),
+            asset.to_str().expect("utf-8 fixture path"),
+        ])
+        .output()
+        .expect("runs animsmith");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "historical v18/v17 reader must accept a valid pinned report:\n{}",
         stderr(&output)
     );
 }
@@ -7786,7 +7857,7 @@ fn diff_preserves_tailored_report_errors_and_remediation() {
         (
             "unsupported output version",
             unsupported_output_version,
-            format!("has schema_version 2; this build reads schema_version 18; {remediation}"),
+            format!("has schema_version 2; this build reads schema_version 19; {remediation}"),
         ),
         (
             "missing command",
@@ -8197,7 +8268,7 @@ fn diff_rejects_historical_output_v5_with_v11_measurements() {
     assert!(stdout(&output).is_empty());
     assert!(
         stderr(&output).contains(
-            "has schema_version 5; this build reads schema_version 18; regenerate it from the original asset with `animsmith measure --format json <asset>`"
+            "has schema_version 5; this build reads schema_version 19; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         ),
         "stderr:\n{}",
         stderr(&output)
@@ -8244,7 +8315,7 @@ fn diff_historical_reader_reports_its_pinned_measurement_contract() {
     report["schema_version"] = json!(12);
     report["schema"] = json!("urn:animsmith:schema:output:12");
 
-    report["files"][0]["measurements"]["schema_version"] = json!(17);
+    report["files"][0]["measurements"]["schema_version"] = json!(18);
     write_json(&report_path, &report);
     let output = animsmith()
         .args([
@@ -8256,7 +8327,7 @@ fn diff_historical_reader_reports_its_pinned_measurement_contract() {
         .expect("runs animsmith");
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains(
-        "has measurement schema_version 17; this reader expects measurement schema_version 15"
+        "has measurement schema_version 18; this reader expects measurement schema_version 15"
     ));
 
     report["files"][0]["measurements"]["schema_version"] = json!(15);
@@ -8290,7 +8361,8 @@ fn diff_reports_pinned_measurement_contract_for_every_output_reader_revision() {
         (15, 16, MEASUREMENTS_V16_SCHEMA_ID),
         (16, 16, MEASUREMENTS_V16_SCHEMA_ID),
         (17, 16, MEASUREMENTS_V16_SCHEMA_ID),
-        (18, 17, MEASUREMENTS_SCHEMA_ID),
+        (18, 17, MEASUREMENTS_V17_SCHEMA_ID),
+        (19, 18, MEASUREMENTS_SCHEMA_ID),
     ];
     let remediation =
         "regenerate it from the original asset with `animsmith measure --format json <asset>`";

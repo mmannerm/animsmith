@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:animsmith:skill:animation-pack-evaluation:2",
   "title": "AnimSmith animation-pack evaluation model V2",
-  "description": "Current evaluation authority bound exactly to collection-output V10, retaining typed per-source completeness evidence.",
+  "description": "Current evaluation authority bound exactly to collection-output V11, retaining typed per-source completeness evidence.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "schema_version", "binding", "presentation", "evidence", "runs", "clips", "runtime_sets", "profiles", "pipeline_stages", "readiness", "capabilities", "integration_steps", "issues", "remediations", "engine_evidence", "limitations", "sources", "narratives", "collection"],
@@ -130,11 +130,11 @@
       "required": ["key", "input", "digest", "config", "loader", "dependency_closure", "take_inventory", "result"],
       "properties": {
         "key": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[a-z0-9][a-z0-9._-]*$" },
-        "input": { "$ref": "urn:animsmith:schema:collection-output:10#/$defs/source_input" },
-        "digest": { "$ref": "urn:animsmith:schema:collection-output:10#/$defs/digest" },
+        "input": { "$ref": "urn:animsmith:schema:collection-output:11#/$defs/source_input" },
+        "digest": { "$ref": "urn:animsmith:schema:collection-output:11#/$defs/digest" },
         "config": { "$ref": "#/$defs/config" },
-        "loader": { "$ref": "urn:animsmith:schema:collection-output:10#/$defs/loader" },
-        "dependency_closure": { "$ref": "urn:animsmith:schema:collection-output:10#/$defs/dependency_closure" },
+        "loader": { "$ref": "urn:animsmith:schema:collection-output:11#/$defs/loader" },
+        "dependency_closure": { "$ref": "urn:animsmith:schema:collection-output:11#/$defs/dependency_closure" },
         "take_inventory": { "enum": ["complete", "unavailable"] },
         "result": { "$ref": "#/$defs/result" }
       }

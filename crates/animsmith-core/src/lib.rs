@@ -184,20 +184,22 @@ pub use contact_fragment::{
     ContactPhaseV1, ContactProducerV1, ContactRoleV1,
 };
 pub use contract::{
-    DiffEnvelope, InputIdentity, LintEnvelope, LintEnvelopeV16, LintEnvelopeV17, LintEnvelopeV18,
-    LintFileReport, LintFileReportV16, LintFileReportV17, LintFileReportV18,
+    DiffEnvelope, InputIdentity, LintEnvelope, LintEnvelopeV16, LintEnvelopeV17, LintEnvelopeV19,
+    LintFileReport, LintFileReportV16, LintFileReportV17, LintFileReportV19,
     MEASUREMENTS_SCHEMA_ID, MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_V15_SCHEMA_ID,
     MEASUREMENTS_V15_SCHEMA_VERSION, MEASUREMENTS_V16_SCHEMA_ID, MEASUREMENTS_V16_SCHEMA_VERSION,
-    MeasureEnvelope, MeasureFileReport, MeasurementContract, MeasurementContractError,
-    MeasurementFileError, MeasurementReportError, MeasurementReportFile, MeasurementReportInput,
+    MEASUREMENTS_V17_SCHEMA_ID, MEASUREMENTS_V17_SCHEMA_VERSION, MeasureEnvelope,
+    MeasureFileReport, MeasurementContract, MeasurementContractError, MeasurementFileError,
+    MeasurementReportError, MeasurementReportFile, MeasurementReportInput,
     MeasurementReportReadError, OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION, OUTPUT_V10_SCHEMA_ID,
     OUTPUT_V11_MAX_CHECKS_PER_FILE, OUTPUT_V11_MAX_FILES, OUTPUT_V11_MAX_REPORT_BYTES,
     OUTPUT_V11_SCHEMA_ID, OUTPUT_V11_SCHEMA_VERSION, OUTPUT_V12_SCHEMA_ID,
     OUTPUT_V12_SCHEMA_VERSION, OUTPUT_V13_SCHEMA_ID, OUTPUT_V13_SCHEMA_VERSION,
     OUTPUT_V14_SCHEMA_ID, OUTPUT_V14_SCHEMA_VERSION, OUTPUT_V15_SCHEMA_ID,
     OUTPUT_V15_SCHEMA_VERSION, OUTPUT_V16_SCHEMA_ID, OUTPUT_V16_SCHEMA_VERSION,
-    OUTPUT_V17_SCHEMA_ID, OUTPUT_V17_SCHEMA_VERSION, OutputContractError, RigInfo, RigInfoError,
-    ToolInfo, ToolSource, sha256_hex,
+    OUTPUT_V17_SCHEMA_ID, OUTPUT_V17_SCHEMA_VERSION, OUTPUT_V18_SCHEMA_ID,
+    OUTPUT_V18_SCHEMA_VERSION, OutputContractError, RigInfo, RigInfoError, ToolInfo, ToolSource,
+    sha256_hex,
 };
 pub use dependency_closure::{
     DEPENDENCY_CLOSURE_BUDGET_V1_ID, DEPENDENCY_CLOSURE_V1_ID,

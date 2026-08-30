@@ -25,8 +25,8 @@
 use animsmith_core::evaluate_checks;
 use animsmith_core::{
     Check, CheckCtx, CheckSelection, Config, DiffEnvelope, EngineRootMotionClipIntentInputV1,
-    EngineRootMotionClipMappingStateV1, EngineRootMotionProjectIntentV1, LintEnvelopeV18,
-    LintFileReportV18, MeasureEnvelope, MeasureFileReport, MeasurementContract,
+    EngineRootMotionClipMappingStateV1, EngineRootMotionProjectIntentV1, LintEnvelopeV19,
+    LintFileReportV19, MeasureEnvelope, MeasureFileReport, MeasurementContract,
     MeasurementFileError, MeasurementReportError, MeasurementReportInput,
     MeasurementReportReadError, MetricGrids, RigInfo, RootMotionProjectOwnerV1, Severity,
     TRANSITION_FAMILY_V1_MAX_SOURCE_BYTES, ToolInfo, ToolSource,
@@ -86,8 +86,8 @@ mod transition_family;
 /// findings, 2 = operator error.
 const EXIT_FINDINGS: u8 = 1;
 const EXIT_OPERATOR: u8 = 2;
-const COLLECTION_OUTPUT_V10_VALIDATION_HANDSHAKE: &[u8] =
-    b"animsmith-internal collection-output-valid urn:animsmith:schema:collection-output:10 10\n";
+const COLLECTION_OUTPUT_V11_VALIDATION_HANDSHAKE: &[u8] =
+    b"animsmith-internal collection-output-valid urn:animsmith:schema:collection-output:11 11\n";
 
 #[derive(Parser)]
 #[command(
@@ -282,12 +282,12 @@ enum Cmd {
     },
     /// Compare animation measurements.
     #[command(
-        long_about = "Compare the measurements of two inputs (asset files, one-file current output-v18 `measure` or `lint` JSON carrying measurements-v17, or historical output-v17/output-v16/output-v15/output-v14/output-v13 JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
+        long_about = "Compare the measurements of two inputs (asset files, one-file current output-v19 `measure` or `lint` JSON carrying measurements-v18, historical output-v18 carrying measurements-v17, or output-v17/output-v16/output-v15/output-v14/output-v13 JSON carrying measurements-v16) and report movement beyond significance thresholds. Exits 1 on significant movement."
     )]
     Diff {
-        /// Before input: asset file or one-file output-v18/output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
+        /// Before input: asset file or one-file output-v19 through output-v13 `measure`/`lint` JSON report.
         a: PathBuf,
-        /// After input: asset file or one-file output-v18/output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON report.
+        /// After input: asset file or one-file output-v19 through output-v13 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
@@ -1420,7 +1420,7 @@ fn is_unity_generic_root_motion_profile(profile: &ResolvedProfileSettingsV2) -> 
 }
 
 struct LintAnalysis {
-    report: LintFileReportV18,
+    report: LintFileReportV19,
     requires_failure: bool,
     indexed_measurements: Vec<animsmith_core::measure::ClipMeasurements>,
 }
@@ -1540,7 +1540,7 @@ fn analyze_loaded_lint(
         MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(doc))
             .map_err(|error| error.to_string())?;
     let report = match (prediction_provenance_v6, prediction_provenance_v5) {
-        (Some(provenance), None) => LintFileReportV18::new_v6(
+        (Some(provenance), None) => LintFileReportV19::new_v6(
             path_label,
             input,
             rig,
@@ -1548,7 +1548,7 @@ fn analyze_loaded_lint(
             evaluations,
             measurements,
         ),
-        (None, Some(provenance)) => LintFileReportV18::new_v5(
+        (None, Some(provenance)) => LintFileReportV19::new_v5(
             path_label,
             input,
             rig,
@@ -1556,7 +1556,7 @@ fn analyze_loaded_lint(
             evaluations,
             measurements,
         ),
-        (None, None) => LintFileReportV18::new(
+        (None, None) => LintFileReportV19::new(
             path_label,
             input,
             rig,
@@ -1668,7 +1668,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             match format {
                 PresentationFormat::Json => {
-                    let envelope = LintEnvelopeV18::new(current_tool(), reports)
+                    let envelope = LintEnvelopeV19::new(current_tool(), reports)
                         .map_err(|error| error.to_string())?;
                     render::print_json(&envelope)?;
                 }
@@ -1727,7 +1727,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     collection_output::read_current_collection_output(stdin.lock()).map_err(
                         |error| format!("invalid collection output from stdin: {error}"),
                     )?;
-                    publish::emit_required_text(COLLECTION_OUTPUT_V10_VALIDATION_HANDSHAKE)?;
+                    publish::emit_required_text(COLLECTION_OUTPUT_V11_VALIDATION_HANDSHAKE)?;
                     Ok(ExitCode::SUCCESS)
                 }
                 CollectionCmd::GenerateContactFragment {
@@ -2318,7 +2318,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
 }
 
 /// Measurements for `diff`: an asset file (measured now) or a one-file
-/// current output-v18 carrying measurements-v17 or historical
+/// current output-v19 carrying measurements-v18, historical output-v18
+/// carrying measurements-v17, or historical
 /// output-v17/output-v16/output-v15/output-v14/output-v13 `measure`/`lint` JSON
 /// carrying measurements-v16.
 fn load_measurements(
@@ -2340,7 +2341,7 @@ fn load_measurements(
             }
             _ => format!("{} {error}", path.display()),
         })?;
-        // Current output-v18 and historical output-v17/output-v16/output-v15/output-v14/output-v13/output-v12/output-v11 envelopes
+        // Current output-v19 and historical output-v18 through output-v11 envelopes
         // are accepted only with their version-matched measurements contract.
         // The V11 route retains its original V1 evidence validation; producers
         // emit V16.

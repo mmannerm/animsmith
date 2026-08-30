@@ -49,6 +49,7 @@ check_schema docs/schemas/output-v15.schema.json urn:animsmith:schema:output:15 
 check_schema docs/schemas/output-v16.schema.json urn:animsmith:schema:output:16 crates/animsmith-core/src/contract.rs docs/output.md docs/cli.md
 check_schema docs/schemas/output-v17.schema.json urn:animsmith:schema:output:17 crates/animsmith-core/src/contract.rs docs/output.md docs/cli.md
 check_schema docs/schemas/output-v18.schema.json urn:animsmith:schema:output:18 crates/animsmith-core/src/contract.rs docs/output.md docs/cli.md
+check_schema docs/schemas/output-v19.schema.json urn:animsmith:schema:output:19 crates/animsmith-core/src/contract.rs docs/output.md docs/cli.md
 check_schema docs/schemas/measurements-v8.schema.json urn:animsmith:schema:measurements:8
 check_schema docs/schemas/measurements-v9.schema.json urn:animsmith:schema:measurements:9
 check_schema docs/schemas/measurements-v10.schema.json urn:animsmith:schema:measurements:10
@@ -59,6 +60,7 @@ check_schema docs/schemas/measurements-v14.schema.json urn:animsmith:schema:meas
 check_schema docs/schemas/measurements-v15.schema.json urn:animsmith:schema:measurements:15 crates/animsmith-core/src/contract.rs docs/schemas/output-v9.schema.json docs/schemas/output-v10.schema.json docs/output.md
 check_schema docs/schemas/measurements-v16.schema.json urn:animsmith:schema:measurements:16 crates/animsmith-core/src/contract.rs docs/schemas/output-v13.schema.json docs/schemas/output-v14.schema.json docs/schemas/output-v15.schema.json docs/schemas/output-v16.schema.json docs/schemas/output-v17.schema.json docs/output.md docs/cli.md
 check_schema docs/schemas/measurements-v17.schema.json urn:animsmith:schema:measurements:17 crates/animsmith-core/src/contract.rs docs/schemas/output-v18.schema.json docs/output.md docs/cli.md
+check_schema docs/schemas/measurements-v18.schema.json urn:animsmith:schema:measurements:18 crates/animsmith-core/src/contract.rs docs/schemas/output-v19.schema.json docs/output.md docs/cli.md
 for historical_output in docs/schemas/output-v4.schema.json docs/schemas/output-v5.schema.json; do
   jq -e --arg expected 'urn:animsmith:schema:measurements:11' \
     '.["$defs"].file_report.properties.measurements["$ref"] == $expected' \
@@ -221,6 +223,7 @@ check_schema docs/schemas/collection-output-v7.schema.json urn:animsmith:schema:
 check_schema docs/schemas/collection-output-v8.schema.json urn:animsmith:schema:collection-output:8 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-output-v9.schema.json urn:animsmith:schema:collection-output:9 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-output-v10.schema.json urn:animsmith:schema:collection-output:10 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
+check_schema docs/schemas/collection-output-v11.schema.json urn:animsmith:schema:collection-output:11 crates/animsmith/src/collection_output.rs docs/output.md docs/cli.md
 check_schema .agents/skills/evaluate-animation-packs/schemas/evaluation-model-v2.schema.json urn:animsmith:skill:animation-pack-evaluation:2 .agents/skills/evaluate-animation-packs/SKILL.md .agents/skills/evaluate-animation-packs/references/evaluation-model-v2.md .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py
 
 # A producer advance must fail this exact consumer inventory until the skill,
@@ -239,10 +242,10 @@ for file in \
 done
 grep -Fq "$collection_output_current" .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
   || fail 'current evaluation-model contract is stale against the producer identity'
-grep -Fq 'urn:animsmith:schema:output:18' .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
-  || fail 'current evaluation-model contract is stale against output:18'
-grep -Fq 'urn:animsmith:schema:measurements:17' .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
-  || fail 'current evaluation-model contract is stale against measurements:17'
+grep -Fq 'urn:animsmith:schema:output:19' .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
+  || fail 'current evaluation-model contract is stale against output:19'
+grep -Fq 'urn:animsmith:schema:measurements:18' .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
+  || fail 'current evaluation-model contract is stale against measurements:18'
 grep -Fq 'evaluation_model_v2' .agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
   || fail 'renderer is not discovered through the current evaluation-model contract'
 grep -Fq 'evaluation_model_v2 as contract' .agents/skills/evaluate-animation-packs/scripts/validate_evaluation_model_v2.py \
@@ -251,10 +254,10 @@ grep -Fq '../../../.agents/skills/evaluate-animation-packs/SKILL.md' .claude/ski
   || fail 'Claude discovery adapter no longer routes to the audited canonical skill'
 grep -Fq '#574' .agents/skills/evaluate-animation-packs/references/schema-impact-audit.md \
   || fail 'schema-impact audit no longer covers the blocked report-migration ticket'
-grep -Fq 'test_synchronized_v10_source_sequence_work_and_closure_mutations_fail_closed' .agents/skills/evaluate-animation-packs/scripts/test_validators.py \
+grep -Fq 'test_synchronized_v11_source_sequence_work_and_closure_mutations_fail_closed' .agents/skills/evaluate-animation-packs/scripts/test_validators.py \
   || fail 'schema-impact audit lost its synchronized current-binding mutation fixture'
-grep -Fq 'evaluation_v2_complete_fixture_passes_the_authoritative_v10_reader' crates/animsmith/src/collection_output.rs \
-  || fail 'authoritative V10 reader no longer proves the complete evaluation fixture'
+grep -Fq 'evaluation_v2_complete_fixture_passes_the_authoritative_v11_reader' crates/animsmith/src/collection_output.rs \
+  || fail 'authoritative V11 reader no longer proves the complete evaluation fixture'
 grep -Fq 'ValidateOutput' crates/animsmith/src/main.rs \
   || fail 'authoritative collection-output validation entry point is missing'
 grep -Fq 'read_current_collection_output(stdin.lock())' crates/animsmith/src/main.rs \
@@ -266,7 +269,7 @@ grep -Fq 'binding, binding_bytes = load_authoritative_collection_output(' .agent
 grep -Fq 'model_validator_v2.load_authoritative_collection_output(animsmith, path)' .agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
   || fail 'V2 renderer no longer requires authoritative collection-output readback'
 grep -Fq 'stdout_size != len(_VALIDATION_HANDSHAKE)' .agents/skills/evaluate-animation-packs/scripts/validate_evaluation_model_v2.py \
-  || fail 'V2 validator no longer requires the exact Rust V10 handshake'
+  || fail 'V2 validator no longer requires the exact Rust V11 handshake'
 jq -e '
   any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:output:12")
   and any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:measurements:15#/$defs/clip_measurements")
@@ -302,6 +305,11 @@ jq -e '
   and any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:measurements:17#/$defs/clip_measurements")
 ' docs/schemas/collection-output-v10.schema.json >/dev/null \
   || fail 'collection-output-v10 must reference output-v18 and measurements-v17'
+jq -e '
+  any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:output:19")
+  and any(.. | objects | .["$ref"]?; . == "urn:animsmith:schema:measurements:18#/$defs/clip_measurements")
+' docs/schemas/collection-output-v11.schema.json >/dev/null \
+  || fail 'collection-output-v11 must reference output-v19 and measurements-v18'
 jq -e --slurp '
   .[0]["$defs"].budget.properties == .[1]["$defs"].budget.properties
 ' docs/schemas/collection-output-v4.schema.json \
@@ -560,10 +568,10 @@ done
 # Current-contract descriptions must not send readers back to the immutable
 # output-v2 schema. Keep these exact statements aligned with the current outer
 # contract when it advances.
-grep -Fq 'Final output-v18 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
-  || fail 'CheckEvaluation documentation does not identify output v18'
-grep -Fq 'Regenerate a current output-v18 report from the original' docs/output.md \
-  || fail 'report migration documentation does not identify output v18'
+grep -Fq 'Final output-v19 record for one catalog check.' crates/animsmith-core/src/evaluation.rs \
+  || fail 'CheckEvaluation documentation does not identify output v19'
+grep -Fq 'Regenerate a current output-v19 report from the original' docs/output.md \
+  || fail 'report migration documentation does not identify output v19'
 
 for removed_schema in \
   docs/schemas/output-v1.schema.json \
@@ -729,7 +737,7 @@ legacy_candidate_pattern='"schema_version"'
 
 # Pin the scanner against a normal outer envelope whose schema/tool fields sit
 # between its version and command. Also prove that current nested measurements in a
-# current output-v18 envelope are not mistaken for an outer legacy contract.
+# current output-v19 envelope are not mistaken for an outer legacy contract.
 legacy_scanner_regression=$(
   printf '%s\n' \
     '{' \

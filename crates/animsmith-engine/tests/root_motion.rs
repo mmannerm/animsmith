@@ -10,7 +10,7 @@ use animsmith_core::{
     EnginePredictionFacetV4, EnginePredictionV4, EnginePredictionV6,
     EngineRootMotionClipIntentInputV1, EngineRootMotionClipMappingStateV1,
     EngineRootMotionProjectIntentV1, EvaluationScope, EvaluationScopeCode, InputIdentity,
-    Interpolation, LintEnvelopeV18, LintFileReportV18, MeasurementContract, MeasurementReportInput,
+    Interpolation, LintEnvelopeV19, LintFileReportV19, MeasurementContract, MeasurementReportInput,
     MetricGrids, PREDICTION_V2_MAX_CANDIDATE_FACETS_PER_RULE, PredictionFacetDemandV2,
     PredictionRuleDemandV2, PredictionUnavailableReasonV2, Property, RawSourceFactsBuilderV1,
     RawTransformPathInventoryV1, RawTransformPathNodeInputV1, RawTransformPathNodeKindV1,
@@ -439,7 +439,7 @@ fn strict_v18_bytes_with_evaluations(
         animsmith_core::measure::measure_assets(fixture.source.document()),
     )
     .unwrap();
-    let report = LintFileReportV18::new_v6(
+    let report = LintFileReportV19::new_v6(
         "strict-v18.fbx",
         fixture.source.source_facts().primary_identity().clone(),
         RigInfo::from_resolved(fixture.source.document(), &fixture.roles).unwrap(),
@@ -448,7 +448,7 @@ fn strict_v18_bytes_with_evaluations(
         measurements,
     )
     .unwrap();
-    let envelope = LintEnvelopeV18::new(
+    let envelope = LintEnvelopeV19::new(
         ToolInfo::animsmith(ToolSource::new(None, None)),
         vec![report],
     )

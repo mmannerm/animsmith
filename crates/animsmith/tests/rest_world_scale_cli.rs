@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
-const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v18.schema.json");
+const OUTPUT_SCHEMA: &str = include_str!("../../../docs/schemas/output-v19.schema.json");
 const OUTPUT_V14_SCHEMA: &str = include_str!("../../../docs/schemas/output-v14.schema.json");
 const OUTPUT_V13_SCHEMA: &str = include_str!("../../../docs/schemas/output-v13.schema.json");
 const OUTPUT_V10_SCHEMA: &str = include_str!("../../../docs/schemas/output-v10.schema.json");
@@ -18,7 +18,7 @@ const MEASUREMENTS_V15_SCHEMA: &str =
 const MEASUREMENTS_V16_SCHEMA: &str =
     include_str!("../../../docs/schemas/measurements-v16.schema.json");
 const MEASUREMENTS_SCHEMA: &str =
-    include_str!("../../../docs/schemas/measurements-v17.schema.json");
+    include_str!("../../../docs/schemas/measurements-v18.schema.json");
 
 fn output_validator() -> jsonschema::Validator {
     let output: Value = serde_json::from_str(OUTPUT_SCHEMA).expect("valid output schema");
@@ -45,7 +45,7 @@ fn output_validator() -> jsonschema::Validator {
         .expect("registers historical measurements schema")
         .add("urn:animsmith:schema:measurements:16", measurements_v16)
         .expect("registers historical measurements-v16 schema")
-        .add("urn:animsmith:schema:measurements:17", measurements)
+        .add("urn:animsmith:schema:measurements:18", measurements)
         .expect("registers measurements schema")
         .prepare()
         .expect("prepares measurements schema registry");

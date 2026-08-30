@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- add canonical proper-orthogonal-polar `rotation_xyzw` rest-world and
+  skin-bind linear facts in measurements-v18; make output-v19 and
+  collection-output-v11 the current contracts while retaining their pinned
+  historical readers
+
 ## [0.8.0](https://github.com/mmannerm/animsmith/compare/v0.7.0...v0.8.0) - 2026-08-29
 
 ### Fixed

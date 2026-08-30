@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strictly validate evaluation model V2 against exact collection-output V10."""
+"""Strictly validate evaluation model V2 against exact collection-output V11."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ _MODEL_SCHEMA_PATH = _SKILL_ROOT / "schemas" / "evaluation-model-v2.schema.json"
 _MODEL_V1_SCHEMA_PATH = _SKILL_ROOT / "schemas" / "evaluation-model-v1.schema.json"
 _VALIDATION_HANDSHAKE = (
     b"animsmith-internal collection-output-valid "
-    b"urn:animsmith:schema:collection-output:10 10\n"
+    b"urn:animsmith:schema:collection-output:11 11\n"
 )
 
 
@@ -37,10 +37,10 @@ def _documents() -> list[dict[str, Any]]:
     paths = (
         _MODEL_SCHEMA_PATH,
         _MODEL_V1_SCHEMA_PATH,
-        _SCHEMA_ROOT / "collection-output-v10.schema.json",
+        _SCHEMA_ROOT / "collection-output-v11.schema.json",
         _SCHEMA_ROOT / "output-v10.schema.json",
-        _SCHEMA_ROOT / "output-v18.schema.json",
-        _SCHEMA_ROOT / "measurements-v17.schema.json",
+        _SCHEMA_ROOT / "output-v19.schema.json",
+        _SCHEMA_ROOT / "measurements-v18.schema.json",
     )
     documents = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
     expected_ids = (
@@ -157,7 +157,7 @@ def _parse_collection_output(raw: bytes) -> Any:
 
 
 def validate_with_animsmith(animsmith: Path, binding_bytes: bytes) -> None:
-    """Require the selected checkout binary to accept the exact V10 bytes."""
+    """Require the selected checkout binary to accept the exact V11 bytes."""
     try:
         executable = animsmith.resolve(strict=True)
     except OSError as error:
@@ -180,17 +180,17 @@ def validate_with_animsmith(animsmith: Path, binding_bytes: bytes) -> None:
             handshake = stdout.read(len(_VALIDATION_HANDSHAKE) + 1)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ValueError(
-            "selected AnimSmith binary could not validate collection-output V10"
+            "selected AnimSmith binary could not validate collection-output V11"
         ) from error
     if result.returncode != 0:
         raise ValueError(
-            "selected AnimSmith binary rejected collection-output V10 "
+            "selected AnimSmith binary rejected collection-output V11 "
             f"with exit code {result.returncode}"
         )
     if stdout_size != len(_VALIDATION_HANDSHAKE) or handshake != _VALIDATION_HANDSHAKE:
         raise ValueError(
             "selected AnimSmith binary did not return the exact internal "
-            "collection-output V10 validation handshake"
+            "collection-output V11 validation handshake"
         )
 
 
@@ -225,8 +225,8 @@ def _source_projection(source: dict[str, Any]) -> dict[str, Any]:
 def _v1_relation_projection(binding: dict[str, Any]) -> dict[str, Any]:
     """Build an in-memory V2 shape solely to reuse frozen V1 model relations.
 
-    The public V1 validator never sees or accepts V10. V2 first validates and
-    binds the complete V10 envelope; this synthetic unavailable-data shape only
+    The public V1 validator never sees or accepts V11. V2 first validates and
+    binds the complete V11 envelope; this synthetic unavailable-data shape only
     supplies the immutable clip/set identity interface to V1's relationship
     checker, so its evidence/reference/collection rules are not forked.
     """
@@ -346,33 +346,33 @@ def validate_model(model: Any, binding: Any, binding_bytes: bytes) -> list[str]:
         actual_binding[0], actual_binding[1],
     )
     if expected_identity != actual_identity:
-        errors.append("model.binding must identify the exact collection-output:10 bytes and manifest")
+        errors.append("model.binding must identify the exact collection-output:11 bytes and manifest")
 
     projected_sources = [_source_projection(source) for source in binding["sources"]]
     if declared["sources"] != projected_sources:
-        errors.append("model.binding.sources must retain every typed V10 source state in canonical order")
+        errors.append("model.binding.sources must retain every typed V11 source state in canonical order")
     if binding["summary"]["incomplete"] and model["presentation"]["completeness"] == "complete":
-        errors.append("model.presentation.completeness cannot be complete for incomplete V10 evidence")
+        errors.append("model.presentation.completeness cannot be complete for incomplete V11 evidence")
 
     bound_clips = {clip["id"]: clip for clip in binding["clips"]}
     model_clips = {clip["id"]: clip for clip in model["clips"]}
     if set(bound_clips) != set(model_clips):
-        errors.append("model.clips must contain exactly every V10 clip row")
+        errors.append("model.clips must contain exactly every V11 clip row")
     for clip_id in sorted(set(bound_clips) & set(model_clips)):
         source = bound_clips[clip_id]
         record = model_clips[clip_id]
         if tuple(record[key] for key in ("source", "take_index", "take_name")) != tuple(
             source[key] for key in ("source", "take_index", "take_name")
         ):
-            errors.append(f"model.clips[{clip_id}] has a stale V10 source/take witness")
+            errors.append(f"model.clips[{clip_id}] has a stale V11 source/take witness")
         state = source["binding"]
         if state["state"] == "unavailable":
             if record["assessment"] != "not-evaluated" or record["coverage"] not in {
                 "not-evaluated", "unsupported-input", "unavailable-evidence"
             }:
-                errors.append(f"model.clips[{clip_id}] must retain unavailable V10 evidence as a typed soft failure")
+                errors.append(f"model.clips[{clip_id}] must retain unavailable V11 evidence as a typed soft failure")
             if record["duration_s"] != {"state": "unavailable"} or record["root_motion_speed_mps"] != {"state": "unavailable"}:
-                errors.append(f"model.clips[{clip_id}] must preserve unavailable V10 measurement availability")
+                errors.append(f"model.clips[{clip_id}] must preserve unavailable V11 measurement availability")
         else:
             if (
                 state["observed_source_take_index"], state["observed_take_name"]
@@ -380,7 +380,7 @@ def validate_model(model: Any, binding: Any, binding_bytes: bytes) -> list[str]:
                 errors.append(f"binding.clips[{clip_id}] has a contradictory observed take witness")
             measurements = state["measurements"]
             if record["duration_s"] != {"state": "available", "value": measurements["duration_s"]}:
-                errors.append(f"model.clips[{clip_id}].duration_s must equal V10")
+                errors.append(f"model.clips[{clip_id}].duration_s must equal V11")
             speed_availability = measurements["speed_mps_availability"]
             expected_speed = (
                 {"state": "available", "value": measurements["speed_mps"]}
@@ -391,28 +391,28 @@ def validate_model(model: Any, binding: Any, binding_bytes: bytes) -> list[str]:
                 }[speed_availability]
             )
             if record["root_motion_speed_mps"] != expected_speed:
-                errors.append(f"model.clips[{clip_id}].root_motion_speed_mps must preserve exact V10 value and availability")
+                errors.append(f"model.clips[{clip_id}].root_motion_speed_mps must preserve exact V11 value and availability")
 
     bound_sets = {runtime_set["id"]: runtime_set for runtime_set in binding["runtime_sets"]}
     model_sets = {runtime_set["id"]: runtime_set for runtime_set in model["runtime_sets"]}
     if set(bound_sets) != set(model_sets):
-        errors.append("model.runtime_sets must contain exactly every V10 runtime-set row")
+        errors.append("model.runtime_sets must contain exactly every V11 runtime-set row")
     for set_id in sorted(set(bound_sets) & set(model_sets)):
         source = bound_sets[set_id]
         record = model_sets[set_id]
         if record["kind"] != source["kind"] or [member["clip_id"] for member in record["members"]] != [member["id"] for member in source["members"]]:
-            errors.append(f"model.runtime_sets[{set_id}] must preserve V10 kind and member order")
+            errors.append(f"model.runtime_sets[{set_id}] must preserve V11 kind and member order")
             continue
         for index, member in enumerate(source["members"]):
             if member["resolution"]["state"] == "unavailable" and record["members"][index]["eligibility"] == "complete":
-                errors.append(f"model.runtime_sets[{set_id}].members[{index}] cannot be complete when V10 is unavailable")
+                errors.append(f"model.runtime_sets[{set_id}].members[{index}] cannot be complete when V11 is unavailable")
         if source["lifecycle"] == "incomplete" and (
             record["assessment"] != "not-evaluated"
             or record["coverage"] not in {"partially-evaluated", "not-evaluated", "unavailable-evidence"}
         ):
-            errors.append(f"model.runtime_sets[{set_id}] must retain incomplete V10 evidence as a typed soft failure")
+            errors.append(f"model.runtime_sets[{set_id}] must retain incomplete V11 evidence as a typed soft failure")
 
-    # Reuse the frozen V1 relationship closure only after V2/V10 identity and
+    # Reuse the frozen V1 relationship closure only after V2/V11 identity and
     # completeness have been checked independently above.
     relation_model = copy.deepcopy(model)
     relation_model["schema"] = v1_contract.SCHEMA

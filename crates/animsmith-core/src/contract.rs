@@ -74,9 +74,13 @@ use crate::{
 };
 
 /// Current outer result-envelope version.
-pub const OUTPUT_SCHEMA_VERSION: u32 = 18;
+pub const OUTPUT_SCHEMA_VERSION: u32 = 19;
 /// Immutable identity of the current outer result envelope.
-pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:18";
+pub const OUTPUT_SCHEMA_ID: &str = "urn:animsmith:schema:output:19";
+/// Immutable output-v18 identity retained for historical V6 prediction evidence.
+pub const OUTPUT_V18_SCHEMA_ID: &str = "urn:animsmith:schema:output:18";
+/// Schema version of output-v18.
+pub const OUTPUT_V18_SCHEMA_VERSION: u32 = 18;
 /// Immutable output-v17 identity retained for historical V6 prediction evidence.
 pub const OUTPUT_V17_SCHEMA_ID: &str = "urn:animsmith:schema:output:17";
 /// Schema version of output-v17.
@@ -114,9 +118,13 @@ pub const OUTPUT_V11_MAX_FILES: usize = 4_096;
 /// Maximum check records carried by one output-v11 lint file.
 pub const OUTPUT_V11_MAX_CHECKS_PER_FILE: usize = 4_096;
 /// Current nested measurement-contract version.
-pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 17;
+pub const MEASUREMENTS_SCHEMA_VERSION: u32 = 18;
 /// Immutable identity of the current nested measurement contract.
-pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:17";
+pub const MEASUREMENTS_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:18";
+/// Immutable measurements-v17 identity retained for the output-v18 reader.
+pub const MEASUREMENTS_V17_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:17";
+/// Immutable measurements-v17 version retained for the output-v18 reader.
+pub const MEASUREMENTS_V17_SCHEMA_VERSION: u32 = 17;
 /// Immutable measurements-v16 identity retained for output-v13 through output-v17 readers.
 pub const MEASUREMENTS_V16_SCHEMA_ID: &str = "urn:animsmith:schema:measurements:16";
 /// Immutable measurements-v16 version retained for historical report readers.
@@ -359,7 +367,7 @@ impl MeasurementContract {
         clips: BTreeMap<String, ClipMeasurements>,
         assets: AssetMeasurements,
     ) -> Result<Self, MeasurementContractError> {
-        validate_measurements(&clips, &assets, MeasurementRevision::V17)?;
+        validate_measurements(&clips, &assets, MeasurementRevision::V18)?;
         Ok(Self {
             schema_version: MEASUREMENTS_SCHEMA_VERSION,
             schema: MEASUREMENTS_SCHEMA_ID,
@@ -394,11 +402,25 @@ impl MeasurementContract {
         })
     }
 
-    /// Reconstruct the measurements-v16 evidence view consumed by immutable
-    /// prediction contracts embedded in current output. V16 represented loop
-    /// continuity as all-or-nothing, so any unavailable V17 bone projects to
-    /// an unavailable outer fact; fully measured rows simply omit the V17-only
-    /// per-bone availability field.
+    pub(crate) fn historical_v17(
+        clips: BTreeMap<String, ClipMeasurements>,
+        assets: AssetMeasurements,
+    ) -> Result<Self, MeasurementContractError> {
+        validate_measurements(&clips, &assets, MeasurementRevision::V17)?;
+        Ok(Self {
+            schema_version: MEASUREMENTS_V17_SCHEMA_VERSION,
+            schema: MEASUREMENTS_V17_SCHEMA_ID,
+            clips,
+            assets,
+        })
+    }
+
+    /// Reconstruct the measurements-v18-to-v16 evidence view consumed by
+    /// immutable prediction contracts embedded in current output. V16
+    /// represented loop continuity as all-or-nothing, so any unavailable V17
+    /// bone projects to an unavailable outer fact; fully measured rows omit
+    /// the V17-only per-bone availability field, and every V18-only linear
+    /// rotation fact is removed.
     fn prediction_v16_projection(&self) -> Result<Self, MeasurementContractError> {
         let mut clips = self.clips.clone();
         for clip in clips.values_mut() {
@@ -417,7 +439,21 @@ impl MeasurementContract {
                 }
             }
         }
-        Self::historical_v16(clips, self.assets.clone())
+        let mut assets = self.assets.clone();
+        for node in &mut assets.skeleton_nodes {
+            node.rest_world_linear.rotation_xyzw = None;
+        }
+        for skin in &mut assets.skins {
+            for joint in &mut skin.joints {
+                if let Some(linear) = &mut joint.joint_bind_to_mesh.linear {
+                    linear.rotation_xyzw = None;
+                }
+                if let Some(linear) = &mut joint.mesh_bind_world.linear {
+                    linear.rotation_xyzw = None;
+                }
+            }
+        }
+        Self::historical_v16(clips, assets)
     }
 
     /// Per-clip measurements keyed by clip name.
@@ -441,6 +477,7 @@ enum MeasurementRevision {
     V15,
     V16,
     V17,
+    V18,
 }
 
 fn validate_measurements(
@@ -702,13 +739,21 @@ fn validate_measurements(
                         ),
                     });
                 }
-                if revision == MeasurementRevision::V17 && !bone.availability_was_present {
+                if matches!(
+                    revision,
+                    MeasurementRevision::V17 | MeasurementRevision::V18
+                ) && !bone.availability_was_present
+                {
                     return Err(MeasurementContractError::InvalidStructure {
                         path: format!("{path}.availability"),
                         reason: "measurements-v17 requires explicit per-bone availability".into(),
                     });
                 }
-                if revision != MeasurementRevision::V17 && bone.availability_was_present {
+                if !matches!(
+                    revision,
+                    MeasurementRevision::V17 | MeasurementRevision::V18
+                ) && bone.availability_was_present
+                {
                     return Err(MeasurementContractError::InvalidStructure {
                         path: format!("{path}.availability"),
                         reason:
@@ -716,8 +761,10 @@ fn validate_measurements(
                                 .into(),
                     });
                 }
-                if revision != MeasurementRevision::V17
-                    && bone.availability != MeasurementAvailability::Measured
+                if !matches!(
+                    revision,
+                    MeasurementRevision::V17 | MeasurementRevision::V18
+                ) && bone.availability != MeasurementAvailability::Measured
                 {
                     return Err(MeasurementContractError::InvalidStructure {
                         path: format!("{path}.availability"),
@@ -851,7 +898,10 @@ fn validate_measurements(
             ));
         }
         match (&mesh.primitives, revision) {
-            (None, MeasurementRevision::V16 | MeasurementRevision::V17) => {
+            (
+                None,
+                MeasurementRevision::V16 | MeasurementRevision::V17 | MeasurementRevision::V18,
+            ) => {
                 return Err(invalid(
                     format!("mesh_definitions[{index}].primitives"),
                     "measurements-v16 requires per-primitive evidence",
@@ -863,7 +913,10 @@ fn validate_measurements(
                     "measurements-v15 cannot carry per-primitive evidence",
                 ));
             }
-            (Some(primitives), MeasurementRevision::V16 | MeasurementRevision::V17) => {
+            (
+                Some(primitives),
+                MeasurementRevision::V16 | MeasurementRevision::V17 | MeasurementRevision::V18,
+            ) => {
                 let mut summed_vertex_count = 0u64;
                 let mut summed_finite_vertex_count = 0u64;
                 let mut aggregate_min = [f32::INFINITY; 3];
@@ -1136,7 +1189,7 @@ fn validate_measurements(
             "default_scene_index must reference a declared scene",
         ));
     }
-    validate_skeleton_measurements(assets, &invalid)?;
+    validate_skeleton_measurements(assets, revision, &invalid)?;
     validate_material_resources(assets, revision, &invalid)?;
     Ok(())
 }
@@ -1144,6 +1197,7 @@ fn validate_measurements(
 fn validate_linear_transform_fields(
     linear: &LinearTransformMeasurements,
     path: &str,
+    revision: MeasurementRevision,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
     let numeric_fields_present = linear.axis_lengths.is_some()
@@ -1153,6 +1207,7 @@ fn validate_linear_transform_fields(
         if linear.axis_lengths.is_some()
             || linear.determinant.is_some()
             || linear.orientation.is_some()
+            || linear.rotation_xyzw.is_some()
             || linear.uniform_scale.is_some()
         {
             return Err(invalid(
@@ -1166,6 +1221,31 @@ fn validate_linear_transform_fields(
         return Err(invalid(
             path.into(),
             "a finite classification requires axis_lengths, determinant, and orientation",
+        ));
+    }
+    let rotation_present = linear.rotation_xyzw.is_some();
+    if revision == MeasurementRevision::V18 {
+        let rotation_required =
+            linear.classification == LinearTransformClassification::UnitOrthonormal;
+        if rotation_present != rotation_required {
+            return Err(invalid(
+                path.into(),
+                "rotation_xyzw must be present exactly for unit_orthonormal linear transforms",
+            ));
+        }
+        if let Some(rotation) = linear.rotation_xyzw {
+            for (component, value) in rotation.into_iter().enumerate() {
+                if !value.is_finite() {
+                    return Err(MeasurementContractError::NonFiniteValue {
+                        path: format!("{path}.rotation_xyzw[{component}]"),
+                    });
+                }
+            }
+        }
+    } else if rotation_present {
+        return Err(invalid(
+            path.into(),
+            "rotation_xyzw is exclusive to measurements-v18",
         ));
     }
     for (axis, value) in linear
@@ -1209,6 +1289,7 @@ fn validate_linear_transform_fields(
 
 fn validate_skeleton_measurements(
     assets: &AssetMeasurements,
+    revision: MeasurementRevision,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
     if assets.skeleton_source_coverage == SourceSkeletonCoverage::Unavailable {
@@ -1273,6 +1354,7 @@ fn validate_skeleton_measurements(
         validate_linear_transform_fields(
             &node.rest_world_linear,
             &format!("{node_path}.rest_world_linear"),
+            revision,
             invalid,
         )?;
         match (
@@ -1296,7 +1378,10 @@ fn validate_skeleton_measurements(
                         "rest_world_translation_m must equal the rest-world matrix translation column",
                     ));
                 }
-                let expected_linear = measure_linear_transform(Mat4::from_cols_array(matrix));
+                let mut expected_linear = measure_linear_transform(Mat4::from_cols_array(matrix));
+                if revision != MeasurementRevision::V18 {
+                    expected_linear.rotation_xyzw = None;
+                }
                 if node.rest_world_linear != expected_linear {
                     return Err(invalid(
                         format!("{node_path}.rest_world_linear"),
@@ -1560,6 +1645,7 @@ fn validate_skeleton_measurements(
             validate_derived_matrix(
                 &joint.joint_bind_to_mesh,
                 &joint_bind_path,
+                revision,
                 &finite_matrix,
                 invalid,
             )?;
@@ -1585,6 +1671,7 @@ fn validate_skeleton_measurements(
             validate_derived_matrix(
                 &joint.mesh_bind_world,
                 &mesh_bind_path,
+                revision,
                 &finite_matrix,
                 invalid,
             )?;
@@ -1867,6 +1954,7 @@ fn validate_derived_source(
 fn validate_derived_matrix(
     matrix: &SkinDerivedMatrixMeasurements,
     path: &str,
+    revision: MeasurementRevision,
     finite_matrix: &impl Fn(&[f32; 16], &str) -> Result<(), MeasurementContractError>,
     invalid: &impl Fn(String, &str) -> MeasurementContractError,
 ) -> Result<(), MeasurementContractError> {
@@ -1889,8 +1977,12 @@ fn validate_derived_matrix(
     ) {
         (Some(matrix), Some(linear), None) => {
             finite_matrix(matrix, &format!("{path}.matrix"))?;
-            validate_linear_transform_fields(linear, &format!("{path}.linear"), invalid)?;
-            if *linear != measure_linear_transform(Mat4::from_cols_array(matrix)) {
+            validate_linear_transform_fields(linear, &format!("{path}.linear"), revision, invalid)?;
+            let mut expected_linear = measure_linear_transform(Mat4::from_cols_array(matrix));
+            if revision != MeasurementRevision::V18 {
+                expected_linear.rotation_xyzw = None;
+            }
+            if *linear != expected_linear {
                 return Err(invalid(
                     format!("{path}.linear"),
                     "linear facts must be derived from the available matrix",
@@ -2079,7 +2171,7 @@ fn validate_image_measurement(
             ));
         }
         (
-            MeasurementRevision::V16 | MeasurementRevision::V17,
+            MeasurementRevision::V16 | MeasurementRevision::V17 | MeasurementRevision::V18,
             Some(crate::model::ImageUnavailableReason::UnsupportedContainer),
             Some(magic),
         ) => {
@@ -2097,18 +2189,26 @@ fn validate_image_measurement(
             }
         }
         (
-            MeasurementRevision::V16 | MeasurementRevision::V17,
+            MeasurementRevision::V16 | MeasurementRevision::V17 | MeasurementRevision::V18,
             Some(crate::model::ImageUnavailableReason::UnsupportedContainer),
             None,
         )
         | (MeasurementRevision::V15, _, None) => {}
-        (MeasurementRevision::V16 | MeasurementRevision::V17, _, Some(_)) => {
+        (
+            MeasurementRevision::V16 | MeasurementRevision::V17 | MeasurementRevision::V18,
+            _,
+            Some(_),
+        ) => {
             return Err(invalid(
                 format!("images[{offset}].leading_magic_hex"),
                 "leading_magic_hex is permitted only for unsupported_container",
             ));
         }
-        (MeasurementRevision::V16 | MeasurementRevision::V17, _, None) => {}
+        (
+            MeasurementRevision::V16 | MeasurementRevision::V17 | MeasurementRevision::V18,
+            _,
+            None,
+        ) => {}
     }
     Ok(())
 }
@@ -10418,6 +10518,7 @@ impl MeasurementReportInput {
             V16,
             V17,
             V18,
+            V19,
         }
 
         let revision = match self.schema_version {
@@ -10428,7 +10529,8 @@ impl MeasurementReportInput {
             Some(OUTPUT_V15_SCHEMA_VERSION) => ReaderRevision::V15,
             Some(OUTPUT_V16_SCHEMA_VERSION) => ReaderRevision::V16,
             Some(OUTPUT_V17_SCHEMA_VERSION) => ReaderRevision::V17,
-            Some(OUTPUT_SCHEMA_VERSION) => ReaderRevision::V18,
+            Some(OUTPUT_V18_SCHEMA_VERSION) => ReaderRevision::V18,
+            Some(OUTPUT_SCHEMA_VERSION) => ReaderRevision::V19,
             Some(found) => {
                 return Err(MeasurementReportError::UnsupportedOutputVersion { found });
             }
@@ -10442,7 +10544,8 @@ impl MeasurementReportInput {
             ReaderRevision::V15 => OUTPUT_V15_SCHEMA_ID,
             ReaderRevision::V16 => OUTPUT_V16_SCHEMA_ID,
             ReaderRevision::V17 => OUTPUT_V17_SCHEMA_ID,
-            ReaderRevision::V18 => OUTPUT_SCHEMA_ID,
+            ReaderRevision::V18 => OUTPUT_V18_SCHEMA_ID,
+            ReaderRevision::V19 => OUTPUT_SCHEMA_ID,
         };
         if self.schema.as_deref() != Some(expected_schema) {
             return Err(MeasurementReportError::WrongOutputIdentity);
@@ -10522,7 +10625,10 @@ impl MeasurementReportInput {
                     .checked_add(file_unavailable)
                     .ok_or(MeasurementReportError::PredictionFacetSummaryMismatch)?;
                 file
-            } else if matches!(revision, ReaderRevision::V17 | ReaderRevision::V18) {
+            } else if matches!(
+                revision,
+                ReaderRevision::V17 | ReaderRevision::V18 | ReaderRevision::V19
+            ) {
                 let file = decode_prediction_phase_file_v17(command, file_index, &raw)?;
                 let (file_available, file_unavailable) =
                     validate_prediction_phase_file_v17(command, file_index, &file)?;
@@ -10604,6 +10710,7 @@ impl MeasurementReportInput {
                             | ReaderRevision::V16
                             | ReaderRevision::V17
                             | ReaderRevision::V18
+                            | ReaderRevision::V19
                     ),
                 )
                 .map_err(|source| {
@@ -10625,7 +10732,10 @@ impl MeasurementReportInput {
                     | ReaderRevision::V17 => {
                         (MEASUREMENTS_V16_SCHEMA_VERSION, MEASUREMENTS_V16_SCHEMA_ID)
                     }
-                    ReaderRevision::V18 => (MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_SCHEMA_ID),
+                    ReaderRevision::V18 => {
+                        (MEASUREMENTS_V17_SCHEMA_VERSION, MEASUREMENTS_V17_SCHEMA_ID)
+                    }
+                    ReaderRevision::V19 => (MEASUREMENTS_SCHEMA_VERSION, MEASUREMENTS_SCHEMA_ID),
                 };
                 match measurements.schema_version {
                     Some(found) if found == expected_measurement_version => {}
@@ -10764,7 +10874,8 @@ impl MeasurementReportInput {
                     | ReaderRevision::V15
                     | ReaderRevision::V16
                     | ReaderRevision::V17 => MeasurementContract::historical_v16(clips, assets),
-                    ReaderRevision::V18 => MeasurementContract::new(clips, assets),
+                    ReaderRevision::V18 => MeasurementContract::historical_v17(clips, assets),
+                    ReaderRevision::V19 => MeasurementContract::new(clips, assets),
                 }
                 .map_err(|source| {
                     MeasurementReportError::file(
@@ -10772,16 +10883,17 @@ impl MeasurementReportInput {
                         MeasurementFileError::InvalidMeasurements { source },
                     )
                 })?;
-                let prediction_measurements = if revision == ReaderRevision::V18 {
-                    measurements.prediction_v16_projection().map_err(|source| {
-                        MeasurementReportError::file(
-                            file_index,
-                            MeasurementFileError::InvalidMeasurements { source },
-                        )
-                    })?
-                } else {
-                    measurements.clone()
-                };
+                let prediction_measurements =
+                    if matches!(revision, ReaderRevision::V18 | ReaderRevision::V19) {
+                        measurements.prediction_v16_projection().map_err(|source| {
+                            MeasurementReportError::file(
+                                file_index,
+                                MeasurementFileError::InvalidMeasurements { source },
+                            )
+                        })?
+                    } else {
+                        measurements.clone()
+                    };
                 if revision == ReaderRevision::V15 {
                     let provenance = file.prediction_provenance_v4.as_present();
                     for (check_index, check) in file
@@ -10839,7 +10951,10 @@ impl MeasurementReportInput {
                 }
                 if matches!(
                     revision,
-                    ReaderRevision::V16 | ReaderRevision::V17 | ReaderRevision::V18
+                    ReaderRevision::V16
+                        | ReaderRevision::V17
+                        | ReaderRevision::V18
+                        | ReaderRevision::V19
                 ) && !matches!(file.prediction_provenance_v5, RequiredNullable::Missing)
                 {
                     let provenance = file.prediction_provenance_v5.as_present();
@@ -10870,8 +10985,10 @@ impl MeasurementReportInput {
                         })?;
                     }
                 }
-                if matches!(revision, ReaderRevision::V17 | ReaderRevision::V18)
-                    && !matches!(file.prediction_provenance_v6, RequiredNullable::Missing)
+                if matches!(
+                    revision,
+                    ReaderRevision::V17 | ReaderRevision::V18 | ReaderRevision::V19
+                ) && !matches!(file.prediction_provenance_v6, RequiredNullable::Missing)
                 {
                     let provenance = file.prediction_provenance_v6.as_present();
                     let rig = file.rig_v17.as_ref().ok_or_else(|| {
@@ -10936,18 +11053,19 @@ impl MeasurementReportInput {
             (file, (checks, legacy_checks, checks_v3, checks_v4, checks_v5, checks_v6)),
         ) in parsed.iter().enumerate()
         {
-            let prediction_measurements = if revision == ReaderRevision::V18 {
-                file.measurements
-                    .prediction_v16_projection()
-                    .map_err(|source| {
-                        MeasurementReportError::file(
-                            file_index,
-                            MeasurementFileError::InvalidMeasurements { source },
-                        )
-                    })?
-            } else {
-                file.measurements.clone()
-            };
+            let prediction_measurements =
+                if matches!(revision, ReaderRevision::V18 | ReaderRevision::V19) {
+                    file.measurements
+                        .prediction_v16_projection()
+                        .map_err(|source| {
+                            MeasurementReportError::file(
+                                file_index,
+                                MeasurementFileError::InvalidMeasurements { source },
+                            )
+                        })?
+                } else {
+                    file.measurements.clone()
+                };
             validate_measurement_references_batch_v4(
                 &prediction_measurements,
                 checks_v6
@@ -11255,6 +11373,60 @@ mod measurement_report_input_tests {
 
     fn prediction_test_measurements() -> MeasurementContract {
         MeasurementContract::new(BTreeMap::new(), AssetMeasurements::default()).unwrap()
+    }
+
+    fn prediction_measurements_with_rotation_facts() -> MeasurementContract {
+        let assets: AssetMeasurements = serde_json::from_value(serde_json::json!({
+            "material_resource_coverage": "unavailable",
+            "material_definitions": [], "textures": [], "images": [],
+            "skeleton_source_coverage": "complete",
+            "skeleton_nodes": [{
+                "node_index": 0,
+                "scene_root_indices": [],
+                "local_rest": {
+                    "kind": "trs",
+                    "translation_parent_space_m": [0.0, 0.0, 0.0],
+                    "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                    "scale": [1.0, 1.0, 1.0]
+                },
+                "rest_world_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                "rest_world_translation_m": [0.0, 0.0, 0.0],
+                "rest_world_linear": {
+                    "classification": "unit_orthonormal",
+                    "axis_lengths": [1.0, 1.0, 1.0],
+                    "determinant": 1.0,
+                    "orientation": "positive",
+                    "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                    "uniform_scale": 1.0
+                }
+            }],
+            "skins": [{
+                "skin_index": 0,
+                "joints": [{
+                    "joint_index": 0, "node_index": 0,
+                    "joint_bind_to_mesh": {
+                        "source_inverse_bind_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                        "inversion_quality": { "reciprocal_condition_number_inf": 1.0 },
+                        "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                        "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "rotation_xyzw": [0.0, 0.0, 0.0, 1.0], "uniform_scale": 1.0 }
+                    },
+                    "mesh_bind_world": {
+                        "source_inverse_bind_matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                        "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                        "linear": { "classification": "unit_orthonormal", "axis_lengths": [1.0, 1.0, 1.0], "determinant": 1.0, "orientation": "positive", "rotation_xyzw": [0.0, 0.0, 0.0, 1.0], "uniform_scale": 1.0 }
+                    }
+                }],
+                "joint_bind_linear_summary": { "classification": "consistent_uniform", "joint_count": 1, "available_joint_count": 1, "unavailable_joint_count": 0, "consistent_uniform_scale": 1.0 },
+                "inverse_bind_accessor": {
+                    "status": "available", "declared_count": 1,
+                    "matrices": [[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]]
+                },
+                "attachments": [{ "node_index": 0 }]
+            }],
+            "mesh_definitions": [], "node_instances": [], "scenes": []
+        }))
+        .expect("complete skeleton and skin fixture");
+        MeasurementContract::new(BTreeMap::new(), assets).expect("current rotation facts")
     }
 
     fn prediction_test_measurements_v16() -> MeasurementContract {
@@ -13014,7 +13186,7 @@ mod measurement_report_input_tests {
     }
 
     #[test]
-    fn current_v16_primitive_mutations_fail_closed_on_readback() {
+    fn current_v18_primitive_mutations_fail_closed_on_readback() {
         let wire = measure_wire(primitive_measurement_contract());
         let primitive = &wire["files"][0]["measurements"]["mesh_definitions"][0]["primitives"][0];
         assert_eq!(primitive["primitive_index"], serde_json::json!(1));
@@ -13156,7 +13328,7 @@ mod measurement_report_input_tests {
     }
 
     #[test]
-    fn current_v16_material_indices_follow_resource_coverage() {
+    fn current_v18_material_indices_follow_resource_coverage() {
         let unavailable = measure_wire(primitive_measurement_contract());
         serde_json::from_value::<MeasurementReportInput>(unavailable.clone())
             .unwrap()
@@ -13191,7 +13363,7 @@ mod measurement_report_input_tests {
     }
 
     #[test]
-    fn current_v16_leading_magic_is_bounded_reason_specific_hex() {
+    fn current_v18_leading_magic_is_bounded_reason_specific_hex() {
         let mut assets = AssetMeasurements {
             material_resource_coverage: MaterialResourceCoverage::Complete,
             ..AssetMeasurements::default()
@@ -13416,14 +13588,14 @@ mod measurement_report_input_tests {
     #[test]
     fn adjacent_output_revisions_reject_each_others_nested_measurements() {
         let current = measure_wire(prediction_test_measurements());
-        let mut v12_with_v17 = current.clone();
-        v12_with_v17["schema_version"] = serde_json::json!(OUTPUT_V12_SCHEMA_VERSION);
-        v12_with_v17["schema"] = serde_json::json!(OUTPUT_V12_SCHEMA_ID);
+        let mut v12_with_v18 = current.clone();
+        v12_with_v18["schema_version"] = serde_json::json!(OUTPUT_V12_SCHEMA_VERSION);
+        v12_with_v18["schema"] = serde_json::json!(OUTPUT_V12_SCHEMA_ID);
         assert!(matches!(
-            reader_error(v12_with_v17),
+            reader_error(v12_with_v18),
             MeasurementReportError::File {
                 source: MeasurementFileError::UnsupportedMeasurementVersion {
-                    found: 17,
+                    found: 18,
                     expected: MEASUREMENTS_V15_SCHEMA_VERSION,
                 },
                 ..
@@ -13468,7 +13640,7 @@ mod measurement_report_input_tests {
     }
 
     #[test]
-    fn current_v18_writers_refuse_measurements_v16_at_file_and_envelope_boundaries() {
+    fn current_v19_writers_refuse_measurements_v16_at_file_and_envelope_boundaries() {
         let mismatch = OutputContractError::CurrentMeasurementContractMismatch {
             output_version: OUTPUT_SCHEMA_VERSION,
             found_version: MEASUREMENTS_V16_SCHEMA_VERSION,
@@ -13485,7 +13657,7 @@ mod measurement_report_input_tests {
             mismatch
         );
         assert_eq!(
-            LintFileReportV18::new(
+            LintFileReportV19::new(
                 "historical.glb",
                 InputIdentity::from_bytes(&[]),
                 prediction_test_rig(),
@@ -13513,7 +13685,7 @@ mod measurement_report_input_tests {
             .unwrap_err(),
             mismatch
         );
-        let malformed_lint = LintFileReportV18 {
+        let malformed_lint = LintFileReportV19 {
             evidence: FileEvidence::new(
                 "historical.glb",
                 InputIdentity::from_bytes(&[]),
@@ -13524,7 +13696,7 @@ mod measurement_report_input_tests {
             checks: Vec::new(),
         };
         assert_eq!(
-            LintEnvelopeV18::new(
+            LintEnvelopeV19::new(
                 ToolInfo::animsmith(ToolSource::new(None, None)),
                 vec![malformed_lint],
             )
@@ -13555,6 +13727,62 @@ mod measurement_report_input_tests {
                 .all(|bone| bone.get("availability").is_none())
         );
 
+        // Historical prediction writers consume a V16 projection. Exercise
+        // every new V18 rotation location with real skeleton and skin facts so
+        // the projection cannot accidentally leak an exclusive V18 field.
+        let rotation_facts = prediction_measurements_with_rotation_facts();
+        let projected_rotation_facts = rotation_facts.prediction_v16_projection().unwrap();
+        let projected_wire = serde_json::to_value(&projected_rotation_facts).unwrap();
+        let projected_linear_paths = [
+            &projected_wire["skeleton_nodes"][0]["rest_world_linear"],
+            &projected_wire["skins"][0]["joints"][0]["joint_bind_to_mesh"]["linear"],
+            &projected_wire["skins"][0]["joints"][0]["mesh_bind_world"]["linear"],
+        ];
+        assert!(
+            projected_linear_paths
+                .into_iter()
+                .all(|linear| linear.get("rotation_xyzw").is_none()),
+            "V16 projection must remove every V18-only rotation fact"
+        );
+        let historical_rotation_report = LintFileReport::new(
+            "rotation-facts.glb",
+            InputIdentity::from_bytes(&[]),
+            prediction_test_rig(),
+            None,
+            Vec::new(),
+            rotation_facts,
+        )
+        .expect("historical writer projects non-empty rotation facts");
+        let historical_rotation_wire = serde_json::to_value(&historical_rotation_report).unwrap();
+        assert_eq!(
+            historical_rotation_report.measurements().schema_version,
+            MEASUREMENTS_V16_SCHEMA_VERSION
+        );
+        let historical_linear_paths = [
+            &historical_rotation_wire["measurements"]["skeleton_nodes"][0]["rest_world_linear"],
+            &historical_rotation_wire["measurements"]["skins"][0]["joints"][0]["joint_bind_to_mesh"]
+                ["linear"],
+            &historical_rotation_wire["measurements"]["skins"][0]["joints"][0]["mesh_bind_world"]["linear"],
+        ];
+        assert!(
+            historical_linear_paths
+                .into_iter()
+                .all(|linear| linear.get("rotation_xyzw").is_none()),
+            "historical V15 writer must preserve the V16 measurement shape"
+        );
+        let historical_envelope = LintEnvelope::new(
+            ToolInfo::animsmith(ToolSource::new(None, None)),
+            vec![historical_rotation_report],
+        )
+        .expect("historical envelope accepts projected non-empty rotation facts");
+        let historical_envelope_wire = serde_json::to_value(historical_envelope).unwrap();
+        let historical_input: MeasurementReportInput =
+            serde_json::from_value(historical_envelope_wire).unwrap();
+        assert_eq!(historical_input.file_count(), Some(1));
+        historical_input
+            .into_files()
+            .expect("historical reader accepts the projected V16 wire shape");
+
         let partial = loop_projection_measurements(&[
             MeasurementAvailability::Measured,
             MeasurementAvailability::Unavailable,
@@ -13572,7 +13800,7 @@ mod measurement_report_input_tests {
             assert!(projected.clips()["loop"].loop_continuity.is_none());
         }
 
-        let current_v3 = LintFileReportV18::new(
+        let current_v3 = LintFileReportV19::new(
             "v3.glb",
             InputIdentity::from_bytes(&[]),
             prediction_test_rig(),
@@ -13581,7 +13809,7 @@ mod measurement_report_input_tests {
             fully_measured,
         )
         .unwrap();
-        let current_v5 = LintFileReportV18::new_v5(
+        let current_v5 = LintFileReportV19::new_v5(
             "v5.glb",
             InputIdentity::from_bytes(&[]),
             prediction_test_rig(),
@@ -13590,7 +13818,7 @@ mod measurement_report_input_tests {
             partial.clone(),
         )
         .unwrap();
-        let current_v6 = LintFileReportV18::new_v6(
+        let current_v6 = LintFileReportV19::new_v6(
             "v6.glb",
             InputIdentity::from_bytes(&[]),
             prediction_test_rig(),
@@ -13859,14 +14087,14 @@ impl MeasureFileReport {
     /// # Errors
     ///
     /// Returns [`OutputContractError::CurrentMeasurementContractMismatch`] if
-    /// the nested evidence is not the exact current measurements-v17 contract.
+    /// the nested evidence is not the exact current measurements-v18 contract.
     pub fn new(
         path: impl Into<String>,
         input: InputIdentity,
         rig: RigInfo,
         measurements: MeasurementContract,
     ) -> Result<Self, OutputContractError> {
-        require_measurements_v17(OUTPUT_SCHEMA_VERSION, &measurements)?;
+        require_measurements_v18(OUTPUT_SCHEMA_VERSION, &measurements)?;
         Ok(Self {
             evidence: FileEvidence::new(path, input, rig, measurements),
         })
@@ -13982,7 +14210,7 @@ pub enum OutputContractError {
     },
     /// A current output writer received a non-current nested measurement contract.
     #[error(
-        "output-v{output_version} requires measurements-v17, found measurement schema_version {found_version} ({found_schema})"
+        "output-v{output_version} requires measurements-v18, found measurement schema_version {found_version} ({found_schema})"
     )]
     CurrentMeasurementContractMismatch {
         /// Current outer output revision.
@@ -13994,7 +14222,7 @@ pub enum OutputContractError {
     },
 }
 
-fn require_measurements_v17(
+fn require_measurements_v18(
     output_version: u32,
     measurements: &MeasurementContract,
 ) -> Result<(), OutputContractError> {
@@ -14137,7 +14365,7 @@ impl MeasureEnvelope {
             });
         }
         for file in &files {
-            require_measurements_v17(OUTPUT_SCHEMA_VERSION, &file.evidence.measurements)?;
+            require_measurements_v18(OUTPUT_SCHEMA_VERSION, &file.evidence.measurements)?;
         }
         Ok(Self {
             header: EnvelopeHeader::new(tool, "measure"),
@@ -15116,18 +15344,18 @@ impl LintFileReportV17 {
     }
 }
 
-/// Current output-v18 lint-file payload. Immutable prediction contracts are
+/// Current output-v19 lint-file payload. Immutable prediction contracts are
 /// checked against the deterministic measurements-v16 projection while the
-/// report retains the complete measurements-v17 evidence.
+/// report retains the complete measurements-v18 evidence.
 #[derive(Debug, Clone, Serialize)]
-pub struct LintFileReportV18 {
+pub struct LintFileReportV19 {
     #[serde(flatten)]
     evidence: FileEvidence,
     prediction_provenance: Option<CurrentPredictionProvenanceV17>,
     checks: Vec<CheckEvaluation>,
 }
 
-impl LintFileReportV18 {
+impl LintFileReportV19 {
     /// Construct a revision-1-profile record whose V3 graph is unchanged.
     pub fn new(
         path: impl Into<String>,
@@ -15193,7 +15421,7 @@ impl LintFileReportV18 {
         checks: Vec<CheckEvaluation>,
         measurements: MeasurementContract,
     ) -> Result<Self, OutputContractError> {
-        require_measurements_v17(OUTPUT_SCHEMA_VERSION, &measurements)?;
+        require_measurements_v18(OUTPUT_SCHEMA_VERSION, &measurements)?;
         let report = Self {
             evidence: FileEvidence::new(path, input, rig, measurements),
             prediction_provenance,
@@ -15268,7 +15496,7 @@ impl LintFileReportV18 {
 }
 
 /// Historical output-v17 lint envelope retained for immutable writer tests and
-/// the output-v18 prediction projection.
+/// the output-v19 prediction projection.
 #[derive(Debug, Clone, Serialize)]
 pub struct LintEnvelopeV17 {
     #[serde(flatten)]
@@ -15361,18 +15589,18 @@ impl LintEnvelopeV17 {
     }
 }
 
-/// Current output-v18 lint envelope.
+/// Current output-v19 lint envelope.
 #[derive(Debug, Clone, Serialize)]
-pub struct LintEnvelopeV18 {
+pub struct LintEnvelopeV19 {
     #[serde(flatten)]
     header: EnvelopeHeaderV2,
     summary: LintSummary,
-    files: Vec<LintFileReportV18>,
+    files: Vec<LintFileReportV19>,
 }
 
-impl LintEnvelopeV18 {
-    /// Construct a schema-valid V18 lint envelope and derive summaries.
-    pub fn new(tool: ToolInfo, files: Vec<LintFileReportV18>) -> Result<Self, OutputContractError> {
+impl LintEnvelopeV19 {
+    /// Construct a schema-valid V19 lint envelope and derive summaries.
+    pub fn new(tool: ToolInfo, files: Vec<LintFileReportV19>) -> Result<Self, OutputContractError> {
         if files.len() > OUTPUT_V11_MAX_FILES {
             return Err(OutputContractError::TooManyFiles {
                 found: files.len(),
@@ -15380,11 +15608,11 @@ impl LintEnvelopeV18 {
             });
         }
         for file in &files {
-            require_measurements_v17(OUTPUT_SCHEMA_VERSION, &file.evidence.measurements)?;
+            require_measurements_v18(OUTPUT_SCHEMA_VERSION, &file.evidence.measurements)?;
         }
         let historical_files = files
             .iter()
-            .map(LintFileReportV18::historical_prediction_view)
+            .map(LintFileReportV19::historical_prediction_view)
             .collect::<Result<Vec<_>, _>>()?;
         let historical = LintEnvelopeV17::new(tool.clone(), historical_files)?;
         Ok(Self {

@@ -3750,21 +3750,21 @@ def valid_evaluation_model() -> dict[str, object]:
     }
 
 
-def valid_collection_output_v10() -> dict[str, object]:
-    """Producer-emitted complete V10/output18/measurements17 fixture."""
+def valid_collection_output_v11() -> dict[str, object]:
+    """Producer-emitted complete V11/output19/measurements18 fixture."""
     fixture = (
         Path(__file__).parents[1]
         / "fixtures"
-        / "collection-output-v10-complete.json"
+        / "collection-output-v11-complete.json"
     )
     return json.loads(fixture.read_bytes())
 
 
-def valid_incomplete_collection_output_v10() -> tuple[dict[str, object], bytes]:
-    """Strict-valid soft-failure V10 fixture with exact raw byte accounting."""
+def valid_incomplete_collection_output_v11() -> tuple[dict[str, object], bytes]:
+    """Strict-valid soft-failure V11 fixture with exact raw byte accounting."""
     binding = copy.deepcopy(valid_collection_output_projection())
     binding["schema"] = model_contract_v2.COLLECTION_OUTPUT_SCHEMA
-    binding["schema_version"] = 10
+    binding["schema_version"] = 11
     aliases = {
         "fixture:idle-ip": "fixture/idle-ip",
         "fixture:walk-rm": "fixture/walk-rm",
@@ -3789,9 +3789,9 @@ def valid_incomplete_collection_output_v10() -> tuple[dict[str, object], bytes]:
     raise AssertionError("collection-output serialized byte count did not converge")
 
 
-def valid_partial_collection_output_v10() -> tuple[dict[str, object], bytes]:
-    """Strict-valid V10 with readable sources but partial dependency closure."""
-    binding = valid_collection_output_v10()
+def valid_partial_collection_output_v11() -> tuple[dict[str, object], bytes]:
+    """Strict-valid V11 with readable sources but partial dependency closure."""
+    binding = valid_collection_output_v11()
     for source in binding["sources"]:  # type: ignore[index]
         source["dependency_closure"] = {
             "state": "partial",
@@ -3836,8 +3836,8 @@ def valid_evaluation_model_v2(
     binding: dict[str, object] | None = None,
     binding_bytes: bytes | None = None,
 ) -> dict[str, object]:
-    """Current V2 model whose facts exactly match complete or unavailable V10."""
-    binding = binding or valid_collection_output_v10()
+    """Current V2 model whose facts exactly match complete or unavailable V11."""
+    binding = binding or valid_collection_output_v11()
     binding_bytes = binding_bytes or model_contract_v2.canonical_json(binding)
     model = copy.deepcopy(valid_evaluation_model())
     model["schema"] = model_contract_v2.SCHEMA
@@ -3937,7 +3937,7 @@ class EvaluationModelTests(unittest.TestCase):
         model_validator_v2.validate_with_animsmith(self.animsmith, raw)
 
     def assert_authoritative_rejects(self, raw: bytes) -> None:
-        with self.assertRaisesRegex(ValueError, "rejected collection-output V10"):
+        with self.assertRaisesRegex(ValueError, "rejected collection-output V11"):
             model_validator_v2.validate_with_animsmith(self.animsmith, raw)
 
     def test_synthetic_fixture_covers_pair_refusal_unknown_and_artist_work(self) -> None:
@@ -3947,7 +3947,7 @@ class EvaluationModelTests(unittest.TestCase):
         fixture = (
             Path(__file__).parents[1]
             / "fixtures"
-            / "collection-output-v10-complete.json"
+            / "collection-output-v11-complete.json"
         )
         raw = fixture.read_bytes()
         binding = json.loads(raw)
@@ -3966,7 +3966,7 @@ class EvaluationModelTests(unittest.TestCase):
             binding["work"]["serialized_bytes"] = len(raw)  # type: ignore[index]
         raise AssertionError("mutated collection-output byte count did not converge")
 
-    def test_current_model_binds_exact_v10_and_keeps_v1_frozen(self) -> None:
+    def test_current_model_binds_exact_v11_and_keeps_v1_frozen(self) -> None:
         model, binding, raw = self.valid()
         self.assert_authoritative_accepts(raw)
         self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
@@ -3978,7 +3978,7 @@ class EvaluationModelTests(unittest.TestCase):
             )
         )
 
-    def test_synchronized_v10_source_sequence_work_and_closure_mutations_fail_closed(self) -> None:
+    def test_synchronized_v11_source_sequence_work_and_closure_mutations_fail_closed(self) -> None:
         for label, mutate in (
             (
                 "serialized-bytes",
@@ -4002,7 +4002,7 @@ class EvaluationModelTests(unittest.TestCase):
             ),
         ):
             with self.subTest(label=label):
-                binding, _prior = valid_incomplete_collection_output_v10()
+                binding, _prior = valid_incomplete_collection_output_v11()
                 mutate(binding)
                 if label == "serialized-bytes":
                     raw = model_contract_v2.canonical_json(binding)
@@ -4057,7 +4057,7 @@ class EvaluationModelTests(unittest.TestCase):
         self.assertTrue(any("unknown/clip" in error for error in errors), errors)
 
     def test_partial_dependency_closure_is_authoritative_typed_soft_fail_evidence(self) -> None:
-        binding, raw = valid_partial_collection_output_v10()
+        binding, raw = valid_partial_collection_output_v11()
         model = valid_evaluation_model_v2(binding, raw)
         self.assert_authoritative_accepts(raw)
         self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
@@ -4086,12 +4086,12 @@ class EvaluationModelTests(unittest.TestCase):
         self.assertTrue(model_validator_v2.validate_model(wrong_model, wrong, wrong_raw))
         self.assertTrue(
             any(
-                "exact collection-output:10" in error
+                "exact collection-output:11" in error
                 for error in model_validator_v2.validate_model(model, binding, raw + b" ")
             )
         )
 
-    def test_offline_registry_is_exactly_v10_output18_measurements17(self) -> None:
+    def test_offline_registry_is_current_v11_with_frozen_v1_output10(self) -> None:
         self.assertEqual(
             tuple(document["$id"] for document in model_validator_v2._DOCUMENTS),
             (
@@ -4106,8 +4106,8 @@ class EvaluationModelTests(unittest.TestCase):
 
     def test_incomplete_rows_are_mandatory_typed_soft_failures(self) -> None:
         for label, mutate, needle in (
-            ("clip-omission", lambda model: model["clips"].pop(), "every V10 clip row"),
-            ("set-omission", lambda model: model["runtime_sets"].clear(), "every V10 runtime-set row"),
+            ("clip-omission", lambda model: model["clips"].pop(), "every V11 clip row"),
+            ("set-omission", lambda model: model["runtime_sets"].clear(), "every V11 runtime-set row"),
             (
                 "clip-promotion",
                 lambda model: model["clips"][0].update(assessment="pass", coverage="evaluated-clean"),
@@ -4120,7 +4120,7 @@ class EvaluationModelTests(unittest.TestCase):
             ),
         ):
             with self.subTest(label=label):
-                binding, raw = valid_incomplete_collection_output_v10()
+                binding, raw = valid_incomplete_collection_output_v11()
                 model = valid_evaluation_model_v2(binding, raw)
                 mutate(model)
                 errors = model_validator_v2.validate_model(model, binding, raw)
@@ -4133,9 +4133,9 @@ class EvaluationModelTests(unittest.TestCase):
         self.assertEqual(model["clips"][0]["duration_s"], {"state": "available", "value": 1.0})
         self.assertEqual(model["clips"][0]["root_motion_speed_mps"], {"state": "available", "value": 1.0})
         model["clips"][0]["root_motion_speed_mps"] = {"state": "not-applicable"}
-        self.assertTrue(any("exact V10 value and availability" in error for error in model_validator_v2.validate_model(model, binding, raw)))
+        self.assertTrue(any("exact V11 value and availability" in error for error in model_validator_v2.validate_model(model, binding, raw)))
 
-        unavailable_binding, unavailable_raw = valid_incomplete_collection_output_v10()
+        unavailable_binding, unavailable_raw = valid_incomplete_collection_output_v11()
         self.assert_authoritative_accepts(unavailable_raw)
         unavailable = valid_evaluation_model_v2(unavailable_binding, unavailable_raw)
         for field in ("duration_s", "root_motion_speed_mps"):
@@ -4172,10 +4172,10 @@ class EvaluationModelTests(unittest.TestCase):
         self.assertEqual(model_validator_v2.validate_model(not_applicable, not_applicable_binding, not_applicable_raw), [])
         swapped = copy.deepcopy(not_applicable)
         swapped["clips"][0]["root_motion_speed_mps"] = {"state": "unavailable"}
-        self.assertTrue(any("exact V10 value and availability" in error for error in model_validator_v2.validate_model(swapped, not_applicable_binding, not_applicable_raw)))
+        self.assertTrue(any("exact V11 value and availability" in error for error in model_validator_v2.validate_model(swapped, not_applicable_binding, not_applicable_raw)))
 
     def test_v2_renderer_proves_current_identity_and_typed_source_evidence(self) -> None:
-        binding, raw = valid_incomplete_collection_output_v10()
+        binding, raw = valid_incomplete_collection_output_v11()
         model = valid_evaluation_model_v2(binding, raw)
         views = model_renderer.render_views(
             model, binding, report_name="fixture.md",
