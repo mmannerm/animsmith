@@ -359,7 +359,13 @@ fn assert_built_in_check_inventory(markdown: &str, catalog: &BTreeSet<&str>) {
 struct MarkdownSection {
     heading: String,
     body: String,
-    code_spans: Vec<String>,
+    inline_tokens: Vec<MarkdownInlineToken>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MarkdownInlineToken {
+    Text(String),
+    Code(String),
 }
 
 fn built_in_check_sections(markdown: &str) -> Vec<MarkdownSection> {
@@ -386,17 +392,18 @@ fn built_in_check_sections(markdown: &str) -> Vec<MarkdownSection> {
             .unwrap_or(events.len());
         let body_events = &events[end + 1..body_end];
         let body = markdown_event_text(body_events);
-        let code_spans = body_events
+        let inline_tokens = body_events
             .iter()
             .filter_map(|event| match event {
-                Event::Code(value) => Some(value.to_string()),
+                Event::Text(value) => Some(MarkdownInlineToken::Text(value.to_string())),
+                Event::Code(value) => Some(MarkdownInlineToken::Code(value.to_string())),
                 _ => None,
             })
             .collect();
         sections.push(MarkdownSection {
             heading,
             body,
-            code_spans,
+            inline_tokens,
         });
     }
 
@@ -586,23 +593,29 @@ fn numeric_defaults(id: &str) -> &'static [NumericDefault] {
 fn assert_documented_numeric_defaults(section: &MarkdownSection, source: &str) {
     for default in numeric_defaults(&section.heading) {
         let implementation_value = source_default_constant_value(source, default.constant);
-        let key_index = section
-            .code_spans
+        let key_index = section.inline_tokens.iter().position(
+            |token| matches!(token, MarkdownInlineToken::Code(value) if value == default.key),
+        );
+        let Some(key_index) = key_index else {
+            panic!(
+                "detailed section for {} is missing config key `{}`",
+                section.heading, default.key
+            );
+        };
+        let mut saw_default = false;
+        let documented_value = section.inline_tokens[key_index + 1..]
             .iter()
-            .position(|span| span == default.key)
+            .find_map(|token| match token {
+                MarkdownInlineToken::Text(value) => {
+                    saw_default |= value.to_ascii_lowercase().contains("default");
+                    None
+                }
+                MarkdownInlineToken::Code(value) if saw_default => value.parse::<f64>().ok(),
+                MarkdownInlineToken::Code(_) => None,
+            })
             .unwrap_or_else(|| {
                 panic!(
-                    "detailed section for {} is missing config key `{}`",
-                    section.heading, default.key
-                )
-            });
-        let documented_value = section
-            .code_spans
-            .get(key_index + 1)
-            .and_then(|span| span.parse::<f64>().ok())
-            .unwrap_or_else(|| {
-                panic!(
-                    "detailed section for {} must put a numeric default immediately after `{}`",
+                    "detailed section for {} must put a numeric value after the `default` for `{}`",
                     section.heading, default.key
                 )
             });
