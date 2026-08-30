@@ -7,6 +7,44 @@ fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../animsmith-report/testdata/rig.gltf")
 }
 
+#[cfg(unix)]
+#[test]
+fn report_comparison_refuses_symlink_and_hardlink_outputs_without_touching_inputs() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let before = fixture();
+    let original = std::fs::read(&before).expect("fixture bytes");
+    for (name, symlink) in [("symlink.html", true), ("hardlink.html", false)] {
+        let output = directory.path().join(name);
+        if symlink {
+            std::os::unix::fs::symlink(&before, &output).expect("creates symlink output");
+        } else {
+            std::fs::hard_link(&before, &output).expect("creates hardlink output");
+        }
+        let result = animsmith()
+            .args([
+                "report",
+                before.to_str().expect("UTF-8 fixture path"),
+                "--compare-after",
+                before.to_str().expect("UTF-8 fixture path"),
+                "--before-clip",
+                "walk",
+                "--after-clip",
+                "idle",
+                "--output",
+                output.to_str().expect("UTF-8 output path"),
+            ])
+            .output()
+            .expect("runs alias refusal");
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(std::fs::read(&before).expect("fixture survives"), original);
+    }
+}
+
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
 }

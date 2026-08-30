@@ -56,7 +56,7 @@ use serde::Deserialize;
 #[cfg(feature = "fbx")]
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -839,6 +839,64 @@ fn write_report(
         html.len(),
     ));
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(feature = "report")]
+fn require_comparison_output_distinct(
+    output: &Path,
+    before: &Path,
+    after: &Path,
+) -> Result<(), String> {
+    let destination = publish::PublicationDestination::new("comparison output", output)?;
+    for (label, input) in [("before input", before), ("after input", after)] {
+        let input_identity = publish::input_identity(input)?;
+        if input_identity == destination.identity()
+            || same_file_entry(input, destination.identity())?
+        {
+            return Err(format!(
+                "report comparison {label} and output must be different files"
+            ));
+        }
+    }
+    publish::require_writable_destination(destination.identity())
+}
+
+#[cfg(all(feature = "report", unix))]
+fn same_file_entry(input: &Path, destination: &Path) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt;
+    let input = std::fs::metadata(input)
+        .map_err(|error| format!("cannot read {}: {error}", input.display()))?;
+    let destination = match std::fs::metadata(destination) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("cannot inspect {}: {error}", destination.display())),
+    };
+    Ok(input.dev() == destination.dev() && input.ino() == destination.ino())
+}
+
+#[cfg(all(feature = "report", not(unix)))]
+fn same_file_entry(_input: &Path, _destination: &Path) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[cfg(feature = "report")]
+fn publish_comparison_report(
+    output: &Path,
+    before: &Path,
+    after: &Path,
+    html: &str,
+) -> Result<(), String> {
+    require_comparison_output_distinct(output, before, after)?;
+    let destination = publish::PublicationDestination::new("comparison output", output)?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(".animsmith-comparison-")
+        .tempfile_in(publish::parent_or_current(destination.identity()))
+        .map_err(|error| format!("cannot stage comparison output: {error}"))?;
+    temp.write_all(html.as_bytes())
+        .map_err(|error| format!("cannot stage comparison output: {error}"))?;
+    temp.flush()
+        .map_err(|error| format!("cannot stage comparison output: {error}"))?;
+    publish::publish_single(temp.path(), destination.identity())
 }
 
 fn finish_run(result: Result<ExitCode, String>) -> ExitCode {
@@ -1837,6 +1895,28 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let loaded_config = load_config(cli.config.as_deref())?;
             full_check_ids()?;
             let loaded = load_with_config(&file, &loaded_config)?;
+            if let Some(after_path) = compare_after.as_ref() {
+                if clip.is_some() {
+                    return Err("--clip cannot be used with --compare-after; declare both --before-clip and --after-clip".into());
+                }
+                let before_name = before_clip
+                    .as_deref()
+                    .ok_or_else(|| "--compare-after requires --before-clip".to_string())?;
+                let after_name = after_clip
+                    .as_deref()
+                    .ok_or_else(|| "--compare-after requires --after-clip".to_string())?;
+                let preflight_after = load_with_config(after_path, &loaded_config)?;
+                animsmith_report::preflight_comparison(
+                    loaded.document(),
+                    before_name,
+                    preflight_after.document(),
+                    after_name,
+                )
+                .map_err(|error| error.to_string())?;
+                require_comparison_output_distinct(&output, &file, after_path)?;
+            } else if before_clip.is_some() || after_clip.is_some() {
+                return Err("--before-clip and --after-clip require --compare-after".into());
+            }
             let config = &loaded_config.config;
             let prediction_provenance = loaded
                 .engine
@@ -1861,18 +1941,13 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             };
             let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
             let html = match compare_after {
-                None => {
-                    if before_clip.is_some() || after_clip.is_some() {
-                        return Err("--before-clip and --after-clip require --compare-after".into());
-                    }
-                    animsmith_report::render(
-                        &grids,
-                        &roles,
-                        &evaluations,
-                        prediction_provenance.as_ref(),
-                        clip.as_deref(),
-                    )
-                }
+                None => animsmith_report::render(
+                    &grids,
+                    &roles,
+                    &evaluations,
+                    prediction_provenance.as_ref(),
+                    clip.as_deref(),
+                ),
                 Some(after_path) => {
                     if clip.is_some() {
                         return Err("--clip cannot be used with --compare-after; declare both --before-clip and --after-clip".into());
@@ -1928,16 +2003,19 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         },
                     )
                     .map_err(|error| error.to_string())?;
-                    return write_report(
+                    let finding_count = finding_count
+                        + after_evaluations
+                            .iter()
+                            .map(|check| check.findings().len())
+                            .sum::<usize>();
+                    publish_comparison_report(&output, &file, &after_path, &html)?;
+                    publish::emit_text(&render::render_report_written(
                         &output,
-                        doc,
-                        finding_count
-                            + after_evaluations
-                                .iter()
-                                .map(|check| check.findings().len())
-                                .sum::<usize>(),
-                        html,
-                    );
+                        doc.clips.len(),
+                        finding_count,
+                        html.len(),
+                    ));
+                    return Ok(ExitCode::SUCCESS);
                 }
             };
             write_report(&output, doc, finding_count, html)

@@ -37,7 +37,7 @@
 //!
 #![warn(missing_docs)]
 
-use animsmith_core::metrics::MetricGrids;
+use animsmith_core::metrics::{MetricGrids, metric_frame_count};
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::PoseGrid;
 use animsmith_core::{CheckEvaluation, InputIdentity, PredictionProvenanceV1};
@@ -55,6 +55,20 @@ const COMPARISON_VIEWER_JS: &str = include_str!("../assets/comparison.js");
 /// The bound is checked before the renderer allocates its binary pose buffer.
 pub const MAX_COMPARISON_POSE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_COMPARISON_JSON_BYTES: usize = 48 * 1024 * 1024;
+const MAX_COMPARISON_INPUT_TEXT_BYTES: usize = 1024 * 1024;
+
+/// Validated bounded correspondence used before sampling or check evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComparisonPreflight {
+    /// Selected before clip index in its document.
+    pub before_clip_index: usize,
+    /// Selected after clip index in its document.
+    pub after_clip_index: usize,
+    /// Exact before metric frame count.
+    pub before_frames: usize,
+    /// Exact after metric frame count.
+    pub after_frames: usize,
+}
 
 /// One explicit input to [`render_comparison`].
 #[derive(Clone, Copy)]
@@ -138,6 +152,53 @@ pub enum ComparisonError {
         /// Fixed comparison JSON budget.
         limit: usize,
     },
+    /// Input names would exceed the fixed pre-evaluation text budget.
+    #[error("{side} comparison input text requires {bytes} bytes, above the {limit}-byte limit")]
+    InputTextWorkExceeded {
+        /// Input side exceeding the bound.
+        side: &'static str,
+        /// Counted UTF-8 bytes.
+        bytes: usize,
+        /// Fixed input text budget.
+        limit: usize,
+    },
+}
+
+/// Validate explicit correspondence and all sampling work before evaluating checks.
+///
+/// This boundary intentionally does not ask [`MetricGrids`] for either grid.
+/// Callers use it after loading the two immutable documents and before running
+/// checks, then pass the same documents to [`render_comparison`].
+pub fn preflight_comparison(
+    before: &animsmith_core::Document,
+    before_clip_name: &str,
+    after: &animsmith_core::Document,
+    after_clip_name: &str,
+) -> Result<ComparisonPreflight, ComparisonError> {
+    validate_skeletons(before, after)?;
+    input_text_bytes(before, "before")?;
+    input_text_bytes(after, "after")?;
+    let before_clip = select_clip(before, before_clip_name, "before")?;
+    let after_clip = select_clip(after, after_clip_name, "after")?;
+    let before_frames = metric_frame_count(before_clip.1).ok_or_else(|| {
+        ComparisonError::UnavailableSampleGrid {
+            side: "before",
+            clip: before_clip_name.to_owned(),
+        }
+    })?;
+    let after_frames =
+        metric_frame_count(after_clip.1).ok_or_else(|| ComparisonError::UnavailableSampleGrid {
+            side: "after",
+            clip: after_clip_name.to_owned(),
+        })?;
+    comparison_pose_bytes(before_frames, before.skeleton.bones.len(), "before")?;
+    comparison_pose_bytes(after_frames, after.skeleton.bones.len(), "after")?;
+    Ok(ComparisonPreflight {
+        before_clip_index: before_clip.0,
+        after_clip_index: after_clip.0,
+        before_frames,
+        after_frames,
+    })
 }
 
 /// Render a self-contained, synchronized before/after HTML diagnostic.
@@ -154,38 +215,36 @@ pub fn render_comparison(
 ) -> Result<String, ComparisonError> {
     let before_doc = before.grids.document();
     let after_doc = after.grids.document();
-    validate_skeletons(before_doc, after_doc)?;
-    let before_clip = select_clip(before_doc, before.clip, "before")?;
-    let after_clip = select_clip(after_doc, after.clip, "after")?;
-    let before_grid =
-        before
-            .grids
-            .grid(before_clip.0)
-            .ok_or_else(|| ComparisonError::UnavailableSampleGrid {
-                side: "before",
-                clip: before.clip.to_owned(),
-            })?;
-    let after_grid =
-        after
-            .grids
-            .grid(after_clip.0)
-            .ok_or_else(|| ComparisonError::UnavailableSampleGrid {
-                side: "after",
-                clip: after.clip.to_owned(),
-            })?;
+    let preflight = preflight_comparison(before_doc, before.clip, after_doc, after.clip)?;
+    let before_clip = &before_doc.clips[preflight.before_clip_index];
+    let after_clip = &after_doc.clips[preflight.after_clip_index];
+    let before_grid = before
+        .grids
+        .grid(preflight.before_clip_index)
+        .ok_or_else(|| ComparisonError::UnavailableSampleGrid {
+            side: "before",
+            clip: before.clip.to_owned(),
+        })?;
+    let after_grid = after
+        .grids
+        .grid(preflight.after_clip_index)
+        .ok_or_else(|| ComparisonError::UnavailableSampleGrid {
+            side: "after",
+            clip: after.clip.to_owned(),
+        })?;
 
     let bones = comparison_bones(before_doc);
     let before_side = comparison_side_json(
         before,
-        before_clip.1.name.as_str(),
-        before_clip.1.duration_s,
+        before_clip.name.as_str(),
+        before_clip.duration_s,
         before_grid.as_ref(),
         "before",
     )?;
     let after_side = comparison_side_json(
         after,
-        after_clip.1.name.as_str(),
-        after_clip.1.duration_s,
+        after_clip.name.as_str(),
+        after_clip.duration_s,
         after_grid.as_ref(),
         "after",
     )?;
@@ -253,6 +312,11 @@ fn validate_skeletons(
 ) -> Result<(), ComparisonError> {
     let before_names = skeleton_names(&before.skeleton, "before")?;
     let after_names = skeleton_names(&after.skeleton, "after")?;
+    if before_names.is_empty() {
+        return Err(ComparisonError::IncompatibleSkeleton {
+            detail: "skeleton has no bones".into(),
+        });
+    }
     if before_names.len() != after_names.len() {
         return Err(ComparisonError::IncompatibleSkeleton {
             detail: "bone counts differ".into(),
@@ -308,6 +372,28 @@ fn skeleton_names<'a>(
         }
     }
     Ok(names)
+}
+
+fn input_text_bytes(
+    doc: &animsmith_core::Document,
+    side: &'static str,
+) -> Result<(), ComparisonError> {
+    let bytes = doc
+        .skeleton
+        .bones
+        .iter()
+        .map(|bone| bone.name.len())
+        .chain(doc.clips.iter().map(|clip| clip.name.len()))
+        .try_fold(0usize, |total, bytes| total.checked_add(bytes))
+        .unwrap_or(usize::MAX);
+    if bytes > MAX_COMPARISON_INPUT_TEXT_BYTES {
+        return Err(ComparisonError::InputTextWorkExceeded {
+            side,
+            bytes,
+            limit: MAX_COMPARISON_INPUT_TEXT_BYTES,
+        });
+    }
+    Ok(())
 }
 
 fn comparison_bones(doc: &animsmith_core::Document) -> Vec<Value> {

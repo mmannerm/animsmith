@@ -12,6 +12,19 @@ for (const side of [data.before, data.after]) side.clip.pos = decode(side.clip.p
 q("mapping").textContent = data.correspondence.disclosure;
 const parents = data.bones.map((bone) => bone.parent);
 const namedBone = new Map(data.bones.map((bone, index) => [bone.name, index]));
+const sharedFrameMax = Math.max(data.before.clip.frames, data.after.clip.frames) - 1;
+q("scrub").max = sharedFrameMax;
+const range = (values) => [Math.min(...values), Math.max(...values)];
+const sharedPoseBounds = (() => {
+  const xs = [], ys = [];
+  for (const side of [data.before, data.after]) for (let i = 0; i < side.clip.pos.length; i += 3) { xs.push(side.clip.pos[i]); ys.push(side.clip.pos[i + 1]); }
+  return { x: range(xs), y: range(ys) };
+})();
+const sharedPathBounds = (() => {
+  const xs = [], zs = [];
+  for (const side of [data.before, data.after]) { const root = side.clip.trails.root; if (root == null) continue; for (let frame = 0; frame < side.clip.frames; frame++) { const base = frame * data.bones.length * 3 + root * 3; xs.push(side.clip.pos[base]); zs.push(side.clip.pos[base + 2]); } }
+  return xs.length ? { x: range(xs), z: range(zs) } : null;
+})();
 
 function drawSide(name, phase, highlighted) {
   const side = data[name], canvas = q(`${name}-gl`), context = canvas.getContext("2d");
@@ -21,7 +34,7 @@ function drawSide(name, phase, highlighted) {
   const frame = Math.round(phase * Math.max(0, side.clip.frames - 1)), base = frame * data.bones.length * 3;
   const point = (bone) => [side.clip.pos[base + bone * 3], side.clip.pos[base + bone * 3 + 1], side.clip.pos[base + bone * 3 + 2]];
   const all = data.bones.map((_, bone) => point(bone));
-  const xs = all.map((p) => p[0]), ys = all.map((p) => p[1]), minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const [minX, maxX] = sharedPoseBounds.x, [minY, maxY] = sharedPoseBounds.y;
   const scale = Math.min(canvas.clientWidth / Math.max(.1, maxX - minX), canvas.clientHeight / Math.max(.1, maxY - minY)) * .72;
   const project = (p) => [canvas.clientWidth / 2 + (p[0] - (minX + maxX) / 2) * scale, canvas.clientHeight / 2 - (p[1] - (minY + maxY) / 2) * scale];
   context.lineWidth = 2; context.strokeStyle = "#8e99bc";
@@ -33,16 +46,18 @@ function drawPath(name, phase) {
   const side = data[name], svg = q(`${name}-path`), root = side.clip.trails.root;
   svg.replaceChildren(); if (root == null) { svg.textContent = "root path unavailable"; return; }
   const points = Array.from({ length: side.clip.frames }, (_, frame) => { const base = frame * data.bones.length * 3 + root * 3; return [side.clip.pos[base], side.clip.pos[base + 2]]; });
-  const xs = points.map((point) => point[0]), ys = points.map((point) => point[1]), minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-  const map = (point) => [18 + (point[0] - minX) * 324 / Math.max(.001, maxX - minX), 132 - (point[1] - minY) * 114 / Math.max(.001, maxY - minY)];
+  const [minX, maxX] = sharedPathBounds.x, [minZ, maxZ] = sharedPathBounds.z;
+  const map = (point) => [18 + (point[0] - minX) * 324 / Math.max(.001, maxX - minX), 132 - (point[1] - minZ) * 114 / Math.max(.001, maxZ - minZ)];
   const svgNs = "http:" + "//www.w3.org/2000/svg";
   const path = document.createElementNS(svgNs, "path"); path.setAttribute("d", points.map((point, index) => `${index ? "L" : "M"}${map(point).join(",")}`).join("")); path.setAttribute("fill", "none"); path.setAttribute("stroke", "#7aa2f7"); path.setAttribute("stroke-width", "2"); svg.append(path);
   const dot = document.createElementNS(svgNs, "circle"), selected = map(points[Math.round(phase * Math.max(0, points.length - 1))]); dot.setAttribute("cx", selected[0]); dot.setAttribute("cy", selected[1]); dot.setAttribute("r", "4"); dot.setAttribute("fill", "#f0cb83"); svg.append(dot);
+  const legend = document.createElementNS(svgNs, "text"); legend.setAttribute("x", "8"); legend.setAttribute("y", "14"); legend.setAttribute("fill", "#aab1c5"); legend.textContent = "root path top-down (m) — shared scale"; svg.append(legend);
 }
 let highlight = { before: null, after: null };
-function update() { const phase = Number(q("scrub").value) / 1000; const beforeFrame = drawSide("before", phase, highlight.before), afterFrame = drawSide("after", phase, highlight.after); drawPath("before", phase); drawPath("after", phase); const time = (side, frame) => (frame / Math.max(1, side.clip.frames - 1) * side.clip.duration).toFixed(3); q("times").textContent = `before ${time(data.before, beforeFrame)}s · after ${time(data.after, afterFrame)}s (normalized phase; not a time warp)`; }
+function update() { const phase = Number(q("scrub").value) / Math.max(1, sharedFrameMax); const beforeFrame = drawSide("before", phase, highlight.before), afterFrame = drawSide("after", phase, highlight.after); drawPath("before", phase); drawPath("after", phase); const time = (side, frame) => (frame / Math.max(1, side.clip.frames - 1) * side.clip.duration).toFixed(3); q("times").textContent = `before ${time(data.before, beforeFrame)}s · after ${time(data.after, afterFrame)}s (normalized phase; not a time warp)`; }
 function summary(side) { return `${side.identity.sha256} · ${side.identity.bytes} bytes · clip ${side.clip.name}`; }
-function selectFinding(name, index) { const row = data[name].findings[index], side = data[name]; if (!row) return; q("scrub").value = Math.round(1000 * (row.time == null ? 0 : row.time / Math.max(.000001, side.clip.duration))); highlight[name] = row.bone && namedBone.has(row.bone) ? namedBone.get(row.bone) : null; update(); }
+function subjectBone(row) { if (row.bone && namedBone.has(row.bone)) return namedBone.get(row.bone); const nodeName = row.node && row.node.match(/\(([^()]*)\)$/); return nodeName && namedBone.has(nodeName[1]) ? namedBone.get(nodeName[1]) : null; }
+function selectFinding(name, index) { const row = data[name].findings[index], side = data[name]; if (!row) return; q("scrub").value = Math.round(sharedFrameMax * (row.time == null ? 0 : row.time / Math.max(.000001, side.clip.duration))); highlight = { before: null, after: null }; highlight[name] = subjectBone(row); update(); }
 function list(name, kind) { const side = data[name], target = q(`${name}-${kind}`), rows = side[kind]; if (!rows.length) { target.textContent = kind === "findings" ? "no findings" : "none"; return; } rows.forEach((row, index) => { const item = document.createElement("li"); item.id = `${kind.slice(0, -1)}-${name}-${index}`; item.textContent = kind === "findings" ? `${row.severity} · ${row.check} · ${row.bone || row.node || "no mapped subject"}${row.time == null ? "" : ` @${row.time.toFixed(3)}s`} — ${row.message}` : `${row.check_id} · ${row.code} — ${row.message}`; if (kind === "findings") { const timeAnchor = document.createElement("span"); timeAnchor.id = `time-${name}-${index}`; item.append(timeAnchor); item.className = "finding"; item.addEventListener("click", () => { selectFinding(name, index); item.scrollIntoView({ block: "nearest" }); }); } target.append(item); }); }
 for (const name of ["before", "after"]) { q(`${name}-identity`).textContent = summary(data[name]); list(name, "findings"); list(name, "gaps"); q(`${name}-predictions`).textContent = JSON.stringify({ provenance: data[name].prediction_provenance, predictions: data[name].predictions }, null, 2); }
 function selectHash() { const match = location.hash.match(/^#(?:finding|time)-(before|after)-(\d+)$/); if (match) selectFinding(match[1], Number(match[2])); }

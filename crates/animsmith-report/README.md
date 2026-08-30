@@ -16,6 +16,14 @@ plays back exactly those frames in a small hand-written WebGL viewer.
 There is no CDN, no three.js dependency, and no JavaScript resampling;
 when a finding names a frame, the viewer scrubs to that judged frame.
 
+`render_comparison` is the deliberately narrow before/after companion. Call
+`preflight_comparison` before evaluating checks, then pass two explicit clip
+names and their immutable input identities. It refuses ambiguous clips and
+non-identical named/indexed skeleton correspondence, embeds bounded sampled
+poses, and writes separate finding, gap, and prediction-provenance records for
+each side. Its normalized-phase display labels both source times and does not
+claim an authored retime or artistic/engine acceptance.
+
 ## Install
 
 ```toml
