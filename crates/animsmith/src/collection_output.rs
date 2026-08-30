@@ -1080,6 +1080,23 @@ impl CollectionOutputInput {
                     SourceDependencyClosureStateWire::Partial { .. } => "partial",
                     SourceDependencyClosureStateWire::Unavailable { .. } => "unavailable",
                 },
+                takes: source
+                    .observed_takes
+                    .iter()
+                    .map(|take| CollectionDashboardPhysicalTakeInput {
+                        source_take_index: take.source_take_index,
+                        take_name: match &take.name {
+                            TakeNameState::Available { value } => Some(value.clone()),
+                            TakeNameState::Unavailable => None,
+                        },
+                        normalized_clip: match &take.normalized {
+                            NormalizedClipState::Available { index, name } => {
+                                Some((*index, name.clone()))
+                            }
+                            NormalizedClipState::Unavailable => None,
+                        },
+                    })
+                    .collect(),
                 roles: facts.roles,
                 evidence: facts.evidence,
                 unscoped_findings: facts.unscoped_findings,
@@ -1664,6 +1681,10 @@ pub(crate) struct CollectionDashboardSourceInput {
     pub(crate) availability: &'static str,
     pub(crate) loader: &'static str,
     pub(crate) dependency_closure: &'static str,
+    /// Complete observed physical-take inventory for this source. These rows
+    /// remain independent of logical declarations, so a successfully loaded
+    /// source with zero declared clips does not disappear from the dashboard.
+    pub(crate) takes: Vec<CollectionDashboardPhysicalTakeInput>,
     pub(crate) roles: Vec<String>,
     pub(crate) evidence: BTreeMap<String, CollectionDashboardClipEvidence>,
     /// Valid findings that cannot truthfully be assigned to one logical clip.
@@ -1672,6 +1693,13 @@ pub(crate) struct CollectionDashboardSourceInput {
     /// guessing a clip.
     pub(crate) unscoped_findings: usize,
     pub(crate) unscoped_severities: BTreeSet<String>,
+}
+
+#[cfg(feature = "report")]
+pub(crate) struct CollectionDashboardPhysicalTakeInput {
+    pub(crate) source_take_index: u32,
+    pub(crate) take_name: Option<String>,
+    pub(crate) normalized_clip: Option<(u32, String)>,
 }
 
 #[cfg(feature = "report")]

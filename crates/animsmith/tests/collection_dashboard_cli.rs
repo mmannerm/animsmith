@@ -34,14 +34,14 @@ fn rendered_dashboard_state(html: &Path, filters: &Value) -> Value {
 const fs=require('fs'),html=fs.readFileSync(process.argv[1],'utf8'),filters=JSON.parse(process.argv[2]);
 let data=html.match(/<script type="application\/json" id="collection-dashboard-data">([\s\S]*?)<\/script>/)[1];
 if(filters.client_fixture){const d=JSON.parse(data);d.view.sources=[
-  {key:'source-a',locator:'source-a.gltf',input:d.collection_output,availability:'available',loader:'ready',dependency_closure:'complete',unscoped_findings:0,unscoped_severities:[]},
-  {key:'source-b',locator:'source-b.gltf',input:d.collection_output,availability:'available',loader:'unavailable',dependency_closure:'unavailable',unscoped_findings:0,unscoped_severities:[]},
-  {key:'source-c',locator:'source-c.gltf',availability:'unavailable',loader:'unavailable',dependency_closure:'unavailable',unscoped_findings:0,unscoped_severities:[]}
+  {key:'source-a',locator:'source-a.gltf',input:d.collection_output,availability:'available',loader:'ready',dependency_closure:'complete',takes:[{source_take_index:0,take_name:'A',normalized_clip_index:0,normalized_clip_name:'A',availability:'established',outcome:'with_findings',findings:1,severities:['error'],coverage_gaps:0,prediction_unavailable:0,coverage:{complete:1,partial:0,excluded:0,not_evaluated:0}}],unscoped_findings:0,unscoped_severities:[]},
+  {key:'source-b',locator:'source-b.gltf',input:d.collection_output,availability:'available',loader:'unavailable',dependency_closure:'unavailable',takes:[{source_take_index:1,take_name:'B',normalized_clip_index:1,normalized_clip_name:'B',availability:'established',outcome:'partial',findings:0,severities:[],coverage_gaps:1,prediction_unavailable:0,coverage:{complete:0,partial:1,excluded:0,not_evaluated:0}}],unscoped_findings:0,unscoped_severities:[]},
+  {key:'source-c',locator:'source-c.gltf',availability:'unavailable',loader:'unavailable',dependency_closure:'unavailable',takes:[],unscoped_findings:0,unscoped_severities:[]}
 ];d.view.clips=[
   {id:'clip-a',source:'source-a',take_index:0,take_name:'A',roles:['root'],availability:'established',outcome:'with_findings',findings:1,severities:['error'],coverage_gaps:0,prediction_unavailable:0,coverage:{complete:1,partial:0,excluded:0,not_evaluated:0},runtime_sets:['set-a']},
   {id:'clip-b',source:'source-b',take_index:1,take_name:'B',roles:['hips'],availability:'loader_unavailable',outcome:'partial',findings:0,severities:['warning'],coverage_gaps:1,prediction_unavailable:0,coverage:{complete:0,partial:1,excluded:0,not_evaluated:0},runtime_sets:['set-b']},
   {id:'clip-c',source:'source-c',take_index:2,take_name:'C',roles:[],availability:'source_unavailable',outcome:'unavailable',findings:0,severities:[],coverage_gaps:0,prediction_unavailable:1,coverage:{complete:0,partial:0,excluded:0,not_evaluated:1},runtime_sets:[]}
-];d.view.runtime_sets=[{id:'set-a',lifecycle:'complete',members:['clip-a'],gaps:[]},{id:'set-b',lifecycle:'incomplete',members:['clip-b'],gaps:['member_unavailable']}];d.summary={sources:3,clips:3,runtime_sets:2,findings:1,unscoped_findings:0,coverage_gaps:1,prediction_unavailable:1,with_findings:1,evaluated:0,partial:1,excluded:0,unavailable:1,not_evaluated:0};data=JSON.stringify(d)}
+];d.view.runtime_sets=[{id:'set-a',lifecycle:'complete',members:['clip-a'],gaps:[]},{id:'set-b',lifecycle:'incomplete',members:['clip-b'],gaps:['member_unavailable']}];d.summary={sources:3,physical_takes:2,clips:3,runtime_sets:2,findings:1,unscoped_findings:0,coverage_gaps:1,prediction_unavailable:0,with_findings:1,evaluated:0,partial:1,excluded:0,unavailable:1,not_evaluated:0};data=JSON.stringify(d)}
 if(filters.hostile){const d=JSON.parse(data),c=d.view.clips[0],s=d.view.sources[0];c.id='</td><img src=x>';c.source='<source>';c.take_name='"quoted"';c.report_link='reports/a&b.html';s.key='</td><img src=source>';s.locator='<source-path>';data=JSON.stringify(d)}
 const code=html.match(/<script>\s*([\s\S]*?)<\/script><\/body>/)[1];
 const elements=new Map();
@@ -51,7 +51,7 @@ new Function(code)();
 const initialSummary=element('summary').textContent;
 for(const [id,value] of Object.entries(filters)){if(!['client_fixture','hostile'].includes(id))element(id).value=value}
 element('group').onchange();
-console.log(JSON.stringify({count:element('count').textContent,groups:element('groups').textContent,summary:element('summary').textContent,initialSummary,roles:element('role').children.map(x=>x.value),clips:element('clips').innerHTML,sources:element('sources').innerHTML,sourceCount:element('source-count').textContent}));
+console.log(JSON.stringify({count:element('count').textContent,groups:element('groups').textContent,summary:element('summary').textContent,initialSummary,roles:element('role').children.map(x=>x.value),clips:element('clips').innerHTML,sources:element('sources').innerHTML,takes:element('takes').innerHTML,sourceCount:element('source-count').textContent}));
 "#;
     let output = Command::new("node")
         .args(["-e", script, html.to_str().unwrap(), &filters.to_string()])
@@ -188,12 +188,9 @@ fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
         "showing 3 of 3 declared clips; filters do not change collection completeness"
     );
     assert_eq!(unfiltered["summary"], unfiltered["initialSummary"]);
-    assert!(
-        unfiltered["summary"]
-            .as_str()
-            .unwrap()
-            .contains("3 sources · 3 clips · 2 runtime sets · 1 findings (0 unscoped)")
-    );
+    assert!(unfiltered["summary"].as_str().unwrap().contains(
+        "3 sources · 2 physical takes · 3 clips · 2 runtime sets · 1 findings (0 unscoped)"
+    ));
     for (filter, value) in [
         ("source", "source-a"),
         ("role", "root"),
@@ -539,9 +536,14 @@ fn dashboard_keeps_current_unavailable_collection_rows_visible() {
         temp.path().join("source/present.gltf"),
     )
     .unwrap();
+    fs::copy(
+        spike_path("source/walk-a.gltf"),
+        temp.path().join("source/unbound.gltf"),
+    )
+    .unwrap();
     fs::write(
         &manifest,
-        "schema = \"urn:animsmith:schema:collection-manifest:1\"\nschema_version = 1\ncollection_id = \"com.example.dashboard-unavailable\"\ninput_root = \"source\"\n\n[[sources]]\nkey = \"missing\"\npath = \"missing.gltf\"\n\n[[sources]]\nkey = \"present\"\npath = \"present.gltf\"\n\n[[clips]]\nid = \"com.example.dashboard-unavailable/present\"\nsource = \"present\"\ntake_index = 0\ntake_name = \"Take 001\"\n",
+        "schema = \"urn:animsmith:schema:collection-manifest:1\"\nschema_version = 1\ncollection_id = \"com.example.dashboard-unavailable\"\ninput_root = \"source\"\n\n[[sources]]\nkey = \"missing\"\npath = \"missing.gltf\"\n\n[[sources]]\nkey = \"unbound\"\npath = \"unbound.gltf\"\n\n[[sources]]\nkey = \"present\"\npath = \"present.gltf\"\n\n[[clips]]\nid = \"com.example.dashboard-unavailable/present\"\nsource = \"present\"\ntake_index = 0\ntake_name = \"Take 001\"\n",
     )
     .unwrap();
     let evidence = collection(&manifest);
@@ -558,6 +560,25 @@ fn dashboard_keeps_current_unavailable_collection_rows_visible() {
     );
     assert_eq!(current["sources"][0]["key"], "missing");
     assert_eq!(current["clips"].as_array().unwrap().len(), 1);
+    let unbound_current = current["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["key"] == "unbound")
+        .unwrap();
+    assert_eq!(
+        unbound_current["observed_takes"].as_array().unwrap().len(),
+        1
+    );
+    assert!(
+        unbound_current["result"]["envelope"]["files"][0]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|check| check["findings"].as_array().into_iter().flatten())
+            .any(|finding| finding["clip"] == "Take 001"),
+        "fixture must exercise a real clip-scoped finding"
+    );
     let collection_path = temp.path().join("collection-output.json");
     let html = temp.path().join("dashboard.html");
     let authority = temp.path().join("dashboard.json");
@@ -592,8 +613,39 @@ fn dashboard_keeps_current_unavailable_collection_rows_visible() {
     assert!(missing.get("input").is_none());
     assert_eq!(missing["loader"], "unavailable");
     assert_eq!(missing["dependency_closure"], "unavailable");
-    assert_eq!(authority["summary"]["sources"], 2);
+    let unbound = authority["view"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["key"] == "unbound")
+        .unwrap();
+    assert_eq!(unbound["availability"], "available");
+    assert_eq!(unbound["takes"].as_array().unwrap().len(), 1);
+    assert_eq!(unbound["takes"][0]["source_take_index"], 0);
+    assert_eq!(unbound["takes"][0]["take_name"], "Take 001");
+    assert_eq!(unbound["takes"][0]["normalized_clip_index"], 0);
+    assert_eq!(unbound["takes"][0]["normalized_clip_name"], "Take 001");
+    assert!(unbound["takes"][0]["findings"].as_u64().unwrap() > 0);
+    assert_eq!(unbound["takes"][0]["outcome"], "with_findings");
+    assert!(
+        authority["view"]["clips"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|clip| clip["source"] != "unbound"),
+        "a physical take must not invent a logical clip id"
+    );
+    assert_eq!(authority["summary"]["sources"], 3);
+    assert_eq!(authority["summary"]["physical_takes"], 2);
     assert_eq!(authority["summary"]["clips"], 1);
+    let physical_findings = authority["view"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|source| source["takes"].as_array().unwrap())
+        .map(|take| take["findings"].as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(authority["summary"]["findings"], physical_findings);
     let state = rendered_dashboard_state(&html, &serde_json::json!({}));
     assert_eq!(
         state["count"],
@@ -601,13 +653,17 @@ fn dashboard_keeps_current_unavailable_collection_rows_visible() {
     );
     assert_eq!(
         state["sourceCount"],
-        "2 declared sources; sources with zero logical clips remain listed"
+        "3 declared sources; sources with zero logical clips remain listed"
     );
     let source_table = state["sources"].as_str().unwrap();
     assert!(source_table.contains("missing"));
     assert!(source_table.contains("missing.gltf"));
     assert!(source_table.contains("unavailable"));
     assert!(source_table.contains("<td>0</td>"));
+    let take_table = state["takes"].as_str().unwrap();
+    assert!(take_table.contains("unbound"));
+    assert!(take_table.contains("Take 001"));
+    assert!(take_table.contains("with_findings"));
 }
 
 #[test]

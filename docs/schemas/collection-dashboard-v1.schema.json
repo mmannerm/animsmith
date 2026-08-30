@@ -85,6 +85,7 @@
       "additionalProperties": false,
       "required": [
         "sources",
+        "physical_takes",
         "clips",
         "runtime_sets",
         "findings",
@@ -100,6 +101,10 @@
       ],
       "properties": {
         "sources": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "physical_takes": {
           "type": "integer",
           "minimum": 0
         },
@@ -162,6 +167,7 @@
         "availability",
         "loader",
         "dependency_closure",
+        "takes",
         "unscoped_findings",
         "unscoped_severities"
       ],
@@ -189,6 +195,13 @@
           "type": "string",
           "maxLength": 128
         },
+        "takes": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/physical_take"
+          }
+        },
         "unscoped_findings": {
           "type": "integer",
           "minimum": 0
@@ -203,6 +216,81 @@
               "note"
             ]
           }
+        }
+      }
+    },
+    "physical_take": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_take_index",
+        "availability",
+        "outcome",
+        "findings",
+        "severities",
+        "coverage_gaps",
+        "prediction_unavailable",
+        "coverage"
+      ],
+      "properties": {
+        "source_take_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "take_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "normalized_clip_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "normalized_clip_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4101
+        },
+        "availability": {
+          "enum": [
+            "established",
+            "take_name_unavailable",
+            "normalized_clip_unavailable"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "with_findings",
+            "evaluated",
+            "partial",
+            "excluded",
+            "unavailable",
+            "not_evaluated"
+          ]
+        },
+        "findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "severities": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "enum": ["error", "warning", "note"]
+          }
+        },
+        "coverage_gaps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prediction_unavailable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
         }
       }
     },

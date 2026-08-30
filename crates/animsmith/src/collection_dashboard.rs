@@ -268,6 +268,18 @@ fn read_compatible_evaluation(
         );
     }
     wire.validate()?;
+    let source_inputs = collection
+        .sources
+        .iter()
+        .filter_map(|source| {
+            source.input.as_ref().map(|input| {
+                (
+                    source.key.as_str(),
+                    IdentityWire::from_input_identity(input),
+                )
+            })
+        })
+        .collect::<BTreeMap<_, _>>();
     Ok(EvaluationAuthorityV1 {
         input: IdentityWire::from_input_identity(&InputIdentity::from_bytes(&bytes)),
         status: wire.status,
@@ -285,29 +297,20 @@ fn read_compatible_evaluation(
                     .members
                     .into_iter()
                     .map(|member| {
-                        let logical_clip = member.source_input.as_ref().and_then(|input| {
-                            let candidates = collection
-                                .clips
-                                .iter()
-                                .filter(|clip| {
-                                    clip.take_index as u64 == member.take_index
-                                        && clip.take_name == member.take_name
-                                        && collection.sources.iter().any(|source| {
-                                            source.key == clip.source
-                                                && source.input.as_ref().is_some_and(
-                                                    |source_input| {
-                                                        input
-                                                            == &IdentityWire::from_input_identity(
-                                                                source_input,
-                                                            )
-                                                    },
-                                                )
-                                        })
-                                })
-                                .map(|clip| clip.id.clone())
-                                .collect::<Vec<_>>();
-                            (candidates.len() == 1).then(|| candidates[0].clone())
-                        });
+                        let logical_clip = resolve_logical_clip(
+                            member.source_input.as_ref(),
+                            member.take_index,
+                            &member.take_name,
+                            &source_inputs,
+                            collection.clips.iter().map(|clip| {
+                                (
+                                    clip.id.as_str(),
+                                    clip.source.as_str(),
+                                    u64::from(clip.take_index),
+                                    clip.take_name.as_str(),
+                                )
+                            }),
+                        );
                         EvaluationMemberV1 {
                             take_index: member.take_index,
                             take_name: member.take_name,
@@ -343,6 +346,32 @@ fn read_compatible_evaluation(
     })
 }
 
+/// Resolve a transition member only when its complete physical witness names
+/// exactly one logical declaration. The same helper is used by projection and
+/// strict authority readback so serialized `logical_clip` is never trusted.
+fn resolve_logical_clip<'a>(
+    source_input: Option<&IdentityWire>,
+    take_index: u64,
+    take_name: &str,
+    source_inputs: &BTreeMap<&str, IdentityWire>,
+    clips: impl IntoIterator<Item = (&'a str, &'a str, u64, &'a str)>,
+) -> Option<String> {
+    let source_input = source_input?;
+    let mut resolved = None;
+    for (id, source, candidate_index, candidate_name) in clips {
+        if candidate_index == take_index
+            && candidate_name == take_name
+            && source_inputs.get(source) == Some(source_input)
+        {
+            if resolved.is_some() {
+                return None;
+            }
+            resolved = Some(id.to_owned());
+        }
+    }
+    resolved
+}
+
 fn build_authority(
     collection_output: InputIdentity,
     collection: &collection_output::CollectionDashboardInput,
@@ -363,6 +392,55 @@ fn build_authority(
                 .push(set.id.clone());
         }
     }
+    let sources = collection
+        .sources
+        .iter()
+        .map(|source| CollectionDashboardSourceV1 {
+            key: source.key.clone(),
+            locator: source.locator.clone(),
+            input: source.input.as_ref().map(IdentityWire::from_input_identity),
+            availability: source.availability.to_owned(),
+            loader: source.loader.to_owned(),
+            dependency_closure: source.dependency_closure.to_owned(),
+            takes: source
+                .takes
+                .iter()
+                .map(|take| {
+                    let facts = take
+                        .normalized_clip
+                        .as_ref()
+                        .and_then(|(_, name)| source.evidence.get(name));
+                    let availability = match (&take.take_name, &take.normalized_clip) {
+                        (Some(_), Some(_)) => "established",
+                        (None, _) => "take_name_unavailable",
+                        (Some(_), None) => "normalized_clip_unavailable",
+                    };
+                    let evidence = project_evidence(facts, availability);
+                    CollectionDashboardPhysicalTakeV1 {
+                        source_take_index: u64::from(take.source_take_index),
+                        take_name: take.take_name.clone(),
+                        normalized_clip_index: take
+                            .normalized_clip
+                            .as_ref()
+                            .map(|(index, _)| u64::from(*index)),
+                        normalized_clip_name: take
+                            .normalized_clip
+                            .as_ref()
+                            .map(|(_, name)| name.clone()),
+                        availability: availability.to_owned(),
+                        outcome: evidence.outcome,
+                        findings: evidence.findings,
+                        severities: evidence.severities,
+                        coverage_gaps: evidence.coverage_gaps,
+                        prediction_unavailable: evidence.prediction_unavailable,
+                        coverage: evidence.coverage,
+                    }
+                })
+                .collect(),
+            unscoped_findings: source.unscoped_findings,
+            unscoped_severities: source.unscoped_severities.iter().cloned().collect(),
+        })
+        .collect::<Vec<_>>();
     let clips = collection
         .clips
         .iter()
@@ -374,18 +452,7 @@ fn build_authority(
                 .check_key
                 .as_ref()
                 .and_then(|key| source.evidence.get(key));
-            let coverage =
-                facts.map_or_else(DashboardCoverageV1::default, |facts| DashboardCoverageV1 {
-                    complete: facts.coverage.complete,
-                    partial: facts.coverage.partial,
-                    excluded: facts.coverage.excluded,
-                    not_evaluated: facts.coverage.not_evaluated,
-                });
-            let outcome = derive_clip_outcome(
-                facts.map_or(0, |facts| facts.findings),
-                &coverage,
-                clip.availability,
-            );
+            let evidence = project_evidence(facts, clip.availability);
             Ok(CollectionDashboardClipV1 {
                 id: clip.id.clone(),
                 source: clip.source.clone(),
@@ -393,14 +460,12 @@ fn build_authority(
                 take_name: clip.take_name.clone(),
                 roles: source.roles.clone(),
                 availability: clip.availability.to_owned(),
-                outcome: outcome.to_owned(),
-                findings: facts.map_or(0, |facts| facts.findings),
-                severities: facts
-                    .map(|facts| facts.severities.iter().cloned().collect())
-                    .unwrap_or_default(),
-                coverage_gaps: facts.map_or(0, |facts| facts.coverage_gaps),
-                prediction_unavailable: facts.map_or(0, |facts| facts.prediction_unavailable),
-                coverage,
+                outcome: evidence.outcome,
+                findings: evidence.findings,
+                severities: evidence.severities,
+                coverage_gaps: evidence.coverage_gaps,
+                prediction_unavailable: evidence.prediction_unavailable,
+                coverage: evidence.coverage,
                 runtime_sets: membership.remove(&clip.id).unwrap_or_default(),
                 report_link: report_links.get(&clip.id).cloned(),
             })
@@ -411,26 +476,9 @@ fn build_authority(
         schema_version: COLLECTION_DASHBOARD_V1_VERSION,
         collection_output: IdentityWire::from_input_identity(&collection_output),
         evaluation,
-        summary: DashboardSummaryV1::from_rows(
-            &collection.sources,
-            &clips,
-            &collection.runtime_sets,
-        ),
+        summary: DashboardSummaryV1::from_rows(&sources, &clips, &collection.runtime_sets),
         view: CollectionDashboardViewV1 {
-            sources: collection
-                .sources
-                .iter()
-                .map(|source| CollectionDashboardSourceV1 {
-                    key: source.key.clone(),
-                    locator: source.locator.clone(),
-                    input: source.input.as_ref().map(IdentityWire::from_input_identity),
-                    availability: source.availability.to_owned(),
-                    loader: source.loader.to_owned(),
-                    dependency_closure: source.dependency_closure.to_owned(),
-                    unscoped_findings: source.unscoped_findings,
-                    unscoped_severities: source.unscoped_severities.iter().cloned().collect(),
-                })
-                .collect(),
+            sources,
             clips,
             runtime_sets: collection
                 .runtime_sets
@@ -446,7 +494,43 @@ fn build_authority(
     })
 }
 
-fn derive_clip_outcome(
+struct DashboardEvidenceProjection {
+    outcome: String,
+    findings: usize,
+    severities: Vec<String>,
+    coverage_gaps: usize,
+    prediction_unavailable: usize,
+    coverage: DashboardCoverageV1,
+}
+
+fn project_evidence(
+    facts: Option<&collection_output::CollectionDashboardClipEvidence>,
+    availability: &str,
+) -> DashboardEvidenceProjection {
+    let coverage = facts.map_or_else(DashboardCoverageV1::default, |facts| DashboardCoverageV1 {
+        complete: facts.coverage.complete,
+        partial: facts.coverage.partial,
+        excluded: facts.coverage.excluded,
+        not_evaluated: facts.coverage.not_evaluated,
+    });
+    DashboardEvidenceProjection {
+        outcome: derive_evidence_outcome(
+            facts.map_or(0, |facts| facts.findings),
+            &coverage,
+            availability,
+        )
+        .to_owned(),
+        findings: facts.map_or(0, |facts| facts.findings),
+        severities: facts
+            .map(|facts| facts.severities.iter().cloned().collect())
+            .unwrap_or_default(),
+        coverage_gaps: facts.map_or(0, |facts| facts.coverage_gaps),
+        prediction_unavailable: facts.map_or(0, |facts| facts.prediction_unavailable),
+        coverage,
+    }
+}
+
+fn derive_evidence_outcome(
     findings: usize,
     coverage: &DashboardCoverageV1,
     availability: &str,
@@ -482,6 +566,7 @@ struct CollectionDashboardAuthorityV1 {
 #[serde(deny_unknown_fields)]
 struct DashboardSummaryV1 {
     sources: usize,
+    physical_takes: usize,
     clips: usize,
     runtime_sets: usize,
     findings: usize,
@@ -497,7 +582,7 @@ struct DashboardSummaryV1 {
 }
 impl DashboardSummaryV1 {
     fn from_rows(
-        sources: &[collection_output::CollectionDashboardSourceInput],
+        sources: &[CollectionDashboardSourceV1],
         clips: &[CollectionDashboardClipV1],
         sets: &[collection_output::CollectionDashboardRuntimeSetInput],
     ) -> Self {
@@ -507,6 +592,7 @@ impl DashboardSummaryV1 {
             .sum::<usize>();
         let mut value = Self {
             sources: sources.len(),
+            physical_takes: sources.iter().map(|source| source.takes.len()).sum(),
             clips: clips.len(),
             runtime_sets: sets.len(),
             findings: unscoped_findings,
@@ -520,10 +606,12 @@ impl DashboardSummaryV1 {
             unavailable: 0,
             not_evaluated: 0,
         };
+        for take in sources.iter().flat_map(|source| &source.takes) {
+            value.findings += take.findings;
+            value.coverage_gaps += take.coverage_gaps;
+            value.prediction_unavailable += take.prediction_unavailable;
+        }
         for clip in clips {
-            value.findings += clip.findings;
-            value.coverage_gaps += clip.coverage_gaps;
-            value.prediction_unavailable += clip.prediction_unavailable;
             match clip.outcome.as_str() {
                 "with_findings" => value.with_findings += 1,
                 "evaluated" => value.evaluated += 1,
@@ -556,11 +644,31 @@ struct CollectionDashboardSourceV1 {
     availability: String,
     loader: String,
     dependency_closure: String,
+    takes: Vec<CollectionDashboardPhysicalTakeV1>,
     unscoped_findings: usize,
     unscoped_severities: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CollectionDashboardPhysicalTakeV1 {
+    source_take_index: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    take_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalized_clip_index: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalized_clip_name: Option<String>,
+    availability: String,
+    outcome: String,
+    findings: usize,
+    severities: Vec<String>,
+    coverage_gaps: usize,
+    prediction_unavailable: usize,
+    coverage: DashboardCoverageV1,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CollectionDashboardClipV1 {
     id: String,
@@ -580,7 +688,7 @@ struct CollectionDashboardClipV1 {
     report_link: Option<String>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DashboardCoverageV1 {
     complete: usize,
@@ -614,6 +722,7 @@ impl CollectionDashboardAuthorityV1 {
         }
         let mut summary = DashboardSummaryV1 {
             sources: self.view.sources.len(),
+            physical_takes: 0,
             clips: self.view.clips.len(),
             runtime_sets: self.view.runtime_sets.len(),
             findings: 0,
@@ -635,18 +744,6 @@ impl CollectionDashboardAuthorityV1 {
             .collect::<BTreeSet<_>>();
         if clip_ids.len() != self.view.clips.len() {
             return Err("dashboard authority duplicates a logical clip".to_owned());
-        }
-        if self.evaluation.as_ref().is_some_and(|evaluation| {
-            evaluation.families.iter().any(|family| {
-                family.members.iter().any(|member| {
-                    member
-                        .logical_clip
-                        .as_deref()
-                        .is_some_and(|clip| !clip_ids.contains(clip))
-                })
-            })
-        }) {
-            return Err("dashboard evaluation resolves an unknown logical clip".to_owned());
         }
         for clip in &self.view.clips {
             if clip.id.chars().count() > 4096
@@ -671,19 +768,8 @@ impl CollectionDashboardAuthorityV1 {
             {
                 return Err("dashboard authority has an invalid bounded row".to_owned());
             }
-            summary.findings = summary
-                .findings
-                .checked_add(clip.findings)
-                .ok_or_else(|| "dashboard summary overflows".to_owned())?;
-            summary.coverage_gaps = summary
-                .coverage_gaps
-                .checked_add(clip.coverage_gaps)
-                .ok_or_else(|| "dashboard summary overflows".to_owned())?;
-            summary.prediction_unavailable = summary
-                .prediction_unavailable
-                .checked_add(clip.prediction_unavailable)
-                .ok_or_else(|| "dashboard summary overflows".to_owned())?;
-            let expected = derive_clip_outcome(clip.findings, &clip.coverage, &clip.availability);
+            let expected =
+                derive_evidence_outcome(clip.findings, &clip.coverage, &clip.availability);
             if clip.outcome != expected {
                 return Err("dashboard row outcome contradicts its coverage".to_owned());
             }
@@ -720,6 +806,8 @@ impl CollectionDashboardAuthorityV1 {
                     source.dependency_closure.as_str(),
                     "complete" | "partial" | "unavailable"
                 )
+                || source.takes.len() > 4096
+                || source.availability == "unavailable" && !source.takes.is_empty()
                 || source.unscoped_severities.len() > 4096
                 || source
                     .unscoped_severities
@@ -734,6 +822,70 @@ impl CollectionDashboardAuthorityV1 {
                 || (source.unscoped_findings == 0) != source.unscoped_severities.is_empty()
             {
                 return Err("dashboard authority has an invalid source".to_owned());
+            }
+            let mut source_take_indices = BTreeSet::new();
+            let mut normalized_clip_indices = BTreeSet::new();
+            for take in &source.takes {
+                let normalized_identity_present =
+                    take.normalized_clip_index.is_some() && take.normalized_clip_name.is_some();
+                if !source_take_indices.insert(take.source_take_index)
+                    || take
+                        .take_name
+                        .as_ref()
+                        .is_some_and(|name| name.is_empty() || name.chars().count() > 4096)
+                    || take
+                        .normalized_clip_name
+                        .as_ref()
+                        .is_some_and(|name| name.is_empty() || name.chars().count() > 4101)
+                    || take.normalized_clip_index.is_some() != take.normalized_clip_name.is_some()
+                    || take
+                        .normalized_clip_index
+                        .is_some_and(|index| !normalized_clip_indices.insert(index))
+                    || !matches!(
+                        (
+                            take.availability.as_str(),
+                            take.take_name.is_some(),
+                            normalized_identity_present
+                        ),
+                        ("established", true, true)
+                            | ("take_name_unavailable", false, false)
+                            | ("take_name_unavailable", false, true)
+                            | ("normalized_clip_unavailable", true, false)
+                    )
+                    || take.severities.len() > 4096
+                    || take
+                        .severities
+                        .iter()
+                        .any(|severity| !matches!(severity.as_str(), "error" | "warning" | "note"))
+                    || take.severities.iter().collect::<BTreeSet<_>>().len()
+                        != take.severities.len()
+                    || (take.findings == 0) != take.severities.is_empty()
+                {
+                    return Err("dashboard authority has an invalid physical take".to_owned());
+                }
+                let expected =
+                    derive_evidence_outcome(take.findings, &take.coverage, &take.availability);
+                if take.outcome != expected {
+                    return Err(
+                        "dashboard physical-take outcome contradicts its evidence".to_owned()
+                    );
+                }
+                summary.physical_takes = summary
+                    .physical_takes
+                    .checked_add(1)
+                    .ok_or_else(|| "dashboard summary overflows".to_owned())?;
+                summary.findings = summary
+                    .findings
+                    .checked_add(take.findings)
+                    .ok_or_else(|| "dashboard summary overflows".to_owned())?;
+                summary.coverage_gaps = summary
+                    .coverage_gaps
+                    .checked_add(take.coverage_gaps)
+                    .ok_or_else(|| "dashboard summary overflows".to_owned())?;
+                summary.prediction_unavailable = summary
+                    .prediction_unavailable
+                    .checked_add(take.prediction_unavailable)
+                    .ok_or_else(|| "dashboard summary overflows".to_owned())?;
             }
             summary.findings = summary
                 .findings
@@ -751,6 +903,43 @@ impl CollectionDashboardAuthorityV1 {
             .any(|clip| !source_keys.contains(clip.source.as_str()))
         {
             return Err("dashboard clip references an unknown source".to_owned());
+        }
+        let source_inputs = self
+            .view
+            .sources
+            .iter()
+            .filter_map(|source| {
+                source
+                    .input
+                    .as_ref()
+                    .map(|input| (source.key.as_str(), input.clone()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        if self.evaluation.as_ref().is_some_and(|evaluation| {
+            evaluation.families.iter().any(|family| {
+                family.members.iter().any(|member| {
+                    let expected = resolve_logical_clip(
+                        member.source_input.as_ref(),
+                        member.take_index,
+                        &member.take_name,
+                        &source_inputs,
+                        self.view.clips.iter().map(|clip| {
+                            (
+                                clip.id.as_str(),
+                                clip.source.as_str(),
+                                clip.take_index,
+                                clip.take_name.as_str(),
+                            )
+                        }),
+                    );
+                    member.logical_clip != expected
+                })
+            })
+        }) {
+            return Err(
+                "dashboard evaluation logical resolution contradicts its physical witness"
+                    .to_owned(),
+            );
         }
         let mut memberships = BTreeMap::<&str, BTreeSet<&str>>::new();
         let mut set_ids = BTreeSet::new();
@@ -803,6 +992,7 @@ impl CollectionDashboardAuthorityV1 {
             }
         }
         if self.summary.sources != summary.sources
+            || self.summary.physical_takes != summary.physical_takes
             || self.summary.clips != summary.clips
             || self.summary.runtime_sets != summary.runtime_sets
             || self.summary.findings != summary.findings
@@ -1405,7 +1595,7 @@ mod tests {
     #[test]
     fn authority_readback_rejects_schema_and_summary_mutations() {
         let identity = "0".repeat(64);
-        let value = serde_json::json!({"schema":"urn:animsmith:schema:collection-dashboard:1","schema_version":1,"collection_output":{"sha256":identity,"bytes":0},"summary":{"sources":0,"clips":0,"runtime_sets":0,"findings":0,"unscoped_findings":0,"coverage_gaps":0,"prediction_unavailable":0,"with_findings":0,"evaluated":0,"partial":0,"excluded":0,"unavailable":0,"not_evaluated":0},"view":{"sources":[],"clips":[],"runtime_sets":[]}});
+        let value = serde_json::json!({"schema":"urn:animsmith:schema:collection-dashboard:1","schema_version":1,"collection_output":{"sha256":identity,"bytes":0},"summary":{"sources":0,"physical_takes":0,"clips":0,"runtime_sets":0,"findings":0,"unscoped_findings":0,"coverage_gaps":0,"prediction_unavailable":0,"with_findings":0,"evaluated":0,"partial":0,"excluded":0,"unavailable":0,"not_evaluated":0},"view":{"sources":[],"clips":[],"runtime_sets":[]}});
         let bytes = serde_json::to_vec(&value).unwrap();
         assert!(validate_authority_readback(&bytes).is_ok());
         let mut mismatch = value.clone();
@@ -1421,9 +1611,9 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "schema":"urn:animsmith:schema:collection-dashboard:1", "schema_version":1,
             "collection_output":identity,
-            "summary":{"sources":1,"clips":6,"runtime_sets":1,"findings":2,"unscoped_findings":0,"coverage_gaps":3,"prediction_unavailable":4,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
-            "evaluation":{"input":{"sha256":"0".repeat(64),"bytes":0},"status":"complete","decision":"finding","families":[{"id":"family","status":"complete","decision":"finding","members":[{"take_index":0,"take_name":"Finding","logical_clip":"finding"},{"take_index":1,"take_name":"Partial","logical_clip":"partial"}],"pair_findings":[{"member_indices":[0,1],"boundary":"entry","translation_offenders":[{"bone_ordinal":0,"bone_name":"root","delta":0.25}],"rotation_offenders":[]}]}]},
-            "view":{"sources":[{"key":"source","locator":"source.gltf","input":{"sha256":"0".repeat(64),"bytes":0},"availability":"available","loader":"ready","dependency_closure":"complete","unscoped_findings":0,"unscoped_severities":[]}],"clips":[
+            "summary":{"sources":1,"physical_takes":1,"clips":6,"runtime_sets":1,"findings":2,"unscoped_findings":0,"coverage_gaps":3,"prediction_unavailable":4,"with_findings":1,"evaluated":1,"partial":1,"excluded":1,"unavailable":1,"not_evaluated":1},
+            "evaluation":{"input":{"sha256":"0".repeat(64),"bytes":0},"status":"complete","decision":"finding","families":[{"id":"family","status":"complete","decision":"finding","members":[{"take_index":0,"take_name":"Finding","source_input":{"sha256":"0".repeat(64),"bytes":0},"logical_clip":"finding"},{"take_index":1,"take_name":"Partial","source_input":{"sha256":"0".repeat(64),"bytes":0},"logical_clip":"partial"}],"pair_findings":[{"member_indices":[0,1],"boundary":"entry","translation_offenders":[{"bone_ordinal":0,"bone_name":"root","delta":0.25}],"rotation_offenders":[]}]}]},
+            "view":{"sources":[{"key":"source","locator":"source.gltf","input":{"sha256":"0".repeat(64),"bytes":0},"availability":"available","loader":"ready","dependency_closure":"complete","takes":[{"source_take_index":0,"take_name":"Finding","normalized_clip_index":0,"normalized_clip_name":"Finding","availability":"established","outcome":"with_findings","findings":2,"severities":["error"],"coverage_gaps":3,"prediction_unavailable":4,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0}}],"unscoped_findings":0,"unscoped_severities":[]}],"clips":[
                 {"id":"finding","source":"source","take_index":0,"take_name":"Finding","roles":["locomotion"],"availability":"established","outcome":"with_findings","findings":2,"severities":["error"],"coverage_gaps":3,"prediction_unavailable":4,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
                 {"id":"partial","source":"source","take_index":1,"take_name":"Partial","roles":["locomotion","combat"],"availability":"established","outcome":"partial","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":0,"partial":1,"excluded":0,"not_evaluated":0},"runtime_sets":["set"]},
                 {"id":"evaluated","source":"source","take_index":2,"take_name":"Evaluated","roles":[],"availability":"established","outcome":"evaluated","findings":0,"severities":[],"coverage_gaps":0,"prediction_unavailable":0,"coverage":{"complete":1,"partial":0,"excluded":0,"not_evaluated":0},"runtime_sets":[]},
@@ -1460,9 +1650,73 @@ mod tests {
             validate_authority_readback(&serde_json::to_vec(&dangling_resolution).unwrap())
                 .is_err()
         );
+        let mut absent_unique_resolution = rich_authority();
+        absent_unique_resolution
+            .evaluation
+            .as_mut()
+            .unwrap()
+            .families[0]
+            .members[0]
+            .logical_clip = None;
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&absent_unique_resolution).unwrap())
+                .is_err()
+        );
+        let witness_mutations: [fn(&mut super::EvaluationMemberV1); 4] = [
+            |member: &mut super::EvaluationMemberV1| member.source_input = None,
+            |member: &mut super::EvaluationMemberV1| {
+                member.source_input.as_mut().unwrap().bytes = 1
+            },
+            |member: &mut super::EvaluationMemberV1| member.take_index = 99,
+            |member: &mut super::EvaluationMemberV1| member.take_name = "Wrong".to_owned(),
+        ];
+        for mutate in witness_mutations {
+            let mut mismatched_witness = rich_authority();
+            mutate(&mut mismatched_witness.evaluation.as_mut().unwrap().families[0].members[0]);
+            assert!(
+                validate_authority_readback(&serde_json::to_vec(&mismatched_witness).unwrap())
+                    .is_err()
+            );
+        }
+        let mut ambiguous_resolution = rich_authority();
+        let mut duplicate = ambiguous_resolution.view.clips[0].clone();
+        duplicate.id = "finding-alias".to_owned();
+        ambiguous_resolution.view.clips.push(duplicate);
+        ambiguous_resolution.view.runtime_sets[0]
+            .members
+            .push("finding-alias".to_owned());
+        ambiguous_resolution.summary.clips += 1;
+        ambiguous_resolution.summary.with_findings += 1;
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&ambiguous_resolution).unwrap())
+                .is_err()
+        );
+        ambiguous_resolution.evaluation.as_mut().unwrap().families[0].members[0].logical_clip =
+            None;
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&ambiguous_resolution).unwrap())
+                .is_ok()
+        );
         let mut bad_severity = rich_authority();
         bad_severity.view.clips[0].severities = vec!["fatal".to_owned()];
         assert!(validate_authority_readback(&serde_json::to_vec(&bad_severity).unwrap()).is_err());
+
+        let mut incomplete_physical_identity = rich_authority();
+        incomplete_physical_identity.view.sources[0].takes[0].normalized_clip_name = None;
+        assert!(
+            validate_authority_readback(
+                &serde_json::to_vec(&incomplete_physical_identity).unwrap()
+            )
+            .is_err()
+        );
+        let mut contradictory_physical_outcome = rich_authority();
+        contradictory_physical_outcome.view.sources[0].takes[0].outcome = "evaluated".to_owned();
+        assert!(
+            validate_authority_readback(
+                &serde_json::to_vec(&contradictory_physical_outcome).unwrap()
+            )
+            .is_err()
+        );
 
         let mut missing_source_identity = rich_authority();
         missing_source_identity.view.sources[0].input = None;
@@ -1489,12 +1743,20 @@ mod tests {
     #[test]
     fn availability_outcomes_match_dashboard_input_check_reference_mapping() {
         assert_eq!(
-            super::derive_clip_outcome(0, &super::DashboardCoverageV1::default(), "established"),
+            super::derive_evidence_outcome(
+                0,
+                &super::DashboardCoverageV1::default(),
+                "established"
+            ),
             "not_evaluated"
         );
         for availability in ["duplicate_embedded_take_name", "nested_output_unavailable"] {
             assert_eq!(
-                super::derive_clip_outcome(0, &super::DashboardCoverageV1::default(), availability),
+                super::derive_evidence_outcome(
+                    0,
+                    &super::DashboardCoverageV1::default(),
+                    availability
+                ),
                 "unavailable"
             );
             let mut authority = rich_authority();

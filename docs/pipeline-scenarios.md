@@ -130,6 +130,9 @@ assets outside source control when they contain licensed material. Do not use
 the dashboard as a quality score or an engine/artistic/gameplay acceptance
 decision. Its versioned machine authority is
 `urn:animsmith:schema:collection-dashboard:1`.
+Observed physical takes remain visible under their source even when no logical
+clip declaration binds them; their evidence contributes to the unfiltered
+summary without creating a logical identity.
 
 Record intake as a coverage matrix over the representative files rather
 than one verdict per file: what was evaluated and clean, what was

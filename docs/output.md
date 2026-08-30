@@ -101,10 +101,20 @@ per-member dashboard projection.
 
 Every declared source has its own inventory row even when no logical clip
 binds to it. The row retains its safe locator, optional observed input identity,
-availability, loader state, and dependency-closure state. Valid nested findings
+availability, loader state, dependency-closure state, and bounded observed-take
+inventory. Each physical take preserves its exact source-owned take index/name,
+normalized index/name state, evidence, and outcome without inventing a logical
+ID. Summary evidence totals count physical rows plus unscoped source findings;
+the logical-clip outcome partition remains a separate declared-row view. Valid nested findings
 that have no matching clip are retained as source-level unscoped findings and
 included in the dashboard finding total; the projection never assigns them to
 an arbitrary clip.
+
+When transition evidence is present, a member's optional `logical_clip` is
+required exactly when its `source_input`, `take_index`, and `take_name` resolve
+uniquely through the dashboard source identities and logical declarations.
+Strict authority readback rederives the match rather than trusting the stored
+logical ID; absent, mismatched, and ambiguous witnesses remain unresolved.
 
 The dashboard is inventory and evidence navigation only. It has no quality
 score and does not establish engine loading/playback, retargeting, contacts,

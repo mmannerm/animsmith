@@ -95,9 +95,18 @@ clip semantics. Filtering only hides rows locally: it cannot turn partial,
 unavailable, excluded, or incomplete evidence into a complete collection.
 The separate declared-source inventory remains visible even for sources with
 zero logical clips and retains observed identity plus availability, loader, and
-dependency-closure states. Source/document findings without an exact clip match
+dependency-closure states. Every observed physical take remains source-owned
+and records its source take index/name, normalized index/name state, evidence,
+and outcome even when no logical clip declares it. Global finding/gap/prediction
+totals derive from those physical rows plus unscoped source findings; logical
+rows are navigation projections and are not counted a second time.
+Source/document findings without an exact clip match
 remain explicit unscoped source findings and still contribute to the unfiltered
 finding total; they are never guessed onto a clip row.
+Optional transition members carry a logical clip only when their source-input
+identity plus take index/name uniquely match one dashboard declaration. Strict
+readback rederives that relationship and rejects missing, forged, or ambiguous
+logical resolution.
 
 `evaluate-transition-poses` is a JSON-only, single-result transition-family
 contract, not a lint/check stream. It evaluates exact named/indexed takes in
