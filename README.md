@@ -213,6 +213,9 @@ with `--config`. The detailed check-by-check cross-reference for the keys below
 is in the [built-in check
 reference](https://github.com/mmannerm/animsmith/blob/main/docs/built-in-checks.md):
 
+The complete table/key reference, defaults, precedence, validation domains,
+and engine-profile settings live in the [configuration reference](https://github.com/mmannerm/animsmith/blob/main/docs/configuration-reference.md).
+
 ```toml
 [rig]
 profile = "auto"            # or mixamo / ue-mannequin / humanoid, or inline [rig.roles]
