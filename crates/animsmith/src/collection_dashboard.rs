@@ -956,16 +956,15 @@ struct EvaluationFamilyV1 {
 struct DashboardEvaluationPairFindingReadback {
     member_indices: [u64; 2],
     boundary: String,
-    translation_offenders: Vec<TranslationOffenderWire>,
-    rotation_offenders: Vec<RotationOffenderWire>,
+    translation_offenders: Vec<TransitionPoseOffenderWire>,
+    rotation_offenders: Vec<TransitionPoseOffenderWire>,
 }
 impl DashboardEvaluationPairFindingReadback {
     fn validate(&self, members: usize) -> Result<(), String> {
-        if self.member_indices[0] == self.member_indices[1]
-            || self
-                .member_indices
-                .iter()
-                .any(|index| *index >= members as u64)
+        if self
+            .member_indices
+            .iter()
+            .any(|index| *index >= members as u64)
             || !matches!(self.boundary.as_str(), "entry" | "exit")
             || self.translation_offenders.len() > 16
             || self.rotation_offenders.len() > 16
@@ -1167,7 +1166,6 @@ impl TransitionPoseFamilyWire {
             || (incomplete
                 && self.reason.as_deref().is_some_and(valid_transition_reason)
                 && self.pairs.is_empty()
-                && self._skeleton_basis_input.is_none()
                 && incomplete_members_valid);
         valid
             .then_some(())
@@ -1200,9 +1198,6 @@ impl TransitionPoseMemberWire {
         {
             return Err("transition-pose evaluation has an unsupported V1 shape".to_owned());
         }
-        if self.source_input.is_none() && self._source_dependency_closure_identity.is_some() {
-            return Err("transition-pose evaluation has contradictory member identity".to_owned());
-        }
         Ok(())
     }
 }
@@ -1226,11 +1221,10 @@ struct TransitionPosePairWire {
 
 impl TransitionPosePairWire {
     fn validate(&self, members: usize) -> Result<(), String> {
-        if self.member_indices[0] == self.member_indices[1]
-            || self
-                .member_indices
-                .iter()
-                .any(|index| *index >= members as u64)
+        if self
+            .member_indices
+            .iter()
+            .any(|index| *index >= members as u64)
             || !matches!(self.boundary.as_str(), "entry" | "exit")
             || self.translation_offenders.len() > 16
             || self.rotation_offenders.len() > 16
@@ -1298,33 +1292,27 @@ impl TransitionPoseOffenderWire {
         }
     }
     fn validate(&self) -> Result<(), String> {
-        if self.bone_ordinal > 4095 || !self.delta.is_finite() || self.delta < 0.0 {
-            return Err("transition-pose evaluation has invalid offender values".to_owned());
-        }
-        Ok(())
+        validate_offender(self.bone_ordinal, self.delta)
     }
 }
 
 impl TranslationOffenderWire {
     fn validate(&self) -> Result<(), String> {
-        TransitionPoseOffenderWire::translation(TranslationOffenderWire {
-            bone_ordinal: self.bone_ordinal,
-            bone_name: self.bone_name.clone(),
-            delta_m: self.delta_m,
-        })
-        .validate()
+        validate_offender(self.bone_ordinal, self.delta_m)
     }
 }
 
 impl RotationOffenderWire {
     fn validate(&self) -> Result<(), String> {
-        TransitionPoseOffenderWire::rotation(RotationOffenderWire {
-            bone_ordinal: self.bone_ordinal,
-            bone_name: self.bone_name.clone(),
-            delta_deg: self.delta_deg,
-        })
-        .validate()
+        validate_offender(self.bone_ordinal, self.delta_deg)
     }
+}
+
+fn validate_offender(bone_ordinal: u64, delta: f64) -> Result<(), String> {
+    if bone_ordinal > 4095 || !delta.is_finite() || delta < 0.0 {
+        return Err("transition-pose evaluation has invalid offender values".to_owned());
+    }
+    Ok(())
 }
 
 fn valid_transition_reason(reason: &str) -> bool {
@@ -1406,7 +1394,25 @@ mod tests {
         });
         let wire: super::TransitionPoseEvaluationWire = serde_json::from_value(value).unwrap();
         assert!(wire.validate().is_err());
+
+        let missing_closure = serde_json::json!({
+            "schema":"urn:animsmith:schema:transition-pose-evaluation:1", "schema_version":1,
+            "status":"incomplete", "decision":"not_evaluated",
+            "declaration_input":{"sha256":"0".repeat(64),"bytes":0}, "declaration_normalized":{"sha256":"0".repeat(64),"bytes":0}, "subject_input":{"sha256":"0".repeat(64),"bytes":0},
+            "families":[{"family_id":"family","status":"incomplete","decision":"not_evaluated","reason":"zero_duration","members":[
+                {"take_index":0,"take_name":"a","source_input":{"sha256":"0".repeat(64),"bytes":0}},
+                {"take_index":1,"take_name":"b","source_input":{"sha256":"0".repeat(64),"bytes":0},"source_dependency_closure_identity":{"sha256":"0".repeat(64),"bytes":0}}],"pairs":[]}]
+        });
+        let wire: super::TransitionPoseEvaluationWire =
+            serde_json::from_value(missing_closure).unwrap();
+        assert!(wire.validate().is_err());
+
         let pair = serde_json::json!({"member_indices":[0,1],"boundary":"entry","max_translation_delta_m":0.0,"max_rotation_delta_deg":0.0,"translation_tolerance_m":0.0,"rotation_tolerance_deg":0.0,"translation_offenders":[{"bone_ordinal":0,"bone_name":"bone","delta":0.0}],"rotation_offenders":[]});
         assert!(serde_json::from_value::<super::TransitionPosePairWire>(pair).is_err());
+
+        let dashboard_pair = serde_json::json!({"member_indices":[0,1],"boundary":"entry","translation_offenders":[{"bone_ordinal":0,"bone_name":"bone","delta":0.0}],"rotation_offenders":[]});
+        let dashboard_pair: super::DashboardEvaluationPairFindingReadback =
+            serde_json::from_value(dashboard_pair).unwrap();
+        assert!(dashboard_pair.validate(2).is_ok());
     }
 }
