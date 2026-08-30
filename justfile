@@ -125,6 +125,14 @@ coverage:
 package-inventory:
     bash scripts/check-package-inventory.sh
 
+# Verify the isolated exact-Bevy lock remains bound by the normal-workspace contract.
+bevy-readback-lock:
+    bash scripts/check-bevy-readback-lock.sh
+
+# Opt-in Bevy 0.19 isolated compile/runtime contract matrix; not part of CI.
+bevy-readback-test:
+    bash scripts/test-bevy-readback.sh
+
 # Contract coverage for release binary packaging + CLI tag detection.
 release-packaging:
     bash scripts/check-release-packaging.sh
@@ -145,6 +153,7 @@ gates: require-cargo-deny require-typos
     # tests. Pin it independently in the shipped glTF dependency graph.
     cargo tree -p animsmith-gltf --edges features,no-dev | grep -F 'serde_json feature "float_roundtrip"'
     cargo test --workspace
+    just bevy-readback-lock
     bash scripts/check-golden-skip-marker.sh
     cargo deny check
     just schema-id

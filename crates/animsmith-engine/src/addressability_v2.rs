@@ -2537,7 +2537,7 @@ pub enum GltfAddressabilityV2Error {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use animsmith_core::{
         Clip, Config, DependencyClosureBuilderV1, Document, MetricGrids,
@@ -2718,7 +2718,9 @@ mod tests {
         )
     }
 
-    fn adapter_report_json(pointer_width: Option<TargetPointerWidth>) -> serde_json::Value {
+    pub(crate) fn adapter_report_json(
+        pointer_width: Option<TargetPointerWidth>,
+    ) -> serde_json::Value {
         let source = loaded_source_with_targets([0], true);
         let raw = simple_target_raw(&source, Some("target".into()));
         let animations = GltfAnimationAddressabilityInventoryV1::from_source(&source).unwrap();
@@ -3784,6 +3786,10 @@ mod tests {
     #[test]
     fn adapter_strict_readback_rejects_each_authority_projection_and_check_mutation() {
         let complete = adapter_report_json(Some(TargetPointerWidth::Bits64));
+        assert!(
+            crate::validate_bevy_readback_v1(serde_json::to_vec(&complete).unwrap().as_slice())
+                .is_err()
+        );
         let reject = |value: serde_json::Value| {
             let bytes = serde_json::to_vec(&value).unwrap();
             assert!(GltfAddressabilityV2::read_from(Cursor::new(bytes)).is_err());

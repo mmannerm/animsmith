@@ -3518,6 +3518,7 @@ mod tests {
         )
         .unwrap();
         let json = serde_json::to_vec(&report).unwrap();
+        assert!(crate::validate_bevy_readback_v1(json.as_slice()).is_err());
         let read = GltfAnimationAddressabilityInput::read_from(Cursor::new(&json))
             .unwrap()
             .into_report()

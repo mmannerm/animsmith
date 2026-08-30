@@ -62,6 +62,24 @@ distinguishes a complete (including empty) target domain from
 path, and staged-reader bounds and makes no claim that Bevy loaded, spawned,
 retained, wired, or played the asset.
 
+`BevyReadbackV1` is the separately strict, engine-neutral public contract for
+an owner-run exact-Bevy observation. It records the frozen harness and lock,
+the immutable private snapshot bytes actually given to `AssetServer`, the exact
+V2 document and V4 provenance identities, bounded redacted warning metadata,
+terminal lifecycle, and available typed inventories. Its reader rejects unknown
+fields, malformed or oversized input, noncanonical rows, changed self-identity,
+and any stored conformance result that does not recompute from the strict V2
+prediction. The probe preserves closure-relative paths in its private,
+read-only snapshot, then re-hashes and removes that retained tree after all
+observation and before report serialization; on Windows the probe additionally
+refuses final reparse points and validates each opened source handle's final
+path remains under the authorized root, so neither the owner path nor the
+temporary path enters the contract.
+The headless Bevy executable is deliberately excluded from this Rust-1.88
+workspace because its isolated build records and enforces the exact official
+compiler identity `rustc 1.95.0 (59807616e 2026-04-14)`; see
+`tools/bevy-readback/README.md`.
+
 Resolved settings V1 materializes at most 4,096 actual clip rows. Inputs above
 that bound return a typed `ResolutionError::ResolvedSettingsContract`; callers
 must not truncate the clip list and claim complete prediction provenance.
