@@ -33,6 +33,7 @@ function trailPoints(side, bone) {
     return [point[0], point[2]];
   });
 }
+function finitePoint(point) { return point.every(Number.isFinite); }
 function boundsFor(roleNames) {
   const xs = [], zs = [];
   for (const side of [data.before, data.after]) for (const role of roleNames) {
@@ -48,7 +49,8 @@ const sharedPoseBounds = (() => {
   for (const side of [data.before, data.after]) for (let index = 0; index < side.clip.pos.length; index += 3) {
     xs.push(side.clip.pos[index]); ys.push(side.clip.pos[index + 1]);
   }
-  return { x: finiteRange(xs), y: finiteRange(ys) };
+  const x = finiteRange(xs), y = finiteRange(ys);
+  return x && y ? { x, y } : null;
 })();
 const sharedRootBounds = boundsFor(["root"]);
 const sharedTrailBounds = boundsFor(["root", "hips", "left_foot", "right_foot"]);
@@ -67,7 +69,15 @@ function topDownMap(bounds, width, height, pad) {
   return (point) => [width / 2 + (point[0] - centerX) * scale, height / 2 - (point[1] - centerZ) * scale];
 }
 function pathData(points, map) {
-  return points.map((point, index) => `${index ? "L" : "M"}${map(point).join(",")}`).join("");
+  let drawing = false, path = "";
+  for (const point of points) {
+    if (!finitePoint(point)) { drawing = false; continue; }
+    const mapped = map(point);
+    if (!finitePoint(mapped)) { drawing = false; continue; }
+    path += `${drawing ? "L" : "M"}${mapped.join(",")}`;
+    drawing = true;
+  }
+  return path;
 }
 
 function drawSide(name, phase, highlighted) {
@@ -76,6 +86,10 @@ function drawSide(name, phase, highlighted) {
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
+  if (!sharedPoseBounds) {
+    q(`${name}-pose-context`).textContent = "pose drawing unavailable: sampled X/Y positions are non-finite; findings and coverage remain listed";
+    return frame;
+  }
   const [minX, maxX] = sharedPoseBounds.x, [minY, maxY] = sharedPoseBounds.y;
   const scale = Math.min(canvas.clientWidth / Math.max(.1, maxX - minX), canvas.clientHeight / Math.max(.1, maxY - minY)) * .72;
   const project = (point) => [canvas.clientWidth / 2 + (point[0] - (minX + maxX) / 2) * scale, canvas.clientHeight / 2 - (point[1] - (minY + maxY) / 2) * scale];
@@ -83,10 +97,12 @@ function drawSide(name, phase, highlighted) {
     context.lineWidth = 2; context.strokeStyle = stroke;
     for (let bone = 0; bone < parents.length; bone++) if (parents[bone] >= 0) {
       const a = project(posePoint(side, poseFrame, parents[bone])), b = project(posePoint(side, poseFrame, bone));
+      if (!finitePoint(a) || !finitePoint(b)) continue;
       context.beginPath(); context.moveTo(...a); context.lineTo(...b); context.stroke();
     }
     for (let bone = 0; bone < data.bones.length; bone++) {
       const point = project(posePoint(side, poseFrame, bone));
+      if (!finitePoint(point)) continue;
       context.fillStyle = bone === subject ? "#f0cb83" : fill;
       context.beginPath(); context.arc(...point, bone === subject ? 6 : 3, 0, Math.PI * 2); context.fill();
     }
@@ -116,7 +132,7 @@ function drawRootComparison(phase) {
     svg.append(svgElement("path", { d: pathData(points, map), fill: "none", stroke: color, "stroke-width": 3 }));
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
-    svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 5, fill: color }));
+    if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 5, fill: color }));
   }
   const beforeLabel = data.before.clip.trails.root == null ? "before root unavailable" : "before root path";
   const afterLabel = data.after.clip.trails.root == null ? "after root unavailable" : "after root path";
@@ -142,7 +158,7 @@ function drawTrails(name, phase) {
     svg.append(svgElement("path", { d: pathData(points, map), fill: "none", stroke: color, "stroke-width": 2, "data-role": role }));
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
-    svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 3, fill: color, "data-role-dot": role }));
+    if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 3, fill: color, "data-role-dot": role }));
     svg.append(svgElement("text", { x: legendX, y: 14, fill: color }, label));
     legendX += label.length * 7 + 16;
   }
@@ -159,7 +175,9 @@ function drawGait(name, phase) {
     series.left.push(posePoint(side, frame, gait.left)[1] - hipsY);
     series.right.push(posePoint(side, frame, gait.right)[1] - hipsY);
   }
-  const yrange = finiteRange(series.left.concat(series.right)), span = Math.max(.001, yrange[1] - yrange[0]);
+  const yrange = finiteRange(series.left.concat(series.right));
+  if (!yrange) { svg.textContent = "gait drawing unavailable: sampled relative heights are non-finite; stance and coverage evidence remain listed"; return; }
+  const span = Math.max(.001, yrange[1] - yrange[0]);
   const x = (frame) => 20 + frame * 320 / Math.max(1, side.clip.frames - 1);
   const y = (value) => 150 - (value - yrange[0]) * 120 / span;
   for (const stance of side.contexts.stances) for (const run of stance.runs) {
@@ -183,10 +201,10 @@ function update() {
   const phase = Number(q("scrub").value) / Math.max(1, sharedFrameMax);
   const beforeFrame = drawSide("before", phase, highlight.before), afterFrame = drawSide("after", phase, highlight.after);
   drawRootComparison(phase); drawTrails("before", phase); drawTrails("after", phase); drawGait("before", phase); drawGait("after", phase);
-  const time = (side, frame) => side.clip.times[frame].toFixed(3);
+  const time = (side, frame) => Number.isFinite(side.clip.times[frame]) ? side.clip.times[frame].toFixed(3) : "unavailable";
   q("times").textContent = `before ${time(data.before, beforeFrame)}s · after ${time(data.after, afterFrame)}s (normalized phase; not a time warp)`;
 }
-function summary(side) { return `${side.identity.sha256} · ${side.identity.bytes} bytes · clip ${side.clip.name}`; }
+function summary(side) { return `primary ${side.identity.sha256} · ${side.identity.bytes} bytes · complete closure ${side.dependency_closure_identity.sha256} · clip ${side.clip.name}`; }
 function subjectBone(row) {
   if (row.bone && namedBone.has(row.bone)) return namedBone.get(row.bone);
   const nodeName = row.node && row.node.match(/\(([^()]*)\)$/);

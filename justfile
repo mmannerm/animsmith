@@ -143,7 +143,16 @@ animation-pack-skill:
     ANIMSMITH_TEST_BINARY=target/debug/animsmith PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/evaluate-animation-packs/scripts/test_validators.py
 
 report-browser:
-    node scripts/test-comparison-viewer.js
+    #!/usr/bin/env bash
+    set -euo pipefail
+    report_path="$(mktemp)"
+    trap 'rm -f "${report_path}"' EXIT
+    cargo run -q -p animsmith -- --config examples/report-comparison.animsmith.toml report \
+      examples/assets/report-comparison-before.glb \
+      --compare-after examples/assets/report-comparison-after.glb \
+      --before-clip acceptance-matrix --after-clip acceptance-matrix \
+      --output "${report_path}"
+    node scripts/test-comparison-viewer.js "${report_path}"
 
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package

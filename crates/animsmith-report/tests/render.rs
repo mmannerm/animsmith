@@ -2,7 +2,7 @@ use animsmith_core::metrics::{MetricGrids, metric_frame_count};
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::sample_clip;
 use animsmith_core::{
-    CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode, Finding, InputIdentity, Severity,
+    CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode, Finding, Severity,
 };
 use animsmith_core::{
     EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionV1, EvaluationScope,
@@ -15,6 +15,12 @@ use std::path::PathBuf;
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rig.gltf")
+}
+
+fn comparison_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/assets")
+        .join(format!("report-comparison-{name}.glb"))
 }
 
 fn report_data(html: &str) -> Value {
@@ -34,17 +40,15 @@ fn embedded_json(html: &str, id: &str) -> Value {
 }
 
 fn comparison_side<'a>(
-    doc: &'a animsmith_core::Document,
-    identity: &'a InputIdentity,
+    source: &'a animsmith_core::LoadedSource,
     grids: &'a MetricGrids<'a>,
     roles: &'a ResolvedRoles,
     checks: &'a [CheckEvaluation],
     config: &'a animsmith_core::Config,
     clip: &'a str,
 ) -> animsmith_report::ComparisonSide<'a> {
-    let _ = doc;
     animsmith_report::ComparisonSide {
-        identity,
+        source,
         grids,
         roles,
         checks,
@@ -56,10 +60,12 @@ fn comparison_side<'a>(
 
 #[test]
 fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
-    let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
-    let source = std::fs::read(fixture()).expect("fixture bytes");
-    let identity = InputIdentity::from_bytes(&source);
-    let grids = MetricGrids::new(&doc);
+    let before_source =
+        animsmith_gltf::load_source(&comparison_fixture("before")).expect("before fixture loads");
+    let after_source =
+        animsmith_gltf::load_source(&comparison_fixture("after")).expect("after fixture loads");
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
     let checks = evaluations(vec![
@@ -68,7 +74,7 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
             Severity::Warning,
             "</script><img onerror=alert(1)>",
         )
-        .clip("walk")
+        .clip("acceptance-matrix")
         .bone("hips")
         .time(0.5),
         Finding::new(
@@ -76,12 +82,26 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
             Severity::Warning,
             "second semantic at the same subject and time",
         )
-        .clip("walk")
+        .clip("acceptance-matrix")
         .bone("hips")
         .time(0.5),
     ]);
-    let before = comparison_side(&doc, &identity, &grids, &roles, &checks, &config, "walk");
-    let after = comparison_side(&doc, &identity, &grids, &roles, &checks, &config, "idle");
+    let before = comparison_side(
+        &before_source,
+        &before_grids,
+        &roles,
+        &checks,
+        &config,
+        "acceptance-matrix",
+    );
+    let after = comparison_side(
+        &after_source,
+        &after_grids,
+        &roles,
+        &[],
+        &config,
+        "acceptance-matrix",
+    );
     let first = animsmith_report::render_comparison(before, after).expect("comparison renders");
     let second = animsmith_report::render_comparison(before, after)
         .expect("comparison renders deterministically");
@@ -98,10 +118,20 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
     );
     let data = embedded_json(&first, "comparison-report-data");
     assert_eq!(data["kind"], "animsmith-comparison-v1");
-    assert_eq!(data["correspondence"]["before_clip"], "walk");
-    assert_eq!(data["correspondence"]["after_clip"], "idle");
-    assert_eq!(data["before"]["identity"]["sha256"], identity.sha256());
-    assert_eq!(data["after"]["identity"]["sha256"], identity.sha256());
+    assert_eq!(data["correspondence"]["before_clip"], "acceptance-matrix");
+    assert_eq!(data["correspondence"]["after_clip"], "acceptance-matrix");
+    assert_eq!(
+        data["before"]["dependency_closure_identity"],
+        serde_json::to_value(before_source.dependency_closure().identity().unwrap()).unwrap()
+    );
+    assert_eq!(
+        data["after"]["dependency_closure_identity"],
+        serde_json::to_value(after_source.dependency_closure().identity().unwrap()).unwrap()
+    );
+    assert_ne!(
+        data["before"]["dependency_closure_identity"],
+        data["after"]["dependency_closure_identity"]
+    );
     assert_eq!(data["before"]["findings"][0]["bone"], "hips");
     assert_ne!(
         data["before"]["findings"][0]["anchor"], data["before"]["findings"][1]["anchor"],
@@ -120,36 +150,265 @@ fn comparison_refuses_incompatible_named_hierarchy_before_rendering() {
     let before_doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let mut after_doc = before_doc.clone();
     after_doc.skeleton.bones[1].parent = None;
-    let identity = InputIdentity::from_bytes(b"self-authored comparison identity");
-    let before_grids = MetricGrids::new(&before_doc);
-    let after_grids = MetricGrids::new(&after_doc);
-    let roles = ResolvedRoles::default();
-    let config = animsmith_core::Config::default();
-    let error = animsmith_report::render_comparison(
-        comparison_side(
-            &before_doc,
-            &identity,
-            &before_grids,
-            &roles,
-            &[],
-            &config,
-            "walk",
-        ),
-        comparison_side(
-            &after_doc,
-            &identity,
-            &after_grids,
-            &roles,
-            &[],
-            &config,
-            "walk",
-        ),
-    )
-    .expect_err("different named parent must refuse");
+    let error = animsmith_report::preflight_comparison(&before_doc, "walk", &after_doc, "walk")
+        .expect_err("different named parent must refuse");
     assert!(matches!(
         error,
         animsmith_report::ComparisonError::IncompatibleSkeleton { .. }
     ));
+}
+
+#[test]
+fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides() {
+    let baseline = animsmith_testkit::comparison_report_before_doc();
+    for side in ["before", "after"] {
+        let mut duplicate = baseline.clone();
+        duplicate.skeleton.bones[2].name = duplicate.skeleton.bones[3].name.clone();
+        let result = if side == "before" {
+            animsmith_report::preflight_comparison(
+                &duplicate,
+                "acceptance-matrix",
+                &baseline,
+                "acceptance-matrix",
+            )
+        } else {
+            animsmith_report::preflight_comparison(
+                &baseline,
+                "acceptance-matrix",
+                &duplicate,
+                "acceptance-matrix",
+            )
+        };
+        assert!(
+            matches!(result, Err(animsmith_report::ComparisonError::DuplicateBoneName { side: found, .. }) if found == side)
+        );
+
+        let mut later_parent = baseline.clone();
+        later_parent.skeleton.bones[2].parent = Some(3);
+        let result = if side == "before" {
+            animsmith_report::preflight_comparison(
+                &later_parent,
+                "acceptance-matrix",
+                &baseline,
+                "acceptance-matrix",
+            )
+        } else {
+            animsmith_report::preflight_comparison(
+                &baseline,
+                "acceptance-matrix",
+                &later_parent,
+                "acceptance-matrix",
+            )
+        };
+        assert!(
+            matches!(result, Err(animsmith_report::ComparisonError::InvalidHierarchy { side: found, .. }) if found == side)
+        );
+
+        let mut invalid_parent = baseline.clone();
+        invalid_parent.skeleton.bones[2].parent = Some(usize::MAX);
+        let result = if side == "before" {
+            animsmith_report::preflight_comparison(
+                &invalid_parent,
+                "acceptance-matrix",
+                &baseline,
+                "acceptance-matrix",
+            )
+        } else {
+            animsmith_report::preflight_comparison(
+                &baseline,
+                "acceptance-matrix",
+                &invalid_parent,
+                "acceptance-matrix",
+            )
+        };
+        assert!(
+            matches!(result, Err(animsmith_report::ComparisonError::InvalidHierarchy { side: found, .. }) if found == side)
+        );
+
+        let mut unavailable = baseline.clone();
+        unavailable.clips[0].duration_s = 0.0;
+        let result = if side == "before" {
+            animsmith_report::preflight_comparison(
+                &unavailable,
+                "acceptance-matrix",
+                &baseline,
+                "acceptance-matrix",
+            )
+        } else {
+            animsmith_report::preflight_comparison(
+                &baseline,
+                "acceptance-matrix",
+                &unavailable,
+                "acceptance-matrix",
+            )
+        };
+        assert!(
+            matches!(result, Err(animsmith_report::ComparisonError::UnavailableSampleGrid { side: found, .. }) if found == side)
+        );
+    }
+
+    let mut reordered = baseline.clone();
+    reordered.skeleton.bones.swap(2, 3);
+    assert!(matches!(
+        animsmith_report::preflight_comparison(
+            &baseline,
+            "acceptance-matrix",
+            &reordered,
+            "acceptance-matrix"
+        ),
+        Err(animsmith_report::ComparisonError::IncompatibleSkeleton { .. })
+    ));
+}
+
+#[test]
+fn comparison_refuses_the_same_complete_loader_authority() {
+    let source = animsmith_gltf::load_source(&fixture()).expect("fixture loads");
+    assert_eq!(
+        animsmith_report::preflight_comparison_sources(&source, "walk", &source, "idle"),
+        Err(animsmith_report::ComparisonError::IdenticalAuthorities)
+    );
+}
+
+#[test]
+fn comparison_binds_equal_primary_bytes_to_changed_sidecar_closures() {
+    let directory = tempfile::tempdir().unwrap();
+    let source_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    let encoded = source_json["buffers"][0]["uri"]
+        .as_str()
+        .unwrap()
+        .split_once(',')
+        .unwrap()
+        .1;
+    let mut sidecar = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .unwrap();
+    let mut external = source_json;
+    external["buffers"][0]["uri"] = serde_json::Value::String("clip.bin".to_owned());
+    let primary = serde_json::to_vec(&external).unwrap();
+    let mut paths = Vec::new();
+    for name in ["before", "after"] {
+        let root = directory.path().join(name);
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("asset.gltf");
+        std::fs::write(&path, &primary).unwrap();
+        std::fs::write(root.join("clip.bin"), &sidecar).unwrap();
+        paths.push(path);
+        let last = sidecar.len() - 4;
+        sidecar[last] ^= 1;
+    }
+    let before_source = animsmith_gltf::load_source(&paths[0]).unwrap();
+    let after_source = animsmith_gltf::load_source(&paths[1]).unwrap();
+    assert_eq!(
+        before_source.dependency_closure().primary_input(),
+        after_source.dependency_closure().primary_input()
+    );
+    assert_ne!(
+        before_source.dependency_closure().identity(),
+        after_source.dependency_closure().identity()
+    );
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let html = animsmith_report::render_comparison(
+        comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
+        comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+    )
+    .unwrap();
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(data["before"]["identity"], data["after"]["identity"]);
+    assert_ne!(
+        data["before"]["dependency_closure_identity"],
+        data["after"]["dependency_closure_identity"]
+    );
+}
+
+#[test]
+fn identical_findings_get_side_and_occurrence_unique_navigation_anchors() {
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let identical = Finding::new("fixture-check", Severity::Warning, "identical")
+        .clip("acceptance-matrix")
+        .bone("hips")
+        .time(0.5);
+    let before_checks = evaluations(vec![identical.clone(), identical.clone()]);
+    let after_checks = evaluations(vec![identical]);
+    let html = animsmith_report::render_comparison(
+        comparison_side(
+            &before_source,
+            &before_grids,
+            &roles,
+            &before_checks,
+            &config,
+            "acceptance-matrix",
+        ),
+        comparison_side(
+            &after_source,
+            &after_grids,
+            &roles,
+            &after_checks,
+            &config,
+            "acceptance-matrix",
+        ),
+    )
+    .unwrap();
+    let data = embedded_json(&html, "comparison-report-data");
+    let first = data["before"]["findings"][0]["anchor"].as_str().unwrap();
+    let second = data["before"]["findings"][1]["anchor"].as_str().unwrap();
+    let other_side = data["after"]["findings"][0]["anchor"].as_str().unwrap();
+    assert_ne!(first, second);
+    assert_ne!(first, other_side);
+    assert_ne!(second, other_side);
+    assert!(html.contains("#(?:finding|time)-(before|after)-"));
+}
+
+#[test]
+fn comparison_public_boundary_admits_finding_max_and_refuses_n_plus_one() {
+    const LIMIT: usize = 4096;
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let finding =
+        Finding::new("fixture-check", Severity::Warning, "bounded").clip("acceptance-matrix");
+    let render = |count| {
+        let checks = evaluations(vec![finding.clone(); count]);
+        animsmith_report::render_comparison(
+            comparison_side(
+                &before_source,
+                &before_grids,
+                &roles,
+                &checks,
+                &config,
+                "acceptance-matrix",
+            ),
+            comparison_side(
+                &after_source,
+                &after_grids,
+                &roles,
+                &[],
+                &config,
+                "acceptance-matrix",
+            ),
+        )
+    };
+    render(LIMIT).expect("the exact finding limit renders");
+    assert_eq!(
+        render(LIMIT + 1).unwrap_err(),
+        animsmith_report::ComparisonError::ReportRowsExceeded {
+            side: "before",
+            kind: "findings",
+            found: LIMIT + 1,
+            limit: LIMIT,
+        }
+    );
 }
 
 fn comparison_matrix_config() -> animsmith_core::Config {
@@ -204,21 +463,22 @@ fn matrix_evaluations<'a>(
 
 #[test]
 fn comparison_matrix_projects_typed_visual_acceptance_context() {
-    let before_doc = animsmith_testkit::comparison_report_before_doc();
-    let after_doc = animsmith_testkit::comparison_report_after_doc();
+    let before_source =
+        animsmith_gltf::load_source(&comparison_fixture("before")).expect("before fixture loads");
+    let after_source =
+        animsmith_gltf::load_source(&comparison_fixture("after")).expect("after fixture loads");
+    let before_doc = before_source.document();
+    let after_doc = after_source.document();
     let config = comparison_matrix_config();
     let roles = ResolvedRoles::from_names(&before_doc.skeleton, config.rig.roles.clone());
     let after_roles = ResolvedRoles::from_names(&after_doc.skeleton, config.rig.roles.clone());
-    let before_grids = MetricGrids::new(&before_doc);
-    let after_grids = MetricGrids::new(&after_doc);
+    let before_grids = MetricGrids::new(before_doc);
+    let after_grids = MetricGrids::new(after_doc);
     let before_checks = matrix_evaluations(&before_grids, &roles, &config);
     let after_checks = matrix_evaluations(&after_grids, &after_roles, &config);
-    let before_identity = InputIdentity::from_bytes(b"self-authored matrix before");
-    let after_identity = InputIdentity::from_bytes(b"self-authored matrix after");
     let html = animsmith_report::render_comparison(
         comparison_side(
-            &before_doc,
-            &before_identity,
+            &before_source,
             &before_grids,
             &roles,
             &before_checks,
@@ -226,8 +486,7 @@ fn comparison_matrix_projects_typed_visual_acceptance_context() {
             "acceptance-matrix",
         ),
         comparison_side(
-            &after_doc,
-            &after_identity,
+            &after_source,
             &after_grids,
             &after_roles,
             &after_checks,
@@ -462,6 +721,94 @@ fn prediction_check(
             .with_engine_prediction(prediction),
     )
     .expect("prediction lifecycle is valid")
+}
+
+#[test]
+fn comparison_filters_scoped_gaps_and_prediction_facets_to_selected_clip() {
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let selected_scope = EvaluationScope::new(EvaluationScopeCode::custom("test:selected"))
+        .subject("acceptance-matrix");
+    let other_scope =
+        EvaluationScope::new(EvaluationScopeCode::custom("test:other")).subject("other-clip");
+    let gaps = CheckEvaluation::evaluated(
+        "test:gaps",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            Vec::new(),
+            vec![
+                CoverageGap::new(CoverageGapCode::custom("test:selected-gap"), "selected")
+                    .scope(selected_scope.clone()),
+                CoverageGap::new(CoverageGapCode::custom("test:other-gap"), "other")
+                    .scope(other_scope.clone()),
+            ],
+        ),
+    )
+    .unwrap();
+    let (_, provenance) = prediction_provenance();
+    let basis = EnginePredictionBasisV1::new(vec![
+        PredictionBasisReferenceV1::profile_fact("accepted_inputs").unwrap(),
+    ])
+    .unwrap();
+    let prediction = EnginePredictionV1::new(
+        provenance.identity().clone(),
+        vec![
+            EnginePredictionFacetV1::available(selected_scope.clone(), basis.clone()).unwrap(),
+            EnginePredictionFacetV1::available(other_scope.clone(), basis).unwrap(),
+        ],
+    )
+    .unwrap();
+    let prediction = CheckEvaluation::evaluated(
+        "test:prediction",
+        CheckOutput::from_coverage(
+            Vec::new(),
+            vec![selected_scope.clone(), other_scope],
+            Vec::new(),
+        )
+        .with_engine_prediction(prediction),
+    )
+    .unwrap();
+    let checks = vec![gaps, prediction];
+    let html = animsmith_report::render_comparison(
+        comparison_side(
+            &before_source,
+            &before_grids,
+            &roles,
+            &checks,
+            &config,
+            "acceptance-matrix",
+        ),
+        comparison_side(
+            &after_source,
+            &after_grids,
+            &roles,
+            &[],
+            &config,
+            "acceptance-matrix",
+        ),
+    )
+    .unwrap();
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(data["before"]["gaps"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        data["before"]["gaps"][0]["scope"]["subject"],
+        "acceptance-matrix"
+    );
+    assert_eq!(
+        data["before"]["predictions"][0]["prediction"]["facets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        data["before"]["predictions"][0]["prediction"]["facets"][0]["scope"]["subject"],
+        "acceptance-matrix"
+    );
 }
 
 #[test]

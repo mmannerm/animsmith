@@ -125,6 +125,7 @@ dependencies = [
  "animsmith-testkit",
  "base64",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 

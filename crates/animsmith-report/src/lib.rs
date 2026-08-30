@@ -41,7 +41,10 @@ use animsmith_core::metrics::{MetricGrids, metric_frame_count};
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::PoseGrid;
 use animsmith_core::stance_support::{StanceSideV1, resolve_stance_support_v1};
-use animsmith_core::{CheckEvaluation, Config, InputIdentity, PredictionProvenanceV1};
+use animsmith_core::{
+    CheckEvaluation, Config, LoadedSource, PredictionProvenanceV1, SourceObservationStateV1,
+    SourceSetCoverageStateV1,
+};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -57,6 +60,11 @@ const COMPARISON_VIEWER_JS: &str = include_str!("../assets/comparison.js");
 pub const MAX_COMPARISON_POSE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_COMPARISON_JSON_BYTES: usize = 48 * 1024 * 1024;
 const MAX_COMPARISON_INPUT_TEXT_BYTES: usize = 1024 * 1024;
+const MAX_COMPARISON_FINDINGS_PER_SIDE: usize = 4096;
+const MAX_COMPARISON_GAPS_PER_SIDE: usize = 4096;
+const MAX_COMPARISON_PREDICTION_FACETS_PER_SIDE: usize = 4096;
+const MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE: usize = 8192;
+const MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE: usize = 4 * 1024 * 1024;
 
 /// Validated bounded correspondence used before sampling or check evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,8 +82,9 @@ pub struct ComparisonPreflight {
 /// One explicit input to [`render_comparison`].
 #[derive(Clone, Copy)]
 pub struct ComparisonSide<'a> {
-    /// Immutable identity of the bytes loaded for this side.
-    pub identity: &'a InputIdentity,
+    /// Exact loader authority for the normalized document and its complete
+    /// rooted dependency closure.
+    pub source: &'a LoadedSource,
     /// Metric pose grids computed from this side's loaded document.
     pub grids: &'a MetricGrids<'a>,
     /// Resolved roles for this side.
@@ -168,6 +177,58 @@ pub enum ComparisonError {
         /// Fixed input text budget.
         limit: usize,
     },
+    /// The metric grids were not built from the supplied loader authority.
+    #[error("{side} metric grids do not belong to the supplied source authority")]
+    AuthorityDocumentMismatch {
+        /// Input side whose authority and grids differed.
+        side: &'static str,
+    },
+    /// A side lacked the exact complete dependency-closure identity required
+    /// to distinguish immutable comparison authorities.
+    #[error("{side} input has no complete dependency-closure identity")]
+    IncompleteDependencyClosure {
+        /// Input side whose rooted closure was incomplete.
+        side: &'static str,
+    },
+    /// Before and after named the same complete immutable input authority.
+    #[error("before and after have the same complete dependency-closure identity")]
+    IdenticalAuthorities,
+    /// The exact authored/parser clip-name authority was incomplete.
+    #[error("{side} authored clip-name inventory is incomplete")]
+    IncompleteAuthoredClipInventory {
+        /// Input side whose raw source clip inventory was incomplete.
+        side: &'static str,
+    },
+    /// A selected authored/parser clip name was ambiguous even if the loader
+    /// disambiguated normalized document names.
+    #[error("{side} authored clip {clip:?} is ambiguous")]
+    AmbiguousAuthoredClip {
+        /// Input side containing the duplicate authored name.
+        side: &'static str,
+        /// Explicit selected clip spelling.
+        clip: String,
+    },
+    /// One selected side exceeded a fixed report row budget before report
+    /// values were allocated.
+    #[error("{side} comparison {kind} requires {found} rows, above the {limit}-row limit")]
+    ReportRowsExceeded {
+        /// Input side exceeding the bound.
+        side: &'static str,
+        /// Bounded row domain.
+        kind: &'static str,
+        /// Observed rows, capped at the N+1 witness.
+        found: usize,
+        /// Fixed row limit.
+        limit: usize,
+    },
+    /// One selected side exceeded the fixed aggregate report-text budget.
+    #[error("{side} comparison report text exceeds the {limit}-byte limit")]
+    ReportTextWorkExceeded {
+        /// Input side exceeding the bound.
+        side: &'static str,
+        /// Fixed aggregate text limit.
+        limit: usize,
+    },
 }
 
 /// Validate explicit correspondence and all sampling work before evaluating checks.
@@ -207,6 +268,34 @@ pub fn preflight_comparison(
     })
 }
 
+/// Validate loader-owned immutable authorities before check evaluation.
+///
+/// In addition to normalized document correspondence, this requires complete
+/// rooted dependency closures, refuses identical before/after authorities,
+/// and checks duplicate authored/parser clip names through the exact raw
+/// source projection rather than the loader's disambiguated display names.
+pub fn preflight_comparison_sources(
+    before: &LoadedSource,
+    before_clip_name: &str,
+    after: &LoadedSource,
+    after_clip_name: &str,
+) -> Result<ComparisonPreflight, ComparisonError> {
+    let preflight = preflight_comparison(
+        before.document(),
+        before_clip_name,
+        after.document(),
+        after_clip_name,
+    )?;
+    let before_identity = complete_source_closure_identity(before, "before")?;
+    let after_identity = complete_source_closure_identity(after, "after")?;
+    if before_identity == after_identity {
+        return Err(ComparisonError::IdenticalAuthorities);
+    }
+    validate_source_authored_clip_name(before, preflight.before_clip_index, "before")?;
+    validate_source_authored_clip_name(after, preflight.after_clip_index, "after")?;
+    Ok(preflight)
+}
+
 /// Render a self-contained, synchronized before/after HTML diagnostic.
 ///
 /// The caller declares the clip correspondence by supplying exactly one clip
@@ -221,7 +310,19 @@ pub fn render_comparison(
 ) -> Result<String, ComparisonError> {
     let before_doc = before.grids.document();
     let after_doc = after.grids.document();
-    let preflight = preflight_comparison(before_doc, before.clip, after_doc, after.clip)?;
+    validate_side_authority(before, "before")?;
+    validate_side_authority(after, "after")?;
+    let preflight =
+        preflight_comparison_sources(before.source, before.clip, after.source, after.clip)?;
+    let before_text_bytes = preflight_side_report_work(before, before.clip, "before")?;
+    let after_text_bytes = preflight_side_report_work(after, after.clip, "after")?;
+    preflight_report_allocation(
+        before_doc,
+        after_doc,
+        preflight,
+        before_text_bytes,
+        after_text_bytes,
+    )?;
     let before_clip = &before_doc.clips[preflight.before_clip_index];
     let after_clip = &after_doc.clips[preflight.after_clip_index];
     let before_grid = before
@@ -311,6 +412,265 @@ fn select_clip<'a>(
         });
     }
     Ok(found)
+}
+
+fn validate_side_authority(
+    side: ComparisonSide<'_>,
+    side_name: &'static str,
+) -> Result<(), ComparisonError> {
+    if !std::ptr::eq(side.source.document(), side.grids.document()) {
+        return Err(ComparisonError::AuthorityDocumentMismatch { side: side_name });
+    }
+    Ok(())
+}
+
+fn complete_source_closure_identity<'a>(
+    source: &'a LoadedSource,
+    side_name: &'static str,
+) -> Result<&'a animsmith_core::DependencyClosureIdentityV1, ComparisonError> {
+    let closure = source.dependency_closure();
+    if !closure.coverage().is_complete() {
+        return Err(ComparisonError::IncompleteDependencyClosure { side: side_name });
+    }
+    closure
+        .identity()
+        .ok_or(ComparisonError::IncompleteDependencyClosure { side: side_name })
+}
+
+fn validate_source_authored_clip_name(
+    source: &LoadedSource,
+    normalized_clip_index: usize,
+    side_name: &'static str,
+) -> Result<(), ComparisonError> {
+    let facts = source.source_facts();
+    let clips = facts.clips();
+    if clips.coverage().state() != SourceSetCoverageStateV1::Complete {
+        return Err(ComparisonError::IncompleteAuthoredClipInventory { side: side_name });
+    }
+    let selected = clips.rows().iter().find(|row| {
+        matches!(
+            row.normalized_clip_index().state(),
+            SourceObservationStateV1::Observed(index) if *index == normalized_clip_index
+        )
+    });
+    let Some(SourceObservationStateV1::Observed(selected_name)) =
+        selected.map(|row| row.source_name().state())
+    else {
+        // An unnamed source clip is still uniquely and exactly bound through
+        // its source index -> normalized index mapping.
+        return Ok(());
+    };
+    let matches = clips
+        .rows()
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.source_name().state(),
+                SourceObservationStateV1::Observed(name) if name == selected_name
+            )
+        })
+        .take(2)
+        .count();
+    if matches > 1 {
+        return Err(ComparisonError::AmbiguousAuthoredClip {
+            side: side_name,
+            clip: selected_name.as_str().to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn scope_applies(scope: Option<&animsmith_core::EvaluationScope>, clip_name: &str) -> bool {
+    scope.is_none_or(|scope| {
+        scope
+            .subject
+            .as_deref()
+            .is_none_or(|subject| subject == clip_name)
+    })
+}
+
+fn bounded_row_count<I>(
+    rows: I,
+    side: &'static str,
+    kind: &'static str,
+    limit: usize,
+) -> Result<usize, ComparisonError>
+where
+    I: IntoIterator,
+{
+    let found = rows.into_iter().take(limit.saturating_add(1)).count();
+    if found > limit {
+        return Err(ComparisonError::ReportRowsExceeded {
+            side,
+            kind,
+            found,
+            limit,
+        });
+    }
+    Ok(found)
+}
+
+struct ReportTextCounter {
+    bytes: usize,
+}
+
+impl Write for ReportTextCounter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.bytes = self
+            .bytes
+            .checked_add(data.len())
+            .ok_or_else(|| io::Error::other("comparison report text limit"))?;
+        if self.bytes > MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE {
+            return Err(io::Error::other("comparison report text limit"));
+        }
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn preflight_side_report_work(
+    side: ComparisonSide<'_>,
+    clip_name: &str,
+    side_name: &'static str,
+) -> Result<usize, ComparisonError> {
+    let selected_findings = side
+        .checks
+        .iter()
+        .flat_map(CheckEvaluation::findings)
+        .filter(|finding| finding.clip.as_deref().is_none_or(|clip| clip == clip_name));
+    let finding_count = bounded_row_count(
+        selected_findings.clone(),
+        side_name,
+        "findings",
+        MAX_COMPARISON_FINDINGS_PER_SIDE,
+    )?;
+    let selected_gaps = side.checks.iter().flat_map(|check| {
+        check
+            .gaps()
+            .iter()
+            .filter(|gap| scope_applies(gap.scope.as_ref(), clip_name))
+    });
+    bounded_row_count(
+        selected_gaps.clone(),
+        side_name,
+        "coverage gaps",
+        MAX_COMPARISON_GAPS_PER_SIDE,
+    )?;
+    let selected_facets = side
+        .checks
+        .iter()
+        .filter_map(CheckEvaluation::engine_prediction)
+        .flat_map(|prediction| prediction.facets())
+        .filter(|facet| scope_applies(Some(facet.scope()), clip_name));
+    bounded_row_count(
+        selected_facets.clone(),
+        side_name,
+        "prediction facets",
+        MAX_COMPARISON_PREDICTION_FACETS_PER_SIDE,
+    )?;
+
+    let clip_index = select_clip(side.grids.document(), clip_name, side_name)?.0;
+    let frames = metric_frame_count(&side.grids.document().clips[clip_index]).unwrap_or(0);
+    let context_upper_bound = frames.saturating_add(finding_count).saturating_add(2);
+    if context_upper_bound > MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE {
+        return Err(ComparisonError::ReportRowsExceeded {
+            side: side_name,
+            kind: "diagnostic contexts",
+            found: MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE.saturating_add(1),
+            limit: MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE,
+        });
+    }
+
+    let mut counter = ReportTextCounter { bytes: 0 };
+    for finding in selected_findings {
+        serde_json::to_writer(&mut counter, finding).map_err(|_| {
+            ComparisonError::ReportTextWorkExceeded {
+                side: side_name,
+                limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
+            }
+        })?;
+    }
+    for gap in selected_gaps {
+        serde_json::to_writer(&mut counter, gap).map_err(|_| {
+            ComparisonError::ReportTextWorkExceeded {
+                side: side_name,
+                limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
+            }
+        })?;
+    }
+    for facet in selected_facets {
+        serde_json::to_writer(&mut counter, facet).map_err(|_| {
+            ComparisonError::ReportTextWorkExceeded {
+                side: side_name,
+                limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
+            }
+        })?;
+    }
+    if let Some(provenance) = side.prediction_provenance {
+        serde_json::to_writer(&mut counter, provenance).map_err(|_| {
+            ComparisonError::ReportTextWorkExceeded {
+                side: side_name,
+                limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
+            }
+        })?;
+    }
+    Ok(counter.bytes)
+}
+
+fn preflight_report_allocation(
+    before: &animsmith_core::Document,
+    after: &animsmith_core::Document,
+    preflight: ComparisonPreflight,
+    before_text_bytes: usize,
+    after_text_bytes: usize,
+) -> Result<(), ComparisonError> {
+    let before_pose = comparison_pose_bytes(
+        preflight.before_frames,
+        before.skeleton.bones.len(),
+        "before",
+    )?;
+    let after_pose =
+        comparison_pose_bytes(preflight.after_frames, after.skeleton.bones.len(), "after")?;
+    let base64_bytes = [before_pose, after_pose]
+        .into_iter()
+        .try_fold(0u128, |total, bytes| {
+            let encoded = bytes.checked_add(2)?.checked_div(3)?.checked_mul(4)?;
+            total.checked_add(encoded)
+        })
+        .unwrap_or(u128::MAX);
+    // JSON f64 spellings are at most 24 bytes for finite values in serde's
+    // shortest-roundtrip representation. Six bytes per source-name byte is
+    // the worst JSON Unicode/control escape expansion. The fixed allowance
+    // covers keys, identities, arrays, roles, and the embedded contract shell.
+    let time_bytes = (preflight.before_frames as u128)
+        .saturating_add(preflight.after_frames as u128)
+        .saturating_mul(24);
+    let bone_name_bytes = before
+        .skeleton
+        .bones
+        .iter()
+        .map(|bone| bone.name.len() as u128)
+        .sum::<u128>()
+        .saturating_mul(6);
+    let estimate = base64_bytes
+        .saturating_add(time_bytes)
+        .saturating_add(bone_name_bytes)
+        .saturating_add(before_text_bytes as u128)
+        .saturating_add(after_text_bytes as u128)
+        .saturating_add(64 * 1024);
+    require_report_estimate(estimate)
+}
+
+fn require_report_estimate(estimate: u128) -> Result<(), ComparisonError> {
+    if estimate > MAX_COMPARISON_JSON_BYTES as u128 {
+        return Err(ComparisonError::ReportWorkExceeded {
+            limit: MAX_COMPARISON_JSON_BYTES,
+        });
+    }
+    Ok(())
 }
 
 fn validate_skeletons(
@@ -449,31 +809,65 @@ fn comparison_side_json(
     })
     .collect::<serde_json::Map<_, _>>()
     .into();
-    let findings = side.checks.iter().flat_map(CheckEvaluation::findings)
-        .filter(|finding| finding.clip.as_deref() == Some(clip_name) || finding.clip.is_none())
-        .map(|finding| json!({"anchor":finding_anchor(finding),"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"time":finding.time_s,"measured":finding.measured,"expected":finding.expected,"members":finding.members,"prediction_scope":finding.prediction_scope,"message":finding.message}))
+    let anchored_findings = side
+        .checks
+        .iter()
+        .flat_map(CheckEvaluation::findings)
+        .filter(|finding| finding.clip.as_deref().is_none_or(|clip| clip == clip_name))
+        .enumerate()
+        .map(|(ordinal, finding)| (finding, finding_anchor(side_name, ordinal, finding)))
+        .collect::<Vec<_>>();
+    let findings = anchored_findings
+        .iter()
+        .map(|(finding, anchor)| json!({"anchor":anchor,"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"time":finding.time_s,"measured":finding.measured,"expected":finding.expected,"members":finding.members,"prediction_scope":finding.prediction_scope,"message":finding.message}))
         .collect::<Vec<_>>();
     let gaps = side.checks.iter().flat_map(|check| check.gaps().iter().map(move |gap| (check.check_id(), gap)))
+        .filter(|(_, gap)| scope_applies(gap.scope.as_ref(), clip_name))
         .map(|(check_id, gap)| json!({"check_id":check_id,"code":gap.code,"message":gap.message,"scope":gap.scope}))
         .collect::<Vec<_>>();
     let predictions = side
         .checks
         .iter()
         .filter_map(|check| {
-            check
-                .engine_prediction()
-                .map(|prediction| json!({"check_id":check.check_id(),"prediction":prediction}))
+            let prediction = check.engine_prediction()?;
+            let facets = prediction
+                .facets()
+                .iter()
+                .filter(|facet| scope_applies(Some(facet.scope()), clip_name))
+                .collect::<Vec<_>>();
+            (!facets.is_empty()).then(|| {
+                json!({
+                    "check_id": check.check_id(),
+                    "prediction": {
+                        "schema": prediction.contract_id(),
+                        "provenance_identity": prediction.provenance_identity(),
+                        "facets": facets,
+                    }
+                })
+            })
         })
         .collect::<Vec<_>>();
+    let primary = side.source.dependency_closure().primary_input();
+    let closure_identity = side
+        .source
+        .dependency_closure()
+        .identity()
+        .expect("comparison authority preflight requires a complete closure");
     Ok(json!({
-        "identity": {"sha256": side.identity.sha256(), "bytes": side.identity.bytes()},
+        "identity": {"sha256": primary.sha256(), "bytes": primary.bytes()},
+        "dependency_closure_identity": closure_identity,
         "clip": {"anchor":semantic_anchor("clip", clip_name),"name":clip_name,"duration":duration_s,"frames":frames,"times":grid.times,"positions":base64::engine::general_purpose::STANDARD.encode(positions),"trails":trails},
-        "contexts": comparison_contexts(side, clip_name, grid),
+        "contexts": comparison_contexts(side, clip_name, grid, &anchored_findings),
         "findings":findings,"gaps":gaps,"prediction_provenance":side.prediction_provenance,"predictions":predictions,
     }))
 }
 
-fn comparison_contexts(side: ComparisonSide<'_>, clip_name: &str, grid: &PoseGrid) -> Value {
+fn comparison_contexts(
+    side: ComparisonSide<'_>,
+    clip_name: &str,
+    grid: &PoseGrid,
+    anchored_findings: &[(&animsmith_core::Finding, String)],
+) -> Value {
     let left_gait_role = side
         .roles
         .get(Role::LeftFoot)
@@ -558,15 +952,12 @@ fn comparison_contexts(side: ComparisonSide<'_>, clip_name: &str, grid: &PoseGri
     })
     .collect::<Vec<_>>();
 
-    let findings = side
-        .checks
-        .iter()
-        .flat_map(CheckEvaluation::findings)
-        .filter(|finding| finding.clip.as_deref() == Some(clip_name));
     let mut seams = Vec::new();
     let mut structural = Vec::new();
-    for finding in findings {
-        let anchor = finding_anchor(finding);
+    for (finding, anchor) in anchored_findings
+        .iter()
+        .filter(|(finding, _)| finding.clip.as_deref() == Some(clip_name))
+    {
         if matches!(
             finding.check_id,
             "loop-closure" | "loop-seam" | "loop-seam-vel" | "loop-seam-rot"
@@ -614,9 +1005,9 @@ fn comparison_contexts(side: ComparisonSide<'_>, clip_name: &str, grid: &PoseGri
     })
 }
 
-fn finding_anchor(finding: &animsmith_core::Finding) -> String {
+fn finding_anchor(side: &'static str, ordinal: usize, finding: &animsmith_core::Finding) -> String {
     let material = format!(
-        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{:?}\u{1f}{}",
+        "{side}\u{1f}{ordinal}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{:?}\u{1f}{}",
         finding.check_id,
         finding.clip.as_deref().unwrap_or(""),
         finding.bone.as_deref().unwrap_or(""),
@@ -700,6 +1091,60 @@ mod comparison_tests {
                 bytes: (MAX_COMPARISON_POSE_BYTES as u128) * 2 * 3 * 4,
                 limit: MAX_COMPARISON_POSE_BYTES,
             }
+        );
+    }
+
+    #[test]
+    fn comparison_row_budgets_admit_max_and_refuse_n_plus_one() {
+        assert_eq!(
+            bounded_row_count(
+                0..MAX_COMPARISON_FINDINGS_PER_SIDE,
+                "before",
+                "findings",
+                MAX_COMPARISON_FINDINGS_PER_SIDE,
+            )
+            .unwrap(),
+            MAX_COMPARISON_FINDINGS_PER_SIDE
+        );
+        assert_eq!(
+            bounded_row_count(
+                0..MAX_COMPARISON_FINDINGS_PER_SIDE + 1,
+                "before",
+                "findings",
+                MAX_COMPARISON_FINDINGS_PER_SIDE,
+            ),
+            Err(ComparisonError::ReportRowsExceeded {
+                side: "before",
+                kind: "findings",
+                found: MAX_COMPARISON_FINDINGS_PER_SIDE + 1,
+                limit: MAX_COMPARISON_FINDINGS_PER_SIDE,
+            })
+        );
+    }
+
+    #[test]
+    fn comparison_text_budget_admits_max_and_refuses_n_plus_one() {
+        let mut counter = ReportTextCounter { bytes: 0 };
+        assert_eq!(
+            counter
+                .write(&vec![0; MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE])
+                .unwrap(),
+            MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE
+        );
+        assert!(counter.write(&[0]).is_err());
+    }
+
+    #[test]
+    fn comparison_report_budget_admits_max_and_refuses_n_plus_one() {
+        assert_eq!(
+            require_report_estimate(MAX_COMPARISON_JSON_BYTES as u128),
+            Ok(())
+        );
+        assert_eq!(
+            require_report_estimate(MAX_COMPARISON_JSON_BYTES as u128 + 1),
+            Err(ComparisonError::ReportWorkExceeded {
+                limit: MAX_COMPARISON_JSON_BYTES,
+            })
         );
     }
 }

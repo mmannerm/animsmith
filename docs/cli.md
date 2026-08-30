@@ -78,11 +78,17 @@ when authoring `assemble` or material texture recipes.
 `report --compare-after` writes one offline synchronized before/after diagnostic.
 Both input files and both clip names are explicit; it refuses duplicate or
 incompatible named skeletons, missing/ambiguous clips, unavailable metric
-grids, and report work beyond its fixed bounds. The two panels synchronize by
+grids, identical or incomplete rooted dependency closures, and report work
+beyond its fixed bounds. Authored duplicate take names remain ambiguous even
+when a loader gives normalized clips distinct display suffixes. Each panel
+shows both its primary input and complete closure identity, and includes only
+selected-clip or whole-input gaps and predictions. The output cannot alias
+either primary input, a rooted sidecar, or the selected config; refusal
+preserves any existing output. The two panels synchronize by
 normalized sampled-frame phase and display both source times — that display
 mapping is not an authored time warp. Findings, coverage gaps, prediction
-provenance, and SHA-256 input identities remain separate per side. Selecting a
-finding scrubs the linked time and highlights its uniquely mapped bone. The
+provenance, and identities remain separate per side. Selecting a finding
+scrubs the linked time and highlights its uniquely mapped bone. The
 report is evidence for troubleshooting, not an artistic, gameplay, engine, or
 retargeting acceptance verdict.
 

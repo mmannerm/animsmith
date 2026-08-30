@@ -844,11 +844,10 @@ fn write_report(
 #[cfg(feature = "report")]
 fn require_comparison_output_distinct(
     output: &Path,
-    before: &Path,
-    after: &Path,
+    inputs: &[(&str, &Path)],
 ) -> Result<(), String> {
     let destination = publish::PublicationDestination::new("comparison output", output)?;
-    for (label, input) in [("before input", before), ("after input", after)] {
+    for &(label, input) in inputs {
         let input_identity = publish::input_identity(input)?;
         if input_identity == destination.identity()
             || same_file_entry(input, destination.identity())?
@@ -882,11 +881,10 @@ fn same_file_entry(_input: &Path, _destination: &Path) -> Result<bool, String> {
 #[cfg(feature = "report")]
 fn publish_comparison_report(
     output: &Path,
-    before: &Path,
-    after: &Path,
+    inputs: &[(&str, &Path)],
     html: &str,
 ) -> Result<(), String> {
-    require_comparison_output_distinct(output, before, after)?;
+    require_comparison_output_distinct(output, inputs)?;
     let destination = publish::PublicationDestination::new("comparison output", output)?;
     let mut temp = tempfile::Builder::new()
         .prefix(".animsmith-comparison-")
@@ -1906,14 +1904,34 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     .as_deref()
                     .ok_or_else(|| "--compare-after requires --after-clip".to_string())?;
                 let after_loaded = load_with_config(after_path, &loaded_config)?;
-                animsmith_report::preflight_comparison(
-                    loaded.document(),
+                animsmith_report::preflight_comparison_sources(
+                    &loaded.source,
                     before_name,
-                    after_loaded.document(),
+                    &after_loaded.source,
                     after_name,
                 )
                 .map_err(|error| error.to_string())?;
-                require_comparison_output_distinct(&output, &file, after_path)?;
+                let mut comparison_inputs = vec![
+                    ("before input", file.as_path()),
+                    ("after input", after_path.as_path()),
+                ];
+                if let Some(config_path) = loaded_config.control_input() {
+                    comparison_inputs.push(("configuration input", config_path));
+                }
+                require_comparison_output_distinct(&output, &comparison_inputs)?;
+                let destinations = [("comparison output", output.as_path())];
+                publish::require_external_dependencies_safe_for_publication(
+                    "report comparison before input",
+                    input_resource_root(&file),
+                    loaded.dependency_closure(),
+                    &destinations,
+                )?;
+                publish::require_external_dependencies_safe_for_publication(
+                    "report comparison after input",
+                    input_resource_root(after_path),
+                    after_loaded.dependency_closure(),
+                    &destinations,
+                )?;
                 Some(after_loaded)
             } else if before_clip.is_some() || after_clip.is_some() {
                 return Err("--before-clip and --after-clip require --compare-after".into());
@@ -1991,7 +2009,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     };
                     let html = animsmith_report::render_comparison(
                         animsmith_report::ComparisonSide {
-                            identity: loaded.input(),
+                            source: &loaded.source,
                             grids: &grids,
                             roles: &roles,
                             checks: &evaluations,
@@ -2000,7 +2018,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             clip: &before_clip,
                         },
                         animsmith_report::ComparisonSide {
-                            identity: after_loaded.input(),
+                            source: &after_loaded.source,
                             grids: &after_grids,
                             roles: &after_roles,
                             checks: &after_evaluations,
@@ -2015,7 +2033,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             .iter()
                             .map(|check| check.findings().len())
                             .sum::<usize>();
-                    publish_comparison_report(&output, &file, after_path, &html)?;
+                    let mut comparison_inputs = vec![
+                        ("before input", file.as_path()),
+                        ("after input", after_path.as_path()),
+                    ];
+                    if let Some(config_path) = loaded_config.control_input() {
+                        comparison_inputs.push(("configuration input", config_path));
+                    }
+                    publish_comparison_report(&output, &comparison_inputs, &html)?;
                     publish::emit_text(&render::render_report_written(
                         &output,
                         doc.clips.len(),
