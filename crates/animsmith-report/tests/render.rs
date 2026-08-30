@@ -650,66 +650,65 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
         }
     );
 
-    let directory = tempfile::tempdir().unwrap();
-    let mut json: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
-    let frames = CONTEXT_LIMIT;
-    let mut bytes = Vec::with_capacity(frames * 16);
-    for frame in 0..frames {
-        bytes.extend_from_slice(&(frame as f32).to_le_bytes());
-    }
-    let output_offset = bytes.len();
-    bytes.resize(output_offset + frames * 12, 0);
-    json["buffers"][0]["uri"] = format!(
-        "data:application/octet-stream;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(&bytes)
-    )
-    .into();
-    json["buffers"][0]["byteLength"] = bytes.len().into();
-    json["bufferViews"] = serde_json::json!([
-        {"buffer":0,"byteOffset":0,"byteLength":output_offset},
-        {"buffer":0,"byteOffset":output_offset,"byteLength":frames * 12}
-    ]);
-    json["accessors"] = serde_json::json!([
-        {"bufferView":0,"componentType":5126,"count":frames,"type":"SCALAR","min":[0.0],"max":[(frames - 1) as f32]},
-        {"bufferView":1,"componentType":5126,"count":frames,"type":"VEC3"}
-    ]);
-    json["animations"] = serde_json::json!([{
-        "name":"walk",
-        "samplers":[{"input":0,"output":1,"interpolation":"LINEAR"}],
-        "channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}]
-    }]);
-    let mut long_paths = Vec::new();
-    for marker in ["before", "after"] {
-        json["asset"]["extras"] = serde_json::json!({"authority": marker});
-        let path = directory.path().join(format!("{marker}.gltf"));
-        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
-        long_paths.push(path);
-    }
-    let long_before = animsmith_gltf::load_source(&long_paths[0]).unwrap();
-    let long_after = animsmith_gltf::load_source(&long_paths[1]).unwrap();
-    let long_before_grids = MetricGrids::new(long_before.document());
-    let long_after_grids = MetricGrids::new(long_after.document());
-    let long_roles = ResolvedRoles::from_names(
-        &long_before.document().skeleton,
-        [
-            (Role::Root, "root".to_owned()),
-            (Role::Hips, "hips".to_owned()),
-            (Role::LeftFoot, "foot".to_owned()),
-            (Role::RightFoot, "foot".to_owned()),
-        ],
-    );
-    let stance_scopes = ["left_foot_stance", "right_foot_stance"]
-        .map(|code| EvaluationScope::new(EvaluationScopeCode::custom(code)).subject("walk"));
-    let stance_checks = vec![
-        CheckEvaluation::evaluated(
-            "foot-slide",
-            CheckOutput::from_coverage(Vec::new(), stance_scopes.into(), Vec::new()),
+    for frames in [CONTEXT_LIMIT - 2, CONTEXT_LIMIT - 1] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+        let mut bytes = Vec::with_capacity(frames * 16);
+        for frame in 0..frames {
+            bytes.extend_from_slice(&(frame as f32).to_le_bytes());
+        }
+        let output_offset = bytes.len();
+        bytes.resize(output_offset + frames * 12, 0);
+        json["buffers"][0]["uri"] = format!(
+            "data:application/octet-stream;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
         )
-        .unwrap(),
-    ];
-    assert_eq!(
-        animsmith_report::render_comparison(
+        .into();
+        json["buffers"][0]["byteLength"] = bytes.len().into();
+        json["bufferViews"] = serde_json::json!([
+            {"buffer":0,"byteOffset":0,"byteLength":output_offset},
+            {"buffer":0,"byteOffset":output_offset,"byteLength":frames * 12}
+        ]);
+        json["accessors"] = serde_json::json!([
+            {"bufferView":0,"componentType":5126,"count":frames,"type":"SCALAR","min":[0.0],"max":[(frames - 1) as f32]},
+            {"bufferView":1,"componentType":5126,"count":frames,"type":"VEC3"}
+        ]);
+        json["animations"] = serde_json::json!([{
+            "name":"walk",
+            "samplers":[{"input":0,"output":1,"interpolation":"LINEAR"}],
+            "channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}]
+        }]);
+        let mut long_paths = Vec::new();
+        for marker in ["before", "after"] {
+            json["asset"]["extras"] = serde_json::json!({"authority": marker});
+            let path = directory.path().join(format!("{marker}.gltf"));
+            std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+            long_paths.push(path);
+        }
+        let long_before = animsmith_gltf::load_source(&long_paths[0]).unwrap();
+        let long_after = animsmith_gltf::load_source(&long_paths[1]).unwrap();
+        let long_before_grids = MetricGrids::new(long_before.document());
+        let long_after_grids = MetricGrids::new(long_after.document());
+        let long_roles = ResolvedRoles::from_names(
+            &long_before.document().skeleton,
+            [
+                (Role::Root, "root".to_owned()),
+                (Role::Hips, "hips".to_owned()),
+                (Role::LeftFoot, "foot".to_owned()),
+                (Role::RightFoot, "foot".to_owned()),
+            ],
+        );
+        let stance_scopes = ["left_foot_stance", "right_foot_stance"]
+            .map(|code| EvaluationScope::new(EvaluationScopeCode::custom(code)).subject("walk"));
+        let stance_checks = vec![
+            CheckEvaluation::evaluated(
+                "foot-slide",
+                CheckOutput::from_coverage(Vec::new(), stance_scopes.into(), Vec::new()),
+            )
+            .unwrap(),
+        ];
+        let result = animsmith_report::render_comparison(
             comparison_side(
                 &long_before,
                 &long_before_grids,
@@ -726,15 +725,21 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
                 &config,
                 "walk",
             ),
-        )
-        .unwrap_err(),
-        animsmith_report::ComparisonError::ReportRowsExceeded {
-            side: "before",
-            kind: "diagnostic contexts",
-            found: CONTEXT_LIMIT + 1,
-            limit: CONTEXT_LIMIT,
+        );
+        if frames == CONTEXT_LIMIT - 2 {
+            result.expect("the exact diagnostic-context work limit renders");
+        } else {
+            assert_eq!(
+                result.unwrap_err(),
+                animsmith_report::ComparisonError::ReportRowsExceeded {
+                    side: "before",
+                    kind: "diagnostic contexts",
+                    found: CONTEXT_LIMIT + 1,
+                    limit: CONTEXT_LIMIT,
+                }
+            );
         }
-    );
+    }
 }
 
 fn comparison_matrix_config() -> animsmith_core::Config {

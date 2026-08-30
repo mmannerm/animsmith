@@ -55,6 +55,7 @@ const seamFinding = data.before.findings.find(row => row.anchor === seam.finding
 const structuralFinding = data.before.findings.find(row => row.anchor === structural.finding_anchor);
 if (!seamFinding || !structuralFinding) throw new Error("Rust-generated context/finding binding is incomplete");
 seamFinding.time = 1.501; seamFinding.message = "<img>";
+structuralFinding.time = 1.501;
 let afterFinding = data.after.findings[0];
 if (!afterFinding) {
   afterFinding = {...seamFinding, anchor: "finding-1111111111111111"};
@@ -85,27 +86,43 @@ if(nodes.scrub.value != 1234) throw new Error("cross-side semantic finding ancho
 
 // A non-finite sampled range must degrade the drawing, not abort navigation
 // or hide the already-rendered findings and coverage lists.
+const cleanBefore = data.before.clip.positions, cleanAfter = data.after.clip.positions;
+function execute(payload) {
+  const testNodes = Object.fromEntries(ids.map(id=>[id,new Node(id)]));
+  testNodes["comparison-report-data"].textContent=JSON.stringify(payload);
+  const testContext={document:{getElementById:id=>testNodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(){}},location:{hash:""},atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
+  vm.createContext(testContext); vm.runInContext(viewer, testContext);
+  return testNodes;
+}
 const invalid = Buffer.from(data.before.clip.positions, "base64");
 for (let offset = 0; offset < invalid.length; offset += 4) invalid.writeFloatLE(Number.NaN, offset);
 data.before.clip.positions = invalid.toString("base64");
-nodes["comparison-report-data"].textContent=JSON.stringify(data);
-const isolatedNodes = Object.fromEntries(ids.map(id=>[id,new Node(id)]));
-isolatedNodes["comparison-report-data"].textContent=JSON.stringify(data);
-const isolatedContext={document:{getElementById:id=>isolatedNodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(){}},location:{hash:""},atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
-vm.createContext(isolatedContext); vm.runInContext(viewer, isolatedContext);
+data.after.clip.positions = cleanAfter;
+const isolatedNodes = execute(data);
 const rootLabels = isolatedNodes["comparison-root-path"].children.map(child=>child.textContent);
-if (!isolatedNodes["before-pose-context"].textContent.includes("non-finite") || !isolatedNodes["before-gait"].textContent.includes("non-finite") || !isolatedNodes["after-pose-context"].textContent.includes("exact judged") || !rootLabels.includes("before root unavailable") || !rootLabels.includes("after root path") || isolatedNodes["before-findings"].children.length !== data.before.findings.length) throw new Error("asymmetric non-finite pose/gait/root evidence was mislabeled, hidden, or threw");
+const beforeTrailText = isolatedNodes["before-path"].children.map(child=>child.textContent).join(" ");
+const afterTrailText = isolatedNodes["after-path"].children.map(child=>child.textContent).join(" ");
+if (!isolatedNodes["before-pose-context"].textContent.includes("non-finite") || !isolatedNodes["before-gait"].textContent.includes("non-finite") || !isolatedNodes["after-pose-context"].textContent.includes("exact judged") || !rootLabels.includes("before root unavailable") || !rootLabels.includes("after root path") || !beforeTrailText.includes("unavailable:") || !beforeTrailText.includes("non-finite") || afterTrailText.includes("non-finite") || isolatedNodes["before-findings"].children.length !== data.before.findings.length) throw new Error("before-side non-finite pose/gait/root/trail evidence was mislabeled, hidden, or threw");
+
+data.before.clip.positions = cleanBefore; data.after.clip.positions = invalid.toString("base64");
+const reverseNodes = execute(data);
+const reverseTrailText = reverseNodes["after-path"].children.map(child=>child.textContent).join(" ");
+if (!reverseNodes["before-pose-context"].textContent.includes("exact judged") || !reverseNodes["after-pose-context"].textContent.includes("non-finite") || !reverseTrailText.includes("unavailable:") || !reverseTrailText.includes("non-finite")) throw new Error("after-side non-finite evidence did not remain independent of exact before evidence");
 
 // A selected mixed-finite frame also loses the exact-evidence label while
 // other finite frames and the opposite side remain independently available.
-const mixed = Buffer.from(data.after.clip.positions, "base64");
+const mixed = Buffer.from(cleanAfter, "base64");
 mixed.writeFloatLE(Number.NaN, (1501 * bones * 3 + 1 * 3) * 4);
-data.after.clip.positions = mixed.toString("base64");
-isolatedNodes["comparison-report-data"].textContent=JSON.stringify(data);
-const mixedNodes = Object.fromEntries(ids.map(id=>[id,new Node(id)]));
-mixedNodes["comparison-report-data"].textContent=JSON.stringify(data);
-const mixedContext={document:{getElementById:id=>mixedNodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(){}},location:{hash:""},atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
-vm.createContext(mixedContext); vm.runInContext(viewer, mixedContext);
+data.before.clip.positions = cleanBefore; data.after.clip.positions = mixed.toString("base64");
+const mixedNodes = execute(data);
 mixedNodes.scrub.value=1501; mixedNodes.scrub.listeners.input();
-if (!mixedNodes["after-pose-context"].textContent.includes("selected frame contains non-finite") || mixedNodes["before-pose-context"].textContent.includes("exact judged")) throw new Error("mixed per-frame availability was not evaluated independently");
+const mixedTrailText = mixedNodes["after-path"].children.map(child=>child.textContent).join(" ");
+if (!mixedNodes["after-pose-context"].textContent.includes("selected frame contains non-finite") || !mixedNodes["before-pose-context"].textContent.includes("exact judged") || !mixedTrailText.includes("incomplete non-finite samples")) throw new Error("mixed per-frame/trail availability was not evaluated independently");
+
+// Structural context must remain visible without overriding the selected
+// frame's non-finite availability disclosure.
+data.before.clip.positions = mixed.toString("base64"); data.after.clip.positions = cleanAfter;
+const structuralNodes = execute(data);
+structuralNodes["before-findings"].children[structuralIndex].listeners.click();
+if (!structuralNodes["before-pose-context"].textContent.includes("structural evidence") || !structuralNodes["before-pose-context"].textContent.includes("selected frame contains non-finite")) throw new Error("structural selection hid non-finite selected-frame availability");
 console.log("comparison viewer harness passed");

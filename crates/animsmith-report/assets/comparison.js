@@ -91,9 +91,11 @@ function drawSide(name, phase, highlighted) {
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
+  const structural = selectedContext && selectedContext.name === name && selectedContext.kind === "structural" ? selectedContext.value : null;
   const bounds = sidePoseBounds[name];
   if (!bounds) {
-    q(`${name}-pose-context`).textContent = "pose drawing unavailable: sampled X/Y positions are non-finite; findings and coverage remain listed";
+    const unavailable = "pose drawing unavailable: sampled X/Y positions are non-finite; findings and coverage remain listed";
+    q(`${name}-pose-context`).textContent = structural ? `${structural.label} · ${unavailable}` : unavailable;
     return frame;
   }
   const [minX, maxX] = bounds.x, [minY, maxY] = bounds.y;
@@ -123,9 +125,10 @@ function drawSide(name, phase, highlighted) {
       : `loop seam pose drawing incomplete: an endpoint contains non-finite positions; finding and coverage evidence remain listed · affected ${seam.subject_bone_name || "bone unavailable"}`;
   } else {
     drawFrame(frame, "#8e99bc", "#d5d9e5", highlighted);
-    const structural = selectedContext && selectedContext.name === name && selectedContext.kind === "structural" ? selectedContext.value : null;
     q(`${name}-pose-context`).textContent = structural
-      ? structural.label
+      ? frameFinite(side, frame)
+        ? structural.label
+        : `${structural.label} · pose drawing incomplete: selected frame contains non-finite positions; findings and coverage remain listed`
       : frameFinite(side, frame)
         ? "exact judged pose-grid frame"
         : "pose drawing incomplete: selected frame contains non-finite positions; findings and coverage remain listed";
@@ -170,20 +173,25 @@ function drawTrails(name, phase) {
   const side = data[name], svg = q(`${name}-path`); svg.replaceChildren();
   if (!sharedTrailBounds) { svg.textContent = "role trajectories unavailable"; return; }
   const map = topDownMap(sharedTrailBounds, 360, 180, 24);
-  let legendX = 8, unavailable = [];
+  let legendX = 8, unavailable = [], incomplete = [];
   for (const role of Object.keys(trailStyles)) {
     const bone = side.clip.trails[role];
     if (bone == null) { unavailable.push(trailStyles[role][1]); continue; }
     const points = trailPoints(side, bone), [color, label] = trailStyles[role];
+    const finite = points.filter(finitePoint).length;
+    if (finite === 0) { unavailable.push(`${label} (non-finite)`); continue; }
+    if (finite !== points.length) incomplete.push(label);
     svg.append(svgElement("path", { d: pathData(points, map), fill: "none", stroke: color, "stroke-width": 2, "data-role": role }));
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 3, fill: color, "data-role-dot": role }));
-    svg.append(svgElement("text", { x: legendX, y: 14, fill: color }, label));
+    const legend = finite === points.length ? label : `${label} incomplete`;
+    svg.append(svgElement("text", { x: legendX, y: 14, fill: color }, legend));
     legendX += label.length * 7 + 16;
   }
   const missing = unavailable.length ? ` · unavailable: ${unavailable.join(", ")}` : "";
-  svg.append(svgElement("text", { x: 8, y: 174, fill: "#aab1c5" }, `top-down X/Z metres · shared scale across both inputs${missing}`));
+  const partial = incomplete.length ? ` · incomplete non-finite samples: ${incomplete.join(", ")}` : "";
+  svg.append(svgElement("text", { x: 8, y: 174, fill: "#aab1c5" }, `top-down X/Z metres · shared scale across both inputs${missing}${partial}`));
 }
 
 function drawGait(name, phase) {

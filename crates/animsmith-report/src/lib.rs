@@ -65,6 +65,17 @@ const MAX_COMPARISON_GAPS_PER_SIDE: usize = 4096;
 const MAX_COMPARISON_PREDICTION_FACETS_PER_SIDE: usize = 4096;
 const MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE: usize = 8192;
 const MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE: usize = 4 * 1024 * 1024;
+// Four f64 spellings, their keys and JSON punctuation fit well below this
+// allowance for one stance run. The same bound also covers every seam,
+// structural, gait, or stance object shell; variable authored strings are
+// counted separately by `ReportTextCounter`.
+const MAX_COMPARISON_CONTEXT_WIRE_BYTES_PER_ROW: usize = 512;
+
+#[derive(Debug, Clone, Copy)]
+struct SideReportPreflight {
+    text_bytes: usize,
+    context_rows: usize,
+}
 
 /// Validated bounded correspondence used before sampling or check evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,14 +334,14 @@ pub fn render_comparison(
     validate_side_authority(after, "after")?;
     let preflight =
         preflight_comparison_sources(before.source, before.clip, after.source, after.clip)?;
-    let before_text_bytes = preflight_side_report_work(before, before.clip, "before")?;
-    let after_text_bytes = preflight_side_report_work(after, after.clip, "after")?;
+    let before_report = preflight_side_report_work(before, before.clip, "before")?;
+    let after_report = preflight_side_report_work(after, after.clip, "after")?;
     preflight_report_allocation(
         before_doc,
         after_doc,
         preflight,
-        before_text_bytes,
-        after_text_bytes,
+        before_report,
+        after_report,
     )?;
     let before_clip = &before_doc.clips[preflight.before_clip_index];
     let after_clip = &after_doc.clips[preflight.after_clip_index];
@@ -546,7 +557,7 @@ fn preflight_side_report_work(
     side: ComparisonSide<'_>,
     clip_name: &str,
     side_name: &'static str,
-) -> Result<usize, ComparisonError> {
+) -> Result<SideReportPreflight, ComparisonError> {
     validate_prediction_authority(side, side_name)?;
     let selected_findings = side
         .checks
@@ -618,7 +629,12 @@ fn preflight_side_report_work(
     } else {
         0
     };
-    let context_upper_bound = stance_contexts.saturating_add(finding_contexts);
+    let has_gait_context = side.roles.get(Role::Hips).is_some()
+        && (side.roles.get(Role::LeftFoot).is_some() || side.roles.get(Role::LeftToe).is_some())
+        && (side.roles.get(Role::RightFoot).is_some() || side.roles.get(Role::RightToe).is_some());
+    let context_upper_bound = stance_contexts
+        .saturating_add(finding_contexts)
+        .saturating_add(usize::from(has_gait_context));
     if context_upper_bound > MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE {
         return Err(ComparisonError::ReportRowsExceeded {
             side: side_name,
@@ -680,7 +696,10 @@ fn preflight_side_report_work(
     if let Some(provenance) = side.prediction_provenance {
         count_wire!(provenance);
     }
-    Ok(counter.bytes)
+    Ok(SideReportPreflight {
+        text_bytes: counter.bytes,
+        context_rows: context_upper_bound,
+    })
 }
 
 fn validate_prediction_authority(
@@ -723,8 +742,8 @@ fn preflight_report_allocation(
     before: &animsmith_core::Document,
     after: &animsmith_core::Document,
     preflight: ComparisonPreflight,
-    before_text_bytes: usize,
-    after_text_bytes: usize,
+    before_report: SideReportPreflight,
+    after_report: SideReportPreflight,
 ) -> Result<(), ComparisonError> {
     let before_pose = comparison_pose_bytes(
         preflight.before_frames,
@@ -758,8 +777,13 @@ fn preflight_report_allocation(
     let estimate = base64_bytes
         .saturating_add(time_bytes)
         .saturating_add(bone_name_bytes)
-        .saturating_add(before_text_bytes as u128)
-        .saturating_add(after_text_bytes as u128)
+        .saturating_add(before_report.text_bytes as u128)
+        .saturating_add(after_report.text_bytes as u128)
+        .saturating_add(
+            (before_report.context_rows as u128)
+                .saturating_add(after_report.context_rows as u128)
+                .saturating_mul(MAX_COMPARISON_CONTEXT_WIRE_BYTES_PER_ROW as u128),
+        )
         .saturating_add(64 * 1024);
     require_report_estimate(estimate)
 }
