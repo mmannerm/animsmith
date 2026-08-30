@@ -632,7 +632,12 @@ fn assert_documented_numeric_defaults(section: &MarkdownSection, source: &str) {
                     }));
                     break;
                 }
-                MarkdownInlineToken::Code(_) => {}
+                MarkdownInlineToken::Code(_) => {
+                    panic!(
+                        "detailed section for {} must keep `default` prose and its numeric value adjacent to `{}`",
+                        section.heading, default.key
+                    );
+                }
             }
         }
         let (Some(value_index), Some(documented_value)) = (value_index, documented_value) else {
@@ -1313,6 +1318,48 @@ fn unit_drift_in_one_detail_field_fails_even_when_a_later_unit_matches() {
         assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &mutated);
     })
     .expect_err("a unit removed from one default association must fail the docs gate");
+    let message = panic_message(failure);
+    assert!(message.contains("contact_height_m"), "{message}");
+}
+
+#[test]
+fn missing_numeric_default_cannot_borrow_a_later_decoy_association() {
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+        read_source_catalog_docs()
+    else {
+        return;
+    };
+    let without_own_default = built_in_checks.replacen(
+        "`contact_height_m` default `0.03` metres",
+        "`contact_height_m`",
+        1,
+    );
+    assert_ne!(
+        without_own_default, built_in_checks,
+        "mutation must remove the own default"
+    );
+    let mutated = without_own_default.replacen(
+        "metres per second. The clip-level",
+        "metres per second; unrelated default `0.03` metres. The clip-level",
+        1,
+    );
+    assert_ne!(
+        mutated, without_own_default,
+        "mutation must add a later decoy"
+    );
+    assert!(
+        mutated.contains("unrelated default `0.03` metres"),
+        "the later decoy must remain in the fixture"
+    );
+    assert!(
+        mutated.contains("`max_slide_mps` default `0.3`"),
+        "the other documented field must remain intact"
+    );
+
+    let failure = std::panic::catch_unwind(|| {
+        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &mutated);
+    })
+    .expect_err("a default must not borrow a later decoy association");
     let message = panic_message(failure);
     assert!(message.contains("contact_height_m"), "{message}");
 }
