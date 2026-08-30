@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +72,101 @@ class ExternalProxyContractTests(unittest.TestCase):
             self.assertIn(expected_error, result.stderr)
             self.assertTrue(sentinel.is_file(), "failed staging preserves the prior publication")
             self.assertFalse((stage / "src").exists(), "failed staging publishes no partial source tree")
+
+    def fixture_pages_source(self, root: Path) -> Path:
+        source = root / "source"
+        (source / "docs/reports").mkdir(parents=True)
+        (source / "examples/assets").mkdir(parents=True)
+        (source / "schemas").mkdir()
+        (source / ".mdbook-version").write_text("0.4.52\n", encoding="utf-8")
+        (source / "README.md").write_text("# Root\n", encoding="utf-8")
+        (source / "CONTRIBUTING.md").write_text("# Contributing\n", encoding="utf-8")
+        (source / "examples/assets/README.md").write_text("# Assets\n", encoding="utf-8")
+        (source / "schemas/example.json").write_text("{}\n", encoding="utf-8")
+        (source / "docs/README.md").write_text(
+            "# Documentation\n\n"
+            "| Document | Use it to… | Category |\n"
+            "|---|---|---|\n"
+            "| [Reports](reports/README.md) | Read reports. | Guides |\n"
+            "| [Contributing](../CONTRIBUTING.md) | Contribute. | Reference |\n"
+            "| [Assets](../examples/assets/README.md) | Inspect fixtures. | Reference |\n"
+            "| [Schemas](../schemas/) | Inspect schemas. | Reference |\n",
+            encoding="utf-8",
+        )
+        (source / "docs/reports/README.md").write_text(
+            "# Reports\n\n"
+            "| Technical report | Evidence appendix | Scope | Evaluation status |\n"
+            "|---|---|---|---|\n"
+            "| [One](one.md) | [Evidence](one-evidence.md) | Fixture | Current |\n",
+            encoding="utf-8",
+        )
+        (source / "docs/reports/one.md").write_text("# One\n", encoding="utf-8")
+        (source / "docs/reports/one-evidence.md").write_text(
+            "# One evidence\n", encoding="utf-8"
+        )
+        subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+        subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+        return source
+
+    def invoke_fixture_build(
+        self, source: Path, stage: Path, include_missing_report: bool = False
+    ) -> None:
+        real_run = subprocess.run
+
+        def run(command: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            if command[0] != "fixture-mdbook":
+                return real_run(command, *args, **kwargs)
+            if command[1:] == ["--version"]:
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="mdbook v0.4.52\n", stderr=""
+                )
+            self.assertEqual(command[1:], ["build", "-d", "book"])
+            book = Path(str(kwargs["cwd"])) / "book"
+            reports = book / "docs/reports"
+            reports.mkdir(parents=True)
+            (book / "index.html").write_text("<h1>Root</h1>\n", encoding="utf-8")
+            missing = (
+                '<a href="reports/missing.html">missing report</a>\n'
+                if include_missing_report
+                else ""
+            )
+            (book / "docs/index.html").write_text(
+                '<a href="reports/README.html">reports</a>\n'
+                '<a href="../CONTRIBUTING.html">contributing</a>\n'
+                '<a href="../examples/assets/README.html">assets</a>\n'
+                '<a href="../schemas/">schemas</a>\n'
+                '<a href="/animsmith/dev/docs/reports/one.html">root-relative report</a>\n'
+                + missing,
+                encoding="utf-8",
+            )
+            (reports / "index.html").write_text(
+                '<a href="one.html">report</a>\n'
+                '<a href="one-evidence.html">evidence</a>\n',
+                encoding="utf-8",
+            )
+            (reports / "one.html").write_text("<h1>One</h1>\n", encoding="utf-8")
+            (reports / "one-evidence.html").write_text(
+                "<h1>Evidence</h1>\n", encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(command, 0)
+
+        arguments = [
+            str(BUILDER),
+            "--source",
+            str(source),
+            "--stage",
+            str(stage),
+            "--site-url",
+            "/animsmith/dev/",
+            "--source-ref",
+            "vfixture",
+            "--mdbook",
+            "fixture-mdbook",
+            "--build",
+        ]
+        with mock.patch.object(BUILD_DOCS_SITE.subprocess, "run", side_effect=run):
+            with mock.patch.object(sys, "argv", arguments):
+                BUILD_DOCS_SITE.main()
 
     def test_external_proxy_rejects_each_public_guard_without_partial_publication(self) -> None:
         cases = [
@@ -330,6 +426,183 @@ class ExternalProxyContractTests(unittest.TestCase):
             (book / "bad:name").write_text("invalid on Pages artifact upload\n", encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "invalid path characters"):
                 BUILD_DOCS_SITE.validate_artifact_paths(book)
+
+    def test_build_entrypoint_publishes_ref_pinned_routes_and_invokes_final_validation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self.fixture_pages_source(root)
+            stage = root / "stage"
+            self.invoke_fixture_build(source, stage)
+
+            book = stage / "book"
+            for alias in ["README.html", "docs/README.html", "docs/reports/README.html"]:
+                self.assertTrue((book / alias).is_file(), f"build publishes {alias}")
+            redirects = {
+                "CONTRIBUTING.html": (
+                    "https://github.com/mmannerm/animsmith/blob/vfixture/CONTRIBUTING.md"
+                ),
+                "examples/assets/README.html": (
+                    "https://github.com/mmannerm/animsmith/blob/vfixture/examples/assets/README.md"
+                ),
+                "schemas/index.html": (
+                    "https://github.com/mmannerm/animsmith/tree/vfixture/schemas"
+                ),
+            }
+            for relative, expected_url in redirects.items():
+                output = (book / relative).read_text(encoding="utf-8")
+                self.assertIn(expected_url, output, f"build pins {relative} to its source ref")
+                self.assertNotIn("/main/", output)
+            BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/dev/")
+
+            with self.assertRaisesRegex(RuntimeError, "reports/missing.html"):
+                self.invoke_fixture_build(source, root / "broken-stage", include_missing_report=True)
+
+    def test_report_index_parser_refuses_missing_malformed_and_empty_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            index = Path(temporary) / "README.md"
+            index.write_text("# No table\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "canonical current-reports table"):
+                BUILD_DOCS_SITE.report_rows(index)
+
+            index.write_text(
+                "| Technical report | Evidence appendix | Scope | Evaluation status |\n"
+                "|---|---|---|---|\n"
+                "| [One](one.md) | [Evidence](evidence.md) | Too few |\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "malformed current-reports row"):
+                BUILD_DOCS_SITE.report_rows(index)
+
+            index.write_text(
+                "| Technical report | Evidence appendix | Scope | Evaluation status |\n"
+                "|---|---|---|---|\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "has no rows"):
+                BUILD_DOCS_SITE.report_rows(index)
+
+    def test_source_ref_guard_rejects_empty_controls_whitespace_and_oversize(self) -> None:
+        cases = [
+            ("", "required"),
+            ("bad ref", "whitespace or control"),
+            ("bad\nref", "whitespace or control"),
+            ("x" * (BUILD_DOCS_SITE.MAX_SOURCE_REF_BYTES + 1), "exceeds"),
+        ]
+        for source_ref, expected in cases:
+            with self.subTest(source_ref=source_ref[:20]):
+                with self.assertRaisesRegex(ValueError, expected):
+                    BUILD_DOCS_SITE.validate_source_ref(source_ref)
+        BUILD_DOCS_SITE.validate_source_ref("v0.9.0")
+
+    def test_rendered_link_validator_rejects_missing_local_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            book = Path(temporary) / "book"
+            reports = book / "docs/reports"
+            reports.mkdir(parents=True)
+            index = reports / "index.html"
+            index.write_text(
+                '<a href="protofactor-basic-locomotion.html#technical-issue-register">report</a>\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "no published target"):
+                BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
+
+            (reports / "protofactor-basic-locomotion.html").write_text(
+                '<h1 id="technical-issue-register">report</h1>\n', encoding="utf-8"
+            )
+            BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
+
+    def test_built_readme_chapters_receive_compatibility_aliases_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staged = root / "src"
+            book = root / "book"
+            (staged / "docs").mkdir(parents=True)
+            (staged / "unpublished").mkdir()
+            (book / "docs").mkdir(parents=True)
+            (staged / "README.md").write_text("# Root\n", encoding="utf-8")
+            (staged / "docs/README.md").write_text("# Docs\n", encoding="utf-8")
+            (staged / "unpublished/README.md").write_text("# Hidden\n", encoding="utf-8")
+            (book / "index.html").write_text("root output\n", encoding="utf-8")
+            (book / "docs/index.html").write_text("docs output\n", encoding="utf-8")
+
+            BUILD_DOCS_SITE.publish_readme_aliases(staged, book)
+
+            self.assertEqual((book / "README.html").read_text(encoding="utf-8"), "root output\n")
+            self.assertEqual(
+                (book / "docs/README.html").read_text(encoding="utf-8"), "docs output\n"
+            )
+            self.assertFalse(
+                (book / "unpublished/README.html").exists(),
+                "an unbuilt source page does not become a misleading alias",
+            )
+
+    def test_non_site_source_references_redirect_but_missing_docs_still_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staged = root / "src"
+            book = root / "book"
+            (staged / "examples/assets").mkdir(parents=True)
+            (staged / "examples/assets/README.md").write_text("# Assets\n", encoding="utf-8")
+            (staged / "docs/reports").mkdir(parents=True)
+            (staged / "docs/reports/missing.md").write_text("# Missing report\n", encoding="utf-8")
+            (book / "docs").mkdir(parents=True)
+            (book / "docs/index.html").write_text(
+                '<a href="../examples/assets/README.html">source</a>\n'
+                '<a href="reports/missing.html">report</a>\n',
+                encoding="utf-8",
+            )
+
+            links = BUILD_DOCS_SITE.rendered_local_links(book, "/animsmith/")
+            BUILD_DOCS_SITE.publish_source_redirects(staged, book, links, "main")
+
+            redirect = book / "examples/assets/README.html"
+            self.assertTrue(redirect.is_file())
+            self.assertIn(
+                "https://github.com/mmannerm/animsmith/blob/main/examples/assets/README.md",
+                redirect.read_text(encoding="utf-8"),
+            )
+            self.assertFalse(
+                (book / "docs/reports/missing.html").exists(),
+                "site documentation cannot silently degrade to a source redirect",
+            )
+            with self.assertRaisesRegex(RuntimeError, "reports/missing.html"):
+                BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
+
+    def test_rendered_link_resolution_refuses_relative_and_decoded_root_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            book = Path(temporary) / "book"
+            (book / "docs").mkdir(parents=True)
+            (book / "docs/index.html").write_text(
+                '<a href="../../outside.html">relative escape</a>\n'
+                '<a href="/animsmith/%2Foutside.html">decoded root escape</a>\n'
+                '<a href="/another-site/outside.html">wrong site</a>\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "local link escapes artifact") as failure:
+                BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
+            self.assertIn("../../outside.html", str(failure.exception))
+            self.assertIn("/animsmith/%2Foutside.html", str(failure.exception))
+            self.assertIn("/another-site/outside.html", str(failure.exception))
+            self.assertIn("root-relative link escapes site URL", str(failure.exception))
+
+    def test_rendered_link_resolution_accepts_encoded_file_and_directory_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            book = Path(temporary) / "book"
+            (book / "docs").mkdir(parents=True)
+            (book / "schemas").mkdir()
+            (book / "docs/index.html").write_text(
+                '<a href="encoded%20report.html">encoded file</a>\n'
+                '<a href="../schemas/">directory</a>\n',
+                encoding="utf-8",
+            )
+            (book / "docs/encoded report.html").write_text("report\n", encoding="utf-8")
+            (book / "schemas/index.html").write_text("schemas\n", encoding="utf-8")
+
+            BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
 
 
 if __name__ == "__main__":

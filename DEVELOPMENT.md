@@ -174,11 +174,16 @@ $ cargo install mdbook --version "$(tr -d '[:space:]' < .mdbook-version)" --lock
 ```
 
 `just docs-check` stages tracked repository files outside the checkout (in a
-deterministic sibling directory named after the checkout by default), generates mdBook navigation from the
-category column in `docs/README.md`, builds it, and parser-validates the staged
-Markdown destinations. `just docs-serve` stages the same source and serves it
-locally. Set `ANIMSMITH_DOCS_STAGE` to choose another external staging
-directory; it must not overlap the checkout and must not be committed.
+deterministic sibling directory named after the checkout by default), generates
+mdBook navigation from the category column in `docs/README.md` and the report
+pairs in `docs/reports/README.md`, builds it, parser-validates the staged
+Markdown destinations, and rejects rendered local links without targets in the
+built artifact. Built `README.md` chapters receive compatibility routes because
+mdBook renders them as `index.html`. Generated links to repository source are
+pinned to the selected release tag at the release root and to `main` below
+`/dev/`. `just docs-serve` stages the same source and serves it locally. Set
+`ANIMSMITH_DOCS_STAGE` to choose another external staging directory; it must not
+overlap the checkout and must not be committed.
 
 ## Spell Checking
 
