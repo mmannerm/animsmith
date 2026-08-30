@@ -577,7 +577,7 @@ deferred rather than exposing a partial transform API.
   "schema": "urn:animsmith:schema:output:15",
   "tool": {
     "name": "animsmith",
-    "version": "0.8.0",
+    "version": "0.9.0",
     "source": {
       "revision": "0123456789abcdef0123456789abcdef01234567",
       "dirty": false
@@ -638,7 +638,7 @@ producer-refusal v1 record:
   "schema": "urn:animsmith:schema:producer-refusal:1",
   "tool": {
     "name": "animsmith",
-    "version": "0.8.0",
+    "version": "0.9.0",
     "source": { "revision": null, "dirty": null }
   },
   "command": "convert",
@@ -658,7 +658,7 @@ producer-refusal v1 record:
   "schema": "urn:animsmith:schema:conversion-evidence:2",
   "tool": {
     "name": "animsmith",
-    "version": "0.8.0",
+    "version": "0.9.0",
     "source": { "revision": null, "dirty": null }
   },
   "command": "convert",
@@ -1663,7 +1663,7 @@ delta count, and structured metric deltas:
   "schema": "urn:animsmith:schema:output:19",
   "tool": {
     "name": "animsmith",
-    "version": "0.8.0",
+    "version": "0.9.0",
     "source": { "revision": null, "dirty": null }
   },
   "command": "diff",
