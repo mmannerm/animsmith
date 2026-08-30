@@ -1970,9 +1970,6 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     clip.as_deref(),
                 ),
                 Some(after_loaded) => {
-                    if clip.is_some() {
-                        return Err("--clip cannot be used with --compare-after; declare both --before-clip and --after-clip".into());
-                    }
                     let before_clip = before_clip
                         .ok_or_else(|| "--compare-after requires --before-clip".to_string())?;
                     let after_clip = after_clip

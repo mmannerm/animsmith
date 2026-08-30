@@ -47,7 +47,7 @@ use animsmith_core::{
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 
 const VIEWER_JS: &str = include_str!("../assets/viewer.js");
@@ -229,6 +229,15 @@ pub enum ComparisonError {
         /// Fixed aggregate text limit.
         limit: usize,
     },
+    /// Prediction evidence was not bound to the exact side authority supplied
+    /// to the public comparison boundary.
+    #[error("{side} prediction authority is invalid: {detail}")]
+    PredictionAuthorityMismatch {
+        /// Input side whose prediction evidence was inconsistent.
+        side: &'static str,
+        /// Stable operator-readable mismatch reason.
+        detail: &'static str,
+    },
 }
 
 /// Validate explicit correspondence and all sampling work before evaluating checks.
@@ -371,6 +380,8 @@ pub fn render_comparison(
     let data = bounded_json(&data)?;
     // A `</script>`-bearing string inside data cannot terminate this element.
     let data = data.replace('<', "\\u003c");
+    let before_clip_anchor = semantic_anchor("clip", before.clip);
+    let after_clip_anchor = semantic_anchor("clip", after.clip);
     Ok(format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
@@ -379,8 +390,8 @@ pub fn render_comparison(
          <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></header>\n\
          <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"></label><span id=\"times\"></span></section>\n\
          <section class=\"shared-chart\"><h2>Before/after root trajectory</h2><svg id=\"comparison-root-path\" viewBox=\"0 0 720 220\"></svg></section>\n\
-         <main><section class=\"side\" id=\"before-panel\"><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><canvas id=\"before-gl\"></canvas><p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"before-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"before-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
-         <section class=\"side\" id=\"after-panel\"><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><canvas id=\"after-gl\"></canvas><p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"after-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"after-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
+         <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><canvas id=\"before-gl\"></canvas><p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"before-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"before-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
+         <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><canvas id=\"after-gl\"></canvas><p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"after-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"after-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
          <script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
     ))
 }
@@ -536,12 +547,13 @@ fn preflight_side_report_work(
     clip_name: &str,
     side_name: &'static str,
 ) -> Result<usize, ComparisonError> {
+    validate_prediction_authority(side, side_name)?;
     let selected_findings = side
         .checks
         .iter()
         .flat_map(CheckEvaluation::findings)
         .filter(|finding| finding.clip.as_deref().is_none_or(|clip| clip == clip_name));
-    let finding_count = bounded_row_count(
+    bounded_row_count(
         selected_findings.clone(),
         side_name,
         "findings",
@@ -574,7 +586,39 @@ fn preflight_side_report_work(
 
     let clip_index = select_clip(side.grids.document(), clip_name, side_name)?.0;
     let frames = metric_frame_count(&side.grids.document().clips[clip_index]).unwrap_or(0);
-    let context_upper_bound = frames.saturating_add(finding_count).saturating_add(2);
+    let finding_contexts = selected_findings
+        .clone()
+        .filter(|finding| {
+            matches!(
+                finding.check_id,
+                "loop-closure"
+                    | "loop-seam"
+                    | "loop-seam-vel"
+                    | "loop-seam-rot"
+                    | "constant-track"
+                    | "quat-flip"
+                    | "quat-norm"
+            )
+        })
+        .count();
+    let has_stance_context = side.checks.iter().any(|check| {
+        check.check_id() == "foot-slide"
+            && check.evaluated_scopes().iter().any(|scope| {
+                matches!(
+                    scope.code.as_str(),
+                    "left_foot_stance" | "right_foot_stance"
+                ) && scope.subject.as_deref() == Some(clip_name)
+            })
+    });
+    // One retained stance run can begin or end at every sampled frame; add
+    // the two side rows themselves. Finding-derived seam/structural contexts
+    // are counted exactly from their typed check authorities.
+    let stance_contexts = if has_stance_context {
+        frames.saturating_add(2)
+    } else {
+        0
+    };
+    let context_upper_bound = stance_contexts.saturating_add(finding_contexts);
     if context_upper_bound > MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE {
         return Err(ComparisonError::ReportRowsExceeded {
             side: side_name,
@@ -585,39 +629,94 @@ fn preflight_side_report_work(
     }
 
     let mut counter = ReportTextCounter { bytes: 0 };
+    macro_rules! count_wire {
+        ($value:expr) => {
+            serde_json::to_writer(&mut counter, $value).map_err(|_| {
+                ComparisonError::ReportTextWorkExceeded {
+                    side: side_name,
+                    limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
+                }
+            })?
+        };
+    }
+    // A finding is serialized once as a finding row and may duplicate all of
+    // its authored text into both seam and structural context projections.
+    // Counting all three copies is conservative without first allocating the
+    // eventual serde Values or inspecting check-specific strings.
     for finding in selected_findings {
-        serde_json::to_writer(&mut counter, finding).map_err(|_| {
-            ComparisonError::ReportTextWorkExceeded {
-                side: side_name,
-                limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
-            }
-        })?;
+        count_wire!(finding);
+        count_wire!(finding);
+        count_wire!(finding);
     }
-    for gap in selected_gaps {
-        serde_json::to_writer(&mut counter, gap).map_err(|_| {
-            ComparisonError::ReportTextWorkExceeded {
-                side: side_name,
-                limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
-            }
-        })?;
+    for check in side.checks {
+        for gap in check
+            .gaps()
+            .iter()
+            .filter(|gap| scope_applies(gap.scope.as_ref(), clip_name))
+        {
+            count_wire!(&check.check_id());
+            count_wire!(gap);
+        }
+        if let Some(prediction) = check.engine_prediction()
+            && prediction
+                .facets()
+                .iter()
+                .any(|facet| scope_applies(Some(facet.scope()), clip_name))
+        {
+            // Count the whole attachment rather than just selected facets:
+            // this includes every repeated check id, identity, basis string,
+            // unavailable reason and provenance-shaped field conservatively.
+            count_wire!(&check.check_id());
+            count_wire!(prediction);
+        }
     }
-    for facet in selected_facets {
-        serde_json::to_writer(&mut counter, facet).map_err(|_| {
-            ComparisonError::ReportTextWorkExceeded {
-                side: side_name,
-                limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
-            }
-        })?;
+    // The selected names are repeated in correspondence, side headers,
+    // anchors, selected scopes, and contextual rows. This intentionally
+    // overcounts rather than allocating the final wire tree to discover the
+    // exact repetition count.
+    for _ in 0..16 {
+        count_wire!(&clip_name);
     }
     if let Some(provenance) = side.prediction_provenance {
-        serde_json::to_writer(&mut counter, provenance).map_err(|_| {
-            ComparisonError::ReportTextWorkExceeded {
-                side: side_name,
-                limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
-            }
-        })?;
+        count_wire!(provenance);
     }
     Ok(counter.bytes)
+}
+
+fn validate_prediction_authority(
+    side: ComparisonSide<'_>,
+    side_name: &'static str,
+) -> Result<(), ComparisonError> {
+    let predictions = side
+        .checks
+        .iter()
+        .filter_map(CheckEvaluation::engine_prediction)
+        .collect::<Vec<_>>();
+    let Some(provenance) = side.prediction_provenance else {
+        if predictions.is_empty() {
+            return Ok(());
+        }
+        return Err(ComparisonError::PredictionAuthorityMismatch {
+            side: side_name,
+            detail: "prediction attachment has no supplied provenance",
+        });
+    };
+    if provenance.dependency_closure() != side.source.dependency_closure() {
+        return Err(ComparisonError::PredictionAuthorityMismatch {
+            side: side_name,
+            detail: "provenance dependency closure differs from the loaded source",
+        });
+    }
+    if predictions
+        .iter()
+        .any(|prediction| prediction.provenance_identity() != provenance.identity())
+    {
+        return Err(ComparisonError::PredictionAuthorityMismatch {
+            side: side_name,
+            detail: "prediction attachment identity differs from supplied provenance",
+        });
+    }
+    Ok(())
 }
 
 fn preflight_report_allocation(
@@ -652,6 +751,7 @@ fn preflight_report_allocation(
         .skeleton
         .bones
         .iter()
+        .chain(after.skeleton.bones.iter())
         .map(|bone| bone.name.len() as u128)
         .sum::<u128>()
         .saturating_mul(6);
@@ -819,7 +919,10 @@ fn comparison_side_json(
         .collect::<Vec<_>>();
     let findings = anchored_findings
         .iter()
-        .map(|(finding, anchor)| json!({"anchor":anchor,"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"time":finding.time_s,"measured":finding.measured,"expected":finding.expected,"members":finding.members,"prediction_scope":finding.prediction_scope,"message":finding.message}))
+        .map(|(finding, anchor)| {
+            let subject_bone = finding_subject_bone(side, finding);
+            json!({"anchor":anchor,"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"subject_bone":subject_bone,"time":finding.time_s,"measured":finding.measured,"expected":finding.expected,"members":finding.members,"prediction_scope":finding.prediction_scope,"message":finding.message})
+        })
         .collect::<Vec<_>>();
     let gaps = side.checks.iter().flat_map(|check| check.gaps().iter().map(move |gap| (check.check_id(), gap)))
         .filter(|(_, gap)| scope_applies(gap.scope.as_ref(), clip_name))
@@ -962,14 +1065,7 @@ fn comparison_contexts(
             finding.check_id,
             "loop-closure" | "loop-seam" | "loop-seam-vel" | "loop-seam-rot"
         ) {
-            let subject_bone = finding.bone.as_ref().and_then(|name| {
-                side.grids
-                    .document()
-                    .skeleton
-                    .bones
-                    .iter()
-                    .position(|bone| bone.name == *name)
-            });
+            let subject_bone = finding_subject_bone(side, finding);
             seams.push(json!({
                 "source": "typed seam finding on exact sampled endpoint poses",
                 "finding_anchor": anchor,
@@ -1003,6 +1099,58 @@ fn comparison_contexts(
         "seams": seams,
         "structural": structural,
     })
+}
+
+fn finding_subject_bone(
+    side: ComparisonSide<'_>,
+    finding: &animsmith_core::Finding,
+) -> Option<usize> {
+    if let Some(name) = finding.bone.as_ref() {
+        return side
+            .grids
+            .document()
+            .skeleton
+            .bones
+            .iter()
+            .position(|bone| bone.name == *name);
+    }
+    let target = finding.node.as_deref()?;
+    let source = side.source.source_facts().source_skeleton();
+    let by_index = source
+        .nodes
+        .iter()
+        .map(|node| (node.source_node_index, node))
+        .collect::<BTreeMap<_, _>>();
+    source.nodes.iter().find_map(|node| {
+        (source_node_path(node.source_node_index, &by_index) == target)
+            .then_some(node.bone)
+            .flatten()
+    })
+}
+
+fn source_node_path(
+    source_node_index: usize,
+    by_index: &BTreeMap<usize, &animsmith_core::SourceNodeAsset>,
+) -> String {
+    let mut components = Vec::new();
+    let mut current = Some(source_node_index);
+    let mut visited = BTreeSet::new();
+    while let Some(index) = current {
+        if !visited.insert(index) {
+            break;
+        }
+        let Some(node) = by_index.get(&index) else {
+            break;
+        };
+        components.push(format!(
+            "#{}({})",
+            node.source_node_index,
+            node.name.as_deref().unwrap_or("<unnamed>")
+        ));
+        current = node.parent_source_node_index;
+    }
+    components.reverse();
+    components.join("/")
 }
 
 fn finding_anchor(side: &'static str, ordinal: usize, finding: &animsmith_core::Finding) -> String {

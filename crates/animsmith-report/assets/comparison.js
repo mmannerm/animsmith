@@ -12,7 +12,6 @@ const decode = (encoded) => {
 for (const side of [data.before, data.after]) side.clip.pos = decode(side.clip.positions);
 q("mapping").textContent = data.correspondence.disclosure;
 const parents = data.bones.map((bone) => bone.parent);
-const namedBone = new Map(data.bones.map((bone, index) => [bone.name, index]));
 const sharedFrameMax = Math.max(data.before.clip.frames, data.after.clip.frames) - 1;
 q("scrub").max = sharedFrameMax;
 let selectedFrames = null;
@@ -44,14 +43,20 @@ function boundsFor(roleNames) {
   const x = finiteRange(xs), z = finiteRange(zs);
   return x && z ? { x, z } : null;
 }
-const sharedPoseBounds = (() => {
+const poseBounds = (side) => {
   const xs = [], ys = [];
-  for (const side of [data.before, data.after]) for (let index = 0; index < side.clip.pos.length; index += 3) {
+  for (let index = 0; index < side.clip.pos.length; index += 3) {
     xs.push(side.clip.pos[index]); ys.push(side.clip.pos[index + 1]);
   }
   const x = finiteRange(xs), y = finiteRange(ys);
   return x && y ? { x, y } : null;
-})();
+};
+const sidePoseBounds = { before: poseBounds(data.before), after: poseBounds(data.after) };
+const frameFinite = (side, frame) => {
+  if (!Number.isInteger(frame) || frame < 0 || frame >= side.clip.frames) return false;
+  for (let bone = 0; bone < data.bones.length; bone++) if (!finitePoint(posePoint(side, frame, bone))) return false;
+  return true;
+};
 const sharedRootBounds = boundsFor(["root"]);
 const sharedTrailBounds = boundsFor(["root", "hips", "left_foot", "right_foot"]);
 
@@ -86,11 +91,12 @@ function drawSide(name, phase, highlighted) {
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
-  if (!sharedPoseBounds) {
+  const bounds = sidePoseBounds[name];
+  if (!bounds) {
     q(`${name}-pose-context`).textContent = "pose drawing unavailable: sampled X/Y positions are non-finite; findings and coverage remain listed";
     return frame;
   }
-  const [minX, maxX] = sharedPoseBounds.x, [minY, maxY] = sharedPoseBounds.y;
+  const [minX, maxX] = bounds.x, [minY, maxY] = bounds.y;
   const scale = Math.min(canvas.clientWidth / Math.max(.1, maxX - minX), canvas.clientHeight / Math.max(.1, maxY - minY)) * .72;
   const project = (point) => [canvas.clientWidth / 2 + (point[0] - (minX + maxX) / 2) * scale, canvas.clientHeight / 2 - (point[1] - (minY + maxY) / 2) * scale];
   const drawFrame = (poseFrame, stroke, fill, subject) => {
@@ -111,18 +117,25 @@ function drawSide(name, phase, highlighted) {
   if (seam) {
     drawFrame(seam.first_frame, "#7aa2f7", "#7aa2f7", seam.subject_bone);
     drawFrame(seam.last_frame, "#e0af68", "#e0af68", seam.subject_bone);
-    q(`${name}-pose-context`).textContent = `loop seam endpoint poses — first ${seam.first_s.toFixed(3)}s blue · last ${seam.last_s.toFixed(3)}s orange · affected ${seam.subject_bone_name || "bone unavailable"}`;
+    const exact = frameFinite(side, seam.first_frame) && frameFinite(side, seam.last_frame);
+    q(`${name}-pose-context`).textContent = exact
+      ? `loop seam exact endpoint poses — first ${seam.first_s.toFixed(3)}s blue · last ${seam.last_s.toFixed(3)}s orange · affected ${seam.subject_bone_name || "bone unavailable"}`
+      : `loop seam pose drawing incomplete: an endpoint contains non-finite positions; finding and coverage evidence remain listed · affected ${seam.subject_bone_name || "bone unavailable"}`;
   } else {
     drawFrame(frame, "#8e99bc", "#d5d9e5", highlighted);
     const structural = selectedContext && selectedContext.name === name && selectedContext.kind === "structural" ? selectedContext.value : null;
-    q(`${name}-pose-context`).textContent = structural ? structural.label : "exact judged pose-grid frame";
+    q(`${name}-pose-context`).textContent = structural
+      ? structural.label
+      : frameFinite(side, frame)
+        ? "exact judged pose-grid frame"
+        : "pose drawing incomplete: selected frame contains non-finite positions; findings and coverage remain listed";
   }
   return frame;
 }
 
 function drawRootComparison(phase) {
   const svg = q("comparison-root-path"); svg.replaceChildren();
-  if (!sharedRootBounds) { svg.textContent = "root trajectories unavailable: a Root role did not resolve"; return; }
+  if (!sharedRootBounds) { svg.textContent = "root trajectories unavailable: no input has finite resolved Root samples"; return; }
   const map = topDownMap(sharedRootBounds, 720, 220, 28);
   const styles = { before: "#7aa2f7", after: "#e0af68" };
   for (const name of ["before", "after"]) {
@@ -134,10 +147,17 @@ function drawRootComparison(phase) {
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 5, fill: color }));
   }
-  const beforeLabel = data.before.clip.trails.root == null ? "before root unavailable" : "before root path";
-  const afterLabel = data.after.clip.trails.root == null ? "after root unavailable" : "after root path";
-  svg.append(svgElement("text", { x: 18, y: 20, fill: data.before.clip.trails.root == null ? "#aab1c5" : "#7aa2f7" }, beforeLabel));
-  svg.append(svgElement("text", { x: 170, y: 20, fill: data.after.clip.trails.root == null ? "#aab1c5" : "#e0af68" }, afterLabel));
+  const rootState = (side) => {
+    const root = side.clip.trails.root;
+    if (root == null) return "unavailable";
+    const points = trailPoints(side, root), finite = points.filter(finitePoint).length;
+    return finite === 0 ? "unavailable" : finite === points.length ? "path" : "path incomplete";
+  };
+  const beforeState = rootState(data.before), afterState = rootState(data.after);
+  const beforeLabel = `before root ${beforeState}`;
+  const afterLabel = `after root ${afterState}`;
+  svg.append(svgElement("text", { x: 18, y: 20, fill: beforeState === "unavailable" ? "#aab1c5" : "#7aa2f7" }, beforeLabel));
+  svg.append(svgElement("text", { x: 170, y: 20, fill: afterState === "unavailable" ? "#aab1c5" : "#e0af68" }, afterLabel));
   svg.append(svgElement("text", { x: 330, y: 20, fill: "#aab1c5" }, "top-down · one shared uniform metres scale"));
   svg.append(svgElement("text", { x: 18, y: 212, fill: "#aab1c5" }, `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m · Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m`));
 }
@@ -175,6 +195,7 @@ function drawGait(name, phase) {
     series.left.push(posePoint(side, frame, gait.left)[1] - hipsY);
     series.right.push(posePoint(side, frame, gait.right)[1] - hipsY);
   }
+  const gaitFinite = series.left.every(Number.isFinite) && series.right.every(Number.isFinite);
   const yrange = finiteRange(series.left.concat(series.right));
   if (!yrange) { svg.textContent = "gait drawing unavailable: sampled relative heights are non-finite; stance and coverage evidence remain listed"; return; }
   const span = Math.max(.001, yrange[1] - yrange[0]);
@@ -193,7 +214,9 @@ function drawGait(name, phase) {
   const roleLabel = (role) => role.replace("_", " ");
   svg.append(svgElement("text", { x: 8, y: 14, fill: "#7aa2f7" }, `${roleLabel(gait.left_role)} height rel hips`));
   svg.append(svgElement("text", { x: 170, y: 14, fill: "#e0af68" }, `${roleLabel(gait.right_role)} height rel hips`));
-  svg.append(svgElement("text", { x: 8, y: 174, fill: "#aab1c5" }, "height in metres · shaded runs are sampled foot-slide stance evidence"));
+  svg.append(svgElement("text", { x: 8, y: 174, fill: "#aab1c5" }, gaitFinite
+    ? "exact sampled height in metres · shaded runs are sampled foot-slide stance evidence"
+    : "gait drawing incomplete: non-finite sampled heights; stance and coverage evidence remain listed"));
 }
 
 let highlight = { before: null, after: null };
@@ -206,9 +229,7 @@ function update() {
 }
 function summary(side) { return `primary ${side.identity.sha256} · ${side.identity.bytes} bytes · complete closure ${side.dependency_closure_identity.sha256} · clip ${side.clip.name}`; }
 function subjectBone(row) {
-  if (row.bone && namedBone.has(row.bone)) return namedBone.get(row.bone);
-  const nodeName = row.node && row.node.match(/\(([^()]*)\)$/);
-  return nodeName && namedBone.has(nodeName[1]) ? namedBone.get(nodeName[1]) : null;
+  return Number.isInteger(row.subject_bone) && row.subject_bone >= 0 && row.subject_bone < data.bones.length ? row.subject_bone : null;
 }
 function nearestFrame(side, time) {
   return side.clip.times.reduce((best, value, index) => Math.abs(value - time) < Math.abs(side.clip.times[best] - time) ? index : best, 0);
@@ -255,7 +276,6 @@ function listContexts(name) {
 }
 for (const name of ["before", "after"]) {
   q(`${name}-identity`).textContent = summary(data[name]);
-  q(`clip-${name}`).id = `${name}-${data[name].clip.anchor}`;
   listContexts(name); list(name, "findings"); list(name, "gaps");
   q(`${name}-predictions`).textContent = JSON.stringify({ provenance: data[name].prediction_provenance, predictions: data[name].predictions }, null, 2);
 }

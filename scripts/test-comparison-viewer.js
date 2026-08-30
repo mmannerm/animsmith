@@ -2,9 +2,23 @@
 const fs = require("fs"), vm = require("vm");
 if (process.argv.length !== 3) throw new Error("usage: test-comparison-viewer.js GENERATED_REPORT.html");
 const html = fs.readFileSync(process.argv[2], "utf8");
-const payload = html.match(/<script type="application\/json" id="comparison-report-data">([\s\S]*?)<\/script>/);
-if (!payload) throw new Error("Rust-generated comparison payload is absent");
-const data = JSON.parse(payload[1]);
+function generatedReportParts(source) {
+  const match = source.match(/<script type="application\/json" id="comparison-report-data">([\s\S]*?)<\/script><script>([\s\S]*?)<\/script><\/body><\/html>\s*$/);
+  if (!match) throw new Error("Rust-generated payload and immediately following inline viewer are absent");
+  if (!match[2].startsWith("// animsmith comparison viewer:")) throw new Error("wrong inline comparison viewer");
+  return { payload: match[1], viewer: match[2] };
+}
+const generated = generatedReportParts(html);
+for (const mutation of [
+  html.replace("</script><script>// animsmith comparison viewer:", "</script><script>// misplaced</script><script>// animsmith comparison viewer:"),
+  html.replace("// animsmith comparison viewer:", "// wrong viewer:"),
+  html.replace(/<\/script><\/body><\/html>\s*$/, "</body></html>"),
+]) {
+  let refused = false;
+  try { generatedReportParts(mutation); } catch (_) { refused = true; }
+  if (!refused) throw new Error("generated HTML viewer placement/identity mutation was accepted");
+}
+const data = JSON.parse(generated.payload), viewer = generated.viewer;
 if (data.kind !== "animsmith-comparison-v1") throw new Error("unexpected Rust comparison contract");
 const frames = 2002, bones = data.bones.length, positions = Buffer.alloc(frames * bones * 3 * 4);
 for (let frame = 0; frame < frames; frame++) for (let bone = 0; bone < bones; bone++) {
@@ -16,7 +30,10 @@ for (let frame = 0; frame < frames; frame++) for (let bone = 0; bone < bones; bo
 class Node {
   constructor(id) { this.id=id; this.children=[]; this.style={}; this.attrs={}; this.listeners={}; this.clientWidth=360; this.clientHeight=270; this.value="0"; this.textContent=""; }
   append(x){this.children.push(x)} replaceChildren(){this.children=[]} addEventListener(k,f){this.listeners[k]=f}
-  setAttribute(k,v){this.attrs[k]=v} getContext(){return {setTransform(){},clearRect(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},arc(){},fill(){}}}
+  setAttribute(k,v){this.attrs[k]=v} getContext(){
+    if (!this.context) this.context={arcs:[],fillStyle:null,setTransform(){},clearRect(){this.arcs=[]},beginPath(){},moveTo(){},lineTo(){},stroke(){},arc(...args){this.arcs.push({args,fillStyle:this.fillStyle})},fill(){}};
+    return this.context;
+  }
   scrollIntoView(){this.scrolled=true}
 }
 const ids = ["comparison-report-data","mapping","scrub","times","comparison-root-path","clip-before","clip-after","before-gl","after-gl","before-pose-context","after-pose-context","before-path","after-path","before-gait","after-gait","before-contexts","after-contexts","before-identity","after-identity","before-findings","after-findings","before-gaps","after-gaps","before-predictions","after-predictions"];
@@ -47,16 +64,17 @@ afterFinding.time = 1.234;
 nodes["comparison-report-data"].textContent=JSON.stringify(data);
 const windowListeners={};
 const context={document:{getElementById:id=>nodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(k,f){windowListeners[k]=f}},location:{hash:""},atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
-vm.createContext(context); vm.runInContext(fs.readFileSync("crates/animsmith-report/assets/comparison.js","utf8"),context);
-const viewer = fs.readFileSync("crates/animsmith-report/assets/comparison.js", "utf8");
-if(nodes.scrub.max !== 2001 || !nodes["before-findings"].children.some(child=>child.textContent.includes("<img>")) || viewer.includes("innerHTML")) throw new Error("viewer did not retain exact frames or safe textContent");
+vm.createContext(context); vm.runInContext(viewer,context);
+if(nodes.scrub.max !== 2001 || !nodes["before-findings"].children.some(child=>child.textContent.includes("<img>"))) throw new Error("viewer did not retain exact frames or safe finding text");
 if(!nodes["before-identity"].textContent.includes(data.before.dependency_closure_identity.sha256) || !nodes["after-identity"].textContent.includes(data.after.dependency_closure_identity.sha256)) throw new Error("viewer does not disclose complete closure identities");
-if(!nodes["comparison-root-path"].children.some(child=>child.attrs.stroke==="#7aa2f7") || !nodes["comparison-root-path"].children.some(child=>child.attrs.stroke==="#e0af68")) throw new Error("shared root chart lacks unambiguous before/after paths");
+if(!nodes.times.textContent.includes("before 0.000s") || !nodes.times.textContent.includes("after 0.000s") || !nodes.times.textContent.includes("not a time warp")) throw new Error("shared phase omits source times or no-warp disclosure");
+if(!nodes["comparison-root-path"].children.some(child=>child.textContent==="before root path") || !nodes["comparison-root-path"].children.some(child=>child.textContent==="after root path")) throw new Error("shared root chart lacks textual before/after legends");
 if(!nodes["before-path"].children.some(child=>child.attrs["data-role"]==="left_foot") || !nodes["before-path"].children.some(child=>child.attrs["data-role"]==="right_foot")) throw new Error("role trail chart omits foot trajectories");
 if(!nodes["before-gait"].children.some(child=>child.attrs["data-stance-side"]==="left")) throw new Error("gait chart omits typed stance interval");
 const seamIndex = data.before.findings.indexOf(seamFinding), structuralIndex = data.before.findings.indexOf(structuralFinding), afterIndex = data.after.findings.indexOf(afterFinding);
 nodes["before-findings"].children[seamIndex].listeners.click();
 if(nodes.scrub.value != 1501 || !nodes["before-pose-context"].textContent.includes("first 0.000s") || !nodes["before-pose-context"].textContent.includes(`affected ${seam.subject_bone_name}`)) throw new Error("seam finding did not select exact frame and endpoint/subject context");
+if(!nodes["before-gl"].context.arcs.some(row=>row.args[2]===6 && row.fillStyle==="#f0cb83")) throw new Error("finding did not highlight its Rust-projected bone on canvas");
 nodes["before-findings"].children[structuralIndex].listeners.click();
 if(!nodes["before-pose-context"].textContent.includes("structural evidence") || !nodes["before-contexts"].children.some(child=>child.className.includes("structural"))) throw new Error("structural finding was not distinguished from visible pose evidence");
 nodes["after-findings"].children[afterIndex].listeners.click(); if(nodes.scrub.value != 1234) throw new Error("after finding did not select exact frame");
@@ -69,11 +87,25 @@ if(nodes.scrub.value != 1234) throw new Error("cross-side semantic finding ancho
 // or hide the already-rendered findings and coverage lists.
 const invalid = Buffer.from(data.before.clip.positions, "base64");
 for (let offset = 0; offset < invalid.length; offset += 4) invalid.writeFloatLE(Number.NaN, offset);
-data.before.clip.positions = invalid.toString("base64"); data.after.clip.positions = invalid.toString("base64");
+data.before.clip.positions = invalid.toString("base64");
 nodes["comparison-report-data"].textContent=JSON.stringify(data);
 const isolatedNodes = Object.fromEntries(ids.map(id=>[id,new Node(id)]));
 isolatedNodes["comparison-report-data"].textContent=JSON.stringify(data);
 const isolatedContext={document:{getElementById:id=>isolatedNodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(){}},location:{hash:""},atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
 vm.createContext(isolatedContext); vm.runInContext(viewer, isolatedContext);
-if (!isolatedNodes["before-pose-context"].textContent.includes("non-finite") || !isolatedNodes["before-gait"].textContent.includes("non-finite") || isolatedNodes["before-findings"].children.length !== data.before.findings.length) throw new Error("non-finite pose/gait range hid diagnostics or threw");
+const rootLabels = isolatedNodes["comparison-root-path"].children.map(child=>child.textContent);
+if (!isolatedNodes["before-pose-context"].textContent.includes("non-finite") || !isolatedNodes["before-gait"].textContent.includes("non-finite") || !isolatedNodes["after-pose-context"].textContent.includes("exact judged") || !rootLabels.includes("before root unavailable") || !rootLabels.includes("after root path") || isolatedNodes["before-findings"].children.length !== data.before.findings.length) throw new Error("asymmetric non-finite pose/gait/root evidence was mislabeled, hidden, or threw");
+
+// A selected mixed-finite frame also loses the exact-evidence label while
+// other finite frames and the opposite side remain independently available.
+const mixed = Buffer.from(data.after.clip.positions, "base64");
+mixed.writeFloatLE(Number.NaN, (1501 * bones * 3 + 1 * 3) * 4);
+data.after.clip.positions = mixed.toString("base64");
+isolatedNodes["comparison-report-data"].textContent=JSON.stringify(data);
+const mixedNodes = Object.fromEntries(ids.map(id=>[id,new Node(id)]));
+mixedNodes["comparison-report-data"].textContent=JSON.stringify(data);
+const mixedContext={document:{getElementById:id=>mixedNodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(){}},location:{hash:""},atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
+vm.createContext(mixedContext); vm.runInContext(viewer, mixedContext);
+mixedNodes.scrub.value=1501; mixedNodes.scrub.listeners.input();
+if (!mixedNodes["after-pose-context"].textContent.includes("selected frame contains non-finite") || mixedNodes["before-pose-context"].textContent.includes("exact judged")) throw new Error("mixed per-frame availability was not evaluated independently");
 console.log("comparison viewer harness passed");
