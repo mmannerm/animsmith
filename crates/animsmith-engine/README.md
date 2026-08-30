@@ -70,7 +70,8 @@ and available typed inventories. Its reader rejects unknown fields, malformed
 or oversized input, noncanonical rows, changed self-identity, and any stored
 conformance result that does not recompute from the strict V2 prediction. The
 headless Bevy executable is deliberately excluded from this Rust-1.88 workspace
-because Bevy 0.19 requires Rust 1.95; see `tools/bevy-readback/README.md`.
+because its isolated toolchain pins compiler 1.95; see
+`tools/bevy-readback/README.md`.
 
 Resolved settings V1 materializes at most 4,096 actual clip rows. Inputs above
 that bound return a typed `ResolutionError::ResolvedSettingsContract`; callers
