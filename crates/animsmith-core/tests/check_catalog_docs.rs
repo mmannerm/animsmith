@@ -399,6 +399,46 @@ fn built_in_check_sections(markdown: &str) -> Vec<MarkdownSection> {
     sections
 }
 
+fn remove_check_section_heading(markdown: &str, target: &str) -> String {
+    let mut heading: Option<(String, usize)> = None;
+    for (event, range) in Parser::new_ext(markdown, Options::all()).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H3,
+                ..
+            }) => heading = Some((String::new(), range.start)),
+            Event::Text(value) | Event::Code(value) => {
+                if let Some((text, _)) = heading.as_mut() {
+                    text.push_str(&value);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some((text, _)) = heading.as_mut() {
+                    text.push('\n');
+                }
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                let Some((text, start)) = heading.take() else {
+                    continue;
+                };
+                if text != target {
+                    continue;
+                }
+                let line_start = markdown[..start].rfind('\n').map_or(0, |offset| offset + 1);
+                let line_end = markdown[start..]
+                    .find('\n')
+                    .map_or(markdown.len(), |offset| start + offset + 1);
+                let mut without_heading = String::with_capacity(markdown.len());
+                without_heading.push_str(&markdown[..line_start]);
+                without_heading.push_str(&markdown[line_end..]);
+                return without_heading;
+            }
+            _ => {}
+        }
+    }
+    panic!("missing H3 heading for `{target}`");
+}
+
 fn markdown_heading_at_or_above_h3(event: &Event<'_>) -> bool {
     matches!(
         event,
@@ -850,21 +890,31 @@ fn missing_detailed_check_section_fails_even_when_inventory_is_intact() {
     else {
         return;
     };
-    let missing = built_in_checks.replacen("### `bind-pose`\n", "", 1);
-    assert_ne!(
-        missing, built_in_checks,
-        "mutation must remove a detailed section"
-    );
-    assert!(
-        missing.contains("| [bind-pose](#bind-pose) |"),
-        "the mutation must leave the inventory row intact"
-    );
+    let lf = built_in_checks.replace("\r\n", "\n");
+    for newline in ["\n", "\r\n"] {
+        let fixture = lf.replace('\n', newline);
+        let missing = remove_check_section_heading(&fixture, "bind-pose");
+        assert_ne!(
+            missing, fixture,
+            "mutation must remove a detailed section for {newline:?} input"
+        );
+        assert!(
+            missing.contains("| [bind-pose](#bind-pose) |"),
+            "the mutation must leave the inventory row intact for {newline:?} input"
+        );
+        assert!(
+            built_in_check_sections(&missing)
+                .iter()
+                .all(|section| section.heading != "bind-pose"),
+            "the parsed target section must be removed for {newline:?} input"
+        );
 
-    let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &missing);
-    })
-    .expect_err("a missing detailed section must fail the docs gate");
-    let message = panic_message(failure);
-    assert!(message.contains("detailed sections"), "{message}");
-    assert!(message.contains("bind-pose"), "{message}");
+        let failure = std::panic::catch_unwind(|| {
+            assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &missing);
+        })
+        .expect_err("a missing detailed section must fail the docs gate");
+        let message = panic_message(failure);
+        assert!(message.contains("detailed sections"), "{message}");
+        assert!(message.contains("bind-pose"), "{message}");
+    }
 }
