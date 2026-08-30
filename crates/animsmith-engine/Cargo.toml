@@ -20,6 +20,7 @@ targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 animsmith-core = { workspace = true }
 blake3 = { workspace = true }
 serde = { workspace = true }
+serde_jcs = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

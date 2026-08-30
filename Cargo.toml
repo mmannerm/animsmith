@@ -9,6 +9,10 @@ members = [
     "crates/animsmith",
     "crates/animsmith-testkit",
 ]
+# The exact Bevy probe has a Rust 1.95 toolchain requirement and owns a
+# separate lock graph; it must never enter published-crate, docs.rs, or MSRV
+# workspace resolution.
+exclude = ["tools/bevy-readback"]
 
 [workspace.package]
 version = "0.8.0"

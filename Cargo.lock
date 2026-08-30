@@ -81,6 +81,7 @@ dependencies = [
  "blake3",
  "jsonschema",
  "serde",
+ "serde_jcs",
  "serde_json",
  "thiserror",
 ]

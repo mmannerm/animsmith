@@ -1,0 +1,24 @@
+[package]
+name = "animsmith-bevy-readback"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+# This intentionally is not an AnimSmith workspace member.  Bevy 0.19.0
+# declares Rust 1.95, while AnimSmith's published crates promise Rust 1.88.
+[workspace]
+
+[features]
+test-support = []
+
+[dependencies]
+animsmith-engine = { path = "../../crates/animsmith-engine" }
+animsmith-core = { path = "../../crates/animsmith-core" }
+# `gltf_animation`, not merely `bevy_animation`, forwards Bevy's optional
+# animation feature into `bevy_gltf`; without it `Gltf::{animations,
+# named_animations}` is deliberately absent.
+bevy = { version = "=0.19.0", default-features = false, features = ["std", "default_app", "bevy_gltf", "gltf_animation", "multi_threaded"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
