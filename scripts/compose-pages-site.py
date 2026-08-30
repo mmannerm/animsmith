@@ -10,7 +10,14 @@ import sys
 from pathlib import Path
 
 
-def build(builder: Path, source: Path, stage: Path, site_url: str, mdbook: Path) -> None:
+def build(
+    builder: Path,
+    source: Path,
+    stage: Path,
+    site_url: str,
+    source_ref: str,
+    mdbook: Path,
+) -> None:
     subprocess.run(
         [
             sys.executable,
@@ -21,6 +28,8 @@ def build(builder: Path, source: Path, stage: Path, site_url: str, mdbook: Path)
             str(stage),
             "--site-url",
             site_url,
+            "--source-ref",
+            source_ref,
             "--mdbook",
             str(mdbook),
             "--build",
@@ -106,8 +115,22 @@ def compose(
     )
     if not release_tag:
         raise ValueError("release tag is required")
-    build(builder, release_source, release_stage, "/animsmith/", release_mdbook)
-    build(builder, main_source, development_stage, "/animsmith/dev/", development_mdbook)
+    build(
+        builder,
+        release_source,
+        release_stage,
+        "/animsmith/",
+        release_tag,
+        release_mdbook,
+    )
+    build(
+        builder,
+        main_source,
+        development_stage,
+        "/animsmith/dev/",
+        "main",
+        development_mdbook,
+    )
     if output.exists():
         shutil.rmtree(output)
     copy_tree(release_stage / "book", output)

@@ -196,7 +196,12 @@ the mdBook navigation during clean staging; do not add a hand-maintained
 `SUMMARY.md`, generated HTML, or symlink-based publication tree. `docs.rs`
 remains the Rust API reference and must remain prominent in the Pages index and
 README. Use `just docs-check` before changing the Pages source; it verifies the
-pinned mdBook build and parser-validates the staged Markdown tree.
+pinned mdBook build, parser-validates the staged Markdown tree, and rejects
+rendered local links without targets in the built artifact. Animation-pack
+reports are nested from the canonical table in `docs/reports/README.md`, and
+built `README.md` chapters receive compatibility routes for mdBook's
+`README.html` rewrites. Generated source-reference routes are pinned to the
+selected release tag at the release root and to `main` below `/dev/`.
 
 If a future release needs version-pinned README links, update the
 READMEs, this section, and `scripts/check-package-inventory.sh` in the

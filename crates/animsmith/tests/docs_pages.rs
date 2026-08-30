@@ -24,6 +24,22 @@ fn links(markdown: &str) -> Vec<String> {
         .collect()
 }
 
+fn links_with_list_depth(markdown: &str) -> Vec<(String, usize)> {
+    let mut list_depth = 0usize;
+    let mut links = Vec::new();
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::List(_)) => list_depth += 1,
+            Event::End(TagEnd::List(_)) => list_depth -= 1,
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                links.push((dest_url.into_string(), list_depth));
+            }
+            _ => {}
+        }
+    }
+    links
+}
+
 fn rendered_links(markdown: &str) -> Vec<(String, String)> {
     let mut rendered = Vec::new();
     let mut active = None;
@@ -303,6 +319,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--source", type=Path, required=True)
 parser.add_argument("--stage", type=Path, required=True)
 parser.add_argument("--site-url")
+parser.add_argument("--source-ref", required=True)
 parser.add_argument("--mdbook", type=Path, required=True)
 parser.add_argument("--build", action="store_true")
 args = parser.parse_args()
@@ -310,7 +327,7 @@ args = parser.parse_args()
 marker = (args.source / "README.md").read_text(encoding="utf-8")
 pin = (args.source / ".mdbook-version").read_text(encoding="utf-8")
 (args.stage / "book" / "index.html").write_text(
-    f"{marker}mdbook={args.mdbook.name}\npin={pin}", encoding="utf-8"
+    f"{marker}mdbook={args.mdbook.name}\npin={pin}source-ref={args.source_ref}\n", encoding="utf-8"
 )
 "#,
     )
@@ -389,6 +406,47 @@ fn canonical_index_category_links(markdown: &str) -> Vec<(String, String)> {
     rows
 }
 
+fn canonical_report_pair_links(markdown: &str) -> Vec<String> {
+    let mut in_table = false;
+    let mut in_head = false;
+    let mut is_report_index = false;
+    let mut first_header = None;
+    let mut cell = 0usize;
+    let mut links = Vec::new();
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Table(_)) => {
+                in_table = true;
+                in_head = true;
+                is_report_index = false;
+                first_header = Some(String::new());
+                cell = 0;
+            }
+            Event::Start(Tag::TableCell) if in_table => cell += 1,
+            Event::Text(text) if in_table && in_head && cell == 1 => {
+                first_header
+                    .as_mut()
+                    .expect("header is present")
+                    .push_str(&text);
+            }
+            Event::End(TagEnd::TableHead) if in_table => {
+                in_head = false;
+                is_report_index = first_header.as_deref() == Some("Technical report");
+            }
+            Event::Start(Tag::TableRow) if is_report_index => cell = 0,
+            Event::Start(Tag::Link { dest_url, .. })
+                if is_report_index && !in_head && matches!(cell, 1 | 2) =>
+            {
+                links.push(dest_url.into_string());
+            }
+            Event::End(TagEnd::Table) if is_report_index => break,
+            Event::End(TagEnd::Table) => in_table = false,
+            _ => {}
+        }
+    }
+    links
+}
+
 fn summary_destination(destination: &str) -> String {
     if destination.contains("://") || destination.starts_with('#') {
         return destination.to_owned();
@@ -415,10 +473,13 @@ fn summary_destination(destination: &str) -> String {
 fn summary_category_links(markdown: &str) -> Vec<(String, String)> {
     let mut heading = None;
     let mut active_category = None;
+    let mut list_depth = 0usize;
     let mut links = Vec::new();
     for event in Parser::new_ext(markdown, options()) {
         match event {
             Event::Start(Tag::Heading { .. }) => heading = Some(String::new()),
+            Event::Start(Tag::List(_)) => list_depth += 1,
+            Event::End(TagEnd::List(_)) => list_depth -= 1,
             Event::Text(text) if heading.is_some() => {
                 heading
                     .as_mut()
@@ -427,9 +488,10 @@ fn summary_category_links(markdown: &str) -> Vec<(String, String)> {
             }
             Event::End(TagEnd::Heading(_)) => active_category = heading.take(),
             Event::Start(Tag::Link { dest_url, .. })
-                if active_category
-                    .as_deref()
-                    .is_some_and(|category| category != "Summary") =>
+                if list_depth == 1
+                    && active_category
+                        .as_deref()
+                        .is_some_and(|category| category != "Summary") =>
             {
                 links.push((
                     active_category.clone().expect("active category is present"),
@@ -651,7 +713,12 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
         std::fs::read_to_string(output.join("index.html")).expect("reads release root");
     assert_eq!(
         strict_lines(&release_root),
-        ["# RELEASE ROOT", "mdbook=release-mdbook", "pin=0.4.51"],
+        [
+            "# RELEASE ROOT",
+            "mdbook=release-mdbook",
+            "pin=0.4.51",
+            "source-ref=vfixture"
+        ],
         "the Pages root uses the selected release checkout and its mdBook pin:\n{release_root}"
     );
     let development_root =
@@ -661,7 +728,8 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
         [
             "# MAIN DEVELOPMENT",
             "mdbook=development-mdbook",
-            "pin=0.4.52"
+            "pin=0.4.52",
+            "source-ref=main"
         ],
         "the /dev subtree uses current main and its independent mdBook pin:\n{development_root}"
     );
@@ -799,6 +867,37 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
     let second_summary =
         std::fs::read_to_string(second.path().join("src/SUMMARY.md")).expect("second summary");
     assert_eq!(first_summary, second_summary, "navigation is deterministic");
+
+    let report_index = std::fs::read_to_string(root.join("docs/reports/README.md"))
+        .expect("reads canonical reports index");
+    let expected_report_links = canonical_report_pair_links(&report_index)
+        .into_iter()
+        .enumerate()
+        .map(|(index, destination)| {
+            (
+                format!("docs/reports/{destination}"),
+                if index % 2 == 0 { 2 } else { 3 },
+            )
+        })
+        .collect::<Vec<_>>();
+    let generated_links = links_with_list_depth(&first_summary);
+    let reports_position = generated_links
+        .iter()
+        .position(|(destination, depth)| destination == "docs/reports/README.md" && *depth == 1)
+        .expect("summary contains the reports index");
+    let report_links_end = reports_position + 1 + expected_report_links.len();
+    assert_eq!(
+        &generated_links[reports_position + 1..report_links_end],
+        expected_report_links,
+        "every report/evidence pair is nested in canonical table order so mdBook publishes it"
+    );
+    assert_eq!(
+        generated_links
+            .get(report_links_end)
+            .map(|(destination, depth)| (destination.as_str(), *depth)),
+        Some(("examples/README.md", 1)),
+        "the next canonical root chapter follows immediately after the complete report pair sequence"
+    );
 
     let index =
         std::fs::read_to_string(root.join("docs/README.md")).expect("reads canonical index");
