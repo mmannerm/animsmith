@@ -3017,6 +3017,70 @@ mod tests {
             path: "clips.<selector>.engine_settings.root_position_xz",
             authority: "engine_setting_map(_v2)",
         },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>",
+            authority: "DocumentConfigWire::transition_families",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.schema",
+            authority: "DocumentFamilyWire::schema",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.schema_version",
+            authority: "DocumentFamilyWire::schema_version",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.scope",
+            authority: "DocumentFamilyWire::scope",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.boundary",
+            authority: "DocumentFamilyWire::boundary",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.basis",
+            authority: "DocumentFamilyWire::basis",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.basis.translation",
+            authority: "BasisWire::translation",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.basis.rotation",
+            authority: "BasisWire::rotation",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.basis.time",
+            authority: "BasisWire::time",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.tolerances",
+            authority: "DocumentFamilyWire::tolerances",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.tolerances.translation_m",
+            authority: "TolerancesWire::translation_m",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.tolerances.rotation_deg",
+            authority: "TolerancesWire::rotation_deg",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.tolerances.time_normalized",
+            authority: "TolerancesWire::time_normalized",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.members",
+            authority: "DocumentFamilyWire::members",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.members.take_index",
+            authority: "DocumentMemberWire::take_index",
+        },
+        ConfigurationReferenceEntry {
+            path: "transition_families.<id>.members.take_name",
+            authority: "DocumentMemberWire::take_name",
+        },
     ];
 
     fn configuration_reference_code_tokens(markdown: &str) -> BTreeSet<String> {
@@ -3710,6 +3774,17 @@ min_lr_amplitude_m = 0.03
             missing.iter().map(|entry| entry.path).collect::<Vec<_>>(),
             vec!["runtime_nodes.selectors"],
             "removing one exact nested code span must fail the maintenance inventory"
+        );
+
+        let mutated = docs.replace(
+            "`transition_families.<id>.tolerances.translation_m`",
+            "transition_families.<id>.tolerances.translation_m",
+        );
+        let missing = missing_configuration_reference_entries(&mutated);
+        assert_eq!(
+            missing.iter().map(|entry| entry.path).collect::<Vec<_>>(),
+            vec!["transition_families.<id>.tolerances.translation_m"],
+            "removing a transition-family nested path must fail the maintenance inventory"
         );
     }
 }

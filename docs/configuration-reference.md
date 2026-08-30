@@ -160,6 +160,25 @@ explicit or the profile's verified default; no generic default is invented.
 
 Document-local families are strict tables, not core `Config` fields:
 
+| Path | Authority and contract |
+|---|---|
+| `transition_families.<id>` | `DocumentConfigWire::transition_families` map entry; the family id is the exact TOML key. |
+| `transition_families.<id>.schema` | `DocumentFamilyWire::schema`; must be the supported transition-family schema id. |
+| `transition_families.<id>.schema_version` | `DocumentFamilyWire::schema_version`; currently `1`. |
+| `transition_families.<id>.scope` | `DocumentFamilyWire::scope`; currently `document`. |
+| `transition_families.<id>.boundary` | `DocumentFamilyWire::boundary`; `entry`, `exit`, or `both`. |
+| `transition_families.<id>.basis` | `BasisWire`; all three basis fields are required. |
+| `transition_families.<id>.basis.translation` | `BasisWire::translation`; currently `skeleton-local-metres`. |
+| `transition_families.<id>.basis.rotation` | `BasisWire::rotation`; currently `skeleton-local-degrees`. |
+| `transition_families.<id>.basis.time` | `BasisWire::time`; currently `normalized-clip`. |
+| `transition_families.<id>.tolerances` | `TolerancesWire`; all three finite non-negative limits are required. |
+| `transition_families.<id>.tolerances.translation_m` | `TolerancesWire::translation_m`, in metres. |
+| `transition_families.<id>.tolerances.rotation_deg` | `TolerancesWire::rotation_deg`, in degrees. |
+| `transition_families.<id>.tolerances.time_normalized` | `TolerancesWire::time_normalized`, in normalized clip time. |
+| `transition_families.<id>.members` | `DocumentFamilyWire::members`; bounded ordered member list. |
+| `transition_families.<id>.members.take_index` | `DocumentMemberWire::take_index`; zero-based take index. |
+| `transition_families.<id>.members.take_name` | `DocumentMemberWire::take_name`; exact source take name. |
+
 ```toml
 [transition_families."walk_to_run"]
 schema = "urn:animsmith:schema:transition-family:1"
