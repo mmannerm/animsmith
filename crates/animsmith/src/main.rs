@@ -3270,4 +3270,142 @@ root_rotation = "bake"
             "has invalid measurements: measurement value meshes[0].aabb.min[0] must be finite; regenerate it from the original asset with `animsmith measure --format json <asset>`"
         );
     }
+
+    #[test]
+    fn configuration_reference_examples_and_inventory_are_parser_checked() {
+        let source = r#"
+[rig]
+profile = "mixamo"
+roles = { hips = "Hips" }
+required_bones = ["weapon_socket"]
+[checks.loop-seam]
+severity = "warn"
+max_ratio = 1.5
+min_stride_step_m = 0.02
+[checks.loop-closure]
+max_position_delta_m = 0.01
+max_rotation_delta_deg = 1.0
+[checks.loop-seam-vel]
+max_velocity_delta_mps = 0.1
+[checks.loop-seam-rot]
+max_angular_velocity_delta_degps = 5.0
+[checks.frozen-bone]
+min_rotation_deg = 1.0
+[checks.bind-pose]
+max_mean_rest_delta_deg = 45.0
+[checks.foot-slide]
+contact_height_m = 0.03
+max_slide_mps = 0.3
+[checks.rest-world-scale]
+expected_uniform_scale = 1.0
+uniform_scale_tolerance = 0.0001
+[runtime_nodes]
+selectors = ["weapon_socket", "ik_*"]
+[clips."run_*"]
+loop = true
+max_loop_position_delta_m = 0.04
+max_loop_rotation_delta_deg = 2.0
+max_loop_velocity_delta_mps = 0.2
+max_loop_angular_velocity_delta_degps = 200.0
+duration_s = { value = 1.0, tolerance = 0.02 }
+speed_mps = { value = 2.0, tolerance = 0.2 }
+movement_owner_xz = "animation"
+movement_owner_y = "gameplay"
+movement_owner_yaw = "animation"
+fps = 30.0
+animates_bones = ["Hips"]
+[gait_groups.ring]
+clips = ["run_forward", "run_back"]
+max_gait_phase_spread = 0.15
+min_lr_amplitude_m = 0.03
+[sync_groups.ring]
+clips = ["run_forward", "run_back"]
+max_duration_delta_s = 0.001
+max_frame_count_delta = 0
+max_fps_delta = 0.01
+[sync_groups.ring.time_complement]
+min_reflected_time_advantage = 0.25
+min_lr_amplitude_m = 0.03
+"#;
+        let config: Config = toml::from_str(source).expect("complete core config parses");
+        config.validate().expect("complete core config validates");
+        assert_eq!(config.rig.profile, "mixamo");
+        assert_eq!(
+            config.rig.roles.get(&animsmith_core::Role::Hips),
+            Some(&"Hips".to_owned())
+        );
+        assert_eq!(
+            config.runtime_node_selectors().unwrap().selectors(),
+            ["weapon_socket", "ik_*"]
+        );
+        assert_eq!(config.expectations_for("run_forward").fps, Some(30.0));
+        assert_eq!(config.gait_groups["ring"].max_gait_phase_spread, 0.15);
+        assert_eq!(config.sync_groups["ring"].max_frame_count_delta, 0);
+        assert!(toml::from_str::<Config>("[clips.walk]\nunknown = true\n").is_err());
+        parse_config(document_transition_family().as_bytes())
+            .expect("transition-family reference shape parses");
+
+        let docs = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/configuration-reference.md"
+        ))
+        .expect("configuration reference exists");
+        for key in [
+            "rig.profile",
+            "rig.roles",
+            "rig.required_bones",
+            "checks.<id>.severity",
+            "max_ratio",
+            "min_stride_step_m",
+            "max_position_delta_m",
+            "max_rotation_delta_deg",
+            "max_velocity_delta_mps",
+            "max_angular_velocity_delta_degps",
+            "min_rotation_deg",
+            "max_mean_rest_delta_deg",
+            "contact_height_m",
+            "max_slide_mps",
+            "expected_uniform_scale",
+            "uniform_scale_tolerance",
+            "node_selectors",
+            "clips.<selector>.loop",
+            "max_loop_position_delta_m",
+            "max_loop_rotation_delta_deg",
+            "max_loop_velocity_delta_mps",
+            "max_loop_angular_velocity_delta_degps",
+            "duration_s",
+            "speed_mps",
+            "movement_owner_xz",
+            "movement_owner_y",
+            "movement_owner_yaw",
+            "in_place",
+            "fps",
+            "animates_bones",
+            "gait_groups.<name>.clips",
+            "max_gait_phase_spread",
+            "min_lr_amplitude_m",
+            "sync_groups.<name>.clips",
+            "max_duration_delta_s",
+            "max_frame_count_delta",
+            "max_fps_delta",
+            "time_complement",
+            "min_reflected_time_advantage",
+            "engine",
+            "transition_families",
+        ] {
+            assert!(
+                docs.contains(key),
+                "documented configuration key missing: {key}"
+            );
+        }
+        for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples"))
+            .expect("examples directory")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().to_string_lossy().ends_with(".animsmith.toml"))
+        {
+            let path = entry.path();
+            let bytes = std::fs::read(&path).expect("example readable");
+            parse_config(&bytes).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        }
+    }
 }
