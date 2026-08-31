@@ -26,11 +26,21 @@ pub const FOOT_CYCLE_PARAMETERIZATION_V1_SCHEMA_VERSION: u32 = 1;
 pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// Maximum declared members and supplied evidence rows.
 pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS: usize = 4_096;
+/// Maximum aggregate contact events inspected across all supplied members.
+///
+/// This admits the minimum bilateral window/marker evidence for every member
+/// at the member cap while preventing per-fragment limits from multiplying.
+pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS: usize =
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS * 4;
 /// Maximum source-to-output control points, shared with contact-transform V1.
 pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS: usize =
     crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS;
 /// Largest accepted finite segment-slope bound.
 pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_SLOPE: f64 = 1_000_000.0;
+/// Inclusive V1 in-place horizontal endpoint-displacement limit in metres.
+pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M: f64 = 0.01;
+/// Inclusive V1 in-place accumulated-yaw limit in degrees.
+pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG: f64 = 1.0;
 /// Known stance-support detector extension emitted by AnimSmith.
 pub const CONTACT_SUPPORT_DETECTOR_V1_ID: &str = "urn:animsmith:contact-support-detector:1";
 
@@ -233,13 +243,46 @@ impl FootCycleParameterizationV1 {
     }
 }
 
-/// One already-read contact fragment bound to its exact source bytes and path.
+/// Independently measured in-place evidence for one source clip.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum FootCycleRootMotionEvidenceV1 {
+    /// Complete finite source measurements.
+    Measured {
+        /// Magnitude of Root/Hips horizontal endpoint displacement in metres.
+        horizontal_endpoint_displacement_m: f64,
+        /// Signed accumulated Root/Hips yaw in degrees.
+        accumulated_yaw_deg: f64,
+    },
+    /// Required Root/Hips evidence was absent.
+    Missing,
+    /// More than one source authority could own the measurement.
+    Ambiguous,
+    /// Source sampling encountered a non-finite value.
+    NonFinite,
+}
+
+impl FootCycleRootMotionEvidenceV1 {
+    /// Construct complete measured evidence.
+    pub const fn measured(
+        horizontal_endpoint_displacement_m: f64,
+        accumulated_yaw_deg: f64,
+    ) -> Self {
+        Self::Measured {
+            horizontal_endpoint_displacement_m,
+            accumulated_yaw_deg,
+        }
+    }
+}
+
+/// One already-read contact fragment and root witness bound to exact source bytes and path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FootCycleMemberEvidenceV1 {
     id: CollectionLogicalIdV1,
     contact_fragment_path: DependencyResourceKeyV1,
     input: InputIdentity,
     fragment: ContactFragmentV1,
+    root_motion: FootCycleRootMotionEvidenceV1,
 }
 
 impl FootCycleMemberEvidenceV1 {
@@ -249,12 +292,14 @@ impl FootCycleMemberEvidenceV1 {
         contact_fragment_path: DependencyResourceKeyV1,
         input: InputIdentity,
         fragment: ContactFragmentV1,
+        root_motion: FootCycleRootMotionEvidenceV1,
     ) -> Self {
         Self {
             id,
             contact_fragment_path,
             input,
             fragment,
+            root_motion,
         }
     }
 
@@ -272,6 +317,11 @@ impl FootCycleMemberEvidenceV1 {
     pub const fn fragment(&self) -> &ContactFragmentV1 {
         &self.fragment
     }
+
+    /// Independently measured Root/Hips in-place evidence.
+    pub const fn root_motion(&self) -> FootCycleRootMotionEvidenceV1 {
+        self.root_motion
+    }
 }
 
 /// One member's exact contact binding and future time-warp operation.
@@ -279,6 +329,7 @@ impl FootCycleMemberEvidenceV1 {
 pub struct FootCycleMemberPlanV1 {
     id: CollectionLogicalIdV1,
     input: ContactTransformBindingV1,
+    root_motion: FootCycleRootMotionEvidenceV1,
     operation: ContactTransformOperationV1,
 }
 
@@ -291,6 +342,11 @@ impl FootCycleMemberPlanV1 {
     /// Exact contact-transform input binding.
     pub const fn input(&self) -> &ContactTransformBindingV1 {
         &self.input
+    }
+
+    /// Accepted in-place root evidence consumed by this plan.
+    pub const fn root_motion(&self) -> FootCycleRootMotionEvidenceV1 {
+        self.root_motion
     }
 
     /// Validated time-warp operation preserving the source duration.
@@ -393,6 +449,14 @@ pub enum FootCycleParameterizationError {
     /// Evidence row count differed from declaration count.
     #[error("foot-cycle evidence row count does not match declared members")]
     EvidenceCountMismatch,
+    /// Aggregate contact-event work exceeded V1 before topology retention.
+    #[error("foot-cycle evidence has {found} contact events, exceeding V1 aggregate limit {max}")]
+    TooManyContactEvents {
+        /// Observed aggregate count, capped at the first excess witness.
+        found: usize,
+        /// Frozen maximum.
+        max: usize,
+    },
     /// Evidence id or locator differed from the corresponding declaration row.
     #[error("foot-cycle evidence does not match declared member order and paths")]
     EvidenceMemberMismatch,
@@ -408,6 +472,18 @@ pub enum FootCycleParameterizationError {
     /// Detector provenance payload was malformed or contradicted event roles.
     #[error("contact fragment stance detector provenance is invalid")]
     InvalidDetectorProvenance,
+    /// Root/Hips measurements were absent, ambiguous, malformed, or non-finite.
+    #[error("member {member:?} does not have complete finite Root/Hips in-place evidence")]
+    RootMotionEvidenceUnavailable {
+        /// Logical member whose evidence refused.
+        member: String,
+    },
+    /// Root/Hips motion exceeded the inclusive V1 in-place thresholds.
+    #[error("member {member:?} exceeds V1 in-place root-motion thresholds")]
+    RootMotionOutOfRange {
+        /// Logical member whose evidence refused.
+        member: String,
+    },
     /// Bilateral support runs violated the exact V1 topology grammar.
     #[error("contact fragment has incomplete or non-alternating bilateral stance topology")]
     InvalidContactTopology,
@@ -494,6 +570,9 @@ pub fn plan_foot_cycle_parameterization_v1(
     if evidence.len() != parameterization.members.len() {
         return Err(FootCycleParameterizationError::EvidenceCountMismatch);
     }
+    validate_aggregate_contact_event_budget(
+        evidence.iter().map(|row| row.fragment.events().len()),
+    )?;
 
     let mut topologies = Vec::with_capacity(evidence.len());
     for (index, (declaration, evidence)) in
@@ -512,6 +591,7 @@ pub fn plan_foot_cycle_parameterization_v1(
             return Err(FootCycleParameterizationError::NonCanonicalFragment);
         }
         validate_clip_witness(manifest, &declaration.id, &evidence.fragment)?;
+        validate_root_motion(&declaration.id, evidence.root_motion)?;
         let topology = topology(&evidence.fragment)?;
         topologies.push(MemberTopology {
             evidence_index: index,
@@ -549,6 +629,7 @@ pub fn plan_foot_cycle_parameterization_v1(
         plans.push(FootCycleMemberPlanV1 {
             id: source.id.clone(),
             input: binding,
+            root_motion: source.root_motion,
             operation: ContactTransformOperationV1::time_warp(
                 source.fragment.duration_s(),
                 control_points,
@@ -563,6 +644,60 @@ pub fn plan_foot_cycle_parameterization_v1(
         reference_member: parameterization.reference_member.clone(),
         members: plans,
     })
+}
+
+fn validate_root_motion(
+    member: &CollectionLogicalIdV1,
+    evidence: FootCycleRootMotionEvidenceV1,
+) -> Result<(), FootCycleParameterizationError> {
+    let FootCycleRootMotionEvidenceV1::Measured {
+        horizontal_endpoint_displacement_m,
+        accumulated_yaw_deg,
+    } = evidence
+    else {
+        return Err(
+            FootCycleParameterizationError::RootMotionEvidenceUnavailable {
+                member: member.as_str().to_owned(),
+            },
+        );
+    };
+    if !horizontal_endpoint_displacement_m.is_finite()
+        || horizontal_endpoint_displacement_m < 0.0
+        || !accumulated_yaw_deg.is_finite()
+    {
+        return Err(
+            FootCycleParameterizationError::RootMotionEvidenceUnavailable {
+                member: member.as_str().to_owned(),
+            },
+        );
+    }
+    if horizontal_endpoint_displacement_m
+        > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M
+        || accumulated_yaw_deg.abs() > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG
+    {
+        return Err(FootCycleParameterizationError::RootMotionOutOfRange {
+            member: member.as_str().to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_aggregate_contact_event_budget(
+    counts: impl IntoIterator<Item = usize>,
+) -> Result<(), FootCycleParameterizationError> {
+    let mut total = 0usize;
+    for count in counts {
+        total = total
+            .checked_add(count)
+            .unwrap_or(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS + 1);
+        if total > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS {
+            return Err(FootCycleParameterizationError::TooManyContactEvents {
+                found: total.min(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS + 1),
+                max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_manifest_binding(
@@ -656,6 +791,7 @@ fn topology(
         return Err(FootCycleParameterizationError::InvalidContactTopology);
     }
     windows.sort_by(|left, right| left.start.total_cmp(&right.start));
+    markers.sort_by(|left, right| left.1.total_cmp(&right.1));
     let left_count = windows
         .iter()
         .filter(|window| window.side == Side::Left)
@@ -678,27 +814,12 @@ fn topology(
     {
         return Err(FootCycleParameterizationError::InvalidContactTopology);
     }
-    for window in &windows {
-        if markers
-            .iter()
-            .filter(|(side, time)| {
-                *side == window.side && window.start <= *time && *time <= window.end
-            })
-            .count()
-            != 1
-        {
-            return Err(FootCycleParameterizationError::InvalidContactTopology);
-        }
-    }
-    for (side, time) in &markers {
-        if windows
-            .iter()
-            .filter(|window| window.side == *side && window.start <= *time && *time <= window.end)
-            .count()
-            != 1
-        {
-            return Err(FootCycleParameterizationError::InvalidContactTopology);
-        }
+    if markers.len() != windows.len()
+        || windows.iter().zip(&markers).any(|(window, (side, time))| {
+            window.side != *side || *time < window.start || *time > window.end
+        })
+    {
+        return Err(FootCycleParameterizationError::InvalidContactTopology);
     }
 
     let origin = windows
@@ -1043,6 +1164,7 @@ mod tests {
                 path(source),
                 fragment.canonical_identity().unwrap(),
                 fragment,
+                FootCycleRootMotionEvidenceV1::measured(0.0, 0.0),
             )
         })
         .collect()
@@ -1113,6 +1235,86 @@ mod tests {
             Some(1.0)
         );
         assert_eq!(first.members()[1].input().fragment(), evidence[1].input());
+        assert_eq!(first.members()[1].root_motion(), evidence[1].root_motion());
+    }
+
+    #[test]
+    fn root_motion_gate_is_inclusive_and_refuses_unavailable_or_excess_evidence() {
+        let (manifest, manifest_input) = manifest();
+        let declaration = declaration(&manifest_input, 0.5, 2.0);
+        let windows = [(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)];
+        let parameterization_input = || InputIdentity::from_bytes(b"parameterization");
+
+        let mut accepted = evidence(&windows, &windows);
+        accepted[1].root_motion = FootCycleRootMotionEvidenceV1::measured(
+            FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M,
+            -FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG,
+        );
+        assert!(
+            plan_foot_cycle_parameterization_v1(
+                &declaration,
+                parameterization_input(),
+                &manifest,
+                manifest_input.clone(),
+                &accepted,
+            )
+            .is_ok()
+        );
+
+        for unavailable in [
+            FootCycleRootMotionEvidenceV1::Missing,
+            FootCycleRootMotionEvidenceV1::Ambiguous,
+            FootCycleRootMotionEvidenceV1::NonFinite,
+            FootCycleRootMotionEvidenceV1::measured(f64::NAN, 0.0),
+            FootCycleRootMotionEvidenceV1::measured(-0.001, 0.0),
+        ] {
+            let mut source = evidence(&windows, &windows);
+            source[1].root_motion = unavailable;
+            assert!(matches!(
+                plan_foot_cycle_parameterization_v1(
+                    &declaration,
+                    parameterization_input(),
+                    &manifest,
+                    manifest_input.clone(),
+                    &source,
+                ),
+                Err(FootCycleParameterizationError::RootMotionEvidenceUnavailable { .. })
+            ));
+        }
+
+        for excess in [
+            FootCycleRootMotionEvidenceV1::measured(
+                f64::from_bits(
+                    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M.to_bits() + 1,
+                ),
+                0.0,
+            ),
+            FootCycleRootMotionEvidenceV1::measured(
+                0.0,
+                f64::from_bits(
+                    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG.to_bits() + 1,
+                ),
+            ),
+            FootCycleRootMotionEvidenceV1::measured(
+                0.0,
+                -f64::from_bits(
+                    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG.to_bits() + 1,
+                ),
+            ),
+        ] {
+            let mut source = evidence(&windows, &windows);
+            source[1].root_motion = excess;
+            assert!(matches!(
+                plan_foot_cycle_parameterization_v1(
+                    &declaration,
+                    parameterization_input(),
+                    &manifest,
+                    manifest_input.clone(),
+                    &source,
+                ),
+                Err(FootCycleParameterizationError::RootMotionOutOfRange { .. })
+            ));
+        }
     }
 
     #[test]
@@ -1376,6 +1578,27 @@ mod tests {
             Err(FootCycleParameterizationError::TooManyControlPoints {
                 found: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS + 1,
                 max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS,
+            })
+        );
+    }
+
+    #[test]
+    fn aggregate_contact_event_budget_accepts_exact_and_stops_at_first_excess() {
+        assert_eq!(
+            validate_aggregate_contact_event_budget([
+                FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS - 1,
+                1,
+            ]),
+            Ok(())
+        );
+        assert_eq!(
+            validate_aggregate_contact_event_budget([
+                FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS,
+                usize::MAX,
+            ]),
+            Err(FootCycleParameterizationError::TooManyContactEvents {
+                found: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS + 1,
+                max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS,
             })
         );
     }

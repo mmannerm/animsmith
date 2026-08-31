@@ -97,18 +97,25 @@ id = "com.example/walk-right"
 contact_fragment = "contacts/walk-right.json"
 ```
 
-The reader is closed and bounded at 8 MiB and 4,096 members. Safe locators use
-the same lexical relative-path contract as collection manifests. It rejects
-unknown fields, unsupported identities/versions, unsafe or duplicate paths,
-duplicate/missing members, an absent reference, invalid manifest identities,
-and invalid slope ranges. Host canonicalization, symlink/alias detection, and
-the guarantee that `output_directory` is a previously absent sibling
-generation destination belong to the later transactional collection adapter;
-this parser performs no filesystem I/O.
+The reader is closed and bounded at 8 MiB and 4,096 members. Planning admits at
+most 16,384 contact events across the whole declared ring, so independent
+per-fragment limits cannot multiply into unbounded retained topology or work.
+Safe locators use the same lexical relative-path contract as collection
+manifests. It rejects unknown fields, unsupported identities/versions, unsafe
+or duplicate paths, duplicate/missing members, an absent reference, invalid
+manifest identities, and invalid slope ranges. Host canonicalization,
+symlink/alias detection, and the guarantee that `output_directory` is a
+previously absent sibling generation destination belong to the later
+transactional collection adapter; this parser performs no filesystem I/O.
 
 The pure core planner additionally requires each supplied sidecar byte identity
 to equal its canonical `contact-fragment:1` identity and its collection clip
 witness to equal the manifest's exact logical/source/take-index/take-name row.
+Each member also supplies independently measured typed Root/Hips evidence. A
+missing, ambiguous, malformed, or non-finite witness refuses, as does horizontal
+endpoint displacement above 0.01 m or absolute accumulated yaw above 1 degree;
+both thresholds are inclusive. The planner consumes and retains those facts but
+does not sample an animation asset itself.
 V1 recognizes exactly AnimSmith's `contact-support-detector:1` extension and
 validates its closed algorithm, sampling, frame-cap, threshold, and selected
 left/right foot-or-toe role provenance. Other extensions refuse because no
@@ -130,9 +137,9 @@ increasing, continuous, and within the inclusive declared slope range. The
 planner preflights the 4,096-point contact-transform cap and returns one
 duration-preserving `ContactTransformOperationV1::TimeWarp` plus exact
 `ContactTransformBindingV1` per member. It does not mutate LINEAR/STEP tracks,
-handle CUBICSPLINE, transform contact fragments, sample root motion, serialize
-output artifacts, prove reread results, or publish a generation directory;
-those are later #18 seams.
+handle CUBICSPLINE, transform contact fragments, derive root measurements,
+serialize output artifacts, prove reread results, or publish a generation
+directory; those are later #18 seams.
 
 ## Contact fragments (#147)
 

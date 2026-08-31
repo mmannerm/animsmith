@@ -310,7 +310,8 @@ For the library cutover itself:
 boundary for a manifest-declared in-place gait ring. A host supplies the strict
 typed parameterization, its exact byte identity, the already validated
 collection manifest and exact byte identity, plus canonical contact fragments
-in declared member/path order. The planner validates manifest clip witnesses,
+and independently measured typed Root/Hips in-place evidence in declared
+member/path order. The planner validates manifest clip witnesses,
 the known stance-detector provenance, alternating bilateral support topology,
 positional boundary correspondence, and every declared segment-slope bound.
 It returns one exact `ContactTransformBindingV1` and duration-preserving
@@ -319,7 +320,7 @@ It returns one exact `ContactTransformBindingV1` and duration-preserving
 The planner does not open paths. The CLI crate's current parser validates the
 closed bounded TOML grammar, while a later collection producer must resolve
 those paths under the parameterization document, detect canonical aliases,
-reload the exact assets, establish the in-place root-motion boundary, mutate
+reload the exact assets, derive the typed in-place root-motion evidence, mutate
 tracks and fragments with the same map, independently prove serialized
 outputs, and publish one generation directory. Embedders must not treat a
 successful plan as an output-artifact or gameplay-acceptance proof. See the

@@ -284,12 +284,15 @@ pub use evaluation::{
 pub use finding::{Finding, MemberMeasurement, Severity, Value};
 pub use foot_cycle::{
     CONTACT_SUPPORT_DETECTOR_V1_ID, FOOT_CYCLE_PARAMETERIZATION_V1_ID,
-    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES, FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES, FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M,
     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS, FOOT_CYCLE_PARAMETERIZATION_V1_MAX_SLOPE,
     FOOT_CYCLE_PARAMETERIZATION_V1_SCHEMA_VERSION, FootCycleManifestBindingV1,
     FootCycleMemberEvidenceV1, FootCycleMemberPlanV1, FootCycleParameterizationError,
     FootCycleParameterizationMemberV1, FootCycleParameterizationV1, FootCyclePlanV1,
-    plan_foot_cycle_parameterization_v1,
+    FootCycleRootMotionEvidenceV1, plan_foot_cycle_parameterization_v1,
 };
 /// Re-export of the exact `glam` version used by animsmith's public math
 /// types, so embedders can construct [`Transform`] values without a
