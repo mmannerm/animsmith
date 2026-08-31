@@ -118,6 +118,147 @@ fn glb_round_trip() {
 }
 
 #[test]
+fn strict_in_memory_glb_preflight_counts_exact_bytes_and_matches_legacy_path() {
+    use animsmith_gltf::write::{
+        GlbProjectionPolicyV1, GlbWriteLimits, preflight_glb_bytes, write_glb_bytes,
+    };
+
+    let doc = synthetic_doc();
+    let receipt = preflight_glb_bytes(
+        &doc,
+        GlbProjectionPolicyV1::StrictFootCycleV1,
+        GlbWriteLimits::FOOT_CYCLE_V1,
+    )
+    .expect("strict candidate is representable");
+    let bytes = write_glb_bytes(&doc, GlbProjectionPolicyV1::StrictFootCycleV1, &receipt)
+        .expect("writes exact preflight candidate");
+    assert_eq!(bytes.len(), receipt.total_bytes());
+    assert_eq!(
+        u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize,
+        receipt.total_bytes(),
+        "GLB header uses the admitted total byte count"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("same.glb");
+    animsmith_gltf::write::write(&doc, &path).expect("legacy path writes");
+    assert_eq!(
+        bytes,
+        std::fs::read(path).unwrap(),
+        "strict direct candidate and legacy GLB path share the projection bytes"
+    );
+}
+
+#[test]
+fn strict_receipt_binds_content_not_just_byte_counts() {
+    use animsmith_gltf::{
+        WriteError,
+        write::{GlbProjectionPolicyV1, GlbWriteLimits, preflight_glb_bytes, write_glb_bytes},
+    };
+
+    let mut doc = synthetic_doc();
+    let receipt = preflight_glb_bytes(
+        &doc,
+        GlbProjectionPolicyV1::StrictFootCycleV1,
+        GlbWriteLimits::FOOT_CYCLE_V1,
+    )
+    .expect("preflight");
+    let TrackValues::Quats(values) = &mut doc.clips[0].tracks[0].values else {
+        panic!("fixture rotation values")
+    };
+    values[1] = Quat::from_rotation_z(0.8);
+    assert!(matches!(
+        write_glb_bytes(&doc, GlbProjectionPolicyV1::StrictFootCycleV1, &receipt),
+        Err(WriteError::ReceiptMismatch)
+    ));
+}
+
+#[test]
+fn strict_preflight_refuses_legacy_omission_before_candidate_bytes_exist() {
+    use animsmith_gltf::{
+        WriteError,
+        write::{GlbProjectionPolicyV1, GlbWriteLimits, preflight_glb_bytes},
+    };
+
+    let mut doc = synthetic_doc();
+    doc.clips.push(Clip {
+        name: "empty".into(),
+        duration_s: 0.0,
+        tracks: vec![],
+    });
+    let error = preflight_glb_bytes(
+        &doc,
+        GlbProjectionPolicyV1::StrictFootCycleV1,
+        GlbWriteLimits::FOOT_CYCLE_V1,
+    )
+    .expect_err("strict candidate must not omit the clip");
+    assert!(
+        matches!(error, WriteError::Refused(message) if message.contains("no writable tracks"))
+    );
+}
+
+#[test]
+fn strict_preflight_accepts_the_exact_total_limit_and_refuses_its_first_byte_over() {
+    use animsmith_gltf::{
+        WriteError,
+        write::{GlbProjectionPolicyV1, GlbWriteLimits, preflight_glb_bytes},
+    };
+
+    let doc = synthetic_doc();
+    let generous = preflight_glb_bytes(
+        &doc,
+        GlbProjectionPolicyV1::StrictFootCycleV1,
+        GlbWriteLimits::FOOT_CYCLE_V1,
+    )
+    .expect("discover exact candidate count");
+    let exact = GlbWriteLimits {
+        max_json_bytes: generous.json_bytes(),
+        max_bin_bytes: generous.bin_bytes(),
+        max_total_bytes: generous.total_bytes(),
+    };
+    assert!(preflight_glb_bytes(&doc, GlbProjectionPolicyV1::StrictFootCycleV1, exact).is_ok());
+    let first_over = GlbWriteLimits {
+        max_total_bytes: exact.max_total_bytes - 1,
+        ..exact
+    };
+    assert!(matches!(
+        preflight_glb_bytes(&doc, GlbProjectionPolicyV1::StrictFootCycleV1, first_over),
+        Err(WriteError::TooLarge { field: "configured total GLB limit", bytes }) if bytes == exact.max_total_bytes
+    ));
+}
+
+#[test]
+fn strict_preflight_refuses_source_scene_membership_that_the_canonical_scene_would_collapse() {
+    use animsmith_gltf::{
+        WriteError,
+        write::{GlbProjectionPolicyV1, GlbWriteLimits, preflight_glb_bytes},
+    };
+
+    let mut doc = synthetic_doc();
+    doc.assets.scenes = vec![
+        SceneAsset {
+            source_scene_index: 0,
+            name: Some("first".into()),
+            roots: vec![0],
+        },
+        SceneAsset {
+            source_scene_index: 1,
+            name: Some("second".into()),
+            roots: vec![0],
+        },
+    ];
+    doc.assets.default_scene = Some(0);
+    assert!(matches!(
+        preflight_glb_bytes(
+            &doc,
+            GlbProjectionPolicyV1::StrictFootCycleV1,
+            GlbWriteLimits::FOOT_CYCLE_V1,
+        ),
+        Err(WriteError::Refused(message)) if message.contains("source scenes")
+    ));
+}
+
+#[test]
 fn gltf_round_trip() {
     assert_round_trip("gltf");
 }

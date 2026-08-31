@@ -9,6 +9,10 @@
 //! animation projection used by clip-track consumers.
 //! Malformed inputs report [`LoadError`]; output failures
 //! report [`WriteError`].
+//! [`write::preflight_glb_bytes`] plus [`write::write_glb_bytes`] are the
+//! explicit count-then-retain boundary for a bounded in-memory GLB candidate;
+//! callers select a projection policy and byte limits before any output bytes
+//! are retained.
 //!
 //! This crate is the glTF/GLB format edge around `animsmith-core`.
 //! Loading preserves authored animation values for checks and also carries
@@ -323,6 +327,23 @@ pub enum WriteError {
         /// Actual byte count that could not fit in the GLB field.
         bytes: usize,
     },
+    /// The bounded GLB projection cannot represent this document without
+    /// silently omitting or changing authored model data.
+    #[error("GLB projection refused: {0}")]
+    Refused(String),
+    /// A checked byte calculation or allocation reservation failed before
+    /// output bytes were constructed.
+    #[error("GLB output cannot reserve {bytes} bytes for {field}")]
+    Allocation {
+        /// The output component whose allocation could not be reserved.
+        field: &'static str,
+        /// Requested byte count.
+        bytes: usize,
+    },
+    /// The caller supplied a preflight receipt for a different document or
+    /// limit set.
+    #[error("GLB preflight receipt no longer matches the document")]
+    ReceiptMismatch,
 }
 
 /// Convert an external-resource URI to the shared safe relative key.
