@@ -2710,7 +2710,7 @@ fn is_presentation_control(ch: char) -> bool {
 /// formatting characters while leaving ordinary Unicode text readable. Each
 /// untrusted value therefore remains one visibly ordered physical line and
 /// cannot inject ANSI terminal commands.
-fn text_atom(text: &str) -> Cow<'_, str> {
+pub(crate) fn text_atom(text: &str) -> Cow<'_, str> {
     if !text.chars().any(is_presentation_control) {
         return Cow::Borrowed(text);
     }

@@ -13,7 +13,8 @@ prediction facets beside its sampled-motion view.
 the exact raw correspondence TOML bytes, recorded as `correspondence.input`.
 That TOML pins the exact source and target primary identities, their explicit
 selected node-name sets (including each selected root), the declared matching
-mode, and every tolerance. It does not infer skeleton membership from scene
+mode, the resolved explicit mapping (empty for exact-name mode), and every
+tolerance. It does not infer skeleton membership from scene
 graph reachability. Invalid or stale
 control input, unreadable input, or an input beyond the 64 MiB primary-source
 bound is an operator error (exit 2) and emits no result.
@@ -27,8 +28,9 @@ The result keeps structural topology/rest evidence separate from optional
 source skin-membership, inverse-bind, and deformation-model facets. A result
 is `compatible` only when every required topology/rest row was available and
 within its declared tolerances. Complete mismatches are `incompatible`; mixed
-available/unavailable topology/rest evidence is `partial`; and no evaluable
-correspondence is `not_evaluated`. The last three exit 1. Neither the outcome
+available/unavailable required topology/rest evidence is `partial` even when
+another retained field also mismatches; and no evaluable correspondence is
+`not_evaluated`. The last three exit 1. Neither the outcome
 nor any optional facet establishes retargeting, runtime deformation, masking,
 contact, gameplay, or artistic acceptance.
 
@@ -39,8 +41,20 @@ contains separate local and rest-world translation, rotation, and scale deltas;
 the world rotation exists only where the existing source measurement proves a
 right-handed unit-orthonormal rest-world linear transform. A child-bone ratio
 exists only when both corresponding parent/child world positions permit an
-independent nonzero length comparison. `missing_source`, `missing_target`, and
-`parent_mismatch` rows are explicit rather than folded into a score.
+independent nonzero length comparison. Parent correspondence and child length
+use the nearest selected ancestor, walking across unselected intermediate
+nodes; they compare the declared selector projection rather than claiming that
+the complete raw hierarchies are identical. `missing_source`, `missing_target`,
+and `parent_mismatch` rows are explicit rather than folded into a score.
+
+Non-pass rows identify a deterministic `owner_surface` and `remedy_class`.
+These route work to the correspondence, selected skeleton authority, selected
+skin/bind evidence, or a documented measurement boundary; they do not infer
+project, artist, or vendor blame from structure alone. Unavailable source and
+target evidence sides carry the same routing fields. The text view renders the
+exact source, target, selected-skeleton, and correspondence identities; matching
+mode and explicit pairs; tolerances; every retained row delta; facet details;
+and remediation routing. JSON remains the stable adapter contract.
 
 ## Transition-pose evaluation
 

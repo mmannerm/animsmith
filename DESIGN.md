@@ -3917,14 +3917,18 @@ correspondence bytes, canonical selected-skeleton provenance for each side,
 deterministic row order, and separate non-scoring evidence facets for source
 skin membership, inverse-bind accessors, and deformation model coverage.
 Topology/rest rows are the only scoring surface in V1. `compatible` means
-every required row was available and within tolerance; `incompatible` means at
-least one required row mismatched; `partial` retains mixed available and
-unavailable required evidence; and `not_evaluated` means no correspondence row
-was evaluable. Missing source/target names and parent mismatch remain explicit
-typed rows rather than being collapsed into an aggregate score.
+every required row was available and within tolerance; `partial` retains mixed
+available and unavailable required evidence even when another retained field
+mismatches; otherwise any required mismatch is `incompatible`; and
+`not_evaluated` means no correspondence row was evaluable. Missing source/target
+names and parent mismatch remain explicit typed rows rather than being
+collapsed into an aggregate score.
 
 The seam compares only the declared selector members. It does not infer a
 skeleton subtree from attachments, scene reachability, or skin membership.
+Parent correspondence and normalized child length walk through unselected
+intermediate nodes to the nearest selected ancestor, so they describe the
+declared projection and do not claim complete raw-hierarchy equality.
 `selected_skeleton_identity` is derived provenance, not a copied authored
 profile: AnimSmith serializes a canonical, name-ordered projection of each
 selected node's measured structural evidence and the declared selector, then
@@ -3932,6 +3936,13 @@ records that exact identity. Local and rest-world transform deltas reuse the
 existing normalized source-skeleton measurements contract; world-space
 comparison stays unavailable when the loaded source evidence does not prove a
 finite right-handed unit-orthonormal rest-world basis.
+
+Non-pass rows and unavailable evidence sides carry a typed remediation surface
+and likely remedy class. This routes work to correspondence, the selected
+skeleton authority, selected skin/bind evidence, or a measurement boundary
+without guessing whether a project integrator, artist, or vendor is to blame.
+The human text view renders those fields together with exact identities,
+matching authority, tolerances, row deltas, and facet details.
 
 ### F.11 Transition-family declaration V1 (#148)
 

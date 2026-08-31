@@ -46,6 +46,12 @@ fn write_duplicate_name_doc(path: &Path) {
     let mut document = two_bone_rotation_doc("walk", quats_from_angles(&[0.0; 5]), false);
     document.skeleton.bones[0].name = "root".into();
     document.skeleton.bones[1].name = "root".into();
+    document.skeleton.bones.push(Bone {
+        name: "spine".into(),
+        parent: Some(0),
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    });
     animsmith_gltf::write::write(&document, path).expect("writes duplicate-name fixture");
 }
 
@@ -127,7 +133,7 @@ normalized_bone_length_ratio_delta = {}
         toml_names(source_nodes),
         target.sha256(),
         target.bytes(),
-        if explicit { "target_root" } else { "root" },
+        target_nodes[0],
         toml_names(target_nodes),
         matching,
         length_tolerance,
@@ -135,13 +141,17 @@ normalized_bone_length_ratio_delta = {}
 }
 
 fn run(source: &Path, target: &Path, control: &Path) -> Output {
+    run_format(source, target, control, "json")
+}
+
+fn run_format(source: &Path, target: &Path, control: &Path, format: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .args(["skeleton", "compare"])
         .arg(source)
         .arg(target)
         .args(["--correspondence"])
         .arg(control)
-        .args(["--format", "json"])
+        .args(["--format", format])
         .output()
         .expect("runs skeleton compare")
 }
@@ -190,6 +200,15 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
     );
     assert_eq!(value["outcome"], "compatible");
     assert_eq!(value["correspondence"]["matching_mode"], "exact_name");
+    assert_eq!(value["correspondence"]["mapping"], json!({}));
+    let mut invalid_exact_mapping = value.clone();
+    invalid_exact_mapping["correspondence"]["mapping"] = json!({"root":"root"});
+    let schema: Value = serde_json::from_str(SCHEMA).unwrap();
+    assert!(
+        !jsonschema::validator_for(&schema)
+            .unwrap()
+            .is_valid(&invalid_exact_mapping)
+    );
     assert_eq!(
         value["source"]["selected_skeleton_identity"],
         value["target"]["selected_skeleton_identity"]
@@ -216,6 +235,14 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
         value["facets"]["skin_membership"]["target"]["detail"],
         "no target skin declarations include selected skeleton joints"
     );
+    assert_eq!(
+        value["facets"]["skin_membership"]["source"]["owner_surface"],
+        "selected_skin_bind_evidence"
+    );
+    assert_eq!(
+        value["facets"]["skin_membership"]["source"]["remedy_class"],
+        "supply_skin_bind_evidence"
+    );
     assert_eq!(value["facets"]["inverse_bind"]["state"], "unavailable");
     let repeated = run(&source, &target, &control);
     assert_eq!(output.stdout, repeated.stdout, "serialization is stable");
@@ -228,6 +255,17 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
     validate(&value);
     assert_eq!(value["outcome"], "incompatible");
     assert_eq!(value["correspondence"]["matching_mode"], "explicit");
+    assert_eq!(
+        value["correspondence"]["mapping"],
+        json!({"root":"target_root", "spine":"target_spine"})
+    );
+    let mut invalid_explicit_mapping = value.clone();
+    invalid_explicit_mapping["correspondence"]["mapping"] = json!({});
+    assert!(
+        !jsonschema::validator_for(&schema)
+            .unwrap()
+            .is_valid(&invalid_explicit_mapping)
+    );
     let spine = value["rows"]
         .as_array()
         .unwrap()
@@ -238,6 +276,8 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
         spine["normalized_child_bone_length_ratio"]["state"],
         "mismatch"
     );
+    assert_eq!(spine["owner_surface"], "selected_skeleton_authority");
+    assert_eq!(spine["remedy_class"], "align_rest_pose");
 }
 
 #[test]
@@ -267,6 +307,125 @@ fn skin_and_bind_facets_only_use_skins_that_include_the_selected_skeleton() {
         "unavailable"
     );
     assert_eq!(unrelated["facets"]["inverse_bind"]["state"], "unavailable");
+}
+
+#[test]
+fn text_report_preserves_authority_deltas_remediation_and_all_outcome_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.glb");
+    let target = temp.path().join("target.glb");
+    let control = temp.path().join("correspondence.toml");
+
+    write_doc(&source, "root", "spine", 0.5);
+    write_doc(&target, "root", "spine", 0.5);
+    std::fs::write(&control, correspondence(&source, &target, false, 0.0)).unwrap();
+    let machine = json(&run(&source, &target, &control));
+    let output = run_format(&source, &target, &control, "text");
+    assert!(output.status.success());
+    let report = String::from_utf8(output.stdout).unwrap();
+    let source_identity = InputIdentity::from_bytes(&std::fs::read(&source).unwrap());
+    let target_identity = InputIdentity::from_bytes(&std::fs::read(&target).unwrap());
+    let control_identity = InputIdentity::from_bytes(&std::fs::read(&control).unwrap());
+    assert!(report.starts_with("skeleton compatibility: compatible\n"));
+    assert!(report.contains(&format!(
+        "source input: sha256={} bytes={}",
+        source_identity.sha256(),
+        source_identity.bytes()
+    )));
+    assert!(report.contains(&format!(
+        "target input: sha256={} bytes={}",
+        target_identity.sha256(),
+        target_identity.bytes()
+    )));
+    assert!(report.contains(&format!(
+        "correspondence input: sha256={} bytes={}",
+        control_identity.sha256(),
+        control_identity.bytes()
+    )));
+    assert!(report.contains(&format!(
+        "source selected skeleton: sha256={} bytes={}",
+        machine["source"]["selected_skeleton_identity"]["sha256"]
+            .as_str()
+            .unwrap(),
+        machine["source"]["selected_skeleton_identity"]["bytes"]
+            .as_u64()
+            .unwrap()
+    )));
+    assert!(report.contains(&format!(
+        "target selected skeleton: sha256={} bytes={}",
+        machine["target"]["selected_skeleton_identity"]["sha256"]
+            .as_str()
+            .unwrap(),
+        machine["target"]["selected_skeleton_identity"]["bytes"]
+            .as_u64()
+            .unwrap()
+    )));
+    assert!(report.contains("source selector node: root"));
+    assert!(report.contains("target selector node: spine"));
+    assert!(report.contains("matching mode: exact_name"));
+    assert!(report.contains("tolerances: translation_m=0 rotation_deg=0 scale_delta=0 normalized_bone_length_ratio_delta=0"));
+    assert!(report.contains("local_rest.translation_m: state=pass"));
+    assert!(report.contains("facet skin_membership: unavailable required=false"));
+    assert!(report.contains("remedy_class=supply_skin_bind_evidence"));
+
+    write_doc(&target, "target_root", "target_spine", 1.0);
+    std::fs::write(&control, correspondence(&source, &target, true, 0.0)).unwrap();
+    let output = run_format(&source, &target, &control, "text");
+    assert_eq!(output.status.code(), Some(1));
+    let report = String::from_utf8(output.stdout).unwrap();
+    assert!(report.starts_with("skeleton compatibility: incompatible\n"));
+    assert!(report.contains("matching mode: explicit"));
+    assert!(report.contains("mapping: root -> target_root"));
+    assert!(report.contains("mapping: spine -> target_spine"));
+    assert!(report.contains("remedy_class=align_rest_pose"));
+
+    write_three_bone_doc(&source, 1, 0.0, 1.0);
+    write_three_bone_doc(&target, 1, 0.0, 2.0);
+    std::fs::write(
+        &control,
+        correspondence_with_selectors(
+            &source,
+            &target,
+            false,
+            0.0,
+            &["root", "spine", "head"],
+            &["root", "spine", "head"],
+        ),
+    )
+    .unwrap();
+    let output = run_format(&source, &target, &control, "text");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .starts_with("skeleton compatibility: partial\n")
+    );
+
+    write_doc(&source, "root", "spine", 0.5);
+    write_doc(&target, "target_root", "target_spine", 0.5);
+    std::fs::write(
+        &control,
+        correspondence_with_selectors(
+            &source,
+            &target,
+            false,
+            0.0,
+            &["root", "spine"],
+            &["target_root", "target_spine"],
+        ),
+    )
+    .unwrap();
+    let machine = run(&source, &target, &control);
+    assert_eq!(machine.status.code(), Some(1));
+    let machine = json(&machine);
+    validate(&machine);
+    assert_eq!(machine["outcome"], "not_evaluated");
+    let output = run_format(&source, &target, &control, "text");
+    assert_eq!(output.status.code(), Some(1));
+    let report = String::from_utf8(output.stdout).unwrap();
+    assert!(report.starts_with("skeleton compatibility: not_evaluated\n"));
+    assert!(report.contains("row missing_target: root -> -"));
+    assert!(report.contains("remedy_class=rename_or_remap"));
 }
 
 #[test]
@@ -339,18 +498,14 @@ fn schema_rejects_omitted_and_forbidden_fields_for_every_row_kind() {
     let delta = json!({"tolerance": 0.0, "state": "pass"});
     let rows = [
         json!({"kind":"matched", "source_name":"a", "target_name":"b", "parent_correspondence":"pass", "local_rest":rest, "rest_world":rest, "normalized_child_bone_length_ratio":delta}),
-        json!({"kind":"parent_mismatch", "source_name":"a", "target_name":"b", "parent_correspondence":"mismatch", "local_rest":rest, "rest_world":rest, "normalized_child_bone_length_ratio":delta}),
-        json!({"kind":"missing_target", "source_name":"a"}),
-        json!({"kind":"missing_source", "target_name":"b"}),
-        json!({"kind":"unavailable", "source_name":"a", "target_name":"b"}),
+        json!({"kind":"parent_mismatch", "source_name":"a", "target_name":"b", "parent_correspondence":"mismatch", "local_rest":rest, "rest_world":rest, "normalized_child_bone_length_ratio":delta, "owner_surface":"selected_skeleton_authority", "remedy_class":"align_hierarchy"}),
+        json!({"kind":"missing_target", "source_name":"a", "owner_surface":"correspondence", "remedy_class":"rename_or_remap"}),
+        json!({"kind":"missing_source", "target_name":"b", "owner_surface":"correspondence", "remedy_class":"rename_or_remap"}),
     ];
-    for (row, required_field) in rows.into_iter().zip([
-        "local_rest",
-        "rest_world",
-        "source_name",
-        "target_name",
-        "source_name",
-    ]) {
+    for (row, required_field) in
+        rows.into_iter()
+            .zip(["local_rest", "rest_world", "source_name", "target_name"])
+    {
         assert!(
             validator.is_valid(&row),
             "valid row: {row}; errors: {:?}",
@@ -366,6 +521,11 @@ fn schema_rejects_omitted_and_forbidden_fields_for_every_row_kind() {
             "forbidden field: {forbidden}"
         );
     }
+    let matched_with_half_remediation = json!({"kind":"matched", "source_name":"a", "target_name":"b", "parent_correspondence":"pass", "local_rest":rest, "rest_world":rest, "owner_surface":"measurement_boundary"});
+    assert!(!validator.is_valid(&matched_with_half_remediation));
+    assert!(
+        !validator.is_valid(&json!({"kind":"unavailable", "source_name":"a", "target_name":"b"}))
+    );
 }
 
 #[test]
@@ -512,6 +672,14 @@ fn reports_missing_parent_rotation_scale_and_unavailable_rotation_as_distinct_ev
             .iter()
             .any(|row| row["kind"] == "missing_source" && row["target_name"] == "head")
     );
+    let missing = missing_json["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["kind"] == "missing_source")
+        .unwrap();
+    assert_eq!(missing["owner_surface"], "correspondence");
+    assert_eq!(missing["remedy_class"], "rename_or_remap");
 
     write_three_bone_doc(&source, 1, 0.0, 1.0);
     write_three_bone_doc(&target, 0, 0.0, 1.0);
@@ -536,6 +704,8 @@ fn reports_missing_parent_rotation_scale_and_unavailable_rotation_as_distinct_ev
         .unwrap();
     assert_eq!(head["kind"], "parent_mismatch");
     assert_eq!(head["parent_correspondence"], "mismatch");
+    assert_eq!(head["owner_surface"], "selected_skeleton_authority");
+    assert_eq!(head["remedy_class"], "align_hierarchy");
 
     write_three_bone_doc(&target, 1, 0.5, 1.0);
     std::fs::write(

@@ -90,7 +90,9 @@ selector declares the complete finite node-name set on each side; it does not
 infer a subtree from `root_name`. The named root must be included, every name
 must resolve exactly once in its input, and only these explicitly selected
 nodes contribute rows. This prevents meshes, props, cameras, and other scene
-attachments from silently becoming skeleton evidence. All tolerances are
+attachments from silently becoming skeleton evidence. Parent comparison walks
+through unselected intermediate nodes to the nearest selected ancestor, so it
+describes this declared projection rather than the complete raw hierarchy. All tolerances are
 mandatory and have no defaults:
 
 ```toml

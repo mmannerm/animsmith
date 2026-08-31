@@ -40,12 +40,17 @@
     "correspondence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema", "schema_version", "input", "matching_mode", "tolerances"],
+      "required": ["schema", "schema_version", "input", "matching_mode", "mapping", "tolerances"],
+      "allOf": [
+        {"if": {"properties": {"matching_mode": {"const": "exact_name"}}}, "then": {"properties": {"mapping": {"maxProperties": 0}}}},
+        {"if": {"properties": {"matching_mode": {"const": "explicit"}}}, "then": {"properties": {"mapping": {"minProperties": 1}}}}
+      ],
       "properties": {
         "schema": {"const": "urn:animsmith:skeleton-correspondence:1"},
         "schema_version": {"const": 1},
         "input": {"$ref": "#/$defs/identity"},
         "matching_mode": {"enum": ["exact_name", "explicit"]},
+        "mapping": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
         "tolerances": {"$ref": "#/$defs/tolerances"}
       }
     },
@@ -78,17 +83,20 @@
         {"$ref": "#/$defs/matched_row"},
         {"$ref": "#/$defs/parent_mismatch_row"},
         {"$ref": "#/$defs/missing_target_row"},
-        {"$ref": "#/$defs/missing_source_row"},
-        {"$ref": "#/$defs/unavailable_row"}
+        {"$ref": "#/$defs/missing_source_row"}
       ]
     },
-    "matched_row": {"type": "object", "additionalProperties": false, "required": ["kind", "source_name", "target_name", "parent_correspondence", "local_rest", "rest_world"], "properties": {"kind": {"const": "matched"}, "source_name": {"type": "string"}, "target_name": {"type": "string"}, "parent_correspondence": {"const": "pass"}, "local_rest": {"$ref": "#/$defs/rest_deltas"}, "rest_world": {"$ref": "#/$defs/rest_deltas"}, "normalized_child_bone_length_ratio": {"$ref": "#/$defs/delta"}}},
-    "parent_mismatch_row": {"type": "object", "additionalProperties": false, "required": ["kind", "source_name", "target_name", "parent_correspondence", "local_rest", "rest_world"], "properties": {"kind": {"const": "parent_mismatch"}, "source_name": {"type": "string"}, "target_name": {"type": "string"}, "parent_correspondence": {"const": "mismatch"}, "local_rest": {"$ref": "#/$defs/rest_deltas"}, "rest_world": {"$ref": "#/$defs/rest_deltas"}, "normalized_child_bone_length_ratio": {"$ref": "#/$defs/delta"}}},
-    "missing_target_row": {"type": "object", "additionalProperties": false, "required": ["kind", "source_name"], "properties": {"kind": {"const": "missing_target"}, "source_name": {"type": "string"}}},
-    "missing_source_row": {"type": "object", "additionalProperties": false, "required": ["kind", "target_name"], "properties": {"kind": {"const": "missing_source"}, "target_name": {"type": "string"}}},
-    "unavailable_row": {"type": "object", "additionalProperties": false, "required": ["kind", "source_name", "target_name"], "properties": {"kind": {"const": "unavailable"}, "source_name": {"type": "string"}, "target_name": {"type": "string"}}},
+    "owner_surface": {"enum": ["correspondence", "selected_skeleton_authority", "selected_skin_bind_evidence", "measurement_boundary"]},
+    "remedy_class": {"enum": ["rename_or_remap", "align_hierarchy", "align_rest_pose", "supply_skin_bind_evidence", "unavailable_evidence"]},
+    "matched_row": {"type": "object", "additionalProperties": false, "required": ["kind", "source_name", "target_name", "parent_correspondence", "local_rest", "rest_world"], "dependentRequired": {"owner_surface": ["remedy_class"], "remedy_class": ["owner_surface"]}, "properties": {"kind": {"const": "matched"}, "source_name": {"type": "string"}, "target_name": {"type": "string"}, "parent_correspondence": {"const": "pass"}, "local_rest": {"$ref": "#/$defs/rest_deltas"}, "rest_world": {"$ref": "#/$defs/rest_deltas"}, "normalized_child_bone_length_ratio": {"$ref": "#/$defs/delta"}, "owner_surface": {"$ref": "#/$defs/owner_surface"}, "remedy_class": {"$ref": "#/$defs/remedy_class"}}},
+    "parent_mismatch_row": {"type": "object", "additionalProperties": false, "required": ["kind", "source_name", "target_name", "parent_correspondence", "local_rest", "rest_world", "owner_surface", "remedy_class"], "properties": {"kind": {"const": "parent_mismatch"}, "source_name": {"type": "string"}, "target_name": {"type": "string"}, "parent_correspondence": {"const": "mismatch"}, "local_rest": {"$ref": "#/$defs/rest_deltas"}, "rest_world": {"$ref": "#/$defs/rest_deltas"}, "normalized_child_bone_length_ratio": {"$ref": "#/$defs/delta"}, "owner_surface": {"const": "selected_skeleton_authority"}, "remedy_class": {"const": "align_hierarchy"}}},
+    "missing_target_row": {"type": "object", "additionalProperties": false, "required": ["kind", "source_name", "owner_surface", "remedy_class"], "properties": {"kind": {"const": "missing_target"}, "source_name": {"type": "string"}, "owner_surface": {"const": "correspondence"}, "remedy_class": {"const": "rename_or_remap"}}},
+    "missing_source_row": {"type": "object", "additionalProperties": false, "required": ["kind", "target_name", "owner_surface", "remedy_class"], "properties": {"kind": {"const": "missing_source"}, "target_name": {"type": "string"}, "owner_surface": {"const": "correspondence"}, "remedy_class": {"const": "rename_or_remap"}}},
     "facet_summary": {"type": "object", "additionalProperties": false, "required": ["required", "state"], "properties": {"required": {"type": "boolean"}, "state": {"$ref": "#/$defs/state"}}},
-    "evidence_side": {"type": "object", "additionalProperties": false, "required": ["state", "detail"], "properties": {"state": {"$ref": "#/$defs/state"}, "detail": {"type": "string"}}},
+    "evidence_side": {"oneOf": [
+      {"type": "object", "additionalProperties": false, "required": ["state", "detail"], "properties": {"state": {"const": "pass"}, "detail": {"type": "string"}}},
+      {"type": "object", "additionalProperties": false, "required": ["state", "detail", "owner_surface", "remedy_class"], "properties": {"state": {"const": "unavailable"}, "detail": {"type": "string"}, "owner_surface": {"$ref": "#/$defs/owner_surface"}, "remedy_class": {"$ref": "#/$defs/remedy_class"}}}
+    ]},
     "evidence": {"type": "object", "additionalProperties": false, "required": ["required", "state", "source", "target"], "properties": {"required": {"const": false}, "state": {"$ref": "#/$defs/state"}, "source": {"$ref": "#/$defs/evidence_side"}, "target": {"$ref": "#/$defs/evidence_side"}}},
     "facets": {
       "type": "object",

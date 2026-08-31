@@ -325,6 +325,17 @@ enum CompatibilityOutcome {
     NotEvaluated,
 }
 
+impl CompatibilityOutcome {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Compatible => "compatible",
+            Self::Incompatible => "incompatible",
+            Self::Partial => "partial",
+            Self::NotEvaluated => "not_evaluated",
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct ResultEnvelope {
     schema_version: u32,
@@ -345,6 +356,7 @@ struct CorrespondenceProvenance {
     schema_version: u32,
     input: InputIdentity,
     matching_mode: &'static str,
+    mapping: BTreeMap<String, String>,
     tolerances: OutputTolerances,
 }
 
@@ -394,6 +406,52 @@ struct Row {
     rest_world: Option<RestDeltas>,
     #[serde(skip_serializing_if = "Option::is_none")]
     normalized_child_bone_length_ratio: Option<Delta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner_surface: Option<OwnerSurface>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remedy_class: Option<RemedyClass>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum OwnerSurface {
+    Correspondence,
+    SelectedSkeletonAuthority,
+    SelectedSkinBindEvidence,
+    MeasurementBoundary,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RemedyClass {
+    RenameOrRemap,
+    AlignHierarchy,
+    AlignRestPose,
+    SupplySkinBindEvidence,
+    UnavailableEvidence,
+}
+
+impl OwnerSurface {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Correspondence => "correspondence",
+            Self::SelectedSkeletonAuthority => "selected_skeleton_authority",
+            Self::SelectedSkinBindEvidence => "selected_skin_bind_evidence",
+            Self::MeasurementBoundary => "measurement_boundary",
+        }
+    }
+}
+
+impl RemedyClass {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::RenameOrRemap => "rename_or_remap",
+            Self::AlignHierarchy => "align_hierarchy",
+            Self::AlignRestPose => "align_rest_pose",
+            Self::SupplySkinBindEvidence => "supply_skin_bind_evidence",
+            Self::UnavailableEvidence => "unavailable_evidence",
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -402,6 +460,16 @@ enum FacetState {
     Pass,
     Mismatch,
     Unavailable,
+}
+
+impl FacetState {
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Mismatch => "mismatch",
+            Self::Unavailable => "unavailable",
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -445,6 +513,10 @@ struct EvidenceSummary {
 struct EvidenceSide {
     state: FacetState,
     detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner_surface: Option<OwnerSurface>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remedy_class: Option<RemedyClass>,
 }
 
 fn compare(
@@ -562,6 +634,10 @@ fn compare(
             matching_mode: match correspondence.mapping {
                 Matching::ExactName => "exact_name",
                 Matching::Explicit(_) => "explicit",
+            },
+            mapping: match &correspondence.mapping {
+                Matching::ExactName => BTreeMap::new(),
+                Matching::Explicit(mapping) => mapping.clone(),
             },
             tolerances: OutputTolerances {
                 translation_m: correspondence.tolerances.translation_m,
@@ -771,6 +847,12 @@ fn compare_rows(
             || rest_mismatch(local_rest.as_ref())
             || rest_mismatch(rest_world.as_ref())
             || delta_mismatch(length.as_ref());
+        let remediation = row_remediation(
+            &parent,
+            local_rest.as_ref(),
+            rest_world.as_ref(),
+            length.as_ref(),
+        );
         mismatches |= row_mismatch;
         rows.push(Row {
             kind: if matches!(parent, FacetState::Mismatch) {
@@ -784,6 +866,8 @@ fn compare_rows(
             local_rest,
             rest_world,
             normalized_child_bone_length_ratio: length,
+            owner_surface: remediation.map(|value| value.0),
+            remedy_class: remediation.map(|value| value.1),
         });
     }
     for name in source.keys().filter(|name| !map.contains_key(*name)) {
@@ -796,6 +880,8 @@ fn compare_rows(
             local_rest: None,
             rest_world: None,
             normalized_child_bone_length_ratio: None,
+            owner_surface: Some(OwnerSurface::Correspondence),
+            remedy_class: Some(RemedyClass::RenameOrRemap),
         });
     }
     for name in target.keys().filter(|name| !mapped_targets.contains(*name)) {
@@ -808,6 +894,8 @@ fn compare_rows(
             local_rest: None,
             rest_world: None,
             normalized_child_bone_length_ratio: None,
+            owner_surface: Some(OwnerSurface::Correspondence),
+            remedy_class: Some(RemedyClass::RenameOrRemap),
         });
     }
     Ok((rows, mismatches, evaluable))
@@ -1037,6 +1125,47 @@ fn delta_mismatch(value: Option<&Delta>) -> bool {
     value.is_some_and(|value| matches!(value.state, FacetState::Mismatch))
 }
 
+fn row_remediation(
+    parent: &FacetState,
+    local_rest: Option<&RestDeltas>,
+    rest_world: Option<&RestDeltas>,
+    length: Option<&Delta>,
+) -> Option<(OwnerSurface, RemedyClass)> {
+    if matches!(parent, FacetState::Mismatch) {
+        Some((
+            OwnerSurface::SelectedSkeletonAuthority,
+            RemedyClass::AlignHierarchy,
+        ))
+    } else if rest_mismatch(local_rest) || rest_mismatch(rest_world) || delta_mismatch(length) {
+        Some((
+            OwnerSurface::SelectedSkeletonAuthority,
+            RemedyClass::AlignRestPose,
+        ))
+    } else if rest_unavailable(local_rest)
+        || rest_unavailable(rest_world)
+        || delta_unavailable(length)
+    {
+        Some((
+            OwnerSurface::MeasurementBoundary,
+            RemedyClass::UnavailableEvidence,
+        ))
+    } else {
+        None
+    }
+}
+
+fn rest_unavailable(value: Option<&RestDeltas>) -> bool {
+    value.is_some_and(|value| {
+        delta_unavailable(Some(&value.translation_m))
+            || delta_unavailable(Some(&value.rotation_deg))
+            || delta_unavailable(Some(&value.scale_delta))
+    })
+}
+
+fn delta_unavailable(value: Option<&Delta>) -> bool {
+    value.is_some_and(|value| matches!(value.state, FacetState::Unavailable))
+}
+
 enum EvidenceKind {
     Skin,
     Bind,
@@ -1071,12 +1200,16 @@ fn evidence_summary(
                 SkeletonSourceCoverage::Unavailable => EvidenceSide {
                     state: FacetState::Unavailable,
                     detail: format!("{side_name} skeleton coverage unavailable"),
+                    owner_surface: Some(OwnerSurface::SelectedSkinBindEvidence),
+                    remedy_class: Some(RemedyClass::SupplySkinBindEvidence),
                 },
                 SkeletonSourceCoverage::Complete if relevant_skins.is_empty() => EvidenceSide {
                     state: FacetState::Unavailable,
                     detail: format!(
                         "no {side_name} skin declarations include selected skeleton joints"
                     ),
+                    owner_surface: Some(OwnerSurface::SelectedSkinBindEvidence),
+                    remedy_class: Some(RemedyClass::SupplySkinBindEvidence),
                 },
                 SkeletonSourceCoverage::Complete => EvidenceSide {
                     state: FacetState::Pass,
@@ -1084,18 +1217,24 @@ fn evidence_summary(
                         "{} {side_name} skin declarations include selected skeleton joints",
                         relevant_skins.len()
                     ),
+                    owner_surface: None,
+                    remedy_class: None,
                 },
             },
             EvidenceKind::Bind => match assets.skeleton_source_coverage {
                 SkeletonSourceCoverage::Unavailable => EvidenceSide {
                     state: FacetState::Unavailable,
                     detail: format!("{side_name} skeleton coverage unavailable"),
+                    owner_surface: Some(OwnerSurface::SelectedSkinBindEvidence),
+                    remedy_class: Some(RemedyClass::SupplySkinBindEvidence),
                 },
                 SkeletonSourceCoverage::Complete if relevant_skins.is_empty() => EvidenceSide {
                     state: FacetState::Unavailable,
                     detail: format!(
                         "no {side_name} skin declarations include selected skeleton joints"
                     ),
+                    owner_surface: Some(OwnerSurface::SelectedSkinBindEvidence),
+                    remedy_class: Some(RemedyClass::SupplySkinBindEvidence),
                 },
                 SkeletonSourceCoverage::Complete
                     if relevant_skins.iter().all(|skin| {
@@ -1109,6 +1248,8 @@ fn evidence_summary(
                             "{} {side_name} selected-skeleton skin declarations have readable inverse-bind accessors",
                             relevant_skins.len()
                         ),
+                        owner_surface: None,
+                        remedy_class: None,
                     }
                 }
                 SkeletonSourceCoverage::Complete => EvidenceSide {
@@ -1116,6 +1257,8 @@ fn evidence_summary(
                     detail: format!(
                         "one or more {side_name} selected-skeleton skin inverse-bind accessors are unavailable"
                     ),
+                    owner_surface: Some(OwnerSurface::SelectedSkinBindEvidence),
+                    remedy_class: Some(RemedyClass::SupplySkinBindEvidence),
                 },
             },
             EvidenceKind::Deformation => EvidenceSide {
@@ -1123,6 +1266,8 @@ fn evidence_summary(
                 detail: format!(
                     "the format-neutral {side_name} contract has no deformation-model evidence"
                 ),
+                owner_surface: Some(OwnerSurface::MeasurementBoundary),
+                remedy_class: Some(RemedyClass::UnavailableEvidence),
             },
         }
     };
@@ -1144,13 +1289,194 @@ fn evidence_summary(
 }
 
 fn render_text(result: &ResultEnvelope) -> String {
-    let mut text = format!("skeleton compatibility: {:?}\n", result.outcome).to_lowercase();
-    for row in &result.rows {
-        let source = row.source_name.as_deref().unwrap_or("-");
-        let target = row.target_name.as_deref().unwrap_or("-");
-        text.push_str(&format!("{:<18} {} -> {}\n", row.kind, source, target));
+    let mut text = format!("skeleton compatibility: {}\n", result.outcome.as_str());
+    push_identity(&mut text, "source input", &result.source.input);
+    push_identity(
+        &mut text,
+        "source selected skeleton",
+        &result.source.selected_skeleton_identity,
+    );
+    text.push_str(&format!(
+        "source selector: root={} nodes={}\n",
+        super::render::text_atom(&result.source.selector.root_name),
+        result.source.selector.node_names.len()
+    ));
+    for name in &result.source.selector.node_names {
+        text.push_str(&format!(
+            "source selector node: {}\n",
+            super::render::text_atom(name)
+        ));
     }
+    push_dependency_closure(&mut text, "source", &result.source);
+    push_identity(&mut text, "target input", &result.target.input);
+    push_identity(
+        &mut text,
+        "target selected skeleton",
+        &result.target.selected_skeleton_identity,
+    );
+    text.push_str(&format!(
+        "target selector: root={} nodes={}\n",
+        super::render::text_atom(&result.target.selector.root_name),
+        result.target.selector.node_names.len()
+    ));
+    for name in &result.target.selector.node_names {
+        text.push_str(&format!(
+            "target selector node: {}\n",
+            super::render::text_atom(name)
+        ));
+    }
+    push_dependency_closure(&mut text, "target", &result.target);
+    push_identity(
+        &mut text,
+        "correspondence input",
+        &result.correspondence.input,
+    );
+    text.push_str(&format!(
+        "matching mode: {}\n",
+        result.correspondence.matching_mode
+    ));
+    for (source, target) in &result.correspondence.mapping {
+        text.push_str(&format!(
+            "mapping: {} -> {}\n",
+            super::render::text_atom(source),
+            super::render::text_atom(target)
+        ));
+    }
+    text.push_str(&format!(
+        "tolerances: translation_m={} rotation_deg={} scale_delta={} normalized_bone_length_ratio_delta={}\n",
+        result.correspondence.tolerances.translation_m,
+        result.correspondence.tolerances.rotation_deg,
+        result.correspondence.tolerances.scale_delta,
+        result
+            .correspondence
+            .tolerances
+            .normalized_bone_length_ratio_delta
+    ));
+    for row in &result.rows {
+        let source = row
+            .source_name
+            .as_deref()
+            .map(super::render::text_atom)
+            .unwrap_or_else(|| "-".into());
+        let target = row
+            .target_name
+            .as_deref()
+            .map(super::render::text_atom)
+            .unwrap_or_else(|| "-".into());
+        text.push_str(&format!("row {}: {} -> {}\n", row.kind, source, target));
+        if let Some(parent) = &row.parent_correspondence {
+            text.push_str(&format!("  parent_correspondence: {}\n", parent.as_str()));
+        }
+        push_rest_deltas(&mut text, "local_rest", row.local_rest.as_ref());
+        push_rest_deltas(&mut text, "rest_world", row.rest_world.as_ref());
+        push_delta(
+            &mut text,
+            "normalized_child_bone_length_ratio",
+            row.normalized_child_bone_length_ratio.as_ref(),
+        );
+        push_remediation(&mut text, row.owner_surface, row.remedy_class);
+    }
+    text.push_str(&format!(
+        "facet topology_rest: {} required={}\n",
+        result.facets.topology_rest.state.as_str(),
+        result.facets.topology_rest.required
+    ));
+    push_evidence(&mut text, "skin_membership", &result.facets.skin_membership);
+    push_evidence(&mut text, "inverse_bind", &result.facets.inverse_bind);
+    push_evidence(
+        &mut text,
+        "deformation_model",
+        &result.facets.deformation_model,
+    );
     text
+}
+
+fn push_identity(text: &mut String, label: &str, identity: &InputIdentity) {
+    text.push_str(&format!(
+        "{label}: sha256={} bytes={}\n",
+        identity.sha256(),
+        identity.bytes()
+    ));
+}
+
+fn push_dependency_closure(text: &mut String, label: &str, subject: &SubjectProvenance) {
+    if let Some(identity) = &subject.dependency_closure_identity {
+        push_identity(
+            text,
+            &format!("{label} dependency closure"),
+            identity.input_identity(),
+        );
+    } else {
+        text.push_str(&format!(
+            "{label} dependency closure: unavailable complete={}\n",
+            subject.dependency_closure_complete
+        ));
+    }
+}
+
+fn push_rest_deltas(text: &mut String, label: &str, deltas: Option<&RestDeltas>) {
+    let Some(deltas) = deltas else { return };
+    push_delta(
+        text,
+        &format!("{label}.translation_m"),
+        Some(&deltas.translation_m),
+    );
+    push_delta(
+        text,
+        &format!("{label}.rotation_deg"),
+        Some(&deltas.rotation_deg),
+    );
+    push_delta(
+        text,
+        &format!("{label}.scale_delta"),
+        Some(&deltas.scale_delta),
+    );
+}
+
+fn push_delta(text: &mut String, label: &str, delta: Option<&Delta>) {
+    let Some(delta) = delta else { return };
+    let value = delta
+        .value
+        .map_or_else(|| "unavailable".to_owned(), |value| value.to_string());
+    text.push_str(&format!(
+        "  {label}: state={} value={} tolerance={}\n",
+        delta.state.as_str(),
+        value,
+        delta.tolerance
+    ));
+}
+
+fn push_remediation(
+    text: &mut String,
+    owner_surface: Option<OwnerSurface>,
+    remedy_class: Option<RemedyClass>,
+) {
+    if let (Some(owner_surface), Some(remedy_class)) = (owner_surface, remedy_class) {
+        text.push_str(&format!(
+            "  remediation: owner_surface={} remedy_class={}\n",
+            owner_surface.as_str(),
+            remedy_class.as_str()
+        ));
+    }
+}
+
+fn push_evidence(text: &mut String, label: &str, evidence: &EvidenceSummary) {
+    text.push_str(&format!(
+        "facet {label}: {} required={}\n",
+        evidence.state.as_str(),
+        evidence.required
+    ));
+    push_evidence_side(text, "source", &evidence.source);
+    push_evidence_side(text, "target", &evidence.target);
+}
+
+fn push_evidence_side(text: &mut String, label: &str, evidence: &EvidenceSide) {
+    text.push_str(&format!(
+        "  {label}: state={} detail={}\n",
+        evidence.state.as_str(),
+        super::render::text_atom(&evidence.detail)
+    ));
+    push_remediation(text, evidence.owner_surface, evidence.remedy_class);
 }
 
 #[cfg(test)]
