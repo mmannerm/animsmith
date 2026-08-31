@@ -140,16 +140,6 @@ pub enum AssemblyError {
         /// Referenced normalized node.
         bone: BoneId,
     },
-    /// A declared scene root is outside the skeleton.
-    #[error("scene {scene_index} root {root_index} references missing node {bone}")]
-    RemovalSceneRootOutOfBounds {
-        /// Scene index.
-        scene_index: usize,
-        /// Root slot within the scene.
-        root_index: usize,
-        /// Missing node index.
-        bone: BoneId,
-    },
     /// The document no longer has the skeleton used to build a removal plan.
     #[error("node-removal plan does not match the assembled skeleton")]
     RemovalPlanDocumentMismatch,
@@ -212,7 +202,6 @@ pub fn plan_node_subtree_removal(
 ) -> Result<NodeSubtreeRemovalPlan, AssemblyError> {
     validate_document_shape(document)
         .map_err(|violation| AssemblyError::InvalidRemovalDocument { violation })?;
-    validate_scene_roots(document)?;
 
     let mut selected = vec![false; document.skeleton.bones.len()];
     let mut matches = names
@@ -312,7 +301,6 @@ pub fn apply_node_subtree_removal(
     }
     validate_document_shape(document)
         .map_err(|violation| AssemblyError::InvalidRemovalDocument { violation })?;
-    validate_scene_roots(document)?;
     if plan.removed_nodes.is_empty() {
         return Ok(());
     }
@@ -418,22 +406,6 @@ pub fn apply_node_subtree_removal(
     }
     document.assets.source_skeleton = SourceSkeletonAssets::default();
     debug_assert!(validate_document_shape(document).is_ok());
-    Ok(())
-}
-
-fn validate_scene_roots(document: &Document) -> Result<(), AssemblyError> {
-    let bone_count = document.skeleton.bones.len();
-    for (scene_index, scene) in document.assets.scenes.iter().enumerate() {
-        for (root_index, &bone) in scene.roots.iter().enumerate() {
-            if bone >= bone_count {
-                return Err(AssemblyError::RemovalSceneRootOutOfBounds {
-                    scene_index,
-                    root_index,
-                    bone,
-                });
-            }
-        }
-    }
     Ok(())
 }
 
@@ -1135,12 +1107,20 @@ mod node_subtree_removal_tests {
         let plan = plan_prop(&invalid_scene);
         invalid_scene.assets.scenes[0].roots[2] = 99;
         let before = format!("{invalid_scene:?}");
+        assert!(matches!(
+            plan_node_subtree_removal(&invalid_scene, &["prop-root".into()]),
+            Err(AssemblyError::InvalidRemovalDocument {
+                violation: DocumentShapeError::SceneRootOutOfBounds { .. }
+            })
+        ));
         assert_eq!(
             apply_node_subtree_removal(&mut invalid_scene, &plan).unwrap_err(),
-            AssemblyError::RemovalSceneRootOutOfBounds {
-                scene_index: 0,
-                root_index: 2,
-                bone: 99,
+            AssemblyError::InvalidRemovalDocument {
+                violation: DocumentShapeError::SceneRootOutOfBounds {
+                    scene_index: 0,
+                    root_index: 2,
+                    bone: 99,
+                }
             }
         );
         assert_unchanged(&invalid_scene, &before);

@@ -279,6 +279,37 @@ fn rest_bind_plan(document: &Document) -> animsmith_core::scale::ScalePlan {
     rest_bind_plan_with_factor(document, 0.01)
 }
 
+#[test]
+fn public_scale_plan_and_proof_reject_later_scene_root() {
+    let mut document = rig_document(&[rig(None, 0, Vec3::ZERO)], &[0]);
+    document.assets.scenes = vec![
+        animsmith_core::model::SceneAsset {
+            roots: vec![0],
+            ..Default::default()
+        },
+        animsmith_core::model::SceneAsset {
+            roots: vec![99],
+            ..Default::default()
+        },
+    ];
+    let capability = complete_capability();
+    assert_eq!(
+        plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+            document: &document,
+            capability: &capability,
+        })
+        .unwrap_err(),
+        ScaleError::InvalidDocumentShape(
+            animsmith_core::DocumentShapeError::SceneRootOutOfBounds {
+                scene_index: 1,
+                root_index: 0,
+                bone: 99,
+            }
+        )
+    );
+}
+
 fn rest_bind_plan_with_factor(
     document: &Document,
     expected_factor: f64,

@@ -576,6 +576,16 @@ pub enum DocumentShapeError {
         /// The invalid parent index.
         parent: BoneId,
     },
+    /// A declared scene root is outside the normalized skeleton.
+    #[error("scene {scene_index} root {root_index} references missing node {bone}")]
+    SceneRootOutOfBounds {
+        /// Index into [`SceneAssets::scenes`].
+        scene_index: usize,
+        /// Root slot within the scene.
+        root_index: usize,
+        /// Missing normalized skeleton node index.
+        bone: BoneId,
+    },
     /// The source-node projection declares one source node identity twice.
     #[error("source skeleton declares duplicate source node index {source_node_index}")]
     DuplicateSourceNodeIndex {
@@ -1355,8 +1365,8 @@ pub struct SceneAssets {
 /// # Errors
 ///
 /// Returns a typed [`DocumentShapeError`] for the first violation in stable
-/// validation order: skeleton rest/topology, source identity/projection,
-/// tracks, instances, then bone-level inverse binds.
+/// validation order: skeleton rest/topology, scene roots, source
+/// identity/projection, tracks, instances, then bone-level inverse binds.
 pub fn validate_document_shape(document: &Document) -> Result<(), DocumentShapeError> {
     validate_document_structure_prefix(document)?;
     validate_clip_tracks(document)?;
@@ -1366,8 +1376,25 @@ pub fn validate_document_shape(document: &Document) -> Result<(), DocumentShapeE
 
 fn validate_document_structure_prefix(document: &Document) -> Result<(), DocumentShapeError> {
     validate_skeleton_rest(&document.skeleton)?;
+    validate_scene_roots(document)?;
     validate_source_skeleton_identity(&document.assets.source_skeleton)?;
     validate_source_projection(document)
+}
+
+fn validate_scene_roots(document: &Document) -> Result<(), DocumentShapeError> {
+    let bone_count = document.skeleton.bones.len();
+    for (scene_index, scene) in document.assets.scenes.iter().enumerate() {
+        for (root_index, &bone) in scene.roots.iter().enumerate() {
+            if bone >= bone_count {
+                return Err(DocumentShapeError::SceneRootOutOfBounds {
+                    scene_index,
+                    root_index,
+                    bone,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_skeleton_rest(skeleton: &Skeleton) -> Result<(), DocumentShapeError> {
@@ -1670,6 +1697,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn document_shape_validation_checks_all_scene_roots_in_stable_order() {
+        let mut document = one_bone_document();
+        document.assets.scenes = vec![
+            SceneAsset {
+                roots: vec![0],
+                ..SceneAsset::default()
+            },
+            SceneAsset {
+                roots: vec![0, 17],
+                ..SceneAsset::default()
+            },
+        ];
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::SceneRootOutOfBounds {
+                scene_index: 1,
+                root_index: 1,
+                bone: 17,
+            })
+        );
+    }
+
+    #[test]
+    fn document_shape_scene_roots_precede_source_identity_errors() {
+        let mut document = one_bone_document();
+        document.assets.scenes.push(SceneAsset {
+            roots: vec![99],
+            ..SceneAsset::default()
+        });
+        document.assets.source_skeleton.nodes =
+            vec![source_node(0, None, None), source_node(0, None, None)];
+        assert_eq!(
+            validate_document_shape(&document),
+            Err(DocumentShapeError::SceneRootOutOfBounds {
+                scene_index: 0,
+                root_index: 0,
+                bone: 99,
+            })
+        );
+    }
+
     fn source_node(
         source_node_index: usize,
         parent_source_node_index: Option<usize>,
@@ -1823,6 +1892,17 @@ mod tests {
             instance_index: 0,
             violation,
         };
+        let mut bad_scene_root = one_bone_document();
+        bad_scene_root.assets.scenes = vec![
+            SceneAsset {
+                roots: vec![0],
+                ..SceneAsset::default()
+            },
+            SceneAsset {
+                roots: vec![99],
+                ..SceneAsset::default()
+            },
+        ];
 
         let mut non_finite_rest = one_bone_document();
         non_finite_rest.skeleton.bones[0].rest.translation.x = f32::NAN;
@@ -2098,6 +2178,15 @@ mod tests {
         bad_bone_ibm.skeleton.bones[0].inverse_bind = Some(Mat4::from_cols_array(&[f32::NAN; 16]));
 
         let cases = vec![
+            (
+                "scene root boundary",
+                bad_scene_root,
+                DocumentShapeError::SceneRootOutOfBounds {
+                    scene_index: 1,
+                    root_index: 0,
+                    bone: 99,
+                },
+            ),
             (
                 "non-finite rest",
                 non_finite_rest,
