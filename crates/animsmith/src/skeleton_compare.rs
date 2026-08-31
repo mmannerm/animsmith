@@ -596,7 +596,7 @@ struct SelectedNode<'a> {
 #[derive(Serialize)]
 struct SelectedSkeletonIdentity<'a> {
     root_name: &'a str,
-    node_names: &'a [String],
+    node_names: Vec<&'a str>,
     nodes: BTreeMap<&'a str, &'a SkeletonNodeMeasurements>,
 }
 
@@ -604,9 +604,15 @@ fn selected_skeleton_identity(
     nodes: &BTreeMap<String, SelectedNode<'_>>,
     subject: &Subject,
 ) -> Result<InputIdentity, String> {
+    let mut node_names = subject
+        .node_names
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    node_names.sort_unstable();
     let projection = SelectedSkeletonIdentity {
         root_name: &subject.root_name,
-        node_names: &subject.node_names,
+        node_names,
         nodes: nodes
             .iter()
             .map(|(name, selected)| (name.as_str(), selected.node))

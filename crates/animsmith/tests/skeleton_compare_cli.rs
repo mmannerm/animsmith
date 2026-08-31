@@ -4,7 +4,7 @@ use animsmith_core::InputIdentity;
 use animsmith_core::glam::{Quat, Vec3};
 use animsmith_core::model::{Bone, Transform};
 use animsmith_testkit::{quats_from_angles, two_bone_rotation_doc};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -235,6 +235,76 @@ fn uses_only_the_explicitly_declared_node_set() {
             .iter()
             .all(|row| row["source_name"] != "head" && row["target_name"] != "head")
     );
+}
+
+#[test]
+fn selected_skeleton_identity_is_invariant_to_selector_name_order() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.glb");
+    let target = temp.path().join("target.glb");
+    let control = temp.path().join("correspondence.toml");
+    write_doc(&source, "root", "spine", 0.5);
+    write_doc(&target, "root", "spine", 0.5);
+    std::fs::write(&control, correspondence(&source, &target, false, 0.0)).unwrap();
+    let canonical = json(&run(&source, &target, &control));
+    let reordered = correspondence(&source, &target, false, 0.0).replace(
+        "node_names = [\"root\", \"spine\"]",
+        "node_names = [\"spine\", \"root\"]",
+    );
+    std::fs::write(&control, reordered).unwrap();
+    let reordered = json(&run(&source, &target, &control));
+    assert_eq!(canonical["outcome"], reordered["outcome"]);
+    assert_eq!(canonical["rows"], reordered["rows"]);
+    assert_eq!(
+        canonical["source"]["selected_skeleton_identity"],
+        reordered["source"]["selected_skeleton_identity"]
+    );
+    assert_eq!(
+        canonical["target"]["selected_skeleton_identity"],
+        reordered["target"]["selected_skeleton_identity"]
+    );
+}
+
+#[test]
+fn schema_rejects_omitted_and_forbidden_fields_for_every_row_kind() {
+    let schema: Value = serde_json::from_str(SCHEMA).unwrap();
+    let row_schema = json!({"$defs": schema["$defs"], "$ref": "#/$defs/row"});
+    let validator = jsonschema::validator_for(&row_schema).unwrap();
+    let rest = json!({
+        "translation_m": {"tolerance": 0.0, "state": "pass"},
+        "rotation_deg": {"tolerance": 0.0, "state": "pass"},
+        "scale_delta": {"tolerance": 0.0, "state": "pass"}
+    });
+    let delta = json!({"tolerance": 0.0, "state": "pass"});
+    let rows = [
+        json!({"kind":"matched", "source_name":"a", "target_name":"b", "parent_correspondence":"pass", "local_rest":rest, "rest_world":rest, "normalized_child_bone_length_ratio":delta}),
+        json!({"kind":"parent_mismatch", "source_name":"a", "target_name":"b", "parent_correspondence":"mismatch", "local_rest":rest, "rest_world":rest, "normalized_child_bone_length_ratio":delta}),
+        json!({"kind":"missing_target", "source_name":"a"}),
+        json!({"kind":"missing_source", "target_name":"b"}),
+        json!({"kind":"unavailable", "source_name":"a", "target_name":"b"}),
+    ];
+    for (row, required_field) in rows.into_iter().zip([
+        "local_rest",
+        "rest_world",
+        "source_name",
+        "target_name",
+        "source_name",
+    ]) {
+        assert!(
+            validator.is_valid(&row),
+            "valid row: {row}; errors: {:?}",
+            validator.iter_errors(&row).collect::<Vec<_>>()
+        );
+        let mut omitted = row.clone();
+        omitted.as_object_mut().unwrap().remove(required_field);
+        assert!(!validator.is_valid(&omitted), "omitted field: {omitted}");
+        let mut forbidden = row.clone();
+        forbidden["forbidden"] = json!(true);
+        assert!(
+            !validator.is_valid(&forbidden),
+            "forbidden field: {forbidden}"
+        );
+    }
 }
 
 #[test]
