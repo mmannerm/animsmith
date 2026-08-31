@@ -76,6 +76,11 @@ mod contact_producer;
 mod foot_cycle_parameterization;
 #[allow(
     dead_code,
+    reason = "issue #18 freezes in-memory artifact proof before exposing a CLI command"
+)]
+mod foot_cycle_proof;
+#[allow(
+    dead_code,
     reason = "issue #18 freezes source-bound preparation before exposing a CLI command"
 )]
 mod foot_cycle_source_prep;

@@ -475,6 +475,24 @@ fn strict_complete_sidecars_refuse_resource_graph_and_stale_skin_count() {
     let mut doc = complete_strict_asset_doc();
     doc.assets.material_resources.coverage = MaterialResourceCoverage::Complete;
     assert!(
+        matches!(strict(&doc), Err(WriteError::Refused(message)) if message.contains("material-resource")),
+        "an empty source sidecar cannot excuse writer-facing materials"
+    );
+    doc.assets.materials.clear();
+    for mesh in &mut doc.assets.meshes {
+        for primitive in &mut mesh.primitives {
+            primitive.material = None;
+        }
+    }
+    assert!(
+        strict(&doc).is_ok(),
+        "complete empty resource facts round-trip exactly"
+    );
+    doc.assets
+        .material_resources
+        .materials
+        .push(SourceMaterialAsset::default());
+    assert!(
         matches!(strict(&doc), Err(WriteError::Refused(message)) if message.contains("material-resource"))
     );
     let mut doc = complete_strict_asset_doc();

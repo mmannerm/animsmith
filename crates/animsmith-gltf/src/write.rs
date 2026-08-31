@@ -1458,9 +1458,20 @@ fn strict_complete_material_resources_projectable(doc: &Document) -> Result<(), 
     if resources.coverage != MaterialResourceCoverage::Complete {
         return Ok(());
     }
+    // An exact empty source graph is preserved: the emitted GLB has no
+    // materials, textures, or images and the same loader redetects complete
+    // empty lists. Non-empty complete graphs still carry source-only ids,
+    // declaration kinds, and inspection facts that this writer cannot emit.
+    if resources.materials.is_empty()
+        && resources.textures.is_empty()
+        && resources.images.is_empty()
+        && doc.assets.materials.is_empty()
+    {
+        return Ok(());
+    }
     // The normalized writer has texture bytes and MIME types, but no stable
     // source texture/image ids, declaration kinds, or inspection facts. A
-    // complete resource graph would be regenerated rather than preserved.
+    // non-empty complete resource graph would be regenerated rather than preserved.
     Err(WriteError::Refused(
         "complete source material-resource evidence is not preserved by the writer".to_owned(),
     ))

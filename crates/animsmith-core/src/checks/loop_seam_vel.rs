@@ -3,6 +3,7 @@
 //! locomotion stride are required.
 
 use crate::check::{Check, CheckCtx};
+use crate::config::{ClipExpectations, Config};
 use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
@@ -14,6 +15,16 @@ use super::exceeds_f32_cap;
 /// Default maximum difference between the velocities entering and leaving
 /// the seam: 0.1 metres per second.
 pub const DEFAULT_MAX_VELOCITY_DELTA_MPS: f64 = 0.1;
+
+/// Resolve the global/default and per-clip linear seam-velocity cap.
+pub(crate) fn effective_cap(config: &Config, expectations: &ClipExpectations) -> f64 {
+    expectations.max_loop_velocity_delta_mps.unwrap_or(
+        config
+            .check_settings("loop-seam-vel")
+            .max_velocity_delta_mps
+            .unwrap_or(DEFAULT_MAX_VELOCITY_DELTA_MPS),
+    )
+}
 
 pub struct LoopSeamVelocity;
 
@@ -38,20 +49,12 @@ impl Check for LoopSeamVelocity {
         let mut findings = Vec::new();
         let mut evaluated_scopes = Vec::new();
         let mut gaps = Vec::new();
-        let global_max_velocity_delta_mps = ctx
-            .config
-            .check_settings(self.id())
-            .max_velocity_delta_mps
-            .unwrap_or(DEFAULT_MAX_VELOCITY_DELTA_MPS);
-
         for (clip_index, clip) in ctx.doc.clips.iter().enumerate() {
             let expectations = ctx.expectations(clip_index);
             if expectations.looping != Some(true) {
                 continue;
             }
-            let max_velocity_delta_mps = expectations
-                .max_loop_velocity_delta_mps
-                .unwrap_or(global_max_velocity_delta_mps);
+            let max_velocity_delta_mps = effective_cap(ctx.config, expectations);
             let scope =
                 EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM_VELOCITY).subject(&clip.name);
             let Some(metrics) = ctx

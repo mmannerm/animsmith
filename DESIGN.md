@@ -4089,14 +4089,51 @@ non-explicit skinned inverse binds, invalid primary skin slots, incompatible
 skinned/unskinned mesh reuse, meshless materials, scene membership collapse,
 or source-local rest and source-skin root facts without an exact normalized
 representation. Strict output attaches a skinned mesh to its normalized node,
-rather than applying legacy's generated-holder normalization. Complete source
-material-resource sidecars refuse: V1 has no source texture/image identity or
-inspection-fact projection. Source-only names, stable
+rather than applying legacy's generated-holder normalization. Non-empty
+complete source material-resource sidecars refuse: V1 has no source
+texture/image identity or inspection-fact projection. An exact complete-empty
+resource graph is admitted only when the writer-facing material list is also
+empty. Source-only names, stable
 source indices, and image-inspection/provenance evidence remain deliberately
 outside the output projection; they are not presented as candidate facts.
 This seam does not bind a prepared collection member to its source, serialize
 contact transforms, reread/prove output, stage files, publish a directory, or
 add a CLI command.
+
+### F.10F Foot-cycle serialized-candidate proof V1 (#18)
+
+The next private transaction consumes one complete prepared collection without
+adding filesystem or command behavior. For every declared member it clones the
+member's retained source document and replaces only the selected clip with the
+prepared candidate. It validates the document, runs `StrictFootCycleV1`
+preflight, sums exact framed GLB sizes through one checked 256 MiB candidate
+ceiling, and admits the combined source-plus-output metric-grid pose-cell and
+sample-evaluation work before the first candidate write. All candidate writes
+finish before any readback; every exact byte vector is then reread through the
+ordinary glTF loader. Any refusal drops the local vectors and returns no partial
+batch.
+
+The reread artifact identity must equal the exact retained bytes. Its dependency
+closure must be complete and bound to that primary identity, with no external
+resources and no reference target other than `Primary`; embedded BIN-buffer
+references therefore remain valid self-contained evidence. Only then does the
+transaction finish the prepared contact transform with the reread artifact,
+closure, and independently redetected producer identity.
+
+Proof does not treat the existing checks as its verdict. It independently
+revalidates the finite strictly increasing endpoint-preserving map and exact
+LINEAR/STEP/cubic candidate relationship, including the constant-value,
+zero-tangent multi-key CUBICSPLINE restriction. One already-budgeted output grid
+per member supplies fresh contact topology/boundaries, gait phase/amplitude,
+signed Root/Hips trajectory, and per-bone loop pose plus linear/angular seam
+velocity. Contact and gait use the declaration's required proof fields; root
+facts are compared to retained signed source facts under the fixed 0.01 m and
+1 degree V1 limits; loop facts use the exact captured source config's effective
+per-clip/check/default tolerance resolution. The result retains exact artifacts,
+closures, completed transforms, independently detected contacts, proof facts,
+phase spread, and separate source/output/combined work totals for the later
+evidence and publication transaction. It defines no public evidence schema,
+filesystem layout, publication, or CLI behavior.
 
 ### F.11 Transition-family declaration V1 (#148)
 

@@ -3,6 +3,7 @@
 //! locomotion stride are required.
 
 use crate::check::{Check, CheckCtx};
+use crate::config::{ClipExpectations, Config};
 use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
 };
@@ -14,6 +15,18 @@ use super::exceeds_f32_cap;
 /// Default maximum difference between the angular velocities entering and
 /// leaving the seam: 5 degrees per second.
 pub const DEFAULT_MAX_ANGULAR_VELOCITY_DELTA_DEGPS: f64 = 5.0;
+
+/// Resolve the global/default and per-clip angular seam-velocity cap.
+pub(crate) fn effective_cap(config: &Config, expectations: &ClipExpectations) -> f64 {
+    expectations
+        .max_loop_angular_velocity_delta_degps
+        .unwrap_or(
+            config
+                .check_settings("loop-seam-rot")
+                .max_angular_velocity_delta_degps
+                .unwrap_or(DEFAULT_MAX_ANGULAR_VELOCITY_DELTA_DEGPS),
+        )
+}
 
 /// Per-bone model-space angular-velocity continuity across a loop seam.
 pub struct LoopSeamRotation;
@@ -39,20 +52,12 @@ impl Check for LoopSeamRotation {
         let mut findings = Vec::new();
         let mut evaluated_scopes = Vec::new();
         let mut gaps = Vec::new();
-        let global_max_angular_velocity_delta_degps = ctx
-            .config
-            .check_settings(self.id())
-            .max_angular_velocity_delta_degps
-            .unwrap_or(DEFAULT_MAX_ANGULAR_VELOCITY_DELTA_DEGPS);
-
         for (clip_index, clip) in ctx.doc.clips.iter().enumerate() {
             let expectations = ctx.expectations(clip_index);
             if expectations.looping != Some(true) {
                 continue;
             }
-            let max_angular_velocity_delta_degps = expectations
-                .max_loop_angular_velocity_delta_degps
-                .unwrap_or(global_max_angular_velocity_delta_degps);
+            let max_angular_velocity_delta_degps = effective_cap(ctx.config, expectations);
             let scope =
                 EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM_ROTATION).subject(&clip.name);
             let Some(metrics) = ctx

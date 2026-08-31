@@ -164,9 +164,12 @@ cargo run -p animsmith --example embed
    validates numeric check tolerances and per-clip loop caps immediately.
    `MovementOwner` represents independent XZ, Y, and yaw intent in core;
    `Config::expectations_for` returns canonical effective fields after
-   exact/glob layering. The legacy `in_place` input maps only to XZ and is
-   cleared from that effective result. A selector that declares both spellings
-   is rejected by `Config::validate`.
+   exact/glob layering, while `Config::loop_continuity_tolerances` resolves the
+   four effective loop pose and seam-velocity caps through the same per-clip,
+   check-setting, and built-in-default precedence used by the checks. The
+   legacy `in_place` input maps only to XZ and is cleared from that effective
+   result. A selector that declares both spellings is rejected by
+   `Config::validate`.
    Programmatic callers must call `Config::validate` before passing a directly
    constructed config to measurement-only APIs; `evaluate_checks` performs the
    same validation before inspecting or running the check catalog and returns
@@ -344,37 +347,46 @@ and parameterization path sets with symlink/canonical and
 platform-observable hardlink alias refusal, validates the pure runtime-set
 binding before host source access, reloads only its exact member-reachable
 sources/configs, retains their normalized config semantics and byte identities
-for later proof without rereading controls, derives the typed in-place root evidence,
+   for proof without rereading controls, derives the typed in-place root evidence,
 cross-checks plans against exact selected takes, and prepares bounded clip
 candidates. Root evidence retains signed endpoint X/Z and signed accumulated
 yaw even though the unchanged in-place gate applies horizontal `hypot(X, Z)`
 and absolute yaw. The prepared collection also retains exact aggregate source
-metric pose-cell and sample-evaluation totals for the later shared
+   metric pose-cell and sample-evaluation totals for the shared
 source/output proof budget. It also runs the closed operation-aware stance-detector extension
 handler, but retains contact transformation as a typed continuation: only a
-later serializer can supply a truthful fresh output artifact identity and
-dependency closure. Serialization, reread proof, generation-directory
-publication, and a user-visible command remain later work. Embedders must not
+   serializer supplies a truthful fresh output artifact identity and dependency
+   closure. The private in-memory continuation now serializes every candidate
+   as a strict self-contained GLB, rereads the exact bytes, and independently
+   proves the transformed clips and contacts as one all-or-nothing batch.
+   Generation-directory publication and a user-visible command remain later work. Embedders must not
 treat a successful plan or prepared candidate as an output-artifact or
 gameplay-acceptance proof. See the
 [collection contract](collection-contracts.md#foot-cycle-parameterization-v1-18-planner-slice)
 for the declaration and exact topology grammar.
 
-The later format-edge candidate writer is also a private continuation, not a
+   The format-edge candidate writer is also a private continuation, not a
 producer: `animsmith_gltf::write::preflight_glb_bytes` records one exact
 in-memory projection receipt and `write_glb_bytes` reruns it before retaining
 bytes. `StrictFootCycleV1` is deliberately narrower than legacy conversion and
 refuses data it cannot represent exactly enough for the future candidate
-contract, including source scene collapse, incomplete skin bindings, primary
+   contract, including source scene collapse, incomplete skin bindings, primary
 skin-slot reinterpretation, unsupported primitive/texture/material domains and
-complete source material-resource sidecars,
+   non-empty complete source material-resource sidecars,
 and unrepresentable complete source-node or source-skin facts. The receipt
 binds emitted JSON/BIN projection bytes, not deliberately excluded source-only
 evidence. It preserves no
 source-only names, stable source indices, or image-inspection/provenance
-sidecars as output facts. It does not serialize a prepared collection,
-transform a contact sidecar, prove a reread artifact, stage/publish files, or
-claim game-engine acceptance.
+   sidecars as output facts. An exact complete-empty material resource graph is
+   admitted only when the writer-facing material list is also empty. The
+   collection proof clones each prepared source document, replaces only its
+   selected clip, preflights all candidate bytes and shared metric-grid work
+   before writing, rereads the exact GLB bytes, requires a complete closure with
+   no external resources (embedded-buffer references may target `Primary`),
+   finishes the contact transform with the reread identities, and independently
+   checks duration, map/contact correspondence, gait, signed root trajectory,
+   and configured loop pose/velocity tolerances. It does not stage/publish
+   files or claim game-engine acceptance.
 
 ## Scale plan and proof contracts
 

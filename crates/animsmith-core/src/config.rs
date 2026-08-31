@@ -203,6 +203,42 @@ pub struct ClipExpectations {
     pub animates_bones: Option<Vec<String>>,
 }
 
+/// Effective per-clip tolerances for loop pose and seam velocity.
+///
+/// Obtain this value through [`Config::loop_continuity_tolerances`]. It
+/// resolves the same exact-name/glob precedence and per-check defaults used by
+/// the built-in loop checks, so artifact proofs do not need a second tolerance
+/// authority.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LoopContinuityTolerances {
+    max_position_delta_m: f64,
+    max_rotation_delta_deg: f64,
+    max_velocity_delta_mps: f64,
+    max_angular_velocity_delta_degps: f64,
+}
+
+impl LoopContinuityTolerances {
+    /// Inclusive model-space endpoint-position tolerance in metres.
+    pub const fn max_position_delta_m(self) -> f64 {
+        self.max_position_delta_m
+    }
+
+    /// Inclusive shortest-path endpoint-rotation tolerance in degrees.
+    pub const fn max_rotation_delta_deg(self) -> f64 {
+        self.max_rotation_delta_deg
+    }
+
+    /// Inclusive incoming/outgoing linear-velocity tolerance in metres per second.
+    pub const fn max_velocity_delta_mps(self) -> f64 {
+        self.max_velocity_delta_mps
+    }
+
+    /// Inclusive incoming/outgoing angular-velocity tolerance in degrees per second.
+    pub const fn max_angular_velocity_delta_degps(self) -> f64 {
+        self.max_angular_velocity_delta_degps
+    }
+}
+
 impl ClipExpectations {
     /// Canonical horizontal owner declared by this selector entry.
     ///
@@ -825,6 +861,34 @@ impl Config {
         self.check_settings("loop-seam")
             .min_stride_step_m
             .unwrap_or(MIN_STRIDE_STEP_M)
+    }
+
+    /// Resolve the exact loop-pose and seam-velocity tolerances for `clip`.
+    ///
+    /// Per-clip values win over their owning check settings, which in turn
+    /// fall back to the immutable built-in check defaults. Call
+    /// [`Self::validate`] before using configuration supplied by an untrusted
+    /// decoder.
+    pub fn loop_continuity_tolerances(&self, clip: &str) -> LoopContinuityTolerances {
+        let expectations = self.expectations_for(clip);
+        self.loop_continuity_tolerances_for(&expectations)
+    }
+
+    pub(crate) fn loop_continuity_tolerances_for(
+        &self,
+        expectations: &ClipExpectations,
+    ) -> LoopContinuityTolerances {
+        let (max_position_delta_m, max_rotation_delta_deg) =
+            crate::checks::loop_closure::effective_caps(self, expectations);
+        LoopContinuityTolerances {
+            max_position_delta_m,
+            max_rotation_delta_deg,
+            max_velocity_delta_mps: crate::checks::loop_seam_vel::effective_cap(self, expectations),
+            max_angular_velocity_delta_degps: crate::checks::loop_seam_rot::effective_cap(
+                self,
+                expectations,
+            ),
+        }
     }
 }
 
