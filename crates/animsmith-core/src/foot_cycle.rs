@@ -159,6 +159,8 @@ impl FootCycleParameterizationV1 {
         if !minimum_segment_slope.is_finite()
             || !maximum_segment_slope.is_finite()
             || minimum_segment_slope <= 0.0
+            || minimum_segment_slope > 1.0
+            || maximum_segment_slope < 1.0
             || minimum_segment_slope > maximum_segment_slope
             || maximum_segment_slope > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_SLOPE
         {
@@ -416,8 +418,8 @@ pub enum FootCycleParameterizationError {
         /// Frozen maximum.
         max: usize,
     },
-    /// Slope bounds were not finite, positive, ordered, and bounded.
-    #[error("segment-slope bounds must be finite, positive, ordered, and within V1")]
+    /// Slope bounds were not finite, positive, ordered, bounded, and inclusive of identity.
+    #[error("segment-slope bounds must be finite, positive, ordered, include 1, and be within V1")]
     InvalidSlopeBounds,
     /// A logical member id appeared more than once.
     #[error("duplicate foot-cycle member {member:?}")]
@@ -1143,11 +1145,6 @@ mod tests {
         event_roles: Option<[ContactRoleV1; 2]>,
         extensions: Vec<ContactExtensionV1>,
     ) -> ContactFragmentV1 {
-        let artifact = InputIdentity::from_bytes(member.as_bytes());
-        let closure =
-            DependencyClosureBuilderV1::new(artifact.clone(), SourceSetCoverageV1::complete(), 0)
-                .finish()
-                .unwrap();
         let mut events = Vec::with_capacity(windows.len() * 2);
         for (index, &(side, start, end)) in windows.iter().enumerate() {
             let (role, label) = match side {
@@ -1197,6 +1194,26 @@ mod tests {
                 .unwrap(),
             );
         }
+        fragment_with_events(
+            member, source, take_index, take_name, duration_s, events, extensions,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fragment_with_events(
+        member: &str,
+        source: &str,
+        take_index: u32,
+        take_name: &str,
+        duration_s: f64,
+        events: Vec<ContactEventV1>,
+        extensions: Vec<ContactExtensionV1>,
+    ) -> ContactFragmentV1 {
+        let artifact = InputIdentity::from_bytes(member.as_bytes());
+        let closure =
+            DependencyClosureBuilderV1::new(artifact.clone(), SourceSetCoverageV1::complete(), 0)
+                .finish()
+                .unwrap();
         ContactFragmentV1::new(
             ContactProducerV1::new("animsmith", "0.10.0").unwrap(),
             artifact,
@@ -1271,6 +1288,19 @@ mod tests {
             &[(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)],
             &[(Side::Left, 0.2, 0.3), (Side::Right, 0.7, 0.8)],
         );
+        let reference = fragment_with_clip(
+            "reference",
+            "motions",
+            0,
+            "Take 0",
+            3.5,
+            &[(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)],
+            None,
+            None,
+            vec![detector_extension("left_foot", "right_foot")],
+        );
+        evidence[0].input = reference.canonical_identity().unwrap();
+        evidence[0].fragment = reference;
         let member = fragment_with_clip(
             "member",
             "motions",
@@ -1304,6 +1334,8 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.parameterization_input(), &parameterization_input);
         assert_eq!(first.manifest_input(), &manifest_input);
+        assert_eq!(first.runtime_set_id(), declaration.runtime_set_id());
+        assert_eq!(first.reference_member(), declaration.reference_member());
         assert_eq!(first.members().len(), 2);
         assert_eq!(
             points(&first.members()[0]),
@@ -1328,35 +1360,98 @@ mod tests {
             ]
         );
         assert_eq!(
+            first.members()[0].operation().output_duration_s(),
+            Some(3.5)
+        );
+        assert_eq!(
             first.members()[1].operation().output_duration_s(),
             Some(2.5)
         );
-        assert_eq!(first.members()[1].input().fragment(), evidence[1].input());
-        assert_eq!(first.members()[1].root_motion(), evidence[1].root_motion());
+        for (plan, source) in first.members().iter().zip(&evidence) {
+            assert_eq!(plan.id(), source.id());
+            assert_eq!(plan.input().artifact(), source.fragment().artifact());
+            assert_eq!(
+                plan.input().dependency_closure_identity(),
+                source.fragment().dependency_closure_identity()
+            );
+            assert_eq!(plan.input().fragment(), source.input());
+            assert_eq!(plan.root_motion(), source.root_motion());
+            assert_eq!(
+                plan.operation().output_duration_s(),
+                Some(source.fragment().duration_s())
+            );
+        }
+    }
+
+    #[test]
+    fn planner_positionally_maps_every_boundary_in_a_larger_ring() {
+        let reference = [
+            (Side::Left, 0.05, 0.1),
+            (Side::Right, 0.25, 0.3),
+            (Side::Left, 0.5, 0.55),
+            (Side::Right, 0.75, 0.8),
+        ];
+        let member = [
+            (Side::Left, 0.08, 0.14),
+            (Side::Right, 0.3, 0.36),
+            (Side::Left, 0.56, 0.62),
+            (Side::Right, 0.82, 0.88),
+        ];
+        let (manifest, manifest_input) = manifest();
+        let plan = plan_foot_cycle_parameterization_v1(
+            &declaration(&manifest_input, 0.1, 10.0),
+            InputIdentity::from_bytes(b"parameterization"),
+            &manifest,
+            manifest_input,
+            &evidence(&reference, &member),
+        )
+        .unwrap();
+        assert_eq!(
+            points(&plan.members()[1]),
+            [
+                (0.0, 0.0),
+                (0.08, 0.05),
+                (0.14, 0.1),
+                (0.3, 0.25),
+                (0.36, 0.3),
+                (0.56, 0.5),
+                (0.62, 0.55),
+                (0.82, 0.75),
+                (0.88, 0.8),
+                (1.0, 1.0),
+            ]
+        );
     }
 
     #[test]
     fn root_motion_gate_is_inclusive_and_refuses_unavailable_or_excess_evidence() {
+        assert_eq!(
+            FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M,
+            0.01
+        );
+        assert_eq!(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG, 1.0);
         let (manifest, manifest_input) = manifest();
         let declaration = declaration(&manifest_input, 0.5, 2.0);
         let windows = [(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)];
         let parameterization_input = || InputIdentity::from_bytes(b"parameterization");
 
-        let mut accepted = evidence(&windows, &windows);
-        accepted[1].root_motion = FootCycleRootMotionEvidenceV1::measured(
-            FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M,
-            -FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG,
-        );
-        assert!(
-            plan_foot_cycle_parameterization_v1(
-                &declaration,
-                parameterization_input(),
-                &manifest,
-                manifest_input.clone(),
-                &accepted,
-            )
-            .is_ok()
-        );
+        for member_index in 0..2 {
+            let mut accepted = evidence(&windows, &windows);
+            accepted[member_index].root_motion = FootCycleRootMotionEvidenceV1::measured(
+                FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M,
+                -FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG,
+            );
+            assert!(
+                plan_foot_cycle_parameterization_v1(
+                    &declaration,
+                    parameterization_input(),
+                    &manifest,
+                    manifest_input.clone(),
+                    &accepted,
+                )
+                .is_ok()
+            );
+        }
 
         for member_index in 0..2 {
             for unavailable in [
@@ -1365,6 +1460,8 @@ mod tests {
                 FootCycleRootMotionEvidenceV1::NonFinite,
                 FootCycleRootMotionEvidenceV1::measured(f64::NAN, 0.0),
                 FootCycleRootMotionEvidenceV1::measured(0.0, f64::NAN),
+                FootCycleRootMotionEvidenceV1::measured(f64::INFINITY, 0.0),
+                FootCycleRootMotionEvidenceV1::measured(0.0, f64::NEG_INFINITY),
                 FootCycleRootMotionEvidenceV1::measured(-0.001, 0.0),
             ] {
                 let mut source = evidence(&windows, &windows);
@@ -1402,18 +1499,20 @@ mod tests {
                 ),
             ),
         ] {
-            let mut source = evidence(&windows, &windows);
-            source[1].root_motion = excess;
-            assert!(matches!(
-                plan_foot_cycle_parameterization_v1(
-                    &declaration,
-                    parameterization_input(),
-                    &manifest,
-                    manifest_input.clone(),
-                    &source,
-                ),
-                Err(FootCycleParameterizationError::RootMotionOutOfRange { .. })
-            ));
+            for member_index in 0..2 {
+                let mut source = evidence(&windows, &windows);
+                source[member_index].root_motion = excess;
+                assert!(matches!(
+                    plan_foot_cycle_parameterization_v1(
+                        &declaration,
+                        parameterization_input(),
+                        &manifest,
+                        manifest_input.clone(),
+                        &source,
+                    ),
+                    Err(FootCycleParameterizationError::RootMotionOutOfRange { .. })
+                ));
+            }
         }
     }
 
@@ -1497,18 +1596,25 @@ mod tests {
             vec![(Side::Left, 0.0, 0.2), (Side::Right, 0.7, 1.0)],
             vec![(Side::Left, 0.1, 0.2)],
         ] {
-            let (manifest, manifest_input) = manifest();
-            let declaration = declaration(&manifest_input, 0.01, 100.0);
-            assert_eq!(
-                plan_foot_cycle_parameterization_v1(
-                    &declaration,
-                    InputIdentity::from_bytes(b"parameterization"),
-                    &manifest,
-                    manifest_input,
-                    &evidence(&reference, &invalid),
-                ),
-                Err(FootCycleParameterizationError::InvalidContactTopology)
-            );
+            for invalid_index in 0..2 {
+                let (manifest, manifest_input) = manifest();
+                let declaration = declaration(&manifest_input, 0.01, 100.0);
+                let source = if invalid_index == 0 {
+                    evidence(&invalid, &reference)
+                } else {
+                    evidence(&reference, &invalid)
+                };
+                assert_eq!(
+                    plan_foot_cycle_parameterization_v1(
+                        &declaration,
+                        InputIdentity::from_bytes(b"parameterization"),
+                        &manifest,
+                        manifest_input,
+                        &source,
+                    ),
+                    Err(FootCycleParameterizationError::InvalidContactTopology)
+                );
+            }
         }
     }
 
@@ -1521,32 +1627,117 @@ mod tests {
             vec![(Side::Left, 0.65), (Side::Right, 0.15)],
         ];
         for markers in marker_cases {
-            let (manifest, manifest_input) = manifest();
-            let declaration = declaration(&manifest_input, 0.01, 100.0);
-            let invalid = fragment_with_clip(
-                "member",
-                "motions",
-                1,
-                "Take 1",
-                1.0,
-                &windows,
-                Some(&markers),
-                None,
-                vec![detector_extension("left_foot", "right_foot")],
-            );
-            let mut source = evidence(&windows, &windows);
-            source[1].input = invalid.canonical_identity().unwrap();
-            source[1].fragment = invalid;
-            assert_eq!(
-                plan_foot_cycle_parameterization_v1(
-                    &declaration,
-                    InputIdentity::from_bytes(b"parameterization"),
-                    &manifest,
-                    manifest_input,
-                    &source,
-                ),
-                Err(FootCycleParameterizationError::InvalidContactTopology)
-            );
+            for invalid_index in 0..2 {
+                let (manifest, manifest_input) = manifest();
+                let declaration = declaration(&manifest_input, 0.01, 100.0);
+                let (member_id, take_index, take_name) = if invalid_index == 0 {
+                    ("reference", 0, "Take 0")
+                } else {
+                    ("member", 1, "Take 1")
+                };
+                let invalid = fragment_with_clip(
+                    member_id,
+                    "motions",
+                    take_index,
+                    take_name,
+                    1.0,
+                    &windows,
+                    Some(&markers),
+                    None,
+                    vec![detector_extension("left_foot", "right_foot")],
+                );
+                let mut source = evidence(&windows, &windows);
+                source[invalid_index].input = invalid.canonical_identity().unwrap();
+                source[invalid_index].fragment = invalid;
+                assert_eq!(
+                    plan_foot_cycle_parameterization_v1(
+                        &declaration,
+                        InputIdentity::from_bytes(b"parameterization"),
+                        &manifest,
+                        manifest_input,
+                        &source,
+                    ),
+                    Err(FootCycleParameterizationError::InvalidContactTopology)
+                );
+            }
+        }
+
+        for marker_as_window in [false, true] {
+            for invalid_index in 0..2 {
+                let (member_id, take_index, take_name) = if invalid_index == 0 {
+                    ("reference", 0, "Take 0")
+                } else {
+                    ("member", 1, "Take 1")
+                };
+                let invalid_event = if marker_as_window {
+                    ContactEventV1::window(
+                        "invalid/marker-window",
+                        ContactRoleV1::LeftFoot,
+                        ContactPhaseV1::Marker,
+                        ContactEventWindowV1::new(0.1, 0.2).unwrap(),
+                        None,
+                    )
+                    .unwrap()
+                } else {
+                    ContactEventV1::point(
+                        "invalid/begin-point",
+                        ContactRoleV1::LeftFoot,
+                        ContactPhaseV1::Begin,
+                        0.15,
+                        None,
+                    )
+                    .unwrap()
+                };
+                let invalid = fragment_with_events(
+                    member_id,
+                    "motions",
+                    take_index,
+                    take_name,
+                    1.0,
+                    vec![
+                        ContactEventV1::window(
+                            "support/left/0",
+                            ContactRoleV1::LeftFoot,
+                            ContactPhaseV1::Begin,
+                            ContactEventWindowV1::new(0.1, 0.2).unwrap(),
+                            None,
+                        )
+                        .unwrap(),
+                        ContactEventV1::window(
+                            "support/right/1",
+                            ContactRoleV1::RightFoot,
+                            ContactPhaseV1::Begin,
+                            ContactEventWindowV1::new(0.6, 0.7).unwrap(),
+                            None,
+                        )
+                        .unwrap(),
+                        invalid_event,
+                        ContactEventV1::point(
+                            "marker/right/1",
+                            ContactRoleV1::RightFoot,
+                            ContactPhaseV1::Marker,
+                            0.65,
+                            None,
+                        )
+                        .unwrap(),
+                    ],
+                    vec![detector_extension("left_foot", "right_foot")],
+                );
+                let mut source = evidence(&windows, &windows);
+                source[invalid_index].input = invalid.canonical_identity().unwrap();
+                source[invalid_index].fragment = invalid;
+                let (manifest, manifest_input) = manifest();
+                assert_eq!(
+                    plan_foot_cycle_parameterization_v1(
+                        &declaration(&manifest_input, 0.01, 100.0),
+                        InputIdentity::from_bytes(b"parameterization"),
+                        &manifest,
+                        manifest_input,
+                        &source,
+                    ),
+                    Err(FootCycleParameterizationError::InvalidContactTopology)
+                );
+            }
         }
     }
 
@@ -1625,18 +1816,61 @@ mod tests {
         stale[1].input = InputIdentity::from_bytes(b"noncanonical");
         cases.push((stale, FootCycleParameterizationError::NonCanonicalFragment));
 
-        let mut wrong_path = source.clone();
-        wrong_path[1].contact_fragment_path = path("contacts/other.json");
+        let mut stale_reference = source.clone();
+        stale_reference[0].input = InputIdentity::from_bytes(b"noncanonical-reference");
         cases.push((
-            wrong_path,
-            FootCycleParameterizationError::EvidenceMemberMismatch,
+            stale_reference,
+            FootCycleParameterizationError::NonCanonicalFragment,
         ));
+
+        for member_index in 0..2 {
+            let mut wrong_id = source.clone();
+            wrong_id[member_index].id = id("com.example/wrong");
+            cases.push((
+                wrong_id,
+                FootCycleParameterizationError::EvidenceMemberMismatch,
+            ));
+
+            let mut wrong_path = source.clone();
+            wrong_path[member_index].contact_fragment_path = path("contacts/other.json");
+            cases.push((
+                wrong_path,
+                FootCycleParameterizationError::EvidenceMemberMismatch,
+            ));
+        }
 
         let mut wrong_clip = source.clone();
         wrong_clip[1].fragment = fragment("reference", 0, &windows);
         wrong_clip[1].input = wrong_clip[1].fragment.canonical_identity().unwrap();
         cases.push((
             wrong_clip,
+            FootCycleParameterizationError::FragmentClipMismatch,
+        ));
+
+        let mut wrong_reference = source.clone();
+        wrong_reference[0].fragment = fragment("member", 1, &windows);
+        wrong_reference[0].input = wrong_reference[0].fragment.canonical_identity().unwrap();
+        cases.push((
+            wrong_reference,
+            FootCycleParameterizationError::FragmentClipMismatch,
+        ));
+
+        let wrong_reference_source = fragment_with_clip(
+            "reference",
+            "other-source",
+            0,
+            "Take 0",
+            1.0,
+            &windows,
+            None,
+            None,
+            vec![detector_extension("left_foot", "right_foot")],
+        );
+        let mut wrong_reference_witness = source.clone();
+        wrong_reference_witness[0].input = wrong_reference_source.canonical_identity().unwrap();
+        wrong_reference_witness[0].fragment = wrong_reference_source;
+        cases.push((
+            wrong_reference_witness,
             FootCycleParameterizationError::FragmentClipMismatch,
         ));
 
@@ -1728,6 +1962,19 @@ mod tests {
         let source = evidence(&windows, &windows);
         let parameterization_input = || InputIdentity::from_bytes(b"parameterization");
 
+        let mut missing_set = declaration(&manifest_input, 0.5, 2.0);
+        missing_set.runtime_set_id = id("com.example/sets/missing");
+        assert_eq!(
+            plan_foot_cycle_parameterization_v1(
+                &missing_set,
+                parameterization_input(),
+                &manifest,
+                manifest_input.clone(),
+                &source,
+            ),
+            Err(FootCycleParameterizationError::RuntimeSetMismatch)
+        );
+
         let mut wrong_collection = declaration(&manifest_input, 0.5, 2.0);
         wrong_collection.manifest.collection_id = CollectionIdV1::new("com.other").unwrap();
         assert_eq!(
@@ -1777,44 +2024,99 @@ mod tests {
         let windows = [(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)];
         let (manifest, manifest_input) = manifest();
         let declaration = declaration(&manifest_input, 0.5, 2.0);
-        let mut source = evidence(&windows, &windows);
-        source[1].fragment = fragment_with_extensions("member", 1, &windows, Vec::new());
-        source[1].input = source[1].fragment.canonical_identity().unwrap();
-        assert_eq!(
-            plan_foot_cycle_parameterization_v1(
-                &declaration,
-                InputIdentity::from_bytes(b"parameterization"),
-                &manifest,
-                manifest_input.clone(),
-                &source,
-            ),
-            Err(FootCycleParameterizationError::UnsupportedContactExtension)
-        );
+        for invalid_index in 0..2 {
+            let (member, take_index) = if invalid_index == 0 {
+                ("reference", 0)
+            } else {
+                ("member", 1)
+            };
+            let invalid = fragment_with_extensions(member, take_index, &windows, Vec::new());
+            let mut source = evidence(&windows, &windows);
+            source[invalid_index].input = invalid.canonical_identity().unwrap();
+            source[invalid_index].fragment = invalid;
+            assert_eq!(
+                plan_foot_cycle_parameterization_v1(
+                    &declaration,
+                    InputIdentity::from_bytes(b"parameterization"),
+                    &manifest,
+                    manifest_input.clone(),
+                    &source,
+                ),
+                Err(FootCycleParameterizationError::UnsupportedContactExtension)
+            );
+        }
 
-        let toe_fragment = fragment_with_clip(
-            "member",
-            "motions",
-            1,
-            "Take 1",
-            1.0,
-            &windows,
-            None,
-            Some([ContactRoleV1::LeftToe, ContactRoleV1::RightToe]),
-            vec![detector_extension("left_toe", "right_toe")],
-        );
-        let mut source = evidence(&windows, &windows);
-        source[1].input = toe_fragment.canonical_identity().unwrap();
-        source[1].fragment = toe_fragment;
-        assert!(
-            plan_foot_cycle_parameterization_v1(
-                &declaration,
-                InputIdentity::from_bytes(b"parameterization"),
-                &manifest,
-                manifest_input.clone(),
-                &source,
-            )
-            .is_ok()
-        );
+        let payload = json!({
+            "algorithm": "stance-support-v1",
+            "sampling": "metric-grid-longest-authored-channel",
+            "max_frames": 1_000_000,
+            "contact_height_m": 0.03,
+            "roles": {"left": "left_foot", "right": "right_foot"},
+        });
+        let detector = detector_extension("left_foot", "right_foot");
+        for extensions in [
+            vec![ContactExtensionV1::new("urn:other:detector:1", 1, payload.clone()).unwrap()],
+            vec![
+                ContactExtensionV1::new(CONTACT_SUPPORT_DETECTOR_V1_ID, 2, payload.clone())
+                    .unwrap(),
+            ],
+            vec![detector.clone(), detector],
+        ] {
+            for invalid_index in 0..2 {
+                let (member, take_index) = if invalid_index == 0 {
+                    ("reference", 0)
+                } else {
+                    ("member", 1)
+                };
+                let invalid =
+                    fragment_with_extensions(member, take_index, &windows, extensions.clone());
+                let mut source = evidence(&windows, &windows);
+                source[invalid_index].input = invalid.canonical_identity().unwrap();
+                source[invalid_index].fragment = invalid;
+                assert_eq!(
+                    plan_foot_cycle_parameterization_v1(
+                        &declaration,
+                        InputIdentity::from_bytes(b"parameterization"),
+                        &manifest,
+                        manifest_input.clone(),
+                        &source,
+                    ),
+                    Err(FootCycleParameterizationError::UnsupportedContactExtension)
+                );
+            }
+        }
+
+        for member_index in 0..2 {
+            let (member, take_index, take_name) = if member_index == 0 {
+                ("reference", 0, "Take 0")
+            } else {
+                ("member", 1, "Take 1")
+            };
+            let toe_fragment = fragment_with_clip(
+                member,
+                "motions",
+                take_index,
+                take_name,
+                1.0,
+                &windows,
+                None,
+                Some([ContactRoleV1::LeftToe, ContactRoleV1::RightToe]),
+                vec![detector_extension("left_toe", "right_toe")],
+            );
+            let mut source = evidence(&windows, &windows);
+            source[member_index].input = toe_fragment.canonical_identity().unwrap();
+            source[member_index].fragment = toe_fragment;
+            assert!(
+                plan_foot_cycle_parameterization_v1(
+                    &declaration,
+                    InputIdentity::from_bytes(b"parameterization"),
+                    &manifest,
+                    manifest_input.clone(),
+                    &source,
+                )
+                .is_ok()
+            );
+        }
 
         let invalid_payloads = [
             json!({
@@ -1845,17 +2147,70 @@ mod tests {
                 "contact_height_m": -0.01,
                 "roles": {"left": "left_foot", "right": "right_foot"},
             }),
+            json!({
+                "algorithm": "stance-support-v1",
+                "sampling": "metric-grid-longest-authored-channel",
+                "max_frames": 1_000_000,
+                "contact_height_m": 0.03,
+                "roles": {"left": "left_foot", "right": "right_foot"},
+                "extra": true,
+            }),
+            json!({
+                "algorithm": "stance-support-v1",
+                "sampling": "metric-grid-longest-authored-channel",
+                "max_frames": 1_000_000,
+                "contact_height_m": 0.03,
+                "roles": {
+                    "left": "left_foot",
+                    "right": "right_foot",
+                    "extra": "unexpected",
+                },
+            }),
         ];
         for payload in invalid_payloads {
-            let invalid = fragment_with_extensions(
-                "member",
-                1,
+            for invalid_index in 0..2 {
+                let (member, take_index) = if invalid_index == 0 {
+                    ("reference", 0)
+                } else {
+                    ("member", 1)
+                };
+                let invalid = fragment_with_extensions(
+                    member,
+                    take_index,
+                    &windows,
+                    vec![detector_extension_with_payload(payload.clone())],
+                );
+                let mut source = evidence(&windows, &windows);
+                source[invalid_index].input = invalid.canonical_identity().unwrap();
+                source[invalid_index].fragment = invalid;
+                assert_eq!(
+                    plan_foot_cycle_parameterization_v1(
+                        &declaration,
+                        InputIdentity::from_bytes(b"parameterization"),
+                        &manifest,
+                        manifest_input.clone(),
+                        &source,
+                    ),
+                    Err(FootCycleParameterizationError::InvalidDetectorProvenance)
+                );
+            }
+        }
+
+        for invalid_index in 0..2 {
+            let (member, take_index) = if invalid_index == 0 {
+                ("reference", 0)
+            } else {
+                ("member", 1)
+            };
+            let mismatched_roles = fragment_with_extensions(
+                member,
+                take_index,
                 &windows,
-                vec![detector_extension_with_payload(payload)],
+                vec![detector_extension("left_foot", "right_toe")],
             );
             let mut source = evidence(&windows, &windows);
-            source[1].input = invalid.canonical_identity().unwrap();
-            source[1].fragment = invalid;
+            source[invalid_index].input = mismatched_roles.canonical_identity().unwrap();
+            source[invalid_index].fragment = mismatched_roles;
             assert_eq!(
                 plan_foot_cycle_parameterization_v1(
                     &declaration,
@@ -1867,30 +2222,11 @@ mod tests {
                 Err(FootCycleParameterizationError::InvalidDetectorProvenance)
             );
         }
-
-        let mismatched_roles = fragment_with_extensions(
-            "member",
-            1,
-            &windows,
-            vec![detector_extension("left_foot", "right_toe")],
-        );
-        let mut source = evidence(&windows, &windows);
-        source[1].input = mismatched_roles.canonical_identity().unwrap();
-        source[1].fragment = mismatched_roles;
-        assert_eq!(
-            plan_foot_cycle_parameterization_v1(
-                &declaration,
-                InputIdentity::from_bytes(b"parameterization"),
-                &manifest,
-                manifest_input,
-                &source,
-            ),
-            Err(FootCycleParameterizationError::InvalidDetectorProvenance)
-        );
     }
 
     #[test]
     fn control_point_cap_accepts_exact_and_rejects_first_excess() {
+        assert_eq!(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS, 4_096);
         fn boundaries(count: usize) -> Vec<Boundary> {
             (0..count)
                 .map(|index| Boundary {
@@ -1950,6 +2286,7 @@ mod tests {
 
     #[test]
     fn aggregate_contact_event_budget_accepts_exact_and_stops_at_first_excess() {
+        assert_eq!(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS, 16_384);
         assert_eq!(
             validate_aggregate_contact_event_budget([
                 FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS - 1,
@@ -2028,11 +2365,17 @@ mod tests {
 
     #[test]
     fn declaration_rejects_invalid_slopes_duplicates_and_path_collisions() {
+        assert_eq!(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_SLOPE, 1_000_000.0);
         let (_, manifest_input) = manifest();
         for (minimum, maximum) in [
             (0.0, 1.0),
             (-1.0, 1.0),
             (f64::NAN, 1.0),
+            (0.5, f64::NAN),
+            (f64::NEG_INFINITY, 1.0),
+            (0.5, f64::INFINITY),
+            (1.0 + f64::EPSILON, 2.0),
+            (0.5, 1.0 - f64::EPSILON),
             (2.0, 1.0),
             (1.0, FOOT_CYCLE_PARAMETERIZATION_V1_MAX_SLOPE * 2.0),
         ] {
@@ -2153,6 +2496,51 @@ mod tests {
                 ],
             ),
             Err(FootCycleParameterizationError::MissingReferenceMember)
+        );
+    }
+
+    #[test]
+    fn declaration_member_cap_accepts_exact_and_rejects_n_plus_one() {
+        assert_eq!(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS, 4_096);
+        let mut members = (0..FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS)
+            .map(|index| {
+                FootCycleParameterizationMemberV1::new(
+                    id(&format!("com.example/member-{index}")),
+                    path(&format!("contacts/member-{index}.json")),
+                )
+            })
+            .collect::<Vec<_>>();
+        let binding = || {
+            FootCycleManifestBindingV1::new(
+                CollectionIdV1::new("com.example").unwrap(),
+                InputIdentity::from_bytes(b"manifest"),
+            )
+            .unwrap()
+        };
+        let construct = |members| {
+            FootCycleParameterizationV1::new(
+                binding(),
+                id("com.example/sets/walk"),
+                id("com.example/member-0"),
+                path("generated/aligned"),
+                0.5,
+                2.0,
+                members,
+            )
+        };
+
+        assert!(construct(members.clone()).is_ok());
+        let index = FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS;
+        members.push(FootCycleParameterizationMemberV1::new(
+            id(&format!("com.example/member-{index}")),
+            path(&format!("contacts/member-{index}.json")),
+        ));
+        assert_eq!(
+            construct(members),
+            Err(FootCycleParameterizationError::TooManyMembers {
+                found: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS + 1,
+                max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS,
+            })
         );
     }
 }

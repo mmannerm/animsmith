@@ -65,7 +65,8 @@ declaration or its tests.
 declaration for one existing collection-manifest `gait-group`. It repeats the
 exact manifest identity, runtime-set id, exact ordered members, one explicit
 reference member, one safe contact-fragment path per member, finite positive
-minimum/maximum segment slopes, and one safe future output-directory path.
+minimum/maximum segment slopes whose inclusive interval contains `1.0`, and one
+safe future output-directory path.
 The reference owns canonical contact-boundary phases. Membership, ordering,
 contact paths, and reference ownership are never inferred from filenames or
 clip names.

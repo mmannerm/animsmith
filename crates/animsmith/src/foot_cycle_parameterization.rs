@@ -337,6 +337,24 @@ contact_fragment = "contacts/walk-right.json"
                 .kind(),
             FootCycleParameterizationControlKind::UnsupportedSchemaVersion
         );
+        for unsupported in [
+            valid().replace(COLLECTION_MANIFEST_V1_ID, "urn:other:manifest:1"),
+            valid().replace(
+                &format!(
+                    "[manifest]\nschema = \"{COLLECTION_MANIFEST_V1_ID}\"\nschema_version = 1"
+                ),
+                &format!(
+                    "[manifest]\nschema = \"{COLLECTION_MANIFEST_V1_ID}\"\nschema_version = 2"
+                ),
+            ),
+        ] {
+            assert_eq!(
+                parse_foot_cycle_parameterization_bytes(unsupported.as_bytes())
+                    .unwrap_err()
+                    .kind(),
+                FootCycleParameterizationControlKind::InvalidDeclaration
+            );
+        }
         for unknown in [
             valid().replace(
                 "maximum_segment_slope = 2.0",
@@ -371,6 +389,7 @@ contact_fragment = "contacts/walk-right.json"
         );
         for source in [
             valid().replace("contacts/walk-right.json", "../walk-right.json"),
+            valid().replace("generated/walk-aligned", "../generated/walk-aligned"),
             valid().replace(DIGEST, &"A".repeat(64)),
         ] {
             assert_eq!(
@@ -384,6 +403,7 @@ contact_fragment = "contacts/walk-right.json"
 
     #[test]
     fn reader_accepts_exact_byte_limit_and_rejects_n_plus_one() {
+        assert_eq!(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES, 8 * 1024 * 1024);
         let mut exact = valid().into_bytes();
         exact.resize(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES as usize, b' ');
         assert!(parse_foot_cycle_parameterization_bytes(&exact).is_ok());
@@ -398,6 +418,7 @@ contact_fragment = "contacts/walk-right.json"
 
     #[test]
     fn member_deserializer_refuses_n_plus_one_without_retaining_it() {
+        assert_eq!(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS, 4_096);
         let prefix = valid()
             .split("[[members]]")
             .next()

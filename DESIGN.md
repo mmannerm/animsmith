@@ -3962,7 +3962,8 @@ Issue #18's first post-result implementation slice adds the separate strict
 format-neutral map planner. The declaration binds exact manifest bytes, one
 existing ordered `gait-group`, one explicit reference, one safe fragment path
 per member, the future generation directory, and finite positive segment-slope
-bounds. The planner accepts only canonical collection-scoped fragments with
+bounds whose inclusive interval contains identity slope `1.0`. The planner
+accepts only canonical collection-scoped fragments with
 the exact known stance-detector V1 provenance and independently measured typed
 Root/Hips evidence. Missing, ambiguous, malformed, or non-finite root evidence
 refuses, as does horizontal endpoint displacement above 0.01 m or absolute
