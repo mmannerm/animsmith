@@ -1440,6 +1440,52 @@ mod tests {
     }
 
     #[test]
+    fn resample_preserves_times_windows_and_duration_through_readback() {
+        let source = fragment(false);
+        let output = InputIdentity::from_bytes(b"resampled output artifact");
+        let context = ContactTransformContextV1::new(
+            source.artifact().clone(),
+            closure(source.artifact()),
+            output.clone(),
+            closure(&output),
+            ContactProducerV1::new("fixture", "2").unwrap(),
+            None,
+        );
+        let result = transform_contact_fragment_v1(
+            ContactTransformOperationV1::resample(),
+            &source,
+            context.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(result.outcome(), ContactTransformOutcomeV1::Transformed);
+        assert_eq!(
+            result.event_outcomes(),
+            &[
+                ContactEventOutcomeV1::Transformed {
+                    event_id: "left/point".into(),
+                    value: ContactTransformedValueV1::Point { time: 0.25 },
+                },
+                ContactEventOutcomeV1::Transformed {
+                    event_id: "right/window".into(),
+                    value: ContactTransformedValueV1::Window {
+                        window: ContactEventWindowV1::new(0.5, 0.75).unwrap(),
+                    },
+                },
+            ]
+        );
+        let output_fragment = result.output().unwrap().contact_fragment();
+        assert_eq!(output_fragment.duration_s(), source.duration_s());
+        assert_eq!(output_fragment.events(), source.events());
+
+        let bytes = result.canonical_json().unwrap();
+        assert_eq!(
+            ContactTransformResultV1::read_json(&bytes, &source, &context).unwrap(),
+            result
+        );
+    }
+
+    #[test]
     fn time_warp_refuses_nonmonotone_interior_with_valid_endpoints() {
         let source = fragment(false);
         let invalid = transform(
