@@ -3880,12 +3880,14 @@ positive domain. Unsupported extension transformation uses
 `unsupported_extension` as specified above. A malformed fragment/result or
 duplicate, missing, or unknown event-outcome identity is a strict reader error,
 not another refusal result. The result records the operation, bindings, and
-outcomes; detector and operation implementation remain out of scope.
+outcomes. Core implements the exact mapping and independently rederives a read
+result against its separately supplied input fragment; detector policy, asset
+mutation, and publication remain outside this contract.
 
 AnimSmith owns the strict sampled stance-support contact facts and these
 identity/time/transform semantics. The host owns final file layout and merge,
 unrelated measurements and provenance, runtime scheduling, and engine-native
-mapping. The delivered producer does not perform contact transforms, infer
+mapping. The delivered contact-fragment producer does not perform contact transforms, infer
 gameplay meaning, validate foot placement, or claim engine, artistic, or
 gameplay correctness. Host-side merge and runtime behavior remain deferred.
 

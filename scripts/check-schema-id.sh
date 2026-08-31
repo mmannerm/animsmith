@@ -213,6 +213,7 @@ check_schema docs/schemas/gltf-animation-addressability-v1.schema.json urn:anims
 check_schema docs/schemas/gltf-addressability-v2.schema.json urn:animsmith:schema:gltf-addressability:2 crates/animsmith-engine/src/addressability_v2.rs docs/output.md docs/cli.md README.md DESIGN.md crates/animsmith-engine/README.md examples/README.md
 check_schema docs/schemas/engine-import-advice-v1.schema.json urn:animsmith:schema:engine-import-advice:1 crates/animsmith-engine/src/import_advice.rs docs/output.md docs/cli.md
 check_schema docs/schemas/collection-manifest-v1.schema.json urn:animsmith:schema:collection-manifest:1 crates/animsmith-core/src/collection.rs crates/animsmith/src/collection_manifest.rs DESIGN.md
+check_schema docs/schemas/contact-transform-result-v1.schema.json urn:animsmith:schema:contact-transform-result:1 crates/animsmith-core/src/contact_transform.rs docs/output.md docs/collection-contracts.md DESIGN.md
 check_schema docs/schemas/collection-output-v1.schema.json urn:animsmith:schema:collection-output:1 DESIGN.md
 check_schema docs/schemas/collection-output-v2.schema.json urn:animsmith:schema:collection-output:2 DESIGN.md
 check_schema docs/schemas/collection-output-v3.schema.json urn:animsmith:schema:collection-output:3 DESIGN.md

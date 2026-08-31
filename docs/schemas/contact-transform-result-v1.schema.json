@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:contact-transform-result:1",
+  "title": "AnimSmith contact-transform-result V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "operation", "input", "outcome", "event_outcomes"],
+  "properties": {
+    "schema": {"const": "urn:animsmith:schema:contact-transform-result:1"},
+    "schema_version": {"const": 1},
+    "operation": {"$ref": "#/$defs/operation"},
+    "input": {"$ref": "#/$defs/binding"},
+    "outcome": {"enum": ["transformed", "refused"]},
+    "event_outcomes": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/event_outcome"}},
+    "output": {"$ref": "#/$defs/output"},
+    "refusal": {"$ref": "#/$defs/refusal"}
+  },
+  "allOf": [
+    {"if": {"properties": {"outcome": {"const": "transformed"}}, "required": ["outcome"]}, "then": {"required": ["output"], "not": {"required": ["refusal"]}}},
+    {"if": {"properties": {"outcome": {"const": "refused"}}, "required": ["outcome"]}, "then": {"required": ["refusal"], "not": {"required": ["output"]}}}
+  ],
+  "$defs": {
+    "identity": {"type": "object", "additionalProperties": false, "required": ["sha256", "bytes"], "properties": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "bytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}},
+    "binding": {"type": "object", "additionalProperties": false, "required": ["artifact", "dependency_closure_identity", "fragment"], "properties": {"artifact": {"$ref": "#/$defs/identity"}, "dependency_closure_identity": {"$ref": "#/$defs/identity"}, "fragment": {"$ref": "#/$defs/identity"}}},
+    "interval": {"type": "object", "additionalProperties": false, "required": ["start", "end"], "properties": {"start": {"type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991}, "end": {"type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991}}},
+    "control_point": {"type": "object", "additionalProperties": false, "required": ["input_time", "output_time"], "properties": {"input_time": {"type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991}, "output_time": {"type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991}}},
+    "operation": {"oneOf": [
+      {"type": "object", "additionalProperties": false, "required": ["kind", "version", "interval"], "properties": {"kind": {"const": "trim"}, "version": {"const": 1}, "interval": {"$ref": "#/$defs/interval"}}},
+      {"type": "object", "additionalProperties": false, "required": ["kind", "version", "interval"], "properties": {"kind": {"const": "slice"}, "version": {"const": 1}, "interval": {"$ref": "#/$defs/interval"}}},
+      {"type": "object", "additionalProperties": false, "required": ["kind", "version", "mapping"], "properties": {"kind": {"const": "resample"}, "version": {"const": 1}, "mapping": {"const": "identity"}}},
+      {"type": "object", "additionalProperties": false, "required": ["kind", "version", "output_duration_s", "control_points"], "properties": {"kind": {"const": "time_warp"}, "version": {"const": 1}, "output_duration_s": {"type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991}, "control_points": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/control_point"}}}}
+    ]},
+    "value": {"oneOf": [
+      {"type": "object", "additionalProperties": false, "required": ["time"], "properties": {"time": {"type": "number", "minimum": 0, "maximum": 1}}},
+      {"type": "object", "additionalProperties": false, "required": ["window"], "properties": {"window": {"type": "object", "additionalProperties": false, "required": ["start", "end"], "properties": {"start": {"type": "number", "minimum": 0, "maximum": 1}, "end": {"type": "number", "minimum": 0, "maximum": 1}}}}}
+    ]},
+    "event_outcome": {"oneOf": [
+      {"type": "object", "additionalProperties": false, "required": ["event_id", "outcome", "value"], "properties": {"event_id": {"type": "string", "minLength": 1, "maxLength": 255}, "outcome": {"const": "transformed"}, "value": {"$ref": "#/$defs/value"}}},
+      {"type": "object", "additionalProperties": false, "required": ["event_id", "outcome"], "properties": {"event_id": {"type": "string", "minLength": 1, "maxLength": 255}, "outcome": {"const": "outside"}}},
+      {"type": "object", "additionalProperties": false, "required": ["event_id", "outcome", "code"], "properties": {"event_id": {"type": "string", "minLength": 1, "maxLength": 255}, "outcome": {"const": "refused"}, "code": {"const": "partial_window"}}}
+    ]},
+    "refusal_code": {"enum": ["partial_window", "invalid_mapping", "invalid_binding", "invalid_value", "unsupported_extension"]},
+    "refusal": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"$ref": "#/$defs/refusal_code"}, "message": {"type": "string", "minLength": 1, "maxLength": 4096}}},
+    "output": {"type": "object", "additionalProperties": false, "required": ["artifact", "dependency_closure_identity", "fragment", "contact_fragment"], "properties": {"artifact": {"$ref": "#/$defs/identity"}, "dependency_closure_identity": {"$ref": "#/$defs/identity"}, "fragment": {"$ref": "#/$defs/identity"}, "contact_fragment": {"$ref": "urn:animsmith:schema:contact-fragment:1"}}}
+  }
+}

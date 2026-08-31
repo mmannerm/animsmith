@@ -566,8 +566,17 @@ canonical serializer live in `animsmith-core`. `animsmith generate
 contact-fragment` is the strict V1 producer: it publishes a source-bound
 sidecar only after finite bilateral stance-support preflight and a complete
 dependency closure; typed refusals publish nothing. It reports sampled support,
-not physical contact or gameplay meaning. Trim/slice/resample/time-warp remain
-deferred rather than exposing a partial transform API.
+not physical contact or gameplay meaning.
+
+The format-neutral core also implements the separately versioned
+[`contact-transform-result-v1.schema.json`](schemas/contact-transform-result-v1.schema.json)
+(`urn:animsmith:schema:contact-transform-result:1`) reader, canonical serializer,
+and exact trim/slice/resample/time-warp contact mapping. A result reader is
+given the separately supplied input fragment and independently rederives every
+event outcome and successful inline fragment instead of trusting copied result
+rows. Extension transformation is opt-in by exact schema/version; unsupported
+extensions refuse the whole operation. This library contract does not mutate
+an animation asset or publish a collection generation directory.
 
 ## Common envelope
 

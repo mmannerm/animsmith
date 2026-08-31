@@ -225,6 +225,14 @@ Refusal codes are `partial_window`, `invalid_mapping`, `invalid_binding`,
 duplicate, missing, or unknown event-outcome identities are strict reader
 errors, not refusal results.
 
+`animsmith-core` implements this mapping and strict result reader. The reader
+requires the separately supplied input fragment and independently rederives the
+operation, event outcomes, and successful inline fragment. Its published JSON
+Schema is
+[`contact-transform-result-v1.schema.json`](schemas/contact-transform-result-v1.schema.json).
+Asset time mutation and generation-directory publication are separate
+collection-producer responsibilities.
+
 The success shape is an illustrative frozen 0.5.0 transform-contract snapshot:
 
 ```json
@@ -259,8 +267,8 @@ The success shape is an illustrative frozen 0.5.0 transform-contract snapshot:
 }
 ```
 
-The delivered producer samples strict stance-support contacts and writes its
-own canonical fragment sidecar. It does not transform contacts, validate foot
+The delivered contact-fragment producer samples strict stance-support contacts
+and writes its own canonical fragment sidecar. It does not transform contacts, validate foot
 placement, map engine-native event types, merge into a host's final sidecar,
 or establish runtime behavior, gameplay meaning, or engine correctness.
 
