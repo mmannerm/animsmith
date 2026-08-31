@@ -17,16 +17,91 @@ use crate::producer::{self, Command, Failure, Kind, Stage};
 use animsmith_core::{
     CONTACT_SUPPORT_DETECTOR_V1_ID, ContactClipReferenceV1, ContactEventKindV1, ContactEventV1,
     ContactEventWindowV1, ContactExtensionV1, ContactFragmentV1, ContactPhaseV1, ContactProducerV1,
-    ContactRoleV1, DependencyClosureV1, MetricGrids, Role, SourceClipFactV1, SourceFactSetV1,
-    SourceObservationStateV1, SourceSetCoverageStateV1, StanceSideV1, ToolInfo,
+    ContactRoleV1, DependencyClosureV1, MetricGrids, PoseGrid, Role, SourceClipFactV1,
+    SourceFactSetV1, SourceObservationStateV1, SourceSetCoverageStateV1, StanceSideV1, ToolInfo,
     resolve_configured_roles, resolve_stance_support_v1, validate_document_shape,
 };
 use serde_json::json;
 use std::path::Path;
 use std::process::ExitCode;
+use std::rc::Rc;
 
 const MAX_FRAMES: usize = 1_000_000;
+/// V1 CLI-producer ceiling for each pose-grid allocation and sampling pass.
+///
+/// Pose construction retains three frame-major arrays for every
+/// `frames * bones` cell, while sampling evaluates every `frames * tracks`
+/// pair. Both products therefore share the existing one-million-sample gait
+/// safety boundary rather than allowing either dimension to multiply it.
+pub(crate) const MAX_METRIC_GRID_WORK: usize = 1_000_000;
 const MAX_RETAINED_RUNS: usize = 2_048;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MetricGridWork {
+    pub(crate) pose_cells: usize,
+    pub(crate) sample_evaluations: usize,
+}
+
+/// Preflight all dimensions that `MetricGrids::grid` multiplies before it can
+/// allocate a pose grid or enter the per-track sampling loop.
+pub(crate) fn checked_metric_grid_work(
+    frame_count: usize,
+    bone_count: usize,
+    track_count: usize,
+) -> Option<MetricGridWork> {
+    if frame_count == 0 || frame_count > MAX_FRAMES {
+        return None;
+    }
+    let pose_cells = frame_count.checked_mul(bone_count)?;
+    let sample_evaluations = frame_count.checked_mul(track_count)?;
+    if pose_cells > MAX_METRIC_GRID_WORK || sample_evaluations > MAX_METRIC_GRID_WORK {
+        return None;
+    }
+    Some(MetricGridWork {
+        pose_cells,
+        sample_evaluations,
+    })
+}
+
+trait ContactMetricGridRuntime {
+    fn dimensions(
+        &mut self,
+        document: &animsmith_core::Document,
+        clip: &animsmith_core::Clip,
+    ) -> Result<(usize, usize, usize), producer::Rejection>;
+
+    fn build_grid(
+        &mut self,
+        document: &animsmith_core::Document,
+        clip_index: usize,
+    ) -> Option<Rc<PoseGrid>>;
+}
+
+struct ProductionContactMetricGridRuntime;
+
+impl ContactMetricGridRuntime for ProductionContactMetricGridRuntime {
+    fn dimensions(
+        &mut self,
+        document: &animsmith_core::Document,
+        clip: &animsmith_core::Clip,
+    ) -> Result<(usize, usize, usize), producer::Rejection> {
+        let frame_count = animsmith_core::metrics::metric_frame_count(clip)
+            .ok_or_else(|| incomplete_refusal("metric grid is unavailable"))?;
+        Ok((
+            frame_count,
+            document.skeleton.bones.len(),
+            clip.tracks.len(),
+        ))
+    }
+
+    fn build_grid(
+        &mut self,
+        document: &animsmith_core::Document,
+        clip_index: usize,
+    ) -> Option<Rc<PoseGrid>> {
+        MetricGrids::new(document).grid(clip_index)
+    }
+}
 
 /// An exact selection bound both to the serialized clip reference and to the
 /// normalized document index whose sampled evidence it authorizes.
@@ -244,7 +319,7 @@ fn exact_collection_clip(
 /// Resolve one collection raw-take selector through complete source facts.
 /// This is deliberately independent of `Document::clips` names: loaders may
 /// synthesize those names while retaining the source index/name witness.
-fn resolve_collection_take_witness(
+pub(crate) fn resolve_collection_take_witness(
     source_clips: &SourceFactSetV1<SourceClipFactV1>,
     document_clip_count: usize,
     raw_take_index: usize,
@@ -293,7 +368,12 @@ fn publish_loaded(
     format: Format,
     tool: ToolInfo,
 ) -> Result<ExitCode, String> {
-    let fragment = match build_fragment(loaded, config, selection) {
+    let fragment = match build_fragment(
+        loaded,
+        config,
+        selection,
+        &mut ProductionContactMetricGridRuntime,
+    ) {
         Ok(fragment) => fragment,
         Err(rejection) => return emit_refusal(format, tool, rejection),
     };
@@ -324,6 +404,7 @@ fn build_fragment(
     loaded: &LoadedInput,
     config: &LoadedConfig,
     selection: ClipSelection,
+    grid_runtime: &mut impl ContactMetricGridRuntime,
 ) -> Result<ContactFragmentV1, producer::Rejection> {
     let document = loaded.document();
     validate_document_shape(document).map_err(|_| {
@@ -341,12 +422,7 @@ fn build_fragment(
             "clip duration is not finite and positive",
         ));
     }
-    let frame_count = animsmith_core::metrics::metric_frame_count(clip)
-        .ok_or_else(|| incomplete_refusal("metric grid is unavailable"))?;
-    validate_frame_count(frame_count)?;
-    let grids = MetricGrids::new(document);
-    let grid = grids
-        .grid(selected_index)
+    let grid = build_contact_metric_grid_after_preflight(document, selected_index, grid_runtime)?
         .ok_or_else(|| incomplete_refusal("metric grid is unavailable"))?;
     if grid.frame_count() < 3 || grid.times.len() != grid.frame_count() {
         return Err(incomplete_refusal("metric grid is incomplete"));
@@ -446,6 +522,22 @@ fn build_fragment(
     .map_err(|_| incomplete_refusal("contact fragment cannot represent strict evidence"))
 }
 
+fn build_contact_metric_grid_after_preflight(
+    document: &animsmith_core::Document,
+    clip_index: usize,
+    runtime: &mut impl ContactMetricGridRuntime,
+) -> Result<Option<Rc<PoseGrid>>, producer::Rejection> {
+    let clip = document
+        .clips
+        .get(clip_index)
+        .ok_or_else(|| incomplete_refusal("metric grid is unavailable"))?;
+    let (frame_count, bone_count, track_count) = runtime.dimensions(document, clip)?;
+    checked_metric_grid_work(frame_count, bone_count, track_count).ok_or_else(|| {
+        incomplete_refusal("metric grid exceeds the 1000000-cell allocation or sampling-work limit")
+    })?;
+    Ok(runtime.build_grid(document, clip_index))
+}
+
 fn reserve_retained_run(retained_runs: &mut usize) -> Result<(), producer::Rejection> {
     if *retained_runs == MAX_RETAINED_RUNS {
         return Err(incomplete_refusal(
@@ -516,7 +608,7 @@ fn validate_contact_event_relationship(
     Ok(())
 }
 
-fn complete_closure(
+pub(crate) fn complete_closure(
     closure: &DependencyClosureV1,
     primary: &animsmith_core::InputIdentity,
 ) -> Result<animsmith_core::DependencyClosureIdentityV1, producer::Rejection> {
@@ -545,15 +637,6 @@ fn validate_complete_closure_binding(
     identity
         .cloned()
         .ok_or_else(|| incomplete_refusal("complete dependency closure has no identity"))
-}
-
-fn validate_frame_count(frame_count: usize) -> Result<(), producer::Rejection> {
-    if frame_count > MAX_FRAMES {
-        return Err(incomplete_refusal(
-            "metric grid exceeds the 1000000-frame limit",
-        ));
-    }
-    Ok(())
 }
 
 fn contact_role(role: Role) -> Result<ContactRoleV1, producer::Rejection> {
@@ -623,6 +706,74 @@ mod tests {
         SourceChannelFactV1, SourceFormatV1, SourceLoaderDispositionV1, SourceObservationV1,
         SourceProvenanceV1, SourceSetCoverageV1, SourceTextV1, SourceTimeRangeV1,
     };
+    use std::fs;
+
+    struct ObservedContactMetricGridRuntime {
+        dimensions: (usize, usize, usize),
+        grids_built: usize,
+    }
+
+    impl ContactMetricGridRuntime for ObservedContactMetricGridRuntime {
+        fn dimensions(
+            &mut self,
+            _document: &animsmith_core::Document,
+            _clip: &animsmith_core::Clip,
+        ) -> Result<(usize, usize, usize), producer::Rejection> {
+            Ok(self.dimensions)
+        }
+
+        fn build_grid(
+            &mut self,
+            document: &animsmith_core::Document,
+            clip_index: usize,
+        ) -> Option<Rc<PoseGrid>> {
+            self.grids_built += 1;
+            ProductionContactMetricGridRuntime.build_grid(document, clip_index)
+        }
+    }
+
+    fn loaded_contact_fixture() -> (tempfile::TempDir, LoadedInput, LoadedConfig) {
+        let root = tempfile::tempdir().unwrap();
+        let source_path = root.path().join("clip.gltf");
+        let mut buffer = Vec::new();
+        for value in [0.0f32, 0.5, 1.0] {
+            buffer.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] {
+            buffer.extend_from_slice(&value.to_le_bytes());
+        }
+        fs::write(root.path().join("clip.bin"), buffer).unwrap();
+        fs::write(
+            &source_path,
+            r#"{
+  "asset": {"version":"2.0"},
+  "buffers": [{"uri":"clip.bin","byteLength":48}],
+  "bufferViews": [
+    {"buffer":0,"byteOffset":0,"byteLength":12},
+    {"buffer":0,"byteOffset":12,"byteLength":36}
+  ],
+  "accessors": [
+    {"bufferView":0,"componentType":5126,"count":3,"type":"SCALAR","min":[0.0],"max":[1.0]},
+    {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}
+  ],
+  "nodes": [{"name":"root"}],
+  "animations": [{
+    "name":"Take 001",
+    "samplers":[{"input":0,"output":1,"interpolation":"LINEAR"}],
+    "channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}]
+  }],
+  "scenes": [{"nodes":[0]}],
+  "scene": 0
+}"#,
+        )
+        .unwrap();
+        let config = LoadedConfig::without_file();
+        let loaded = match load_with_config_for_producer(&source_path, &config) {
+            Ok(loaded) => loaded,
+            Err(_) => panic!("synthetic contact source must load"),
+        };
+        (root, loaded, config)
+    }
 
     fn window(start: f64, end: f64) -> ContactEventV1 {
         ContactEventV1::window(
@@ -747,9 +898,40 @@ mod tests {
     }
 
     #[test]
-    fn frame_cap_accepts_one_million_and_refuses_next_frame() {
-        assert!(validate_frame_count(MAX_FRAMES).is_ok());
-        assert!(validate_frame_count(MAX_FRAMES + 1).is_err());
+    fn metric_grid_work_caps_products_inclusively_and_refuses_overflow() {
+        assert_eq!(
+            checked_metric_grid_work(1, MAX_METRIC_GRID_WORK, MAX_METRIC_GRID_WORK),
+            Some(MetricGridWork {
+                pose_cells: MAX_METRIC_GRID_WORK,
+                sample_evaluations: MAX_METRIC_GRID_WORK,
+            })
+        );
+        assert!(checked_metric_grid_work(1, MAX_METRIC_GRID_WORK + 1, 1).is_none());
+        assert!(checked_metric_grid_work(1, 1, MAX_METRIC_GRID_WORK + 1).is_none());
+        assert!(checked_metric_grid_work(MAX_FRAMES + 1, 0, 0).is_none());
+        assert!(checked_metric_grid_work(2, usize::MAX, 1).is_none());
+        assert!(checked_metric_grid_work(2, 1, usize::MAX).is_none());
+        assert!(checked_metric_grid_work(0, 0, 0).is_none());
+    }
+
+    #[test]
+    fn actual_build_fragment_preflights_both_products_before_grid_construction() {
+        let (_root, loaded, config) = loaded_contact_fixture();
+        for dimensions in [
+            // 101 * 9,901 is the first integer pose-cell product above one million.
+            (101, 9_901, 1),
+            // The same N+1 product exercises sampling work independently.
+            (101, 3_301, 9_901),
+        ] {
+            let selection = exact_document_clip(&loaded, "Take 001").unwrap();
+            let mut runtime = ObservedContactMetricGridRuntime {
+                dimensions,
+                grids_built: 0,
+            };
+
+            assert!(build_fragment(&loaded, &config, selection, &mut runtime).is_err());
+            assert_eq!(runtime.grids_built, 0);
+        }
     }
 
     #[test]

@@ -110,8 +110,9 @@ manifests. It rejects unknown fields, unsupported identities/versions, unsafe
 or duplicate paths, duplicate/missing members, an absent reference, invalid
 manifest identities, and invalid slope ranges. Host canonicalization,
 symlink/alias detection, and the guarantee that `output_directory` is a
-previously absent sibling generation destination belong to the later
-transactional collection adapter; this parser performs no filesystem I/O.
+previously absent sibling generation destination are enforced by the private
+source-preparation adapter described below; this parser performs no filesystem
+I/O.
 
 The pure core planner additionally requires each supplied sidecar byte identity
 to equal its canonical `contact-fragment:1` identity and its collection clip
@@ -130,6 +131,47 @@ left/right foot-or-toe role provenance. Every member must carry the exact same
 finite non-negative `contact_height_m` binary64 value because that policy
 determines the compared window boundaries. Other extensions refuse because no
 operation-specific transform handler has run.
+
+The private CLI-crate preparation adapter now bounded-reads the exact manifest
+and parameterization, resolves the exact member-reachable source/config subset
+in canonical manifest source-key order plus every declared contact fragment and
+absent output directory under its declaration root, and rejects symlinks,
+canonical collisions, and (where the platform exposes file identity) hardlink
+aliases before source parsing. It first validates the pure exact runtime-set
+binding, then loads only its member-reachable manifest sources/configs in
+manifest order; unrelated source rows do not gate this scoped operation. It
+captures each distinct canonical config once and shares that immutable
+normalized snapshot and explicit byte identity across its sources for later
+proof without a control-file reread. Distinct retained config snapshots share
+an inclusive 32 MiB invocation ceiling; repeated use of the same canonical
+config is counted and captured once. It requires complete
+dependency-closure identity and exact raw take index/name witnesses,
+counts primary, every retained external dependency identity, and normalized
+document semantic payload against per-source and invocation byte ceilings. Each
+loaded document passes strict structural shape validation before sampling or
+candidate work. The adapter then preflights both `frames * bones` pose cells
+and `frames * tracks` sampling work for every selected member and admits the
+complete multi-member totals against the inclusive one-million-cell/work
+ceiling before constructing the first metric grid. After planning, it runs the
+core clip-candidate preflight for every member and checks invocation-wide
+candidate-key, retained-value, exact candidate-storage-byte (including name),
+and work totals before constructing the first candidate.
+It then
+derives Root/Hips endpoint X/Z `hypot` and absolute unwrapped yaw through the
+existing metric grid/role/trajectory authority, and cross-checks every returned
+plan binding and duration before calling `time_warp_clip_v1`. Any refusal drops
+the whole in-memory batch and creates no output or partial result.
+
+Preparation deliberately stops contact transformation at a typed continuation.
+It validates and reconstructs the closed stance-detector payload through the
+operation-specific core handler, but a fresh output artifact identity and its
+dependency closure do not exist until the candidate document is serialized.
+Only that later serialization step may supply those exact identities and call
+`transform_contact_fragment_v1`; preparation does not hash an in-memory `Clip`,
+claim a generated artifact identity, serialize, reread/prove, or publish. No
+user-visible command is added by this slice. A freshly serialized exact-copy
+candidate may truthfully retain the input content identity; freshness comes
+from capturing the serialization result, not from requiring unequal digests.
 
 Each member must contain complete positive left/right support windows, each
 with exactly one same-side marker. Linear and circular overlaps, simultaneous
@@ -385,7 +427,12 @@ The success shape is an illustrative frozen 0.5.0 transform-contract snapshot:
 ```
 
 The delivered contact-fragment producer samples strict stance-support contacts
-and writes its own canonical fragment sidecar. It does not transform contacts, validate foot
+and writes its own canonical fragment sidecar. Before constructing its metric
+grid, the producer requires finite positive timing and checked
+`frames * bones` pose cells plus `frames * tracks` sampling work, each at or
+below the inclusive one-million V1 CLI-producer ceiling. A refusal preserves
+the destination. These resource bounds are not engine or artistic evidence.
+The producer does not transform contacts, validate foot
 placement, map engine-native event types, merge into a host's final sidecar,
 or establish runtime behavior, gameplay meaning, or engine correctness.
 

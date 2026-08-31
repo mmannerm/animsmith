@@ -333,14 +333,21 @@ conservative V1 inspection-work charge without allocating the candidate,
 allowing embedders to enforce their own checked aggregate batch budget before
 retaining multiple outputs.
 
-The planner does not open paths. The CLI crate's current parser validates the
-closed bounded TOML grammar, while a later collection producer must resolve
-those paths under the parameterization document, detect canonical aliases,
-reload the exact assets, derive the typed in-place root-motion evidence, bind
-each loaded clip to its member plan, transform fragments with the same map,
-serialize and independently prove
-outputs, and publish one generation directory. Embedders must not treat a
-successful plan as an output-artifact or gameplay-acceptance proof. See the
+The planner does not open paths. The CLI crate now has a private, non-command
+adapter that validates the closed bounded TOML grammar, resolves the manifest
+and parameterization path sets with symlink/canonical and
+platform-observable hardlink alias refusal, validates the pure runtime-set
+binding before host source access, reloads only its exact member-reachable
+sources/configs, retains their normalized config semantics and byte identities
+for later proof without rereading controls, derives the typed in-place root evidence,
+cross-checks plans against exact selected takes, and prepares bounded clip
+candidates. It also runs the closed operation-aware stance-detector extension
+handler, but retains contact transformation as a typed continuation: only a
+later serializer can supply a truthful fresh output artifact identity and
+dependency closure. Serialization, reread proof, generation-directory
+publication, and a user-visible command remain later work. Embedders must not
+treat a successful plan or prepared candidate as an output-artifact or
+gameplay-acceptance proof. See the
 [collection contract](collection-contracts.md#foot-cycle-parameterization-v1-18-planner-slice)
 for the declaration and exact topology grammar.
 

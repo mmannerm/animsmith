@@ -5,6 +5,9 @@
 //! rooted path resolution, asset loading, transformation, and publication.
 
 use std::fmt;
+use std::fs;
+use std::io::Read;
+use std::path::Path;
 
 use animsmith_core::{
     COLLECTION_MANIFEST_V1_ID, COLLECTION_MANIFEST_V1_SCHEMA_VERSION, CollectionIdV1,
@@ -20,6 +23,7 @@ use serde::de::{Deserializer, SeqAccess, Visitor};
 /// Stable category for a foot-cycle parameterization control failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FootCycleParameterizationControlKind {
+    Read,
     TooLarge,
     Encoding,
     Malformed,
@@ -31,6 +35,7 @@ pub(crate) enum FootCycleParameterizationControlKind {
 impl FootCycleParameterizationControlKind {
     fn label(self) -> &'static str {
         match self {
+            Self::Read => "parameterization-read",
             Self::TooLarge => "parameterization-too-large",
             Self::Encoding => "parameterization-encoding",
             Self::Malformed => "parameterization-malformed",
@@ -39,6 +44,32 @@ impl FootCycleParameterizationControlKind {
             Self::InvalidDeclaration => "invalid-declaration",
         }
     }
+}
+
+/// One validated parameterization bound to the exact bytes read once.
+pub(crate) struct LoadedFootCycleParameterization {
+    pub(crate) parameterization: FootCycleParameterizationV1,
+    pub(crate) input: InputIdentity,
+}
+
+/// Read and strictly validate one bounded parameterization document.
+pub(crate) fn load_foot_cycle_parameterization_with_identity(
+    path: &Path,
+) -> Result<LoadedFootCycleParameterization, FootCycleParameterizationControlError> {
+    let file = fs::File::open(path).map_err(|_| {
+        FootCycleParameterizationControlError::new(FootCycleParameterizationControlKind::Read)
+    })?;
+    let mut bytes = Vec::new();
+    file.take(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| {
+            FootCycleParameterizationControlError::new(FootCycleParameterizationControlKind::Read)
+        })?;
+    let parameterization = parse_foot_cycle_parameterization_bytes(&bytes)?;
+    Ok(LoadedFootCycleParameterization {
+        parameterization,
+        input: InputIdentity::from_bytes(&bytes),
+    })
 }
 
 /// One closed control-plane parsing failure without input detail leakage.

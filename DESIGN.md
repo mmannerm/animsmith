@@ -4016,6 +4016,50 @@ plan belongs to the loaded artifact, transform contact
 fragments, serialize or reread an output, or publish a generation directory.
 Those bindings and atomic transaction steps remain later #18 work.
 
+### F.10D Foot-cycle source preparation V1 (#18)
+
+The CLI crate's next private seam binds the two prior pure boundaries to exact
+local source bytes without adding a command. It bounded-reads the manifest and
+parameterization once, resolves the exact member-reachable manifest
+source/config subset in canonical manifest source-key order plus every
+parameterization contact/output locator under its explicit declaration root,
+and rejects symlinks, canonical collisions, and platform-observable hardlink
+aliases before parsing any motion source. The future output leaf must be absent
+under an existing symlink-free parent. Pure manifest/runtime-set binding is
+validated first. Per-source and aggregate byte caps then cover only the exact
+member-reachable source subset, retained in manifest order; unrelated manifest
+sources do not gate this collection-scoped operation. Every reachable source
+and its exact config basis are loaded. Both the normalized config semantics and
+the explicit config byte identity are retained for later proof without a
+control-file reread. Any declared digest pin is enforced, while complete
+dependency-closure identities, complete raw take inventories, and exact
+index/name-to-normalized-clip witnesses are mandatory.
+
+Each normalized reachable document passes the core's strict structural shape
+validation before it can reach sampling or candidate work. The adapter then
+preflights every selected member's `frames * bones` pose cells and `frames *
+tracks` sampling work, including the complete invocation totals, before
+constructing the first `MetricGrids` grid. It uses configured role resolution
+and `root_trajectory_metrics` as the existing authority. Horizontal
+endpoint displacement is the binary64 `hypot` of X/Z endpoint components and
+accumulated yaw is the absolute unwrapped yaw. Missing, ambiguous, non-finite,
+or over-threshold evidence remains typed and makes the core planner refuse. The
+adapter cross-checks every plan's member, source artifact, closure, canonical
+fragment, selected take, duration, and root binding before building the pure
+clip candidate. Any later member failure discards all candidates; preparation
+does no filesystem mutation.
+
+Contact output remains intentionally unfinished at this boundary. Core exposes
+one operation-aware handler that validates and reconstructs the exact closed
+stance-support detector payload for `time_warp`; the adapter retains that
+handler output together with the exact input fragment, artifact, closure, and
+operation. It cannot truthfully construct the output artifact identity or
+output dependency closure until a complete candidate document is serialized.
+The typed continuation accepts those later exact identities and only then calls
+`transform_contact_fragment_v1`. This slice therefore performs no
+serialization, generated-artifact hashing, reread/proof, generation staging,
+publication, or CLI exposure.
+
 ### F.11 Transition-family declaration V1 (#148)
 
 Issue #148 freezes declarations for transition families without implementing

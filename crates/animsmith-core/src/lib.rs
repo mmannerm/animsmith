@@ -297,7 +297,8 @@ pub use foot_cycle::{
     FootCycleMemberEvidenceV1, FootCycleMemberPlanV1, FootCycleParameterizationError,
     FootCycleParameterizationMemberV1, FootCycleParameterizationV1, FootCyclePlanV1,
     FootCycleRootMotionBindingV1, FootCycleRootMotionEvidenceV1,
-    plan_foot_cycle_parameterization_v1,
+    plan_foot_cycle_parameterization_v1, transform_contact_support_detector_extension_time_warp_v1,
+    validate_foot_cycle_manifest_binding_v1,
 };
 pub use foot_cycle_clip::{
     FOOT_CYCLE_CLIP_V1_MAX_CANDIDATE_BYTES, FOOT_CYCLE_CLIP_V1_MAX_GENERATED_KEYS,
