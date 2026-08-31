@@ -959,7 +959,9 @@ fn contact_boundaries(
     }
     boundaries.sort_by(|left, right| left.phase.total_cmp(&right.phase));
     let windows = boundaries
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0].side, pair[0].edge, pair[1].side, pair[1].edge))
         .collect::<Vec<_>>();
     if boundaries.is_empty()
@@ -1459,6 +1461,72 @@ mod tests {
             candidate.tracks[0].times.len(),
             source.tracks[0].times.len()
         );
+        prove_clip_map(&source, &candidate, plan.operation()).unwrap();
+    }
+
+    #[test]
+    fn clip_map_proof_rejects_mutated_linear_and_step_output_values() {
+        let prepared = crate::foot_cycle_source_prep::tests::prepared_fixture_for_proof_tests();
+        let member = &prepared.members()[1];
+        let plan = &prepared.plan().members()[1];
+        for interpolation in [Interpolation::Linear, Interpolation::Step] {
+            let mut source = prepared.sources()[member.source_index()].document().clips
+                [member.clip_index()]
+            .clone();
+            source.tracks[0].interpolation = interpolation;
+            let candidate = animsmith_core::time_warp_clip_v1(&source, plan).unwrap();
+            prove_clip_map(&source, &candidate, plan.operation()).unwrap();
+
+            let mut mutated = candidate;
+            let TrackValues::Vec3s(values) = &mut mutated.tracks[0].values else {
+                panic!("fixture translation track");
+            };
+            values[1].x = f32::from_bits(values[1].x.to_bits() + 1);
+            assert_eq!(
+                prove_clip_map(&source, &mutated, plan.operation())
+                    .unwrap_err()
+                    .kind(),
+                FootCycleProofKind::ClipMap
+            );
+        }
+    }
+
+    #[test]
+    fn clip_map_proof_accepts_nonidentity_constant_multi_key_cubic_motion() {
+        let prepared = crate::foot_cycle_source_prep::tests::prepared_fixture_for_proof_tests();
+        let member = &prepared.members()[1];
+        let plan = &prepared.plan().members()[1];
+        let mut source =
+            prepared.sources()[member.source_index()].document().clips[member.clip_index()].clone();
+        let track = &mut source.tracks[0];
+        assert!(track.times.len() > 1);
+        let TrackValues::Vec3s(authored) = &track.values else {
+            panic!("fixture translation track");
+        };
+        let value = authored[0];
+        let mut zero = value;
+        zero.x = 0.0;
+        zero.y = 0.0;
+        zero.z = 0.0;
+        track.interpolation = Interpolation::CubicSpline;
+        track.values = TrackValues::Vec3s(
+            track
+                .times
+                .iter()
+                .flat_map(|_| [zero, value, zero])
+                .collect(),
+        );
+        let ContactTransformOperationV1::TimeWarp { control_points, .. } = plan.operation() else {
+            unreachable!()
+        };
+        assert!(
+            control_points
+                .iter()
+                .any(|point| point.input_time() != point.output_time())
+        );
+
+        let candidate = animsmith_core::time_warp_clip_v1(&source, plan).unwrap();
+        assert!(tracks_equal_bits(&source.tracks[0], &candidate.tracks[0]));
         prove_clip_map(&source, &candidate, plan.operation()).unwrap();
     }
 
