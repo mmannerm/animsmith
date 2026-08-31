@@ -329,6 +329,7 @@ if ! cmp -s docs/schemas/collection-output-v6.schema.json <(
 fi
 check_schema docs/schemas/contact-fragment-v1.schema.json urn:animsmith:schema:contact-fragment:1 crates/animsmith-core/src/contact_fragment.rs docs/output.md DESIGN.md
 check_schema docs/schemas/transition-pose-evaluation-v1.schema.json urn:animsmith:schema:transition-pose-evaluation:1 crates/animsmith-core/src/transition_pose_evaluation.rs DESIGN.md docs/collection-contracts.md
+check_schema docs/schemas/skeleton-compatibility-v1.schema.json urn:animsmith:schema:skeleton-compatibility:1 crates/animsmith/src/skeleton_compare.rs docs/cli.md docs/output.md
 check_schema docs/schemas/character-assembly-recipe-v2.schema.json urn:animsmith:schema:character-assembly-recipe:2
 check_schema docs/schemas/character-assembly-recipe-v3.schema.json urn:animsmith:schema:character-assembly-recipe:3 crates/animsmith/src/assembly.rs
 check_schema docs/schemas/character-assembly-recipe-v4.schema.json urn:animsmith:schema:character-assembly-recipe:4 crates/animsmith/src/assembly.rs

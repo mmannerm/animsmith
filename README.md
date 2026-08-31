@@ -102,6 +102,7 @@ $ animsmith collection lint collection.toml --format json
 $ animsmith collection evaluate-directional-speed --policy directional-speed.toml --evidence collection-output.json --format json
 $ animsmith measure clip.glb
 $ animsmith inspect clip.glb
+$ animsmith skeleton compare source.fbx target.glb --correspondence skeleton-correspondence.toml --format json
 $ animsmith generate addressability clip.glb
 $ animsmith --config unity.animsmith.toml generate import-advice export.fbx
 $ animsmith report clip.glb -o report.html

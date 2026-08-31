@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:skeleton-compatibility:1",
+  "title": "AnimSmith skeleton compatibility V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "schema", "tool", "command", "outcome", "correspondence", "source", "target", "rows", "facets"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "schema": {"const": "urn:animsmith:schema:skeleton-compatibility:1"},
+    "tool": {"type": "object"},
+    "command": {"const": "skeleton compare"},
+    "outcome": {"enum": ["compatible", "incompatible", "partial", "not_evaluated"]},
+    "correspondence": {"$ref": "#/$defs/correspondence"},
+    "source": {"$ref": "#/$defs/subject"},
+    "target": {"$ref": "#/$defs/subject"},
+    "rows": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+    "facets": {"$ref": "#/$defs/facets"}
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "bytes"],
+      "properties": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "bytes": {"type": "integer", "minimum": 0}}
+    },
+    "state": {"enum": ["pass", "mismatch", "unavailable"]},
+    "delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tolerance", "state"],
+      "properties": {"value": {"type": "number"}, "tolerance": {"type": "number", "minimum": 0}, "state": {"$ref": "#/$defs/state"}}
+    },
+    "rest_deltas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["translation_m", "rotation_deg", "scale_delta"],
+      "properties": {"translation_m": {"$ref": "#/$defs/delta"}, "rotation_deg": {"$ref": "#/$defs/delta"}, "scale_delta": {"$ref": "#/$defs/delta"}}
+    },
+    "correspondence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "schema_version", "input", "matching_mode", "tolerances"],
+      "properties": {
+        "schema": {"const": "urn:animsmith:skeleton-correspondence:1"},
+        "schema_version": {"const": 1},
+        "input": {"$ref": "#/$defs/identity"},
+        "matching_mode": {"enum": ["exact_name", "explicit"]},
+        "tolerances": {"$ref": "#/$defs/tolerances"}
+      }
+    },
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["translation_m", "rotation_deg", "scale_delta", "normalized_bone_length_ratio_delta"],
+      "properties": {
+        "translation_m": {"type": "number", "minimum": 0},
+        "rotation_deg": {"type": "number", "minimum": 0},
+        "scale_delta": {"type": "number", "minimum": 0},
+        "normalized_bone_length_ratio_delta": {"type": "number", "minimum": 0}
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "dependency_closure_complete", "selector", "normalized_units_basis"],
+      "properties": {
+        "input": {"$ref": "#/$defs/identity"},
+        "dependency_closure_identity": {"$ref": "#/$defs/identity"},
+        "dependency_closure_complete": {"type": "boolean"},
+        "selector": {"type": "object", "additionalProperties": false, "required": ["root_name"], "properties": {"root_name": {"type": "string", "minLength": 1}}},
+        "normalized_units_basis": {"type": "object", "additionalProperties": false, "required": ["translation", "rotation"], "properties": {"translation": {"const": "metres"}, "rotation": {"const": "right-handed normalized coordinates"}}}
+      }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["matched", "missing_target", "missing_source", "parent_mismatch", "unavailable"]},
+        "source_name": {"type": "string"},
+        "target_name": {"type": "string"},
+        "parent_correspondence": {"$ref": "#/$defs/state"},
+        "local_rest": {"$ref": "#/$defs/rest_deltas"},
+        "rest_world": {"$ref": "#/$defs/rest_deltas"},
+        "normalized_child_bone_length_ratio": {"$ref": "#/$defs/delta"}
+      }
+    },
+    "facet_summary": {"type": "object", "additionalProperties": false, "required": ["required", "state"], "properties": {"required": {"type": "boolean"}, "state": {"$ref": "#/$defs/state"}}},
+    "evidence_side": {"type": "object", "additionalProperties": false, "required": ["state", "detail"], "properties": {"state": {"$ref": "#/$defs/state"}, "detail": {"type": "string"}}},
+    "evidence": {"type": "object", "additionalProperties": false, "required": ["required", "state", "source", "target"], "properties": {"required": {"const": false}, "state": {"$ref": "#/$defs/state"}, "source": {"$ref": "#/$defs/evidence_side"}, "target": {"$ref": "#/$defs/evidence_side"}}},
+    "facets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topology_rest", "skin_membership", "inverse_bind", "deformation_model"],
+      "properties": {"topology_rest": {"$ref": "#/$defs/facet_summary"}, "skin_membership": {"$ref": "#/$defs/evidence"}, "inverse_bind": {"$ref": "#/$defs/evidence"}, "deformation_model": {"$ref": "#/$defs/evidence"}}
+    }
+  }
+}

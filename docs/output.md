@@ -5,6 +5,34 @@ Text and Markdown lint output are presentation views over the same evaluation
 results. The HTML report renders the same typed findings, coverage gaps, and
 prediction facets beside its sampled-motion view.
 
+## Skeleton compatibility
+
+`animsmith skeleton compare` emits one immutable
+[`skeleton-compatibility-v1.schema.json`](schemas/skeleton-compatibility-v1.schema.json)
+(`urn:animsmith:schema:skeleton-compatibility:1`) result. Its control plane is
+the exact raw correspondence TOML bytes, recorded as `correspondence.input`.
+That TOML pins the exact source and target primary identities, their selected
+root names, the declared matching mode, and every tolerance. Invalid or stale
+control input, unreadable input, or an input beyond the 64 MiB primary-source
+bound is an operator error (exit 2) and emits no result.
+
+The result keeps structural topology/rest evidence separate from optional
+source skin-membership, inverse-bind, and deformation-model facets. A result
+is `compatible` only when every required topology/rest row was available and
+within its declared tolerances. Complete mismatches are `incompatible`; mixed
+available/unavailable topology/rest evidence is `partial`; and no evaluable
+correspondence is `not_evaluated`. The last three exit 1. Neither the outcome
+nor any optional facet establishes retargeting, runtime deformation, masking,
+contact, gameplay, or artistic acceptance.
+
+`rows` are deterministically ordered by source then target name. A matched row
+contains separate local and rest-world translation, rotation, and scale deltas;
+the world rotation exists only where the existing source measurement proves a
+right-handed unit-orthonormal rest-world linear transform. A child-bone ratio
+exists only when both corresponding parent/child world positions permit an
+independent nonzero length comparison. `missing_source`, `missing_target`, and
+`parent_mismatch` rows are explicit rather than folded into a score.
+
 ## Transition-pose evaluation
 
 `animsmith evaluate-transition-poses INPUT --format json` emits exactly one
