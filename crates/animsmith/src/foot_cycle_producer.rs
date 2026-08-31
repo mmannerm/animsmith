@@ -1113,6 +1113,18 @@ mod tests {
         mutated.into_bytes()
     }
 
+    fn assert_wire_identity_matches_bytes(identity: &IdentityWire, bytes: &[u8]) {
+        let actual = InputIdentity::from_bytes(bytes);
+        assert_eq!(identity.sha256, actual.sha256());
+        assert_eq!(identity.bytes, actual.bytes());
+    }
+
+    fn assert_input_identity_matches_bytes(identity: &InputIdentity, bytes: &[u8]) {
+        let actual = InputIdentity::from_bytes(bytes);
+        assert_eq!(identity.sha256(), actual.sha256());
+        assert_eq!(identity.bytes(), actual.bytes());
+    }
+
     #[test]
     fn three_n_plus_one_and_alias_order_are_checked() {
         assert_eq!(2_u64.checked_mul(3).and_then(|n| n.checked_add(1)), Some(7));
@@ -1267,9 +1279,11 @@ mod tests {
         );
 
         publish_encoded_generation(&generation).unwrap();
-        let aggregate =
+        let aggregate_bytes =
             std::fs::read(generation.destination.join("aggregate-evidence.json")).unwrap();
-        assert_eq!(aggregate, generation.aggregate_bytes);
+        assert_eq!(aggregate_bytes, generation.aggregate_bytes);
+        read_aggregate_evidence_v1(&aggregate_bytes).unwrap();
+        let aggregate: AggregateWire = serde_json::from_slice(&aggregate_bytes).unwrap();
         let mut files = Vec::new();
         for index in 0..2 {
             let root = generation.destination.join(format!("members/{index:06}"));
@@ -1280,14 +1294,33 @@ mod tests {
         }
         files.push(generation.destination.join("aggregate-evidence.json"));
         assert_eq!(files.len(), 7);
-        for member in &generation.members {
+        for (index, member) in generation.members.iter().enumerate() {
+            let root = generation.destination.join(format!("members/{index:06}"));
+            let artifact_bytes = std::fs::read(root.join("artifact.glb")).unwrap();
+            let fragment_bytes = std::fs::read(root.join("contact-fragment.json")).unwrap();
+            let evidence_bytes = std::fs::read(root.join("evidence.json")).unwrap();
             assert!(
-                animsmith_gltf::load_source_bytes(
-                    Path::new("artifact.glb"),
-                    &member.artifact_bytes
-                )
-                .is_ok()
+                animsmith_gltf::load_source_bytes(Path::new("artifact.glb"), &artifact_bytes)
+                    .is_ok()
             );
+            let fragment = animsmith_core::ContactFragmentV1::read_json(&fragment_bytes).unwrap();
+            assert_eq!(fragment.canonical_json().unwrap(), fragment_bytes);
+            read_member_evidence_v1(&evidence_bytes).unwrap();
+            let evidence: MemberWire = serde_json::from_slice(&evidence_bytes).unwrap();
+            let aggregate_member = &aggregate.members[index];
+
+            assert_eq!(artifact_bytes, member.artifact_bytes);
+            assert_eq!(fragment_bytes, member.fragment_bytes);
+            assert_eq!(evidence_bytes, member.evidence_bytes);
+            assert_input_identity_matches_bytes(fragment.artifact(), &artifact_bytes);
+            assert_wire_identity_matches_bytes(&evidence.output.artifact, &artifact_bytes);
+            assert_wire_identity_matches_bytes(&aggregate_member.output_artifact, &artifact_bytes);
+            assert_wire_identity_matches_bytes(&evidence.output.contact_fragment, &fragment_bytes);
+            assert_wire_identity_matches_bytes(
+                &aggregate_member.output_contact_fragment,
+                &fragment_bytes,
+            );
+            assert_wire_identity_matches_bytes(&aggregate_member.evidence, &evidence_bytes);
         }
     }
 

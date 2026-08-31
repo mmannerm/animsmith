@@ -475,6 +475,10 @@ fn public_command_splits_plan_and_source_refusals_from_operator_failures() {
     let result = missing_config.run();
     assert_eq!(result.status.code(), Some(2));
     assert!(result.stdout.is_empty());
+    assert_eq!(
+        result.stderr,
+        b"animsmith: foot-cycle source preparation failed (control)\n"
+    );
     assert!(!missing_config.destination.exists());
 }
 
