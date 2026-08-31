@@ -3985,6 +3985,37 @@ animation assets, transform fragments, derive its required typed in-place
 Root/Hips evidence, serialize candidates, prove output, or publish the
 collection generation.
 
+### F.10C Foot-cycle clip candidate V1 (#18)
+
+The next independent slice is the pure format-neutral application of one
+planned member map to an already selected `Clip`. `time_warp_clip_v1` validates
+track-local clip/track shape again, requires the plan's exact duration-preserving
+V1 operation, and returns a cloned candidate without mutating its input. This
+Clip-only seam has no skeleton input, so its host must already have bound every
+track bone index to the selected, validated skeleton.
+Normalized control points map source time to output time: LINEAR tracks retain
+all mapped authored keys and add interior map-knot samples with the existing
+runtime sampling semantics, while STEP tracks map only authored breakpoints.
+Binary64 calculations may narrow to finite binary32 track times, but distinct
+source or output instants that collide after narrowing refuse rather than being
+silently collapsed. Exact coincident authored/map-knot rows deduplicate
+deterministically. Identity maps return a structurally identical admissible
+clip.
+
+CUBICSPLINE remains deliberately conservative: one-key tracks are retained;
+multi-key tracks are retained only when every stored key value is bit-exact
+equal and all stored input/output tangents are zero. Any other cubic track
+refuses the whole candidate. Finite quaternion keys must also have a finite
+positive binary32 squared length before any runtime sampling. Fixed checked
+caps refuse N+1 retained name bytes, tracks, authored keys/values, generated
+keys, and aggregate inspection work before candidate allocation. Candidate
+storage has a derived public upper bound: retained cubic storage is already
+bounded by authored values, while LINEAR/STEP emit one value per bounded
+generated key. This slice does not prove that the
+plan belongs to the loaded artifact, transform contact
+fragments, serialize or reread an output, or publish a generation directory.
+Those bindings and atomic transaction steps remain later #18 work.
+
 ### F.11 Transition-family declaration V1 (#148)
 
 Issue #148 freezes declarations for transition families without implementing

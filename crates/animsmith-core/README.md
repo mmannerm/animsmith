@@ -156,7 +156,18 @@ canonicalization work, and returns one slope-bounded, endpoint-preserving contac
 phases are canonical; the planner never guesses correspondence or rotates phase
 zero. The CLI crate owns the bounded TOML reader. Asset loading, root-motion
 measurement, animation track mutation, transformed-fragment proof, and
-generation-directory publication are deliberately not part of this planner slice. See the
+generation-directory publication are deliberately not part of this planner slice.
+`animsmith_core::time_warp_clip_v1` is the next pure boundary: after a host has
+bound a member plan to the selected source, it produces a validated cloned
+LINEAR/STEP clip candidate and conservatively retains only representation-exact
+CUBICSPLINE tracks. This Clip-only seam validates track-local shape; its host
+must have already bound every track bone index to the selected, validated
+skeleton. `animsmith_core::preflight_time_warp_clip_v1` exposes the same
+validation path with exact per-candidate name/track/key/value/storage-byte
+counts and a conservative V1 work charge, without allocating the candidate, so
+a host can enforce a checked aggregate batch budget first. It still performs no
+source binding, serialization, proof,
+or publication. See the
 [collection contracts](https://github.com/mmannerm/animsmith/blob/main/docs/collection-contracts.md#foot-cycle-parameterization-v1-18-planner-slice).
 
 ## Constant-Track Pruning
