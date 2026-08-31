@@ -69,7 +69,6 @@ impl FootCycleProofError {
         Self { kind }
     }
 
-    #[cfg(test)]
     pub(crate) const fn kind(self) -> FootCycleProofKind {
         self.kind
     }
@@ -869,6 +868,7 @@ fn tracks_equal_bits(left: &Track, right: &Track) -> bool {
         }
 }
 
+#[cfg(test)]
 fn clips_equal_bits(left: &animsmith_core::Clip, right: &animsmith_core::Clip) -> bool {
     left.name == right.name
         && left.duration_s.to_bits() == right.duration_s.to_bits()

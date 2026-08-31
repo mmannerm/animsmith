@@ -24,6 +24,7 @@ pub(crate) enum Command {
     Convert,
     Assemble,
     ContactFragment,
+    CollectionTransformFootCycle,
 }
 
 impl Command {
@@ -32,6 +33,7 @@ impl Command {
             Self::Convert => "convert",
             Self::Assemble => "assemble",
             Self::ContactFragment => "generate contact-fragment",
+            Self::CollectionTransformFootCycle => "collection transform-foot-cycle",
         }
     }
 }

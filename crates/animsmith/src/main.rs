@@ -74,15 +74,8 @@ mod collection_output;
 mod collection_transition_pose;
 mod contact_producer;
 mod foot_cycle_parameterization;
-#[allow(
-    dead_code,
-    reason = "issue #18 freezes in-memory artifact proof before exposing a CLI command"
-)]
+mod foot_cycle_producer;
 mod foot_cycle_proof;
-#[allow(
-    dead_code,
-    reason = "issue #18 freezes source-bound preparation before exposing a CLI command"
-)]
 mod foot_cycle_source_prep;
 #[cfg(feature = "fbx")]
 mod material_recipe;
@@ -421,6 +414,21 @@ enum CollectionCmd {
         #[arg(long, value_name = "TRANSITION_FAMILIES.toml")]
         families: PathBuf,
         /// Emit the immutable transition-pose evaluation V1 JSON contract.
+        #[arg(long, value_enum)]
+        format: JsonOnlyFormat,
+    },
+    /// Reparameterize one declared in-place locomotion ring and publish one generation.
+    #[command(
+        long_about = "Transform one strict manifest-declared locomotion ring through one separately identity-bound foot-cycle parameterization. Every member becomes a self-contained GLB with a transformed contact fragment and independent proof evidence. The parameterization alone owns the previously absent generation directory. Success publishes exactly 3N+1 files and writes the exact aggregate-evidence bytes to stdout; a refusal publishes nothing and exits 1; malformed or stale controls, paths, I/O, serialization, and publication failures exit 2 without JSON output."
+    )]
+    TransformFootCycle {
+        /// Strict collection-manifest V1 TOML input.
+        #[arg(value_name = "COLLECTION.toml")]
+        manifest: PathBuf,
+        /// Strict manifest-bound foot-cycle-parameterization V1 TOML.
+        #[arg(long, value_name = "FOOT-CYCLE.toml")]
+        parameterization: PathBuf,
+        /// Emit the immutable aggregate foot-cycle evidence V1 JSON contract.
         #[arg(long, value_enum)]
         format: JsonOnlyFormat,
     },
@@ -1918,6 +1926,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 } => {
                     debug_assert_eq!(format, JsonOnlyFormat::Json);
                     collection_transition_pose::run(&manifest, &families)
+                }
+                CollectionCmd::TransformFootCycle {
+                    manifest,
+                    parameterization,
+                    format,
+                } => {
+                    debug_assert_eq!(format, JsonOnlyFormat::Json);
+                    foot_cycle_producer::run(&manifest, &parameterization, current_tool())
                 }
             }
         }

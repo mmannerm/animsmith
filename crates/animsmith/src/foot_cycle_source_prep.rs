@@ -233,8 +233,7 @@ impl FootCycleSourcePrepError {
         Self { kind }
     }
 
-    #[cfg(test)]
-    const fn kind(self) -> FootCycleSourcePrepKind {
+    pub(crate) const fn kind(self) -> FootCycleSourcePrepKind {
         self.kind
     }
 }
@@ -284,6 +283,7 @@ pub(crate) struct PreparedContactTransformV1 {
 }
 
 impl PreparedContactTransformV1 {
+    #[cfg(test)]
     pub(crate) const fn operation(&self) -> &ContactTransformOperationV1 {
         &self.operation
     }
@@ -434,15 +434,13 @@ struct SeenPath {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum ExistingFileIdentity {
     #[cfg(unix)]
-    Unix {
-        device: u64,
-        inode: u64,
-    },
+    Unix { device: u64, inode: u64 },
     #[cfg(windows)]
     Windows {
         volume_serial_number: u32,
         file_index: u64,
     },
+    #[cfg(not(any(unix, windows)))]
     Canonical(PathBuf),
 }
 
@@ -474,7 +472,7 @@ fn prepare_foot_cycle_parameterization_v1_with_runtime(
     // Pure declaration validation must precede every member-reachable path.
     // The planner repeats this check after exact evidence is available.
     validate_foot_cycle_manifest_binding_v1(&parameterization, &manifest, &loaded_manifest.input)
-        .map_err(|_| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::PlanRefused))?;
+        .map_err(|_| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::Control))?;
 
     let mut reachable_source_keys = std::collections::BTreeSet::new();
     for member in parameterization.members() {
@@ -483,7 +481,7 @@ fn prepare_foot_cycle_parameterization_v1_with_runtime(
             .binary_search_by(|clip| clip.id().cmp(member.id()))
             .ok()
             .and_then(|index| manifest.clips().get(index))
-            .ok_or_else(|| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::PlanRefused))?;
+            .ok_or_else(|| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::Control))?;
         reachable_source_keys.insert(clip.source().as_str());
     }
     let reachable_sources = manifest
@@ -1485,14 +1483,14 @@ pub(crate) mod tests {
     }
 
     #[derive(Clone, Copy)]
-    struct FixtureOptions {
+    pub(crate) struct FixtureOptions {
         end_x_a: f32,
         end_x_b: f32,
         end_z_b: f32,
         yaw_deg_b: f32,
         nonfinite_b: bool,
         duplicate_take_name_b: bool,
-        nonconstant_cubic_b: bool,
+        pub(crate) nonconstant_cubic_b: bool,
         config: ConfigMode,
         take_index_b: u32,
         take_name_b: &'static str,
@@ -1517,15 +1515,24 @@ pub(crate) mod tests {
         }
     }
 
-    struct Fixture {
+    impl FixtureOptions {
+        pub(crate) fn with_nonconstant_cubic_b() -> Self {
+            Self {
+                nonconstant_cubic_b: true,
+                ..Self::default()
+            }
+        }
+    }
+
+    pub(crate) struct Fixture {
         _directory: TempDir,
-        root: PathBuf,
-        manifest: PathBuf,
-        parameterization: PathBuf,
+        pub(crate) root: PathBuf,
+        pub(crate) manifest: PathBuf,
+        pub(crate) parameterization: PathBuf,
     }
 
     impl Fixture {
-        fn create(options: FixtureOptions) -> Self {
+        pub(crate) fn create(options: FixtureOptions) -> Self {
             let directory = tempfile::tempdir().unwrap();
             let root = directory.path().to_path_buf();
             fs::create_dir(root.join("assets")).unwrap();
@@ -1690,6 +1697,10 @@ contact_fragment = "contacts/b.json"
             prepare_foot_cycle_parameterization_v1(&self.manifest, &self.parameterization)
         }
 
+        pub(crate) fn prepare_proof_ready(&self) -> PreparedFootCycleCollectionV1 {
+            make_proof_ready(self.prepare().expect("proof test fixture must prepare"))
+        }
+
         fn prepare_with_runtime(
             &self,
             runtime: &mut impl FootCyclePreparationRuntime,
@@ -1744,7 +1755,12 @@ contact_fragment = "contacts/b.json"
     }
 
     pub(crate) fn proof_ready_fixture() -> PreparedFootCycleCollectionV1 {
-        let mut prepared = prepared_fixture_for_proof_tests();
+        make_proof_ready(prepared_fixture_for_proof_tests())
+    }
+
+    fn make_proof_ready(
+        mut prepared: PreparedFootCycleCollectionV1,
+    ) -> PreparedFootCycleCollectionV1 {
         for (source_index, source) in prepared.sources.iter_mut().enumerate() {
             let clip = &mut source.document.clips[0];
             let template = clip.tracks[0].clone();
