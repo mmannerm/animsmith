@@ -137,6 +137,9 @@ jobs:
       - name: Verify output schema $id consistency
         run: scripts/check-schema-id.sh
 
+      - name: Verify exact Bevy readback dependency graph
+        run: bash scripts/check-bevy-readback-lock.sh
+
       - name: Validate GitHub community files
         run: bash scripts/check-github-community-files.sh
 
