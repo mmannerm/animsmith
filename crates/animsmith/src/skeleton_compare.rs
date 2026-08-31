@@ -112,8 +112,8 @@ fn parse(bytes: &[u8]) -> Result<Correspondence, String> {
             "skeleton correspondence control error (unsupported-schema-version)".to_owned(),
         );
     }
-    let source = decode_subject(wire.source, "source")?;
-    let target = decode_subject(wire.target, "target")?;
+    let source_subject = decode_subject(wire.source, "source")?;
+    let target_subject = decode_subject(wire.target, "target")?;
     let tolerances = Tolerances {
         translation_m: finite_nonnegative(wire.tolerances.translation_m, "translation_m")?,
         rotation_deg: finite_nonnegative(wire.tolerances.rotation_deg, "rotation_deg")?,
@@ -132,9 +132,25 @@ fn parse(bytes: &[u8]) -> Result<Correspondence, String> {
                 );
             }
             let mut targets = BTreeSet::new();
-            for (source, target) in &map {
-                valid_name(source, "source mapping name")?;
+            for (mapped_source, target) in &map {
+                valid_name(mapped_source, "source mapping name")?;
                 valid_name(target, "target mapping name")?;
+                if !source_subject
+                    .node_names
+                    .iter()
+                    .any(|name| name == mapped_source)
+                {
+                    return Err(
+                        "skeleton correspondence control error (source-mapping-outside-selector)"
+                            .to_owned(),
+                    );
+                }
+                if !target_subject.node_names.iter().any(|name| name == target) {
+                    return Err(
+                        "skeleton correspondence control error (target-mapping-outside-selector)"
+                            .to_owned(),
+                    );
+                }
                 if !targets.insert(target.clone()) {
                     return Err(
                         "skeleton correspondence control error (duplicate-target)".to_owned()
@@ -145,8 +161,8 @@ fn parse(bytes: &[u8]) -> Result<Correspondence, String> {
         }
     };
     Ok(Correspondence {
-        source,
-        target,
+        source: source_subject,
+        target: target_subject,
         mapping,
         tolerances,
     })

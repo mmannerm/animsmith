@@ -264,6 +264,92 @@ fn refuses_missing_or_ambiguous_declared_selectors_without_a_result() {
 }
 
 #[test]
+fn refuses_explicit_mapping_entries_outside_the_declared_selectors() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.glb");
+    let target = temp.path().join("target.glb");
+    let control = temp.path().join("correspondence.toml");
+    write_doc(&source, "root", "spine", 0.5);
+    write_doc(&target, "target_root", "target_spine", 0.5);
+    let source_injection = correspondence(&source, &target, true, 0.0).replace(
+        "map = { root = \"target_root\", spine = \"target_spine\" }",
+        "map = { head = \"target_root\", spine = \"target_spine\" }",
+    );
+    std::fs::write(&control, source_injection).unwrap();
+    let output = run(&source, &target, &control);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("source-mapping-outside-selector"));
+
+    let target_injection = correspondence(&source, &target, true, 0.0).replace(
+        "map = { root = \"target_root\", spine = \"target_spine\" }",
+        "map = { root = \"head\", spine = \"target_spine\" }",
+    );
+    std::fs::write(&control, target_injection).unwrap();
+    let output = run(&source, &target, &control);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("target-mapping-outside-selector"));
+}
+
+#[test]
+fn refuses_oversized_control_before_input_loading_and_oversized_primary_before_parsing() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.glb");
+    let target = temp.path().join("target.glb");
+    let control = temp.path().join("correspondence.toml");
+    write_doc(&source, "root", "spine", 0.5);
+    write_doc(&target, "root", "spine", 0.5);
+    std::fs::write(&control, vec![b'x'; 64 * 1024 + 1]).unwrap();
+    let output = run(&source, &target, &control);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "animsmith: skeleton correspondence exceeds its bounded reader limit\n"
+    );
+
+    let oversized = temp.path().join("oversized.glb");
+    std::fs::write(&oversized, vec![0; 64 * 1024 * 1024 + 1]).unwrap();
+    std::fs::write(&control, correspondence(&oversized, &target, false, 0.0)).unwrap();
+    let output = run(&oversized, &target, &control);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("skeleton comparison input exceeds its 67108864 byte limit")
+    );
+}
+
+#[test]
+fn reports_an_isolated_translation_delta_with_its_numeric_value() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.glb");
+    let target = temp.path().join("target.glb");
+    let control = temp.path().join("correspondence.toml");
+    write_doc(&source, "root", "spine", 0.5);
+    write_doc(&target, "root", "spine", 0.75);
+    std::fs::write(&control, correspondence(&source, &target, false, 1.0)).unwrap();
+
+    let output = run(&source, &target, &control);
+    assert_eq!(output.status.code(), Some(1));
+    let value = json(&output);
+    let spine = value["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["source_name"] == "spine")
+        .unwrap();
+    for rest in ["local_rest", "rest_world"] {
+        assert_eq!(spine[rest]["translation_m"]["state"], "mismatch");
+        assert!((spine[rest]["translation_m"]["value"].as_f64().unwrap() - 0.25).abs() < 1e-6);
+        assert_eq!(spine[rest]["rotation_deg"]["state"], "pass");
+        assert_eq!(spine[rest]["scale_delta"]["state"], "pass");
+    }
+    assert_eq!(spine["normalized_child_bone_length_ratio"]["state"], "pass");
+}
+
+#[test]
 fn reports_missing_parent_rotation_scale_and_unavailable_rotation_as_distinct_evidence() {
     let temp = tempfile::tempdir().unwrap();
     let two = temp.path().join("two.glb");

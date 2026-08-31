@@ -116,7 +116,8 @@ normalized_bone_length_ratio_delta = 0.01
 ```
 
 For a deliberate rename, replace the correspondence table with a finite,
-one-to-one explicit map. The map is authority, not a suggestion:
+one-to-one explicit map. Every map key and value must already be in the
+respective declared selector; the map is authority, not a suggestion:
 
 ```toml
 [correspondence]
