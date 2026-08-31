@@ -1315,9 +1315,13 @@ mod tests {
         );
         assert!(read_member_evidence_v1(stale_path.as_bytes()).is_err());
 
-        let member_value: serde_json::Value = serde_json::from_slice(member_bytes).unwrap();
+        let member_wire: MemberWire = serde_json::from_slice(member_bytes).unwrap();
         for field in ["artifact_bytes", "contact_fragment_bytes"] {
-            let value = member_value["resources"][field].as_u64().unwrap();
+            let value = match field {
+                "artifact_bytes" => member_wire.resources.artifact_bytes,
+                "contact_fragment_bytes" => member_wire.resources.contact_fragment_bytes,
+                _ => unreachable!(),
+            };
             assert!(read_member_evidence_v1(&mutate_number(member_bytes, field, value)).is_err());
         }
 
@@ -1330,7 +1334,7 @@ mod tests {
         assert_ne!(wrong_order, aggregate);
         assert!(read_aggregate_evidence_v1(wrong_order.as_bytes()).is_err());
 
-        let aggregate_value: serde_json::Value = serde_json::from_slice(aggregate_bytes).unwrap();
+        let aggregate_wire: AggregateWire = serde_json::from_slice(aggregate_bytes).unwrap();
         for field in [
             "members",
             "files",
@@ -1347,7 +1351,27 @@ mod tests {
             "metric_pose_cells",
             "metric_sample_evaluations",
         ] {
-            let value = aggregate_value["resources"][field].as_u64().unwrap();
+            let value = match field {
+                "members" => aggregate_wire.resources.members,
+                "files" => aggregate_wire.resources.files,
+                "artifact_bytes" => aggregate_wire.resources.artifact_bytes,
+                "contact_fragment_bytes" => aggregate_wire.resources.contact_fragment_bytes,
+                "member_evidence_bytes" => aggregate_wire.resources.member_evidence_bytes,
+                "aggregate_evidence_bytes" => aggregate_wire.resources.aggregate_evidence_bytes,
+                "total_bytes" => aggregate_wire.resources.total_bytes,
+                "retained_candidate_bytes" => aggregate_wire.resources.retained_candidate_bytes,
+                "source_metric_pose_cells" => aggregate_wire.resources.source_metric_pose_cells,
+                "source_metric_sample_evaluations" => {
+                    aggregate_wire.resources.source_metric_sample_evaluations
+                }
+                "output_metric_pose_cells" => aggregate_wire.resources.output_metric_pose_cells,
+                "output_metric_sample_evaluations" => {
+                    aggregate_wire.resources.output_metric_sample_evaluations
+                }
+                "metric_pose_cells" => aggregate_wire.resources.metric_pose_cells,
+                "metric_sample_evaluations" => aggregate_wire.resources.metric_sample_evaluations,
+                _ => unreachable!(),
+            };
             assert!(
                 read_aggregate_evidence_v1(&mutate_number(aggregate_bytes, field, value)).is_err(),
                 "aggregate reader accepted mutated {field}"
