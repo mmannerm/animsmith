@@ -164,8 +164,9 @@ fn decode_digest(value: &str) -> Result<[u8; 32], ()> {
         return Err(());
     }
     let mut digest = [0; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        digest[index] = (hex(pair[0])? << 4) | hex(pair[1])?;
+    let bytes = value.as_bytes();
+    for (index, offset) in (0..64).step_by(2).enumerate() {
+        digest[index] = (hex(bytes[offset])? << 4) | hex(bytes[offset + 1])?;
     }
     Ok(digest)
 }
@@ -310,6 +311,14 @@ contact_fragment = "contacts/walk-right.json"
                 .collect::<Vec<_>>(),
             ["com.example/walk-forward", "com.example/walk-right"]
         );
+        assert_eq!(
+            parsed
+                .members()
+                .iter()
+                .map(|member| member.contact_fragment().as_str())
+                .collect::<Vec<_>>(),
+            ["contacts/walk-forward.json", "contacts/walk-right.json"]
+        );
     }
 
     #[test]
@@ -328,16 +337,28 @@ contact_fragment = "contacts/walk-right.json"
                 .kind(),
             FootCycleParameterizationControlKind::UnsupportedSchemaVersion
         );
-        let unknown = valid().replace(
-            "maximum_segment_slope = 2.0",
-            "maximum_segment_slope = 2.0\nunknown = true",
-        );
-        assert_eq!(
-            parse_foot_cycle_parameterization_bytes(unknown.as_bytes())
-                .unwrap_err()
-                .kind(),
-            FootCycleParameterizationControlKind::Malformed
-        );
+        for unknown in [
+            valid().replace(
+                "maximum_segment_slope = 2.0",
+                "maximum_segment_slope = 2.0\nunknown = true",
+            ),
+            valid().replace(
+                "collection_id = \"com.example\"",
+                "collection_id = \"com.example\"\nunknown = true",
+            ),
+            valid().replace("bytes = 1024", "bytes = 1024\nunknown = true"),
+            valid().replace(
+                "contact_fragment = \"contacts/walk-right.json\"",
+                "contact_fragment = \"contacts/walk-right.json\"\nunknown = true",
+            ),
+        ] {
+            assert_eq!(
+                parse_foot_cycle_parameterization_bytes(unknown.as_bytes())
+                    .unwrap_err()
+                    .kind(),
+                FootCycleParameterizationControlKind::Malformed
+            );
+        }
     }
 
     #[test]
