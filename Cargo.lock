@@ -53,6 +53,7 @@ dependencies = [
  "jsonschema",
  "pulldown-cmark",
  "serde",
+ "serde_jcs",
  "serde_json",
  "tempfile",
  "toml",

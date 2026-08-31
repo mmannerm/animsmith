@@ -56,7 +56,9 @@ use serde::Deserialize;
 #[cfg(feature = "fbx")]
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Write};
+use std::io::Read;
+#[cfg(feature = "fbx")]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -77,6 +79,7 @@ mod producer;
 mod publish;
 mod render;
 mod scale;
+mod skeleton_compare;
 #[cfg(feature = "fbx")]
 mod staged_selector;
 #[cfg(feature = "fbx")]
@@ -301,6 +304,32 @@ enum Cmd {
         /// After input: asset file or one-file output-v19 through output-v13 `measure`/`lint` JSON report.
         b: PathBuf,
         #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
+    /// Compare two declared skeleton authorities without retargeting either asset.
+    Skeleton {
+        #[command(subcommand)]
+        operation: SkeletonCmd,
+    },
+}
+
+/// Structural skeleton compatibility commands.
+#[derive(Subcommand)]
+enum SkeletonCmd {
+    /// Compare one source skeleton against one target authority using strict correspondence TOML.
+    #[command(
+        long_about = "Compare selected source and target skeletons using a strict, identity-pinned correspondence TOML and emit skeleton-compatibility V1 evidence. This is structural evidence only: it never retargets, rewrites rest/bind data, infers aliases, or establishes runtime deformation, masking, contact, gameplay, or artistic acceptance."
+    )]
+    Compare {
+        /// Source .glb, .gltf, or .fbx asset.
+        source: PathBuf,
+        /// Immutable target-skeleton authority asset.
+        target: PathBuf,
+        /// Strict skeleton-correspondence V1 TOML.
+        #[arg(long)]
+        correspondence: PathBuf,
+        /// Render versioned JSON evidence rather than a stable text summary.
+        #[arg(long, value_enum, default_value_t = Format::Json)]
         format: Format,
     },
 }
@@ -2558,6 +2587,25 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 ExitCode::SUCCESS
             })
         }
+        Cmd::Skeleton { operation } => match operation {
+            SkeletonCmd::Compare {
+                source,
+                target,
+                correspondence,
+                format,
+            } => {
+                if cli.config.is_some() {
+                    return Err("--config is not supported with skeleton compare; correspondence TOML is its complete control input".to_owned());
+                }
+                skeleton_compare::run(
+                    &source,
+                    &target,
+                    &correspondence,
+                    current_tool(),
+                    format == Format::Json,
+                )
+            }
+        },
     }
 }
 

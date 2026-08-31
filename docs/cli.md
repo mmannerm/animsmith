@@ -68,12 +68,76 @@ animsmith scale rest-bind <in.glb|in.gltf> -o <out.glb|out.gltf> --source-skin-i
 animsmith generate addressability <in.glb|in.gltf> [--format json|text|markdown]
 animsmith generate contact-fragment <in.glb|in.gltf|in.fbx> --clip <take-name> -o <out.json> [--format text|json]
 animsmith diff <before> <after> [--format text|json]
+animsmith skeleton compare <source.glb|source.gltf|source.fbx> <target.glb|target.gltf|target.fbx> --correspondence <skeleton-correspondence.toml> [--format text|json]
 ```
 
 `inspect` is the human-readable discovery view for exact asset-authored names.
 It inventories clips, bones, materials, and mesh-instance nodes, including each
 instance's mesh, skin status, and primitive/material context. Use those names
 when authoring `assemble` or material texture recipes.
+
+### Structural skeleton comparison
+
+`skeleton compare` establishes only declared structural compatibility evidence
+for one source asset and one immutable target asset. It does not retarget,
+rewrite rest or bind data, infer aliases, generate an engine avatar, or prove
+runtime deformation, masking, contact, gameplay, or artistic acceptance.
+
+The correspondence control is strict and identity-pinned. Generate its two
+input identities from the exact source and target bytes you intend to compare;
+a changed asset is a stale control input and exits 2 without a result. The
+selector declares the complete finite node-name set on each side; it does not
+infer a subtree from `root_name`. The named root must be included, every name
+must resolve exactly once in its input, and only these explicitly selected
+nodes contribute rows. This prevents meshes, props, cameras, and other scene
+attachments from silently becoming skeleton evidence. Parent comparison walks
+through unselected intermediate nodes to the nearest selected ancestor, so it
+describes this declared projection rather than the complete raw hierarchy. All tolerances are
+mandatory and have no defaults:
+
+```toml
+schema = "urn:animsmith:skeleton-correspondence:1"
+schema_version = 1
+
+[source]
+input = { sha256 = "<64 lowercase hex characters>", bytes = 12345 }
+selector = { root_name = "Hips", node_names = ["Hips", "Spine", "Head"] }
+
+[target]
+input = { sha256 = "<64 lowercase hex characters>", bytes = 23456 }
+selector = { root_name = "Hips", node_names = ["Hips", "Spine", "Head"] }
+
+[correspondence]
+mode = "exact_name"
+
+[tolerances]
+translation_m = 0.001
+rotation_deg = 0.1
+scale_delta = 0.001
+normalized_bone_length_ratio_delta = 0.01
+```
+
+For a deliberate rename, replace the correspondence table with a finite,
+one-to-one explicit map. Every map key and value must already be in the
+respective declared selector; the map is authority, not a suggestion:
+
+```toml
+[correspondence]
+mode = "explicit"
+map = { Hips = "Root", Spine = "Spine_01" }
+```
+
+The versioned `urn:animsmith:schema:skeleton-compatibility:1` JSON result binds both primary inputs, complete dependency
+closures when they are available, the correspondence bytes, normalized basis,
+selectors, matching mode, and tolerances. It reports matched, missing,
+extra, and parent-mismatch rows; local and rest-world transform deltas; and
+child bone-length ratios where both corresponding parent/child rest-world
+positions are available. `compatible` means all required topology/rest facts
+were available and within the declared tolerances. `incompatible` names a
+complete mismatch. `partial` and `not_evaluated` record unavailable evidence
+and exit 1. Skin membership, inverse-bind evidence, and deformation-model
+evidence are separate facets; they never become an opaque score or turn this
+structural result into a deformation claim.
 
 `report --compare-after` writes one offline synchronized before/after diagnostic.
 Both input files and both clip names are explicit; it refuses duplicate or

@@ -5,6 +5,58 @@ Text and Markdown lint output are presentation views over the same evaluation
 results. The HTML report renders the same typed findings, coverage gaps, and
 prediction facets beside its sampled-motion view.
 
+## Skeleton compatibility
+
+`animsmith skeleton compare` emits one immutable
+[`skeleton-compatibility-v1.schema.json`](schemas/skeleton-compatibility-v1.schema.json)
+(`urn:animsmith:schema:skeleton-compatibility:1`) result. Its control plane is
+the exact raw correspondence TOML bytes, recorded as `correspondence.input`.
+That TOML pins the exact source and target primary identities, their explicit
+selected node-name sets (including each selected root), the declared matching
+mode, the resolved explicit mapping (empty for exact-name mode), and every
+tolerance. It does not infer skeleton membership from scene
+graph reachability. Invalid or stale
+control input, unreadable input, or an input beyond the 64 MiB primary-source
+bound is an operator error (exit 2) and emits no result.
+
+Each subject records `selected_skeleton_identity`: the exact identity of a
+canonical, name-ordered projection of the selected source-node measurements
+and selector. This is provenance derived from the loaded asset, not another
+authored rest-pose profile.
+
+The result keeps structural topology/rest evidence separate from optional
+source skin-membership, inverse-bind, and deformation-model facets. A result
+is `compatible` only when every required topology/rest row was available and
+within its declared tolerances. Complete mismatches are `incompatible`; mixed
+available/unavailable required topology/rest evidence is `partial` even when
+another retained field also mismatches; and no evaluable correspondence is
+`not_evaluated`. The last three exit 1. Neither the outcome
+nor any optional facet establishes retargeting, runtime deformation, masking,
+contact, gameplay, or artistic acceptance.
+
+`rows` are deterministic: correspondence-covered source rows are emitted in
+source-name order, followed by unmapped source names and then unmapped target
+names in their respective name orders. A matched row
+contains separate local and rest-world translation, rotation, and scale deltas;
+the world rotation value exists only where the existing source measurement
+proves a right-handed unit-orthonormal rest-world linear transform. A
+child-bone ratio value exists only when both corresponding parent/child world
+positions permit an independent nonzero length comparison. Parent
+correspondence and child length
+use the nearest selected ancestor, walking across unselected intermediate
+nodes; they compare the declared selector projection rather than claiming that
+the complete raw hierarchies are identical. `missing_source`, `missing_target`,
+and `parent_mismatch` rows are explicit rather than folded into a score.
+
+Non-pass rows identify a deterministic `owner_surface` and `remedy_class`.
+These route work to the correspondence, selected skeleton authority, selected
+skin/bind evidence, or a documented measurement boundary; they do not infer
+project, artist, or vendor blame from structure alone. Unavailable source and
+target evidence sides carry the same routing fields. The text view renders the
+exact source, target, selected-skeleton, and correspondence identities; matching
+mode and explicit pairs; tolerances; every retained row delta; facet details;
+and remediation routing. JSON remains the stable adapter contract.
+
 ## Transition-pose evaluation
 
 `animsmith evaluate-transition-poses INPUT --format json` emits exactly one

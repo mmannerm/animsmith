@@ -3900,6 +3900,61 @@ mapping. The delivered contact-fragment producer does not perform contact transf
 gameplay meaning, validate foot placement, or claim engine, artistic, or
 gameplay correctness. Host-side merge and runtime behavior remain deferred.
 
+### F.10A Skeleton compatibility V1 (#158)
+
+Issue #158 adds a strict structural seam for declared source/target skeleton
+comparison without implementing retargeting, mesh rewrite, engine-avatar
+generation, masking, contacts, or gameplay proof. Its immutable JSON result
+identity is:
+
+```text
+urn:animsmith:schema:skeleton-compatibility:1
+```
+
+The public command is
+`animsmith skeleton compare SOURCE TARGET --correspondence FILE --format json|text`.
+`FILE` is a separate strict TOML authority with independent identity
+`urn:animsmith:skeleton-correspondence:1`. It binds the exact source and
+target primary input identities, explicit selected roots and finite selected
+node-name sets on both sides, either exact-name or one-to-one explicit
+correspondence, and every numeric tolerance. Unknown fields, duplicate names
+or targets, malformed or stale identities, ambiguous selectors, non-finite
+tolerances, oversize control input, or source/target primary inputs above the
+existing 64 MiB bound are operator errors that emit no result.
+
+The result records exact source and target primary identities, complete
+dependency-closure identities when same-load capture is complete, the exact
+correspondence bytes, canonical selected-skeleton provenance for each side,
+deterministic row order, and separate non-scoring evidence facets for source
+skin membership, inverse-bind accessors, and deformation model coverage.
+Topology/rest rows are the only scoring surface in V1. `compatible` means
+every required row was available and within tolerance; `partial` retains mixed
+available and unavailable required evidence even when another retained field
+mismatches; otherwise any required mismatch is `incompatible`; and
+`not_evaluated` means no correspondence row was evaluable. Missing source/target
+names and parent mismatch remain explicit typed rows rather than being
+collapsed into an aggregate score.
+
+The seam compares only the declared selector members. It does not infer a
+skeleton subtree from attachments, scene reachability, or skin membership.
+Parent correspondence and normalized child length walk through unselected
+intermediate nodes to the nearest selected ancestor, so they describe the
+declared projection and do not claim complete raw-hierarchy equality.
+`selected_skeleton_identity` is derived provenance, not a copied authored
+profile: AnimSmith serializes a canonical, name-ordered projection of each
+selected node's measured structural evidence and the declared selector, then
+records that exact identity. Local and rest-world transform deltas reuse the
+existing normalized source-skeleton measurements contract; world-space
+comparison stays unavailable when the loaded source evidence does not prove a
+finite right-handed unit-orthonormal rest-world basis.
+
+Non-pass rows and unavailable evidence sides carry a typed remediation surface
+and likely remedy class. This routes work to correspondence, the selected
+skeleton authority, selected skin/bind evidence, or a measurement boundary
+without guessing whether a project integrator, artist, or vendor is to blame.
+The human text view renders those fields together with exact identities,
+matching authority, tolerances, row deltas, and facet details.
+
 ### F.11 Transition-family declaration V1 (#148)
 
 Issue #148 freezes declarations for transition families without implementing
