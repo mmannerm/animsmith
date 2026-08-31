@@ -878,30 +878,16 @@ impl Config {
         &self,
         expectations: &ClipExpectations,
     ) -> LoopContinuityTolerances {
-        let closure = self.check_settings("loop-closure");
-        let linear_velocity = self.check_settings("loop-seam-vel");
-        let angular_velocity = self.check_settings("loop-seam-rot");
+        let (max_position_delta_m, max_rotation_delta_deg) =
+            crate::checks::loop_closure::effective_caps(self, expectations);
         LoopContinuityTolerances {
-            max_position_delta_m: expectations.max_loop_position_delta_m.unwrap_or(
-                closure
-                    .max_position_delta_m
-                    .unwrap_or(crate::checks::loop_closure::DEFAULT_MAX_POSITION_DELTA_M),
+            max_position_delta_m,
+            max_rotation_delta_deg,
+            max_velocity_delta_mps: crate::checks::loop_seam_vel::effective_cap(self, expectations),
+            max_angular_velocity_delta_degps: crate::checks::loop_seam_rot::effective_cap(
+                self,
+                expectations,
             ),
-            max_rotation_delta_deg: expectations.max_loop_rotation_delta_deg.unwrap_or(
-                closure
-                    .max_rotation_delta_deg
-                    .unwrap_or(crate::checks::loop_closure::DEFAULT_MAX_ROTATION_DELTA_DEG),
-            ),
-            max_velocity_delta_mps: expectations.max_loop_velocity_delta_mps.unwrap_or(
-                linear_velocity
-                    .max_velocity_delta_mps
-                    .unwrap_or(crate::checks::loop_seam_vel::DEFAULT_MAX_VELOCITY_DELTA_MPS),
-            ),
-            max_angular_velocity_delta_degps: expectations
-                .max_loop_angular_velocity_delta_degps
-                .unwrap_or(angular_velocity.max_angular_velocity_delta_degps.unwrap_or(
-                    crate::checks::loop_seam_rot::DEFAULT_MAX_ANGULAR_VELOCITY_DELTA_DEGPS,
-                )),
         }
     }
 }

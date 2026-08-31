@@ -328,10 +328,9 @@ fn serialize_and_prove_foot_cycle_v1_with_runtime(
         validate_document_shape(&document)
             .map_err(|_| FootCycleProofError::new(FootCycleProofKind::ArtifactPreflight))?;
         let preflight = runtime.preflight(&document)?;
-        retained_candidate_bytes = retained_candidate_bytes
-            .checked_add(preflight.total_bytes())
-            .filter(|bytes| *bytes <= MAX_AGGREGATE_CANDIDATE_BYTES)
-            .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::ArtifactBudget))?;
+        retained_candidate_bytes =
+            add_candidate_bytes(retained_candidate_bytes, preflight.total_bytes())
+                .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::ArtifactBudget))?;
         let metric_work = metric_work(&document, member.clip_index())?;
         total_metric_work = add_metric_work(total_metric_work, metric_work)
             .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::MetricWork))?;
@@ -372,12 +371,7 @@ fn serialize_and_prove_foot_cycle_v1_with_runtime(
         let closure = source.dependency_closure();
         let closure_identity = complete_closure(closure, &artifact)
             .map_err(|_| FootCycleProofError::new(FootCycleProofKind::ArtifactClosure))?;
-        if !closure.external_resources().is_empty()
-            || closure
-                .references()
-                .iter()
-                .any(|reference| reference.target() != &DependencyReferenceTargetV1::Primary)
-        {
+        if !is_self_contained_closure(closure) {
             return Err(FootCycleProofError::new(
                 FootCycleProofKind::ArtifactClosure,
             ));
@@ -496,12 +490,7 @@ fn prove_member(
         .get(member.clip_index())
         .map(|clip| clip.duration_s)
         .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::Duration))?;
-    if clip.duration_s != source_duration
-        || expected_contact.duration_s() != source_duration
-        || detected_contact.duration_s() != source_duration
-    {
-        return Err(FootCycleProofError::new(FootCycleProofKind::Duration));
-    }
+    prove_duration(source_duration, clip, expected_contact, detected_contact)?;
     let source_clip = source
         .document()
         .clips
@@ -526,15 +515,12 @@ fn prove_member(
             FootCycleProofKind::MetricUnavailable,
         ));
     }
-    let gait = foot_cycle_metrics(grid, &roles, source.config().loop_seam_min_stride_step_m())
-        .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::MetricUnavailable))?;
-    let gait_phase = gait
-        .gait_phase
-        .filter(|phase| phase.is_finite())
-        .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::GaitAmplitude))?;
-    if !gait.lr_amplitude_m.is_finite() || gait.lr_amplitude_m < policy.min_lr_amplitude_m() {
-        return Err(FootCycleProofError::new(FootCycleProofKind::GaitAmplitude));
-    }
+    let (gait_phase, lr_amplitude_m) = prove_gait(
+        grid,
+        &roles,
+        source.config().loop_seam_min_stride_step_m(),
+        policy.min_lr_amplitude_m(),
+    )?;
 
     let root_bone = roles
         .get(Role::Root)
@@ -595,7 +581,7 @@ fn prove_member(
     Ok(FootCycleMemberProofFactsV1 {
         duration_s: clip.duration_s,
         gait_phase,
-        lr_amplitude_m: gait.lr_amplitude_m,
+        lr_amplitude_m,
         max_contact_boundary_phase_error,
         root_endpoint_displacement_x_m: output_x,
         root_endpoint_displacement_z_m: output_z,
@@ -605,6 +591,41 @@ fn prove_member(
         max_loop_velocity_delta_mps: loop_maxima[2],
         max_loop_angular_velocity_delta_degps: loop_maxima[3],
     })
+}
+
+fn prove_duration(
+    source_duration: f64,
+    output: &animsmith_core::Clip,
+    expected_contact: &ContactFragmentV1,
+    detected_contact: &ContactFragmentV1,
+) -> Result<(), FootCycleProofError> {
+    if !source_duration.is_finite()
+        || source_duration <= 0.0
+        || output.duration_s != source_duration
+        || expected_contact.duration_s() != source_duration
+        || detected_contact.duration_s() != source_duration
+    {
+        return Err(FootCycleProofError::new(FootCycleProofKind::Duration));
+    }
+    Ok(())
+}
+
+fn prove_gait(
+    grid: &PoseGrid,
+    roles: &animsmith_core::ResolvedRoles,
+    min_stride_step_m: f64,
+    min_lr_amplitude_m: f64,
+) -> Result<(f64, f64), FootCycleProofError> {
+    let gait = foot_cycle_metrics(grid, roles, min_stride_step_m)
+        .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::MetricUnavailable))?;
+    let gait_phase = gait
+        .gait_phase
+        .filter(|phase| phase.is_finite())
+        .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::GaitAmplitude))?;
+    if !gait.lr_amplitude_m.is_finite() || gait.lr_amplitude_m < min_lr_amplitude_m {
+        return Err(FootCycleProofError::new(FootCycleProofKind::GaitAmplitude));
+    }
+    Ok((gait_phase, gait.lr_amplitude_m))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -704,6 +725,11 @@ fn prove_clip_map(
         if source.bone != output.bone
             || source.property != output.property
             || source.interpolation != output.interpolation
+        {
+            return Err(FootCycleProofError::new(FootCycleProofKind::ClipMap));
+        }
+        if source.interpolation == Interpolation::CubicSpline
+            && !is_admissible_constant_cubic(source)
         {
             return Err(FootCycleProofError::new(FootCycleProofKind::ClipMap));
         }
@@ -843,6 +869,57 @@ fn tracks_equal_bits(left: &Track, right: &Track) -> bool {
         }
 }
 
+fn clips_equal_bits(left: &animsmith_core::Clip, right: &animsmith_core::Clip) -> bool {
+    left.name == right.name
+        && left.duration_s.to_bits() == right.duration_s.to_bits()
+        && left.tracks.len() == right.tracks.len()
+        && left
+            .tracks
+            .iter()
+            .zip(&right.tracks)
+            .all(|(left, right)| tracks_equal_bits(left, right))
+}
+
+fn is_admissible_constant_cubic(track: &Track) -> bool {
+    if track.interpolation != Interpolation::CubicSpline || track.times.is_empty() {
+        return false;
+    }
+    if track.times.len() == 1 {
+        return true;
+    }
+    match &track.values {
+        TrackValues::Vec3s(values) if values.len() == 3 * track.times.len() => {
+            let reference = TrackSample::Vec3(values[1]);
+            (0..track.times.len()).all(|key| {
+                samples_equal_bits(TrackSample::Vec3(values[3 * key + 1]), reference)
+                    && values[3 * key]
+                        .to_array()
+                        .into_iter()
+                        .all(|component| component == 0.0)
+                    && values[3 * key + 2]
+                        .to_array()
+                        .into_iter()
+                        .all(|component| component == 0.0)
+            })
+        }
+        TrackValues::Quats(values) if values.len() == 3 * track.times.len() => {
+            let reference = TrackSample::Quat(values[1]);
+            (0..track.times.len()).all(|key| {
+                samples_equal_bits(TrackSample::Quat(values[3 * key + 1]), reference)
+                    && values[3 * key]
+                        .to_array()
+                        .into_iter()
+                        .all(|component| component == 0.0)
+                    && values[3 * key + 2]
+                        .to_array()
+                        .into_iter()
+                        .all(|component| component == 0.0)
+            })
+        }
+        _ => false,
+    }
+}
+
 fn contact_boundaries(
     fragment: &ContactFragmentV1,
 ) -> Result<Vec<ContactBoundary>, FootCycleProofError> {
@@ -927,6 +1004,20 @@ fn metric_work(
     .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::MetricWork))
 }
 
+fn add_candidate_bytes(total: usize, next: usize) -> Option<usize> {
+    total
+        .checked_add(next)
+        .filter(|value| *value <= MAX_AGGREGATE_CANDIDATE_BYTES)
+}
+
+fn is_self_contained_closure(closure: &DependencyClosureV1) -> bool {
+    closure.external_resources().is_empty()
+        && closure
+            .references()
+            .iter()
+            .all(|reference| reference.target() == &DependencyReferenceTargetV1::Primary)
+}
+
 fn add_metric_work(total: MetricGridWork, next: MetricGridWork) -> Option<MetricGridWork> {
     Some(MetricGridWork {
         pose_cells: total
@@ -987,7 +1078,8 @@ mod tests {
     use super::*;
     use animsmith_core::{
         ContactClipReferenceV1, ContactEventV1, ContactEventWindowV1, ContactProducerV1,
-        DependencyClosureBuilderV1, SourceSetCoverageV1,
+        DependencyClosureBuilderV1, DependencyResourceKeyV1, ResourceKeySyntaxV1,
+        SourceResourceKindV1, SourceResourceLocatorV1, SourceSetCoverageV1,
     };
 
     fn contact_fragment(windows: &[(ContactRoleV1, f64, f64)]) -> ContactFragmentV1 {
@@ -1042,8 +1134,16 @@ mod tests {
         fail_preflight_at: Option<usize>,
         fail_write_at: Option<usize>,
         mutate_readback_at: Option<usize>,
-        mutate_grid_at: Option<usize>,
+        grid_mutation: Option<(usize, GridMutation)>,
         grids_built: usize,
+    }
+
+    #[derive(Clone, Copy)]
+    enum GridMutation {
+        ContactTopology,
+        LowGaitAmplitude,
+        RootTrajectory,
+        LoopContinuity,
     }
 
     impl FootCycleProofRuntime for ObservedRuntime {
@@ -1099,17 +1199,60 @@ mod tests {
         ) -> Result<Rc<PoseGrid>, FootCycleProofError> {
             let index = self.grids_built;
             self.grids_built += 1;
-            if self.mutate_grid_at != Some(index) {
+            let Some((target, mutation)) = self.grid_mutation else {
+                return ProductionFootCycleProofRuntime.build_grid(document, clip_index);
+            };
+            if target != index {
                 return ProductionFootCycleProofRuntime.build_grid(document, clip_index);
             }
             let mut mutated = document.clone();
-            for track in &mut mutated.clips[clip_index].tracks {
-                if track.bone >= 2
-                    && let TrackValues::Vec3s(values) = &mut track.values
-                {
-                    for value in values {
-                        value.y = 1.0;
+            match mutation {
+                GridMutation::ContactTopology => {
+                    for track in &mut mutated.clips[clip_index].tracks {
+                        if track.bone >= 2
+                            && let TrackValues::Vec3s(values) = &mut track.values
+                        {
+                            for value in values {
+                                value.y = 1.0;
+                            }
+                        }
                     }
+                }
+                GridMutation::LowGaitAmplitude => {
+                    for track in &mut mutated.clips[clip_index].tracks {
+                        if track.bone >= 2
+                            && let TrackValues::Vec3s(values) = &mut track.values
+                        {
+                            for value in values {
+                                value.y *= 0.2;
+                            }
+                        }
+                    }
+                }
+                GridMutation::RootTrajectory => {
+                    let root = mutated.clips[clip_index]
+                        .tracks
+                        .iter_mut()
+                        .find(|track| track.bone == 0)
+                        .expect("fixture root track");
+                    let key_count = root.times.len();
+                    let TrackValues::Vec3s(values) = &mut root.values else {
+                        panic!("fixture root translation");
+                    };
+                    for (key, value) in values.iter_mut().enumerate() {
+                        value.x += 0.02 * key as f32 / (key_count - 1) as f32;
+                    }
+                }
+                GridMutation::LoopContinuity => {
+                    let foot = mutated.clips[clip_index]
+                        .tracks
+                        .iter_mut()
+                        .find(|track| track.bone >= 2)
+                        .expect("fixture foot track");
+                    let TrackValues::Vec3s(values) = &mut foot.values else {
+                        panic!("fixture foot translation");
+                    };
+                    values.last_mut().expect("fixture endpoint").x += 0.1;
                 }
             }
             ProductionFootCycleProofRuntime.build_grid(&mutated, clip_index)
@@ -1122,6 +1265,12 @@ mod tests {
             MAX_AGGREGATE_CANDIDATE_BYTES,
             GlbWriteLimits::FOOT_CYCLE_V1.max_total_bytes
         );
+        assert_eq!(
+            add_candidate_bytes(MAX_AGGREGATE_CANDIDATE_BYTES - 1, 1),
+            Some(MAX_AGGREGATE_CANDIDATE_BYTES)
+        );
+        assert_eq!(add_candidate_bytes(MAX_AGGREGATE_CANDIDATE_BYTES, 1), None);
+        assert_eq!(add_candidate_bytes(usize::MAX, 1), None);
         assert_eq!(
             add_metric_work(
                 MetricGridWork {
@@ -1164,6 +1313,48 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn self_contained_closure_allows_primary_references_and_refuses_external_resources() {
+        let artifact = InputIdentity::from_bytes(b"closure-proof");
+        let mut primary_builder =
+            DependencyClosureBuilderV1::new(artifact.clone(), SourceSetCoverageV1::complete(), 1);
+        assert!(primary_builder.begin_reference(8, 0));
+        primary_builder
+            .push_primary(0, SourceResourceKindV1::Buffer, 0)
+            .unwrap();
+        let primary = primary_builder.finish().unwrap();
+        assert!(is_self_contained_closure(&primary));
+
+        let SourceResourceLocatorV1::Relative(locator) =
+            SourceResourceLocatorV1::classify("external.bin")
+        else {
+            panic!("safe relative fixture");
+        };
+        let key =
+            DependencyResourceKeyV1::from_relative(&locator, ResourceKeySyntaxV1::GltfUri).unwrap();
+        let mut external_builder =
+            DependencyClosureBuilderV1::new(artifact, SourceSetCoverageV1::complete(), 1);
+        assert!(external_builder.begin_reference(12, 1));
+        assert_eq!(
+            external_builder.prepare_external_key(&key).unwrap(),
+            Some(true)
+        );
+        external_builder.record_external_open_attempt(&key).unwrap();
+        assert!(
+            external_builder
+                .push_captured_external(
+                    0,
+                    SourceResourceKindV1::Buffer,
+                    0,
+                    key,
+                    InputIdentity::from_bytes(b"external"),
+                )
+                .unwrap()
+        );
+        let external = external_builder.finish().unwrap();
+        assert!(!is_self_contained_closure(&external));
     }
 
     #[test]
@@ -1272,6 +1463,40 @@ mod tests {
     }
 
     #[test]
+    fn clip_map_proof_independently_refuses_bit_identical_nonconstant_cubic_motion() {
+        let prepared = crate::foot_cycle_source_prep::tests::prepared_fixture_for_proof_tests();
+        let member = &prepared.members()[1];
+        let mut source =
+            prepared.sources()[member.source_index()].document().clips[member.clip_index()].clone();
+        let track = &mut source.tracks[0];
+        let TrackValues::Vec3s(authored) = &track.values else {
+            panic!("fixture translation track");
+        };
+        let mut zero = authored[0];
+        zero.x = 0.0;
+        zero.y = 0.0;
+        zero.z = 0.0;
+        let mut cubic = authored
+            .iter()
+            .flat_map(|value| [zero, *value, zero])
+            .collect::<Vec<_>>();
+        cubic[4].x += 1.0;
+        track.interpolation = Interpolation::CubicSpline;
+        track.values = TrackValues::Vec3s(cubic);
+
+        assert_eq!(
+            prove_clip_map(
+                &source,
+                &source.clone(),
+                prepared.plan().members()[1].operation()
+            )
+            .unwrap_err()
+            .kind(),
+            FootCycleProofKind::ClipMap
+        );
+    }
+
+    #[test]
     fn f32_derived_loop_caps_accept_the_exact_user_boundary() {
         let measured = f64::from(0.1f32);
         assert!(!exceeds_f32_cap(measured, 0.1));
@@ -1329,7 +1554,7 @@ mod tests {
     fn second_member_proof_failure_returns_no_partial_batch() {
         let prepared = crate::foot_cycle_source_prep::tests::proof_ready_fixture();
         let mut runtime = ObservedRuntime {
-            mutate_grid_at: Some(1),
+            grid_mutation: Some((1, GridMutation::ContactTopology)),
             ..ObservedRuntime::default()
         };
         let error = serialize_and_prove_foot_cycle_v1_with_runtime(&prepared, &mut runtime)
@@ -1337,6 +1562,93 @@ mod tests {
             .expect("second proof mutation must fail the whole batch");
         assert_eq!(error.kind(), FootCycleProofKind::ContactTopology);
         assert_eq!(runtime.grids_built, 2);
+    }
+
+    #[test]
+    fn gait_domain_independently_rejects_a_below_floor_output_grid() {
+        let prepared = crate::foot_cycle_source_prep::tests::proof_ready_fixture();
+        let member = &prepared.members()[0];
+        let source = &prepared.sources()[member.source_index()];
+        let mut document = source.document().clone();
+        document.clips[member.clip_index()] = member.candidate_clip().clone();
+        let mut runtime = ObservedRuntime {
+            grid_mutation: Some((0, GridMutation::LowGaitAmplitude)),
+            ..ObservedRuntime::default()
+        };
+        let grid = runtime.build_grid(&document, member.clip_index()).unwrap();
+        let roles = resolve_configured_roles(&document.skeleton, &source.config().rig);
+        assert_eq!(
+            prove_gait(
+                &grid,
+                &roles,
+                source.config().loop_seam_min_stride_step_m(),
+                prepared.plan().proof().min_lr_amplitude_m(),
+            )
+            .unwrap_err()
+            .kind(),
+            FootCycleProofKind::GaitAmplitude
+        );
+    }
+
+    #[test]
+    fn duration_domain_rejects_a_mutated_output_duration() {
+        let prepared = crate::foot_cycle_source_prep::tests::proof_ready_fixture();
+        let member = &prepared.members()[0];
+        let source =
+            &prepared.sources()[member.source_index()].document().clips[member.clip_index()];
+        let mut output = member.candidate_clip().clone();
+        output.duration_s = 2.0;
+        let contact = contact_fragment(&[(ContactRoleV1::LeftFoot, 0.1, 0.2)]);
+        assert_eq!(
+            prove_duration(source.duration_s, &output, &contact, &contact)
+                .unwrap_err()
+                .kind(),
+            FootCycleProofKind::Duration
+        );
+    }
+
+    #[test]
+    fn transaction_rejects_independently_mutated_root_and_loop_metrics() {
+        for (mutation, expected) in [
+            (
+                GridMutation::RootTrajectory,
+                FootCycleProofKind::RootTrajectory,
+            ),
+            (
+                GridMutation::LoopContinuity,
+                FootCycleProofKind::LoopContinuity,
+            ),
+        ] {
+            let prepared = crate::foot_cycle_source_prep::tests::proof_ready_fixture();
+            let mut runtime = ObservedRuntime {
+                grid_mutation: Some((1, mutation)),
+                ..ObservedRuntime::default()
+            };
+            let error = serialize_and_prove_foot_cycle_v1_with_runtime(&prepared, &mut runtime)
+                .err()
+                .expect("mutated output proof grid must fail the whole transaction");
+            assert_eq!(error.kind(), expected);
+            assert_eq!(runtime.grids_built, 2);
+        }
+    }
+
+    #[test]
+    fn transaction_rejects_mutated_duration_and_map_without_partial_results() {
+        for (prepared, expected) in [
+            (
+                crate::foot_cycle_source_prep::tests::proof_ready_fixture_with_candidate_duration_mutation(),
+                FootCycleProofKind::ArtifactPreflight,
+            ),
+            (
+                crate::foot_cycle_source_prep::tests::proof_ready_fixture_with_candidate_map_mutation(),
+                FootCycleProofKind::ClipMap,
+            ),
+        ] {
+            let error = serialize_and_prove_foot_cycle_v1(&prepared)
+                .err()
+                .expect("mutated candidate must fail the whole transaction");
+            assert_eq!(error.kind(), expected);
+        }
     }
 
     #[test]
@@ -1386,7 +1698,8 @@ mod tests {
 
     #[test]
     fn production_transaction_proves_the_complete_in_memory_batch() {
-        let prepared = crate::foot_cycle_source_prep::tests::proof_ready_fixture();
+        let prepared =
+            crate::foot_cycle_source_prep::tests::proof_ready_fixture_with_nonzero_selected_clips();
         let proved = serialize_and_prove_foot_cycle_v1(&prepared).unwrap();
         assert_eq!(proved.members().len(), 2);
         assert_eq!(
@@ -1404,7 +1717,23 @@ mod tests {
         assert_eq!(proved.output_metric_pose_cells(), 2 * 17 * 4);
         assert_eq!(proved.output_metric_sample_evaluations(), 2 * 17 * 4);
         assert!(proved.gait_phase_spread() <= 0.08);
-        for member in proved.members() {
+        for (member_index, member) in proved.members().iter().enumerate() {
+            let prepared_member = &prepared.members()[member_index];
+            assert_eq!(prepared_member.clip_index(), 1);
+            let source = &prepared.sources()[prepared_member.source_index()];
+            let reread = animsmith_gltf::load_source_bytes(
+                Path::new("proved-artifact.glb"),
+                member.artifact_bytes(),
+            )
+            .unwrap();
+            assert!(clips_equal_bits(
+                &reread.document().clips[0],
+                &source.document().clips[0]
+            ));
+            assert!(clips_equal_bits(
+                &reread.document().clips[prepared_member.clip_index()],
+                prepared_member.candidate_clip()
+            ));
             assert_eq!(
                 member.artifact(),
                 &InputIdentity::from_bytes(member.artifact_bytes())
