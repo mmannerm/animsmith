@@ -2307,7 +2307,7 @@ contact_fragment = "contacts/b.json"
             ),
         )
         .unwrap();
-        assert_eq!(fixture.error_kind(), FootCycleSourcePrepKind::PlanRefused);
+        assert_eq!(fixture.error_kind(), FootCycleSourcePrepKind::Control);
 
         for options in [
             FixtureOptions {
@@ -2414,7 +2414,7 @@ expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000
                     "members = [\"com.example/a\", \"com.example/z-unused\"]",
                 )
         });
-        assert_eq!(fixture.error_kind(), FootCycleSourcePrepKind::PlanRefused);
+        assert_eq!(fixture.error_kind(), FootCycleSourcePrepKind::Control);
     }
 
     #[test]

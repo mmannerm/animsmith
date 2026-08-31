@@ -4135,6 +4135,49 @@ phase spread, and separate source/output/combined work totals for the later
 evidence and publication transaction. It defines no public evidence schema,
 filesystem layout, publication, or CLI behavior.
 
+### F.10G Foot-cycle generation producer V1 (#18)
+
+The final CLI-private transaction exposes exactly
+`collection transform-foot-cycle COLLECTION.toml --parameterization
+FOOT-CYCLE.toml --format json`; the required JSON-only format has no default
+and the parameterization is the sole destination authority. The glTF-only
+build retains this command, while FBX admission remains feature gated. Every
+successful source becomes a self-contained strict GLB.
+
+For `N` members the fixed generation has checked `3N+1` cardinality and exact
+declared order: each `members/NNNNNN/` contains `artifact.glb`,
+`contact-fragment.json`, and `evidence.json`, followed by the root
+`aggregate-evidence.json`. The member evidence V1 contract is
+`urn:animsmith:schema:foot-cycle-member-evidence:1`; it binds exact control
+inputs, source artifact/config/complete closure, output artifact/complete
+closure, transformed and independently redetected contacts, canonical map
+identity, policy, proof facts, and deterministic relative paths. Aggregate
+evidence V1 is `urn:animsmith:schema:foot-cycle-aggregate-evidence:1`; it binds
+the ordered member summaries and member-evidence identities,
+phase spread, component and exact total bytes, retained GLB bytes, and
+source/output/combined proof work. Strict bounded readers and published JSON
+Schemas close both records.
+
+All GLB, fragment, member-evidence, and aggregate-evidence bytes share one 256
+MiB retained/staged ceiling; each component retains its narrower contract cap.
+Checked arithmetic admits the exact file count and byte total, including the
+aggregate record's own converged serialized size, before the first filesystem
+write. One `publish_generation` call stages and flushes the complete fixed set
+under a sibling directory, then performs one platform no-replace directory
+rename. An existing or racing destination wins unchanged. This is atomic
+visibility of a new local generation, not replacement, power-loss, network
+filesystem, or crash-cleanup atomicity.
+
+Success emits the exact aggregate file bytes to stdout only after publication;
+a broken stream is best-effort diagnosed and retains exit 0. Valid asset,
+capability, refinement, contact-transform, or proof refusal publishes nothing,
+emits one `producer-refusal:1` record, and exits 1. Malformed or stale control
+bindings, unsafe/aliased paths, I/O, serialization, publication, and race
+failures publish nothing, keep stdout empty, and exit 2. The producer never
+rereads mutable manifest, parameterization, config, or contact controls after
+their exact capture and never substitutes the writer's candidate model for the
+independent serialized readback proof.
+
 ### F.11 Transition-family declaration V1 (#148)
 
 Issue #148 freezes declarations for transition families without implementing

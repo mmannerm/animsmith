@@ -5,7 +5,6 @@
 //! filesystem write occurs until every member and every exact output byte is
 //! available and the shared retained/staged budget has passed.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -24,6 +23,7 @@ use crate::foot_cycle_source_prep::{
     prepare_foot_cycle_parameterization_v1,
 };
 use crate::producer::{self, Command, Kind, Rejection, Stage};
+use crate::publish::{BoundedSerializationError, serialize_record_bounded};
 use crate::publish::{GenerationFile, GenerationPublicationLimits, emit, publish_generation};
 
 pub(crate) const MEMBER_EVIDENCE_V1_ID: &str = "urn:animsmith:schema:foot-cycle-member-evidence:1";
@@ -206,43 +206,13 @@ struct AggregateEvidenceRecord<'a> {
     resources: AggregateResources,
 }
 
-struct CappedWriter {
-    bytes: Vec<u8>,
-    limit: usize,
-}
-
-impl Write for CappedWriter {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let next = self
-            .bytes
-            .len()
-            .checked_add(bytes.len())
-            .filter(|next| *next <= self.limit)
-            .ok_or_else(|| std::io::Error::other("foot-cycle evidence byte limit"))?;
-        self.bytes.reserve(next - self.bytes.len());
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-fn serialize_bounded<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>, String> {
-    let mut writer = CappedWriter {
-        bytes: Vec::new(),
-        limit,
-    };
-    let formatter = serde_json::ser::PrettyFormatter::new();
-    let mut serializer = serde_json::Serializer::with_formatter(&mut writer, formatter);
-    value
-        .serialize(&mut serializer)
-        .map_err(|error| format!("cannot serialize foot-cycle evidence: {error}"))?;
-    writer
-        .write_all(b"\n")
-        .map_err(|error| format!("cannot serialize foot-cycle evidence: {error}"))?;
-    Ok(writer.bytes)
+fn serialize_bounded<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>, ProducerFailure> {
+    serialize_record_bounded(value, limit).map_err(|error| match error {
+        BoundedSerializationError::Limit { .. } => evidence_budget_refusal(limit),
+        BoundedSerializationError::Serialize(error) => {
+            ProducerFailure::Operator(format!("cannot serialize foot-cycle evidence: {error}"))
+        }
+    })
 }
 
 struct EncodedMember {
@@ -268,6 +238,28 @@ enum ProducerFailure {
     Refusal(Rejection),
 }
 
+impl From<String> for ProducerFailure {
+    fn from(error: String) -> Self {
+        Self::Operator(error)
+    }
+}
+
+fn generation_budget_refusal() -> ProducerFailure {
+    ProducerFailure::Refusal(Rejection::new(
+        Stage::Encode,
+        Kind::UnrepresentableArtifact,
+        format!("foot-cycle generation exceeds {MAX_SHARED_BYTES} bytes"),
+    ))
+}
+
+fn evidence_budget_refusal(limit: usize) -> ProducerFailure {
+    ProducerFailure::Refusal(Rejection::new(
+        Stage::Encode,
+        Kind::UnrepresentableArtifact,
+        format!("foot-cycle evidence exceeds {limit} bytes"),
+    ))
+}
+
 /// Run the one JSON-only public producer command.
 pub(crate) fn run(
     manifest: &Path,
@@ -275,13 +267,7 @@ pub(crate) fn run(
     tool: ToolInfo,
 ) -> Result<ExitCode, String> {
     match produce(manifest, parameterization, &tool) {
-        Ok(generation) => {
-            publish_encoded_generation(&generation)?;
-            // Publication is durable before stdout. A failed stream cannot
-            // truthfully turn the completed generation into an operator error.
-            emit(&generation.aggregate_bytes);
-            Ok(ExitCode::SUCCESS)
-        }
+        Ok(generation) => publish_and_emit_with(&generation, emit),
         Err(ProducerFailure::Operator(error)) => Err(error),
         Err(ProducerFailure::Refusal(rejection)) => producer::emit_rejection(
             Command::CollectionTransformFootCycle,
@@ -291,6 +277,17 @@ pub(crate) fn run(
             &mut producer::ProcessRefusalDelivery,
         ),
     }
+}
+
+fn publish_and_emit_with(
+    generation: &EncodedGeneration,
+    emit_record: impl FnOnce(&[u8]),
+) -> Result<ExitCode, String> {
+    publish_encoded_generation(generation)?;
+    // Publication is durable before stdout. A failed stream cannot
+    // truthfully turn the completed generation into an operator error.
+    emit_record(&generation.aggregate_bytes);
+    Ok(ExitCode::SUCCESS)
 }
 
 fn publish_encoded_generation(generation: &EncodedGeneration) -> Result<(), String> {
@@ -347,7 +344,7 @@ fn produce(
     let prepared = prepare_foot_cycle_parameterization_v1(manifest, parameterization)
         .map_err(classify_preparation)?;
     let proved = serialize_and_prove_foot_cycle_v1(&prepared).map_err(classify_proof)?;
-    encode_generation(&prepared, &proved, tool).map_err(ProducerFailure::Operator)
+    encode_generation(&prepared, &proved, tool)
 }
 
 fn classify_preparation(error: FootCycleSourcePrepError) -> ProducerFailure {
@@ -422,26 +419,29 @@ fn operation_identity(
     Ok(InputIdentity::from_bytes(&bytes))
 }
 
-fn checked_add(total: u64, next: usize) -> Result<u64, String> {
-    let next = u64::try_from(next).map_err(|_| "foot-cycle byte count exceeds u64")?;
+fn checked_add(total: u64, next: usize) -> Result<u64, ProducerFailure> {
+    let next = u64::try_from(next)
+        .map_err(|_| ProducerFailure::Operator("foot-cycle byte count exceeds u64".to_owned()))?;
     total
         .checked_add(next)
         .filter(|total| *total <= MAX_SHARED_BYTES)
-        .ok_or_else(|| format!("foot-cycle generation exceeds {MAX_SHARED_BYTES} bytes"))
+        .ok_or_else(generation_budget_refusal)
 }
 
 fn encode_generation(
     prepared: &PreparedFootCycleCollectionV1,
     proved: &ProvedFootCycleCollectionV1,
     tool: &ToolInfo,
-) -> Result<EncodedGeneration, String> {
+) -> Result<EncodedGeneration, ProducerFailure> {
     if prepared.members().len() != proved.members().len()
         || prepared.members().len() != prepared.plan().members().len()
     {
-        return Err("foot-cycle evidence member binding mismatch".to_owned());
+        return Err("foot-cycle evidence member binding mismatch"
+            .to_owned()
+            .into());
     }
-    let member_count =
-        u64::try_from(proved.members().len()).map_err(|_| "foot-cycle member count exceeds u64")?;
+    let member_count = u64::try_from(proved.members().len())
+        .map_err(|_| "foot-cycle member count exceeds u64".to_owned())?;
     let file_count = member_count
         .checked_mul(3)
         .and_then(|count| count.checked_add(1))
@@ -462,7 +462,9 @@ fn encode_generation(
         .enumerate()
     {
         if prepared_member.id() != plan.id() || plan.id() != proved_member.id() {
-            return Err("foot-cycle evidence ordered member mismatch".to_owned());
+            return Err("foot-cycle evidence ordered member mismatch"
+                .to_owned()
+                .into());
         }
         let source = prepared
             .sources()
@@ -570,7 +572,9 @@ fn encode_generation(
     let retained_candidate_bytes = u64::try_from(proved.retained_candidate_bytes())
         .map_err(|_| "retained foot-cycle bytes exceed u64".to_owned())?;
     if retained_candidate_bytes != artifact_total {
-        return Err("retained foot-cycle artifact byte accounting mismatch".to_owned());
+        return Err("retained foot-cycle artifact byte accounting mismatch"
+            .to_owned()
+            .into());
     }
     let fixed_without_aggregate = shared_total;
     let mut aggregate_size = 0_u64;
@@ -579,7 +583,7 @@ fn encode_generation(
         let total_bytes = fixed_without_aggregate
             .checked_add(aggregate_size)
             .filter(|total| *total <= MAX_SHARED_BYTES)
-            .ok_or_else(|| format!("foot-cycle generation exceeds {MAX_SHARED_BYTES} bytes"))?;
+            .ok_or_else(generation_budget_refusal)?;
         let record = AggregateEvidenceRecord {
             schema: AGGREGATE_EVIDENCE_V1_ID,
             schema_version: EVIDENCE_VERSION,
@@ -619,13 +623,15 @@ fn encode_generation(
         aggregate_size = next;
     }
     if aggregate_bytes.len() as u64 != aggregate_size {
-        return Err("aggregate foot-cycle evidence size did not converge".to_owned());
+        return Err("aggregate foot-cycle evidence size did not converge"
+            .to_owned()
+            .into());
     }
     read_aggregate_evidence_v1(&aggregate_bytes)?;
     shared_total = fixed_without_aggregate
         .checked_add(aggregate_size)
         .filter(|total| *total <= MAX_SHARED_BYTES)
-        .ok_or_else(|| format!("foot-cycle generation exceeds {MAX_SHARED_BYTES} bytes"))?;
+        .ok_or_else(generation_budget_refusal)?;
 
     Ok(EncodedGeneration {
         destination: prepared.output_directory().to_path_buf(),
@@ -654,17 +660,24 @@ impl IdentityWire {
                 .sha256
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+            && self.bytes <= 9_007_199_254_740_991
     }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ToolSourceWire {
-    #[serde(default)]
-    revision: Option<String>,
-    #[serde(default)]
-    dirty: Option<bool>,
+    revision: RequiredNullableString,
+    dirty: RequiredNullableBool,
 }
+
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct RequiredNullableString(Option<String>);
+
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct RequiredNullableBool(Option<bool>);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -672,6 +685,19 @@ struct ToolWire {
     name: String,
     version: String,
     source: ToolSourceWire,
+}
+
+impl ToolWire {
+    fn valid(&self) -> bool {
+        let revision_valid = self.source.revision.0.as_deref().is_none_or(|revision| {
+            revision.len() == 40
+                && revision
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f' | b'A'..=b'F'))
+        });
+        let _ = self.source.dirty.0;
+        self.name == "animsmith" && !self.version.is_empty() && revision_valid
+    }
 }
 
 #[derive(Deserialize)]
@@ -738,21 +764,29 @@ struct ProofWire {
 
 impl ProofWire {
     fn valid(&self) -> bool {
-        [
-            self.duration_s,
-            self.gait_phase,
-            self.lr_amplitude_m,
-            self.max_contact_boundary_phase_error,
-            self.root_endpoint_displacement_x_m,
-            self.root_endpoint_displacement_z_m,
-            self.root_accumulated_yaw_deg,
-            self.max_loop_position_delta_m,
-            self.max_loop_rotation_delta_deg,
-            self.max_loop_velocity_delta_mps,
-            self.max_loop_angular_velocity_delta_degps,
-        ]
-        .into_iter()
-        .all(f64::is_finite)
+        self.duration_s.is_finite()
+            && self.duration_s > 0.0
+            && self.gait_phase.is_finite()
+            && (0.0..=1.0).contains(&self.gait_phase)
+            && self.lr_amplitude_m.is_finite()
+            && self.lr_amplitude_m >= 0.0
+            && self.max_contact_boundary_phase_error.is_finite()
+            && (0.0..=0.5).contains(&self.max_contact_boundary_phase_error)
+            && [
+                self.root_endpoint_displacement_x_m,
+                self.root_endpoint_displacement_z_m,
+                self.root_accumulated_yaw_deg,
+            ]
+            .into_iter()
+            .all(f64::is_finite)
+            && [
+                self.max_loop_position_delta_m,
+                self.max_loop_rotation_delta_deg,
+                self.max_loop_velocity_delta_mps,
+                self.max_loop_angular_velocity_delta_degps,
+            ]
+            .into_iter()
+            .all(|value| value.is_finite() && value >= 0.0)
     }
 }
 
@@ -815,29 +849,30 @@ pub(crate) fn read_member_evidence_v1(bytes: &[u8]) -> Result<(), String> {
             .config
             .as_ref()
             .is_none_or(IdentityWire::validate);
-    let tool_valid = wire.tool.name == "animsmith"
-        && !wire.tool.version.is_empty()
-        && wire.tool.source.revision.as_ref().is_none_or(|revision| {
-            revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
-        });
-    let _ = wire.tool.source.dirty;
     if wire.schema != MEMBER_EVIDENCE_V1_ID
         || wire.schema_version != EVIDENCE_VERSION
         || wire.command != COMMAND
+        || wire.member_index > 4095
         || wire.member_id.is_empty()
+        || wire.member_id.len() > 255
         || wire.source.source_key.is_empty()
-        || !tool_valid
+        || wire.source.source_key.len() > 4096
+        || !wire.tool.valid()
         || !identities_valid
         || !wire.proof_policy.valid()
         || !wire.proof.valid()
+        || wire.resources.artifact_bytes == 0
+        || wire.resources.contact_fragment_bytes == 0
+        || wire.resources.artifact_bytes > MAX_SHARED_BYTES
+        || wire.resources.contact_fragment_bytes > MAX_MEMBER_EVIDENCE_BYTES as u64
         || wire.resources.artifact_bytes != wire.output.artifact.bytes
+        || wire.resources.contact_fragment_bytes != wire.output.contact_fragment.bytes
         || wire.paths.artifact != alias_text(&expected.0)?
         || wire.paths.contact_fragment != alias_text(&expected.1)?
         || wire.paths.evidence != alias_text(&expected.2)?
     {
         return Err("invalid foot-cycle member evidence V1".to_owned());
     }
-    let _ = wire.resources.contact_fragment_bytes;
     Ok(())
 }
 
@@ -919,6 +954,7 @@ pub(crate) fn read_aggregate_evidence_v1(bytes: &[u8]) -> Result<(), String> {
         };
         member.member_index == index_u64
             && !member.member_id.is_empty()
+            && member.member_id.len() <= 255
             && member.artifact_path == expected.0.to_string_lossy()
             && member.contact_fragment_path == expected.1.to_string_lossy()
             && member.evidence_path == expected.2.to_string_lossy()
@@ -935,6 +971,15 @@ pub(crate) fn read_aggregate_evidence_v1(bytes: &[u8]) -> Result<(), String> {
             .all(IdentityWire::validate)
     });
     let aggregate_len = bytes.len() as u64;
+    let artifact_bytes = wire.members.iter().try_fold(0_u64, |total, member| {
+        total.checked_add(member.output_artifact.bytes)
+    });
+    let contact_fragment_bytes = wire.members.iter().try_fold(0_u64, |total, member| {
+        total.checked_add(member.output_contact_fragment.bytes)
+    });
+    let member_evidence_bytes = wire.members.iter().try_fold(0_u64, |total, member| {
+        total.checked_add(member.evidence.bytes)
+    });
     let components = wire
         .resources
         .artifact_bytes
@@ -946,14 +991,21 @@ pub(crate) fn read_aggregate_evidence_v1(bytes: &[u8]) -> Result<(), String> {
         || wire.command != COMMAND
         || wire.outcome != "published"
         || wire.runtime_set_id.is_empty()
+        || wire.runtime_set_id.len() > 255
         || wire.reference_member.is_empty()
+        || wire.reference_member.len() > 255
         || !wire.manifest_input.validate()
         || !wire.parameterization_input.validate()
         || !wire.proof_policy.valid()
         || !wire.gait_phase_spread.is_finite()
+        || !(0.0..=0.5).contains(&wire.gait_phase_spread)
         || !ordered
+        || !(2..=4096).contains(&member_count)
         || wire.resources.members != member_count
         || Some(wire.resources.files) != expected_files
+        || artifact_bytes != Some(wire.resources.artifact_bytes)
+        || contact_fragment_bytes != Some(wire.resources.contact_fragment_bytes)
+        || member_evidence_bytes != Some(wire.resources.member_evidence_bytes)
         || wire.resources.aggregate_evidence_bytes != aggregate_len
         || components != Some(wire.resources.total_bytes)
         || wire.resources.total_bytes > MAX_SHARED_BYTES
@@ -968,8 +1020,7 @@ pub(crate) fn read_aggregate_evidence_v1(bytes: &[u8]) -> Result<(), String> {
             .source_metric_sample_evaluations
             .checked_add(wire.resources.output_metric_sample_evaluations)
             != Some(wire.resources.metric_sample_evaluations)
-        || wire.tool.name != "animsmith"
-        || wire.tool.version.is_empty()
+        || !wire.tool.valid()
     {
         return Err("invalid foot-cycle aggregate evidence V1".to_owned());
     }
@@ -981,11 +1032,25 @@ mod tests {
     use super::*;
     use crate::foot_cycle_source_prep::tests::{Fixture, FixtureOptions};
 
+    struct BrokenPipe;
+
+    impl std::io::Write for BrokenPipe {
+        fn write(&mut self, _bytes: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "producer stdout is closed",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     fn fixture_generation(fixture: &Fixture) -> Result<EncodedGeneration, ProducerFailure> {
         let prepared = fixture.prepare_proof_ready();
         let proved = serialize_and_prove_foot_cycle_v1(&prepared).map_err(classify_proof)?;
         encode_generation(&prepared, &proved, &crate::current_tool())
-            .map_err(ProducerFailure::Operator)
     }
 
     #[test]
@@ -1015,7 +1080,14 @@ mod tests {
         }
         let bytes = serialize_bounded(&Payload { value: "x" }, 19).unwrap();
         assert_eq!(bytes, b"{\n  \"value\": \"x\"\n}\n");
-        assert!(serialize_bounded(&Payload { value: "x" }, 18).is_err());
+        assert!(matches!(
+            serialize_bounded(&Payload { value: "x" }, 18),
+            Err(ProducerFailure::Refusal(_))
+        ));
+        assert!(matches!(
+            serialize_bounded(&Finite(f64::NAN), 18),
+            Err(ProducerFailure::Operator(_))
+        ));
     }
 
     #[test]
@@ -1024,8 +1096,14 @@ mod tests {
             checked_add(MAX_SHARED_BYTES - 1, 1).unwrap(),
             MAX_SHARED_BYTES
         );
-        assert!(checked_add(MAX_SHARED_BYTES, 1).is_err());
-        assert!(checked_add(u64::MAX, 1).is_err());
+        assert!(matches!(
+            checked_add(MAX_SHARED_BYTES, 1),
+            Err(ProducerFailure::Refusal(_))
+        ));
+        assert!(matches!(
+            checked_add(u64::MAX, 1),
+            Err(ProducerFailure::Refusal(_))
+        ));
     }
 
     #[test]
@@ -1074,6 +1152,82 @@ mod tests {
                 .is_ok()
             );
         }
+    }
+
+    #[test]
+    fn stdout_is_the_exact_aggregate_file_and_a_broken_stream_cannot_reverse_publication() {
+        let exact = Fixture::create(FixtureOptions::default());
+        let exact_generation = fixture_generation(&exact).unwrap();
+        let mut stdout = Vec::new();
+        let status =
+            publish_and_emit_with(&exact_generation, |bytes| stdout.extend_from_slice(bytes))
+                .expect("the complete generation publishes");
+        assert_eq!(status, ExitCode::SUCCESS);
+        assert_eq!(stdout, exact_generation.aggregate_bytes);
+        assert_eq!(
+            stdout,
+            std::fs::read(exact_generation.destination.join("aggregate-evidence.json")).unwrap()
+        );
+
+        let broken = Fixture::create(FixtureOptions::default());
+        let broken_generation = fixture_generation(&broken).unwrap();
+        let mut diagnostics = Vec::new();
+        let status = publish_and_emit_with(&broken_generation, |bytes| {
+            crate::publish::emit_with(&mut BrokenPipe, &mut diagnostics, bytes);
+        })
+        .expect("report delivery cannot reverse a durable publication");
+        assert_eq!(status, ExitCode::SUCCESS);
+        assert!(
+            broken_generation
+                .destination
+                .join("aggregate-evidence.json")
+                .is_file()
+        );
+        assert!(
+            String::from_utf8(diagnostics)
+                .unwrap()
+                .contains("cannot write JSON output to stdout")
+        );
+    }
+
+    #[test]
+    fn strict_readers_reject_unknown_fields_stale_bindings_and_order_drift() {
+        let fixture = Fixture::create(FixtureOptions::default());
+        let generation = fixture_generation(&fixture).unwrap();
+
+        let member = String::from_utf8(generation.members[0].evidence_bytes.clone()).unwrap();
+        let unknown = member.replacen("{\n", "{\n  \"unknown\": true,\n", 1);
+        assert!(read_member_evidence_v1(unknown.as_bytes()).is_err());
+
+        let stale_path = member.replacen(
+            "members/000000/artifact.glb",
+            "members/000001/artifact.glb",
+            1,
+        );
+        assert!(read_member_evidence_v1(stale_path.as_bytes()).is_err());
+
+        let artifact_count = format!(
+            "\"artifact_bytes\": {}",
+            generation.members[0].artifact_bytes.len()
+        );
+        let stale_count = member.replacen(&artifact_count, "\"artifact_bytes\": 1", 1);
+        assert_ne!(stale_count, member);
+        assert!(read_member_evidence_v1(stale_count.as_bytes()).is_err());
+
+        let aggregate = String::from_utf8(generation.aggregate_bytes.clone()).unwrap();
+        let wrong_order = aggregate.replacen("\"member_index\": 0", "\"member_index\": 1", 1);
+        assert_ne!(wrong_order, aggregate);
+        assert!(read_aggregate_evidence_v1(wrong_order.as_bytes()).is_err());
+
+        let artifact_total = generation
+            .members
+            .iter()
+            .map(|member| member.artifact_bytes.len() as u64)
+            .sum::<u64>();
+        let artifact_count = format!("\"artifact_bytes\": {artifact_total}");
+        let stale_count = aggregate.replacen(&artifact_count, "\"artifact_bytes\": 1", 1);
+        assert_ne!(stale_count, aggregate);
+        assert!(read_aggregate_evidence_v1(stale_count.as_bytes()).is_err());
     }
 
     #[test]

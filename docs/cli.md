@@ -372,7 +372,7 @@ form a truthful record; delivery failure after rendering is only reporting for
 the ordinary streams. Other operator errors occur before stdout reporting,
 remain stderr-only, and retain exit `2`.
 
-For `convert` and `assemble`, classification is by typed provenance, never by
+For artifact producers, classification is by typed provenance, never by
 diagnostic wording. The JSON refusal identity is
 `urn:animsmith:schema:producer-refusal:1`:
 
@@ -382,7 +382,8 @@ diagnostic wording. The JSON refusal identity is
 | Operator error | Invalid flags/config; recipe syntax, schema, or intrinsic values; unsupported extension; missing/unreadable declared file; unsafe, aliased, or unwritable paths; temporary/write/publication/rollback I/O; refusal-record serialization. | `2`; prose on stderr and nothing on stdout in either format. |
 
 A refusal is established before publication. It leaves any prior assembly
-artifact/evidence pair and any prior convert artifact byte-identical. Convert
+artifact/evidence pair and any prior convert artifact byte-identical; the
+foot-cycle producer never replaces a generation. Convert
 still writes its successful single artifact directly, so this is not a
 rollback promise for an operator I/O failure during that write.
 Commands that render several related pieces attempt one checked stream when a
@@ -495,11 +496,28 @@ cargo install animsmith --no-default-features
 
 The no-default-features build has no C toolchain dependency and keeps the
 glTF-only workflow: `inspect`, `measure`, `lint`, `transform`, `fix`, `scale`,
-and `diff`. `scale` is the minimal build's evidence-emitting producer. The HTML `report` command is controlled by the `report` feature.
+`collection transform-foot-cycle`, and `diff`. `scale` and the collection
+foot-cycle command are the minimal build's evidence-emitting producers. The HTML `report` command is controlled by the `report` feature.
 `convert` accepts FBX or glTF input (a glTF input is re-emitted,
 carrying its geometry) but is compiled only with the `fbx` feature.
 `assemble` is gated by the same feature because its maintained boundary accepts
 FBX sources as well as glTF.
+
+The exact foot-cycle producer form is:
+
+```console
+animsmith collection transform-foot-cycle COLLECTION.toml \
+  --parameterization FOOT-CYCLE.toml --format json
+```
+
+`--format json` is required and JSON is the only format. There is no
+`--output` or `--output-dir`: the strict parameterization document is the sole
+destination authority. The destination must not exist. Success publishes one
+complete generation with exactly three files per declared member plus
+`aggregate-evidence.json`, then writes the exact aggregate file bytes to
+stdout. Valid asset/capability/refinement/proof refusal exits 1 with one
+`producer-refusal:1` JSON record. Malformed or stale controls, unsafe paths,
+I/O, serialization, and publication races exit 2 with empty stdout.
 Full-scene conversion carries factor-only materials plus linked or embedded
 PNG/JPEG base-color, normal, metallic-roughness, and occlusion textures. Normal textures retain their glTF
 scale; FBX normal maps use glTF's default scale because ordinary FBX materials

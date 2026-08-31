@@ -102,6 +102,7 @@ pure-Rust glTF-only binary:
 
 ```console
 $ cargo test -p animsmith --test cli_contract --no-default-features
+$ cargo test -p animsmith --test foot_cycle_cli --no-default-features
 $ cargo test -p animsmith --test scale_cli --no-default-features
 $ cargo test -p animsmith --test transition_pose_cli --no-default-features
 $ cargo build -p animsmith --no-default-features

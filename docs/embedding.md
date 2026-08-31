@@ -341,7 +341,7 @@ conservative V1 inspection-work charge without allocating the candidate,
 allowing embedders to enforce their own checked aggregate batch budget before
 retaining multiple outputs.
 
-The planner does not open paths. The CLI crate now has a private, non-command
+The planner does not open paths. The CLI crate has a private
 adapter that validates the closed bounded TOML grammar, resolves the manifest
 and parameterization path sets with symlink/canonical and
 platform-observable hardlink alias refusal, validates the pure runtime-set
@@ -359,7 +359,9 @@ handler, but retains contact transformation as a typed continuation: only a
    closure. The private in-memory continuation now serializes every candidate
    as a strict self-contained GLB, rereads the exact bytes, and independently
    proves the transformed clips and contacts as one all-or-nothing batch.
-   Generation-directory publication and a user-visible command remain later work. Embedders must not
+   The public CLI then bounded-serializes member and aggregate evidence and
+   publishes the complete fixed generation through one no-replace directory
+   rename. Embedders must not
 treat a successful plan or prepared candidate as an output-artifact or
 gameplay-acceptance proof. See the
 [collection contract](collection-contracts.md#foot-cycle-parameterization-v1-18-planner-slice)
@@ -369,7 +371,7 @@ for the declaration and exact topology grammar.
 producer: `animsmith_gltf::write::preflight_glb_bytes` records one exact
 in-memory projection receipt and `write_glb_bytes` reruns it before retaining
 bytes. `StrictFootCycleV1` is deliberately narrower than legacy conversion and
-refuses data it cannot represent exactly enough for the future candidate
+refuses data it cannot represent exactly enough for the foot-cycle candidate
    contract, including source scene collapse, incomplete skin bindings, primary
 skin-slot reinterpretation, unsupported primitive/texture/material domains and
    non-empty complete source material-resource sidecars,
@@ -385,8 +387,9 @@ source-only names, stable source indices, or image-inspection/provenance
    no external resources (embedded-buffer references may target `Primary`),
    finishes the contact transform with the reread identities, and independently
    checks duration, map/contact correspondence, gait, signed root trajectory,
-   and configured loop pose/velocity tolerances. It does not stage/publish
-   files or claim game-engine acceptance.
+   and configured loop pose/velocity tolerances. The CLI-only transaction owns
+   generation staging/publication; the format crate does not. Neither path
+   claims game-engine acceptance.
 
 ## Scale plan and proof contracts
 

@@ -227,7 +227,66 @@ become a separate valid value-only case.
 Neither pure seam transforms contact fragments, derives root measurements,
 binds the selected asset to the plan, serializes output artifacts, proves
 reread results, or publishes a generation directory; those remain later #18
-transaction seams.
+transaction seams described below.
+
+## Foot-cycle generation V1 (#18)
+
+The public producer is deliberately one collection command with no destination
+override:
+
+```console
+animsmith collection transform-foot-cycle COLLECTION.toml \
+  --parameterization FOOT-CYCLE.toml --format json
+```
+
+The parameterization's `output_directory` is resolved relative to that
+document and must name a previously absent directory below an existing safe
+parent. The command is available in the glTF-only build; `.fbx` sources remain
+available only when the `fbx` feature is enabled. Every admitted source,
+including `.gltf`, is emitted as a self-contained GLB.
+
+For `N` members, the generation has exactly `3N+1` files in parameterization
+member order:
+
+```text
+members/000000/artifact.glb
+members/000000/contact-fragment.json
+members/000000/evidence.json
+...
+aggregate-evidence.json
+```
+
+Logical ids and source keys are evidence fields, never filesystem names. The
+member evidence identity is
+`urn:animsmith:schema:foot-cycle-member-evidence:1`; it binds exact manifest
+and parameterization inputs, source artifact/config/complete closure, output
+artifact/complete closure, transformed and independently redetected contact
+identities, canonical operation identity, declared proof policy, and reread
+proof residuals. The aggregate identity is
+`urn:animsmith:schema:foot-cycle-aggregate-evidence:1`; it repeats the control
+bindings and policy, preserves ordered member paths and identities, and records
+checked `3N+1`, component bytes, exact total, retained GLB bytes, and
+source/output/combined metric work. See
+[`foot-cycle-member-evidence-v1.schema.json`](schemas/foot-cycle-member-evidence-v1.schema.json)
+and
+[`foot-cycle-aggregate-evidence-v1.schema.json`](schemas/foot-cycle-aggregate-evidence-v1.schema.json).
+
+All GLBs, canonical transformed fragments, member evidence, and aggregate
+evidence share one 256 MiB retained/staged cap in addition to their stricter
+component limits. Every candidate, contact transform, independent reread
+proof, and bounded serialization finishes before the first filesystem write.
+The publisher flushes the fixed file set beneath one sibling temporary
+directory and performs one no-replace directory rename. It does not replace an
+existing generation or claim power-loss, network-filesystem, or abandoned-temp
+cleanup guarantees.
+
+Success exits 0 and writes the exact published `aggregate-evidence.json` bytes
+to stdout only after publication. A broken stdout is diagnosed best effort and
+cannot undo or relabel the generation. Asset/capability/map/contact/proof
+refusal exits 1 with one `producer-refusal:1` JSON record and no destination.
+Malformed or stale controls and bindings, unsafe paths or aliases, I/O,
+serialization, or publication/race failures exit 2 with empty stdout and no
+published destination.
 
 ## Contact fragments (#147)
 

@@ -98,10 +98,81 @@ use animsmith_gltf::fix::{FixReport, Repair};
 /// evidence path. A record that cannot be rendered truthfully is diagnosed,
 /// never panicked over and never silently dropped.
 pub(crate) fn serialize_record<T: Serialize>(record: &T) -> Result<Vec<u8>, String> {
-    let mut bytes = serde_json::to_vec_pretty(record)
-        .map_err(|error| format!("cannot serialize JSON output: {error}"))?;
-    bytes.push(b'\n');
-    Ok(bytes)
+    serialize_record_bounded(record, usize::MAX).map_err(|error| error.to_string())
+}
+
+#[derive(Debug)]
+pub(crate) enum BoundedSerializationError {
+    Limit { limit: usize },
+    Serialize(String),
+}
+
+impl std::fmt::Display for BoundedSerializationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Limit { limit } => write!(formatter, "JSON output exceeds {limit} bytes"),
+            Self::Serialize(error) => formatter.write_str(error),
+        }
+    }
+}
+
+struct BoundedJsonWriter {
+    bytes: Vec<u8>,
+    limit: usize,
+    exceeded: bool,
+}
+
+impl std::io::Write for BoundedJsonWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self
+            .bytes
+            .len()
+            .checked_add(bytes.len())
+            .filter(|next| *next <= self.limit)
+            .is_none()
+        {
+            self.exceeded = true;
+            return Err(std::io::Error::other("JSON output exceeds its byte limit"));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Serialize one pretty, newline-terminated JSON record within an exact cap.
+///
+/// The cap is enforced by the serializer's writer, so a caller never first
+/// allocates an over-budget complete record merely to reject it afterward.
+pub(crate) fn serialize_record_bounded<T: Serialize>(
+    record: &T,
+    limit: usize,
+) -> Result<Vec<u8>, BoundedSerializationError> {
+    let mut writer = BoundedJsonWriter {
+        bytes: Vec::new(),
+        limit,
+        exceeded: false,
+    };
+    let formatter = serde_json::ser::PrettyFormatter::new();
+    let mut serializer = serde_json::Serializer::with_formatter(&mut writer, formatter);
+    if let Err(error) = record.serialize(&mut serializer) {
+        return Err(if writer.exceeded {
+            BoundedSerializationError::Limit { limit }
+        } else {
+            BoundedSerializationError::Serialize(format!("cannot serialize JSON output: {error}"))
+        });
+    }
+    if let Err(error) = writer.write_all(b"\n") {
+        return Err(if writer.exceeded {
+            BoundedSerializationError::Limit { limit }
+        } else {
+            BoundedSerializationError::Serialize(format!("cannot serialize JSON output: {error}"))
+        });
+    }
+    Ok(writer.bytes)
 }
 
 /// Write exactly these bytes to stdout, diagnosing a write failure on stderr
@@ -127,11 +198,20 @@ pub(crate) fn serialize_record<T: Serialize>(record: &T) -> Result<Vec<u8>, Stri
 pub(crate) fn emit(bytes: &[u8]) {
     // Locked once for the whole record rather than per `write` call, so a
     // concurrently printed line cannot land inside the JSON document.
-    if let Err(error) = emit_to(&mut std::io::stdout().lock(), bytes) {
+    emit_with(&mut std::io::stdout().lock(), &mut std::io::stderr(), bytes);
+}
+
+/// Best-effort JSON delivery with injectable streams for producer tests.
+pub(crate) fn emit_with(
+    sink: &mut impl std::io::Write,
+    diagnostics: &mut impl std::io::Write,
+    bytes: &[u8],
+) {
+    if let Err(error) = emit_to(sink, bytes) {
         // Best effort, and deliberately not `eprint!`: if stderr is gone too
         // then there is nothing left to report with, and `eprint!` would
         // panic for exactly the reason stdout just failed.
-        diagnose_write_failure(&error);
+        diagnose_write_failure_to(diagnostics, &error);
     }
 }
 
@@ -1696,7 +1776,7 @@ mod tests {
                 "emit",
                 "pub(crate) fn emit(bytes:",
                 "/// Write one already-rendered",
-                "diagnose_write_failure(",
+                "emit_with(",
             ),
             (
                 "emit_text",
@@ -1859,6 +1939,7 @@ mod tests {
             concat!("to_vec", "_pretty"),
             concat!("to_string", "_pretty"),
             concat!("to_writer", "_pretty"),
+            concat!("Serializer", "::with_formatter"),
         ];
         let sites = crate_sources()
             .into_iter()
@@ -1873,7 +1954,7 @@ mod tests {
         assert_eq!(
             sites,
             std::collections::BTreeMap::from([("publish.rs".to_owned(), 1)]),
-            "pretty JSON has exactly one producer: `publish::serialize_record`. Evidence \
+            "pretty JSON has exactly one producer: `publish::serialize_record_bounded`. Evidence \
              records go through it once and its bytes reach both the evidence file and \
              stdout; the output-v15 envelopes reach it through `render::print_json`. Route \
              a new call through one of those two entry points instead of adding a second \
@@ -1895,7 +1976,12 @@ mod tests {
         // its own documentation.
         let printer = concat!("print", "_json");
         let sources = crate_sources();
-        for producer in ["assembly.rs", "scale.rs", "contact_producer.rs"] {
+        for producer in [
+            "assembly.rs",
+            "scale.rs",
+            "contact_producer.rs",
+            "foot_cycle_producer.rs",
+        ] {
             let (_, text) = sources
                 .iter()
                 .find(|(name, _)| name == producer)

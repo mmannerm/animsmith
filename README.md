@@ -100,6 +100,7 @@ clip.glb:
 $ animsmith lint export.fbx
 $ animsmith collection lint collection.toml --format json
 $ animsmith collection evaluate-directional-speed --policy directional-speed.toml --evidence collection-output.json --format json
+$ animsmith collection transform-foot-cycle collection.toml --parameterization foot-cycle.toml --format json
 $ animsmith measure clip.glb
 $ animsmith inspect clip.glb
 $ animsmith skeleton compare source.fbx target.glb --correspondence skeleton-correspondence.toml --format json

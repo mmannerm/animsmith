@@ -175,6 +175,7 @@ gates: require-cargo-deny require-typos
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps
     cargo test -p animsmith --test cli_contract --no-default-features
+    cargo test -p animsmith --test foot_cycle_cli --no-default-features
     cargo test -p animsmith --test measure_mesh --no-default-features
     cargo test -p animsmith --test scale_cli --no-default-features
     cargo build -p animsmith --no-default-features
