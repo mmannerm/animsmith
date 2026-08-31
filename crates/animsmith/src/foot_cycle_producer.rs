@@ -359,7 +359,7 @@ fn produce(
     let prepared = prepare_foot_cycle_parameterization_v1(manifest, parameterization)
         .map_err(classify_preparation)?;
     let proved = serialize_and_prove_foot_cycle_v1(&prepared).map_err(classify_proof)?;
-    encode_generation(&prepared, &proved, tool)
+    encode_generation(&prepared, proved, tool)
 }
 
 fn classify_preparation(error: FootCycleSourcePrepError) -> ProducerFailure {
@@ -446,7 +446,7 @@ fn checked_add(total: u64, next: usize, limit: u64) -> Result<u64, ProducerFailu
 
 fn encode_generation(
     prepared: &PreparedFootCycleCollectionV1,
-    proved: &ProvedFootCycleCollectionV1,
+    proved: ProvedFootCycleCollectionV1,
     tool: &ToolInfo,
 ) -> Result<EncodedGeneration, ProducerFailure> {
     encode_generation_with_limits(prepared, proved, tool, ENCODING_LIMITS)
@@ -454,7 +454,7 @@ fn encode_generation(
 
 fn encode_generation_with_limits(
     prepared: &PreparedFootCycleCollectionV1,
-    proved: &ProvedFootCycleCollectionV1,
+    proved: ProvedFootCycleCollectionV1,
     tool: &ToolInfo,
     limits: EncodingLimits,
 ) -> Result<EncodedGeneration, ProducerFailure> {
@@ -465,15 +465,26 @@ fn encode_generation_with_limits(
             .to_owned()
             .into());
     }
-    let member_count = u64::try_from(proved.members().len())
+    let member_capacity = proved.members().len();
+    let member_count = u64::try_from(member_capacity)
         .map_err(|_| "foot-cycle member count exceeds u64".to_owned())?;
     let file_count = member_count
         .checked_mul(3)
         .and_then(|count| count.checked_add(1))
         .ok_or_else(|| "foot-cycle 3N+1 file count overflow".to_owned())?;
+    let retained_candidate_bytes = u64::try_from(proved.retained_candidate_bytes())
+        .map_err(|_| "retained foot-cycle bytes exceed u64".to_owned())?;
+    let gait_phase_spread = proved.gait_phase_spread();
+    let source_metric_pose_cells = proved.source_metric_pose_cells() as u64;
+    let source_metric_sample_evaluations = proved.source_metric_sample_evaluations() as u64;
+    let output_metric_pose_cells = proved.output_metric_pose_cells() as u64;
+    let output_metric_sample_evaluations = proved.output_metric_sample_evaluations() as u64;
+    let metric_pose_cells = proved.metric_pose_cells() as u64;
+    let metric_sample_evaluations = proved.metric_sample_evaluations() as u64;
+    let proved_members = proved.into_members();
 
-    let mut encoded = Vec::with_capacity(proved.members().len());
-    let mut aggregate_members = Vec::with_capacity(proved.members().len());
+    let mut encoded = Vec::with_capacity(member_capacity);
+    let mut aggregate_members = Vec::with_capacity(member_capacity);
     let mut artifact_total = 0_u64;
     let mut fragment_total = 0_u64;
     let mut evidence_total = 0_u64;
@@ -483,7 +494,7 @@ fn encode_generation_with_limits(
         .members()
         .iter()
         .zip(prepared.plan().members())
-        .zip(proved.members())
+        .zip(proved_members)
         .enumerate()
     {
         if prepared_member.id() != plan.id() || plan.id() != proved_member.id() {
@@ -557,11 +568,6 @@ fn encode_generation_with_limits(
         // The strict reader is part of the producer boundary, not only a test helper.
         read_member_evidence_v1(&evidence_bytes)?;
 
-        shared_total = checked_add(
-            shared_total,
-            proved_member.artifact_bytes().len(),
-            limits.shared_bytes,
-        )?;
         shared_total = checked_add(shared_total, fragment_bytes.len(), limits.shared_bytes)?;
         shared_total = checked_add(shared_total, evidence_bytes.len(), limits.shared_bytes)?;
         artifact_total = artifact_total
@@ -588,18 +594,18 @@ fn encode_generation_with_limits(
             independently_detected_contact_fragment: detected_fragment,
             evidence: evidence_identity,
         });
+        let artifact_bytes = proved_member.into_artifact_bytes();
+        shared_total = checked_add(shared_total, artifact_bytes.len(), limits.shared_bytes)?;
         encoded.push(EncodedMember {
             artifact_alias,
             fragment_alias,
             evidence_alias,
-            artifact_bytes: proved_member.artifact_bytes().to_vec(),
+            artifact_bytes,
             fragment_bytes,
             evidence_bytes,
         });
     }
 
-    let retained_candidate_bytes = u64::try_from(proved.retained_candidate_bytes())
-        .map_err(|_| "retained foot-cycle bytes exceed u64".to_owned())?;
     if retained_candidate_bytes != artifact_total {
         return Err("retained foot-cycle artifact byte accounting mismatch"
             .to_owned()
@@ -625,7 +631,7 @@ fn encode_generation_with_limits(
             runtime_set_id: prepared.plan().runtime_set_id().as_str(),
             reference_member: prepared.plan().reference_member().as_str(),
             proof_policy: prepared.plan().proof().into(),
-            gait_phase_spread: Finite(proved.gait_phase_spread()),
+            gait_phase_spread: Finite(gait_phase_spread),
             members: &aggregate_members,
             resources: AggregateResources {
                 members: member_count,
@@ -636,12 +642,12 @@ fn encode_generation_with_limits(
                 aggregate_evidence_bytes: aggregate_size,
                 total_bytes,
                 retained_candidate_bytes,
-                source_metric_pose_cells: proved.source_metric_pose_cells() as u64,
-                source_metric_sample_evaluations: proved.source_metric_sample_evaluations() as u64,
-                output_metric_pose_cells: proved.output_metric_pose_cells() as u64,
-                output_metric_sample_evaluations: proved.output_metric_sample_evaluations() as u64,
-                metric_pose_cells: proved.metric_pose_cells() as u64,
-                metric_sample_evaluations: proved.metric_sample_evaluations() as u64,
+                source_metric_pose_cells,
+                source_metric_sample_evaluations,
+                output_metric_pose_cells,
+                output_metric_sample_evaluations,
+                metric_pose_cells,
+                metric_sample_evaluations,
             },
         };
         let candidate = serialize_bounded(&record, limits.aggregate_evidence_bytes)?;
@@ -983,12 +989,19 @@ pub(crate) fn read_aggregate_evidence_v1(bytes: &[u8]) -> Result<(), String> {
         let Ok(expected) = aliases(index) else {
             return false;
         };
+        let (Ok(expected_artifact), Ok(expected_fragment), Ok(expected_evidence)) = (
+            alias_text(&expected.0),
+            alias_text(&expected.1),
+            alias_text(&expected.2),
+        ) else {
+            return false;
+        };
         member.member_index == index_u64
             && !member.member_id.is_empty()
             && member.member_id.len() <= 255
-            && member.artifact_path == expected.0.to_string_lossy()
-            && member.contact_fragment_path == expected.1.to_string_lossy()
-            && member.evidence_path == expected.2.to_string_lossy()
+            && member.artifact_path == expected_artifact
+            && member.contact_fragment_path == expected_fragment
+            && member.evidence_path == expected_evidence
             && [
                 &member.source_artifact,
                 &member.source_dependency_closure_identity,
@@ -1081,7 +1094,7 @@ mod tests {
     fn fixture_generation(fixture: &Fixture) -> Result<EncodedGeneration, ProducerFailure> {
         let prepared = fixture.prepare_proof_ready();
         let proved = serialize_and_prove_foot_cycle_v1(&prepared).map_err(classify_proof)?;
-        encode_generation(&prepared, &proved, &crate::current_tool())
+        encode_generation(&prepared, proved, &crate::current_tool())
     }
 
     fn mutate_number(bytes: &[u8], key: &str, value: u64) -> Vec<u8> {
@@ -1154,11 +1167,38 @@ mod tests {
     }
 
     #[test]
-    fn actual_evidence_and_generation_limits_are_inclusive_and_convergence_is_required() {
+    fn encoding_moves_proved_artifact_allocations_without_cloning() {
         let fixture = Fixture::create(FixtureOptions::default());
         let prepared = fixture.prepare_proof_ready();
         let proved = serialize_and_prove_foot_cycle_v1(&prepared).unwrap();
-        let full = encode_generation(&prepared, &proved, &crate::current_tool()).unwrap();
+        let allocations = proved
+            .members()
+            .iter()
+            .map(|member| {
+                (
+                    member.artifact_bytes().as_ptr() as usize,
+                    member.artifact_bytes().len(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let generation = encode_generation(&prepared, proved, &crate::current_tool()).unwrap();
+        assert_eq!(generation.members.len(), allocations.len());
+        for (member, (address, length)) in generation.members.iter().zip(allocations) {
+            assert_eq!(member.artifact_bytes.as_ptr() as usize, address);
+            assert_eq!(member.artifact_bytes.len(), length);
+        }
+    }
+
+    #[test]
+    fn actual_evidence_and_generation_limits_are_inclusive_and_convergence_is_required() {
+        let fixture = Fixture::create(FixtureOptions::default());
+        let prepared = fixture.prepare_proof_ready();
+        let encode = |limits| {
+            let proved = serialize_and_prove_foot_cycle_v1(&prepared).unwrap();
+            encode_generation_with_limits(&prepared, proved, &crate::current_tool(), limits)
+        };
+        let full = encode(ENCODING_LIMITS).unwrap();
         let member_limit = full
             .members
             .iter()
@@ -1173,9 +1213,7 @@ mod tests {
             aggregate_evidence_bytes: aggregate_limit,
             aggregate_convergence_iterations: ENCODING_LIMITS.aggregate_convergence_iterations,
         };
-        let encoded =
-            encode_generation_with_limits(&prepared, &proved, &crate::current_tool(), exact)
-                .unwrap();
+        let encoded = encode(exact).unwrap();
         assert_eq!(encoded.total_bytes, full.total_bytes);
         assert_eq!(encoded.aggregate_bytes, full.aggregate_bytes);
 
@@ -1193,22 +1231,14 @@ mod tests {
                 ..exact
             },
         ] {
-            assert!(matches!(
-                encode_generation_with_limits(&prepared, &proved, &crate::current_tool(), limits),
-                Err(ProducerFailure::Refusal(_))
-            ));
+            assert!(matches!(encode(limits), Err(ProducerFailure::Refusal(_))));
         }
 
         assert!(matches!(
-            encode_generation_with_limits(
-                &prepared,
-                &proved,
-                &crate::current_tool(),
-                EncodingLimits {
-                    aggregate_convergence_iterations: 1,
-                    ..exact
-                }
-            ),
+            encode(EncodingLimits {
+                aggregate_convergence_iterations: 1,
+                ..exact
+            }),
             Err(ProducerFailure::Operator(_))
         ));
     }
