@@ -4060,6 +4060,35 @@ The typed continuation accepts those later exact identities and only then calls
 serialization, generated-artifact hashing, reread/proof, generation staging,
 publication, or CLI exposure.
 
+### F.10E Bounded candidate GLB projection V1 (#18)
+
+The next private format-edge seam is an in-memory GLB writer, not a collection
+producer. It first makes an allocation-free strict admission pass over the
+normalized document: checked row, name-byte, and traversal-work ceilings bound
+the modeled writer arrays, scalar binary components, validation lookups, source
+sidecars, and copied texture bytes before it constructs writer-owned JSON. It then counts the
+single shared projection with checked JSON/BIN/GLB framing arithmetic and
+returns an immutable receipt containing padded chunk sizes, framing size, and
+JSON/BIN digests. The receipt binds that emitted projection, not deliberately
+excluded source-only provenance. Retaining output reruns the projection and
+accepts only the same receipt, reserving exact output capacities before copying bytes.
+
+The legacy path remains its established permissive conversion projection. The
+new `StrictFootCycleV1` policy instead fails closed on any normalized fact that
+the writer cannot preserve: omitted clips/tracks, primitive or texture domains,
+non-explicit skinned inverse binds, invalid primary skin slots, incompatible
+skinned/unskinned mesh reuse, meshless materials, scene membership collapse,
+or source-local rest and source-skin root facts without an exact normalized
+representation. Strict output attaches a skinned mesh to its normalized node,
+rather than applying legacy's generated-holder normalization. Complete source
+material-resource sidecars refuse: V1 has no source texture/image identity or
+inspection-fact projection. Source-only names, stable
+source indices, and image-inspection/provenance evidence remain deliberately
+outside the output projection; they are not presented as candidate facts.
+This seam does not bind a prepared collection member to its source, serialize
+contact transforms, reread/prove output, stage files, publish a directory, or
+add a CLI command.
+
 ### F.11 Transition-family declaration V1 (#148)
 
 Issue #148 freezes declarations for transition families without implementing
