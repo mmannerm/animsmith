@@ -142,6 +142,20 @@ coordinate convention, effective target factors, explicit operation selectors,
 and factor. The same compiled plan supplies the pre-remap translation and
 `CUBICSPLINE` tangent factors; assembly does not own a second scale algorithm.
 
+## Foot-Cycle Map Planning
+
+`animsmith_core::foot_cycle` owns the strict format-neutral V1 declaration and
+pure map planner for a manifest-declared in-place gait ring. It binds canonical
+contact fragments to exact manifest clip witnesses, validates the known
+stance-detector provenance and alternating bilateral support topology, and
+returns one slope-bounded, endpoint-preserving contact `time_warp` operation
+per member. The reference member's authored boundary phases are canonical;
+the planner never guesses correspondence or rotates phase zero. The CLI crate
+owns the bounded TOML reader. Asset loading, root-motion preflight, animation
+track mutation, transformed-fragment proof, and generation-directory
+publication are deliberately not part of this planner slice. See the
+[collection contracts](https://github.com/mmannerm/animsmith/blob/main/docs/collection-contracts.md#foot-cycle-parameterization-v1-18-planner-slice).
+
 ## Constant-Track Pruning
 
 `animsmith_core::transform::prune_constant_tracks` is an opt-in mechanical

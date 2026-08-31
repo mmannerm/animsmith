@@ -3955,6 +3955,25 @@ without guessing whether a project integrator, artist, or vendor is to blame.
 The human text view renders those fields together with exact identities,
 matching authority, tolerances, row deltas, and facet details.
 
+### F.10B Foot-cycle parameterization planner V1 (#18)
+
+Issue #18's first post-result implementation slice adds the separate strict
+`urn:animsmith:schema:foot-cycle-parameterization:1` TOML declaration and pure
+format-neutral map planner. The declaration binds exact manifest bytes, one
+existing ordered `gait-group`, one explicit reference, one safe fragment path
+per member, the future generation directory, and finite positive segment-slope
+bounds. The planner accepts only canonical collection-scoped fragments with
+the exact known stance-detector V1 provenance. It requires positive bilateral
+windows with one marker each and one identical cyclic alternating boundary
+signature, indexed from each member's first left onset. It pairs boundaries
+positionally, maps them to the reference's authored phases, adds `(0,0)` and
+`(1,1)`, and returns bounded duration-preserving `time_warp` operations with
+exact contact input bindings. Only the topology is circularly normalized:
+phase zero is not rotated, so a correspondence that cannot remain strictly
+monotone and endpoint preserving refuses. This slice does not load or mutate
+animation assets, transform fragments, derive its required typed in-place Root/Hips
+evidence, serialize candidates, prove output, or publish the collection generation.
+
 ### F.11 Transition-family declaration V1 (#148)
 
 Issue #148 freezes declarations for transition families without implementing

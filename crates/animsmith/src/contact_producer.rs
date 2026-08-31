@@ -15,9 +15,9 @@ use super::publish::{
 use super::{Format, LoadedConfig, LoadedInput, load_with_config_for_producer};
 use crate::producer::{self, Command, Failure, Kind, Stage};
 use animsmith_core::{
-    ContactClipReferenceV1, ContactEventKindV1, ContactEventV1, ContactEventWindowV1,
-    ContactExtensionV1, ContactFragmentV1, ContactPhaseV1, ContactProducerV1, ContactRoleV1,
-    DependencyClosureV1, MetricGrids, Role, SourceClipFactV1, SourceFactSetV1,
+    CONTACT_SUPPORT_DETECTOR_V1_ID, ContactClipReferenceV1, ContactEventKindV1, ContactEventV1,
+    ContactEventWindowV1, ContactExtensionV1, ContactFragmentV1, ContactPhaseV1, ContactProducerV1,
+    ContactRoleV1, DependencyClosureV1, MetricGrids, Role, SourceClipFactV1, SourceFactSetV1,
     SourceObservationStateV1, SourceSetCoverageStateV1, StanceSideV1, ToolInfo,
     resolve_configured_roles, resolve_stance_support_v1, validate_document_shape,
 };
@@ -25,7 +25,6 @@ use serde_json::json;
 use std::path::Path;
 use std::process::ExitCode;
 
-const DETECTOR_EXTENSION: &str = "urn:animsmith:contact-support-detector:1";
 const MAX_FRAMES: usize = 1_000_000;
 const MAX_RETAINED_RUNS: usize = 2_048;
 
@@ -422,7 +421,7 @@ fn build_fragment(
         }
     }
     let extension = ContactExtensionV1::new(
-        DETECTOR_EXTENSION,
+        CONTACT_SUPPORT_DETECTOR_V1_ID,
         1,
         json!({
             "algorithm": "stance-support-v1",
