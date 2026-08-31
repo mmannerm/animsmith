@@ -356,6 +356,8 @@ pub(crate) struct PreparedFootCycleCollectionV1 {
     sources: Vec<PreparedFootCycleSourceV1>,
     members: Vec<PreparedFootCycleMemberV1>,
     plan: FootCyclePlanV1,
+    source_metric_pose_cells: usize,
+    source_metric_sample_evaluations: usize,
 }
 
 impl PreparedFootCycleCollectionV1 {
@@ -381,6 +383,14 @@ impl PreparedFootCycleCollectionV1 {
 
     pub(crate) const fn plan(&self) -> &FootCyclePlanV1 {
         &self.plan
+    }
+
+    pub(crate) const fn source_metric_pose_cells(&self) -> usize {
+        self.source_metric_pose_cells
+    }
+
+    pub(crate) const fn source_metric_sample_evaluations(&self) -> usize {
+        self.source_metric_sample_evaluations
     }
 }
 
@@ -670,45 +680,50 @@ fn prepare_foot_cycle_parameterization_v1_with_runtime(
         })?;
         metric_work.push(runtime.metric_grid_work(&source.loaded, member.clip_index)?);
     }
-    let (selected, evidence) = build_after_metric_grid_batch_preflight(&metric_work, || {
-        let mut selected = Vec::with_capacity(pending_selected.len());
-        let mut evidence = Vec::with_capacity(pending_selected.len());
-        for (member, declaration) in pending_selected.into_iter().zip(parameterization.members()) {
-            let source = loaded_sources.get(member.source_index).ok_or_else(|| {
-                FootCycleSourcePrepError::new(FootCycleSourcePrepKind::TakeMismatch)
-            })?;
-            let closure_identity =
-                complete_closure(source.loaded.dependency_closure(), source.loaded.input())
-                    .map_err(|_| {
-                        FootCycleSourcePrepError::new(FootCycleSourcePrepKind::IncompleteClosure)
-                    })?;
-            let root_motion = derive_root_motion(
-                &source.loaded,
-                &source.config.loaded,
-                member.clip_index,
-                member.clip_reference.clone(),
-                closure_identity,
-                runtime,
-            )?;
-            evidence.push(FootCycleMemberEvidenceV1::new(
-                member.id.clone(),
-                declaration.contact_fragment().clone(),
-                member.fragment_input.clone(),
-                member.fragment.clone(),
-                root_motion.clone(),
-            ));
-            selected.push(SelectedMember {
-                id: member.id,
-                source_index: member.source_index,
-                clip_index: member.clip_index,
-                clip_reference: member.clip_reference,
-                fragment: member.fragment,
-                fragment_input: member.fragment_input,
-                root_motion,
-            });
-        }
-        Ok((selected, evidence))
-    })?;
+    let ((selected, evidence), source_metric_work) =
+        build_after_metric_grid_batch_preflight(&metric_work, || {
+            let mut selected = Vec::with_capacity(pending_selected.len());
+            let mut evidence = Vec::with_capacity(pending_selected.len());
+            for (member, declaration) in
+                pending_selected.into_iter().zip(parameterization.members())
+            {
+                let source = loaded_sources.get(member.source_index).ok_or_else(|| {
+                    FootCycleSourcePrepError::new(FootCycleSourcePrepKind::TakeMismatch)
+                })?;
+                let closure_identity =
+                    complete_closure(source.loaded.dependency_closure(), source.loaded.input())
+                        .map_err(|_| {
+                            FootCycleSourcePrepError::new(
+                                FootCycleSourcePrepKind::IncompleteClosure,
+                            )
+                        })?;
+                let root_motion = derive_root_motion(
+                    &source.loaded,
+                    &source.config.loaded,
+                    member.clip_index,
+                    member.clip_reference.clone(),
+                    closure_identity,
+                    runtime,
+                )?;
+                evidence.push(FootCycleMemberEvidenceV1::new(
+                    member.id.clone(),
+                    declaration.contact_fragment().clone(),
+                    member.fragment_input.clone(),
+                    member.fragment.clone(),
+                    root_motion.clone(),
+                ));
+                selected.push(SelectedMember {
+                    id: member.id,
+                    source_index: member.source_index,
+                    clip_index: member.clip_index,
+                    clip_reference: member.clip_reference,
+                    fragment: member.fragment,
+                    fragment_input: member.fragment_input,
+                    root_motion,
+                });
+            }
+            Ok((selected, evidence))
+        })?;
 
     let plan = plan_foot_cycle_parameterization_v1(
         &parameterization,
@@ -797,6 +812,8 @@ fn prepare_foot_cycle_parameterization_v1_with_runtime(
         sources,
         members: prepared_members,
         plan,
+        source_metric_pose_cells: source_metric_work.pose_cells,
+        source_metric_sample_evaluations: source_metric_work.sample_evaluations,
     })
 }
 
@@ -1303,7 +1320,7 @@ fn metric_grid_work_for_clip(
 fn build_after_metric_grid_batch_preflight<T>(
     members: &[MetricGridWork],
     build: impl FnOnce() -> Result<T, FootCycleSourcePrepError>,
-) -> Result<T, FootCycleSourcePrepError> {
+) -> Result<(T, MetricGridWork), FootCycleSourcePrepError> {
     let mut total = MetricGridWork {
         pose_cells: 0,
         sample_evaluations: 0,
@@ -1313,7 +1330,7 @@ fn build_after_metric_grid_batch_preflight<T>(
             FootCycleSourcePrepError::new(FootCycleSourcePrepKind::RootEvidenceUnavailable)
         })?;
     }
-    build()
+    Ok((build()?, total))
 }
 
 fn derive_root_motion(
@@ -1347,16 +1364,16 @@ fn derive_root_motion(
     let (Some(translation), Some(yaw)) = (trajectory.translation, trajectory.yaw) else {
         return Ok(FootCycleRootMotionEvidenceV1::non_finite(binding));
     };
-    let horizontal = translation
-        .horizontal_displacement_x_m
-        .hypot(translation.horizontal_displacement_z_m);
-    let accumulated_yaw = yaw.unwrapped_yaw_deg.abs();
-    if !horizontal.is_finite() || !accumulated_yaw.is_finite() {
+    let endpoint_x = translation.horizontal_displacement_x_m;
+    let endpoint_z = translation.horizontal_displacement_z_m;
+    let accumulated_yaw = yaw.unwrapped_yaw_deg;
+    if !endpoint_x.is_finite() || !endpoint_z.is_finite() || !accumulated_yaw.is_finite() {
         return Ok(FootCycleRootMotionEvidenceV1::non_finite(binding));
     }
     Ok(FootCycleRootMotionEvidenceV1::measured(
         binding,
-        horizontal,
+        endpoint_x,
+        endpoint_z,
         accumulated_yaw,
     ))
 }
@@ -1633,6 +1650,11 @@ reference_member = "com.example/a"
 output_directory = "generated/aligned"
 minimum_segment_slope = 0.25
 maximum_segment_slope = 4.0
+
+[proof]
+max_gait_phase_spread = 0.08
+min_lr_amplitude_m = 0.05
+max_contact_boundary_phase_error = 0.01
 
 [manifest]
 schema = "urn:animsmith:schema:collection-manifest:1"
@@ -1975,12 +1997,29 @@ contact_fragment = "contacts/b.json"
     fn prepares_successful_multi_member_batch_without_mutation() {
         let fixture = Fixture::create(FixtureOptions::default());
         let config_bytes = fs::read(fixture.root.join("config.toml")).unwrap();
+        let parameterization_bytes = fs::read(&fixture.parameterization).unwrap();
         let expected_config = crate::load_config(Some(&fixture.root.join("config.toml"))).unwrap();
         let before = snapshot(&fixture.root);
         let prepared = fixture.prepare().unwrap();
         assert_eq!(prepared.sources().len(), 2);
         assert_eq!(prepared.members().len(), 2);
         assert_eq!(prepared.plan().members().len(), 2);
+        assert_eq!(
+            prepared.parameterization_input(),
+            &InputIdentity::from_bytes(&parameterization_bytes)
+        );
+        assert_eq!(
+            prepared.plan().parameterization_input(),
+            prepared.parameterization_input()
+        );
+        assert_eq!(prepared.plan().proof().max_gait_phase_spread(), 0.08);
+        assert_eq!(prepared.plan().proof().min_lr_amplitude_m(), 0.05);
+        assert_eq!(
+            prepared.plan().proof().max_contact_boundary_phase_error(),
+            0.01
+        );
+        assert!(prepared.source_metric_pose_cells() > 0);
+        assert!(prepared.source_metric_sample_evaluations() > 0);
         assert_eq!(prepared.sources()[0].key(), "a");
         assert!(Arc::ptr_eq(
             &prepared.sources()[0].config,
@@ -2051,7 +2090,7 @@ contact_fragment = "contacts/b.json"
         assert!(root_motion_matches(planned, planned));
         let corrupted = FootCycleRootMotionEvidenceV1::missing(planned.binding().clone());
         let numerically_corrupted =
-            FootCycleRootMotionEvidenceV1::measured(planned.binding().clone(), 0.005, 0.5);
+            FootCycleRootMotionEvidenceV1::measured(planned.binding().clone(), 0.005, 0.0, 0.5);
         assert!(!root_motion_matches(&corrupted, planned));
         assert!(!root_motion_matches(planned, &corrupted));
         assert!(!root_motion_matches(&numerically_corrupted, planned));
@@ -2082,6 +2121,29 @@ contact_fragment = "contacts/b.json"
                 .kind(),
             FootCycleSourcePrepKind::PlanBindingMismatch
         );
+    }
+
+    #[test]
+    fn source_preparation_retains_signed_root_endpoint_and_yaw_facts() {
+        let fixture = Fixture::create(FixtureOptions {
+            end_x_b: -0.003,
+            end_z_b: 0.004,
+            yaw_deg_b: -0.5,
+            ..FixtureOptions::default()
+        });
+        let prepared = fixture.prepare().unwrap();
+        let FootCycleRootMotionEvidenceV1::Measured {
+            endpoint_displacement_x_m,
+            endpoint_displacement_z_m,
+            accumulated_yaw_deg,
+            ..
+        } = prepared.plan().members()[1].root_motion()
+        else {
+            panic!("source preparation must retain measured root facts");
+        };
+        assert!(*endpoint_displacement_x_m < 0.0);
+        assert!(*endpoint_displacement_z_m > 0.0);
+        assert!(*accumulated_yaw_deg < 0.0);
     }
 
     #[test]
@@ -2885,7 +2947,15 @@ expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000
             metric_work: exact_members.clone(),
             ..ObservedPreparationRuntime::default()
         };
-        fixture.prepare_with_runtime(&mut runtime).unwrap();
+        let prepared = fixture.prepare_with_runtime(&mut runtime).unwrap();
+        assert_eq!(
+            prepared.source_metric_pose_cells(),
+            MAX_AGGREGATE_METRIC_GRID_WORK
+        );
+        assert_eq!(
+            prepared.source_metric_sample_evaluations(),
+            MAX_AGGREGATE_METRIC_GRID_WORK
+        );
         assert_eq!(runtime.grids_built, 2);
         assert_eq!(runtime.candidates_built, 2);
         assert_eq!(snapshot(&fixture.root), before);

@@ -149,12 +149,15 @@ pure map planner for a manifest-declared in-place gait ring. It binds canonical
 contact fragments to exact manifest clip witnesses, consumes independently
 measured typed Root/Hips evidence bound to the same artifact, dependency
 closure, and collection source/take for the inclusive 0.01 m / 1 degree in-place
-gate, validates the known stance-detector provenance and alternating bilateral
+gate while retaining signed endpoint X/Z and signed accumulated yaw facts,
+validates the known stance-detector provenance and alternating bilateral
 support topology under one exact ring-wide detector threshold, bounds aggregate
 canonicalization work, and returns one slope-bounded, endpoint-preserving contact
 `time_warp` operation per member. The reference member's authored boundary
 phases are canonical; the planner never guesses correspondence or rotates phase
-zero. The CLI crate owns the bounded TOML reader. Asset loading, root-motion
+zero. Its declaration and returned plan retain one required identity-bound
+proof policy with no defaults or cross-member merge. The CLI crate owns the
+bounded TOML reader. Asset loading, root-motion
 measurement, animation track mutation, transformed-fragment proof, and
 generation-directory publication are deliberately not part of this planner slice.
 `animsmith_core::time_warp_clip_v1` is the next pure boundary: after a host has
