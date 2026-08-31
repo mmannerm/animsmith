@@ -42,6 +42,25 @@ fn write_doc_with_skin(path: &Path, selected_skin: bool) {
     animsmith_gltf::write::write(&document, path).expect("writes skinned skeleton fixture");
 }
 
+fn write_matrix_local_doc(path: &Path) {
+    let document = json!({
+        "asset": {"version": "2.0"},
+        "nodes": [
+            {"name": "root", "children": [1]},
+            {"name": "spine", "matrix": [
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.5, 0.0, 1.0
+            ]}
+        ],
+        "scenes": [{"nodes": [0]}],
+        "scene": 0
+    });
+    std::fs::write(path, serde_json::to_vec_pretty(&document).unwrap())
+        .expect("writes authored-matrix glTF fixture");
+}
+
 fn write_duplicate_name_doc(path: &Path) {
     let mut document = two_bone_rotation_doc("walk", quats_from_angles(&[0.0; 5]), false);
     document.skeleton.bones[0].name = "root".into();
@@ -244,6 +263,14 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
         "supply_skin_bind_evidence"
     );
     assert_eq!(value["facets"]["inverse_bind"]["state"], "unavailable");
+    assert_eq!(
+        value["facets"]["deformation_model"]["source"]["owner_surface"],
+        "measurement_boundary"
+    );
+    assert_eq!(
+        value["facets"]["deformation_model"]["source"]["remedy_class"],
+        "unavailable_evidence"
+    );
     let repeated = run(&source, &target, &control);
     assert_eq!(output.stdout, repeated.stdout, "serialization is stable");
 
@@ -362,10 +389,14 @@ fn text_report_preserves_authority_deltas_remediation_and_all_outcome_names() {
     )));
     assert!(report.contains("source selector node: root"));
     assert!(report.contains("target selector node: spine"));
+    assert!(report.contains("source dependency closure: sha256="));
     assert!(report.contains("matching mode: exact_name"));
     assert!(report.contains("tolerances: translation_m=0 rotation_deg=0 scale_delta=0 normalized_bone_length_ratio_delta=0"));
-    assert!(report.contains("local_rest.translation_m: state=pass"));
+    assert!(report.contains("local_rest.translation_m: state=pass value=0 tolerance=0"));
     assert!(report.contains("facet skin_membership: unavailable required=false"));
+    assert!(report.contains(
+        "source: state=unavailable detail=no source skin declarations include selected skeleton joints"
+    ));
     assert!(report.contains("remedy_class=supply_skin_bind_evidence"));
 
     write_doc(&target, "target_root", "target_spine", 1.0);
@@ -377,7 +408,30 @@ fn text_report_preserves_authority_deltas_remediation_and_all_outcome_names() {
     assert!(report.contains("matching mode: explicit"));
     assert!(report.contains("mapping: root -> target_root"));
     assert!(report.contains("mapping: spine -> target_spine"));
+    assert!(report.contains("rest_world.translation_m: state=mismatch value=0.5 tolerance=0"));
     assert!(report.contains("remedy_class=align_rest_pose"));
+
+    let matrix_source = temp.path().join("matrix-source.gltf");
+    write_matrix_local_doc(&matrix_source);
+    write_doc(&target, "root", "spine", 0.5);
+    std::fs::write(
+        &control,
+        correspondence(&matrix_source, &target, false, 0.0),
+    )
+    .unwrap();
+    let matrix = run(&matrix_source, &target, &control);
+    assert_eq!(matrix.status.code(), Some(1));
+    let matrix = json(&matrix);
+    validate(&matrix);
+    let spine = matrix["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["source_name"] == "spine")
+        .unwrap();
+    assert_eq!(spine["owner_surface"], "measurement_boundary");
+    assert_eq!(spine["remedy_class"], "unavailable_evidence");
+    assert_eq!(spine["local_rest"]["translation_m"]["state"], "unavailable");
 
     write_three_bone_doc(&source, 1, 0.0, 1.0);
     write_three_bone_doc(&target, 1, 0.0, 2.0);

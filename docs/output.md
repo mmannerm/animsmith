@@ -38,10 +38,11 @@ contact, gameplay, or artistic acceptance.
 source-name order, followed by unmapped source names and then unmapped target
 names in their respective name orders. A matched row
 contains separate local and rest-world translation, rotation, and scale deltas;
-the world rotation exists only where the existing source measurement proves a
-right-handed unit-orthonormal rest-world linear transform. A child-bone ratio
-exists only when both corresponding parent/child world positions permit an
-independent nonzero length comparison. Parent correspondence and child length
+the world rotation value exists only where the existing source measurement
+proves a right-handed unit-orthonormal rest-world linear transform. A
+child-bone ratio value exists only when both corresponding parent/child world
+positions permit an independent nonzero length comparison. Parent
+correspondence and child length
 use the nearest selected ancestor, walking across unselected intermediate
 nodes; they compare the declared selector projection rather than claiming that
 the complete raw hierarchies are identical. `missing_source`, `missing_target`,
