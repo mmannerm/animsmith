@@ -68,6 +68,85 @@ fn write_contact_fixture(directory: &Path) -> (PathBuf, PathBuf) {
     (input, config)
 }
 
+fn write_metric_grid_work_fixture(
+    directory: &Path,
+    stem: &str,
+    frames: usize,
+    bones: usize,
+    tracks: usize,
+) -> (PathBuf, PathBuf) {
+    let input = directory.join(format!("{stem}.gltf"));
+    let config = directory.join(format!("{stem}.toml"));
+    let buffer_name = format!("{stem}.bin");
+    let mut bytes = Vec::with_capacity(frames * 32);
+    for frame in 0..frames {
+        bytes.extend_from_slice(&(frame as f32 / (frames - 1) as f32).to_le_bytes());
+    }
+    let translation_offset = bytes.len();
+    for _ in 0..frames {
+        for component in [0.0f32; 3] {
+            bytes.extend_from_slice(&component.to_le_bytes());
+        }
+    }
+    let rotation_offset = bytes.len();
+    for _ in 0..frames {
+        for component in [0.0f32, 0.0, 0.0, 1.0] {
+            bytes.extend_from_slice(&component.to_le_bytes());
+        }
+    }
+    fs::write(directory.join(&buffer_name), &bytes).unwrap();
+    let nodes = (0..bones)
+        .map(|index| json!({"name": format!("N{index}")}))
+        .collect::<Vec<_>>();
+    let roots = (0..bones).collect::<Vec<_>>();
+    let channels = (0..tracks)
+        .map(|index| {
+            let sampler = index % 2;
+            let path = if sampler == 0 {
+                "translation"
+            } else {
+                "rotation"
+            };
+            json!({"sampler": sampler, "target": {"node": index / 2, "path": path}})
+        })
+        .collect::<Vec<_>>();
+    fs::write(
+        &input,
+        serde_json::to_vec(&json!({
+            "asset": {"version": "2.0"},
+            "buffers": [{"uri": buffer_name, "byteLength": bytes.len()}],
+            "bufferViews": [
+                {"buffer": 0, "byteOffset": 0, "byteLength": translation_offset},
+                {"buffer": 0, "byteOffset": translation_offset, "byteLength": frames * 12},
+                {"buffer": 0, "byteOffset": rotation_offset, "byteLength": frames * 16}
+            ],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": frames, "type": "SCALAR", "min": [0.0], "max": [1.0]},
+                {"bufferView": 1, "componentType": 5126, "count": frames, "type": "VEC3"},
+                {"bufferView": 2, "componentType": 5126, "count": frames, "type": "VEC4"}
+            ],
+            "nodes": nodes,
+            "scenes": [{"nodes": roots}], "scene": 0,
+            "animations": [{
+                "name": "walk",
+                "samplers": [
+                    {"input": 0, "output": 1, "interpolation": "LINEAR"},
+                    {"input": 0, "output": 2, "interpolation": "LINEAR"}
+                ],
+                "channels": channels
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        &config,
+        "[rig]\nprofile = \"auto\"\nroles = { root = \"N0\", left_foot = \"N1\", right_foot = \"N2\" }\n",
+    )
+    .unwrap();
+    (input, config)
+}
+
 fn direct(input: &Path, config: &Path, output: &Path, clip: &str) -> Output {
     animsmith()
         .args([
@@ -337,6 +416,58 @@ fn refusal_never_replaces_an_existing_output() {
     assert_eq!(fs::read(&output).unwrap(), b"sentinel");
     let refusal: Value = serde_json::from_slice(&run.stdout).unwrap();
     assert_eq!(refusal["rejection"]["kind"], "selection-mismatch");
+}
+
+#[test]
+fn metric_grid_work_excess_refuses_direct_and_collection_without_replacing_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let (input, config) =
+        write_metric_grid_work_fixture(directory.path(), "pose-excess", 1_001, 1_000, 1);
+    let manifest = write_collection_manifest(directory.path(), &input, &config);
+    let output = directory.path().join("fragment.json");
+    for collection_scoped in [false, true] {
+        fs::write(&output, b"sentinel").unwrap();
+        let run = if collection_scoped {
+            collection(&manifest, &output, "example.contacts/walk", "json")
+        } else {
+            direct(&input, &config, &output, "walk")
+        };
+        assert_eq!(run.status.code(), Some(1));
+        assert_eq!(fs::read(&output).unwrap(), b"sentinel");
+        let refusal: Value = serde_json::from_slice(&run.stdout).unwrap();
+        assert_eq!(refusal["rejection"]["kind"], "incomplete-evidence");
+    }
+}
+
+#[test]
+fn metric_grid_sampling_work_accepts_exact_and_refuses_n_plus_one() {
+    let exact_directory = tempfile::tempdir().unwrap();
+    let (exact_input, exact_config) =
+        write_metric_grid_work_fixture(exact_directory.path(), "sampling-exact", 1_000, 500, 1_000);
+    let exact_output = exact_directory.path().join("fragment.json");
+    assert_eq!(
+        direct(&exact_input, &exact_config, &exact_output, "walk")
+            .status
+            .code(),
+        Some(0)
+    );
+    assert!(exact_output.exists());
+
+    let excess_directory = tempfile::tempdir().unwrap();
+    let (excess_input, excess_config) = write_metric_grid_work_fixture(
+        excess_directory.path(),
+        "sampling-excess",
+        1_000,
+        501,
+        1_001,
+    );
+    let excess_output = excess_directory.path().join("fragment.json");
+    fs::write(&excess_output, b"sentinel").unwrap();
+    let run = direct(&excess_input, &excess_config, &excess_output, "walk");
+    assert_eq!(run.status.code(), Some(1));
+    assert_eq!(fs::read(&excess_output).unwrap(), b"sentinel");
+    let refusal: Value = serde_json::from_slice(&run.stdout).unwrap();
+    assert_eq!(refusal["rejection"]["kind"], "incomplete-evidence");
 }
 
 #[test]

@@ -681,6 +681,27 @@ pub(crate) fn load_collection_config_for_producer(
     Ok(prepare_config(resolution)?.loaded)
 }
 
+/// One manifest-owned config basis and the exact explicit bytes, when present.
+pub(crate) struct LoadedCollectionConfigForPreparation {
+    pub(crate) loaded: LoadedConfig,
+    pub(crate) input: Option<InputIdentity>,
+}
+
+/// Load a source config while retaining the exact explicit control identity.
+pub(crate) fn load_collection_config_for_preparation(
+    resolution: CollectionConfigResolution,
+) -> Result<LoadedCollectionConfigForPreparation, String> {
+    let prepared = prepare_config(resolution)?;
+    let input = match &prepared.evidence {
+        ConfigState::Explicit { input, .. } => Some(input.clone()),
+        ConfigState::Default => None,
+    };
+    Ok(LoadedCollectionConfigForPreparation {
+        loaded: prepared.loaded,
+        input,
+    })
+}
+
 fn read_control_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, ()> {
     let file = fs::File::open(path).map_err(|_| ())?;
     let mut bytes = Vec::new();

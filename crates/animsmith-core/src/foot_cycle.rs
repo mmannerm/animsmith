@@ -704,7 +704,7 @@ pub fn plan_foot_cycle_parameterization_v1(
     if parameterization_input.bytes() > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES {
         return Err(FootCycleParameterizationError::ParameterizationTooLarge);
     }
-    validate_manifest_binding(parameterization, manifest, &manifest_input)?;
+    validate_foot_cycle_manifest_binding_v1(parameterization, manifest, &manifest_input)?;
     if evidence.len() != parameterization.members.len() {
         return Err(FootCycleParameterizationError::EvidenceCountMismatch);
     }
@@ -876,7 +876,19 @@ fn validate_aggregate_contact_fragment_byte_budget(
     Ok(())
 }
 
-fn validate_manifest_binding(
+/// Validate one parameterization's pure manifest/runtime-set binding.
+///
+/// This performs no evidence inspection or host I/O. Frontends may call it
+/// before resolving member-reachable source paths; the full planner calls it
+/// again defensively before accepting evidence. `CollectionManifestV1`'s own
+/// construction contract already guarantees every ordered member has one
+/// unique clip row bound to a declared source row.
+///
+/// # Errors
+///
+/// Returns [`FootCycleParameterizationError`] when the exact manifest identity,
+/// runtime-set id/kind, or ordered member ring does not match the declaration.
+pub fn validate_foot_cycle_manifest_binding_v1(
     parameterization: &FootCycleParameterizationV1,
     manifest: &CollectionManifestV1,
     manifest_input: &InputIdentity,
@@ -1030,6 +1042,12 @@ fn validate_detector_extension(
     let [extension] = fragment.extensions() else {
         return Err(FootCycleParameterizationError::UnsupportedContactExtension);
     };
+    validate_detector_extension_value(extension)
+}
+
+fn validate_detector_extension_value(
+    extension: &crate::ContactExtensionV1,
+) -> Result<DetectorProvenance, FootCycleParameterizationError> {
     if extension.schema() != CONTACT_SUPPORT_DETECTOR_V1_ID
         || extension.schema_version() != CONTACT_SUPPORT_DETECTOR_V1_SCHEMA_VERSION
     {
@@ -1091,6 +1109,61 @@ fn validate_detector_extension(
         roles: [left, right],
         contact_height_m_bits: canonical_zero(contact_height_m).to_bits(),
     })
+}
+
+/// Reconstruct the known stance-detector extension for a V1 time warp.
+///
+/// Detector configuration and role provenance are operation-invariant; event
+/// times live in the fragment rows transformed by the contact-transform
+/// authority. This function nevertheless validates the complete closed
+/// detector payload and operation kind before reconstructing the handler-owned
+/// output, so frontends never authorize an opaque extension copy.
+///
+/// # Errors
+///
+/// Returns [`FootCycleParameterizationError`] when the operation is not a V1
+/// time warp or the extension is not the exact known stance-detector payload.
+pub fn transform_contact_support_detector_extension_time_warp_v1(
+    extension: &crate::ContactExtensionV1,
+    operation: &ContactTransformOperationV1,
+) -> Result<crate::ContactExtensionV1, FootCycleParameterizationError> {
+    if !matches!(
+        operation,
+        ContactTransformOperationV1::TimeWarp { version: 1, .. }
+    ) {
+        return Err(FootCycleParameterizationError::UnsupportedContactExtension);
+    }
+    let detector = validate_detector_extension_value(extension)?;
+    let left = detector_role_name(detector.roles[0])
+        .ok_or(FootCycleParameterizationError::InvalidDetectorProvenance)?;
+    let right = detector_role_name(detector.roles[1])
+        .ok_or(FootCycleParameterizationError::InvalidDetectorProvenance)?;
+    let payload = serde_json::json!({
+        "algorithm": CONTACT_SUPPORT_DETECTOR_V1_ALGORITHM,
+        "contact_height_m": f64::from_bits(detector.contact_height_m_bits),
+        "max_frames": CONTACT_SUPPORT_DETECTOR_V1_MAX_FRAMES,
+        "roles": {
+            "left": left,
+            "right": right,
+        },
+        "sampling": CONTACT_SUPPORT_DETECTOR_V1_SAMPLING,
+    });
+    crate::ContactExtensionV1::new(
+        CONTACT_SUPPORT_DETECTOR_V1_ID,
+        CONTACT_SUPPORT_DETECTOR_V1_SCHEMA_VERSION,
+        payload,
+    )
+    .map_err(|_| FootCycleParameterizationError::InvalidDetectorProvenance)
+}
+
+fn detector_role_name(role: ContactRoleV1) -> Option<&'static str> {
+    match role {
+        ContactRoleV1::LeftFoot => Some("left_foot"),
+        ContactRoleV1::LeftToe => Some("left_toe"),
+        ContactRoleV1::RightFoot => Some("right_foot"),
+        ContactRoleV1::RightToe => Some("right_toe"),
+        _ => None,
+    }
 }
 
 fn event_side(role: ContactRoleV1, roles: [ContactRoleV1; 2]) -> Option<Side> {
@@ -2352,6 +2425,10 @@ mod tests {
         let mut missing_set = declaration(&manifest_input, 0.5, 2.0);
         missing_set.runtime_set_id = id("com.example/sets/missing");
         assert_eq!(
+            validate_foot_cycle_manifest_binding_v1(&missing_set, &manifest, &manifest_input,),
+            Err(FootCycleParameterizationError::RuntimeSetMismatch)
+        );
+        assert_eq!(
             plan_foot_cycle_parameterization_v1(
                 &missing_set,
                 parameterization_input(),
@@ -2705,6 +2782,76 @@ mod tests {
                 Err(FootCycleParameterizationError::DetectorPolicyMismatch)
             );
         }
+    }
+
+    #[test]
+    fn stance_extension_time_warp_handler_revalidates_closed_payload() {
+        let extension = detector_extension("left_foot", "right_foot");
+        let operation = ContactTransformOperationV1::time_warp(
+            1.0,
+            vec![
+                ContactTimeWarpControlPointV1::new(0.0, 0.0),
+                ContactTimeWarpControlPointV1::new(1.0, 1.0),
+            ],
+        );
+        assert_eq!(
+            transform_contact_support_detector_extension_time_warp_v1(&extension, &operation)
+                .unwrap(),
+            extension
+        );
+        for (left, right) in [
+            ("left_toe", "right_toe"),
+            ("left_toe", "right_foot"),
+            ("left_foot", "right_toe"),
+        ] {
+            let extension = detector_extension(left, right);
+            assert_eq!(
+                transform_contact_support_detector_extension_time_warp_v1(&extension, &operation,)
+                    .unwrap(),
+                extension
+            );
+        }
+        let negative_zero = detector_extension_with_payload(json!({
+            "algorithm": "stance-support-v1",
+            "sampling": "metric-grid-longest-authored-channel",
+            "max_frames": 1_000_000,
+            "contact_height_m": -0.0,
+            "roles": {"left": "left_foot", "right": "right_foot"},
+        }));
+        let reconstructed =
+            transform_contact_support_detector_extension_time_warp_v1(&negative_zero, &operation)
+                .unwrap();
+        assert_eq!(
+            reconstructed
+                .payload()
+                .get("contact_height_m")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap()
+                .to_bits(),
+            0.0_f64.to_bits()
+        );
+        assert_eq!(
+            transform_contact_support_detector_extension_time_warp_v1(
+                &extension,
+                &ContactTransformOperationV1::resample(),
+            ),
+            Err(FootCycleParameterizationError::UnsupportedContactExtension)
+        );
+        let opaque_lookalike = detector_extension_with_payload(json!({
+            "algorithm": "stance-support-v1",
+            "sampling": "metric-grid-longest-authored-channel",
+            "max_frames": 1_000_000,
+            "contact_height_m": 0.03,
+            "roles": {"left": "left_foot", "right": "right_foot"},
+            "opaque": true,
+        }));
+        assert_eq!(
+            transform_contact_support_detector_extension_time_warp_v1(
+                &opaque_lookalike,
+                &operation,
+            ),
+            Err(FootCycleParameterizationError::InvalidDetectorProvenance)
+        );
     }
 
     #[test]

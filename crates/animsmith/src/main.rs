@@ -74,6 +74,11 @@ mod collection_output;
 mod collection_transition_pose;
 mod contact_producer;
 mod foot_cycle_parameterization;
+#[allow(
+    dead_code,
+    reason = "issue #18 freezes source-bound preparation before exposing a CLI command"
+)]
+mod foot_cycle_source_prep;
 #[cfg(feature = "fbx")]
 mod material_recipe;
 mod producer;
@@ -2939,6 +2944,42 @@ fn load_with_config_for_producer(
     config: &LoadedConfig,
 ) -> Result<LoadedInput, producer::Failure> {
     let (format, bytes) = capture_input(path).map_err(producer::Failure::operator)?;
+    let source =
+        load_source_bytes_typed(path, format, &bytes).map_err(contact_producer_load_failure)?;
+    let engine = config
+        .resolve_engine_input(source.source_facts().format(), source.document())
+        .map_err(producer::Failure::operator)?;
+    Ok(LoadedInput {
+        source,
+        engine,
+        engine_v2: None,
+        engine_v4: None,
+    })
+}
+
+/// Load one strict-producer primary input through an exact bounded read.
+///
+/// Collection operations preflight aggregate metadata before this call, while
+/// this byte reader closes the per-file TOCTOU boundary by retaining at most
+/// the first excess byte.
+fn load_with_config_for_producer_bounded(
+    path: &Path,
+    config: &LoadedConfig,
+    limit: u64,
+) -> Result<LoadedInput, producer::Failure> {
+    let format = input_format(path).map_err(producer::Failure::operator)?;
+    let file = std::fs::File::open(path).map_err(producer::Failure::operator)?;
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(producer::Failure::operator)?;
+    if bytes.len() as u64 > limit {
+        return Err(producer::Failure::refusal(
+            producer::Stage::Load,
+            producer::Kind::UnreadableSource,
+            "primary source exceeds the collection source-byte limit",
+        ));
+    }
     let source =
         load_source_bytes_typed(path, format, &bytes).map_err(contact_producer_load_failure)?;
     let engine = config
