@@ -515,14 +515,28 @@ fn compare(
     };
     let facets = Facets {
         topology_rest,
-        skin_membership: evidence_summary(&source_assets, &target_assets, EvidenceKind::Skin),
-        inverse_bind: evidence_summary(&source_assets, &target_assets, EvidenceKind::Bind),
+        skin_membership: evidence_summary(
+            &source_assets,
+            &source_nodes,
+            &target_assets,
+            &target_nodes,
+            EvidenceKind::Skin,
+        ),
+        inverse_bind: evidence_summary(
+            &source_assets,
+            &source_nodes,
+            &target_assets,
+            &target_nodes,
+            EvidenceKind::Bind,
+        ),
         // The format-neutral source table deliberately has no deformation model
         // vocabulary yet.  Recording that boundary prevents a structural result
         // from being read as a skinning-runtime verdict.
         deformation_model: evidence_summary(
             &source_assets,
+            &source_nodes,
             &target_assets,
+            &target_nodes,
             EvidenceKind::Deformation,
         ),
     };
@@ -1030,32 +1044,61 @@ enum EvidenceKind {
 }
 fn evidence_summary(
     source: &AssetMeasurements,
+    source_nodes: &BTreeMap<String, SelectedNode<'_>>,
     target: &AssetMeasurements,
+    target_nodes: &BTreeMap<String, SelectedNode<'_>>,
     kind: EvidenceKind,
 ) -> EvidenceSummary {
-    let side = |assets: &AssetMeasurements| -> EvidenceSide {
+    let side = |assets: &AssetMeasurements,
+                selected_nodes: &BTreeMap<String, SelectedNode<'_>>,
+                side_name: &str|
+     -> EvidenceSide {
+        let selected_indices = selected_nodes
+            .values()
+            .map(|selected| selected.node.node_index)
+            .collect::<BTreeSet<_>>();
+        let relevant_skins = assets
+            .skins
+            .iter()
+            .filter(|skin| {
+                skin.joints
+                    .iter()
+                    .any(|joint| selected_indices.contains(&joint.node_index))
+            })
+            .collect::<Vec<_>>();
         match kind {
             EvidenceKind::Skin => match assets.skeleton_source_coverage {
-                SkeletonSourceCoverage::Complete => EvidenceSide {
-                    state: FacetState::Pass,
-                    detail: format!("{} source skin declarations", assets.skins.len()),
-                },
                 SkeletonSourceCoverage::Unavailable => EvidenceSide {
                     state: FacetState::Unavailable,
-                    detail: "source skeleton coverage unavailable".into(),
+                    detail: format!("{side_name} skeleton coverage unavailable"),
+                },
+                SkeletonSourceCoverage::Complete if relevant_skins.is_empty() => EvidenceSide {
+                    state: FacetState::Unavailable,
+                    detail: format!(
+                        "no {side_name} skin declarations include selected skeleton joints"
+                    ),
+                },
+                SkeletonSourceCoverage::Complete => EvidenceSide {
+                    state: FacetState::Pass,
+                    detail: format!(
+                        "{} {side_name} skin declarations include selected skeleton joints",
+                        relevant_skins.len()
+                    ),
                 },
             },
             EvidenceKind::Bind => match assets.skeleton_source_coverage {
                 SkeletonSourceCoverage::Unavailable => EvidenceSide {
                     state: FacetState::Unavailable,
-                    detail: "source skeleton coverage unavailable".into(),
+                    detail: format!("{side_name} skeleton coverage unavailable"),
                 },
-                SkeletonSourceCoverage::Complete if assets.skins.is_empty() => EvidenceSide {
+                SkeletonSourceCoverage::Complete if relevant_skins.is_empty() => EvidenceSide {
                     state: FacetState::Unavailable,
-                    detail: "no source skin declarations".into(),
+                    detail: format!(
+                        "no {side_name} skin declarations include selected skeleton joints"
+                    ),
                 },
                 SkeletonSourceCoverage::Complete
-                    if assets.skins.iter().all(|skin| {
+                    if relevant_skins.iter().all(|skin| {
                         skin.inverse_bind_accessor.status
                             == SourceInverseBindAccessorStatus::Available
                     }) =>
@@ -1063,25 +1106,28 @@ fn evidence_summary(
                     EvidenceSide {
                         state: FacetState::Pass,
                         detail: format!(
-                            "{} source skin declarations have readable inverse-bind accessors",
-                            assets.skins.len()
+                            "{} {side_name} selected-skeleton skin declarations have readable inverse-bind accessors",
+                            relevant_skins.len()
                         ),
                     }
                 }
                 SkeletonSourceCoverage::Complete => EvidenceSide {
                     state: FacetState::Unavailable,
-                    detail: "one or more source skin inverse-bind accessors are unavailable".into(),
+                    detail: format!(
+                        "one or more {side_name} selected-skeleton skin inverse-bind accessors are unavailable"
+                    ),
                 },
             },
             EvidenceKind::Deformation => EvidenceSide {
                 state: FacetState::Unavailable,
-                detail: "the format-neutral source contract has no deformation-model evidence"
-                    .into(),
+                detail: format!(
+                    "the format-neutral {side_name} contract has no deformation-model evidence"
+                ),
             },
         }
     };
-    let source_side = side(source);
-    let target_side = side(target);
+    let source_side = side(source, source_nodes, "source");
+    let target_side = side(target, target_nodes, "target");
     let state = if matches!(source_side.state, FacetState::Unavailable)
         || matches!(target_side.state, FacetState::Unavailable)
     {

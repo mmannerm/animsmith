@@ -1,8 +1,8 @@
 //! Black-box coverage for the identity-pinned structural skeleton comparison.
 
 use animsmith_core::InputIdentity;
-use animsmith_core::glam::{Quat, Vec3};
-use animsmith_core::model::{Bone, Transform};
+use animsmith_core::glam::{Mat4, Quat, Vec3};
+use animsmith_core::model::{Bone, MeshAsset, MeshInstance, Transform};
 use animsmith_testkit::{quats_from_angles, two_bone_rotation_doc};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -16,6 +16,30 @@ fn write_doc(path: &Path, root: &str, child: &str, child_height: f32) {
     document.skeleton.bones[1].name = child.into();
     document.skeleton.bones[1].rest.translation = Vec3::new(0.0, child_height, 0.0);
     animsmith_gltf::write::write(&document, path).expect("writes self-authored skeleton fixture");
+}
+
+fn write_doc_with_skin(path: &Path, selected_skin: bool) {
+    let mut document = two_bone_rotation_doc("walk", quats_from_angles(&[0.0; 5]), false);
+    let joint = if selected_skin {
+        1
+    } else {
+        document.skeleton.bones.push(Bone {
+            name: "unrelated".into(),
+            parent: None,
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        });
+        2
+    };
+    document.assets.meshes.push(MeshAsset::default());
+    document.assets.instances.push(MeshInstance {
+        node: joint,
+        mesh: 0,
+        skin_joints: vec![joint],
+        skin_ibms: vec![Mat4::IDENTITY],
+        ..MeshInstance::default()
+    });
+    animsmith_gltf::write::write(&document, path).expect("writes skinned skeleton fixture");
 }
 
 fn write_duplicate_name_doc(path: &Path) {
@@ -183,7 +207,15 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
             .all(|row| row["kind"] == "matched")
     );
     assert_eq!(value["facets"]["deformation_model"]["state"], "unavailable");
-    assert_eq!(value["facets"]["skin_membership"]["state"], "pass");
+    assert_eq!(value["facets"]["skin_membership"]["state"], "unavailable");
+    assert_eq!(
+        value["facets"]["skin_membership"]["source"]["detail"],
+        "no source skin declarations include selected skeleton joints"
+    );
+    assert_eq!(
+        value["facets"]["skin_membership"]["target"]["detail"],
+        "no target skin declarations include selected skeleton joints"
+    );
     assert_eq!(value["facets"]["inverse_bind"]["state"], "unavailable");
     let repeated = run(&source, &target, &control);
     assert_eq!(output.stdout, repeated.stdout, "serialization is stable");
@@ -206,6 +238,35 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
         spine["normalized_child_bone_length_ratio"]["state"],
         "mismatch"
     );
+}
+
+#[test]
+fn skin_and_bind_facets_only_use_skins_that_include_the_selected_skeleton() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.glb");
+    let target = temp.path().join("target.glb");
+    let control = temp.path().join("correspondence.toml");
+
+    write_doc_with_skin(&source, true);
+    write_doc_with_skin(&target, true);
+    std::fs::write(&control, correspondence(&source, &target, false, 0.0)).unwrap();
+    let selected = json(&run(&source, &target, &control));
+    assert_eq!(selected["facets"]["skin_membership"]["state"], "pass");
+    assert_eq!(selected["facets"]["inverse_bind"]["state"], "pass");
+    assert_eq!(
+        selected["facets"]["skin_membership"]["target"]["detail"],
+        "1 target skin declarations include selected skeleton joints"
+    );
+
+    write_doc_with_skin(&source, false);
+    write_doc_with_skin(&target, false);
+    std::fs::write(&control, correspondence(&source, &target, false, 0.0)).unwrap();
+    let unrelated = json(&run(&source, &target, &control));
+    assert_eq!(
+        unrelated["facets"]["skin_membership"]["state"],
+        "unavailable"
+    );
+    assert_eq!(unrelated["facets"]["inverse_bind"]["state"], "unavailable");
 }
 
 #[test]
