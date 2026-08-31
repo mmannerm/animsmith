@@ -27,6 +27,7 @@ serde = { workspace = true }
 # boundary, so every finite input number must round-trip to the same `f64`.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 image = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
