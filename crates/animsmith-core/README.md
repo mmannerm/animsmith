@@ -165,9 +165,13 @@ must have already bound every track bone index to the selected, validated
 skeleton. `animsmith_core::preflight_time_warp_clip_v1` exposes the same
 validation path with exact per-candidate name/track/key/value/storage-byte
 counts and a conservative V1 work charge, without allocating the candidate, so
-a host can enforce a checked aggregate batch budget first. It still performs no
-source binding, serialization, proof,
-or publication. See the
+a host can enforce a checked aggregate batch budget first. The CLI crate has a
+private source-binding adapter that applies that batch preflight, prepares those
+candidates, and uses
+`transform_contact_support_detector_extension_time_warp_v1` for the exact known
+stance extension, but it defers `transform_contact_fragment_v1` until a later
+serializer can supply exact captured output artifact and closure identities. It
+adds no CLI command and performs no proof or publication. See the
 [collection contracts](https://github.com/mmannerm/animsmith/blob/main/docs/collection-contracts.md#foot-cycle-parameterization-v1-18-planner-slice).
 
 ## Constant-Track Pruning

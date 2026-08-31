@@ -36,6 +36,12 @@ pub(crate) enum CollectionControlKind {
     ConfigMissing,
     ConfigUnreadable,
     ConfigNonRegular,
+    ControlMissing,
+    ControlUnreadable,
+    ControlNonRegular,
+    OutputParentMissing,
+    OutputParentNonRegular,
+    OutputAlreadyExists,
     CanonicalSourceAlias,
     DuplicateSourcePath,
 }
@@ -56,6 +62,12 @@ impl CollectionControlKind {
             Self::ConfigMissing => "config-missing",
             Self::ConfigUnreadable => "config-unreadable",
             Self::ConfigNonRegular => "config-non-regular",
+            Self::ControlMissing => "control-missing",
+            Self::ControlUnreadable => "control-unreadable",
+            Self::ControlNonRegular => "control-non-regular",
+            Self::OutputParentMissing => "output-parent-missing",
+            Self::OutputParentNonRegular => "output-parent-non-regular",
+            Self::OutputAlreadyExists => "output-already-exists",
             Self::CanonicalSourceAlias => "canonical-source-alias",
             Self::DuplicateSourcePath => "duplicate-source-path",
         }
@@ -426,6 +438,104 @@ impl CollectionPathResolver {
             )),
             Err(PathFailure::Unsafe) => Err(CollectionControlError::new(
                 CollectionControlKind::UnsafePath,
+            )),
+        }
+    }
+
+    /// Resolve one required regular file below this declaration's directory.
+    ///
+    /// This shares the collection resolver's symlink refusal and canonical
+    /// containment authority with source and config paths.
+    pub(crate) fn resolve_required_control_file(
+        &self,
+        declared: &DependencyResourceKeyV1,
+    ) -> Result<CollectionResolvedPath, CollectionControlError> {
+        match inspect_path(&self.control_root, declared.as_str()) {
+            Ok(PathState::RegularOrDirectory {
+                canonical,
+                metadata,
+            }) if metadata.is_file() => Ok(CollectionResolvedPath {
+                declared: declared.as_str().to_owned(),
+                canonical,
+            }),
+            Ok(PathState::RegularOrDirectory { .. }) | Ok(PathState::NonRegular) => Err(
+                CollectionControlError::new(CollectionControlKind::ControlNonRegular),
+            ),
+            Ok(PathState::Missing) => Err(CollectionControlError::new(
+                CollectionControlKind::ControlMissing,
+            )),
+            Ok(PathState::Unreadable) => Err(CollectionControlError::new(
+                CollectionControlKind::ControlUnreadable,
+            )),
+            Err(PathFailure::Unsafe) => Err(CollectionControlError::new(
+                CollectionControlKind::UnsafePath,
+            )),
+        }
+    }
+
+    /// Resolve a future generation directory whose parent already exists.
+    ///
+    /// V1 publication stages a sibling and atomically renames one directory,
+    /// so preparation requires a symlink-free existing parent and a previously
+    /// absent leaf. It never creates either path.
+    pub(crate) fn resolve_absent_control_directory(
+        &self,
+        declared: &DependencyResourceKeyV1,
+    ) -> Result<CollectionResolvedPath, CollectionControlError> {
+        let path = Path::new(declared.as_str());
+        let Some(Component::Normal(leaf)) = path.components().next_back() else {
+            return Err(CollectionControlError::new(
+                CollectionControlKind::UnsafePath,
+            ));
+        };
+        let parent = path.parent().filter(|value| !value.as_os_str().is_empty());
+        let canonical_parent = match parent {
+            None => self.control_root.clone(),
+            Some(parent) => {
+                let Some(parent) = parent.to_str() else {
+                    return Err(CollectionControlError::new(
+                        CollectionControlKind::UnsafePath,
+                    ));
+                };
+                match inspect_path(&self.control_root, parent) {
+                    Ok(PathState::RegularOrDirectory {
+                        canonical,
+                        metadata,
+                    }) if metadata.is_dir() => canonical,
+                    Ok(PathState::RegularOrDirectory { .. }) | Ok(PathState::NonRegular) => {
+                        return Err(CollectionControlError::new(
+                            CollectionControlKind::OutputParentNonRegular,
+                        ));
+                    }
+                    Ok(PathState::Missing) => {
+                        return Err(CollectionControlError::new(
+                            CollectionControlKind::OutputParentMissing,
+                        ));
+                    }
+                    Ok(PathState::Unreadable) => {
+                        return Err(CollectionControlError::new(
+                            CollectionControlKind::ControlUnreadable,
+                        ));
+                    }
+                    Err(PathFailure::Unsafe) => {
+                        return Err(CollectionControlError::new(
+                            CollectionControlKind::UnsafePath,
+                        ));
+                    }
+                }
+            }
+        };
+        let candidate = canonical_parent.join(leaf);
+        match fs::symlink_metadata(&candidate) {
+            Ok(_) => Err(CollectionControlError::new(
+                CollectionControlKind::OutputAlreadyExists,
+            )),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(CollectionResolvedPath {
+                declared: declared.as_str().to_owned(),
+                canonical: candidate,
+            }),
+            Err(_) => Err(CollectionControlError::new(
+                CollectionControlKind::ControlUnreadable,
             )),
         }
     }
