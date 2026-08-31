@@ -164,9 +164,12 @@ cargo run -p animsmith --example embed
    validates numeric check tolerances and per-clip loop caps immediately.
    `MovementOwner` represents independent XZ, Y, and yaw intent in core;
    `Config::expectations_for` returns canonical effective fields after
-   exact/glob layering. The legacy `in_place` input maps only to XZ and is
-   cleared from that effective result. A selector that declares both spellings
-   is rejected by `Config::validate`.
+   exact/glob layering, while `Config::loop_continuity_tolerances` resolves the
+   four effective loop pose and seam-velocity caps through the same per-clip,
+   check-setting, and built-in-default precedence used by the checks. The
+   legacy `in_place` input maps only to XZ and is cleared from that effective
+   result. A selector that declares both spellings is rejected by
+   `Config::validate`.
    Programmatic callers must call `Config::validate` before passing a directly
    constructed config to measurement-only APIs; `evaluate_checks` performs the
    same validation before inspecting or running the check catalog and returns

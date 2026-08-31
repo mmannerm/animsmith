@@ -1461,7 +1461,7 @@ fn prepare_stance_extensions(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use animsmith_core::glam::{Mat4, Vec3};
     use animsmith_core::model;
@@ -1470,7 +1470,7 @@ mod tests {
         ContactRoleV1, DependencyClosureBuilderV1, DependencyResourceKeyV1,
         FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG,
         FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M, ResourceKeySyntaxV1,
-        SourceSetCoverageV1,
+        SourceSetCoverageV1, TrackValues,
     };
     use serde_json::json;
     use std::collections::VecDeque;
@@ -1624,8 +1624,8 @@ members = ["com.example/a", "com.example/b"]
                 1.0,
                 &loaded_config,
                 &[
-                    (ContactRoleV1::LeftFoot, 0.1, 0.2),
-                    (ContactRoleV1::RightFoot, 0.6, 0.7),
+                    (ContactRoleV1::LeftFoot, 0.125, 0.25),
+                    (ContactRoleV1::RightFoot, 0.625, 0.75),
                 ],
             );
             write_fragment(
@@ -1637,8 +1637,8 @@ members = ["com.example/a", "com.example/b"]
                 options.fragment_duration_b,
                 &loaded_config,
                 &[
-                    (ContactRoleV1::LeftFoot, 0.2, 0.3),
-                    (ContactRoleV1::RightFoot, 0.7, 0.8),
+                    (ContactRoleV1::LeftFoot, 0.25, 0.375),
+                    (ContactRoleV1::RightFoot, 0.75, 0.875),
                 ],
             );
             let manifest_input = InputIdentity::from_bytes(&fs::read(&manifest).unwrap());
@@ -1735,6 +1735,71 @@ contact_fragment = "contacts/b.json"
             )
             .unwrap();
         }
+    }
+
+    pub(crate) fn prepared_fixture_for_proof_tests() -> PreparedFootCycleCollectionV1 {
+        Fixture::create(FixtureOptions::default())
+            .prepare()
+            .expect("proof test fixture must prepare")
+    }
+
+    pub(crate) fn proof_ready_fixture() -> PreparedFootCycleCollectionV1 {
+        let mut prepared = prepared_fixture_for_proof_tests();
+        for (source_index, source) in prepared.sources.iter_mut().enumerate() {
+            let clip = &mut source.document.clips[0];
+            let template = clip.tracks[0].clone();
+            let TrackValues::Vec3s(template_values) = &template.values else {
+                panic!("fixture translation template");
+            };
+            let mut high = template_values[0];
+            high.x = 0.0;
+            high.y = 0.1;
+            high.z = 0.0;
+            let mut low = high;
+            low.y = 0.0;
+            let times = (0..=16)
+                .map(|index| index as f32 / 16.0)
+                .collect::<Vec<_>>();
+            let (left_start, right_start) = if source_index == 0 { (2, 10) } else { (4, 12) };
+            let foot_track = |bone: usize, start: usize| {
+                let mut track = template.clone();
+                track.bone = bone;
+                track.interpolation = animsmith_core::Interpolation::Linear;
+                track.times = times.clone();
+                track.values = TrackValues::Vec3s(
+                    (0..=16)
+                        .map(|index| {
+                            if (start..=start + 2).contains(&index) {
+                                low
+                            } else {
+                                high
+                            }
+                        })
+                        .collect(),
+                );
+                track
+            };
+            clip.tracks.push(foot_track(2, left_start));
+            clip.tracks.push(foot_track(3, right_start));
+        }
+        for (member, plan) in prepared.members.iter_mut().zip(prepared.plan.members()) {
+            let source_clip =
+                &prepared.sources[member.source_index].document.clips[member.clip_index];
+            member.candidate_clip = time_warp_clip_v1(source_clip, plan).unwrap();
+        }
+        prepared.source_metric_pose_cells = 2 * 17 * 4;
+        prepared.source_metric_sample_evaluations = 2 * 17 * 4;
+        prepared
+    }
+
+    pub(crate) fn proof_ready_fixture_with_source_metric_work(
+        pose_cells: usize,
+        sample_evaluations: usize,
+    ) -> PreparedFootCycleCollectionV1 {
+        let mut prepared = proof_ready_fixture();
+        prepared.source_metric_pose_cells = pose_cells;
+        prepared.source_metric_sample_evaluations = sample_evaluations;
+        prepared
     }
 
     #[derive(Clone, Copy)]

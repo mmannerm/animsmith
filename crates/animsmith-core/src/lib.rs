@@ -179,9 +179,9 @@ pub use collection::{
     CollectionSourceKeyV1, CollectionSourceV1,
 };
 pub use config::{
-    ClipExpectations, Config, ConfigValidationError, GaitGroup, MovementOwner, Pinned,
-    RuntimeNodeSelectorResolution, RuntimeNodeSelectors, RuntimeNodesConfig, SeveritySetting,
-    SyncGroup, TimeComplementSettings,
+    ClipExpectations, Config, ConfigValidationError, GaitGroup, LoopContinuityTolerances,
+    MovementOwner, Pinned, RuntimeNodeSelectorResolution, RuntimeNodeSelectors, RuntimeNodesConfig,
+    SeveritySetting, SyncGroup, TimeComplementSettings,
 };
 pub use contact_fragment::{
     CONTACT_FRAGMENT_V1_ID, CONTACT_FRAGMENT_V1_MAX_CANONICAL_BYTES, CONTACT_FRAGMENT_V1_MAX_DEPTH,
