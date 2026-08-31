@@ -3002,7 +3002,7 @@ fn load_with_config_for_producer_bounded(
         ));
     }
     let source =
-        load_source_bytes_typed(path, format, &bytes).map_err(contact_producer_load_failure)?;
+        load_source_bytes_typed(path, format, &bytes).map_err(bounded_producer_load_failure)?;
     let engine = config
         .resolve_engine_input(source.source_facts().format(), source.document())
         .map_err(producer::Failure::operator)?;
@@ -3023,6 +3023,21 @@ fn contact_producer_load_failure(error: InputLoadError) -> producer::Failure {
                 error,
             )
         }
+        error => producer_load_failure(error),
+    }
+}
+
+fn bounded_producer_load_failure(error: InputLoadError) -> producer::Failure {
+    match error {
+        InputLoadError::Gltf(
+            error @ animsmith_gltf::LoadError::ExternalResource(
+                animsmith_gltf::ExternalResourceFailure::CaptureLimitExceeded,
+            ),
+        ) => producer::Failure::refusal(
+            producer::Stage::Load,
+            producer::Kind::IncompleteEvidence,
+            error,
+        ),
         error => producer_load_failure(error),
     }
 }
@@ -3957,6 +3972,28 @@ root_rotation = "bake"
                 }
             }
         }
+    }
+
+    #[test]
+    fn bounded_producer_loader_splits_resource_budget_from_resource_io() {
+        let budget = InputLoadError::Gltf(animsmith_gltf::LoadError::ExternalResource(
+            animsmith_gltf::ExternalResourceFailure::CaptureLimitExceeded,
+        ));
+        let unavailable = InputLoadError::Gltf(animsmith_gltf::LoadError::ExternalResource(
+            animsmith_gltf::ExternalResourceFailure::Unavailable,
+        ));
+        assert!(matches!(
+            bounded_producer_load_failure(budget),
+            producer::Failure::Refusal(producer::Rejection {
+                stage: producer::Stage::Load,
+                kind: producer::Kind::IncompleteEvidence,
+                ..
+            })
+        ));
+        assert!(matches!(
+            bounded_producer_load_failure(unavailable),
+            producer::Failure::Operator(_)
+        ));
     }
 
     #[test]

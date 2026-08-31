@@ -109,16 +109,17 @@ $ cargo build -p animsmith --no-default-features
 $ cargo build -p animsmith --release --no-default-features
 ```
 
-In that build, glTF inspect, measure, lint, transform, fix, scale, diff, and
-`generate addressability` stay available, as do `evaluate-transition-poses`
-and `collection evaluate-transition-poses`. HTML reports require the
-`report` feature; FBX input, `convert`, and `assemble` require the `fbx`
-feature.
+In that build, glTF inspect, measure, lint, transform, fix, scale, diff,
+`generate addressability`, and `collection transform-foot-cycle` stay
+available, as do `evaluate-transition-poses` and
+`collection evaluate-transition-poses`. HTML reports require the `report`
+feature; FBX input, `convert`, and `assemble` require the `fbx` feature.
 
-`scale` is the minimal build's evidence-emitting producer, so the atomic
-artifact/evidence publication helpers live in `crates/animsmith/src/publish.rs`
-rather than inside the feature-gated `assembly` module, and `scale_cli` is part
-of the no-default-features gate.
+`scale` and `collection transform-foot-cycle` are the minimal build's
+evidence-emitting producers, so their shared atomic artifact/evidence and
+generation publication helpers live in `crates/animsmith/src/publish.rs`
+rather than inside the feature-gated `assembly` module. Both `scale_cli` and
+`foot_cycle_cli` are part of the no-default-features gate.
 
 ## Golden Tests
 

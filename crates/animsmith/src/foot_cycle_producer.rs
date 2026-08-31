@@ -38,6 +38,21 @@ const MAX_ALIAS_COMPONENTS: u64 = 4;
 const MAX_ALIAS_COMPONENT_BYTES: u64 = 64;
 
 #[derive(Clone, Copy)]
+struct EncodingLimits {
+    shared_bytes: u64,
+    member_evidence_bytes: usize,
+    aggregate_evidence_bytes: usize,
+    aggregate_convergence_iterations: usize,
+}
+
+const ENCODING_LIMITS: EncodingLimits = EncodingLimits {
+    shared_bytes: MAX_SHARED_BYTES,
+    member_evidence_bytes: MAX_MEMBER_EVIDENCE_BYTES,
+    aggregate_evidence_bytes: MAX_AGGREGATE_EVIDENCE_BYTES,
+    aggregate_convergence_iterations: 32,
+};
+
+#[derive(Clone, Copy)]
 struct Finite(f64);
 
 impl Serialize for Finite {
@@ -244,11 +259,11 @@ impl From<String> for ProducerFailure {
     }
 }
 
-fn generation_budget_refusal() -> ProducerFailure {
+fn generation_budget_refusal(limit: u64) -> ProducerFailure {
     ProducerFailure::Refusal(Rejection::new(
         Stage::Encode,
         Kind::UnrepresentableArtifact,
-        format!("foot-cycle generation exceeds {MAX_SHARED_BYTES} bytes"),
+        format!("foot-cycle generation exceeds {limit} bytes"),
     ))
 }
 
@@ -353,6 +368,7 @@ fn classify_preparation(error: FootCycleSourcePrepError) -> ProducerFailure {
         K::Control
         | K::UnsafePathSet
         | K::SourceUnavailable
+        | K::SourceLoadOperator
         | K::SourceDigestMismatch
         | K::TakeMismatch
         | K::ContactRead
@@ -362,7 +378,7 @@ fn classify_preparation(error: FootCycleSourcePrepError) -> ProducerFailure {
         K::SourceBudget | K::ContactBudget | K::IncompleteClosure => ProducerFailure::Refusal(
             Rejection::new(Stage::Analysis, Kind::IncompleteEvidence, error.to_string()),
         ),
-        K::SourceLoad => ProducerFailure::Refusal(Rejection::new(
+        K::SourceLoadRefused => ProducerFailure::Refusal(Rejection::new(
             Stage::Load,
             Kind::InvalidAssetStructure,
             error.to_string(),
@@ -419,19 +435,28 @@ fn operation_identity(
     Ok(InputIdentity::from_bytes(&bytes))
 }
 
-fn checked_add(total: u64, next: usize) -> Result<u64, ProducerFailure> {
+fn checked_add(total: u64, next: usize, limit: u64) -> Result<u64, ProducerFailure> {
     let next = u64::try_from(next)
         .map_err(|_| ProducerFailure::Operator("foot-cycle byte count exceeds u64".to_owned()))?;
     total
         .checked_add(next)
-        .filter(|total| *total <= MAX_SHARED_BYTES)
-        .ok_or_else(generation_budget_refusal)
+        .filter(|total| *total <= limit)
+        .ok_or_else(|| generation_budget_refusal(limit))
 }
 
 fn encode_generation(
     prepared: &PreparedFootCycleCollectionV1,
     proved: &ProvedFootCycleCollectionV1,
     tool: &ToolInfo,
+) -> Result<EncodedGeneration, ProducerFailure> {
+    encode_generation_with_limits(prepared, proved, tool, ENCODING_LIMITS)
+}
+
+fn encode_generation_with_limits(
+    prepared: &PreparedFootCycleCollectionV1,
+    proved: &ProvedFootCycleCollectionV1,
+    tool: &ToolInfo,
+    limits: EncodingLimits,
 ) -> Result<EncodedGeneration, ProducerFailure> {
     if prepared.members().len() != proved.members().len()
         || prepared.members().len() != prepared.plan().members().len()
@@ -528,13 +553,17 @@ fn encode_generation(
                 contact_fragment_bytes: fragment_bytes.len() as u64,
             },
         };
-        let evidence_bytes = serialize_bounded(&member_record, MAX_MEMBER_EVIDENCE_BYTES)?;
+        let evidence_bytes = serialize_bounded(&member_record, limits.member_evidence_bytes)?;
         // The strict reader is part of the producer boundary, not only a test helper.
         read_member_evidence_v1(&evidence_bytes)?;
 
-        shared_total = checked_add(shared_total, proved_member.artifact_bytes().len())?;
-        shared_total = checked_add(shared_total, fragment_bytes.len())?;
-        shared_total = checked_add(shared_total, evidence_bytes.len())?;
+        shared_total = checked_add(
+            shared_total,
+            proved_member.artifact_bytes().len(),
+            limits.shared_bytes,
+        )?;
+        shared_total = checked_add(shared_total, fragment_bytes.len(), limits.shared_bytes)?;
+        shared_total = checked_add(shared_total, evidence_bytes.len(), limits.shared_bytes)?;
         artifact_total = artifact_total
             .checked_add(proved_member.artifact().bytes())
             .ok_or_else(|| "foot-cycle artifact bytes overflow".to_owned())?;
@@ -579,11 +608,12 @@ fn encode_generation(
     let fixed_without_aggregate = shared_total;
     let mut aggregate_size = 0_u64;
     let mut aggregate_bytes = Vec::new();
-    for _ in 0..32 {
+    let mut aggregate_converged = false;
+    for _ in 0..limits.aggregate_convergence_iterations {
         let total_bytes = fixed_without_aggregate
             .checked_add(aggregate_size)
-            .filter(|total| *total <= MAX_SHARED_BYTES)
-            .ok_or_else(generation_budget_refusal)?;
+            .filter(|total| *total <= limits.shared_bytes)
+            .ok_or_else(|| generation_budget_refusal(limits.shared_bytes))?;
         let record = AggregateEvidenceRecord {
             schema: AGGREGATE_EVIDENCE_V1_ID,
             schema_version: EVIDENCE_VERSION,
@@ -614,15 +644,16 @@ fn encode_generation(
                 metric_sample_evaluations: proved.metric_sample_evaluations() as u64,
             },
         };
-        let candidate = serialize_bounded(&record, MAX_AGGREGATE_EVIDENCE_BYTES)?;
+        let candidate = serialize_bounded(&record, limits.aggregate_evidence_bytes)?;
         let next = candidate.len() as u64;
         aggregate_bytes = candidate;
         if next == aggregate_size {
+            aggregate_converged = true;
             break;
         }
         aggregate_size = next;
     }
-    if aggregate_bytes.len() as u64 != aggregate_size {
+    if !aggregate_converged || aggregate_bytes.len() as u64 != aggregate_size {
         return Err("aggregate foot-cycle evidence size did not converge"
             .to_owned()
             .into());
@@ -630,8 +661,8 @@ fn encode_generation(
     read_aggregate_evidence_v1(&aggregate_bytes)?;
     shared_total = fixed_without_aggregate
         .checked_add(aggregate_size)
-        .filter(|total| *total <= MAX_SHARED_BYTES)
-        .ok_or_else(generation_budget_refusal)?;
+        .filter(|total| *total <= limits.shared_bytes)
+        .ok_or_else(|| generation_budget_refusal(limits.shared_bytes))?;
 
     Ok(EncodedGeneration {
         destination: prepared.output_directory().to_path_buf(),
@@ -1053,6 +1084,22 @@ mod tests {
         encode_generation(&prepared, &proved, &crate::current_tool())
     }
 
+    fn mutate_number(bytes: &[u8], key: &str, value: u64) -> Vec<u8> {
+        let replacement = if value % 10 == 9 {
+            value - 1
+        } else {
+            value + 1
+        };
+        assert_eq!(value.to_string().len(), replacement.to_string().len());
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        let needle = format!("\"{key}\": {value}");
+        let replacement = format!("\"{key}\": {replacement}");
+        let mutated = text.replacen(&needle, &replacement, 1);
+        assert_ne!(mutated, text, "missing field {key}");
+        assert_eq!(mutated.len(), text.len());
+        mutated.into_bytes()
+    }
+
     #[test]
     fn three_n_plus_one_and_alias_order_are_checked() {
         assert_eq!(2_u64.checked_mul(3).and_then(|n| n.checked_add(1)), Some(7));
@@ -1093,16 +1140,76 @@ mod tests {
     #[test]
     fn checked_shared_cap_is_inclusive_and_overflow_safe() {
         assert_eq!(
-            checked_add(MAX_SHARED_BYTES - 1, 1).unwrap(),
+            checked_add(MAX_SHARED_BYTES - 1, 1, MAX_SHARED_BYTES).unwrap(),
             MAX_SHARED_BYTES
         );
         assert!(matches!(
-            checked_add(MAX_SHARED_BYTES, 1),
+            checked_add(MAX_SHARED_BYTES, 1, MAX_SHARED_BYTES),
             Err(ProducerFailure::Refusal(_))
         ));
         assert!(matches!(
-            checked_add(u64::MAX, 1),
+            checked_add(u64::MAX, 1, MAX_SHARED_BYTES),
             Err(ProducerFailure::Refusal(_))
+        ));
+    }
+
+    #[test]
+    fn actual_evidence_and_generation_limits_are_inclusive_and_convergence_is_required() {
+        let fixture = Fixture::create(FixtureOptions::default());
+        let prepared = fixture.prepare_proof_ready();
+        let proved = serialize_and_prove_foot_cycle_v1(&prepared).unwrap();
+        let full = encode_generation(&prepared, &proved, &crate::current_tool()).unwrap();
+        let member_limit = full
+            .members
+            .iter()
+            .map(|member| member.evidence_bytes.len())
+            .max()
+            .unwrap();
+        let aggregate_limit = full.aggregate_bytes.len();
+
+        let exact = EncodingLimits {
+            shared_bytes: full.total_bytes,
+            member_evidence_bytes: member_limit,
+            aggregate_evidence_bytes: aggregate_limit,
+            aggregate_convergence_iterations: ENCODING_LIMITS.aggregate_convergence_iterations,
+        };
+        let encoded =
+            encode_generation_with_limits(&prepared, &proved, &crate::current_tool(), exact)
+                .unwrap();
+        assert_eq!(encoded.total_bytes, full.total_bytes);
+        assert_eq!(encoded.aggregate_bytes, full.aggregate_bytes);
+
+        for limits in [
+            EncodingLimits {
+                member_evidence_bytes: member_limit - 1,
+                ..exact
+            },
+            EncodingLimits {
+                aggregate_evidence_bytes: aggregate_limit - 1,
+                ..exact
+            },
+            EncodingLimits {
+                shared_bytes: full.total_bytes - 1,
+                ..exact
+            },
+        ] {
+            assert!(matches!(
+                encode_generation_with_limits(&prepared, &proved, &crate::current_tool(), limits),
+                Err(ProducerFailure::Refusal(_))
+            ));
+        }
+
+        assert!(matches!(
+            encode_generation_with_limits(
+                &prepared,
+                &proved,
+                &crate::current_tool(),
+                EncodingLimits {
+                    aggregate_convergence_iterations: 1,
+                    ..exact
+                }
+            ),
+            Err(ProducerFailure::Operator(_))
         ));
     }
 
@@ -1191,11 +1298,13 @@ mod tests {
     }
 
     #[test]
-    fn strict_readers_reject_unknown_fields_stale_bindings_and_order_drift() {
+    fn strict_readers_reject_actual_record_mutations_and_accounting_drift() {
         let fixture = Fixture::create(FixtureOptions::default());
         let generation = fixture_generation(&fixture).unwrap();
 
-        let member = String::from_utf8(generation.members[0].evidence_bytes.clone()).unwrap();
+        let member_bytes = &generation.members[0].evidence_bytes;
+        read_member_evidence_v1(member_bytes).unwrap();
+        let member = String::from_utf8(member_bytes.clone()).unwrap();
         let unknown = member.replacen("{\n", "{\n  \"unknown\": true,\n", 1);
         assert!(read_member_evidence_v1(unknown.as_bytes()).is_err());
 
@@ -1206,28 +1315,44 @@ mod tests {
         );
         assert!(read_member_evidence_v1(stale_path.as_bytes()).is_err());
 
-        let artifact_count = format!(
-            "\"artifact_bytes\": {}",
-            generation.members[0].artifact_bytes.len()
-        );
-        let stale_count = member.replacen(&artifact_count, "\"artifact_bytes\": 1", 1);
-        assert_ne!(stale_count, member);
-        assert!(read_member_evidence_v1(stale_count.as_bytes()).is_err());
+        let member_value: serde_json::Value = serde_json::from_slice(member_bytes).unwrap();
+        for field in ["artifact_bytes", "contact_fragment_bytes"] {
+            let value = member_value["resources"][field].as_u64().unwrap();
+            assert!(read_member_evidence_v1(&mutate_number(member_bytes, field, value)).is_err());
+        }
 
-        let aggregate = String::from_utf8(generation.aggregate_bytes.clone()).unwrap();
+        let aggregate_bytes = &generation.aggregate_bytes;
+        read_aggregate_evidence_v1(aggregate_bytes).unwrap();
+        let aggregate = String::from_utf8(aggregate_bytes.clone()).unwrap();
+        let unknown = aggregate.replacen("{\n", "{\n  \"unknown\": true,\n", 1);
+        assert!(read_aggregate_evidence_v1(unknown.as_bytes()).is_err());
         let wrong_order = aggregate.replacen("\"member_index\": 0", "\"member_index\": 1", 1);
         assert_ne!(wrong_order, aggregate);
         assert!(read_aggregate_evidence_v1(wrong_order.as_bytes()).is_err());
 
-        let artifact_total = generation
-            .members
-            .iter()
-            .map(|member| member.artifact_bytes.len() as u64)
-            .sum::<u64>();
-        let artifact_count = format!("\"artifact_bytes\": {artifact_total}");
-        let stale_count = aggregate.replacen(&artifact_count, "\"artifact_bytes\": 1", 1);
-        assert_ne!(stale_count, aggregate);
-        assert!(read_aggregate_evidence_v1(stale_count.as_bytes()).is_err());
+        let aggregate_value: serde_json::Value = serde_json::from_slice(aggregate_bytes).unwrap();
+        for field in [
+            "members",
+            "files",
+            "artifact_bytes",
+            "contact_fragment_bytes",
+            "member_evidence_bytes",
+            "aggregate_evidence_bytes",
+            "total_bytes",
+            "retained_candidate_bytes",
+            "source_metric_pose_cells",
+            "source_metric_sample_evaluations",
+            "output_metric_pose_cells",
+            "output_metric_sample_evaluations",
+            "metric_pose_cells",
+            "metric_sample_evaluations",
+        ] {
+            let value = aggregate_value["resources"][field].as_u64().unwrap();
+            assert!(
+                read_aggregate_evidence_v1(&mutate_number(aggregate_bytes, field, value)).is_err(),
+                "aggregate reader accepted mutated {field}"
+            );
+        }
     }
 
     #[test]
