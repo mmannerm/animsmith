@@ -1,0 +1,2201 @@
+//! Pure format-neutral foot-cycle clip candidates.
+//!
+//! This module applies one already-planned source-to-output time map to a
+//! cloned [`Clip`]. It neither proves that the supplied plan belongs to the
+//! loaded source nor serializes or publishes the candidate; those are later
+//! frontend transaction boundaries.
+
+use std::collections::BTreeSet;
+use std::mem::size_of;
+
+use glam::{Quat, Vec3};
+
+use crate::{
+    Clip, ContactTimeWarpControlPointV1, ContactTransformOperationV1, DocumentShapeError,
+    FootCycleMemberPlanV1, Interpolation, Track, TrackSample, TrackValues, sample_track,
+};
+
+/// Maximum tracks accepted by one V1 candidate operation.
+pub const FOOT_CYCLE_CLIP_V1_MAX_TRACKS: usize = 4_096;
+/// Maximum aggregate authored keyframes accepted by one V1 candidate.
+pub const FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS: usize = 1_048_576;
+/// Maximum aggregate authored stored values, including cubic tangents.
+///
+/// This is the derived `3 * input_keys` shape maximum. A structurally valid
+/// track cannot exceed it without first exceeding the input-key bound.
+pub const FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES: usize = 3_145_728;
+/// Maximum aggregate keyframes in one V1 candidate.
+pub const FOOT_CYCLE_CLIP_V1_MAX_GENERATED_KEYS: usize = 1_048_576;
+/// Maximum aggregate bounded inspection work before candidate allocation.
+///
+/// Work counts every authored key, every map-knot probe for a linear track,
+/// and every planned candidate key.
+pub const FOOT_CYCLE_CLIP_V1_MAX_WORK: usize = 8_388_608;
+/// Maximum UTF-8 bytes retained for a V1 candidate clip name.
+pub const FOOT_CYCLE_CLIP_V1_MAX_NAME_BYTES: usize = 65_536;
+/// Maximum exact V1 candidate storage payload bytes.
+///
+/// This bounds the retained clip name, track rows, output key times, and
+/// output values. It is derived from the independent V1 row caps so no
+/// accepted input can make candidate allocation unbounded.
+pub const FOOT_CYCLE_CLIP_V1_MAX_CANDIDATE_BYTES: usize = FOOT_CYCLE_CLIP_V1_MAX_NAME_BYTES
+    + FOOT_CYCLE_CLIP_V1_MAX_TRACKS * size_of::<Track>()
+    + FOOT_CYCLE_CLIP_V1_MAX_GENERATED_KEYS * size_of::<f32>()
+    + FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES * size_of::<Quat>();
+
+/// One bounded resource owned by the V1 clip candidate operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FootCycleClipResourceV1 {
+    /// Tracks inspected.
+    Tracks,
+    /// Authored keyframes inspected.
+    InputKeys,
+    /// Authored stored values inspected.
+    InputValues,
+    /// Candidate keyframes planned.
+    GeneratedKeys,
+    /// Aggregate bounded row work planned.
+    Work,
+    /// UTF-8 bytes retained for the candidate clip name.
+    NameBytes,
+    /// Retained candidate storage payload bytes.
+    CandidateBytes,
+}
+
+/// Why a cubic-spline track cannot be represented by this conservative seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FootCycleCubicSplineRefusalV1 {
+    /// Multi-key stored values differ exactly.
+    DifferingValues,
+    /// At least one stored input or output tangent is not exactly zero.
+    NonZeroTangent,
+}
+
+/// A clip could not be represented as a deterministic V1 time-warp candidate.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum FootCycleClipWarpError {
+    /// The member plan did not carry a time-warp operation.
+    #[error("foot-cycle clip candidate requires a time_warp operation")]
+    UnsupportedOperation,
+    /// The time-warp version is not V1.
+    #[error("unsupported foot-cycle time-warp version {version}")]
+    UnsupportedVersion {
+        /// Declared version.
+        version: u32,
+    },
+    /// The clip duration does not narrow to a finite positive binary32 duration.
+    #[error("clip duration {duration_s} does not narrow to a finite positive binary32 duration")]
+    InvalidClipDuration {
+        /// Declared clip duration.
+        duration_s: f64,
+    },
+    /// The time-warp output duration differs exactly from the clip duration.
+    #[error(
+        "time-warp output duration {operation_duration_s} does not equal clip duration {clip_duration_s}"
+    )]
+    DurationMismatch {
+        /// Clip duration.
+        clip_duration_s: f64,
+        /// Operation output duration.
+        operation_duration_s: f64,
+    },
+    /// The control-point count is outside the closed V1 bound.
+    #[error("time-warp declares {found} control points; expected 2..={maximum}")]
+    InvalidControlPointCount {
+        /// Observed count.
+        found: usize,
+        /// Maximum count.
+        maximum: usize,
+    },
+    /// One normalized control point is non-finite or outside `[0, 1]`.
+    #[error("time-warp control point {index} is not finite and normalized")]
+    InvalidControlPoint {
+        /// Zero-based control-point index.
+        index: usize,
+    },
+    /// The map does not contain the exact normalized endpoints.
+    #[error("time-warp must map exact endpoints (0,0) and (1,1)")]
+    InvalidMapEndpoints,
+    /// The source or output coordinates are not strictly increasing.
+    #[error("time-warp is not strictly increasing at control point {index}")]
+    NonMonotoneMap {
+        /// Index of the second point in the invalid pair.
+        index: usize,
+    },
+    /// A track violates the public structural track contract.
+    #[error("track {track_index} is malformed: {source}")]
+    InvalidTrack {
+        /// Track index in source order.
+        track_index: usize,
+        /// Existing typed shape failure.
+        source: DocumentShapeError,
+    },
+    /// Two tracks target the same property of the same bone.
+    #[error("track {track_index} duplicates {property:?} for node {bone}")]
+    DuplicateTrackTarget {
+        /// Second track index in source order.
+        track_index: usize,
+        /// Duplicated bone index.
+        bone: usize,
+        /// Duplicated property.
+        property: crate::Property,
+    },
+    /// One authored key lies outside the clip interval.
+    #[error("track {track_index} key {key_index} at {time_s} is outside [0, {duration_s}]")]
+    TrackTimeOutOfRange {
+        /// Track index in source order.
+        track_index: usize,
+        /// Key index in source order.
+        key_index: usize,
+        /// Authored key time.
+        time_s: f32,
+        /// Narrowed clip duration.
+        duration_s: f32,
+    },
+    /// A multi-key cubic spline is not representation-exact under this seam.
+    #[error("track {track_index} cubic spline is not safely constant: {reason:?}")]
+    UnsupportedCubicSpline {
+        /// Track index in source order.
+        track_index: usize,
+        /// Exact refusal class.
+        reason: FootCycleCubicSplineRefusalV1,
+    },
+    /// A stored quaternion key cannot be normalized by runtime sampling.
+    #[error("track {track_index} quaternion key {key_index} has invalid binary32 magnitude")]
+    InvalidQuaternionKey {
+        /// Track index in source order.
+        track_index: usize,
+        /// Key index in source order.
+        key_index: usize,
+    },
+    /// Binary64-to-binary32 time narrowing produced a non-finite value.
+    #[error("track {track_index} generated a non-finite binary32 time")]
+    NonFiniteTimeNarrowing {
+        /// Track index in source order.
+        track_index: usize,
+    },
+    /// Two distinct source instants narrowed to one candidate time.
+    #[error("track {track_index} generated a binary32 time collision")]
+    TimeCollision {
+        /// Track index in source order.
+        track_index: usize,
+    },
+    /// Two distinct binary64 source instants narrowed to one binary32 time.
+    #[error("track {track_index} generated a binary32 source-time collision")]
+    SourceTimeCollision {
+        /// Track index in source order.
+        track_index: usize,
+    },
+    /// Endpoint mapping did not retain an exact binary32 endpoint.
+    #[error("track {track_index} did not preserve an exact clip endpoint")]
+    EndpointInconsistency {
+        /// Track index in source order.
+        track_index: usize,
+    },
+    /// Sampling an inserted map knot produced a non-finite value.
+    #[error("track {track_index} generated a non-finite sampled value")]
+    NonFiniteGeneratedValue {
+        /// Track index in source order.
+        track_index: usize,
+    },
+    /// A fixed aggregate V1 resource limit was exceeded.
+    #[error("foot-cycle clip {resource:?} count {observed} exceeds V1 limit {maximum}")]
+    LimitExceeded {
+        /// Bounded resource.
+        resource: FootCycleClipResourceV1,
+        /// Observed count, including the terminal N+1 where applicable.
+        observed: usize,
+        /// Fixed V1 maximum.
+        maximum: usize,
+    },
+    /// Checked aggregate arithmetic overflowed before allocation.
+    #[error("foot-cycle clip {resource:?} count overflowed")]
+    CountOverflow {
+        /// Resource whose checked arithmetic overflowed.
+        resource: FootCycleClipResourceV1,
+    },
+}
+
+/// Exact storage counts and the bounded work charge for one validated V1 clip
+/// candidate.
+///
+/// Hosts may sum these counts with checked arithmetic before retaining a batch
+/// of candidates. The counts describe the candidate that
+/// [`time_warp_clip_v1`] would build from the same inputs; obtaining them does
+/// not allocate or mutate that candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FootCycleClipPreflightV1 {
+    tracks: usize,
+    input_keys: usize,
+    input_values: usize,
+    candidate_keys: usize,
+    candidate_values: usize,
+    name_bytes: usize,
+    candidate_bytes: usize,
+    work: usize,
+}
+
+impl FootCycleClipPreflightV1 {
+    /// Number of tracks inspected and retained by the candidate.
+    pub const fn tracks(self) -> usize {
+        self.tracks
+    }
+
+    /// Number of authored keyframes inspected.
+    pub const fn input_keys(self) -> usize {
+        self.input_keys
+    }
+
+    /// Number of authored stored values inspected, including cubic tangents.
+    pub const fn input_values(self) -> usize {
+        self.input_values
+    }
+
+    /// Number of keyframes retained by the candidate.
+    pub const fn candidate_keys(self) -> usize {
+        self.candidate_keys
+    }
+
+    /// Number of stored values retained by the candidate.
+    ///
+    /// Constant cubic tracks retain their authored values verbatim. LINEAR
+    /// and STEP tracks retain exactly one value per candidate key.
+    pub const fn candidate_values(self) -> usize {
+        self.candidate_values
+    }
+
+    /// UTF-8 bytes retained for the candidate clip name.
+    pub const fn name_bytes(self) -> usize {
+        self.name_bytes
+    }
+
+    /// Exact V1 candidate storage payload bytes.
+    ///
+    /// This is the sum of retained name bytes, track rows, output key times,
+    /// and output values; it is not an allocator-reserved-capacity estimate.
+    pub const fn candidate_bytes(self) -> usize {
+        self.candidate_bytes
+    }
+
+    /// Conservative V1 inspection and candidate-planning work charge.
+    pub const fn work(self) -> usize {
+        self.work
+    }
+}
+
+#[derive(Debug)]
+struct PreparedClipWarp<'a> {
+    output_duration_s: f64,
+    points: &'a [ContactTimeWarpControlPointV1],
+    duration: f32,
+    identity: bool,
+    counts: FootCycleClipPreflightV1,
+    /// Exact retained-key capacity for each source-order track. This is
+    /// bounded by the public track/key limits and is metadata, not a
+    /// candidate buffer.
+    track_candidate_keys: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CandidateKey {
+    source_exact: f64,
+    source_time: f32,
+    output_time: f32,
+    authored_index: Option<usize>,
+}
+
+/// Apply one member's validated normalized source-to-output map to a cloned
+/// format-neutral clip candidate.
+///
+/// The function does not verify that `plan.input()` names `input`; the format
+/// frontend must bind the selected source to the plan before calling this pure
+/// candidate builder. It validates only track-local [`Clip`] shape: because
+/// this seam does not receive a skeleton, the host must already have bound and
+/// validated every track bone index against its selected skeleton. On every
+/// error the borrowed clip is unchanged.
+///
+/// # Errors
+///
+/// Returns [`FootCycleClipWarpError`] for an unsupported or malformed plan,
+/// invalid clip/track shape, unsafe cubic spline, binary32 time collision, or
+/// exceeded fixed work/resource bound.
+pub fn time_warp_clip_v1(
+    input: &Clip,
+    plan: &FootCycleMemberPlanV1,
+) -> Result<Clip, FootCycleClipWarpError> {
+    let prepared = prepare_clip_warp(input, plan)?;
+    debug_assert!(prepared.counts.tracks <= FOOT_CYCLE_CLIP_V1_MAX_TRACKS);
+
+    if prepared.identity {
+        return Ok(input.clone());
+    }
+
+    let mut tracks = Vec::with_capacity(input.tracks.len());
+    debug_assert_eq!(prepared.track_candidate_keys.len(), input.tracks.len());
+    for (track_index, track) in input.tracks.iter().enumerate() {
+        let candidate_keys = prepared.track_candidate_keys[track_index];
+        tracks.push(warp_track(
+            track,
+            track_index,
+            prepared.points,
+            prepared.duration,
+            candidate_keys,
+        )?);
+    }
+    Ok(Clip {
+        name: input.name.clone(),
+        duration_s: prepared.output_duration_s,
+        tracks,
+    })
+}
+
+/// Validate and count one V1 clip candidate without allocating it.
+///
+/// This is the authoritative pre-allocation boundary used by
+/// [`time_warp_clip_v1`]. Hosts that retain multiple candidates can sum the
+/// returned counts with checked arithmetic and enforce an invocation-level
+/// budget before constructing any candidate. Like the builder, this Clip-only
+/// boundary validates track-local shape; the host owns skeleton binding and
+/// track-bone-index validation.
+///
+/// # Errors
+///
+/// Returns the same validation, shape, interpolation, and fixed-limit errors
+/// that candidate construction can report before allocating the output clip.
+pub fn preflight_time_warp_clip_v1(
+    input: &Clip,
+    plan: &FootCycleMemberPlanV1,
+) -> Result<FootCycleClipPreflightV1, FootCycleClipWarpError> {
+    Ok(prepare_clip_warp(input, plan)?.counts)
+}
+
+fn prepare_clip_warp<'a>(
+    input: &Clip,
+    plan: &'a FootCycleMemberPlanV1,
+) -> Result<PreparedClipWarp<'a>, FootCycleClipWarpError> {
+    let (output_duration_s, points) = validate_operation(input, plan.operation())?;
+    let duration = input.duration_s as f32;
+    let identity = points
+        .iter()
+        .all(|point| point.input_time() == point.output_time());
+    let preflight = preflight(input, points, duration, identity)?;
+    Ok(PreparedClipWarp {
+        output_duration_s,
+        points,
+        duration,
+        identity,
+        counts: preflight.counts,
+        track_candidate_keys: preflight.track_candidate_keys,
+    })
+}
+
+fn validate_operation<'a>(
+    input: &Clip,
+    operation: &'a ContactTransformOperationV1,
+) -> Result<(f64, &'a [ContactTimeWarpControlPointV1]), FootCycleClipWarpError> {
+    let duration = input.duration_s as f32;
+    if !input.duration_s.is_finite()
+        || input.duration_s <= 0.0
+        || !duration.is_finite()
+        || duration <= 0.0
+    {
+        return Err(FootCycleClipWarpError::InvalidClipDuration {
+            duration_s: input.duration_s,
+        });
+    }
+    let ContactTransformOperationV1::TimeWarp {
+        version,
+        output_duration_s,
+        control_points,
+    } = operation
+    else {
+        return Err(FootCycleClipWarpError::UnsupportedOperation);
+    };
+    if *version != 1 {
+        return Err(FootCycleClipWarpError::UnsupportedVersion { version: *version });
+    }
+    if *output_duration_s != input.duration_s {
+        return Err(FootCycleClipWarpError::DurationMismatch {
+            clip_duration_s: input.duration_s,
+            operation_duration_s: *output_duration_s,
+        });
+    }
+    if !(2..=crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS).contains(&control_points.len())
+    {
+        return Err(FootCycleClipWarpError::InvalidControlPointCount {
+            found: control_points.len(),
+            maximum: crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS,
+        });
+    }
+    for (index, point) in control_points.iter().enumerate() {
+        if !point.input_time().is_finite()
+            || !point.output_time().is_finite()
+            || !(0.0..=1.0).contains(&point.input_time())
+            || !(0.0..=1.0).contains(&point.output_time())
+        {
+            return Err(FootCycleClipWarpError::InvalidControlPoint { index });
+        }
+    }
+    if control_points
+        .first()
+        .is_none_or(|point| point.input_time() != 0.0 || point.output_time() != 0.0)
+        || control_points
+            .last()
+            .is_none_or(|point| point.input_time() != 1.0 || point.output_time() != 1.0)
+    {
+        return Err(FootCycleClipWarpError::InvalidMapEndpoints);
+    }
+    for (index, pair) in control_points.windows(2).enumerate() {
+        if pair[0].input_time() >= pair[1].input_time()
+            || pair[0].output_time() >= pair[1].output_time()
+        {
+            return Err(FootCycleClipWarpError::NonMonotoneMap { index: index + 1 });
+        }
+    }
+    Ok((*output_duration_s, control_points))
+}
+
+#[derive(Debug)]
+struct PreflightedClipWarp {
+    counts: FootCycleClipPreflightV1,
+    track_candidate_keys: Vec<usize>,
+}
+
+fn preflight(
+    input: &Clip,
+    points: &[ContactTimeWarpControlPointV1],
+    duration: f32,
+    identity: bool,
+) -> Result<PreflightedClipWarp, FootCycleClipWarpError> {
+    let mut counts = FootCycleClipPreflightV1 {
+        tracks: input.tracks.len(),
+        input_keys: 0,
+        input_values: 0,
+        candidate_keys: 0,
+        candidate_values: 0,
+        name_bytes: input.name.len(),
+        candidate_bytes: 0,
+        work: 0,
+    };
+    check_limit(
+        FootCycleClipResourceV1::Tracks,
+        counts.tracks,
+        FOOT_CYCLE_CLIP_V1_MAX_TRACKS,
+    )?;
+    check_limit(
+        FootCycleClipResourceV1::NameBytes,
+        counts.name_bytes,
+        FOOT_CYCLE_CLIP_V1_MAX_NAME_BYTES,
+    )?;
+    counts.candidate_bytes = checked_add(
+        FootCycleClipResourceV1::CandidateBytes,
+        counts.name_bytes,
+        checked_mul(
+            FootCycleClipResourceV1::CandidateBytes,
+            counts.tracks,
+            size_of::<Track>(),
+        )?,
+    )?;
+    check_limit(
+        FootCycleClipResourceV1::CandidateBytes,
+        counts.candidate_bytes,
+        FOOT_CYCLE_CLIP_V1_MAX_CANDIDATE_BYTES,
+    )?;
+    let mut targets = BTreeSet::new();
+    let mut track_candidate_keys = Vec::with_capacity(input.tracks.len());
+    for (track_index, track) in input.tracks.iter().enumerate() {
+        if !targets.insert((track.bone, track.property)) {
+            return Err(FootCycleClipWarpError::DuplicateTrackTarget {
+                track_index,
+                bone: track.bone,
+                property: track.property,
+            });
+        }
+        counts.input_keys = checked_add(
+            FootCycleClipResourceV1::InputKeys,
+            counts.input_keys,
+            track.times.len(),
+        )?;
+        check_limit(
+            FootCycleClipResourceV1::InputKeys,
+            counts.input_keys,
+            FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS,
+        )?;
+        counts.input_values = checked_add(
+            FootCycleClipResourceV1::InputValues,
+            counts.input_values,
+            track.values.len(),
+        )?;
+        check_limit(
+            FootCycleClipResourceV1::InputValues,
+            counts.input_values,
+            FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES,
+        )?;
+        crate::model::validate_track_shape(0, track).map_err(|source| {
+            FootCycleClipWarpError::InvalidTrack {
+                track_index,
+                source,
+            }
+        })?;
+        for (key_index, &time) in track.times.iter().enumerate() {
+            if time < 0.0 || time > duration {
+                return Err(FootCycleClipWarpError::TrackTimeOutOfRange {
+                    track_index,
+                    key_index,
+                    time_s: time,
+                    duration_s: duration,
+                });
+            }
+        }
+        if let TrackValues::Quats(values) = &track.values {
+            for key_index in 0..track.times.len() {
+                let value = values[track.value_index(key_index)];
+                if !value.length_squared().is_finite() || value.length_squared() <= 0.0 {
+                    return Err(FootCycleClipWarpError::InvalidQuaternionKey {
+                        track_index,
+                        key_index,
+                    });
+                }
+            }
+        }
+        if track.interpolation == Interpolation::CubicSpline {
+            validate_cubic(track, track_index)?;
+        }
+        let mut generated = 0;
+        if !identity && track.interpolation != Interpolation::CubicSpline {
+            visit_warp_track_keys(track, track_index, points, duration, |key| {
+                generated = checked_add(FootCycleClipResourceV1::GeneratedKeys, generated, 1)?;
+                // The builder samples inserted knots before retaining them.
+                // Preflight deliberately performs that same calculation here:
+                // this is the no-candidate-allocation refusal boundary, not a
+                // shape-only estimate.
+                candidate_value(track, key, track_index)?;
+                Ok(())
+            })?;
+        } else {
+            generated = track.times.len();
+        }
+        track_candidate_keys.push(generated);
+        counts.candidate_keys = checked_add(
+            FootCycleClipResourceV1::GeneratedKeys,
+            counts.candidate_keys,
+            generated,
+        )?;
+        check_limit(
+            FootCycleClipResourceV1::GeneratedKeys,
+            counts.candidate_keys,
+            FOOT_CYCLE_CLIP_V1_MAX_GENERATED_KEYS,
+        )?;
+        // Candidate value storage has no independent limit to check here.
+        // Constant cubic tracks are retained verbatim, so InputValues bounds
+        // them. LINEAR and STEP emit exactly one value per generated key, so
+        // GeneratedKeys bounds them. A separate generated-value refusal would
+        // therefore be unreachable and would only duplicate those authorities.
+        let candidate_values = if track.interpolation == Interpolation::CubicSpline {
+            track.values.len()
+        } else {
+            generated
+        };
+        let governing_resource = if track.interpolation == Interpolation::CubicSpline {
+            FootCycleClipResourceV1::InputValues
+        } else {
+            FootCycleClipResourceV1::GeneratedKeys
+        };
+        counts.candidate_values = checked_add(
+            governing_resource,
+            counts.candidate_values,
+            candidate_values,
+        )?;
+        counts.candidate_bytes = checked_add(
+            FootCycleClipResourceV1::CandidateBytes,
+            counts.candidate_bytes,
+            candidate_track_bytes(track, generated, candidate_values)?,
+        )?;
+        check_limit(
+            FootCycleClipResourceV1::CandidateBytes,
+            counts.candidate_bytes,
+            FOOT_CYCLE_CLIP_V1_MAX_CANDIDATE_BYTES,
+        )?;
+        counts.work = checked_add(
+            FootCycleClipResourceV1::Work,
+            counts.work,
+            track.times.len(),
+        )?;
+        if !identity && track.interpolation == Interpolation::Linear {
+            counts.work = checked_add(FootCycleClipResourceV1::Work, counts.work, points.len())?;
+        }
+        counts.work = checked_add(FootCycleClipResourceV1::Work, counts.work, generated)?;
+        check_limit(
+            FootCycleClipResourceV1::Work,
+            counts.work,
+            FOOT_CYCLE_CLIP_V1_MAX_WORK,
+        )?;
+    }
+    Ok(PreflightedClipWarp {
+        counts,
+        track_candidate_keys,
+    })
+}
+
+/// Visit every retained candidate key in source order, validating the exact
+/// f64-to-f32 source/output narrowing and output ordering before the caller
+/// can allocate or retain a candidate buffer.  Both preflight and the builder
+/// use this one traversal so a newly added refusal cannot silently become
+/// builder-only.
+fn visit_warp_track_keys(
+    track: &Track,
+    track_index: usize,
+    points: &[ContactTimeWarpControlPointV1],
+    duration: f32,
+    mut visit: impl FnMut(CandidateKey) -> Result<(), FootCycleClipWarpError>,
+) -> Result<(), FootCycleClipWarpError> {
+    let mut previous = None;
+    let mut authored_index = 0;
+    let mut visit_key = |key| {
+        validate_candidate_key(previous, key, duration, track_index)?;
+        previous = Some(key);
+        visit(key)
+    };
+
+    if track.interpolation == Interpolation::Linear {
+        for point in points.iter().skip(1).take(points.len().saturating_sub(2)) {
+            let Some(extra) = linear_extra_knot(track, track_index, point, points, duration)?
+            else {
+                continue;
+            };
+            while authored_index < track.times.len()
+                && f64::from(track.times[authored_index]) < extra.source_exact
+            {
+                let source_time = track.times[authored_index];
+                visit_key(CandidateKey {
+                    source_exact: f64::from(source_time),
+                    source_time,
+                    output_time: map_time(source_time, duration, points, track_index)?,
+                    authored_index: Some(authored_index),
+                })?;
+                authored_index += 1;
+            }
+            visit_key(extra)?;
+        }
+    }
+    while authored_index < track.times.len() {
+        let source_time = track.times[authored_index];
+        visit_key(CandidateKey {
+            source_exact: f64::from(source_time),
+            source_time,
+            output_time: map_time(source_time, duration, points, track_index)?,
+            authored_index: Some(authored_index),
+        })?;
+        authored_index += 1;
+    }
+    Ok(())
+}
+
+/// Return a mapped control-point knot that is not already represented by an
+/// authored key.  An exact coincidence still validates that recomputing the
+/// map through the binary32 authored time yields the same binary32 output;
+/// otherwise construction would have two incompatible representations of one
+/// instant.
+fn linear_extra_knot(
+    track: &Track,
+    track_index: usize,
+    point: &ContactTimeWarpControlPointV1,
+    points: &[ContactTimeWarpControlPointV1],
+    duration: f32,
+) -> Result<Option<CandidateKey>, FootCycleClipWarpError> {
+    let source_exact = point.input_time() * f64::from(duration);
+    if source_exact <= f64::from(track.start_time()) || source_exact >= f64::from(track.end_time())
+    {
+        return Ok(None);
+    }
+    let source_time = source_exact as f32;
+    let output_time = (point.output_time() * f64::from(duration)) as f32;
+    if !source_time.is_finite() || !output_time.is_finite() {
+        return Err(FootCycleClipWarpError::NonFiniteTimeNarrowing { track_index });
+    }
+    match track.times.binary_search_by(|authored| {
+        authored
+            .partial_cmp(&source_time)
+            .expect("validated track times are finite")
+    }) {
+        Ok(authored_index) => {
+            if f64::from(track.times[authored_index]) != source_exact {
+                return Err(FootCycleClipWarpError::SourceTimeCollision { track_index });
+            }
+            let mapped_output = map_time(source_time, duration, points, track_index)?;
+            if mapped_output != output_time {
+                return Err(FootCycleClipWarpError::TimeCollision { track_index });
+            }
+            Ok(None)
+        }
+        Err(_) => Ok(Some(CandidateKey {
+            source_exact,
+            source_time,
+            output_time,
+            authored_index: None,
+        })),
+    }
+}
+
+fn validate_cubic(track: &Track, track_index: usize) -> Result<(), FootCycleClipWarpError> {
+    if track.times.len() <= 1 {
+        return Ok(());
+    }
+    match &track.values {
+        TrackValues::Vec3s(values) => {
+            let reference = values[1];
+            for key in 0..track.times.len() {
+                if !same_vec3(values[3 * key + 1], reference) {
+                    return Err(FootCycleClipWarpError::UnsupportedCubicSpline {
+                        track_index,
+                        reason: FootCycleCubicSplineRefusalV1::DifferingValues,
+                    });
+                }
+                if values[3 * key] != Vec3::ZERO || values[3 * key + 2] != Vec3::ZERO {
+                    return Err(FootCycleClipWarpError::UnsupportedCubicSpline {
+                        track_index,
+                        reason: FootCycleCubicSplineRefusalV1::NonZeroTangent,
+                    });
+                }
+            }
+        }
+        TrackValues::Quats(values) => {
+            let reference = values[1];
+            for key in 0..track.times.len() {
+                if !same_quat(values[3 * key + 1], reference) {
+                    return Err(FootCycleClipWarpError::UnsupportedCubicSpline {
+                        track_index,
+                        reason: FootCycleCubicSplineRefusalV1::DifferingValues,
+                    });
+                }
+                if values[3 * key] != Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)
+                    || values[3 * key + 2] != Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)
+                {
+                    return Err(FootCycleClipWarpError::UnsupportedCubicSpline {
+                        track_index,
+                        reason: FootCycleCubicSplineRefusalV1::NonZeroTangent,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn same_vec3(left: Vec3, right: Vec3) -> bool {
+    left.to_array()
+        .into_iter()
+        .zip(right.to_array())
+        .all(|(left, right)| left.to_bits() == right.to_bits())
+}
+
+fn same_quat(left: Quat, right: Quat) -> bool {
+    left.to_array()
+        .into_iter()
+        .zip(right.to_array())
+        .all(|(left, right)| left.to_bits() == right.to_bits())
+}
+
+fn validate_candidate_key(
+    previous: Option<CandidateKey>,
+    key: CandidateKey,
+    duration: f32,
+    track_index: usize,
+) -> Result<(), FootCycleClipWarpError> {
+    if let Some(previous) = previous {
+        if previous.source_time == key.source_time && previous.source_exact != key.source_exact {
+            return Err(FootCycleClipWarpError::SourceTimeCollision { track_index });
+        }
+        if previous.output_time >= key.output_time {
+            return Err(FootCycleClipWarpError::TimeCollision { track_index });
+        }
+    }
+    if key.source_time == 0.0 && key.output_time != 0.0
+        || key.source_time == duration && key.output_time != duration
+    {
+        return Err(FootCycleClipWarpError::EndpointInconsistency { track_index });
+    }
+    Ok(())
+}
+
+fn candidate_value(
+    track: &Track,
+    key: CandidateKey,
+    track_index: usize,
+) -> Result<TrackSample, FootCycleClipWarpError> {
+    let value = match &track.values {
+        TrackValues::Vec3s(authored) => TrackSample::Vec3(key.authored_index.map_or_else(
+            || match sample_track(track, key.source_time) {
+                TrackSample::Vec3(value) => value,
+                TrackSample::Quat(_) => unreachable!("validated Vec3 track"),
+            },
+            |index| authored[index],
+        )),
+        TrackValues::Quats(authored) => TrackSample::Quat(key.authored_index.map_or_else(
+            || match sample_track(track, key.source_time) {
+                TrackSample::Quat(value) => value,
+                TrackSample::Vec3(_) => unreachable!("validated quaternion track"),
+            },
+            |index| authored[index],
+        )),
+    };
+    let finite = match value {
+        TrackSample::Vec3(value) => value.is_finite(),
+        TrackSample::Quat(value) => value.is_finite(),
+    };
+    if !finite {
+        return Err(FootCycleClipWarpError::NonFiniteGeneratedValue { track_index });
+    }
+    Ok(value)
+}
+
+fn warp_track(
+    track: &Track,
+    track_index: usize,
+    points: &[ContactTimeWarpControlPointV1],
+    duration: f32,
+    candidate_keys: usize,
+) -> Result<Track, FootCycleClipWarpError> {
+    if track.interpolation == Interpolation::CubicSpline {
+        return Ok(track.clone());
+    }
+    let mut times = Vec::with_capacity(candidate_keys);
+    let (mut vec3s, mut quats) = match &track.values {
+        TrackValues::Vec3s(_) => (Vec::with_capacity(candidate_keys), Vec::new()),
+        TrackValues::Quats(_) => (Vec::new(), Vec::with_capacity(candidate_keys)),
+    };
+    visit_warp_track_keys(track, track_index, points, duration, |key| {
+        times.push(key.output_time);
+        match candidate_value(track, key, track_index)? {
+            TrackSample::Vec3(value) => vec3s.push(value),
+            TrackSample::Quat(value) => quats.push(value),
+        }
+        Ok(())
+    })?;
+    let values = match &track.values {
+        TrackValues::Vec3s(_) => TrackValues::Vec3s(vec3s),
+        TrackValues::Quats(_) => TrackValues::Quats(quats),
+    };
+    Ok(Track {
+        bone: track.bone,
+        property: track.property,
+        interpolation: track.interpolation,
+        times,
+        values,
+    })
+}
+
+fn map_time(
+    source_time: f32,
+    duration: f32,
+    points: &[ContactTimeWarpControlPointV1],
+    track_index: usize,
+) -> Result<f32, FootCycleClipWarpError> {
+    let normalized = f64::from(source_time) / f64::from(duration);
+    let upper = points.partition_point(|point| point.input_time() <= normalized);
+    let right = upper.clamp(1, points.len() - 1);
+    let left = right - 1;
+    let x0 = points[left].input_time();
+    let x1 = points[right].input_time();
+    let y0 = points[left].output_time();
+    let y1 = points[right].output_time();
+    let fraction = (normalized - x0) / (x1 - x0);
+    let mapped = (y0 + fraction * (y1 - y0)) * f64::from(duration);
+    let narrowed = mapped as f32;
+    if !narrowed.is_finite() {
+        return Err(FootCycleClipWarpError::NonFiniteTimeNarrowing { track_index });
+    }
+    Ok(narrowed)
+}
+
+fn checked_add(
+    resource: FootCycleClipResourceV1,
+    left: usize,
+    right: usize,
+) -> Result<usize, FootCycleClipWarpError> {
+    left.checked_add(right)
+        .ok_or(FootCycleClipWarpError::CountOverflow { resource })
+}
+
+fn checked_mul(
+    resource: FootCycleClipResourceV1,
+    left: usize,
+    right: usize,
+) -> Result<usize, FootCycleClipWarpError> {
+    left.checked_mul(right)
+        .ok_or(FootCycleClipWarpError::CountOverflow { resource })
+}
+
+fn candidate_track_bytes(
+    track: &Track,
+    candidate_keys: usize,
+    candidate_values: usize,
+) -> Result<usize, FootCycleClipWarpError> {
+    checked_add(
+        FootCycleClipResourceV1::CandidateBytes,
+        checked_mul(
+            FootCycleClipResourceV1::CandidateBytes,
+            candidate_keys,
+            size_of::<f32>(),
+        )?,
+        checked_mul(
+            FootCycleClipResourceV1::CandidateBytes,
+            candidate_values,
+            match &track.values {
+                TrackValues::Vec3s(_) => size_of::<Vec3>(),
+                TrackValues::Quats(_) => size_of::<Quat>(),
+            },
+        )?,
+    )
+}
+
+fn check_limit(
+    resource: FootCycleClipResourceV1,
+    observed: usize,
+    maximum: usize,
+) -> Result<(), FootCycleClipWarpError> {
+    if observed > maximum {
+        return Err(FootCycleClipWarpError::LimitExceeded {
+            resource,
+            observed,
+            maximum,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ContactTransformIntervalV1, Property, TrackShapeViolation,
+        foot_cycle::clip_test_member_plan,
+    };
+
+    fn point(input: f64, output: f64) -> ContactTimeWarpControlPointV1 {
+        ContactTimeWarpControlPointV1::new(input, output)
+    }
+
+    fn plan(duration: f64, points: &[(f64, f64)]) -> FootCycleMemberPlanV1 {
+        clip_test_member_plan(ContactTransformOperationV1::time_warp(
+            duration,
+            points
+                .iter()
+                .map(|&(input, output)| point(input, output))
+                .collect(),
+        ))
+    }
+
+    fn dense_points(count: usize, identity: bool) -> Vec<(f64, f64)> {
+        (0..count)
+            .map(|index| {
+                let input = index as f64 / (count - 1) as f64;
+                let output = if identity || index == 0 || index + 1 == count {
+                    input
+                } else {
+                    0.05 + 0.9 * input
+                };
+                (input, output)
+            })
+            .collect()
+    }
+
+    fn dense_vec_track(interpolation: Interpolation, count: usize) -> Track {
+        let denominator = (count - 1) as f32;
+        vec_track(
+            interpolation,
+            (0..count).map(|index| index as f32 / denominator).collect(),
+            vec![Vec3::ZERO; count],
+        )
+    }
+
+    fn non_identity_plan(duration: f64) -> FootCycleMemberPlanV1 {
+        plan(duration, &[(0.0, 0.0), (0.25, 0.5), (1.0, 1.0)])
+    }
+
+    fn vec_track(interpolation: Interpolation, times: Vec<f32>, values: Vec<Vec3>) -> Track {
+        Track {
+            bone: 7,
+            property: Property::Translation,
+            interpolation,
+            times,
+            values: TrackValues::Vec3s(values),
+        }
+    }
+
+    fn quat_track(interpolation: Interpolation, times: Vec<f32>, values: Vec<Quat>) -> Track {
+        Track {
+            bone: 9,
+            property: Property::Rotation,
+            interpolation,
+            times,
+            values: TrackValues::Quats(values),
+        }
+    }
+
+    fn clip(duration_s: f64, tracks: Vec<Track>) -> Clip {
+        Clip {
+            name: "walk_forward".into(),
+            duration_s,
+            tracks,
+        }
+    }
+
+    fn vec_values(track: &Track) -> &[Vec3] {
+        match &track.values {
+            TrackValues::Vec3s(values) => values,
+            TrackValues::Quats(_) => panic!("expected Vec3 values"),
+        }
+    }
+
+    fn quat_values(track: &Track) -> &[Quat] {
+        match &track.values {
+            TrackValues::Quats(values) => values,
+            TrackValues::Vec3s(_) => panic!("expected quaternion values"),
+        }
+    }
+
+    fn assert_clip_bits_equal(left: &Clip, right: &Clip) {
+        assert_eq!(left.name, right.name);
+        assert_eq!(left.duration_s.to_bits(), right.duration_s.to_bits());
+        assert_eq!(left.tracks.len(), right.tracks.len());
+        for (left, right) in left.tracks.iter().zip(&right.tracks) {
+            assert_eq!(left.bone, right.bone);
+            assert_eq!(left.property, right.property);
+            assert_eq!(left.interpolation, right.interpolation);
+            assert_eq!(
+                left.times
+                    .iter()
+                    .map(|time| time.to_bits())
+                    .collect::<Vec<_>>(),
+                right
+                    .times
+                    .iter()
+                    .map(|time| time.to_bits())
+                    .collect::<Vec<_>>()
+            );
+            match (&left.values, &right.values) {
+                (TrackValues::Vec3s(left), TrackValues::Vec3s(right)) => assert_eq!(
+                    left.iter()
+                        .flat_map(|value| value.to_array().map(f32::to_bits))
+                        .collect::<Vec<_>>(),
+                    right
+                        .iter()
+                        .flat_map(|value| value.to_array().map(f32::to_bits))
+                        .collect::<Vec<_>>()
+                ),
+                (TrackValues::Quats(left), TrackValues::Quats(right)) => assert_eq!(
+                    left.iter()
+                        .flat_map(|value| value.to_array().map(f32::to_bits))
+                        .collect::<Vec<_>>(),
+                    right
+                        .iter()
+                        .flat_map(|value| value.to_array().map(f32::to_bits))
+                        .collect::<Vec<_>>()
+                ),
+                _ => panic!("candidate changed track value storage kind"),
+            }
+        }
+    }
+
+    fn assert_approx(left: f32, right: f32) {
+        assert!(
+            (left - right).abs() <= 2.0 * f32::EPSILON,
+            "{left} != {right}"
+        );
+    }
+
+    fn assert_error(
+        result: Result<Clip, FootCycleClipWarpError>,
+        expected: FootCycleClipWarpError,
+    ) {
+        assert_eq!(result.unwrap_err(), expected);
+    }
+
+    fn assert_preflight_and_candidate_error(
+        source: &Clip,
+        plan: &FootCycleMemberPlanV1,
+        expected: FootCycleClipWarpError,
+    ) {
+        assert_eq!(
+            preflight_time_warp_clip_v1(source, plan),
+            Err(expected.clone())
+        );
+        assert_error(time_warp_clip_v1(source, plan), expected);
+    }
+
+    #[test]
+    fn public_preflight_reports_exact_candidate_storage_and_bounded_work() {
+        let linear = vec_track(
+            Interpolation::Linear,
+            vec![0.0, 1.0],
+            vec![Vec3::ZERO, Vec3::ONE],
+        );
+        let mut cubic = vec_track(
+            Interpolation::CubicSpline,
+            vec![0.0, 1.0],
+            vec![Vec3::ZERO; 6],
+        );
+        cubic.bone = 8;
+        let step = Track {
+            bone: 9,
+            property: Property::Rotation,
+            interpolation: Interpolation::Step,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_rotation_y(0.5)]),
+        };
+        let source = clip(1.0, vec![linear, cubic, step]);
+        let plan = non_identity_plan(1.0);
+
+        let preflight = preflight_time_warp_clip_v1(&source, &plan).unwrap();
+        assert_eq!(preflight.tracks(), 3);
+        assert_eq!(preflight.input_keys(), 6);
+        assert_eq!(preflight.input_values(), 10);
+        assert_eq!(preflight.candidate_keys(), 7);
+        assert_eq!(preflight.candidate_values(), 11);
+        assert_eq!(preflight.name_bytes(), source.name.len());
+        assert_eq!(
+            preflight.candidate_bytes(),
+            source.name.len()
+                + 3 * size_of::<Track>()
+                + 7 * size_of::<f32>()
+                + 9 * size_of::<Vec3>()
+                + 2 * size_of::<Quat>()
+        );
+        assert_eq!(preflight.work(), 16);
+
+        let candidate = time_warp_clip_v1(&source, &plan).unwrap();
+        assert_eq!(
+            candidate
+                .tracks
+                .iter()
+                .map(|track| track.times.len())
+                .sum::<usize>(),
+            preflight.candidate_keys()
+        );
+        assert_eq!(
+            candidate
+                .tracks
+                .iter()
+                .map(|track| track.values.len())
+                .sum::<usize>(),
+            preflight.candidate_values()
+        );
+    }
+
+    #[test]
+    fn public_name_storage_bound_refuses_before_identity_or_nonidentity_candidate_allocation() {
+        let plans = [plan(1.0, &[(0.0, 0.0), (1.0, 1.0)]), non_identity_plan(1.0)];
+        for plan in &plans {
+            let mut exact = clip(
+                1.0,
+                vec![vec_track(Interpolation::Step, vec![0.0], vec![Vec3::ZERO])],
+            );
+            exact.name = "n".repeat(FOOT_CYCLE_CLIP_V1_MAX_NAME_BYTES);
+            let preflight = preflight_time_warp_clip_v1(&exact, plan).unwrap();
+            assert_eq!(preflight.name_bytes(), FOOT_CYCLE_CLIP_V1_MAX_NAME_BYTES);
+            assert_eq!(time_warp_clip_v1(&exact, plan).unwrap().name, exact.name);
+
+            let mut first_excess = exact.clone();
+            first_excess.name.push('n');
+            let before = first_excess.clone();
+            let expected = FootCycleClipWarpError::LimitExceeded {
+                resource: FootCycleClipResourceV1::NameBytes,
+                observed: FOOT_CYCLE_CLIP_V1_MAX_NAME_BYTES + 1,
+                maximum: FOOT_CYCLE_CLIP_V1_MAX_NAME_BYTES,
+            };
+            assert_preflight_and_candidate_error(&first_excess, plan, expected);
+            assert_clip_bits_equal(&first_excess, &before);
+        }
+    }
+
+    #[test]
+    fn maximum_step_tracks_and_map_knots_retain_only_the_preflighted_rows() {
+        let source = clip(
+            1.0,
+            (0..FOOT_CYCLE_CLIP_V1_MAX_TRACKS)
+                .map(|bone| Track {
+                    bone,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Step,
+                    times: vec![0.5],
+                    values: TrackValues::Vec3s(vec![Vec3::splat(bone as f32)]),
+                })
+                .collect(),
+        );
+        let plan = plan(
+            1.0,
+            &dense_points(crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS, false),
+        );
+
+        let preflight = preflight_time_warp_clip_v1(&source, &plan).unwrap();
+        assert_eq!(preflight.candidate_keys(), FOOT_CYCLE_CLIP_V1_MAX_TRACKS);
+        assert_eq!(preflight.candidate_values(), FOOT_CYCLE_CLIP_V1_MAX_TRACKS);
+
+        let candidate = time_warp_clip_v1(&source, &plan).unwrap();
+        assert_eq!(candidate.tracks.len(), FOOT_CYCLE_CLIP_V1_MAX_TRACKS);
+        assert!(candidate.tracks.iter().all(|track| {
+            let value_capacity = match &track.values {
+                TrackValues::Vec3s(values) => values.capacity(),
+                TrackValues::Quats(values) => values.capacity(),
+            };
+            track.times.len() == 1
+                && track.times.capacity() == 1
+                && track.values.len() == 1
+                && value_capacity == 1
+        }));
+    }
+
+    #[test]
+    fn nonunit_duration_scales_step_and_linear_inserted_knots() {
+        let duration = 1.1_f64;
+        let narrowed_duration = duration as f32;
+        let source = clip(
+            duration,
+            vec![
+                vec_track(
+                    Interpolation::Step,
+                    vec![0.0, narrowed_duration * 0.5, narrowed_duration],
+                    vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)],
+                ),
+                Track {
+                    bone: 8,
+                    property: Property::Scale,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.0, narrowed_duration * 0.5, narrowed_duration],
+                    values: TrackValues::Vec3s(vec![
+                        Vec3::ZERO,
+                        Vec3::splat(10.0),
+                        Vec3::splat(20.0),
+                    ]),
+                },
+            ],
+        );
+        let candidate = time_warp_clip_v1(&source, &non_identity_plan(duration)).unwrap();
+        let mapped_middle = 2.0 * narrowed_duration / 3.0;
+
+        assert_eq!(candidate.duration_s.to_bits(), duration.to_bits());
+        assert_eq!(candidate.tracks[0].times.len(), 3);
+        assert_eq!(candidate.tracks[1].times.len(), 4);
+        assert_eq!(candidate.tracks[0].times[0], 0.0);
+        assert_approx(candidate.tracks[0].times[1], mapped_middle);
+        assert_eq!(candidate.tracks[0].times[2], narrowed_duration);
+        assert_eq!(candidate.tracks[1].times[0], 0.0);
+        assert_approx(candidate.tracks[1].times[1], narrowed_duration * 0.5);
+        assert_approx(candidate.tracks[1].times[2], mapped_middle);
+        assert_eq!(candidate.tracks[1].times[3], narrowed_duration);
+        assert_eq!(
+            vec_values(&candidate.tracks[1]),
+            &[
+                Vec3::ZERO,
+                Vec3::splat(5.0),
+                Vec3::splat(10.0),
+                Vec3::splat(20.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn non_affine_linear_map_maps_authored_keys_and_samples_interior_knots() {
+        let source = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, 0.5, 1.0],
+                vec![Vec3::ZERO, Vec3::splat(10.0), Vec3::splat(20.0)],
+            )],
+        );
+
+        let candidate = time_warp_clip_v1(&source, &non_identity_plan(1.0)).unwrap();
+
+        assert_eq!(candidate.name, "walk_forward");
+        assert_eq!(candidate.duration_s, 1.0);
+        assert_eq!(candidate.tracks[0].bone, 7);
+        assert_eq!(candidate.tracks[0].property, Property::Translation);
+        assert_eq!(candidate.tracks[0].interpolation, Interpolation::Linear);
+        assert_eq!(candidate.tracks[0].times.len(), 4);
+        assert_eq!(candidate.tracks[0].times[0], 0.0);
+        assert_eq!(candidate.tracks[0].times[1], 0.5);
+        assert_approx(candidate.tracks[0].times[2], 2.0 / 3.0);
+        assert_eq!(candidate.tracks[0].times[3], 1.0);
+        assert_eq!(
+            vec_values(&candidate.tracks[0]),
+            &[
+                Vec3::ZERO,
+                Vec3::splat(5.0),
+                Vec3::splat(10.0),
+                Vec3::splat(20.0)
+            ]
+        );
+        assert_eq!(
+            sample_track(&candidate.tracks[0], 0.5),
+            sample_track(&source.tracks[0], 0.25)
+        );
+    }
+
+    #[test]
+    fn nonidentity_multi_track_candidate_preserves_order_and_metadata() {
+        let zero_quat = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        let source = clip(
+            1.0,
+            vec![
+                vec_track(
+                    Interpolation::Linear,
+                    vec![0.0, 1.0],
+                    vec![Vec3::ZERO, Vec3::ONE],
+                ),
+                Track {
+                    bone: 8,
+                    property: Property::Scale,
+                    interpolation: Interpolation::Step,
+                    times: vec![0.0, 1.0],
+                    values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::splat(2.0)]),
+                },
+                quat_track(
+                    Interpolation::CubicSpline,
+                    vec![0.0, 1.0],
+                    vec![
+                        zero_quat,
+                        Quat::IDENTITY,
+                        zero_quat,
+                        zero_quat,
+                        Quat::IDENTITY,
+                        zero_quat,
+                    ],
+                ),
+            ],
+        );
+
+        let candidate = time_warp_clip_v1(&source, &non_identity_plan(1.0)).unwrap();
+
+        assert_eq!(
+            candidate
+                .tracks
+                .iter()
+                .map(|track| (track.bone, track.property, track.interpolation))
+                .collect::<Vec<_>>(),
+            vec![
+                (7, Property::Translation, Interpolation::Linear),
+                (8, Property::Scale, Interpolation::Step),
+                (9, Property::Rotation, Interpolation::CubicSpline),
+            ]
+        );
+    }
+
+    #[test]
+    fn linear_knot_coincident_with_authored_key_is_deduplicated_deterministically() {
+        let source = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, 0.25, 1.0],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)],
+            )],
+        );
+        let plan = non_identity_plan(1.0);
+
+        let preflight = preflight_time_warp_clip_v1(&source, &plan).unwrap();
+
+        let first = time_warp_clip_v1(&source, &plan).unwrap();
+        let second = time_warp_clip_v1(&source, &plan).unwrap();
+
+        assert_eq!(first.tracks[0].times, vec![0.0, 0.5, 1.0]);
+        assert_eq!(preflight.candidate_keys(), first.tracks[0].times.len());
+        assert_eq!(preflight.candidate_values(), first.tracks[0].values.len());
+        assert_eq!(first.tracks[0].times, second.tracks[0].times);
+        assert_eq!(vec_values(&first.tracks[0]), vec_values(&second.tracks[0]));
+    }
+
+    #[test]
+    fn coincident_source_knot_with_distinct_recomputed_output_refuses() {
+        let duration = 12_794_115.0;
+        let source = clip(
+            duration,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, 5_496_923.0, 12_794_115.0],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)],
+            )],
+        );
+        let plan = plan(
+            duration,
+            &[
+                (0.0, 0.0),
+                (0.429_644_645_213_834_6, 7.523_163_845_262_64e-37),
+                (1.0, 1.0),
+            ],
+        );
+        let expected = FootCycleClipWarpError::TimeCollision { track_index: 0 };
+
+        assert_eq!(
+            preflight_time_warp_clip_v1(&source, &plan),
+            Err(expected.clone())
+        );
+        assert_error(time_warp_clip_v1(&source, &plan), expected);
+    }
+
+    #[test]
+    fn step_maps_only_authored_breakpoints_and_preserves_hold() {
+        let source = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Step,
+                vec![0.0, 0.5, 1.0],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)],
+            )],
+        );
+
+        let candidate = time_warp_clip_v1(&source, &non_identity_plan(1.0)).unwrap();
+
+        assert_eq!(candidate.tracks[0].times.len(), 3);
+        assert_eq!(candidate.tracks[0].times[0], 0.0);
+        assert_approx(candidate.tracks[0].times[1], 2.0 / 3.0);
+        assert_eq!(candidate.tracks[0].times[2], 1.0);
+        assert_eq!(
+            sample_track(&candidate.tracks[0], 0.6),
+            TrackSample::Vec3(Vec3::ZERO)
+        );
+    }
+
+    #[test]
+    fn identity_map_is_structurally_identical_for_admissible_tracks() {
+        let mut cubic = vec_track(
+            Interpolation::CubicSpline,
+            vec![0.0, 1.0],
+            vec![
+                Vec3::ZERO,
+                Vec3::ONE,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::ONE,
+                Vec3::ZERO,
+            ],
+        );
+        cubic.bone = 10;
+        let source = clip(
+            1.0,
+            vec![
+                vec_track(
+                    Interpolation::Linear,
+                    vec![0.0, 1.0],
+                    vec![Vec3::ZERO, Vec3::ONE],
+                ),
+                Track {
+                    bone: 8,
+                    property: Property::Scale,
+                    interpolation: Interpolation::Step,
+                    times: vec![0.2, 0.8],
+                    values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::splat(2.0)]),
+                },
+                cubic,
+            ],
+        );
+        let before = source.clone();
+
+        let candidate =
+            time_warp_clip_v1(&source, &plan(1.0, &[(0.0, 0.0), (0.4, 0.4), (1.0, 1.0)])).unwrap();
+
+        assert_clip_bits_equal(&candidate, &before);
+        assert_clip_bits_equal(&source, &before);
+    }
+
+    #[test]
+    fn non_exact_binary32_duration_is_permitted_and_preserved_as_binary64() {
+        let source = clip(
+            0.1,
+            vec![vec_track(
+                Interpolation::Step,
+                vec![0.0, 0.1_f32],
+                vec![Vec3::ZERO, Vec3::ONE],
+            )],
+        );
+        let candidate =
+            time_warp_clip_v1(&source, &plan(0.1, &[(0.0, 0.0), (0.5, 0.4), (1.0, 1.0)])).unwrap();
+
+        assert_eq!(candidate.duration_s.to_bits(), 0.1_f64.to_bits());
+        assert_eq!(candidate.tracks[0].times.last(), Some(&0.1_f32));
+    }
+
+    #[test]
+    fn constant_vec3_and_quaternion_cubic_tracks_are_retained_exactly() {
+        let zero_quat = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        let vec_value = Vec3::new(1.0, 2.0, 3.0);
+        let quat_value = Quat::from_xyzw(0.0, 0.0, 0.5, 0.5);
+        let source = clip(
+            1.0,
+            vec![
+                vec_track(
+                    Interpolation::CubicSpline,
+                    vec![0.0, 1.0],
+                    vec![
+                        Vec3::ZERO,
+                        vec_value,
+                        Vec3::ZERO,
+                        Vec3::ZERO,
+                        vec_value,
+                        Vec3::ZERO,
+                    ],
+                ),
+                quat_track(
+                    Interpolation::CubicSpline,
+                    vec![0.0, 1.0],
+                    vec![
+                        zero_quat, quat_value, zero_quat, zero_quat, quat_value, zero_quat,
+                    ],
+                ),
+            ],
+        );
+        let before = format!("{:?}", source.tracks);
+
+        let candidate = time_warp_clip_v1(&source, &non_identity_plan(1.0)).unwrap();
+
+        assert_eq!(format!("{:?}", candidate.tracks), before);
+    }
+
+    #[test]
+    fn one_key_cubic_track_is_retained_without_tangent_restrictions() {
+        let track = vec_track(
+            Interpolation::CubicSpline,
+            vec![0.5],
+            vec![Vec3::splat(2.0), Vec3::ONE, Vec3::splat(3.0)],
+        );
+        let source = clip(1.0, vec![track]);
+        let before = format!("{:?}", source.tracks[0]);
+
+        let candidate = time_warp_clip_v1(&source, &non_identity_plan(1.0)).unwrap();
+
+        assert_eq!(format!("{:?}", candidate.tracks[0]), before);
+    }
+
+    #[test]
+    fn varying_or_nonzero_tangent_cubic_tracks_refuse_atomically() {
+        let cases = [
+            (
+                vec![
+                    Vec3::ZERO,
+                    Vec3::ONE,
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                    Vec3::splat(2.0),
+                    Vec3::ZERO,
+                ],
+                FootCycleCubicSplineRefusalV1::DifferingValues,
+            ),
+            (
+                vec![
+                    Vec3::ZERO,
+                    Vec3::ONE,
+                    Vec3::ONE,
+                    Vec3::ZERO,
+                    Vec3::ONE,
+                    Vec3::ZERO,
+                ],
+                FootCycleCubicSplineRefusalV1::NonZeroTangent,
+            ),
+        ];
+        for (values, reason) in cases {
+            let source = clip(
+                1.0,
+                vec![vec_track(
+                    Interpolation::CubicSpline,
+                    vec![0.0, 1.0],
+                    values,
+                )],
+            );
+            let before = format!("{source:?}");
+            assert_error(
+                time_warp_clip_v1(&source, &non_identity_plan(1.0)),
+                FootCycleClipWarpError::UnsupportedCubicSpline {
+                    track_index: 0,
+                    reason,
+                },
+            );
+            assert_eq!(format!("{source:?}"), before);
+            let identity = plan(1.0, &[(0.0, 0.0), (1.0, 1.0)]);
+            assert_error(
+                time_warp_clip_v1(&source, &identity),
+                FootCycleClipWarpError::UnsupportedCubicSpline {
+                    track_index: 0,
+                    reason,
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn quaternion_cubic_value_and_both_tangent_directions_refuse_atomically() {
+        let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        let value = Quat::IDENTITY;
+        let different = Quat::from_rotation_y(0.5);
+        let cases = [
+            (
+                vec![zero, value, zero, zero, different, zero],
+                FootCycleCubicSplineRefusalV1::DifferingValues,
+            ),
+            (
+                vec![Quat::IDENTITY, value, zero, zero, value, zero],
+                FootCycleCubicSplineRefusalV1::NonZeroTangent,
+            ),
+            (
+                vec![zero, value, Quat::IDENTITY, zero, value, zero],
+                FootCycleCubicSplineRefusalV1::NonZeroTangent,
+            ),
+        ];
+        for (values, reason) in cases {
+            let source = clip(
+                1.0,
+                vec![quat_track(
+                    Interpolation::CubicSpline,
+                    vec![0.0, 1.0],
+                    values,
+                )],
+            );
+            let before = format!("{source:?}");
+            assert_error(
+                time_warp_clip_v1(&source, &non_identity_plan(1.0)),
+                FootCycleClipWarpError::UnsupportedCubicSpline {
+                    track_index: 0,
+                    reason,
+                },
+            );
+            assert_eq!(format!("{source:?}"), before);
+        }
+    }
+
+    #[test]
+    fn source_and_output_binary32_collisions_refuse() {
+        let linear = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, 1.0],
+                vec![Vec3::ZERO, Vec3::ONE],
+            )],
+        );
+        let source_collision = plan(
+            1.0,
+            &[(0.0, 0.0), (0.5, 0.4), (0.500_000_001, 0.6), (1.0, 1.0)],
+        );
+        assert_preflight_and_candidate_error(
+            &linear,
+            &source_collision,
+            FootCycleClipWarpError::SourceTimeCollision { track_index: 0 },
+        );
+
+        let step = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Step,
+                vec![0.0, 0.25, 0.5, 1.0],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0), Vec3::splat(3.0)],
+            )],
+        );
+        let output_collision = plan(
+            1.0,
+            &[(0.0, 0.0), (0.25, 0.5), (0.5, 0.500_000_001), (1.0, 1.0)],
+        );
+        assert_preflight_and_candidate_error(
+            &step,
+            &output_collision,
+            FootCycleClipWarpError::TimeCollision { track_index: 0 },
+        );
+    }
+
+    #[test]
+    fn preflight_refuses_linear_mapped_key_collision() {
+        let source = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, 0.25, 0.5, 1.0],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0), Vec3::splat(3.0)],
+            )],
+        );
+        assert_preflight_and_candidate_error(
+            &source,
+            &plan(
+                1.0,
+                &[(0.0, 0.0), (0.25, 0.5), (0.5, 0.500_000_001), (1.0, 1.0)],
+            ),
+            FootCycleClipWarpError::TimeCollision { track_index: 0 },
+        );
+    }
+
+    #[test]
+    fn malformed_duplicate_and_out_of_range_tracks_refuse_without_mutation() {
+        let malformed = [
+            vec_track(Interpolation::Linear, vec![], vec![]),
+            vec_track(Interpolation::Linear, vec![f32::NAN], vec![Vec3::ZERO]),
+            vec_track(
+                Interpolation::Linear,
+                vec![0.5, 0.5],
+                vec![Vec3::ZERO, Vec3::ONE],
+            ),
+            vec_track(Interpolation::Linear, vec![0.0, 1.0], vec![Vec3::ZERO]),
+            vec_track(
+                Interpolation::Linear,
+                vec![0.0],
+                vec![Vec3::splat(f32::INFINITY)],
+            ),
+        ];
+        let expected = [
+            TrackShapeViolation::EmptyTimes,
+            TrackShapeViolation::NonFiniteTime,
+            TrackShapeViolation::TimesNotStrictlyIncreasing,
+            TrackShapeViolation::ValueCountMismatch,
+            TrackShapeViolation::NonFiniteValue,
+        ];
+        for (track, violation) in malformed.into_iter().zip(expected) {
+            let source = clip(1.0, vec![track]);
+            let before = format!("{source:?}");
+            assert_error(
+                time_warp_clip_v1(&source, &non_identity_plan(1.0)),
+                FootCycleClipWarpError::InvalidTrack {
+                    track_index: 0,
+                    source: DocumentShapeError::TrackShape {
+                        clip_index: 0,
+                        node: 7,
+                        violation,
+                    },
+                },
+            );
+            assert_eq!(format!("{source:?}"), before);
+        }
+
+        let track = vec_track(
+            Interpolation::Step,
+            vec![0.0, 1.1],
+            vec![Vec3::ZERO, Vec3::ONE],
+        );
+        let source = clip(1.0, vec![track]);
+        assert!(matches!(
+            time_warp_clip_v1(&source, &non_identity_plan(1.0)),
+            Err(FootCycleClipWarpError::TrackTimeOutOfRange { key_index: 1, .. })
+        ));
+
+        let negative = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Step,
+                vec![-f32::MIN_POSITIVE, 0.5],
+                vec![Vec3::ZERO, Vec3::ONE],
+            )],
+        );
+        assert!(matches!(
+            time_warp_clip_v1(&negative, &non_identity_plan(1.0)),
+            Err(FootCycleClipWarpError::TrackTimeOutOfRange { key_index: 0, .. })
+        ));
+
+        let duplicate = vec_track(Interpolation::Step, vec![0.0], vec![Vec3::ZERO]);
+        let source = clip(1.0, vec![duplicate.clone(), duplicate]);
+        assert_error(
+            time_warp_clip_v1(&source, &non_identity_plan(1.0)),
+            FootCycleClipWarpError::DuplicateTrackTarget {
+                track_index: 1,
+                bone: 7,
+                property: Property::Translation,
+            },
+        );
+    }
+
+    #[test]
+    fn unsupported_operation_duration_and_map_structures_refuse() {
+        let source = clip(
+            1.0,
+            vec![vec_track(Interpolation::Step, vec![0.0], vec![Vec3::ZERO])],
+        );
+        let unsupported = clip_test_member_plan(ContactTransformOperationV1::trim(
+            ContactTransformIntervalV1::new(0.0, 1.0),
+        ));
+        assert_error(
+            time_warp_clip_v1(&source, &unsupported),
+            FootCycleClipWarpError::UnsupportedOperation,
+        );
+        assert!(matches!(
+            time_warp_clip_v1(&source, &plan(2.0, &[(0.0, 0.0), (1.0, 1.0)])),
+            Err(FootCycleClipWarpError::DurationMismatch { .. })
+        ));
+        let bad_version = clip_test_member_plan(ContactTransformOperationV1::TimeWarp {
+            version: 2,
+            output_duration_s: 1.0,
+            control_points: vec![point(0.0, 0.0), point(1.0, 1.0)],
+        });
+        assert_error(
+            time_warp_clip_v1(&source, &bad_version),
+            FootCycleClipWarpError::UnsupportedVersion { version: 2 },
+        );
+        assert_error(
+            time_warp_clip_v1(&source, &plan(1.0, &[(0.1, 0.0), (1.0, 1.0)])),
+            FootCycleClipWarpError::InvalidMapEndpoints,
+        );
+        assert_error(
+            time_warp_clip_v1(&source, &plan(1.0, &[(0.0, 0.0), (0.9, 1.0)])),
+            FootCycleClipWarpError::InvalidMapEndpoints,
+        );
+        assert_error(
+            time_warp_clip_v1(
+                &source,
+                &plan(1.0, &[(0.0, 0.0), (0.5, 0.6), (0.4, 0.7), (1.0, 1.0)]),
+            ),
+            FootCycleClipWarpError::NonMonotoneMap { index: 2 },
+        );
+        assert_error(
+            time_warp_clip_v1(
+                &source,
+                &plan(1.0, &[(0.0, 0.0), (0.4, 0.7), (0.5, 0.6), (1.0, 1.0)]),
+            ),
+            FootCycleClipWarpError::NonMonotoneMap { index: 2 },
+        );
+        assert_error(
+            time_warp_clip_v1(
+                &source,
+                &plan(1.0, &[(0.0, 0.0), (f64::NAN, 0.5), (1.0, 1.0)]),
+            ),
+            FootCycleClipWarpError::InvalidControlPoint { index: 1 },
+        );
+    }
+
+    #[test]
+    fn invalid_durations_control_point_counts_and_value_types_refuse() {
+        let source = clip(
+            1.0,
+            vec![vec_track(Interpolation::Step, vec![0.0], vec![Vec3::ZERO])],
+        );
+        for duration_s in [-1.0, 0.0, f64::NAN, f64::MAX] {
+            let invalid = clip(duration_s, source.tracks.clone());
+            assert!(matches!(
+                time_warp_clip_v1(&invalid, &plan(duration_s, &[(0.0, 0.0), (1.0, 1.0)])),
+                Err(FootCycleClipWarpError::InvalidClipDuration { .. })
+            ));
+        }
+
+        assert_error(
+            time_warp_clip_v1(&source, &plan(1.0, &[(0.0, 0.0)])),
+            FootCycleClipWarpError::InvalidControlPointCount {
+                found: 1,
+                maximum: crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS,
+            },
+        );
+        let max_points = dense_points(crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS, true);
+        assert!(time_warp_clip_v1(&source, &plan(1.0, &max_points)).is_ok());
+        let too_many = dense_points(
+            crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS + 1,
+            true,
+        );
+        assert_error(
+            time_warp_clip_v1(&source, &plan(1.0, &too_many)),
+            FootCycleClipWarpError::InvalidControlPointCount {
+                found: crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS + 1,
+                maximum: crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS,
+            },
+        );
+
+        let wrong_type = clip(
+            1.0,
+            vec![Track {
+                bone: 0,
+                property: Property::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO]),
+            }],
+        );
+        assert!(matches!(
+            time_warp_clip_v1(&wrong_type, &non_identity_plan(1.0)),
+            Err(FootCycleClipWarpError::InvalidTrack {
+                source: DocumentShapeError::TrackShape {
+                    violation: TrackShapeViolation::ValueTypeMismatchesProperty,
+                    ..
+                },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn finite_zero_quaternion_refuses_before_identity_or_inserted_knot_sampling() {
+        let source = clip(
+            1.0,
+            vec![quat_track(
+                Interpolation::Linear,
+                vec![0.0, 1.0],
+                vec![
+                    Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                    Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                ],
+            )],
+        );
+        let before = format!("{source:?}");
+
+        for candidate_plan in [plan(1.0, &[(0.0, 0.0), (1.0, 1.0)]), non_identity_plan(1.0)] {
+            assert_error(
+                time_warp_clip_v1(&source, &candidate_plan),
+                FootCycleClipWarpError::InvalidQuaternionKey {
+                    track_index: 0,
+                    key_index: 0,
+                },
+            );
+        }
+        assert_eq!(format!("{source:?}"), before);
+
+        let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        let cubic = clip(
+            1.0,
+            vec![quat_track(
+                Interpolation::CubicSpline,
+                vec![0.0, 1.0],
+                vec![zero, zero, zero, zero, zero, zero],
+            )],
+        );
+        assert_error(
+            time_warp_clip_v1(&cubic, &plan(1.0, &[(0.0, 0.0), (1.0, 1.0)])),
+            FootCycleClipWarpError::InvalidQuaternionKey {
+                track_index: 0,
+                key_index: 0,
+            },
+        );
+    }
+
+    #[test]
+    fn track_limit_is_enforced_at_exact_n_and_n_plus_one_through_public_api() {
+        let make_clip = |count: usize| {
+            clip(
+                1.0,
+                (0..count)
+                    .map(|bone| Track {
+                        bone,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Step,
+                        times: vec![0.0],
+                        values: TrackValues::Vec3s(vec![Vec3::ZERO]),
+                    })
+                    .collect(),
+            )
+        };
+        let identity = plan(1.0, &[(0.0, 0.0), (1.0, 1.0)]);
+        assert_eq!(
+            time_warp_clip_v1(&make_clip(FOOT_CYCLE_CLIP_V1_MAX_TRACKS), &identity)
+                .unwrap()
+                .tracks
+                .len(),
+            FOOT_CYCLE_CLIP_V1_MAX_TRACKS
+        );
+        assert_error(
+            time_warp_clip_v1(&make_clip(FOOT_CYCLE_CLIP_V1_MAX_TRACKS + 1), &identity),
+            FootCycleClipWarpError::LimitExceeded {
+                resource: FootCycleClipResourceV1::Tracks,
+                observed: FOOT_CYCLE_CLIP_V1_MAX_TRACKS + 1,
+                maximum: FOOT_CYCLE_CLIP_V1_MAX_TRACKS,
+            },
+        );
+    }
+
+    #[test]
+    fn every_aggregate_limit_has_exact_n_n_plus_one_and_overflow_coverage() {
+        let limits = [
+            (
+                FootCycleClipResourceV1::Tracks,
+                FOOT_CYCLE_CLIP_V1_MAX_TRACKS,
+            ),
+            (
+                FootCycleClipResourceV1::InputKeys,
+                FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS,
+            ),
+            (
+                FootCycleClipResourceV1::InputValues,
+                FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES,
+            ),
+            (
+                FootCycleClipResourceV1::GeneratedKeys,
+                FOOT_CYCLE_CLIP_V1_MAX_GENERATED_KEYS,
+            ),
+            (FootCycleClipResourceV1::Work, FOOT_CYCLE_CLIP_V1_MAX_WORK),
+            (
+                FootCycleClipResourceV1::NameBytes,
+                FOOT_CYCLE_CLIP_V1_MAX_NAME_BYTES,
+            ),
+            (
+                FootCycleClipResourceV1::CandidateBytes,
+                FOOT_CYCLE_CLIP_V1_MAX_CANDIDATE_BYTES,
+            ),
+        ];
+        for (resource, maximum) in limits {
+            assert_eq!(check_limit(resource, maximum, maximum), Ok(()));
+            assert_eq!(
+                check_limit(resource, maximum + 1, maximum),
+                Err(FootCycleClipWarpError::LimitExceeded {
+                    resource,
+                    observed: maximum + 1,
+                    maximum,
+                })
+            );
+            assert_eq!(
+                checked_add(resource, usize::MAX, 1),
+                Err(FootCycleClipWarpError::CountOverflow { resource })
+            );
+        }
+    }
+
+    #[test]
+    fn input_value_limit_is_inclusive_through_public_api_before_shape_scan() {
+        let exact = clip(
+            1.0,
+            vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO; FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES]),
+            }],
+        );
+        assert!(matches!(
+            time_warp_clip_v1(&exact, &plan(1.0, &[(0.0, 0.0), (1.0, 1.0)])),
+            Err(FootCycleClipWarpError::InvalidTrack { .. })
+        ));
+
+        let first_excess = clip(
+            1.0,
+            vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::ZERO;
+                    FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES + 1
+                ]),
+            }],
+        );
+
+        assert_error(
+            time_warp_clip_v1(&first_excess, &plan(1.0, &[(0.0, 0.0), (1.0, 1.0)])),
+            FootCycleClipWarpError::LimitExceeded {
+                resource: FootCycleClipResourceV1::InputValues,
+                observed: FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES + 1,
+                maximum: FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES,
+            },
+        );
+    }
+
+    #[test]
+    fn input_and_generated_key_bounds_are_observable_at_n_and_n_plus_one() {
+        let exact = clip(
+            1.0,
+            vec![dense_vec_track(
+                Interpolation::Linear,
+                FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS,
+            )],
+        );
+        let exact_candidate =
+            time_warp_clip_v1(&exact, &plan(1.0, &[(0.0, 0.0), (1.0, 1.0)])).unwrap();
+        assert_eq!(
+            exact_candidate.tracks[0].times.len(),
+            FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS
+        );
+        assert_eq!(
+            time_warp_clip_v1(&exact, &plan(1.0, &[(0.0, 0.0), (0.5, 0.5), (1.0, 1.0)]),)
+                .unwrap()
+                .tracks[0]
+                .times
+                .len(),
+            FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS
+        );
+
+        let generated_n_plus_one = plan(1.0, &[(0.0, 0.0), (0.5, 0.4), (1.0, 1.0)]);
+        assert_error(
+            time_warp_clip_v1(&exact, &generated_n_plus_one),
+            FootCycleClipWarpError::LimitExceeded {
+                resource: FootCycleClipResourceV1::GeneratedKeys,
+                observed: FOOT_CYCLE_CLIP_V1_MAX_GENERATED_KEYS + 1,
+                maximum: FOOT_CYCLE_CLIP_V1_MAX_GENERATED_KEYS,
+            },
+        );
+
+        let input_n_plus_one = clip(
+            1.0,
+            vec![dense_vec_track(
+                Interpolation::Step,
+                FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS + 1,
+            )],
+        );
+        assert_error(
+            time_warp_clip_v1(&input_n_plus_one, &plan(1.0, &[(0.0, 0.0), (1.0, 1.0)])),
+            FootCycleClipWarpError::LimitExceeded {
+                resource: FootCycleClipResourceV1::InputKeys,
+                observed: FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS + 1,
+                maximum: FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS,
+            },
+        );
+    }
+
+    #[test]
+    fn work_bound_is_observable_at_exact_n_and_n_plus_one() {
+        let work_clip = |linear_tracks: usize, step_keys: usize| {
+            let mut tracks: Vec<Track> = (0..linear_tracks)
+                .map(|bone| Track {
+                    bone,
+                    property: Property::Translation,
+                    interpolation: Interpolation::Linear,
+                    times: vec![0.5],
+                    values: TrackValues::Vec3s(vec![Vec3::ZERO]),
+                })
+                .collect();
+            tracks.push(Track {
+                bone: linear_tracks,
+                property: Property::Translation,
+                interpolation: Interpolation::Step,
+                times: (0..step_keys)
+                    .map(|index| index as f32 / (step_keys - 1).max(1) as f32)
+                    .collect(),
+                values: TrackValues::Vec3s(vec![Vec3::ZERO; step_keys]),
+            });
+            clip(1.0, tracks)
+        };
+
+        let exact = work_clip(2_047, 1);
+        let exact_points = dense_points(4_096, false);
+        assert_eq!(
+            time_warp_clip_v1(&exact, &plan(1.0, &exact_points))
+                .unwrap()
+                .tracks
+                .len(),
+            2_048
+        );
+
+        let n_plus_one = work_clip(2_047, 1_025);
+        let n_plus_one_points = dense_points(4_095, false);
+        assert_error(
+            time_warp_clip_v1(&n_plus_one, &plan(1.0, &n_plus_one_points)),
+            FootCycleClipWarpError::LimitExceeded {
+                resource: FootCycleClipResourceV1::Work,
+                observed: FOOT_CYCLE_CLIP_V1_MAX_WORK + 1,
+                maximum: FOOT_CYCLE_CLIP_V1_MAX_WORK,
+            },
+        );
+    }
+
+    #[test]
+    fn quaternion_linear_interior_knot_uses_existing_shortest_path_sampler() {
+        let source = clip(
+            1.0,
+            vec![quat_track(
+                Interpolation::Linear,
+                vec![0.0, 1.0],
+                vec![Quat::IDENTITY, -Quat::from_rotation_y(std::f32::consts::PI)],
+            )],
+        );
+
+        let candidate = time_warp_clip_v1(&source, &non_identity_plan(1.0)).unwrap();
+
+        assert_eq!(candidate.tracks[0].times, vec![0.0, 0.5, 1.0]);
+        let expected = match sample_track(&source.tracks[0], 0.25) {
+            TrackSample::Quat(value) => value,
+            TrackSample::Vec3(_) => unreachable!(),
+        };
+        assert!(quat_values(&candidate.tracks[0])[1].abs_diff_eq(expected, 1.0e-6));
+    }
+}

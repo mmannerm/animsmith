@@ -319,11 +319,26 @@ topology, positional boundary correspondence, and every declared segment-slope b
 It returns one exact `ContactTransformBindingV1` and duration-preserving
 `ContactTransformOperationV1::TimeWarp` per member.
 
+After the host has independently bound the selected loaded clip to that exact
+member plan and bound every track bone index to its selected, validated
+skeleton, `animsmith_core::time_warp_clip_v1` can build a pure cloned clip
+candidate. The map is source-to-output: LINEAR authored keys move forward and
+interior map knots are sampled with AnimSmith's normal runtime semantics; STEP
+tracks move only their authored breakpoints. Unsafe nonconstant CUBICSPLINE
+tracks and binary32 time collisions refuse the whole candidate. A successful
+candidate still carries no emitted-artifact identity or reread proof.
+`animsmith_core::preflight_time_warp_clip_v1` runs the same validation and
+returns exact candidate name/track/key/value/storage-byte counts plus a
+conservative V1 inspection-work charge without allocating the candidate,
+allowing embedders to enforce their own checked aggregate batch budget before
+retaining multiple outputs.
+
 The planner does not open paths. The CLI crate's current parser validates the
 closed bounded TOML grammar, while a later collection producer must resolve
 those paths under the parameterization document, detect canonical aliases,
-reload the exact assets, derive the typed in-place root-motion evidence, mutate
-tracks and fragments with the same map, independently prove serialized
+reload the exact assets, derive the typed in-place root-motion evidence, bind
+each loaded clip to its member plan, transform fragments with the same map,
+serialize and independently prove
 outputs, and publish one generation directory. Embedders must not treat a
 successful plan as an output-artifact or gameplay-acceptance proof. See the
 [collection contract](collection-contracts.md#foot-cycle-parameterization-v1-18-planner-slice)
