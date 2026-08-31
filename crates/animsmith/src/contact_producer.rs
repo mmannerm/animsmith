@@ -432,9 +432,53 @@ fn build_fragment(
             "metric grid has a non-finite sample time",
         ));
     }
-    let roles = resolve_configured_roles(&document.skeleton, &config.config.rig);
+    derive_contact_fragment_from_grid(
+        document,
+        &config.config,
+        selected_index,
+        loaded.input(),
+        closure_identity,
+        selection.reference,
+        &grid,
+    )
+}
+
+/// Derive one strict contact fragment from an already-budgeted metric grid.
+///
+/// The foot-cycle readback proof uses this seam so its independently detected
+/// contacts and all other output metrics share one exact grid and one checked
+/// work charge. It performs no I/O and does not allocate another pose grid.
+pub(crate) fn derive_contact_fragment_from_grid(
+    document: &animsmith_core::Document,
+    config: &animsmith_core::Config,
+    selected_index: usize,
+    artifact: &animsmith_core::InputIdentity,
+    closure_identity: animsmith_core::DependencyClosureIdentityV1,
+    reference: ContactClipReferenceV1,
+    grid: &PoseGrid,
+) -> Result<ContactFragmentV1, producer::Rejection> {
+    validate_document_shape(document).map_err(|_| {
+        incomplete_refusal("source document shape is not valid for strict contact evidence")
+    })?;
+    let clip = document
+        .clips
+        .get(selected_index)
+        .ok_or_else(|| selection_refusal("selected collection clip disappeared"))?;
+    if !clip.duration_s.is_finite() || clip.duration_s <= 0.0 {
+        return Err(incomplete_refusal(
+            "clip duration is not finite and positive",
+        ));
+    }
+    if grid.frame_count() < 3 || grid.times.len() != grid.frame_count() {
+        return Err(incomplete_refusal("metric grid is incomplete"));
+    }
+    if grid.times.iter().any(|time| !time.is_finite()) {
+        return Err(incomplete_refusal(
+            "metric grid has a non-finite sample time",
+        ));
+    }
+    let roles = resolve_configured_roles(&document.skeleton, &config.rig);
     let contact_height_m = config
-        .config
         .check_settings("foot-slide")
         .contact_height_m
         // This is the frozen `foot-slide` default. The producer intentionally
@@ -449,7 +493,7 @@ fn build_fragment(
     let mut retained_runs = 0usize;
     let mut extension_roles = serde_json::Map::new();
     for side in [StanceSideV1::Left, StanceSideV1::Right] {
-        let stance = resolve_stance_support_v1(&grid, &roles, side, contact_height_m)
+        let stance = resolve_stance_support_v1(grid, &roles, side, contact_height_m)
             .ok_or_else(|| incomplete_refusal("bilateral foot/toe role evidence is incomplete"))?;
         let role = contact_role(stance.role())?;
         let role_name = stance.role().as_str();
@@ -469,7 +513,7 @@ fn build_fragment(
         for run in stance.retained_runs() {
             reserve_retained_run(&mut retained_runs)?;
             let minimum_frame =
-                earliest_minimum_frame(&grid, stance.bone(), run.start_frame, run.end_frame);
+                earliest_minimum_frame(grid, stance.bone(), run.start_frame, run.end_frame);
             let start = normalized_frame(run.start_frame, grid.frame_count())?;
             let end = normalized_frame(run.end_frame, grid.frame_count())?;
             let marker = normalized_frame(minimum_frame, grid.frame_count())?;
@@ -512,9 +556,9 @@ fn build_fragment(
     ContactFragmentV1::new(
         ContactProducerV1::new("animsmith", env!("CARGO_PKG_VERSION"))
             .map_err(|_| incomplete_refusal("producer identity is invalid"))?,
-        loaded.input().clone(),
+        artifact.clone(),
         closure_identity,
-        selection.reference,
+        reference,
         clip.duration_s,
         events,
         vec![extension],

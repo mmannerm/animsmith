@@ -584,6 +584,42 @@ fn configurable_caps_control_each_check() {
 }
 
 #[test]
+fn public_loop_tolerance_resolver_matches_check_precedence_and_defaults() {
+    let defaults = Config::default().loop_continuity_tolerances("plain");
+    assert_eq!(defaults.max_position_delta_m(), 0.01);
+    assert_eq!(defaults.max_rotation_delta_deg(), 1.0);
+    assert_eq!(defaults.max_velocity_delta_mps(), 0.1);
+    assert_eq!(defaults.max_angular_velocity_delta_degps(), 5.0);
+
+    let config: Config = serde_json::from_value(serde_json::json!({
+        "checks": {
+            "loop-closure": {
+                "max_position_delta_m": 0.02,
+                "max_rotation_delta_deg": 2.0
+            },
+            "loop-seam-vel": { "max_velocity_delta_mps": 0.2 },
+            "loop-seam-rot": { "max_angular_velocity_delta_degps": 20.0 }
+        },
+        "clips": {
+            "walk_*": {
+                "max_loop_position_delta_m": 0.03,
+                "max_loop_velocity_delta_mps": 0.3
+            },
+            "walk_exact": {
+                "max_loop_rotation_delta_deg": 3.0,
+                "max_loop_angular_velocity_delta_degps": 30.0
+            }
+        }
+    }))
+    .expect("loop tolerance config");
+    let tolerances = config.loop_continuity_tolerances("walk_exact");
+    assert_eq!(tolerances.max_position_delta_m(), 0.03);
+    assert_eq!(tolerances.max_rotation_delta_deg(), 3.0);
+    assert_eq!(tolerances.max_velocity_delta_mps(), 0.3);
+    assert_eq!(tolerances.max_angular_velocity_delta_degps(), 30.0);
+}
+
+#[test]
 fn exact_clip_loop_caps_report_effective_values_and_global_velocity_fallback() {
     let mut doc = translation_doc([0.0, 0.005, 0.01, 0.015, 0.02]);
     doc.clips[0].name = "position_exact".into();
