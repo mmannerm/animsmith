@@ -1702,18 +1702,18 @@ mod tests {
         let mut document = one_bone_document();
         document.assets.scenes = vec![
             SceneAsset {
-                roots: vec![0],
+                roots: vec![0, 17],
                 ..SceneAsset::default()
             },
             SceneAsset {
-                roots: vec![0, 17],
+                roots: vec![23],
                 ..SceneAsset::default()
             },
         ];
         assert_eq!(
             validate_document_shape(&document),
             Err(DocumentShapeError::SceneRootOutOfBounds {
-                scene_index: 1,
+                scene_index: 0,
                 root_index: 1,
                 bone: 17,
             })
