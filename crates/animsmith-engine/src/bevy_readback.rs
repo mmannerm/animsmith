@@ -29,7 +29,7 @@ pub const BEVY_READBACK_V1_RUSTC: &str = "rustc 1.95.0 (59807616e 2026-04-14)";
 pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = 86_390;
 /// Frozen SHA-256 of the committed excluded-tool lock graph.
 pub const BEVY_READBACK_V1_LOCK_SHA256: &str =
-    "e3457e21695874f90110e5b93a36d7688c134a3b9259cb1dc4d2d8e5f741d1ed";
+    "b6c3fc98120eda778143e15f625ca140a5df01dc8dcfd78d11e1a4aed5e9d587";
 const MAX_TEXT_BYTES: usize = 1_024;
 
 /// Exact V2 document identity plus its canonical V4 provenance header.
@@ -968,12 +968,32 @@ mod tests {
     fn frozen_lock_identity() -> InputIdentity {
         InputIdentity::from_sha256_digest(
             [
+                0xb6, 0xc3, 0xfc, 0x98, 0x12, 0x0e, 0xda, 0x77, 0x81, 0x43, 0xe1, 0x5f, 0x62, 0x5c,
+                0xa1, 0x40, 0xa5, 0xdf, 0x01, 0xdc, 0x8d, 0xcf, 0xd7, 0x8d, 0x11, 0xe1, 0xa4, 0xae,
+                0xd5, 0xe9, 0xd5, 0x87,
+            ],
+            BEVY_READBACK_V1_LOCK_BYTES,
+        )
+    }
+
+    #[test]
+    fn strict_reader_rejects_the_previous_mixed_bevy_patch_graph() {
+        let mut readback = valid_readback(false);
+        readback.harness.lock_identity = InputIdentity::from_sha256_digest(
+            [
                 0xe3, 0x45, 0x7e, 0x21, 0x69, 0x58, 0x74, 0xf9, 0x01, 0x10, 0xe5, 0xb9, 0x3a, 0x36,
                 0xd7, 0x68, 0x8c, 0x13, 0x4a, 0x3b, 0x92, 0x59, 0xcb, 0x1d, 0xc4, 0xd2, 0xd8, 0xe5,
                 0xf7, 0x41, 0xd1, 0xed,
             ],
-            BEVY_READBACK_V1_LOCK_BYTES,
-        )
+            86_390,
+        );
+        let bytes = serde_json::to_vec(&readback).unwrap();
+        assert!(matches!(
+            validate_bevy_readback_v1(bytes.as_slice()),
+            Err(BevyReadbackV1Error::Contract(
+                "invalid frozen harness tuple"
+            ))
+        ));
     }
 
     fn valid_readback(warnings_truncated: bool) -> BevyReadbackV1 {

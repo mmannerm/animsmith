@@ -7,6 +7,17 @@ trap 'rm -rf "$work"' EXIT
 snapshot_tmp="$work/snapshots"
 mkdir "$snapshot_tmp"
 export TMPDIR="$snapshot_tmp"
+# Exercise the generic internal-release guard with a temporary lock mutation.
+# The version check must reject this before the lock byte/hash checks run.
+mutated_lock="$work/mutated-Cargo.lock"
+cp tools/bevy-readback/Cargo.lock "$mutated_lock"
+sed -i '/^name = "bevy_app"$/{n;s/version = "0.19.0"/version = "0.19.1"/;}' "$mutated_lock"
+set +e
+guard_output="$(bash scripts/check-bevy-readback-lock.sh "$mutated_lock" 2>&1)"
+guard_status=$?
+set -e
+test "$guard_status" -ne 0
+grep -Fq 'bevy-readback lock bevy_app must be 0.19.0 (got 0.19.1)' <<< "$guard_output"
 cargo build -p animsmith --bin animsmith >/dev/null
 cargo +1.95.0 build --manifest-path tools/bevy-readback/Cargo.toml --features test-support >/dev/null
 cli=target/debug/animsmith

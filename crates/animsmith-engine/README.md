@@ -44,7 +44,11 @@ scene-instantiated `SkinnedMesh` attachment is outside this static contract.
 Its optional `BevyGltfAddressabilityRulesV1` bundle is pinned to Bevy
 `v0.19.0` commit `c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0`,
 locked `gltf 1.4.1`, and commit-pinned loader, label, path, target-id, feature,
-and root `Cargo.lock` sources. The adapter reuses one `engine-addressability` evaluation and
+and root `Cargo.lock` sources. The isolated probe's committed lock is the graph
+authority: every Bevy 0.19 release crate in that lock is `0.19.0`, and the
+probe rejects internal Bevy patch drift; independently-versioned helpers retain
+their own versions. The adapter
+reuses one `engine-addressability` evaluation and
 the existing `Animation{i}` selector. It predicts `Scene{i}`, an optional
 route from `Gltf.default_scene` to an existing scene, eager
 `Skin{i}/InverseBindMatrices` for every source skin, and conditional `Skin{i}`

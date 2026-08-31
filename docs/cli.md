@@ -810,7 +810,11 @@ this static projection.
 The pinned Bevy authority is tag `v0.19.0`, commit
 `c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0` with locked
 `gltf 1.4.1`, plus commit-pinned label, loader, node-path,
-`AnimationTargetId`, feature, and root `Cargo.lock` sources. `Scene{i}` exists
+`AnimationTargetId`, feature, and root `Cargo.lock` sources. The isolated
+readback probe's committed lock is the graph authority: every Bevy 0.19
+release crate in that lock is `0.19.0`, and the probe rejects internal Bevy
+patch drift; independently-versioned helpers retain their own versions.
+`Scene{i}` exists
 for each declared scene; `Gltf.default_scene` routes only to an existing scene handle, with no
 `DefaultScene` label and no fabricated `Scene0`. Bevy eagerly creates
 `Skin{i}/InverseBindMatrices` for every source skin, including unreferenced

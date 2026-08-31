@@ -165,7 +165,11 @@ second lifecycle.
 The separately versioned authority pins Bevy tag `v0.19.0`, commit
 `c6f634ca9f406d68ba5109d921247b654cb42c10`, `bevy_gltf 0.19.0`, locked
 `gltf 1.4.1`, and the label, loader, node-path, `AnimationTargetId`, feature,
-and root `Cargo.lock` sources. It requires explicit target pointer width
+and root `Cargo.lock` sources. The isolated readback probe's committed lock is
+the graph authority: every Bevy 0.19 release crate in that lock is `0.19.0`
+(independently-versioned helpers such as `bevy_mikktspace` retain their own
+version); its lock guard rejects internal Bevy patch drift. It requires
+explicit target pointer width
 (`bits32` or `bits64`) because Bevy hashes path segment lengths using the target
 pointer width; AnimSmith never uses the host width. Missing `bevy_animation` or disabled
 `load_animations` is typed unavailable, not runtime success.
