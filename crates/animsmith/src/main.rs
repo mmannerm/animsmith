@@ -73,6 +73,7 @@ mod collection_manifest;
 mod collection_output;
 mod collection_transition_pose;
 mod contact_producer;
+mod foot_cycle_parameterization;
 #[cfg(feature = "fbx")]
 mod material_recipe;
 mod producer;

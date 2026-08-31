@@ -5,7 +5,9 @@ decision in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file
 Contact-fragment V1 includes its strict standalone and manifest-selected
 producer/CLI/publication boundary. The directional-speed policy/evaluation V1
 is a separate ordered 0.6.0 slice with one JSON-only evaluator command.
-Neither contact transforms nor runtime systems are delivered here.
+The contact-transform result and foot-cycle map planner are format-neutral
+contracts; animation rewriting, collection publication, and runtime systems
+remain separate work.
 
 ## Directional-speed policy V1 (#552, ordered slice)
 
@@ -56,6 +58,98 @@ values, and N+1 members before retaining them. Separate binding validation
 rejects stale manifest identity, wrong runtime-set id or kind, and missing,
 extra, or reordered member sequences. No licensed asset data belongs in this
 declaration or its tests.
+
+## Foot-cycle parameterization V1 (#18, planner slice)
+
+`urn:animsmith:schema:foot-cycle-parameterization:1` is a strict bounded TOML
+declaration for one existing collection-manifest `gait-group`. It repeats the
+exact manifest identity, runtime-set id, exact ordered members, one explicit
+reference member, one safe contact-fragment path per member, finite positive
+minimum/maximum segment slopes whose inclusive interval contains `1.0`, and one
+safe future output-directory path.
+The reference owns canonical contact-boundary phases. Membership, ordering,
+contact paths, and reference ownership are never inferred from filenames or
+clip names.
+
+```toml
+schema = "urn:animsmith:schema:foot-cycle-parameterization:1"
+schema_version = 1
+runtime_set_id = "com.example/sets/walk"
+reference_member = "com.example/walk-forward"
+output_directory = "generated/walk-aligned"
+minimum_segment_slope = 0.5
+maximum_segment_slope = 2.0
+
+[manifest]
+schema = "urn:animsmith:schema:collection-manifest:1"
+schema_version = 1
+collection_id = "com.example"
+
+[manifest.input]
+sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+bytes = 1234
+
+[[members]]
+id = "com.example/walk-forward"
+contact_fragment = "contacts/walk-forward.json"
+
+[[members]]
+id = "com.example/walk-right"
+contact_fragment = "contacts/walk-right.json"
+```
+
+The reader is closed and bounded at 8 MiB and 4,096 members. Planning admits at
+most 16,384 contact events and 32 MiB of canonical contact-fragment bytes
+across the whole declared ring, so independent per-fragment limits cannot
+multiply into unbounded retained topology or canonicalization work. Exact
+supplied byte counts are preflighted before canonicalization; a false count is
+then caught by exact canonical byte-count and digest comparison on the first
+such row.
+Safe locators use the same lexical relative-path contract as collection
+manifests. It rejects unknown fields, unsupported identities/versions, unsafe
+or duplicate paths, duplicate/missing members, an absent reference, invalid
+manifest identities, and invalid slope ranges. Host canonicalization,
+symlink/alias detection, and the guarantee that `output_directory` is a
+previously absent sibling generation destination belong to the later
+transactional collection adapter; this parser performs no filesystem I/O.
+
+The pure core planner additionally requires each supplied sidecar byte identity
+to equal its canonical `contact-fragment:1` identity and its collection clip
+witness to equal the manifest's exact logical/source/take-index/take-name row.
+Each member also supplies independently measured typed Root/Hips evidence bound
+to the fragment's exact artifact, dependency closure, and collection clip
+source/take witness. Cross-wired or stale measurements refuse before their
+values are used. A
+missing, ambiguous, malformed, or non-finite witness refuses, as does horizontal
+endpoint displacement above 0.01 m or absolute accumulated yaw above 1 degree;
+both thresholds are inclusive. The planner consumes and retains those facts but
+does not sample an animation asset itself.
+V1 recognizes exactly AnimSmith's `contact-support-detector:1` extension and
+validates its closed algorithm, sampling, frame-cap, threshold, and selected
+left/right foot-or-toe role provenance. Every member must carry the exact same
+finite non-negative `contact_height_m` binary64 value because that policy
+determines the compared window boundaries. Other extensions refuse because no
+operation-specific transform handler has run.
+
+Each member must contain complete positive left/right support windows, each
+with exactly one same-side marker. Linear and circular overlaps, simultaneous
+boundaries (including the normalized 0/1 seam), missing sides, repeated sides,
+and non-alternating runs refuse. The planner rotates only the *topology
+signature* to each member's first left-support onset for positional
+correspondence; it does not cyclically rotate clip time. Therefore the
+reference boundary phase remains its authored normalized phase and a member
+that would require moving phase zero refuses as non-monotone.
+
+For matching signatures, corresponding source onsets/releases map to the
+reference phases. `(0,0)` and `(1,1)` are added, exact duplicate endpoint
+boundaries are collapsed, and every resulting segment must be finite, strictly
+increasing, continuous, and within the inclusive declared slope range. The
+planner preflights the 4,096-point contact-transform cap and returns one
+duration-preserving `ContactTransformOperationV1::TimeWarp` plus exact
+`ContactTransformBindingV1` per member. It does not mutate LINEAR/STEP tracks,
+handle CUBICSPLINE, transform contact fragments, derive root measurements,
+serialize output artifacts, prove reread results, or publish a generation
+directory; those are later #18 seams.
 
 ## Contact fragments (#147)
 

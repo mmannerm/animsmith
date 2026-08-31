@@ -36,6 +36,10 @@
 //! format-neutral mapping from an already chosen exact named assembly selector
 //! to its source root and fully governed skin through
 //! [`scale::resolve_assembly_scale_named_selector`].
+//! The [`foot_cycle`] module owns the strict manifest/contact bindings and
+//! pure slope-bounded piecewise-linear map planner for a declared gait ring.
+//! It produces contact-transform V1 operation inputs but deliberately performs
+//! no animation mutation, output proof, or filesystem publication.
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
 //! formats into this model; their docs.rs pages continue the library path for
 //! format-specific loading and, for glTF, writing.
@@ -136,6 +140,7 @@ pub mod evaluation;
 pub mod finding;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
+pub mod foot_cycle;
 pub mod measure;
 pub mod metrics;
 pub mod model;
@@ -277,6 +282,20 @@ pub use evaluation::{
     evaluate_checks_v2, lint_requires_failure,
 };
 pub use finding::{Finding, MemberMeasurement, Severity, Value};
+pub use foot_cycle::{
+    CONTACT_SUPPORT_DETECTOR_V1_ID, FOOT_CYCLE_PARAMETERIZATION_V1_ID,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES, FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M,
+    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS, FOOT_CYCLE_PARAMETERIZATION_V1_MAX_SLOPE,
+    FOOT_CYCLE_PARAMETERIZATION_V1_SCHEMA_VERSION, FootCycleManifestBindingV1,
+    FootCycleMemberEvidenceV1, FootCycleMemberPlanV1, FootCycleParameterizationError,
+    FootCycleParameterizationMemberV1, FootCycleParameterizationV1, FootCyclePlanV1,
+    FootCycleRootMotionBindingV1, FootCycleRootMotionEvidenceV1,
+    plan_foot_cycle_parameterization_v1,
+};
 /// Re-export of the exact `glam` version used by animsmith's public math
 /// types, so embedders can construct [`Transform`] values without a
 /// cross-version type mismatch.

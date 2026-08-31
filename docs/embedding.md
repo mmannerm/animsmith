@@ -304,6 +304,31 @@ For the library cutover itself:
 4. Keep project-specific sidecars, hashes, provenance, and storage policy in
    the host pipeline.
 
+## Foot-cycle map planning
+
+`animsmith_core::plan_foot_cycle_parameterization_v1` is the pure planning
+boundary for a manifest-declared in-place gait ring. A host supplies the strict
+typed parameterization, its exact byte identity, the already validated
+collection manifest and exact byte identity, plus canonical contact fragments
+and independently measured typed Root/Hips in-place evidence bound to each
+fragment's exact artifact, dependency closure, and selected collection take in declared
+member/path order. The planner validates manifest clip witnesses,
+the known stance-detector provenance and exact common detector threshold,
+bounded aggregate canonical-fragment work, alternating bilateral support
+topology, positional boundary correspondence, and every declared segment-slope bound.
+It returns one exact `ContactTransformBindingV1` and duration-preserving
+`ContactTransformOperationV1::TimeWarp` per member.
+
+The planner does not open paths. The CLI crate's current parser validates the
+closed bounded TOML grammar, while a later collection producer must resolve
+those paths under the parameterization document, detect canonical aliases,
+reload the exact assets, derive the typed in-place root-motion evidence, mutate
+tracks and fragments with the same map, independently prove serialized
+outputs, and publish one generation directory. Embedders must not treat a
+successful plan as an output-artifact or gameplay-acceptance proof. See the
+[collection contract](collection-contracts.md#foot-cycle-parameterization-v1-18-planner-slice)
+for the declaration and exact topology grammar.
+
 ## Scale plan and proof contracts
 
 The [scale workflow](scale.md) is the operator-facing guide. Normative algebra,
