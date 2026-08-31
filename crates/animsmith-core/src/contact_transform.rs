@@ -4,7 +4,6 @@
 //! contract. It transforms only contact facts; asset mutation, dependency
 //! capture, filesystem publication, and engine policy remain frontend work.
 
-use std::collections::BTreeSet;
 use std::io::{self, Write};
 
 use serde::de::{Error as _, IgnoredAny, SeqAccess, Visitor};
@@ -13,8 +12,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::contact_fragment::StrictJsonValue;
 use crate::{
     CONTACT_FRAGMENT_V1_MAX_SAFE_INTEGER, ContactEventKindV1, ContactEventV1, ContactEventWindowV1,
-    ContactFragmentError, ContactFragmentV1, ContactProducerV1, DependencyClosureIdentityV1,
-    InputIdentity,
+    ContactExtensionV1, ContactFragmentError, ContactFragmentV1, ContactProducerV1,
+    DependencyClosureIdentityV1, DependencyClosureV1, InputIdentity,
 };
 
 /// Immutable contact-transform-result V1 schema identity.
@@ -250,40 +249,45 @@ impl ContactTransformBindingV1 {
     }
 }
 
-/// Same-operation input/output identity and extension-support context.
+/// Independently captured same-operation artifact, closure, producer, and
+/// extension-output context.
 #[derive(Debug, Clone)]
 pub struct ContactTransformContextV1 {
     current_input_artifact: InputIdentity,
-    current_input_dependency_closure_identity: DependencyClosureIdentityV1,
+    current_input_dependency_closure: DependencyClosureV1,
     output_artifact: InputIdentity,
-    output_dependency_closure_identity: DependencyClosureIdentityV1,
+    output_dependency_closure: DependencyClosureV1,
     output_producer: ContactProducerV1,
-    supported_extensions: BTreeSet<(String, u32)>,
+    transformed_extensions: Option<Vec<ContactExtensionV1>>,
 }
 
 impl ContactTransformContextV1 {
     /// Construct the exact context captured by one artifact operation.
+    ///
+    /// `transformed_extensions` is `None` when no operation-specific extension
+    /// handler ran. When present, it contains handler-produced outputs in exact
+    /// input extension order, not an opaque copy performed by core.
     pub fn new(
         current_input_artifact: InputIdentity,
-        current_input_dependency_closure_identity: DependencyClosureIdentityV1,
+        current_input_dependency_closure: DependencyClosureV1,
         output_artifact: InputIdentity,
-        output_dependency_closure_identity: DependencyClosureIdentityV1,
+        output_dependency_closure: DependencyClosureV1,
         output_producer: ContactProducerV1,
-        supported_extensions: BTreeSet<(String, u32)>,
+        transformed_extensions: Option<Vec<ContactExtensionV1>>,
     ) -> Self {
         Self {
             current_input_artifact,
-            current_input_dependency_closure_identity,
+            current_input_dependency_closure,
             output_artifact,
-            output_dependency_closure_identity,
+            output_dependency_closure,
             output_producer,
-            supported_extensions,
+            transformed_extensions,
         }
     }
 }
 
 /// Exact transformed point or window value.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum ContactTransformedValueV1 {
     /// Mapped point.
@@ -296,6 +300,32 @@ pub enum ContactTransformedValueV1 {
         /// Inclusive normalized output window.
         window: ContactEventWindowV1,
     },
+}
+
+impl<'de> Deserialize<'de> for ContactTransformedValueV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged, deny_unknown_fields)]
+        enum Wire {
+            Point { time: f64 },
+            Window { window: ContactEventWindowV1 },
+        }
+
+        match Wire::deserialize(deserializer)? {
+            Wire::Point { time } if time.is_finite() && (0.0..=1.0).contains(&time) => {
+                Ok(Self::Point {
+                    time: if time == 0.0 { 0.0 } else { time },
+                })
+            }
+            Wire::Point { .. } => Err(D::Error::custom(
+                "transformed point time must be finite and normalized",
+            )),
+            Wire::Window { window } => Ok(Self::Window { window }),
+        }
+    }
 }
 
 /// One input event's operation outcome.
@@ -424,10 +454,11 @@ pub enum ContactTransformOutcomeV1 {
 
 impl ContactTransformResultV1 {
     /// Strictly decode and verify one bounded result against its separately
-    /// supplied input fragment.
+    /// supplied input fragment and independently captured transform context.
     pub fn read_json(
         bytes: &[u8],
         input_fragment: &ContactFragmentV1,
+        context: &ContactTransformContextV1,
     ) -> Result<Self, ContactTransformError> {
         if bytes.len() > CONTACT_TRANSFORM_RESULT_V1_MAX_SOURCE_BYTES {
             return Err(ContactTransformError::SourceTooLarge {
@@ -440,7 +471,7 @@ impl ContactTransformResultV1 {
         deserializer.end().map_err(invalid_decode)?;
         let result = wire.into_result()?;
         result.verify_structure(input_fragment)?;
-        result.verify_semantics(input_fragment)?;
+        result.verify_semantics(input_fragment, context)?;
         Ok(result)
     }
 
@@ -577,47 +608,10 @@ impl ContactTransformResultV1 {
     fn verify_semantics(
         &self,
         input_fragment: &ContactFragmentV1,
+        context: &ContactTransformContextV1,
     ) -> Result<(), ContactTransformError> {
-        if self
-            .refusal
-            .as_ref()
-            .is_some_and(|refusal| refusal.code == ContactTransformRefusalCodeV1::InvalidBinding)
-        {
-            return Ok(());
-        }
-        let supported_extensions = if self.refusal.as_ref().is_some_and(|refusal| {
-            refusal.code == ContactTransformRefusalCodeV1::UnsupportedExtension
-        }) {
-            BTreeSet::new()
-        } else {
-            input_fragment
-                .extensions()
-                .iter()
-                .map(|extension| (extension.schema().to_owned(), extension.schema_version()))
-                .collect()
-        };
-        let (output_artifact, output_closure, output_producer) = match &self.output {
-            Some(output) => (
-                output.artifact.clone(),
-                output.dependency_closure_identity.clone(),
-                output.contact_fragment.producer().clone(),
-            ),
-            None => (
-                input_fragment.artifact().clone(),
-                input_fragment.dependency_closure_identity().clone(),
-                input_fragment.producer().clone(),
-            ),
-        };
-        let context = ContactTransformContextV1::new(
-            self.input.artifact.clone(),
-            self.input.dependency_closure_identity.clone(),
-            output_artifact,
-            output_closure,
-            output_producer,
-            supported_extensions,
-        );
         let mut expected =
-            transform_contact_fragment_v1(self.operation.clone(), input_fragment, context)?;
+            transform_contact_fragment_v1(self.operation.clone(), input_fragment, context.clone())?;
         if let (Some(expected), Some(actual)) = (&mut expected.refusal, &self.refusal) {
             expected.message.clone_from(&actual.message);
         }
@@ -631,17 +625,32 @@ impl ContactTransformResultV1 {
 /// Transform a contact fragment with explicit output identities and explicit
 /// operation-specific extension support.
 ///
-/// The context's extension inventory contains exact `(schema, version)` pairs.
-/// Every input extension must appear there or the whole operation refuses.
+/// The context's optional transformed extension list is supplied by
+/// operation-specific handlers. It must retain input order and the exact
+/// `(schema, version)` at every position; absence refuses a fragment that has
+/// extensions. Core never treats opaque payload copying as transformation.
 pub fn transform_contact_fragment_v1(
     operation: ContactTransformOperationV1,
     input_fragment: &ContactFragmentV1,
     context: ContactTransformContextV1,
 ) -> Result<ContactTransformResultV1, ContactTransformError> {
     validate_operation_structure(&operation)?;
+    let ContactTransformContextV1 {
+        current_input_artifact,
+        current_input_dependency_closure,
+        output_artifact,
+        output_dependency_closure,
+        output_producer,
+        transformed_extensions,
+    } = context;
+    let current_input_dependency_closure_identity = complete_closure_identity(
+        &current_input_dependency_closure,
+        &current_input_artifact,
+        "current input",
+    )?;
     let input = ContactTransformBindingV1::new(
-        context.current_input_artifact,
-        context.current_input_dependency_closure_identity,
+        current_input_artifact,
+        current_input_dependency_closure_identity,
         input_fragment.canonical_identity()?,
     );
     if input.artifact != *input_fragment.artifact()
@@ -664,19 +673,42 @@ pub fn transform_contact_fragment_v1(
             Vec::new(),
         );
     }
-    if input_fragment.extensions().iter().any(|extension| {
-        !context
-            .supported_extensions
-            .contains(&(extension.schema().to_owned(), extension.schema_version()))
-    }) {
-        return refusal(
-            operation,
-            input,
-            ContactTransformRefusalCodeV1::UnsupportedExtension,
-            "contact extension has no operation-specific transform support",
-            Vec::new(),
-        );
-    }
+    let transformed_extensions = match transformed_extensions {
+        None if input_fragment.extensions().is_empty() => Vec::new(),
+        None => {
+            return refusal(
+                operation,
+                input,
+                ContactTransformRefusalCodeV1::UnsupportedExtension,
+                "contact extension has no operation-specific transform support",
+                Vec::new(),
+            );
+        }
+        Some(outputs)
+            if outputs.len() == input_fragment.extensions().len()
+                && outputs
+                    .iter()
+                    .zip(input_fragment.extensions())
+                    .all(|(output, input)| {
+                        output.schema() == input.schema()
+                            && output.schema_version() == input.schema_version()
+                    }) =>
+        {
+            outputs
+        }
+        Some(_) if input_fragment.extensions().is_empty() => {
+            return invalid("extension outputs exist for an extension-free fragment");
+        }
+        Some(_) => {
+            return refusal(
+                operation,
+                input,
+                ContactTransformRefusalCodeV1::UnsupportedExtension,
+                "contact extension transform output does not cover the exact input inventory",
+                Vec::new(),
+            );
+        }
+    };
     let output_duration_s =
         mapped_duration(&operation, input_fragment.duration_s()).ok_or_else(|| {
             ContactTransformError::Invalid {
@@ -725,18 +757,20 @@ pub fn transform_contact_fragment_v1(
             outcomes,
         );
     }
+    let output_dependency_closure_identity =
+        complete_closure_identity(&output_dependency_closure, &output_artifact, "output")?;
     let output_fragment = ContactFragmentV1::new(
-        context.output_producer,
-        context.output_artifact.clone(),
-        context.output_dependency_closure_identity.clone(),
+        output_producer,
+        output_artifact.clone(),
+        output_dependency_closure_identity.clone(),
         input_fragment.clip().clone(),
         output_duration_s,
         transformed_events,
-        input_fragment.extensions().to_vec(),
+        transformed_extensions,
     )?;
     let output = ContactTransformOutputV1 {
-        artifact: context.output_artifact,
-        dependency_closure_identity: context.output_dependency_closure_identity,
+        artifact: output_artifact,
+        dependency_closure_identity: output_dependency_closure_identity,
         fragment: output_fragment.canonical_identity()?,
         contact_fragment: output_fragment,
     };
@@ -970,6 +1004,24 @@ fn validate_identity(identity: &InputIdentity) -> Result<(), ContactTransformErr
         return invalid("contact transform identity bytes exceed the RFC 8785 safe integer");
     }
     Ok(())
+}
+
+fn complete_closure_identity(
+    closure: &DependencyClosureV1,
+    artifact: &InputIdentity,
+    field: &'static str,
+) -> Result<DependencyClosureIdentityV1, ContactTransformError> {
+    if closure.primary_input() != artifact {
+        return invalid(format!(
+            "{field} dependency closure primary input does not match its artifact"
+        ));
+    }
+    closure
+        .identity()
+        .cloned()
+        .ok_or_else(|| ContactTransformError::Invalid {
+            message: format!("{field} dependency closure is not complete"),
+        })
 }
 
 fn safe_number(value: f64) -> bool {
@@ -1206,16 +1258,23 @@ mod tests {
     use super::*;
     use crate::{
         ContactClipReferenceV1, ContactExtensionV1, ContactPhaseV1, ContactRoleV1,
-        DependencyClosureBuilderV1, SourceSetCoverageV1,
+        DependencyClosureBuilderV1, SourceResourceKindV1, SourceSetCoverageV1,
     };
 
-    fn closure(primary: &InputIdentity) -> DependencyClosureIdentityV1 {
+    fn closure(primary: &InputIdentity) -> DependencyClosureV1 {
         DependencyClosureBuilderV1::new(primary.clone(), SourceSetCoverageV1::complete(), 0)
             .finish()
             .unwrap()
-            .identity()
-            .unwrap()
-            .clone()
+    }
+
+    fn closure_with_primary_reference(primary: &InputIdentity) -> DependencyClosureV1 {
+        let mut builder =
+            DependencyClosureBuilderV1::new(primary.clone(), SourceSetCoverageV1::complete(), 1);
+        assert!(builder.begin_reference(4, 1));
+        builder
+            .push_primary(0, SourceResourceKindV1::Buffer, 0)
+            .unwrap();
+        builder.finish().unwrap()
     }
 
     fn fragment(with_extension: bool) -> ContactFragmentV1 {
@@ -1252,7 +1311,7 @@ mod tests {
         ContactFragmentV1::new(
             ContactProducerV1::new("fixture", "1").unwrap(),
             artifact.clone(),
-            closure(&artifact),
+            closure(&artifact).identity().unwrap().clone(),
             ContactClipReferenceV1::document("walk").unwrap(),
             2.0,
             events,
@@ -1272,27 +1331,35 @@ mod tests {
         )
     }
 
-    fn transform(
+    fn context(
         source: &ContactFragmentV1,
-        operation: ContactTransformOperationV1,
-        supported: BTreeSet<(String, u32)>,
-    ) -> ContactTransformResultV1 {
+        transformed_extensions: Option<Vec<ContactExtensionV1>>,
+    ) -> ContactTransformContextV1 {
         let output = InputIdentity::from_bytes(b"output artifact");
-        let context = ContactTransformContextV1::new(
+        ContactTransformContextV1::new(
             source.artifact().clone(),
-            source.dependency_closure_identity().clone(),
+            closure(source.artifact()),
             output.clone(),
             closure(&output),
             ContactProducerV1::new("fixture", "2").unwrap(),
-            supported,
-        );
-        transform_contact_fragment_v1(operation, source, context).unwrap()
+            transformed_extensions,
+        )
+    }
+
+    fn transform(
+        source: &ContactFragmentV1,
+        operation: ContactTransformOperationV1,
+        transformed_extensions: Option<Vec<ContactExtensionV1>>,
+    ) -> ContactTransformResultV1 {
+        transform_contact_fragment_v1(operation, source, context(source, transformed_extensions))
+            .unwrap()
     }
 
     #[test]
     fn time_warp_maps_points_and_both_window_boundaries() {
         let source = fragment(false);
-        let result = transform(&source, warp(), BTreeSet::new());
+        let context = context(&source, None);
+        let result = transform_contact_fragment_v1(warp(), &source, context.clone()).unwrap();
         assert_eq!(result.outcome(), ContactTransformOutcomeV1::Transformed);
         assert_eq!(
             result.event_outcomes(),
@@ -1319,7 +1386,7 @@ mod tests {
 
         let bytes = result.canonical_json().unwrap();
         assert_eq!(
-            ContactTransformResultV1::read_json(&bytes, &source).unwrap(),
+            ContactTransformResultV1::read_json(&bytes, &source, &context).unwrap(),
             result
         );
     }
@@ -1327,7 +1394,7 @@ mod tests {
     #[test]
     fn exact_knots_bypass_interpolation() {
         let source = fragment(false);
-        let result = transform(&source, warp(), BTreeSet::new());
+        let result = transform(&source, warp(), None);
         let ContactEventOutcomeV1::Transformed {
             value: ContactTransformedValueV1::Window { window },
             ..
@@ -1339,6 +1406,63 @@ mod tests {
     }
 
     #[test]
+    fn trim_and_slice_map_successful_points_windows_and_duration() {
+        let source = fragment(false);
+        for operation in [
+            ContactTransformOperationV1::trim(ContactTransformIntervalV1::new(0.25, 0.75)),
+            ContactTransformOperationV1::slice(ContactTransformIntervalV1::new(0.25, 0.75)),
+        ] {
+            let result = transform(&source, operation, None);
+            assert_eq!(result.outcome(), ContactTransformOutcomeV1::Transformed);
+            assert_eq!(
+                result.event_outcomes(),
+                &[
+                    ContactEventOutcomeV1::Transformed {
+                        event_id: "left/point".into(),
+                        value: ContactTransformedValueV1::Point { time: 0.0 },
+                    },
+                    ContactEventOutcomeV1::Transformed {
+                        event_id: "right/window".into(),
+                        value: ContactTransformedValueV1::Window {
+                            window: ContactEventWindowV1::new(0.5, 1.0).unwrap(),
+                        },
+                    },
+                ]
+            );
+            let output = result.output().unwrap().contact_fragment();
+            assert_eq!(output.duration_s(), 1.0);
+            assert_eq!(output.events()[0].kind(), ContactEventKindV1::Point(0.0));
+            assert_eq!(
+                output.events()[1].kind(),
+                ContactEventKindV1::Window(ContactEventWindowV1::new(0.5, 1.0).unwrap())
+            );
+        }
+    }
+
+    #[test]
+    fn time_warp_refuses_nonmonotone_interior_with_valid_endpoints() {
+        let source = fragment(false);
+        let invalid = transform(
+            &source,
+            ContactTransformOperationV1::time_warp(
+                2.0,
+                vec![
+                    ContactTimeWarpControlPointV1::new(0.0, 0.0),
+                    ContactTimeWarpControlPointV1::new(0.4, 0.8),
+                    ContactTimeWarpControlPointV1::new(0.6, 0.7),
+                    ContactTimeWarpControlPointV1::new(1.0, 1.0),
+                ],
+            ),
+            None,
+        );
+        assert_eq!(
+            invalid.refusal().unwrap().code(),
+            ContactTransformRefusalCodeV1::InvalidMapping
+        );
+        assert!(invalid.event_outcomes().is_empty());
+    }
+
+    #[test]
     fn invalid_mapping_and_stale_binding_refuse_before_event_inventory() {
         let source = fragment(false);
         let invalid = transform(
@@ -1347,11 +1471,10 @@ mod tests {
                 2.0,
                 vec![
                     ContactTimeWarpControlPointV1::new(0.0, 0.0),
-                    ContactTimeWarpControlPointV1::new(0.5, 0.75),
                     ContactTimeWarpControlPointV1::new(1.0, 0.5),
                 ],
             ),
-            BTreeSet::new(),
+            None,
         );
         assert_eq!(
             invalid.refusal().unwrap().code(),
@@ -1360,13 +1483,14 @@ mod tests {
         assert!(invalid.event_outcomes().is_empty());
 
         let output = InputIdentity::from_bytes(b"output artifact");
+        let changed_source = InputIdentity::from_bytes(b"changed source");
         let stale_context = ContactTransformContextV1::new(
-            InputIdentity::from_bytes(b"changed source"),
-            source.dependency_closure_identity().clone(),
+            changed_source.clone(),
+            closure(&changed_source),
             output.clone(),
             closure(&output),
             ContactProducerV1::new("fixture", "2").unwrap(),
-            BTreeSet::new(),
+            None,
         );
         let stale = transform_contact_fragment_v1(warp(), &source, stale_context).unwrap();
         assert_eq!(
@@ -1374,6 +1498,99 @@ mod tests {
             ContactTransformRefusalCodeV1::InvalidBinding
         );
         assert!(stale.event_outcomes().is_empty());
+
+        let stale_closure_context = ContactTransformContextV1::new(
+            source.artifact().clone(),
+            closure_with_primary_reference(source.artifact()),
+            output.clone(),
+            closure(&output),
+            ContactProducerV1::new("fixture", "2").unwrap(),
+            None,
+        );
+        let stale_closure =
+            transform_contact_fragment_v1(warp(), &source, stale_closure_context).unwrap();
+        assert_eq!(
+            stale_closure.refusal().unwrap().code(),
+            ContactTransformRefusalCodeV1::InvalidBinding
+        );
+        assert!(stale_closure.event_outcomes().is_empty());
+    }
+
+    #[test]
+    fn output_closure_must_be_complete_and_bound_to_the_output_artifact() {
+        let source = fragment(false);
+        let output = InputIdentity::from_bytes(b"output artifact");
+        let unrelated = InputIdentity::from_bytes(b"unrelated artifact");
+        let context = ContactTransformContextV1::new(
+            source.artifact().clone(),
+            closure(source.artifact()),
+            output,
+            closure(&unrelated),
+            ContactProducerV1::new("fixture", "2").unwrap(),
+            None,
+        );
+        assert!(matches!(
+            transform_contact_fragment_v1(warp(), &source, context),
+            Err(ContactTransformError::Invalid { message })
+                if message.contains("output dependency closure primary input")
+        ));
+    }
+
+    #[test]
+    fn readback_checks_all_three_input_bindings_against_external_context() {
+        let source = fragment(false);
+        let context = context(&source, None);
+        let result = transform_contact_fragment_v1(warp(), &source, context.clone()).unwrap();
+
+        for field in ["artifact", "dependency_closure_identity", "fragment"] {
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&result.canonical_json().unwrap()).unwrap();
+            value["input"][field]["sha256"] = "0".repeat(64).into();
+            assert!(
+                ContactTransformResultV1::read_json(
+                    &serde_json::to_vec(&value).unwrap(),
+                    &source,
+                    &context,
+                )
+                .is_err(),
+                "mutated input binding {field} was accepted"
+            );
+        }
+
+        let changed_source = InputIdentity::from_bytes(b"changed source");
+        let stale_context = ContactTransformContextV1::new(
+            changed_source.clone(),
+            closure(&changed_source),
+            InputIdentity::from_bytes(b"unused output"),
+            closure(&InputIdentity::from_bytes(b"unused output")),
+            ContactProducerV1::new("fixture", "2").unwrap(),
+            None,
+        );
+        let refused =
+            transform_contact_fragment_v1(warp(), &source, stale_context.clone()).unwrap();
+        assert_eq!(
+            ContactTransformResultV1::read_json(
+                &refused.canonical_json().unwrap(),
+                &source,
+                &stale_context,
+            )
+            .unwrap(),
+            refused
+        );
+    }
+
+    #[test]
+    fn public_window_deserialization_preserves_constructor_invariants() {
+        assert!(
+            serde_json::from_str::<ContactEventWindowV1>(r#"{"start":0.25,"end":0.75}"#).is_ok()
+        );
+        assert!(
+            serde_json::from_str::<ContactEventWindowV1>(r#"{"start":0.9,"end":0.1}"#).is_err()
+        );
+        assert!(
+            serde_json::from_str::<ContactEventWindowV1>(r#"{"start":-0.1,"end":0.1}"#).is_err()
+        );
+        assert!(serde_json::from_str::<ContactTransformedValueV1>(r#"{"time":-0.1}"#).is_err());
     }
 
     #[test]
@@ -1382,7 +1599,7 @@ mod tests {
         let result = transform(
             &source,
             ContactTransformOperationV1::trim(ContactTransformIntervalV1::new(0.6, 1.0)),
-            BTreeSet::new(),
+            None,
         );
         assert_eq!(result.outcome(), ContactTransformOutcomeV1::Refused);
         assert!(result.output().is_none());
@@ -1402,40 +1619,81 @@ mod tests {
     #[test]
     fn extensions_require_exact_explicit_support() {
         let source = fragment(true);
-        let refused = transform(&source, warp(), BTreeSet::new());
+        let refused = transform(&source, warp(), None);
         assert_eq!(
             refused.refusal().unwrap().code(),
             ContactTransformRefusalCodeV1::UnsupportedExtension
         );
-        let supported =
-            BTreeSet::from([("urn:animsmith:contact-detector:stance-support:1".into(), 1)]);
+
+        let wrong_version = vec![
+            ContactExtensionV1::new(
+                "urn:animsmith:contact-detector:stance-support:1",
+                2,
+                serde_json::json!({"algorithm": "fixture", "mapped": true}),
+            )
+            .unwrap(),
+        ];
         assert_eq!(
-            transform(&source, warp(), supported).outcome(),
-            ContactTransformOutcomeV1::Transformed
+            transform(&source, warp(), Some(wrong_version))
+                .refusal()
+                .unwrap()
+                .code(),
+            ContactTransformRefusalCodeV1::UnsupportedExtension
+        );
+
+        let transformed = vec![
+            ContactExtensionV1::new(
+                "urn:animsmith:contact-detector:stance-support:1",
+                1,
+                serde_json::json!({"algorithm": "fixture", "mapped": true}),
+            )
+            .unwrap(),
+        ];
+        let context = context(&source, Some(transformed.clone()));
+        let result = transform_contact_fragment_v1(warp(), &source, context.clone()).unwrap();
+        assert_eq!(result.outcome(), ContactTransformOutcomeV1::Transformed);
+        assert_eq!(
+            result.output().unwrap().contact_fragment().extensions(),
+            transformed
+        );
+        assert_eq!(
+            ContactTransformResultV1::read_json(
+                &result.canonical_json().unwrap(),
+                &source,
+                &context,
+            )
+            .unwrap(),
+            result
         );
     }
 
     #[test]
     fn reader_rederives_event_values_instead_of_trusting_result_rows() {
         let source = fragment(false);
-        let result = transform(&source, warp(), BTreeSet::new());
+        let context = context(&source, None);
+        let result = transform_contact_fragment_v1(warp(), &source, context.clone()).unwrap();
         let mut value: serde_json::Value =
             serde_json::from_slice(&result.canonical_json().unwrap()).unwrap();
         value["event_outcomes"][0]["value"]["time"] = serde_json::json!(0.2);
         let bytes = serde_json::to_vec(&value).unwrap();
-        assert!(ContactTransformResultV1::read_json(&bytes, &source).is_err());
+        assert!(ContactTransformResultV1::read_json(&bytes, &source, &context).is_err());
     }
 
     #[test]
     fn reader_rejects_unknown_duplicate_and_n_plus_one_control_points() {
         let source = fragment(false);
-        let result = transform(&source, warp(), BTreeSet::new());
+        let context = context(&source, None);
+        let result = transform_contact_fragment_v1(warp(), &source, context.clone()).unwrap();
         let mut value: serde_json::Value =
             serde_json::from_slice(&result.canonical_json().unwrap()).unwrap();
         value["unknown"] = serde_json::json!(true);
         assert!(
-            ContactTransformResultV1::read_json(&serde_json::to_vec(&value).unwrap(), &source)
-                .is_err()
+            ContactTransformResultV1::read_json(
+                &serde_json::to_vec(&value).unwrap(),
+                &source,
+                &context,
+            )
+            .is_err()
         );
 
         let duplicate = result
@@ -1449,7 +1707,9 @@ mod tests {
             "{\"schema\":\"urn:animsmith:schema:contact-transform-result:1\",\"event_outcomes\"",
             1,
         );
-        assert!(ContactTransformResultV1::read_json(duplicate.as_bytes(), &source).is_err());
+        assert!(
+            ContactTransformResultV1::read_json(duplicate.as_bytes(), &source, &context).is_err()
+        );
 
         let mut value: serde_json::Value =
             serde_json::from_slice(&result.canonical_json().unwrap()).unwrap();
@@ -1463,20 +1723,56 @@ mod tests {
                 .collect(),
         );
         assert!(
-            ContactTransformResultV1::read_json(&serde_json::to_vec(&value).unwrap(), &source)
-                .is_err()
+            ContactTransformResultV1::read_json(
+                &serde_json::to_vec(&value).unwrap(),
+                &source,
+                &context,
+            )
+            .is_err()
+        );
+
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&result.canonical_json().unwrap()).unwrap();
+        value["event_outcomes"] = serde_json::Value::Array(
+            (0..=CONTACT_TRANSFORM_RESULT_V1_MAX_EVENT_OUTCOMES)
+                .map(|_| serde_json::json!({"event_id": "left/point", "outcome": "outside"}))
+                .collect(),
+        );
+        assert!(
+            ContactTransformResultV1::read_json(
+                &serde_json::to_vec(&value).unwrap(),
+                &source,
+                &context,
+            )
+            .is_err()
         );
     }
 
     #[test]
     fn source_and_canonical_byte_caps_fail_closed() {
         let source = fragment(false);
+        let context = context(&source, None);
         assert!(matches!(
             ContactTransformResultV1::read_json(
                 &vec![b' '; CONTACT_TRANSFORM_RESULT_V1_MAX_SOURCE_BYTES + 1],
                 &source,
+                &context,
             ),
             Err(ContactTransformError::SourceTooLarge { .. })
         ));
+
+        let mut writer = CappedWriter {
+            bytes: Vec::new(),
+            overflowed: false,
+        };
+        writer
+            .write_all(&vec![b'x'; CONTACT_TRANSFORM_RESULT_V1_MAX_CANONICAL_BYTES])
+            .unwrap();
+        assert_eq!(
+            writer.bytes.len(),
+            CONTACT_TRANSFORM_RESULT_V1_MAX_CANONICAL_BYTES
+        );
+        assert!(writer.write_all(b"x").is_err());
+        assert!(writer.overflowed);
     }
 }

@@ -226,9 +226,14 @@ duplicate, missing, or unknown event-outcome identities are strict reader
 errors, not refusal results.
 
 `animsmith-core` implements this mapping and strict result reader. The reader
-requires the separately supplied input fragment and independently rederives the
-operation, event outcomes, and successful inline fragment. Its published JSON
-Schema is
+requires the separately supplied input fragment plus an external transform
+context containing the current input/output artifacts, their complete captured
+closures, the expected producer, and any handler-produced extension outputs.
+It validates each closure against its artifact and independently rederives the
+operation, event outcomes, and successful inline fragment. Opaque extensions
+are never copied merely because a caller lists their schema/version: an exact
+handler-produced output is required at every input extension position. Its
+published JSON Schema is
 [`contact-transform-result-v1.schema.json`](schemas/contact-transform-result-v1.schema.json).
 Asset time mutation and generation-directory publication are separate
 collection-producer responsibilities.

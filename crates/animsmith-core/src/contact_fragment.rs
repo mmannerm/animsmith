@@ -232,11 +232,28 @@ impl ContactClipReferenceV1 {
 }
 
 /// Inclusive normalized time window.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContactEventWindowV1 {
     start: f64,
     end: f64,
+}
+
+impl<'de> Deserialize<'de> for ContactEventWindowV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            start: f64,
+            end: f64,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Self::new(wire.start, wire.end).map_err(D::Error::custom)
+    }
 }
 
 impl ContactEventWindowV1 {

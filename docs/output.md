@@ -572,11 +572,16 @@ The format-neutral core also implements the separately versioned
 [`contact-transform-result-v1.schema.json`](schemas/contact-transform-result-v1.schema.json)
 (`urn:animsmith:schema:contact-transform-result:1`) reader, canonical serializer,
 and exact trim/slice/resample/time-warp contact mapping. A result reader is
-given the separately supplied input fragment and independently rederives every
-event outcome and successful inline fragment instead of trusting copied result
-rows. Extension transformation is opt-in by exact schema/version; unsupported
-extensions refuse the whole operation. This library contract does not mutate
-an animation asset or publish a collection generation directory.
+given the separately supplied input fragment and an external context containing
+the current input/output artifacts, their complete captured closures, the
+expected producer, and any handler-produced extension outputs. It validates the
+closure-to-artifact bindings and independently rederives every event outcome
+and successful inline fragment instead of trusting copied result rows.
+Extension transformation requires exact schema/version-preserving output from
+an operation-specific handler; opaque payloads are never automatically copied,
+and unsupported extensions refuse the whole operation. This library contract
+does not mutate an animation asset or publish a collection generation
+directory.
 
 ## Common envelope
 
