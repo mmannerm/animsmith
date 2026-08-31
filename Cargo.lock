@@ -52,11 +52,13 @@ dependencies = [
  "image",
  "jsonschema",
  "pulldown-cmark",
+ "rustix",
  "serde",
  "serde_jcs",
  "serde_json",
  "tempfile",
  "toml",
+ "windows-sys",
 ]
 
 [[package]]

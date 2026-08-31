@@ -46,6 +46,27 @@
 //! directory flush is best effort because a platform may legitimately refuse
 //! to open a directory for `fsync`, and failing publication for that would be
 //! worse than publishing without the extra guarantee.
+//!
+//! # Generation directories
+//!
+//! [`publish_generation`] is the corresponding primitive for a complete,
+//! caller-supplied fixed file set. It validates all aliases and byte limits
+//! before creating its sibling temporary directory, writes and `sync_all`s
+//! every file there, then publishes exactly that directory with an operating
+//! system no-replacement rename. Readers therefore observe either no
+//! generation or every staged member; this is not a promise about concurrent
+//! readers of a pre-existing destination, power loss, or network filesystem
+//! cache/coherency semantics. File data is flushed before the rename and the
+//! nested staging directories, staging root, and destination parent are
+//! flushed best effort, but filesystem, device, and platform durability
+//! guarantees still determine what survives abrupt power loss. The temporary
+//! directory guard removes a failed stage while this process can return an
+//! error; a process crash or forced termination can leave its sibling
+//! temporary directory behind for later cleanup. The destination parent is an
+//! ordinary caller-controlled path, not a hostile same-user security boundary:
+//! callers must not swap it or its ancestors while publication is in progress.
+//! This small cross-platform primitive deliberately makes no claim to pin a
+//! directory handle against such pathname races.
 
 use animsmith_core::sha256_hex;
 use serde::Serialize;
@@ -682,6 +703,410 @@ pub(crate) fn read_digest(path: &Path) -> Result<(String, u64), String> {
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let size = u64::try_from(bytes.len()).map_err(|_| "input size exceeds u64".to_owned())?;
     Ok((sha256_hex(&bytes), size))
+}
+
+/// One immutable file to include in a newly published generation directory.
+///
+/// `alias` is a portable, lowercase-ASCII, slash-separated relative path
+/// beneath the generation root. The publisher refuses ambiguous case,
+/// Unicode, platform-reserved, traversal, and directory/file-prefix aliases.
+#[allow(dead_code)] // The foot-cycle producer consumes this primitive in a later issue.
+pub(crate) struct GenerationFile<'a> {
+    pub(crate) alias: &'a Path,
+    pub(crate) bytes: &'a [u8],
+}
+
+/// Caller-chosen bounds for [`publish_generation`].
+///
+/// These are deliberately supplied by the owning operation: this primitive
+/// has no domain-specific default file or output budget.
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // The foot-cycle producer supplies its operation-specific limits later.
+pub(crate) struct GenerationPublicationLimits {
+    pub(crate) max_files: u64,
+    pub(crate) max_file_bytes: u64,
+    pub(crate) max_total_bytes: u64,
+    pub(crate) max_alias_components: u64,
+    pub(crate) max_alias_component_bytes: u64,
+    pub(crate) max_total_alias_bytes: u64,
+}
+
+/// Publish one complete, new directory generation without replacing a prior
+/// destination.
+///
+/// The destination's parent must already be a directory. The caller supplies
+/// all bytes up front; before a temporary directory or output file is created,
+/// this validates the file count, individual and aggregate byte limits, each
+/// relative alias, exact aliases, and aliases where one would be another's
+/// parent. An existing destination is refused unchanged. The final platform
+/// rename is itself no-replacement, so a destination created after this
+/// preflight wins the race and causes this call to fail without replacement.
+///
+/// Linux and Apple builds attempt `renameat_with(NOREPLACE)`; Windows builds
+/// attempt `MoveFileExW` without `REPLACE_EXISTING`. A runtime-unavailable or
+/// rejected syscall returns an error and removes the staged directory without
+/// publication. Other targets refuse before staging rather than silently
+/// weakening the publication contract.
+///
+/// # Errors
+///
+/// Returns an operator error when preflight, staging, flushing, or publication
+/// fails. A failed stage is removed by its temporary-directory guard. A failed
+/// no-replacement promotion leaves its destination untouched and also removes
+/// the staged directory.
+#[allow(dead_code)] // Kept independently usable until its first collection producer lands.
+pub(crate) fn publish_generation(
+    destination: &Path,
+    files: &[GenerationFile<'_>],
+    limits: GenerationPublicationLimits,
+) -> Result<(), String> {
+    publish_generation_with_hooks(destination, files, limits, || {}, || {}, |_| {}, |_| {})
+}
+
+fn publish_generation_with_hooks(
+    destination: &Path,
+    files: &[GenerationFile<'_>],
+    limits: GenerationPublicationLimits,
+    after_preflight: impl FnOnce(),
+    before_rename: impl FnOnce(),
+    after_rename: impl FnOnce(&Path),
+    before_stage_file: impl FnMut(&Path),
+) -> Result<(), String> {
+    ensure_generation_publication_supported()?;
+    preflight_generation(destination, files, limits)?;
+    // Tests place their observation immediately before this creation point.
+    // A preflight error therefore cannot have created a sibling temp directory.
+    after_preflight();
+
+    let parent = parent_or_current(destination);
+    let staged = tempfile::Builder::new()
+        .prefix(".animsmith-generation-")
+        .tempdir_in(parent)
+        .map_err(|error| {
+            format!(
+                "cannot create generation staging directory beside {}: {error}",
+                destination.display()
+            )
+        })?;
+
+    stage_generation_files(staged.path(), files, before_stage_file)?;
+    before_rename();
+    rename_generation_no_replace(staged.path(), destination)?;
+    // `TempDir` still remembers the old staging pathname after the rename. It
+    // must relinquish that cleanup ownership before any further work: another
+    // actor can recreate that old name immediately, and dropping `staged`
+    // must not delete the new unrelated directory.
+    let relinquished_stage_name = staged.keep();
+    after_rename(&relinquished_stage_name);
+    flush_directory(parent);
+    Ok(())
+}
+
+fn preflight_generation(
+    destination: &Path,
+    files: &[GenerationFile<'_>],
+    limits: GenerationPublicationLimits,
+) -> Result<(), String> {
+    let parent = parent_or_current(destination);
+    if !parent.is_dir() {
+        return Err(format!(
+            "generation output directory for {} does not exist",
+            destination.display()
+        ));
+    }
+    match fs::symlink_metadata(destination) {
+        Ok(_) => {
+            return Err(format!(
+                "generation destination {} already exists and will not be replaced",
+                destination.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect generation destination {}: {error}",
+                destination.display()
+            ));
+        }
+    }
+
+    let count = u64::try_from(files.len()).map_err(|_| "generation file count exceeds u64")?;
+    if count > limits.max_files {
+        return Err(format!(
+            "generation has {count} files, exceeding its limit of {}",
+            limits.max_files
+        ));
+    }
+
+    let mut aliases = std::collections::BTreeSet::new();
+    let mut total_bytes = 0_u64;
+    let mut total_alias_bytes = 0_u64;
+    for file in files {
+        let alias_bytes = validate_generation_alias(file.alias, limits)?;
+        let alias = file.alias.to_path_buf();
+        if !aliases.insert(alias.clone()) {
+            return Err(format!(
+                "generation contains duplicate file alias {}",
+                alias.display()
+            ));
+        }
+
+        let byte_count = u64::try_from(file.bytes.len())
+            .map_err(|_| format!("generation file {} exceeds u64", file.alias.display()))?;
+        if byte_count > limits.max_file_bytes {
+            return Err(format!(
+                "generation file {} has {byte_count} bytes, exceeding its limit of {}",
+                file.alias.display(),
+                limits.max_file_bytes
+            ));
+        }
+        total_bytes = total_bytes.checked_add(byte_count).ok_or_else(|| {
+            format!(
+                "generation bytes overflow while adding {}",
+                file.alias.display()
+            )
+        })?;
+        if total_bytes > limits.max_total_bytes {
+            return Err(format!(
+                "generation has {total_bytes} bytes, exceeding its limit of {}",
+                limits.max_total_bytes
+            ));
+        }
+        total_alias_bytes = total_alias_bytes.checked_add(alias_bytes).ok_or_else(|| {
+            format!(
+                "generation alias bytes overflow while adding {}",
+                file.alias.display()
+            )
+        })?;
+        if total_alias_bytes > limits.max_total_alias_bytes {
+            return Err(format!(
+                "generation has {total_alias_bytes} alias bytes, exceeding its limit of {}",
+                limits.max_total_alias_bytes
+            ));
+        }
+    }
+
+    for alias in &aliases {
+        let mut ancestor = alias.parent();
+        while let Some(parent) = ancestor {
+            if parent.as_os_str().is_empty() {
+                break;
+            }
+            if aliases.contains(parent) {
+                return Err(format!(
+                    "generation aliases {} and {} collide because one is a parent of the other",
+                    parent.display(),
+                    alias.display()
+                ));
+            }
+            ancestor = parent.parent();
+        }
+    }
+    Ok(())
+}
+
+fn validate_generation_alias(
+    alias: &Path,
+    limits: GenerationPublicationLimits,
+) -> Result<u64, String> {
+    let Some(alias) = alias.to_str() else {
+        return Err("generation file alias must be valid UTF-8".to_owned());
+    };
+    if alias.is_empty()
+        || alias.starts_with('/')
+        || alias.ends_with('/')
+        || alias.split('/').any(str::is_empty)
+    {
+        return Err(format!(
+            "generation file alias {alias:?} must use nonempty portable relative components"
+        ));
+    }
+
+    let alias_bytes = u64::try_from(alias.len()).map_err(|_| "generation alias exceeds u64")?;
+    let mut component_count = 0_u64;
+    for component in alias.split('/') {
+        component_count = component_count
+            .checked_add(1)
+            .ok_or_else(|| "generation alias component count overflow".to_owned())?;
+        if component_count > limits.max_alias_components {
+            return Err(format!(
+                "generation alias {alias:?} has more than {} components",
+                limits.max_alias_components
+            ));
+        }
+        let component_bytes =
+            u64::try_from(component.len()).map_err(|_| "generation alias component exceeds u64")?;
+        if component_bytes > limits.max_alias_component_bytes {
+            return Err(format!(
+                "generation alias component {component:?} has {component_bytes} bytes, exceeding its limit of {}",
+                limits.max_alias_component_bytes
+            ));
+        }
+        if !is_portable_generation_component(component) {
+            return Err(format!(
+                "generation alias component {component:?} is not portable"
+            ));
+        }
+    }
+    Ok(alias_bytes)
+}
+
+fn is_portable_generation_component(component: &str) -> bool {
+    let mut bytes = component.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+        return false;
+    }
+    if component.ends_with('.')
+        || !bytes.all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
+    {
+        return false;
+    }
+    let basename = component
+        .split_once('.')
+        .map_or(component, |(name, _)| name);
+    !matches!(
+        basename,
+        "con"
+            | "prn"
+            | "aux"
+            | "nul"
+            | "clock$"
+            | "com1"
+            | "com2"
+            | "com3"
+            | "com4"
+            | "com5"
+            | "com6"
+            | "com7"
+            | "com8"
+            | "com9"
+            | "lpt1"
+            | "lpt2"
+            | "lpt3"
+            | "lpt4"
+            | "lpt5"
+            | "lpt6"
+            | "lpt7"
+            | "lpt8"
+            | "lpt9"
+    )
+}
+
+fn stage_generation_files(
+    staged_root: &Path,
+    files: &[GenerationFile<'_>],
+    mut before_stage_file: impl FnMut(&Path),
+) -> Result<(), String> {
+    let mut directories = std::collections::BTreeSet::new();
+    directories.insert(staged_root.to_path_buf());
+    for file in files {
+        let staged_file = staged_root.join(file.alias);
+        before_stage_file(&staged_file);
+        let file_parent = parent_or_current(&staged_file);
+        fs::create_dir_all(file_parent).map_err(|error| {
+            format!(
+                "cannot create generation directory for {}: {error}",
+                file.alias.display()
+            )
+        })?;
+        for ancestor in file_parent.ancestors() {
+            if ancestor.starts_with(staged_root) {
+                directories.insert(ancestor.to_path_buf());
+            }
+        }
+        let mut output = fs::File::create(&staged_file).map_err(|error| {
+            format!(
+                "cannot create staged generation file {}: {error}",
+                file.alias.display()
+            )
+        })?;
+        output.write_all(file.bytes).map_err(|error| {
+            format!(
+                "cannot write staged generation file {}: {error}",
+                file.alias.display()
+            )
+        })?;
+        output.sync_all().map_err(|error| {
+            format!(
+                "cannot flush staged generation file {}: {error}",
+                file.alias.display()
+            )
+        })?;
+    }
+    for directory in directories {
+        flush_directory(&directory);
+    }
+    Ok(())
+}
+
+fn ensure_generation_publication_supported() -> Result<(), String> {
+    #[cfg(any(target_vendor = "apple", target_os = "linux", windows))]
+    {
+        Ok(())
+    }
+    #[cfg(not(any(target_vendor = "apple", target_os = "linux", windows)))]
+    {
+        Err("generation publication requires an atomic no-replacement directory rename on this platform".to_owned())
+    }
+}
+
+#[cfg(any(target_vendor = "apple", target_os = "linux"))]
+fn rename_generation_no_replace(source: &Path, destination: &Path) -> Result<(), String> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+
+    renameat_with(CWD, source, CWD, destination, RenameFlags::NOREPLACE).map_err(|error| {
+        format!(
+            "cannot publish generation {} without replacing an existing destination: {error}",
+            destination.display()
+        )
+    })
+}
+
+#[cfg(windows)]
+fn rename_generation_no_replace(source: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+
+    let source_wide = source
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let destination_wide = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    // Source and destination are siblings, so this cannot become a copy. Do
+    // not pass MOVEFILE_REPLACE_EXISTING: a racing destination must win.
+    if unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        return Err(format!(
+            "cannot publish generation {} without replacing an existing destination: {}",
+            destination.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "linux", windows)))]
+fn rename_generation_no_replace(_source: &Path, destination: &Path) -> Result<(), String> {
+    Err(format!(
+        "cannot publish generation {}: this platform has no atomic no-replacement directory rename",
+        destination.display()
+    ))
 }
 
 fn backup_destination(path: &Path) -> Result<Option<tempfile::TempPath>, String> {
@@ -1548,5 +1973,380 @@ mod tests {
         assert!(error.contains("cannot flush"), "{error}");
         assert_eq!(fs::read(&artifact).unwrap(), b"old artifact");
         assert_eq!(fs::read(&evidence).unwrap(), b"old evidence");
+    }
+
+    fn generation_limits() -> GenerationPublicationLimits {
+        GenerationPublicationLimits {
+            max_files: 8,
+            max_file_bytes: 16,
+            max_total_bytes: 32,
+            max_alias_components: 4,
+            max_alias_component_bytes: 32,
+            max_total_alias_bytes: 64,
+        }
+    }
+
+    fn generation_file<'a>(alias: &'a Path, bytes: &'a [u8]) -> GenerationFile<'a> {
+        GenerationFile { alias, bytes }
+    }
+
+    #[test]
+    fn generation_preflight_accepts_the_exact_file_and_byte_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("generation");
+        let paths = [Path::new("aaaa"), Path::new("bbbb")];
+        let bytes = [b"1234".as_slice(), b"5678".as_slice()];
+        let files = paths
+            .iter()
+            .zip(bytes)
+            .map(|(alias, bytes)| generation_file(alias, bytes))
+            .collect::<Vec<_>>();
+        let limits = GenerationPublicationLimits {
+            max_files: 2,
+            max_file_bytes: 4,
+            max_total_bytes: 8,
+            max_alias_components: 1,
+            max_alias_component_bytes: 4,
+            max_total_alias_bytes: 8,
+        };
+
+        publish_generation(&destination, &files, limits).unwrap();
+        assert_eq!(fs::read(destination.join("aaaa")).unwrap(), b"1234");
+        assert_eq!(fs::read(destination.join("bbbb")).unwrap(), b"5678");
+    }
+
+    #[test]
+    fn generation_preflight_refuses_n_plus_one_files_before_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("generation");
+        let files = [
+            generation_file(Path::new("a"), b"1"),
+            generation_file(Path::new("b"), b"2"),
+            generation_file(Path::new("c"), b"3"),
+        ];
+        let limits = GenerationPublicationLimits {
+            max_files: 2,
+            ..generation_limits()
+        };
+
+        let staged = std::cell::Cell::new(false);
+        let error = publish_generation_with_hooks(
+            &destination,
+            &files,
+            limits,
+            || staged.set(true),
+            || {},
+            |_| {},
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("3 files, exceeding its limit of 2"),
+            "{error}"
+        );
+        assert!(
+            !staged.get(),
+            "a preflight refusal must occur before the stage-creation hook"
+        );
+        assert!(!destination.exists());
+        assert_generation_staging_is_gone(dir.path());
+    }
+
+    #[test]
+    fn generation_preflight_refuses_n_plus_one_individual_or_aggregate_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let individual_destination = dir.path().join("individual");
+        let individual = [generation_file(Path::new("a"), b"12345")];
+        let individual_limits = GenerationPublicationLimits {
+            max_file_bytes: 4,
+            ..generation_limits()
+        };
+        let error = publish_generation(&individual_destination, &individual, individual_limits)
+            .unwrap_err();
+        assert!(
+            error.contains("5 bytes, exceeding its limit of 4"),
+            "{error}"
+        );
+
+        let aggregate_destination = dir.path().join("aggregate");
+        let aggregate = [
+            generation_file(Path::new("a"), b"1234"),
+            generation_file(Path::new("b"), b"5678"),
+        ];
+        let aggregate_limits = GenerationPublicationLimits {
+            max_total_bytes: 7,
+            ..generation_limits()
+        };
+        let error =
+            publish_generation(&aggregate_destination, &aggregate, aggregate_limits).unwrap_err();
+        assert!(
+            error.contains("8 bytes, exceeding its limit of 7"),
+            "{error}"
+        );
+        assert!(!individual_destination.exists());
+        assert!(!aggregate_destination.exists());
+        assert_generation_staging_is_gone(dir.path());
+    }
+
+    #[test]
+    fn generation_preflight_refuses_unsafe_duplicate_and_parent_aliases() {
+        let dir = tempfile::tempdir().unwrap();
+        let cases = [
+            (
+                "traversal",
+                vec![generation_file(Path::new("nested/../escape"), b"x")],
+                "portable",
+            ),
+            (
+                "absolute",
+                vec![generation_file(Path::new("/escape"), b"x")],
+                "portable",
+            ),
+            (
+                "nul-alias",
+                vec![generation_file(Path::new("\0invalid"), b"x")],
+                "portable",
+            ),
+            (
+                "duplicate",
+                vec![
+                    generation_file(Path::new("same"), b"x"),
+                    generation_file(Path::new("same"), b"y"),
+                ],
+                "duplicate file alias",
+            ),
+            (
+                "parent",
+                vec![
+                    generation_file(Path::new("member"), b"x"),
+                    generation_file(Path::new("member/evidence.json"), b"y"),
+                ],
+                "collide because one is a parent",
+            ),
+        ];
+
+        for (name, files, expected) in cases {
+            let destination = dir.path().join(name);
+            let error = publish_generation(&destination, &files, generation_limits()).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+            assert!(!destination.exists(), "{name} must not be published");
+        }
+        assert_generation_staging_is_gone(dir.path());
+    }
+
+    #[test]
+    fn generation_preflight_refuses_nonportable_case_unicode_suffix_and_device_aliases() {
+        let dir = tempfile::tempdir().unwrap();
+        for alias in [
+            "Members/000000/artifact.glb",
+            "members/000000/café.glb",
+            "members/000000/artifact.",
+            "members/000000/artifact ",
+            "members/000000/aux.json",
+            "members/000000/com1.txt",
+            "members/000000/a:b.json",
+        ] {
+            let files = [generation_file(Path::new(alias), b"x")];
+            let error =
+                publish_generation(&dir.path().join("generation"), &files, generation_limits())
+                    .unwrap_err();
+            assert!(error.contains("not portable"), "{alias}: {error}");
+        }
+        assert_generation_staging_is_gone(dir.path());
+    }
+
+    #[test]
+    fn generation_preflight_bounds_alias_components_component_bytes_and_total_alias_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let component_overflow = [generation_file(Path::new("a/b/c"), b"x")];
+        let error = publish_generation(
+            &dir.path().join("depth"),
+            &component_overflow,
+            GenerationPublicationLimits {
+                max_alias_components: 2,
+                ..generation_limits()
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("more than 2 components"), "{error}");
+
+        let long_component = [generation_file(Path::new("abcdef"), b"x")];
+        let error = publish_generation(
+            &dir.path().join("component-bytes"),
+            &long_component,
+            GenerationPublicationLimits {
+                max_alias_component_bytes: 5,
+                ..generation_limits()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("6 bytes, exceeding its limit of 5"),
+            "{error}"
+        );
+
+        let aliases = [
+            generation_file(Path::new("first"), b"x"),
+            generation_file(Path::new("second"), b"x"),
+        ];
+        let error = publish_generation(
+            &dir.path().join("total-alias-bytes"),
+            &aliases,
+            GenerationPublicationLimits {
+                max_total_alias_bytes: 10,
+                ..generation_limits()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("11 alias bytes, exceeding its limit of 10"),
+            "{error}"
+        );
+        assert_generation_staging_is_gone(dir.path());
+    }
+
+    #[test]
+    fn generation_destination_must_be_absent_even_when_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = [generation_file(Path::new("member.bin"), b"new bytes")];
+
+        let empty = dir.path().join("empty");
+        fs::create_dir(&empty).unwrap();
+        let error = publish_generation(&empty, &files, generation_limits()).unwrap_err();
+        assert!(error.contains("already exists"), "{error}");
+        assert!(empty.is_dir());
+        assert!(fs::read_dir(&empty).unwrap().next().is_none());
+
+        let nonempty = dir.path().join("nonempty");
+        fs::create_dir(&nonempty).unwrap();
+        fs::write(nonempty.join("keep"), b"old bytes").unwrap();
+        let error = publish_generation(&nonempty, &files, generation_limits()).unwrap_err();
+        assert!(error.contains("already exists"), "{error}");
+        assert_eq!(fs::read(nonempty.join("keep")).unwrap(), b"old bytes");
+        assert_generation_staging_is_gone(dir.path());
+    }
+
+    #[test]
+    fn generation_race_before_rename_cannot_replace_the_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("generation");
+        let files = [generation_file(Path::new("member.bin"), b"new bytes")];
+
+        let error = publish_generation_with_hooks(
+            &destination,
+            &files,
+            generation_limits(),
+            || {},
+            || {
+                fs::create_dir(&destination).unwrap();
+                fs::write(destination.join("racer"), b"racing bytes").unwrap();
+            },
+            |_| {},
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(error.contains("without replacing"), "{error}");
+        assert_eq!(
+            fs::read(destination.join("racer")).unwrap(),
+            b"racing bytes"
+        );
+        assert_generation_staging_is_gone(dir.path());
+    }
+
+    #[test]
+    fn generation_publication_preserves_every_supplied_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("generation");
+        let files = [
+            generation_file(Path::new("asset.glb"), b"\0asset\xff"),
+            generation_file(Path::new("contacts/member.json"), b"{\"exact\":true}\n"),
+        ];
+
+        publish_generation(&destination, &files, generation_limits()).unwrap();
+        assert_eq!(
+            fs::read(destination.join("asset.glb")).unwrap(),
+            b"\0asset\xff"
+        );
+        assert_eq!(
+            fs::read(destination.join("contacts/member.json")).unwrap(),
+            b"{\"exact\":true}\n"
+        );
+    }
+
+    #[test]
+    fn generation_relinquishes_the_old_stage_name_after_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("generation");
+        let files = [generation_file(Path::new("member.bin"), b"new bytes")];
+        let recreated_stage = std::cell::RefCell::new(None);
+
+        publish_generation_with_hooks(
+            &destination,
+            &files,
+            generation_limits(),
+            || {},
+            || {},
+            |old_stage_name| {
+                fs::create_dir(old_stage_name).unwrap();
+                fs::write(old_stage_name.join("must-survive"), b"sentinel").unwrap();
+                *recreated_stage.borrow_mut() = Some(old_stage_name.to_path_buf());
+            },
+            |_| {},
+        )
+        .unwrap();
+
+        let recreated_stage = recreated_stage.into_inner().unwrap();
+        assert_eq!(
+            fs::read(recreated_stage.join("must-survive")).unwrap(),
+            b"sentinel"
+        );
+    }
+
+    #[test]
+    fn generation_full_publish_path_write_failure_cleans_up_the_staging_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = [
+            generation_file(Path::new("written-first"), b"bytes"),
+            generation_file(Path::new("write-fails"), b"bytes"),
+        ];
+        let destination = dir.path().join("generation");
+        let error = publish_generation_with_hooks(
+            &destination,
+            &files,
+            generation_limits(),
+            || {},
+            || {},
+            |_| {},
+            |staged_file| {
+                if staged_file.ends_with("write-fails") {
+                    fs::create_dir(staged_file).unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("cannot create staged generation file"),
+            "{error}"
+        );
+        assert!(!destination.exists());
+        assert_generation_staging_is_gone(dir.path());
+    }
+
+    fn assert_generation_staging_is_gone(parent: &Path) {
+        let leftovers = fs::read_dir(parent)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".animsmith-generation-")
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "staging directories remain: {leftovers:?}"
+        );
     }
 }
