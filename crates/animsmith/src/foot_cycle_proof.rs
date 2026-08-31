@@ -69,6 +69,7 @@ impl FootCycleProofError {
         Self { kind }
     }
 
+    #[cfg(test)]
     pub(crate) const fn kind(self) -> FootCycleProofKind {
         self.kind
     }

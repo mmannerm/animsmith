@@ -790,7 +790,6 @@ pub(crate) fn read_digest(path: &Path) -> Result<(String, u64), String> {
 /// `alias` is a portable, lowercase-ASCII, slash-separated relative path
 /// beneath the generation root. The publisher refuses ambiguous case,
 /// Unicode, platform-reserved, traversal, and directory/file-prefix aliases.
-#[allow(dead_code)] // The foot-cycle producer consumes this primitive in a later issue.
 pub(crate) struct GenerationFile<'a> {
     pub(crate) alias: &'a Path,
     pub(crate) bytes: &'a [u8],
@@ -801,7 +800,6 @@ pub(crate) struct GenerationFile<'a> {
 /// These are deliberately supplied by the owning operation: this primitive
 /// has no domain-specific default file or output budget.
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // The foot-cycle producer supplies its operation-specific limits later.
 pub(crate) struct GenerationPublicationLimits {
     pub(crate) max_files: u64,
     pub(crate) max_file_bytes: u64,
@@ -834,7 +832,6 @@ pub(crate) struct GenerationPublicationLimits {
 /// fails. A failed stage is removed by its temporary-directory guard. A failed
 /// no-replacement promotion leaves its destination untouched and also removes
 /// the staged directory.
-#[allow(dead_code)] // Kept independently usable until its first collection producer lands.
 pub(crate) fn publish_generation(
     destination: &Path,
     files: &[GenerationFile<'_>],

@@ -284,6 +284,12 @@ fn rewrite_canonical_json(path: &Path, mutate: impl FnOnce(&mut Value)) {
     fs::write(path, serde_jcs::to_vec(&value).unwrap()).unwrap();
 }
 
+fn assert_identity_matches_bytes(identity: &Value, bytes: &[u8]) {
+    let actual = InputIdentity::from_bytes(bytes);
+    assert_eq!(identity["sha256"], actual.sha256());
+    assert_eq!(identity["bytes"], actual.bytes());
+}
+
 #[cfg(not(feature = "fbx"))]
 fn rebind_parameterization(fixture: &FootCycleFixture) {
     let input = InputIdentity::from_bytes(&fs::read(&fixture.manifest).unwrap());
@@ -351,14 +357,70 @@ fn public_command_publishes_exact_two_member_generation_and_stdout() {
         "members/000000/artifact.glb"
     );
     for index in 0..2 {
-        let artifact = fs::read(
-            fixture
-                .destination
-                .join(format!("members/{index:06}/artifact.glb")),
-        )
-        .unwrap();
+        let member_root = fixture.destination.join(format!("members/{index:06}"));
+        let artifact = fs::read(member_root.join("artifact.glb")).unwrap();
         assert!(animsmith_gltf::load_source_bytes(Path::new("artifact.glb"), &artifact).is_ok());
+
+        let fragment_bytes = fs::read(member_root.join("contact-fragment.json")).unwrap();
+        let evidence_bytes = fs::read(member_root.join("evidence.json")).unwrap();
+        let fragment: Value = serde_json::from_slice(&fragment_bytes).unwrap();
+        let evidence: Value = serde_json::from_slice(&evidence_bytes).unwrap();
+        let aggregate_member = &aggregate["members"][index];
+        let member_id = format!("com.example/{}", if index == 0 { "a" } else { "b" });
+
+        assert_eq!(
+            fragment["schema"],
+            "urn:animsmith:schema:contact-fragment:1"
+        );
+        assert_eq!(fragment["clip"]["logical_id"], member_id);
+        assert_eq!(
+            evidence["schema"],
+            "urn:animsmith:schema:foot-cycle-member-evidence:1"
+        );
+        assert_eq!(evidence["member_index"], index);
+        assert_eq!(evidence["member_id"], member_id);
+        assert_eq!(
+            evidence["paths"]["contact_fragment"],
+            format!("members/{index:06}/contact-fragment.json")
+        );
+        assert_eq!(
+            evidence["paths"]["evidence"],
+            format!("members/{index:06}/evidence.json")
+        );
+        assert_identity_matches_bytes(
+            &aggregate_member["output_contact_fragment"],
+            &fragment_bytes,
+        );
+        assert_identity_matches_bytes(&aggregate_member["evidence"], &evidence_bytes);
+        assert_identity_matches_bytes(&evidence["output"]["contact_fragment"], &fragment_bytes);
     }
+}
+
+#[test]
+fn proof_stage_refusal_is_canonical_exit_one() {
+    let fixture = FootCycleFixture::create();
+    let parameterization = fs::read_to_string(&fixture.parameterization).unwrap();
+    let stricter = parameterization.replacen(
+        "max_gait_phase_spread = 0.08",
+        "max_gait_phase_spread = 0.0",
+        1,
+    );
+    assert_ne!(stricter, parameterization);
+    fs::write(&fixture.parameterization, stricter).unwrap();
+
+    let result = fixture.run();
+    assert_eq!(result.status.code(), Some(1));
+    assert!(result.stderr.is_empty());
+    let refusal: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(refusal["schema"], "urn:animsmith:schema:producer-refusal:1");
+    assert_eq!(refusal["command"], "collection-transform-foot-cycle");
+    assert_eq!(refusal["rejection"]["stage"], "proof");
+    assert_eq!(refusal["rejection"]["kind"], "proof-failed");
+    assert_eq!(
+        refusal["rejection"]["detail"],
+        "foot-cycle proof failed (GaitSpread)"
+    );
+    assert!(!fixture.destination.exists());
 }
 
 #[test]

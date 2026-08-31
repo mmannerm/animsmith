@@ -408,7 +408,7 @@ fn classify_proof(error: FootCycleProofError) -> ProducerFailure {
     ProducerFailure::Refusal(Rejection::new(
         Stage::Proof,
         Kind::ProofFailed,
-        format!("foot-cycle proof refused ({:?})", error.kind()),
+        error.to_string(),
     ))
 }
 
