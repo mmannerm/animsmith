@@ -277,6 +277,7 @@ impl FootCycleProofRuntime for ProductionFootCycleProofRuntime {
 struct CandidateDocument {
     document: Document,
     preflight: GlbWritePreflight,
+    metric_work: MetricGridWork,
 }
 
 struct ReadbackCandidate {
@@ -304,6 +305,10 @@ fn serialize_and_prove_foot_cycle_v1_with_runtime(
 
     let mut candidate_documents = Vec::with_capacity(prepared.members().len());
     let mut retained_candidate_bytes = 0usize;
+    let mut total_metric_work = MetricGridWork {
+        pose_cells: prepared.source_metric_pose_cells(),
+        sample_evaluations: prepared.source_metric_sample_evaluations(),
+    };
     for (member, plan) in prepared.members().iter().zip(prepared.plan().members()) {
         if member.id() != plan.id() {
             return Err(FootCycleProofError::new(
@@ -327,9 +332,13 @@ fn serialize_and_prove_foot_cycle_v1_with_runtime(
             .checked_add(preflight.total_bytes())
             .filter(|bytes| *bytes <= MAX_AGGREGATE_CANDIDATE_BYTES)
             .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::ArtifactBudget))?;
+        let metric_work = metric_work(&document, member.clip_index())?;
+        total_metric_work = add_metric_work(total_metric_work, metric_work)
+            .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::MetricWork))?;
         candidate_documents.push(CandidateDocument {
             document,
             preflight,
+            metric_work,
         });
     }
 
@@ -347,6 +356,13 @@ fn serialize_and_prove_foot_cycle_v1_with_runtime(
         let source = runtime.readback(member_index, &bytes)?;
         validate_document_shape(source.document())
             .map_err(|_| FootCycleProofError::new(FootCycleProofKind::ArtifactReadback))?;
+        if metric_work(
+            source.document(),
+            prepared.members()[member_index].clip_index(),
+        )? != candidate_documents[member_index].metric_work
+        {
+            return Err(FootCycleProofError::new(FootCycleProofKind::MetricWork));
+        }
         let artifact = InputIdentity::from_bytes(&bytes);
         if source.source_facts().primary_identity() != &artifact {
             return Err(FootCycleProofError::new(
@@ -372,16 +388,6 @@ fn serialize_and_prove_foot_cycle_v1_with_runtime(
             artifact,
             closure_identity,
         });
-    }
-
-    let mut total_metric_work = MetricGridWork {
-        pose_cells: prepared.source_metric_pose_cells(),
-        sample_evaluations: prepared.source_metric_sample_evaluations(),
-    };
-    for (member, readback) in prepared.members().iter().zip(&readbacks) {
-        let work = metric_work(readback.source.document(), member.clip_index())?;
-        total_metric_work = add_metric_work(total_metric_work, work)
-            .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::MetricWork))?;
     }
 
     let mut proved = Vec::with_capacity(readbacks.len());
@@ -1358,6 +1364,8 @@ mod tests {
             .expect("one combined pose cell over the cap must fail");
         assert_eq!(error.kind(), FootCycleProofKind::MetricWork);
         assert_eq!(runtime.grids_built, 0);
+        assert_eq!(runtime.writes, 0);
+        assert_eq!(runtime.readbacks, 0);
     }
 
     #[test]
