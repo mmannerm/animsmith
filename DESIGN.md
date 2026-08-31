@@ -3838,6 +3838,10 @@ succeed only when it recognizes every extension schema/version and implements
 that extension's operation-specific transform contract. Otherwise it refuses
 the whole operation before event inventory with top-level code
 `unsupported_extension`, an empty `event_outcomes`, and no output fragment.
+The core transform context therefore carries the handler-produced extension
+outputs, in exact input order and with the same schema/version at every
+position. It never treats a caller-declared support set or an automatic opaque
+payload copy as proof that an extension was transformed.
 
 The inline output fragment's `duration_s` is exact: trim and slice use
 `input_duration_s * (b - a)`, resample preserves `input_duration_s`, and
@@ -3880,12 +3884,19 @@ positive domain. Unsupported extension transformation uses
 `unsupported_extension` as specified above. A malformed fragment/result or
 duplicate, missing, or unknown event-outcome identity is a strict reader error,
 not another refusal result. The result records the operation, bindings, and
-outcomes; detector and operation implementation remain out of scope.
+outcomes. Core implements the exact mapping and independently rederives a read
+result against its separately supplied input fragment and external transform
+context. That context carries the current input and output artifacts, their
+complete captured closures, the expected output producer, and any
+operation-specific transformed extension outputs. Core validates that each
+closure's primary input is its corresponding artifact before deriving the
+identity recorded in a successful result; detector policy, asset mutation, and
+publication remain outside this contract.
 
 AnimSmith owns the strict sampled stance-support contact facts and these
 identity/time/transform semantics. The host owns final file layout and merge,
 unrelated measurements and provenance, runtime scheduling, and engine-native
-mapping. The delivered producer does not perform contact transforms, infer
+mapping. The delivered contact-fragment producer does not perform contact transforms, infer
 gameplay meaning, validate foot placement, or claim engine, artistic, or
 gameplay correctness. Host-side merge and runtime behavior remain deferred.
 

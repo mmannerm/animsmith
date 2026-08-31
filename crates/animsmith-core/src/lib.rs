@@ -125,6 +125,7 @@ mod checks;
 pub mod collection;
 pub mod config;
 pub mod contact_fragment;
+pub mod contact_transform;
 pub mod contract;
 pub mod dependency_closure;
 pub mod diff;
@@ -183,6 +184,17 @@ pub use contact_fragment::{
     CONTACT_FRAGMENT_V1_SCHEMA_VERSION, ContactClipReferenceV1, ContactEventKindV1, ContactEventV1,
     ContactEventWindowV1, ContactExtensionV1, ContactFragmentError, ContactFragmentV1,
     ContactPhaseV1, ContactProducerV1, ContactRoleV1,
+};
+pub use contact_transform::{
+    CONTACT_TRANSFORM_RESULT_V1_ID, CONTACT_TRANSFORM_RESULT_V1_MAX_CANONICAL_BYTES,
+    CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS, CONTACT_TRANSFORM_RESULT_V1_MAX_EVENT_OUTCOMES,
+    CONTACT_TRANSFORM_RESULT_V1_MAX_MESSAGE_BYTES, CONTACT_TRANSFORM_RESULT_V1_MAX_SOURCE_BYTES,
+    CONTACT_TRANSFORM_RESULT_V1_SCHEMA_VERSION, ContactEventOutcomeV1,
+    ContactTimeWarpControlPointV1, ContactTransformBindingV1, ContactTransformContextV1,
+    ContactTransformError, ContactTransformIntervalV1, ContactTransformOperationV1,
+    ContactTransformOutcomeV1, ContactTransformOutputV1, ContactTransformRefusalCodeV1,
+    ContactTransformRefusalV1, ContactTransformResultV1, ContactTransformedValueV1,
+    transform_contact_fragment_v1,
 };
 pub use contract::{
     DiffEnvelope, InputIdentity, LintEnvelope, LintEnvelopeV16, LintEnvelopeV17, LintEnvelopeV19,
