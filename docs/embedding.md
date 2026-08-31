@@ -360,6 +360,22 @@ gameplay-acceptance proof. See the
 [collection contract](collection-contracts.md#foot-cycle-parameterization-v1-18-planner-slice)
 for the declaration and exact topology grammar.
 
+The later format-edge candidate writer is also a private continuation, not a
+producer: `animsmith_gltf::write::preflight_glb_bytes` records one exact
+in-memory projection receipt and `write_glb_bytes` reruns it before retaining
+bytes. `StrictFootCycleV1` is deliberately narrower than legacy conversion and
+refuses data it cannot represent exactly enough for the future candidate
+contract, including source scene collapse, incomplete skin bindings, primary
+skin-slot reinterpretation, unsupported primitive/texture/material domains and
+complete source material-resource sidecars,
+and unrepresentable complete source-node or source-skin facts. The receipt
+binds emitted JSON/BIN projection bytes, not deliberately excluded source-only
+evidence. It preserves no
+source-only names, stable source indices, or image-inspection/provenance
+sidecars as output facts. It does not serialize a prepared collection,
+transform a contact sidecar, prove a reread artifact, stage/publish files, or
+claim game-engine acceptance.
+
 ## Scale plan and proof contracts
 
 The [scale workflow](scale.md) is the operator-facing guide. Normative algebra,
