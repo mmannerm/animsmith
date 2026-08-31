@@ -229,25 +229,33 @@ inspect/measure/lint/transform/fix/diff support is always available,
 including in `--no-default-features` builds. The workspace MSRV is
 Rust 1.88.
 
-## More Detail
-
 ## Bounded in-memory GLB candidates
 
 `write::preflight_glb_bytes` and `write::write_glb_bytes` provide the
 two-step GLB boundary for a caller that must account for a candidate before it
 retains output bytes. The caller selects an explicit
-`GlbProjectionPolicyV1` and `GlbWriteLimits`; the foot-cycle producer uses
+`GlbProjectionPolicyV1` and `GlbWriteLimits`; a future foot-cycle publisher
+will use
 `StrictFootCycleV1` with `GlbWriteLimits::FOOT_CYCLE_V1`. Preflight counts the
 same projection that writing uses, including padded JSON, BIN, and GLB
-framing. The receipt binds JSON and BIN content as well as counts, so writing
-refuses a changed document rather than publishing bytes under a stale budget.
+framing. The receipt binds emitted JSON and BIN content as well as counts, so
+writing refuses a changed candidate projection rather than publishing bytes
+under a stale budget. Deliberately source-only evidence does not affect it.
 
 The strict policy is intentionally narrower than the legacy `write()` path:
 it refuses a document when the normalized writer would omit an empty or
 invalid track, collapse source-scene membership, drop a source node, infer a
-skinned inverse bind, omit meshless materials, or discard unsupported
-primitive/texture data. It is a mechanical writer-admission boundary, not a
-claim that the candidate is game-engine ready or artistically accepted.
+skinned inverse bind, reinterpret primary skin slots, omit meshless materials,
+discard unsupported primitive/texture data, or regenerate complete source
+material-resource evidence. Strict V1 therefore refuses complete resource
+sidecars until a source-identity-preserving projection exists. Source-only
+names, stable source indices, and image
+inspection/provenance sidecars are not projected into a candidate; strict V1
+does not treat them as output facts. A complete source-node local rest or
+source-skin skeleton-root fact is accepted only when the normalized writer can
+represent it exactly, otherwise the candidate refuses. It is a mechanical
+writer-admission boundary, not a claim that the candidate is game-engine ready
+or artistically accepted.
 
 - [API reference on docs.rs](https://docs.rs/animsmith-gltf)
 - [Embedding guide](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)

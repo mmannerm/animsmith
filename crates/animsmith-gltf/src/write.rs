@@ -12,7 +12,8 @@
 
 use crate::WriteError;
 use animsmith_core::model::{
-    Document, Interpolation, Property, SourceSkeletonCoverage, TrackValues, validate_document_shape,
+    Document, Interpolation, MaterialResourceCoverage, Property, SourceInverseBindAccessorStatus,
+    SourceNodeLocalRest, SourceSkeletonCoverage, TrackValues, validate_document_shape,
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -32,6 +33,15 @@ pub struct GlbWriteLimits {
     pub max_bin_bytes: usize,
     /// Maximum complete GLB bytes, including header and chunk framing.
     pub max_total_bytes: usize,
+    /// Maximum normalized JSON rows and bounded validation rows considered by
+    /// strict preflight before it constructs a writer-owned JSON value.
+    pub max_structural_rows: usize,
+    /// Maximum UTF-8 bytes retained in strict generated JSON names.
+    pub max_name_bytes: usize,
+    /// Maximum aggregate strict traversal work across the admitted model's
+    /// source/output rows, binary components, sidecar lookups, and copied
+    /// texture bytes.
+    pub max_work: usize,
 }
 
 impl GlbWriteLimits {
@@ -41,6 +51,9 @@ impl GlbWriteLimits {
         max_json_bytes: 256 * 1024 * 1024,
         max_bin_bytes: 256 * 1024 * 1024,
         max_total_bytes: 256 * 1024 * 1024,
+        max_structural_rows: 1_000_000,
+        max_name_bytes: 1_048_576,
+        max_work: 16_000_000,
     };
 }
 
@@ -82,6 +95,11 @@ impl GlbWritePreflight {
         self.total_bytes
     }
 
+    /// Fixed GLB header size included in [`Self::total_bytes`].
+    pub const fn header_bytes(&self) -> usize {
+        12
+    }
+
     /// Limits against which this receipt was admitted.
     pub fn limits(&self) -> GlbWriteLimits {
         self.limits
@@ -97,7 +115,7 @@ enum BinaryMode {
 /// Counts of the scene data emitted by [`write()`].
 ///
 /// The first five fields describe the generated glTF, which can differ from the
-/// input [`Document`] when an animation clip has no writable channels, a
+/// input [`Document`] when an animation clip has no writable channels, a legacy
 /// skinned mesh requires an additional holder node, or materials are omitted
 /// because the document has no meshes. [`Self::clips_without_writable_tracks`]
 /// is intentionally an input-to-output delta rather than an artifact count so
@@ -459,6 +477,7 @@ fn build_projection(
     doc: &Document,
     mode: BinaryMode,
     reserve: usize,
+    policy: GlbProjectionPolicyV1,
 ) -> Result<Projection, WriteError> {
     let assets = &doc.assets;
     let mut buffers = BufferBuilder::new(mode, reserve)?;
@@ -720,7 +739,7 @@ fn build_projection(
     if !meshes_json.is_empty() {
         for (node, mesh_index, skin_index) in &node_attach {
             match skin_index {
-                Some(skin) => {
+                Some(skin) if policy == GlbProjectionPolicyV1::Legacy => {
                     let nodes = root["nodes"].as_array_mut().expect("nodes array");
                     let holder = nodes.len();
                     nodes.push(json!({
@@ -732,6 +751,11 @@ fn build_projection(
                         .as_array_mut()
                         .expect("scene roots")
                         .push(json!(holder));
+                }
+                Some(skin) => {
+                    let node_value = &mut root["nodes"][*node];
+                    node_value["mesh"] = json!(mesh_index);
+                    node_value["skin"] = json!(skin);
                 }
                 None => {
                     let node_value = &mut root["nodes"][*node];
@@ -841,8 +865,8 @@ fn build_projection(
 ///
 /// [`Self::Legacy`] retains `write()`'s established normalizing writer
 /// behaviour. [`Self::StrictFootCycleV1`] is for an #18 candidate: it rejects
-/// every document shape that the legacy writer would omit, merge, or otherwise
-/// fail to represent exactly enough for a foot-cycle candidate.
+/// the modeled document shapes whose legacy projection would omit, merge, or
+/// otherwise fail to represent enough for a foot-cycle candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlbProjectionPolicyV1 {
     /// Existing conversion/transform writer behaviour.
@@ -919,7 +943,8 @@ fn check_limits(
     Ok(lengths)
 }
 
-fn strict_foot_cycle_projectable(doc: &Document) -> Result<(), WriteError> {
+fn strict_foot_cycle_projectable(doc: &Document, limits: GlbWriteLimits) -> Result<(), WriteError> {
+    strict_structure_projectable(doc, limits)?;
     validate_document_shape(doc).map_err(|error| WriteError::Refused(error.to_string()))?;
     for (clip_index, clip) in doc.clips.iter().enumerate() {
         if clip.tracks.is_empty() {
@@ -995,6 +1020,8 @@ fn strict_foot_cycle_projectable(doc: &Document) -> Result<(), WriteError> {
             }
         }
     }
+    strict_skin_projectable(doc)?;
+    strict_source_sidecars_projectable(doc)?;
     for (material_index, material) in doc.assets.materials.iter().enumerate() {
         if !material.base_color.into_iter().all(f32::is_finite)
             || !material.metallic.is_finite()
@@ -1036,72 +1063,454 @@ fn strict_foot_cycle_projectable(doc: &Document) -> Result<(), WriteError> {
             )));
         }
     }
-    if doc.assets.source_skeleton.coverage == SourceSkeletonCoverage::Complete
-        && doc
-            .assets
-            .source_skeleton
-            .nodes
-            .iter()
-            .any(|node| node.bone.is_none())
-    {
+    strict_scene_projectable(doc)
+}
+
+fn strict_structure_projectable(doc: &Document, limits: GlbWriteLimits) -> Result<(), WriteError> {
+    let mut rows = doc.skeleton.bones.len();
+    let mut name_bytes = 0usize;
+    let mut work = 0usize;
+    let add = |total: &mut usize, next: usize, field: &'static str, cap: usize| {
+        *total = total
+            .checked_add(next)
+            .filter(|value| *value <= cap)
+            .ok_or_else(|| {
+                WriteError::Refused(format!(
+                    "strict foot-cycle {field} exceeds its V1 structural limit"
+                ))
+            })?;
+        Ok::<(), WriteError>(())
+    };
+    if rows > limits.max_structural_rows {
         return Err(WriteError::Refused(
-            "source-node projection drops a scene node".to_owned(),
+            "strict foot-cycle JSON rows exceed its V1 structural limit".to_owned(),
         ));
     }
-    if doc
-        .assets
-        .instances
-        .iter()
-        .any(|instance| !instance.skin_joints.is_empty() && instance.skin_ibms.is_empty())
-    {
-        return Err(WriteError::Refused(
-            "skinned instance has no explicit inverse-bind matrices to preserve".to_owned(),
-        ));
+    // The writer's first proportional allocations are skeleton adjacency,
+    // node/root arrays, and the JSON vectors below. Charge every source-side
+    // validation table too: `validate_document_shape` and strict admission
+    // build ordered lookup sets after this boundary.
+    add(
+        &mut rows,
+        doc.skeleton.bones.len().saturating_mul(2),
+        "JSON rows",
+        limits.max_structural_rows,
+    )?;
+    // parent walk plus emitted TRS (3 + 4 + 3 scalar components) per node.
+    add(
+        &mut work,
+        doc.skeleton.bones.len().saturating_mul(11),
+        "work",
+        limits.max_work,
+    )?;
+    for bone in &doc.skeleton.bones {
+        add(
+            &mut name_bytes,
+            bone.name.len(),
+            "name bytes",
+            limits.max_name_bytes,
+        )?;
     }
-    let mut unskinned_nodes = std::collections::BTreeSet::new();
+    for clip in &doc.clips {
+        add(&mut rows, 1, "JSON rows", limits.max_structural_rows)?;
+        add(
+            &mut name_bytes,
+            clip.name.len(),
+            "name bytes",
+            limits.max_name_bytes,
+        )?;
+        for track in &clip.tracks {
+            // sampler/channel plus two buffer views and two accessors.
+            add(&mut rows, 6, "JSON rows", limits.max_structural_rows)?;
+            add(&mut work, track.times.len(), "work", limits.max_work)?;
+            let value_components = match &track.values {
+                TrackValues::Vec3s(values) => values.len().saturating_mul(3),
+                TrackValues::Quats(values) => values.len().saturating_mul(4),
+            };
+            add(&mut work, value_components, "work", limits.max_work)?;
+        }
+    }
+    for mesh in &doc.assets.meshes {
+        add(&mut rows, 1, "JSON rows", limits.max_structural_rows)?;
+        add(
+            &mut name_bytes,
+            mesh.name.len(),
+            "name bytes",
+            limits.max_name_bytes,
+        )?;
+        for primitive in &mesh.primitives {
+            // primitive plus up to six emitted buffer-view/accessor pairs.
+            add(&mut rows, 13, "JSON rows", limits.max_structural_rows)?;
+            for count in [
+                primitive.positions.len().saturating_mul(3),
+                primitive.normals.len().saturating_mul(3),
+                primitive.uvs.len().saturating_mul(2),
+                primitive.joints.len().saturating_mul(4),
+                primitive.weights.len().saturating_mul(4),
+                primitive.indices.len(),
+                primitive.additional_influence_sets.len(),
+            ] {
+                add(&mut work, count, "work", limits.max_work)?;
+            }
+        }
+    }
+    for material in &doc.assets.materials {
+        // material plus up to four image/texture rows and their buffer views.
+        add(&mut rows, 13, "JSON rows", limits.max_structural_rows)?;
+        add(
+            &mut name_bytes,
+            material.name.len(),
+            "name bytes",
+            limits.max_name_bytes,
+        )?;
+        for texture in [
+            material.base_color_texture.as_ref(),
+            material.normal_texture.as_ref().map(|slot| &slot.texture),
+            material.metallic_roughness_texture.as_ref(),
+            material
+                .occlusion_texture
+                .as_ref()
+                .map(|slot| &slot.texture),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            add(&mut work, texture.bytes.len(), "work", limits.max_work)?;
+        }
+    }
+    add(
+        &mut rows,
+        doc.assets.instances.len().saturating_mul(3),
+        "JSON rows",
+        limits.max_structural_rows,
+    )?;
     for instance in &doc.assets.instances {
-        if instance.skin_joints.is_empty() && !unskinned_nodes.insert(instance.node) {
+        add(
+            &mut work,
+            instance.skin_joints.len(),
+            "work",
+            limits.max_work,
+        )?;
+        add(
+            &mut work,
+            instance.skin_ibms.len().saturating_mul(16),
+            "work",
+            limits.max_work,
+        )?;
+    }
+    for scene in &doc.assets.scenes {
+        add(&mut rows, 1, "JSON rows", limits.max_structural_rows)?;
+        add(&mut work, scene.roots.len(), "work", limits.max_work)?;
+    }
+    let source = &doc.assets.source_skeleton;
+    add(
+        &mut rows,
+        source.nodes.len(),
+        "JSON rows",
+        limits.max_structural_rows,
+    )?;
+    add(
+        &mut rows,
+        source.skins.len(),
+        "JSON rows",
+        limits.max_structural_rows,
+    )?;
+    for node in &source.nodes {
+        add(
+            &mut work,
+            node.scene_root_indices.len().saturating_add(1),
+            "work",
+            limits.max_work,
+        )?;
+    }
+    for skin in &source.skins {
+        add(
+            &mut work,
+            skin.joint_source_node_indices.len(),
+            "work",
+            limits.max_work,
+        )?;
+        add(
+            &mut work,
+            skin.inverse_bind_accessor.matrices.len().saturating_mul(16),
+            "work",
+            limits.max_work,
+        )?;
+        add(&mut work, skin.attachments.len(), "work", limits.max_work)?;
+    }
+    let resources = &doc.assets.material_resources;
+    add(
+        &mut rows,
+        resources.materials.len(),
+        "JSON rows",
+        limits.max_structural_rows,
+    )?;
+    add(
+        &mut rows,
+        resources.textures.len(),
+        "JSON rows",
+        limits.max_structural_rows,
+    )?;
+    add(
+        &mut rows,
+        resources.images.len(),
+        "JSON rows",
+        limits.max_structural_rows,
+    )?;
+    for material in &resources.materials {
+        add(
+            &mut work,
+            material.texture_bindings.len().saturating_add(1),
+            "work",
+            limits.max_work,
+        )?;
+    }
+    add(
+        &mut work,
+        resources
+            .textures
+            .len()
+            .saturating_add(resources.images.len()),
+        "work",
+        limits.max_work,
+    )?;
+    Ok(())
+}
+
+fn strict_skin_projectable(doc: &Document) -> Result<(), WriteError> {
+    let mut mesh_kind = std::collections::BTreeMap::<usize, bool>::new();
+    let mut occupied_nodes = std::collections::BTreeSet::new();
+    for (instance_index, instance) in doc.assets.instances.iter().enumerate() {
+        if !occupied_nodes.insert(instance.node) {
             return Err(WriteError::Refused(
-                "multiple unskinned mesh instances target one node".to_owned(),
+                "multiple mesh instances target one normalized node".to_owned(),
+            ));
+        }
+        let Some(mesh) = doc.assets.meshes.get(instance.mesh) else {
+            return Err(WriteError::Refused(format!(
+                "instance {instance_index} references an unknown mesh"
+            )));
+        };
+        let skinned = !instance.skin_joints.is_empty();
+        if mesh_kind
+            .insert(instance.mesh, skinned)
+            .is_some_and(|prior| prior != skinned)
+        {
+            return Err(WriteError::Refused(
+                "a mesh cannot be reused by both skinned and unskinned instances".to_owned(),
+            ));
+        }
+        if !skinned {
+            if mesh
+                .primitives
+                .iter()
+                .any(|primitive| !primitive.joints.is_empty())
+            {
+                return Err(WriteError::Refused(
+                    "an unskinned instance would reinterpret JOINTS_0".to_owned(),
+                ));
+            }
+            continue;
+        }
+        if instance.skin_ibms.len() != instance.skin_joints.len() {
+            return Err(WriteError::Refused(
+                "skinned instance has no explicit inverse-bind matrices to preserve".to_owned(),
+            ));
+        }
+        for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+            if primitive.joints.is_empty()
+                || primitive
+                    .joints
+                    .iter()
+                    .flatten()
+                    .any(|&slot| slot as usize >= instance.skin_joints.len())
+                || primitive
+                    .weights
+                    .iter()
+                    .flatten()
+                    .any(|weight| !weight.is_finite())
+            {
+                return Err(WriteError::Refused(format!(
+                    "mesh {} primitive {primitive_index} has unrepresentable primary skin influences",
+                    instance.mesh
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn strict_source_sidecars_projectable(doc: &Document) -> Result<(), WriteError> {
+    strict_complete_material_resources_projectable(doc)?;
+    if doc.assets.source_skeleton.coverage != SourceSkeletonCoverage::Complete {
+        return Ok(());
+    }
+    let mut bone_of_source = std::collections::BTreeMap::new();
+    for node in &doc.assets.source_skeleton.nodes {
+        let Some(bone) = node.bone else {
+            return Err(WriteError::Refused(
+                "source-node projection drops a scene node".to_owned(),
+            ));
+        };
+        let Some(normalized) = doc.skeleton.bones.get(bone) else {
+            return Err(WriteError::Refused(
+                "source-node bone is outside the normalized skeleton".to_owned(),
+            ));
+        };
+        match &node.local_rest {
+            SourceNodeLocalRest::Trs {
+                translation,
+                rotation,
+                scale,
+            } if *translation == normalized.rest.translation
+                && *rotation == normalized.rest.rotation
+                && *scale == normalized.rest.scale => {}
+            _ => {
+                return Err(WriteError::Refused(
+                    "source-node local rest cannot be represented by the normalized writer"
+                        .to_owned(),
+                ));
+            }
+        }
+        bone_of_source.insert(node.source_node_index, bone);
+    }
+    let mut instance_of_source = std::collections::BTreeMap::new();
+    for (index, instance) in doc.assets.instances.iter().enumerate() {
+        if instance_of_source
+            .insert(instance.source_node_index, index)
+            .is_some()
+        {
+            return Err(WriteError::Refused(
+                "source skin attachment does not identify exactly one normalized instance"
+                    .to_owned(),
             ));
         }
     }
-    strict_scene_projectable(doc)
+    let mut seen_attachments = std::collections::BTreeSet::new();
+    for skin in &doc.assets.source_skeleton.skins {
+        if skin.skeleton_root_source_node_index.is_some() {
+            return Err(WriteError::Refused(
+                "source skin skeleton-root declaration is not emitted by the writer".to_owned(),
+            ));
+        }
+        if skin.attachments.is_empty() {
+            return Err(WriteError::Refused(
+                "unattached complete source skin would be omitted by the writer".to_owned(),
+            ));
+        }
+        if skin.inverse_bind_accessor.status != SourceInverseBindAccessorStatus::Available
+            || skin.inverse_bind_accessor.declared_count
+                != Some(skin.joint_source_node_indices.len())
+            || skin.inverse_bind_accessor.matrices.len() != skin.joint_source_node_indices.len()
+        {
+            return Err(WriteError::Refused(
+                "complete source skin inverse-bind facts cannot be represented exactly".to_owned(),
+            ));
+        }
+        for attachment in &skin.attachments {
+            if !seen_attachments.insert(attachment.source_node_index) {
+                return Err(WriteError::Refused(
+                    "one source node cannot be attached to multiple strict source skins".to_owned(),
+                ));
+            }
+            let Some(&instance_index) = instance_of_source.get(&attachment.source_node_index)
+            else {
+                return Err(WriteError::Refused(
+                    "source skin attachment does not identify exactly one normalized instance"
+                        .to_owned(),
+                ));
+            };
+            let instance = &doc.assets.instances[instance_index];
+            if bone_of_source.get(&attachment.source_node_index) != Some(&instance.node)
+                || attachment.source_mesh_index
+                    != doc
+                        .assets
+                        .meshes
+                        .get(instance.mesh)
+                        .map(|mesh| mesh.source_mesh_index)
+                || instance.skin_joints.is_empty()
+                || instance.skin_joints.len() != skin.joint_source_node_indices.len()
+                || instance.skin_ibms != skin.inverse_bind_accessor.matrices
+            {
+                return Err(WriteError::Refused(
+                    "source skin attachment, joints, or inverse binds would change".to_owned(),
+                ));
+            }
+            for (&source_joint, &joint) in skin
+                .joint_source_node_indices
+                .iter()
+                .zip(&instance.skin_joints)
+            {
+                if bone_of_source.get(&source_joint) != Some(&joint) {
+                    return Err(WriteError::Refused(
+                        "source skin joint order cannot be represented by the normalized instance"
+                            .to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn strict_complete_material_resources_projectable(doc: &Document) -> Result<(), WriteError> {
+    let resources = &doc.assets.material_resources;
+    if resources.coverage != MaterialResourceCoverage::Complete {
+        return Ok(());
+    }
+    // The normalized writer has texture bytes and MIME types, but no stable
+    // source texture/image ids, declaration kinds, or inspection facts. A
+    // complete resource graph would be regenerated rather than preserved.
+    Err(WriteError::Refused(
+        "complete source material-resource evidence is not preserved by the writer".to_owned(),
+    ))
 }
 
 fn strict_scene_projectable(doc: &Document) -> Result<(), WriteError> {
     let scenes = &doc.assets.scenes;
     if scenes.is_empty() {
-        if doc.assets.default_scene.is_some() {
-            return Err(WriteError::Refused(
-                "default scene exists without a declared scene".to_owned(),
-            ));
-        }
-        return Ok(());
+        return Err(WriteError::Refused(
+            "strict projection requires the one emitted source scene and default".to_owned(),
+        ));
     }
-    if scenes.len() != 1 || doc.assets.default_scene.is_some_and(|index| index != 0) {
+    if scenes.len() != 1 || doc.assets.default_scene != Some(0) {
         return Err(WriteError::Refused(
             "multiple or non-canonical source scenes cannot be preserved".to_owned(),
         ));
     }
-    let mut expected: Vec<_> = doc
+    let expected_roots = doc
         .skeleton
         .bones
         .iter()
-        .enumerate()
-        .filter_map(|(index, bone)| bone.parent.is_none().then_some(index))
-        .collect();
-    let mut actual = scenes[0].roots.clone();
-    expected.sort_unstable();
-    actual.sort_unstable();
-    if actual != expected {
+        .filter(|bone| bone.parent.is_none())
+        .count();
+    let actual_roots = &scenes[0].roots;
+    if actual_roots.len() != expected_roots
+        || actual_roots.iter().enumerate().any(|(index, &root)| {
+            doc.skeleton
+                .bones
+                .get(root)
+                .is_none_or(|bone| bone.parent.is_some())
+                || actual_roots[..index].contains(&root)
+        })
+    {
         return Err(WriteError::Refused(
             "source scene roots differ from the canonical emitted scene".to_owned(),
         ));
     }
-    for node in &doc.assets.source_skeleton.nodes {
-        if let Some(bone) = node.bone {
-            let should_be_root = doc.skeleton.bones[bone].parent.is_none();
+    if doc.assets.source_skeleton.coverage == SourceSkeletonCoverage::Complete {
+        for node in &doc.assets.source_skeleton.nodes {
+            let Some(bone) = node.bone else {
+                return Err(WriteError::Refused(
+                    "source scene membership has no normalized bone".to_owned(),
+                ));
+            };
+            let Some(bone) = doc.skeleton.bones.get(bone) else {
+                return Err(WriteError::Refused(
+                    "source scene membership names an invalid normalized bone".to_owned(),
+                ));
+            };
+            let should_be_root = bone.parent.is_none();
             let expected: &[usize] = if should_be_root { &[0] } else { &[] };
             if node.scene_root_indices.as_slice() != expected {
                 return Err(WriteError::Refused(
@@ -1116,7 +1525,7 @@ fn strict_scene_projectable(doc: &Document) -> Result<(), WriteError> {
 /// Count an exact in-memory GLB candidate without retaining its binary bytes.
 ///
 /// The receipt may be passed to [`write_glb_bytes`] only with the same
-/// [`GlbProjectionPolicyV1`] and unchanged document contents.
+/// [`GlbProjectionPolicyV1`] and unchanged emitted JSON/BIN projection.
 ///
 /// # Errors
 ///
@@ -1128,9 +1537,9 @@ pub fn preflight_glb_bytes(
     limits: GlbWriteLimits,
 ) -> Result<GlbWritePreflight, WriteError> {
     if policy == GlbProjectionPolicyV1::StrictFootCycleV1 {
-        strict_foot_cycle_projectable(doc)?;
+        strict_foot_cycle_projectable(doc, limits)?;
     }
-    let projection = build_projection(doc, BinaryMode::Count, 0)?;
+    let projection = build_projection(doc, BinaryMode::Count, 0, policy)?;
     let (json_bytes, json_digest) = count_json(&projection.root)?;
     let bin_bytes = padded_len(projection.bin_bytes, "BIN chunk")?;
     let lengths = check_limits(json_bytes, bin_bytes, limits)?;
@@ -1168,7 +1577,7 @@ pub fn write_glb_bytes(
     if &counted != receipt {
         return Err(WriteError::ReceiptMismatch);
     }
-    let projection = build_projection(doc, BinaryMode::Retain, receipt.bin_bytes)?;
+    let projection = build_projection(doc, BinaryMode::Retain, receipt.bin_bytes, policy)?;
     let (json_bytes, json_digest) = count_json(&projection.root)?;
     let mut bin = projection
         .bin
@@ -1237,6 +1646,7 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
                 max_json_bytes: u32::MAX as usize,
                 max_bin_bytes: u32::MAX as usize,
                 max_total_bytes: u32::MAX as usize,
+                ..GlbWriteLimits::FOOT_CYCLE_V1
             },
         )?;
         let summary = receipt.summary();
@@ -1247,7 +1657,8 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
         })?;
         return Ok(summary);
     }
-    let mut projection = build_projection(doc, BinaryMode::Retain, 0)?;
+    let mut projection =
+        build_projection(doc, BinaryMode::Retain, 0, GlbProjectionPolicyV1::Legacy)?;
     if projection.bin_bytes > 0 {
         projection.root["buffers"][0]["uri"] = json!(format!(
             "data:application/octet-stream;base64,{}",
