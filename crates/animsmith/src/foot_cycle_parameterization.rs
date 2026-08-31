@@ -14,8 +14,8 @@ use animsmith_core::{
     CollectionLogicalIdV1, DependencyResourceKeyV1, FOOT_CYCLE_PARAMETERIZATION_V1_ID,
     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES, FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS,
     FOOT_CYCLE_PARAMETERIZATION_V1_SCHEMA_VERSION, FootCycleManifestBindingV1,
-    FootCycleParameterizationMemberV1, FootCycleParameterizationV1, InputIdentity,
-    ResourceKeySyntaxV1,
+    FootCycleParameterizationMemberV1, FootCycleParameterizationV1, FootCycleProofPolicyV1,
+    InputIdentity, ResourceKeySyntaxV1,
 };
 use serde::Deserialize;
 use serde::de::{Deserializer, SeqAccess, Visitor};
@@ -159,6 +159,12 @@ fn decode(wire: ParameterizationWire) -> Result<FootCycleParameterizationV1, ()>
     let runtime_set_id = CollectionLogicalIdV1::new(wire.runtime_set_id).map_err(|_| ())?;
     let reference_member = CollectionLogicalIdV1::new(wire.reference_member).map_err(|_| ())?;
     let output_directory = safe_path(&wire.output_directory)?;
+    let proof = FootCycleProofPolicyV1::new(
+        wire.proof.max_gait_phase_spread,
+        wire.proof.min_lr_amplitude_m,
+        wire.proof.max_contact_boundary_phase_error,
+    )
+    .map_err(|_| ())?;
     let members = wire
         .members
         .into_iter()
@@ -176,6 +182,7 @@ fn decode(wire: ParameterizationWire) -> Result<FootCycleParameterizationV1, ()>
         output_directory,
         wire.minimum_segment_slope,
         wire.maximum_segment_slope,
+        proof,
         members,
     )
     .map_err(|_| ())
@@ -227,6 +234,7 @@ struct ParameterizationWire {
     minimum_segment_slope: f64,
     maximum_segment_slope: f64,
     manifest: ManifestWire,
+    proof: ProofWire,
     #[serde(deserialize_with = "deserialize_members")]
     members: Vec<MemberWire>,
 }
@@ -238,6 +246,14 @@ struct ManifestWire {
     schema_version: u32,
     collection_id: String,
     input: InputWire,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProofWire {
+    max_gait_phase_spread: f64,
+    min_lr_amplitude_m: f64,
+    max_contact_boundary_phase_error: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,6 +319,11 @@ output_directory = "generated/walk-aligned"
 minimum_segment_slope = 0.5
 maximum_segment_slope = 2.0
 
+[proof]
+max_gait_phase_spread = 0.08
+min_lr_amplitude_m = 0.05
+max_contact_boundary_phase_error = 0.01
+
 [manifest]
 schema = "{COLLECTION_MANIFEST_V1_ID}"
 schema_version = 1
@@ -325,6 +346,10 @@ contact_fragment = "contacts/walk-right.json"
 
     #[test]
     fn strict_reader_preserves_declared_order_and_bindings() {
+        assert_eq!(
+            FOOT_CYCLE_PARAMETERIZATION_V1_ID,
+            "urn:animsmith:schema:foot-cycle-parameterization:1"
+        );
         let parsed = parse_foot_cycle_parameterization_bytes(valid().as_bytes()).unwrap();
         assert_eq!(parsed.schema(), FOOT_CYCLE_PARAMETERIZATION_V1_ID);
         assert_eq!(parsed.manifest().input().bytes(), 1024);
@@ -334,6 +359,9 @@ contact_fragment = "contacts/walk-right.json"
             "com.example/walk-forward"
         );
         assert_eq!(parsed.output_directory().as_str(), "generated/walk-aligned");
+        assert_eq!(parsed.proof().max_gait_phase_spread(), 0.08);
+        assert_eq!(parsed.proof().min_lr_amplitude_m(), 0.05);
+        assert_eq!(parsed.proof().max_contact_boundary_phase_error(), 0.01);
         assert_eq!(
             parsed
                 .members()
@@ -392,6 +420,10 @@ contact_fragment = "contacts/walk-right.json"
                 "maximum_segment_slope = 2.0\nunknown = true",
             ),
             valid().replace(
+                "max_contact_boundary_phase_error = 0.01",
+                "max_contact_boundary_phase_error = 0.01\nunknown = true",
+            ),
+            valid().replace(
                 "collection_id = \"com.example\"",
                 "collection_id = \"com.example\"\nunknown = true",
             ),
@@ -430,6 +462,96 @@ contact_fragment = "contacts/walk-right.json"
                 FootCycleParameterizationControlKind::InvalidDeclaration
             );
         }
+    }
+
+    #[test]
+    fn proof_table_is_required_closed_and_range_checked() {
+        let proof = "[proof]\nmax_gait_phase_spread = 0.08\nmin_lr_amplitude_m = 0.05\nmax_contact_boundary_phase_error = 0.01\n\n";
+        for malformed in [
+            valid().replace(proof, ""),
+            valid().replace("max_gait_phase_spread = 0.08\n", ""),
+            valid().replace("min_lr_amplitude_m = 0.05\n", ""),
+            valid().replace("max_contact_boundary_phase_error = 0.01\n", ""),
+        ] {
+            assert_eq!(
+                parse_foot_cycle_parameterization_bytes(malformed.as_bytes())
+                    .unwrap_err()
+                    .kind(),
+                FootCycleParameterizationControlKind::Malformed
+            );
+        }
+
+        for invalid in [
+            valid().replace(
+                "max_gait_phase_spread = 0.08",
+                "max_gait_phase_spread = -0.01",
+            ),
+            valid().replace(
+                "max_gait_phase_spread = 0.08",
+                "max_gait_phase_spread = 0.5000000000000001",
+            ),
+            valid().replace(
+                "min_lr_amplitude_m = 0.05",
+                "min_lr_amplitude_m = -0.0000000000000001",
+            ),
+            valid().replace(
+                "max_contact_boundary_phase_error = 0.01",
+                "max_contact_boundary_phase_error = 0.5000000000000001",
+            ),
+            valid().replace(
+                "max_gait_phase_spread = 0.08",
+                "max_gait_phase_spread = nan",
+            ),
+            valid().replace("min_lr_amplitude_m = 0.05", "min_lr_amplitude_m = inf"),
+            valid().replace(
+                "max_contact_boundary_phase_error = 0.01",
+                "max_contact_boundary_phase_error = -inf",
+            ),
+        ] {
+            assert_eq!(
+                parse_foot_cycle_parameterization_bytes(invalid.as_bytes())
+                    .unwrap_err()
+                    .kind(),
+                FootCycleParameterizationControlKind::InvalidDeclaration
+            );
+        }
+
+        let exact = valid()
+            .replace(
+                "max_gait_phase_spread = 0.08",
+                "max_gait_phase_spread = 0.5",
+            )
+            .replace("min_lr_amplitude_m = 0.05", "min_lr_amplitude_m = 0.0")
+            .replace(
+                "max_contact_boundary_phase_error = 0.01",
+                "max_contact_boundary_phase_error = 0.5",
+            );
+        let parsed = parse_foot_cycle_parameterization_bytes(exact.as_bytes()).unwrap();
+        assert_eq!(parsed.proof().max_gait_phase_spread(), 0.5);
+        assert_eq!(parsed.proof().min_lr_amplitude_m(), 0.0);
+        assert_eq!(parsed.proof().max_contact_boundary_phase_error(), 0.5);
+    }
+
+    #[test]
+    fn exact_parameterization_bytes_bind_the_proof_policy() {
+        let directory = tempfile::tempdir().unwrap();
+        let first_path = directory.path().join("first.toml");
+        let second_path = directory.path().join("second.toml");
+        let first = valid();
+        let second = first.replace(
+            "max_gait_phase_spread = 0.08",
+            "max_gait_phase_spread = 0.09",
+        );
+        std::fs::write(&first_path, &first).unwrap();
+        std::fs::write(&second_path, &second).unwrap();
+        let first = load_foot_cycle_parameterization_with_identity(&first_path).unwrap();
+        let second = load_foot_cycle_parameterization_with_identity(&second_path).unwrap();
+        assert_eq!(first.parameterization.proof().max_gait_phase_spread(), 0.08);
+        assert_eq!(
+            second.parameterization.proof().max_gait_phase_spread(),
+            0.09
+        );
+        assert_ne!(first.input, second.input);
     }
 
     #[test]

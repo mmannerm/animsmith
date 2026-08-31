@@ -316,6 +316,11 @@ member/path order. The planner validates manifest clip witnesses,
 the known stance-detector provenance and exact common detector threshold,
 bounded aggregate canonical-fragment work, alternating bilateral support
 topology, positional boundary correspondence, and every declared segment-slope bound.
+The strict declaration also carries a required exact proof policy: finite
+maximum gait-phase spread and contact-boundary phase error in `[0, 0.5]`, plus
+a finite non-negative minimum left/right amplitude. The plan retains that
+policy together with the identity of the exact parameterization bytes; it does
+not obtain defaults from config or merge values across members.
 It returns one exact `ContactTransformBindingV1` and duration-preserving
 `ContactTransformOperationV1::TimeWarp` per member.
 
@@ -341,7 +346,11 @@ binding before host source access, reloads only its exact member-reachable
 sources/configs, retains their normalized config semantics and byte identities
 for later proof without rereading controls, derives the typed in-place root evidence,
 cross-checks plans against exact selected takes, and prepares bounded clip
-candidates. It also runs the closed operation-aware stance-detector extension
+candidates. Root evidence retains signed endpoint X/Z and signed accumulated
+yaw even though the unchanged in-place gate applies horizontal `hypot(X, Z)`
+and absolute yaw. The prepared collection also retains exact aggregate source
+metric pose-cell and sample-evaluation totals for the later shared
+source/output proof budget. It also runs the closed operation-aware stance-detector extension
 handler, but retains contact transformation as a typed continuation: only a
 later serializer can supply a truthful fresh output artifact identity and
 dependency closure. Serialization, reread proof, generation-directory
