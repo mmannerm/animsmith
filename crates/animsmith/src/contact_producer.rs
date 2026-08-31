@@ -961,8 +961,13 @@ mod tests {
             normalized_index: 0,
         };
 
-        let rejection = build_fragment(&loaded, &LoadedConfig::without_file(), selection)
-            .expect_err("shared scene-root validation must run before contact analysis");
+        let rejection = build_fragment(
+            &loaded,
+            &LoadedConfig::without_file(),
+            selection,
+            &mut ProductionContactMetricGridRuntime,
+        )
+        .expect_err("shared scene-root validation must run before contact analysis");
 
         assert_eq!(rejection.stage, Stage::Analysis);
         assert_eq!(rejection.kind, Kind::IncompleteEvidence);
