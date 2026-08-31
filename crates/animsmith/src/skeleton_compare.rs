@@ -723,84 +723,49 @@ fn compare_rows(
     let mut evaluable = false;
     let mapped_targets = map.values().cloned().collect::<BTreeSet<_>>();
     for (source_name, target_name) in &map {
-        match (source.get(source_name), target.get(target_name)) {
-            (Some(source_node), Some(target_node)) => {
-                evaluable = true;
-                let parent = parent_state(source_node, target_node, &map);
-                let local_rest = rest_deltas(
-                    source_node.node,
-                    target_node.node,
-                    tolerance,
-                    false,
-                    partial,
-                );
-                let rest_world =
-                    rest_deltas(source_node.node, target_node.node, tolerance, true, partial);
-                let length = normalized_length_delta(
-                    source_node,
-                    target_node,
-                    source,
-                    target,
-                    &map,
-                    tolerance,
-                    partial,
-                );
-                let row_mismatch = matches!(parent, FacetState::Mismatch)
-                    || rest_mismatch(local_rest.as_ref())
-                    || rest_mismatch(rest_world.as_ref())
-                    || delta_mismatch(length.as_ref());
-                mismatches |= row_mismatch;
-                rows.push(Row {
-                    kind: if matches!(parent, FacetState::Mismatch) {
-                        "parent_mismatch"
-                    } else {
-                        "matched"
-                    },
-                    source_name: Some(source_name.clone()),
-                    target_name: Some(target_name.clone()),
-                    parent_correspondence: Some(parent),
-                    local_rest,
-                    rest_world,
-                    normalized_child_bone_length_ratio: length,
-                });
-            }
-            (Some(_), None) => {
-                mismatches = true;
-                rows.push(Row {
-                    kind: "missing_target",
-                    source_name: Some(source_name.clone()),
-                    target_name: Some(target_name.clone()),
-                    parent_correspondence: None,
-                    local_rest: None,
-                    rest_world: None,
-                    normalized_child_bone_length_ratio: None,
-                });
-            }
-            (None, Some(_)) => {
-                mismatches = true;
-                rows.push(Row {
-                    kind: "missing_source",
-                    source_name: Some(source_name.clone()),
-                    target_name: Some(target_name.clone()),
-                    parent_correspondence: None,
-                    local_rest: None,
-                    rest_world: None,
-                    normalized_child_bone_length_ratio: None,
-                });
-            }
-            (None, None) => {
-                *partial = true;
-                rows.push(Row {
-                    kind: "unavailable",
-                    source_name: Some(source_name.clone()),
-                    target_name: Some(target_name.clone()),
-                    parent_correspondence: None,
-                    local_rest: None,
-                    rest_world: None,
-                    normalized_child_bone_length_ratio: None,
-                });
-            }
-        }
+        let source_node = source.get(source_name).expect(
+            "correspondence map must reference only source selector members admitted by parse() and select_nodes()",
+        );
+        let target_node = target.get(target_name).expect(
+            "correspondence map must reference only target selector members admitted by parse() and select_nodes()",
+        );
+        evaluable = true;
+        let parent = parent_state(source_node, target_node, &map);
+        let local_rest = rest_deltas(
+            source_node.node,
+            target_node.node,
+            tolerance,
+            false,
+            partial,
+        );
+        let rest_world = rest_deltas(source_node.node, target_node.node, tolerance, true, partial);
+        let length = normalized_length_delta(
+            source_node,
+            target_node,
+            source,
+            target,
+            &map,
+            tolerance,
+            partial,
+        );
+        let row_mismatch = matches!(parent, FacetState::Mismatch)
+            || rest_mismatch(local_rest.as_ref())
+            || rest_mismatch(rest_world.as_ref())
+            || delta_mismatch(length.as_ref());
+        mismatches |= row_mismatch;
+        rows.push(Row {
+            kind: if matches!(parent, FacetState::Mismatch) {
+                "parent_mismatch"
+            } else {
+                "matched"
+            },
+            source_name: Some(source_name.clone()),
+            target_name: Some(target_name.clone()),
+            parent_correspondence: Some(parent),
+            local_rest,
+            rest_world,
+            normalized_child_bone_length_ratio: length,
+        });
     }
     for name in source.keys().filter(|name| !map.contains_key(*name)) {
         mismatches = true;
