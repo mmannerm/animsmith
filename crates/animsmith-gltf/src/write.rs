@@ -11,10 +11,88 @@
 //! conversion does not repair.
 
 use crate::WriteError;
-use animsmith_core::model::{Document, Interpolation, Property, TrackValues};
+use animsmith_core::model::{
+    Document, Interpolation, Property, SourceSkeletonCoverage, TrackValues, validate_document_shape,
+};
 use base64::Engine as _;
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 use std::path::Path;
+
+/// Inclusive byte ceilings for the strict in-memory GLB writer.
+///
+/// Foot-cycle V1 callers should select [`Self::FOOT_CYCLE_V1`] explicitly. A
+/// caller preparing a larger artifact must make that authority explicit and
+/// still remain within the glTF container's `u32` length fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlbWriteLimits {
+    /// Maximum padded JSON chunk bytes.
+    pub max_json_bytes: usize,
+    /// Maximum padded binary chunk bytes.
+    pub max_bin_bytes: usize,
+    /// Maximum complete GLB bytes, including header and chunk framing.
+    pub max_total_bytes: usize,
+}
+
+impl GlbWriteLimits {
+    /// Conservative 256 MiB inclusive ceiling for each candidate component
+    /// and for the framed in-memory GLB.
+    pub const FOOT_CYCLE_V1: Self = Self {
+        max_json_bytes: 256 * 1024 * 1024,
+        max_bin_bytes: 256 * 1024 * 1024,
+        max_total_bytes: 256 * 1024 * 1024,
+    };
+}
+
+/// Immutable, exact result of [`preflight_glb_bytes`].
+///
+/// A receipt binds the document's strict projection and its byte counts to one
+/// limit set. [`write_glb_bytes`] repeats the projection and refuses if any
+/// count changed, so a mutable core [`Document`] cannot use a stale approval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlbWritePreflight {
+    summary: WriteSummary,
+    json_bytes: usize,
+    bin_bytes: usize,
+    total_bytes: usize,
+    limits: GlbWriteLimits,
+    policy: GlbProjectionPolicyV1,
+    json_digest: [u8; 32],
+    bin_digest: [u8; 32],
+}
+
+impl GlbWritePreflight {
+    /// Generated glTF summary for the strict projection.
+    pub fn summary(&self) -> WriteSummary {
+        self.summary
+    }
+
+    /// Exact padded JSON chunk byte count.
+    pub fn json_bytes(&self) -> usize {
+        self.json_bytes
+    }
+
+    /// Exact padded binary chunk byte count.
+    pub fn bin_bytes(&self) -> usize {
+        self.bin_bytes
+    }
+
+    /// Exact complete GLB byte count, including framing.
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes
+    }
+
+    /// Limits against which this receipt was admitted.
+    pub fn limits(&self) -> GlbWriteLimits {
+        self.limits
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BinaryMode {
+    Count,
+    Retain,
+}
 
 /// Counts of the scene data emitted by [`write()`].
 ///
@@ -42,23 +120,85 @@ pub struct WriteSummary {
 }
 
 struct BufferBuilder {
-    bytes: Vec<u8>,
+    bytes: Option<Vec<u8>>,
+    byte_len: usize,
+    digest: Sha256,
     views: Vec<Value>,
     accessors: Vec<Value>,
 }
 
 impl BufferBuilder {
-    fn new() -> Self {
-        Self {
-            bytes: Vec::new(),
+    fn new(mode: BinaryMode, reserve: usize) -> Result<Self, WriteError> {
+        let bytes = match mode {
+            BinaryMode::Count => None,
+            BinaryMode::Retain => {
+                let mut bytes = Vec::new();
+                bytes
+                    .try_reserve_exact(reserve)
+                    .map_err(|_| WriteError::Allocation {
+                        field: "BIN chunk",
+                        bytes: reserve,
+                    })?;
+                Some(bytes)
+            }
+        };
+        Ok(Self {
+            bytes,
+            byte_len: 0,
+            digest: Sha256::new(),
             views: Vec::new(),
             accessors: Vec::new(),
+        })
+    }
+
+    fn len(&self) -> usize {
+        self.byte_len
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> Result<(), WriteError> {
+        self.byte_len = self
+            .byte_len
+            .checked_add(bytes.len())
+            .ok_or(WriteError::TooLarge {
+                field: "BIN chunk",
+                bytes: usize::MAX,
+            })?;
+        if let Some(retained) = &mut self.bytes {
+            retained.extend_from_slice(bytes);
         }
+        self.digest.update(bytes);
+        Ok(())
+    }
+
+    fn push_padding(&mut self) -> Result<(), WriteError> {
+        while !self.byte_len.is_multiple_of(4) {
+            self.append(&[0])?;
+        }
+        Ok(())
+    }
+
+    fn into_bytes(self) -> Result<Vec<u8>, WriteError> {
+        self.bytes.ok_or(WriteError::Refused(
+            "internal count projection cannot emit bytes".to_owned(),
+        ))
+    }
+
+    fn digest(&self) -> [u8; 32] {
+        self.digest.clone().finalize().into()
     }
 
     /// Append `data` as a buffer view + accessor; returns the accessor
     /// index. `kind` is "SCALAR" | "VEC3" | "VEC4"; floats only.
-    fn push(&mut self, data: &[f32], kind: &str, with_min_max: bool) -> usize {
+    fn push_f32<I>(
+        &mut self,
+        len: usize,
+        data: I,
+        kind: &str,
+        with_min_max: bool,
+    ) -> Result<usize, WriteError>
+    where
+        I: IntoIterator<Item = f32>,
+    {
         let components = match kind {
             "SCALAR" => 1,
             "VEC2" => 2,
@@ -66,52 +206,61 @@ impl BufferBuilder {
             "MAT4" => 16,
             _ => 4,
         };
-        let offset = self.bytes.len();
-        for v in data {
-            self.bytes.extend_from_slice(&v.to_le_bytes());
+        let offset = self.len();
+        let byte_len = len.checked_mul(4).ok_or(WriteError::TooLarge {
+            field: "BIN chunk",
+            bytes: usize::MAX,
+        })?;
+        let mut min = vec![f32::MAX; components];
+        let mut max = vec![f32::MIN; components];
+        let mut count = 0usize;
+        for value in data {
+            let component = count % components;
+            if with_min_max {
+                min[component] = min[component].min(value);
+                max[component] = max[component].max(value);
+            }
+            self.append(&value.to_le_bytes())?;
+            count = count.checked_add(1).ok_or(WriteError::TooLarge {
+                field: "BIN chunk",
+                bytes: usize::MAX,
+            })?;
         }
+        debug_assert_eq!(count, len);
         let view = self.views.len();
         self.views.push(json!({
             "buffer": 0,
             "byteOffset": offset,
-            "byteLength": data.len() * 4,
+            "byteLength": byte_len,
         }));
         let mut accessor = json!({
             "bufferView": view,
             "componentType": 5126,
-            "count": data.len() / components,
+            "count": len / components,
             "type": kind,
         });
-        if with_min_max && !data.is_empty() {
-            // Required on animation inputs; componentwise for vectors.
-            let mut min = vec![f32::MAX; components];
-            let mut max = vec![f32::MIN; components];
-            for (i, v) in data.iter().enumerate() {
-                let c = i % components;
-                min[c] = min[c].min(*v);
-                max[c] = max[c].max(*v);
-            }
+        if with_min_max && len > 0 {
             accessor["min"] = json!(min);
             accessor["max"] = json!(max);
         }
         let index = self.accessors.len();
         self.accessors.push(accessor);
-        index
+        Ok(index)
     }
 }
 
 impl BufferBuilder {
     /// Append u32 triangle indices as a buffer view + accessor.
-    fn push_indices(&mut self, data: &[u32]) -> usize {
-        let offset = self.bytes.len();
+    fn push_indices(&mut self, data: &[u32]) -> Result<usize, WriteError> {
+        let offset = self.len();
         for v in data {
-            self.bytes.extend_from_slice(&v.to_le_bytes());
+            self.append(&v.to_le_bytes())?;
         }
         let view = self.views.len();
         self.views.push(json!({
             "buffer": 0,
             "byteOffset": offset,
-            "byteLength": data.len() * 4,
+            "byteLength": data.len().checked_mul(4).ok_or(WriteError::TooLarge { field: "BIN chunk", bytes: usize::MAX })?,
         }));
         let index = self.accessors.len();
         self.accessors.push(json!({
@@ -120,71 +269,93 @@ impl BufferBuilder {
             "count": data.len(),
             "type": "SCALAR",
         }));
-        index
+        Ok(index)
     }
 
     /// Append raw bytes (an encoded image) as a bare buffer view.
-    fn push_view(&mut self, data: &[u8]) -> usize {
-        while !self.bytes.len().is_multiple_of(4) {
-            self.bytes.push(0);
-        }
-        let offset = self.bytes.len();
-        self.bytes.extend_from_slice(data);
+    fn push_view(&mut self, data: &[u8]) -> Result<usize, WriteError> {
+        self.push_padding()?;
+        let offset = self.len();
+        self.append(data)?;
         let view = self.views.len();
         self.views.push(json!({
             "buffer": 0,
             "byteOffset": offset,
             "byteLength": data.len(),
         }));
-        view
+        Ok(view)
     }
 
     /// Append u16 data (JOINTS_0) as a buffer view + accessor.
-    fn push_u16(&mut self, data: &[u16], kind: &str) -> usize {
+    fn push_u16<I>(&mut self, len: usize, data: I, kind: &str) -> Result<usize, WriteError>
+    where
+        I: IntoIterator<Item = u16>,
+    {
         let components = if kind == "VEC4" { 4 } else { 1 };
-        let offset = self.bytes.len();
+        let offset = self.len();
+        let mut seen = 0usize;
         for v in data {
-            self.bytes.extend_from_slice(&v.to_le_bytes());
+            self.append(&v.to_le_bytes())?;
+            seen = seen.checked_add(1).ok_or(WriteError::TooLarge {
+                field: "BIN chunk",
+                bytes: usize::MAX,
+            })?;
         }
-        while !self.bytes.len().is_multiple_of(4) {
-            self.bytes.push(0);
-        }
+        debug_assert_eq!(seen, len);
+        self.push_padding()?;
         let view = self.views.len();
         self.views.push(json!({
             "buffer": 0,
             "byteOffset": offset,
-            "byteLength": data.len() * 2,
+            "byteLength": len.checked_mul(2).ok_or(WriteError::TooLarge { field: "BIN chunk", bytes: usize::MAX })?,
         }));
         let index = self.accessors.len();
         self.accessors.push(json!({
             "bufferView": view,
             "componentType": 5123,
-            "count": data.len() / components,
+            "count": len / components,
             "type": kind,
         }));
-        index
+        Ok(index)
     }
 }
 
-fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usize) -> Value {
-    let mut nodes: Vec<Value> = Vec::with_capacity(doc.skeleton.bones.len());
+fn document_to_json(
+    doc: &Document,
+    buffer_uri: Option<String>,
+    buffer_len: usize,
+) -> Result<Value, WriteError> {
+    let mut children = Vec::<Vec<usize>>::new();
+    children
+        .try_reserve_exact(doc.skeleton.bones.len())
+        .map_err(|_| WriteError::Allocation {
+            field: "skeleton adjacency",
+            bytes: doc.skeleton.bones.len(),
+        })?;
+    children.resize_with(doc.skeleton.bones.len(), Vec::new);
+    for (child, bone) in doc.skeleton.bones.iter().enumerate() {
+        if let Some(parent) = bone.parent
+            && let Some(children) = children.get_mut(parent)
+        {
+            children.push(child);
+        }
+    }
+    let mut nodes = Vec::<Value>::new();
+    nodes
+        .try_reserve_exact(doc.skeleton.bones.len())
+        .map_err(|_| WriteError::Allocation {
+            field: "node array",
+            bytes: doc.skeleton.bones.len(),
+        })?;
     for (id, bone) in doc.skeleton.bones.iter().enumerate() {
-        let children: Vec<usize> = doc
-            .skeleton
-            .bones
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| b.parent == Some(id))
-            .map(|(i, _)| i)
-            .collect();
         let mut node = json!({
             "name": bone.name,
             "translation": bone.rest.translation.to_array(),
             "rotation": bone.rest.rotation.to_array(),
             "scale": bone.rest.scale.to_array(),
         });
-        if !children.is_empty() {
-            node["children"] = json!(children);
+        if !children[id].is_empty() {
+            node["children"] = json!(children[id]);
         }
         nodes.push(node);
     }
@@ -219,7 +390,7 @@ fn document_to_json(doc: &Document, buffer_uri: Option<String>, buffer_len: usiz
         }
         root["buffers"] = json!([buffer]);
     }
-    root
+    Ok(root)
 }
 
 /// Narrow a GLB byte length to the `u32` its header/chunk field requires,
@@ -250,30 +421,47 @@ pub(crate) struct GlbLengths {
 pub(crate) fn plan_glb_lengths(json_len: usize, bin_len: usize) -> Result<GlbLengths, WriteError> {
     let json = glb_len_u32("JSON chunk", json_len)?;
     let (bin, bin_bytes) = if bin_len > 0 {
-        (Some(glb_len_u32("BIN chunk", bin_len)?), 8 + bin_len)
+        (
+            Some(glb_len_u32("BIN chunk", bin_len)?),
+            8usize.checked_add(bin_len).ok_or(WriteError::TooLarge {
+                field: "total GLB length",
+                bytes: usize::MAX,
+            })?,
+        )
     } else {
         (None, 0)
     };
-    let total = glb_len_u32("total GLB length", 12 + 8 + json_len + bin_bytes)?;
+    let total_bytes = 12usize
+        .checked_add(8)
+        .and_then(|total| total.checked_add(json_len))
+        .and_then(|total| total.checked_add(bin_bytes))
+        .ok_or(WriteError::TooLarge {
+            field: "total GLB length",
+            bytes: usize::MAX,
+        })?;
+    let total = glb_len_u32("total GLB length", total_bytes)?;
     Ok(GlbLengths { total, json, bin })
 }
 
-/// Serialize `doc` to `path` (`.glb` for binary, anything else as
-/// `.gltf` JSON with an embedded data-URI buffer): skeleton, animation,
-/// and any scene assets it carries ([`Document::assets`] — triangulated
-/// meshes, skins, factor-only materials, and embedded PNG/JPEG base-color and
-/// normal textures). A `Document` with default-empty assets writes animation and
-/// skeleton only.
-///
-/// # Errors
-///
-/// Returns [`WriteError::Serialize`] if the generated glTF JSON cannot be
-/// serialized, [`WriteError::TooLarge`] if a GLB length field would exceed
-/// the format's 4 GiB `u32` limit, and [`WriteError::Io`] when the output
-/// file cannot be written.
-pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
+struct Projection {
+    root: Value,
+    bin: Option<Vec<u8>>,
+    bin_bytes: usize,
+    summary: WriteSummary,
+    bin_digest: [u8; 32],
+}
+
+/// Build the one normalized writer projection in either count or retain mode.
+/// Count mode intentionally builds the exact JSON tree but retains no binary
+/// payload; retain mode emits the same tree and bytes after a successful count
+/// preflight has reserved the exact binary capacity.
+fn build_projection(
+    doc: &Document,
+    mode: BinaryMode,
+    reserve: usize,
+) -> Result<Projection, WriteError> {
     let assets = &doc.assets;
-    let mut buffers = BufferBuilder::new();
+    let mut buffers = BufferBuilder::new(mode, reserve)?;
     let mut animations: Vec<Value> = Vec::new();
     let mut clips_without_writable_tracks = 0usize;
 
@@ -284,16 +472,31 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
             if track.times.is_empty() || track.bone >= doc.skeleton.bones.len() {
                 continue;
             }
-            let input = buffers.push(&track.times, "SCALAR", true);
+            let input = buffers.push_f32(
+                track.times.len(),
+                track.times.iter().copied(),
+                "SCALAR",
+                true,
+            )?;
             let output = match &track.values {
-                TrackValues::Vec3s(v) => {
-                    let flat: Vec<f32> = v.iter().flat_map(|x| x.to_array()).collect();
-                    buffers.push(&flat, "VEC3", false)
-                }
-                TrackValues::Quats(v) => {
-                    let flat: Vec<f32> = v.iter().flat_map(|q| q.to_array()).collect();
-                    buffers.push(&flat, "VEC4", false)
-                }
+                TrackValues::Vec3s(v) => buffers.push_f32(
+                    v.len().checked_mul(3).ok_or(WriteError::TooLarge {
+                        field: "BIN chunk",
+                        bytes: usize::MAX,
+                    })?,
+                    v.iter().flat_map(|x| x.to_array()),
+                    "VEC3",
+                    false,
+                )?,
+                TrackValues::Quats(v) => buffers.push_f32(
+                    v.len().checked_mul(4).ok_or(WriteError::TooLarge {
+                        field: "BIN chunk",
+                        bytes: usize::MAX,
+                    })?,
+                    v.iter().flat_map(|q| q.to_array()),
+                    "VEC4",
+                    false,
+                )?,
             };
             let interpolation = match track.interpolation {
                 Interpolation::Linear => "LINEAR",
@@ -337,28 +540,69 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
     for mesh in &assets.meshes {
         let mut prims: Vec<Value> = Vec::new();
         for prim in &mesh.primitives {
-            let flat: Vec<f32> = prim.positions.iter().flat_map(|v| v.to_array()).collect();
             let mut attributes = json!({
                 // POSITION min/max is required by the spec.
-                "POSITION": buffers.push(&flat, "VEC3", true),
+                "POSITION": buffers.push_f32(prim.positions.len().checked_mul(3).ok_or(WriteError::TooLarge { field: "BIN chunk", bytes: usize::MAX })?, prim.positions.iter().flat_map(|v| v.to_array()), "VEC3", true)?,
             });
             if !prim.normals.is_empty() {
-                let flat: Vec<f32> = prim.normals.iter().flat_map(|v| v.to_array()).collect();
-                attributes["NORMAL"] = json!(buffers.push(&flat, "VEC3", false));
+                attributes["NORMAL"] = json!(
+                    buffers.push_f32(
+                        prim.normals
+                            .len()
+                            .checked_mul(3)
+                            .ok_or(WriteError::TooLarge {
+                                field: "BIN chunk",
+                                bytes: usize::MAX
+                            })?,
+                        prim.normals.iter().flat_map(|v| v.to_array()),
+                        "VEC3",
+                        false
+                    )?
+                );
             }
             if !prim.uvs.is_empty() {
-                let flat: Vec<f32> = prim.uvs.iter().flatten().copied().collect();
-                attributes["TEXCOORD_0"] = json!(buffers.push(&flat, "VEC2", false));
+                attributes["TEXCOORD_0"] = json!(buffers.push_f32(
+                    prim.uvs.len().checked_mul(2).ok_or(WriteError::TooLarge {
+                        field: "BIN chunk",
+                        bytes: usize::MAX
+                    })?,
+                    prim.uvs.iter().flatten().copied(),
+                    "VEC2",
+                    false
+                )?);
             }
             if !prim.joints.is_empty() {
-                let flat_j: Vec<u16> = prim.joints.iter().flatten().copied().collect();
-                attributes["JOINTS_0"] = json!(buffers.push_u16(&flat_j, "VEC4"));
-                let flat_w: Vec<f32> = prim.weights.iter().flatten().copied().collect();
-                attributes["WEIGHTS_0"] = json!(buffers.push(&flat_w, "VEC4", false));
+                attributes["JOINTS_0"] = json!(
+                    buffers.push_u16(
+                        prim.joints
+                            .len()
+                            .checked_mul(4)
+                            .ok_or(WriteError::TooLarge {
+                                field: "BIN chunk",
+                                bytes: usize::MAX
+                            })?,
+                        prim.joints.iter().flatten().copied(),
+                        "VEC4"
+                    )?
+                );
+                attributes["WEIGHTS_0"] = json!(
+                    buffers.push_f32(
+                        prim.weights
+                            .len()
+                            .checked_mul(4)
+                            .ok_or(WriteError::TooLarge {
+                                field: "BIN chunk",
+                                bytes: usize::MAX
+                            })?,
+                        prim.weights.iter().flatten().copied(),
+                        "VEC4",
+                        false
+                    )?
+                );
             }
             let mut value = json!({ "attributes": attributes });
             if !prim.indices.is_empty() {
-                value["indices"] = json!(buffers.push_indices(&prim.indices));
+                value["indices"] = json!(buffers.push_indices(&prim.indices)?);
             }
             if let Some(material) = prim.material {
                 value["material"] = json!(material);
@@ -375,17 +619,32 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
         let skin_index = if instance.skin_joints.is_empty() {
             None
         } else {
-            let mut ibms: Vec<f32> = Vec::with_capacity(instance.skin_joints.len() * 16);
-            for (slot, &joint) in instance.skin_joints.iter().enumerate() {
-                let m = instance
-                    .skin_ibms
-                    .get(slot)
-                    .copied()
-                    .or_else(|| doc.skeleton.bones.get(joint).and_then(|b| b.inverse_bind))
-                    .unwrap_or(glam::Mat4::IDENTITY);
-                ibms.extend_from_slice(&m.to_cols_array());
-            }
-            let accessor = buffers.push(&ibms, "MAT4", false);
+            let values = instance
+                .skin_joints
+                .iter()
+                .enumerate()
+                .flat_map(|(slot, &joint)| {
+                    instance
+                        .skin_ibms
+                        .get(slot)
+                        .copied()
+                        .or_else(|| doc.skeleton.bones.get(joint).and_then(|b| b.inverse_bind))
+                        .unwrap_or(glam::Mat4::IDENTITY)
+                        .to_cols_array()
+                });
+            let accessor = buffers.push_f32(
+                instance
+                    .skin_joints
+                    .len()
+                    .checked_mul(16)
+                    .ok_or(WriteError::TooLarge {
+                        field: "BIN chunk",
+                        bytes: usize::MAX,
+                    })?,
+                values,
+                "MAT4",
+                false,
+            )?;
             let index = skins_json.len();
             skins_json.push(json!({
                 "joints": instance.skin_joints,
@@ -414,14 +673,14 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
         vec![None; assets.materials.len()];
     for (mi, material) in assets.materials.iter().enumerate() {
         if let Some(texture) = &material.base_color_texture {
-            let view = buffers.push_view(&texture.bytes);
+            let view = buffers.push_view(&texture.bytes)?;
             let image = images_json.len();
             images_json.push(json!({ "bufferView": view, "mimeType": texture.mime }));
             material_texture_index[mi] = Some(textures_json.len());
             textures_json.push(json!({ "source": image }));
         }
         if let Some(normal) = &material.normal_texture {
-            let view = buffers.push_view(&normal.texture.bytes);
+            let view = buffers.push_view(&normal.texture.bytes)?;
             let image = images_json.len();
             images_json.push(json!({
                 "bufferView": view,
@@ -431,14 +690,14 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
             textures_json.push(json!({ "source": image }));
         }
         if let Some(texture) = &material.metallic_roughness_texture {
-            let view = buffers.push_view(&texture.bytes);
+            let view = buffers.push_view(&texture.bytes)?;
             let image = images_json.len();
             images_json.push(json!({ "bufferView": view, "mimeType": texture.mime }));
             material_metallic_roughness_texture_index[mi] = Some(textures_json.len());
             textures_json.push(json!({ "source": image }));
         }
         if let Some(occlusion) = &material.occlusion_texture {
-            let view = buffers.push_view(&occlusion.texture.bytes);
+            let view = buffers.push_view(&occlusion.texture.bytes)?;
             let image = images_json.len();
             images_json.push(json!({ "bufferView": view, "mimeType": occlusion.texture.mime }));
             material_occlusion_texture_index[mi] = Some(textures_json.len());
@@ -446,27 +705,14 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
         }
     }
 
-    let binary = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("glb"));
-
-    let uri = if binary {
-        None
-    } else {
-        Some(format!(
-            "data:application/octet-stream;base64,{}",
-            base64::engine::general_purpose::STANDARD.encode(&buffers.bytes)
-        ))
-    };
-    let mut root = document_to_json(doc, uri, buffers.bytes.len());
+    let mut root = document_to_json(doc, None, buffers.len())?;
     // Present-but-empty accessor arrays are invalid glTF (minItems 1); an
     // empty document has none, so emit them only when populated.
     if !buffers.views.is_empty() {
-        root["bufferViews"] = Value::Array(buffers.views);
+        root["bufferViews"] = Value::Array(std::mem::take(&mut buffers.views));
     }
     if !buffers.accessors.is_empty() {
-        root["accessors"] = Value::Array(buffers.accessors);
+        root["accessors"] = Value::Array(std::mem::take(&mut buffers.accessors));
     }
     if !animations.is_empty() {
         root["animations"] = Value::Array(animations);
@@ -576,41 +822,449 @@ pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
         clips_without_writable_tracks,
     };
 
-    let io_err = |e: std::io::Error| WriteError::Io {
-        path: path.display().to_string(),
-        source: e,
+    let bin_bytes = buffers.len();
+    let bin_digest = buffers.digest();
+    let bin = match mode {
+        BinaryMode::Count => None,
+        BinaryMode::Retain => Some(buffers.into_bytes()?),
     };
-    if binary {
-        let mut json_bytes = serde_json::to_vec(&root)?;
-        while !json_bytes.len().is_multiple_of(4) {
-            json_bytes.push(b' ');
-        }
-        let mut bin = buffers.bytes;
-        while !bin.len().is_multiple_of(4) {
-            bin.push(0);
-        }
-        // Plan and length-check the chunk framing once, so the bytes
-        // emitted below can't diverge from what was checked.
-        let lengths = plan_glb_lengths(json_bytes.len(), bin.len())?;
-        let mut out = Vec::with_capacity(lengths.total as usize);
-        out.extend_from_slice(b"glTF");
-        out.extend_from_slice(&2u32.to_le_bytes());
-        out.extend_from_slice(&lengths.total.to_le_bytes());
-        out.extend_from_slice(&lengths.json.to_le_bytes());
-        out.extend_from_slice(b"JSON");
-        out.extend_from_slice(&json_bytes);
-        // `bin` is `Some` exactly when a non-empty BIN chunk is emitted;
-        // an empty payload omits the chunk (GLB_EMPTY_CHUNK).
-        if let Some(bin_len) = lengths.bin {
-            out.extend_from_slice(&bin_len.to_le_bytes());
-            out.extend_from_slice(b"BIN\0");
-            out.extend_from_slice(&bin);
-        }
-        std::fs::write(path, out).map_err(io_err)?;
-    } else {
-        let text = serde_json::to_string_pretty(&root)?;
-        std::fs::write(path, text).map_err(io_err)?;
+    Ok(Projection {
+        root,
+        bin,
+        bin_bytes,
+        summary,
+        bin_digest,
+    })
+}
+
+/// Projection contract selected by a GLB caller.
+///
+/// [`Self::Legacy`] retains `write()`'s established normalizing writer
+/// behaviour. [`Self::StrictFootCycleV1`] is for an #18 candidate: it rejects
+/// every document shape that the legacy writer would omit, merge, or otherwise
+/// fail to represent exactly enough for a foot-cycle candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlbProjectionPolicyV1 {
+    /// Existing conversion/transform writer behaviour.
+    Legacy,
+    /// Fail-closed candidate projection for foot-cycle V1.
+    StrictFootCycleV1,
+}
+
+fn padded_len(len: usize, field: &'static str) -> Result<usize, WriteError> {
+    len.checked_add(3)
+        .map(|value| value & !3)
+        .ok_or(WriteError::TooLarge {
+            field,
+            bytes: usize::MAX,
+        })
+}
+
+struct CountingWriter {
+    bytes: usize,
+    digest: Sha256,
+}
+
+impl std::io::Write for CountingWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.bytes = self
+            .bytes
+            .checked_add(bytes.len())
+            .ok_or_else(|| std::io::Error::other("JSON byte count overflow"))?;
+        self.digest.update(bytes);
+        Ok(bytes.len())
     }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn count_json(root: &Value) -> Result<(usize, [u8; 32]), WriteError> {
+    let mut sink = CountingWriter {
+        bytes: 0,
+        digest: Sha256::new(),
+    };
+    serde_json::to_writer(&mut sink, root)?;
+    Ok((
+        padded_len(sink.bytes, "JSON chunk")?,
+        sink.digest.finalize().into(),
+    ))
+}
+
+fn check_limits(
+    json_bytes: usize,
+    bin_bytes: usize,
+    limits: GlbWriteLimits,
+) -> Result<GlbLengths, WriteError> {
+    if json_bytes > limits.max_json_bytes {
+        return Err(WriteError::TooLarge {
+            field: "configured JSON chunk limit",
+            bytes: json_bytes,
+        });
+    }
+    if bin_bytes > limits.max_bin_bytes {
+        return Err(WriteError::TooLarge {
+            field: "configured BIN chunk limit",
+            bytes: bin_bytes,
+        });
+    }
+    let lengths = plan_glb_lengths(json_bytes, bin_bytes)?;
+    if lengths.total as usize > limits.max_total_bytes {
+        return Err(WriteError::TooLarge {
+            field: "configured total GLB limit",
+            bytes: lengths.total as usize,
+        });
+    }
+    Ok(lengths)
+}
+
+fn strict_foot_cycle_projectable(doc: &Document) -> Result<(), WriteError> {
+    validate_document_shape(doc).map_err(|error| WriteError::Refused(error.to_string()))?;
+    for (clip_index, clip) in doc.clips.iter().enumerate() {
+        if clip.tracks.is_empty() {
+            return Err(WriteError::Refused(format!(
+                "clip {clip_index} has no writable tracks"
+            )));
+        }
+        let end = clip
+            .tracks
+            .iter()
+            .filter_map(|track| track.times.last().copied())
+            .fold(0.0_f64, |end, time| end.max(f64::from(time)));
+        if !clip.duration_s.is_finite() || clip.duration_s != end {
+            return Err(WriteError::Refused(format!(
+                "clip {clip_index} duration is not represented by its track times"
+            )));
+        }
+    }
+    if doc.assets.meshes.is_empty() && !doc.assets.materials.is_empty() {
+        return Err(WriteError::Refused(
+            "materials without a mesh would be omitted".to_owned(),
+        ));
+    }
+    for (mesh_index, mesh) in doc.assets.meshes.iter().enumerate() {
+        if mesh.primitives.is_empty() {
+            return Err(WriteError::Refused(format!(
+                "mesh {mesh_index} has no primitives"
+            )));
+        }
+        for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
+            if primitive.positions.is_empty()
+                || primitive
+                    .positions
+                    .iter()
+                    .any(|position| !position.is_finite())
+                || (!primitive.normals.is_empty()
+                    && (primitive.normals.len() != primitive.positions.len()
+                        || primitive.normals.iter().any(|normal| !normal.is_finite())))
+                || (!primitive.uvs.is_empty()
+                    && (primitive.uvs.len() != primitive.positions.len()
+                        || primitive
+                            .uvs
+                            .iter()
+                            .flatten()
+                            .any(|value| !value.is_finite())))
+                || primitive.joints.len() != primitive.weights.len()
+                || (!primitive.joints.is_empty()
+                    && (primitive.joints.len() != primitive.positions.len()
+                        || primitive
+                            .weights
+                            .iter()
+                            .flatten()
+                            .any(|weight| !weight.is_finite())))
+                || primitive
+                    .indices
+                    .iter()
+                    .any(|&index| index as usize >= primitive.positions.len())
+                || (primitive.indices.is_empty() && !primitive.positions.len().is_multiple_of(3))
+                || (!primitive.indices.is_empty() && !primitive.indices.len().is_multiple_of(3))
+                || !primitive.additional_influence_sets.is_empty()
+            {
+                return Err(WriteError::Refused(format!(
+                    "mesh {mesh_index} primitive {primitive_index} is not exactly writer-representable"
+                )));
+            }
+            if primitive
+                .material
+                .is_some_and(|material| material >= doc.assets.materials.len())
+            {
+                return Err(WriteError::Refused(format!(
+                    "mesh {mesh_index} primitive {primitive_index} references an unknown material"
+                )));
+            }
+        }
+    }
+    for (material_index, material) in doc.assets.materials.iter().enumerate() {
+        if !material.base_color.into_iter().all(f32::is_finite)
+            || !material.metallic.is_finite()
+            || !material.roughness.is_finite()
+        {
+            return Err(WriteError::Refused(format!(
+                "material {material_index} has non-finite factors"
+            )));
+        }
+        for texture in [
+            material.base_color_texture.as_ref(),
+            material.normal_texture.as_ref().map(|slot| &slot.texture),
+            material.metallic_roughness_texture.as_ref(),
+            material
+                .occlusion_texture
+                .as_ref()
+                .map(|slot| &slot.texture),
+        ] {
+            if let Some(texture) = texture
+                && (texture.bytes.is_empty()
+                    || !matches!(texture.mime.as_str(), "image/png" | "image/jpeg"))
+            {
+                return Err(WriteError::Refused(format!(
+                    "material {material_index} has an unsupported embedded texture"
+                )));
+            }
+        }
+        if material
+            .normal_texture
+            .as_ref()
+            .is_some_and(|normal| !normal.scale.is_finite())
+            || material
+                .occlusion_texture
+                .as_ref()
+                .is_some_and(|occlusion| !occlusion.strength.is_finite())
+        {
+            return Err(WriteError::Refused(format!(
+                "material {material_index} has a non-finite texture factor"
+            )));
+        }
+    }
+    if doc.assets.source_skeleton.coverage == SourceSkeletonCoverage::Complete
+        && doc
+            .assets
+            .source_skeleton
+            .nodes
+            .iter()
+            .any(|node| node.bone.is_none())
+    {
+        return Err(WriteError::Refused(
+            "source-node projection drops a scene node".to_owned(),
+        ));
+    }
+    if doc
+        .assets
+        .instances
+        .iter()
+        .any(|instance| !instance.skin_joints.is_empty() && instance.skin_ibms.is_empty())
+    {
+        return Err(WriteError::Refused(
+            "skinned instance has no explicit inverse-bind matrices to preserve".to_owned(),
+        ));
+    }
+    let mut unskinned_nodes = std::collections::BTreeSet::new();
+    for instance in &doc.assets.instances {
+        if instance.skin_joints.is_empty() && !unskinned_nodes.insert(instance.node) {
+            return Err(WriteError::Refused(
+                "multiple unskinned mesh instances target one node".to_owned(),
+            ));
+        }
+    }
+    strict_scene_projectable(doc)
+}
+
+fn strict_scene_projectable(doc: &Document) -> Result<(), WriteError> {
+    let scenes = &doc.assets.scenes;
+    if scenes.is_empty() {
+        if doc.assets.default_scene.is_some() {
+            return Err(WriteError::Refused(
+                "default scene exists without a declared scene".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
+    if scenes.len() != 1 || doc.assets.default_scene.is_some_and(|index| index != 0) {
+        return Err(WriteError::Refused(
+            "multiple or non-canonical source scenes cannot be preserved".to_owned(),
+        ));
+    }
+    let mut expected: Vec<_> = doc
+        .skeleton
+        .bones
+        .iter()
+        .enumerate()
+        .filter_map(|(index, bone)| bone.parent.is_none().then_some(index))
+        .collect();
+    let mut actual = scenes[0].roots.clone();
+    expected.sort_unstable();
+    actual.sort_unstable();
+    if actual != expected {
+        return Err(WriteError::Refused(
+            "source scene roots differ from the canonical emitted scene".to_owned(),
+        ));
+    }
+    for node in &doc.assets.source_skeleton.nodes {
+        if let Some(bone) = node.bone {
+            let should_be_root = doc.skeleton.bones[bone].parent.is_none();
+            let expected: &[usize] = if should_be_root { &[0] } else { &[] };
+            if node.scene_root_indices.as_slice() != expected {
+                return Err(WriteError::Refused(
+                    "source scene membership cannot be projected exactly".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Count an exact in-memory GLB candidate without retaining its binary bytes.
+///
+/// The receipt may be passed to [`write_glb_bytes`] only with the same
+/// [`GlbProjectionPolicyV1`] and unchanged document contents.
+///
+/// # Errors
+///
+/// Refuses a strict foot-cycle candidate whose normalized model would lose
+/// data, or whose exact padded JSON, BIN, or total framing exceeds `limits`.
+pub fn preflight_glb_bytes(
+    doc: &Document,
+    policy: GlbProjectionPolicyV1,
+    limits: GlbWriteLimits,
+) -> Result<GlbWritePreflight, WriteError> {
+    if policy == GlbProjectionPolicyV1::StrictFootCycleV1 {
+        strict_foot_cycle_projectable(doc)?;
+    }
+    let projection = build_projection(doc, BinaryMode::Count, 0)?;
+    let (json_bytes, json_digest) = count_json(&projection.root)?;
+    let bin_bytes = padded_len(projection.bin_bytes, "BIN chunk")?;
+    let lengths = check_limits(json_bytes, bin_bytes, limits)?;
+    Ok(GlbWritePreflight {
+        summary: projection.summary,
+        json_bytes,
+        bin_bytes,
+        total_bytes: lengths.total as usize,
+        limits,
+        policy,
+        json_digest,
+        bin_digest: projection.bin_digest,
+    })
+}
+
+/// Construct an in-memory GLB from an exact preflight receipt.
+///
+/// This reruns the same projection in retaining mode and refuses a changed
+/// document or limit set before allocating the complete GLB vector.
+///
+/// # Errors
+///
+/// Returns [`WriteError::ReceiptMismatch`] when the document no longer has the
+/// approved exact projection, or [`WriteError::Allocation`] when the checked
+/// output vector cannot reserve its exact total capacity.
+pub fn write_glb_bytes(
+    doc: &Document,
+    policy: GlbProjectionPolicyV1,
+    receipt: &GlbWritePreflight,
+) -> Result<Vec<u8>, WriteError> {
+    if receipt.policy != policy {
+        return Err(WriteError::ReceiptMismatch);
+    }
+    let counted = preflight_glb_bytes(doc, policy, receipt.limits)?;
+    if &counted != receipt {
+        return Err(WriteError::ReceiptMismatch);
+    }
+    let projection = build_projection(doc, BinaryMode::Retain, receipt.bin_bytes)?;
+    let (json_bytes, json_digest) = count_json(&projection.root)?;
+    let mut bin = projection
+        .bin
+        .expect("retaining projection has binary bytes");
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    let lengths = check_limits(json_bytes, bin.len(), receipt.limits)?;
+    if projection.summary != receipt.summary
+        || json_bytes != receipt.json_bytes
+        || bin.len() != receipt.bin_bytes
+        || lengths.total as usize != receipt.total_bytes
+        || json_digest != receipt.json_digest
+        || projection.bin_digest != receipt.bin_digest
+    {
+        return Err(WriteError::ReceiptMismatch);
+    }
+    let mut json = Vec::new();
+    json.try_reserve_exact(json_bytes)
+        .map_err(|_| WriteError::Allocation {
+            field: "JSON chunk",
+            bytes: json_bytes,
+        })?;
+    serde_json::to_writer(&mut json, &projection.root)?;
+    while !json.len().is_multiple_of(4) {
+        json.push(b' ');
+    }
+    let mut out = Vec::new();
+    out.try_reserve_exact(receipt.total_bytes)
+        .map_err(|_| WriteError::Allocation {
+            field: "GLB output",
+            bytes: receipt.total_bytes,
+        })?;
+    out.extend_from_slice(b"glTF");
+    out.extend_from_slice(&2u32.to_le_bytes());
+    out.extend_from_slice(&lengths.total.to_le_bytes());
+    out.extend_from_slice(&lengths.json.to_le_bytes());
+    out.extend_from_slice(b"JSON");
+    out.extend_from_slice(&json);
+    if let Some(bin_len) = lengths.bin {
+        out.extend_from_slice(&bin_len.to_le_bytes());
+        out.extend_from_slice(b"BIN\0");
+        out.extend_from_slice(&bin);
+    }
+    debug_assert_eq!(out.len(), receipt.total_bytes);
+    Ok(out)
+}
+
+/// Serialize `doc` to `path` (`.glb` for binary, anything else as `.gltf`
+/// JSON with an embedded data-URI buffer). This legacy entry point retains its
+/// historical permissive projection; #18 candidates use the strict receipt API.
+///
+/// # Errors
+///
+/// Returns a write, serialization, checked-size, or allocation error.
+pub fn write(doc: &Document, path: &Path) -> Result<WriteSummary, WriteError> {
+    let binary = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("glb"));
+    if binary {
+        let receipt = preflight_glb_bytes(
+            doc,
+            GlbProjectionPolicyV1::Legacy,
+            GlbWriteLimits {
+                max_json_bytes: u32::MAX as usize,
+                max_bin_bytes: u32::MAX as usize,
+                max_total_bytes: u32::MAX as usize,
+            },
+        )?;
+        let summary = receipt.summary();
+        let bytes = write_glb_bytes(doc, GlbProjectionPolicyV1::Legacy, &receipt)?;
+        std::fs::write(path, bytes).map_err(|source| WriteError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+        return Ok(summary);
+    }
+    let mut projection = build_projection(doc, BinaryMode::Retain, 0)?;
+    if projection.bin_bytes > 0 {
+        projection.root["buffers"][0]["uri"] = json!(format!(
+            "data:application/octet-stream;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(
+                projection
+                    .bin
+                    .as_deref()
+                    .expect("retaining projection has binary bytes")
+            )
+        ));
+    }
+    let summary = projection.summary;
+    let text = serde_json::to_string_pretty(&projection.root)?;
+    std::fs::write(path, text).map_err(|source| WriteError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
     Ok(summary)
 }
 

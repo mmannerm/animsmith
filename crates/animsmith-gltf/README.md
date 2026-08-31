@@ -231,6 +231,24 @@ Rust 1.88.
 
 ## More Detail
 
+## Bounded in-memory GLB candidates
+
+`write::preflight_glb_bytes` and `write::write_glb_bytes` provide the
+two-step GLB boundary for a caller that must account for a candidate before it
+retains output bytes. The caller selects an explicit
+`GlbProjectionPolicyV1` and `GlbWriteLimits`; the foot-cycle producer uses
+`StrictFootCycleV1` with `GlbWriteLimits::FOOT_CYCLE_V1`. Preflight counts the
+same projection that writing uses, including padded JSON, BIN, and GLB
+framing. The receipt binds JSON and BIN content as well as counts, so writing
+refuses a changed document rather than publishing bytes under a stale budget.
+
+The strict policy is intentionally narrower than the legacy `write()` path:
+it refuses a document when the normalized writer would omit an empty or
+invalid track, collapse source-scene membership, drop a source node, infer a
+skinned inverse bind, omit meshless materials, or discard unsupported
+primitive/texture data. It is a mechanical writer-admission boundary, not a
+claim that the candidate is game-engine ready or artistically accepted.
+
 - [API reference on docs.rs](https://docs.rs/animsmith-gltf)
 - [Embedding guide](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
 - [Scale workflow](https://github.com/mmannerm/animsmith/blob/main/docs/scale.md)
