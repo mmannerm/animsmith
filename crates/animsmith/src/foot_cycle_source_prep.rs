@@ -1802,6 +1802,39 @@ contact_fragment = "contacts/b.json"
         prepared
     }
 
+    pub(crate) fn proof_ready_fixture_with_nonzero_selected_clips() -> PreparedFootCycleCollectionV1
+    {
+        let mut prepared = proof_ready_fixture();
+        for (source_index, source) in prepared.sources.iter_mut().enumerate() {
+            let mut sentinel = source.document.clips[0].clone();
+            sentinel.name = format!("untouched-sentinel-{source_index}");
+            let TrackValues::Vec3s(values) = &mut sentinel.tracks[0].values else {
+                panic!("fixture translation sentinel");
+            };
+            values[0].x = 100.0 + source_index as f32;
+            source.document.clips.insert(0, sentinel);
+        }
+        for member in &mut prepared.members {
+            member.clip_index += 1;
+        }
+        prepared
+    }
+
+    pub(crate) fn proof_ready_fixture_with_candidate_duration_mutation()
+    -> PreparedFootCycleCollectionV1 {
+        let mut prepared = proof_ready_fixture();
+        prepared.members[1].candidate_clip.duration_s = 2.0;
+        prepared
+    }
+
+    pub(crate) fn proof_ready_fixture_with_candidate_map_mutation() -> PreparedFootCycleCollectionV1
+    {
+        let mut prepared = proof_ready_fixture();
+        let time = &mut prepared.members[1].candidate_clip.tracks[0].times[1];
+        *time = f32::from_bits(time.to_bits() + 1);
+        prepared
+    }
+
     #[derive(Clone, Copy)]
     enum InjectedShapeFailure {
         InvalidParent,
