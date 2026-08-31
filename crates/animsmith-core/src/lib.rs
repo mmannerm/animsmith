@@ -296,7 +296,7 @@ pub use foot_cycle::{
     FOOT_CYCLE_PARAMETERIZATION_V1_SCHEMA_VERSION, FootCycleManifestBindingV1,
     FootCycleMemberEvidenceV1, FootCycleMemberPlanV1, FootCycleParameterizationError,
     FootCycleParameterizationMemberV1, FootCycleParameterizationV1, FootCyclePlanV1,
-    FootCycleRootMotionBindingV1, FootCycleRootMotionEvidenceV1,
+    FootCycleProofPolicyV1, FootCycleRootMotionBindingV1, FootCycleRootMotionEvidenceV1,
     plan_foot_cycle_parameterization_v1, transform_contact_support_detector_extension_time_warp_v1,
     validate_foot_cycle_manifest_binding_v1,
 };

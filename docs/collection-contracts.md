@@ -80,6 +80,11 @@ output_directory = "generated/walk-aligned"
 minimum_segment_slope = 0.5
 maximum_segment_slope = 2.0
 
+[proof]
+max_gait_phase_spread = 0.08
+min_lr_amplitude_m = 0.05
+max_contact_boundary_phase_error = 0.01
+
 [manifest]
 schema = "urn:animsmith:schema:collection-manifest:1"
 schema_version = 1
@@ -108,7 +113,15 @@ such row.
 Safe locators use the same lexical relative-path contract as collection
 manifests. It rejects unknown fields, unsupported identities/versions, unsafe
 or duplicate paths, duplicate/missing members, an absent reference, invalid
-manifest identities, and invalid slope ranges. Host canonicalization,
+manifest identities, and invalid slope ranges. The required closed `[proof]`
+table declares finite `max_gait_phase_spread` and
+`max_contact_boundary_phase_error` values in the inclusive range `[0, 0.5]`
+plus a finite non-negative `min_lr_amplitude_m`. These exact values are bound
+by the parameterization byte identity and retained in the plan; V1 has no
+defaults, gait-group/config lookup, filename inference, or cross-member policy
+merge. The published
+[`foot-cycle-parameterization-v1.schema.json`](schemas/foot-cycle-parameterization-v1.schema.json)
+describes the decoded TOML shape. Host canonicalization,
 symlink/alias detection, and the guarantee that `output_directory` is a
 previously absent sibling generation destination are enforced by the private
 source-preparation adapter described below; this parser performs no filesystem
@@ -121,10 +134,12 @@ Each member also supplies independently measured typed Root/Hips evidence bound
 to the fragment's exact artifact, dependency closure, and collection clip
 source/take witness. Cross-wired or stale measurements refuse before their
 values are used. A
-missing, ambiguous, malformed, or non-finite witness refuses, as does horizontal
-endpoint displacement above 0.01 m or absolute accumulated yaw above 1 degree;
-both thresholds are inclusive. The planner consumes and retains those facts but
-does not sample an animation asset itself.
+missing, ambiguous, malformed, or non-finite witness refuses. Evidence retains
+signed endpoint X/Z displacement and signed accumulated unwrapped yaw. The
+unchanged admission derives horizontal displacement with binary64 `hypot(X, Z)`
+and uses absolute yaw; values above 0.01 m or 1 degree refuse, and both
+thresholds are inclusive. The planner consumes and retains those facts but does
+not sample an animation asset itself.
 V1 recognizes exactly AnimSmith's `contact-support-detector:1` extension and
 validates its closed algorithm, sampling, frame-cap, threshold, and selected
 left/right foot-or-toe role provenance. Every member must carry the exact same
@@ -152,7 +167,10 @@ loaded document passes strict structural shape validation before sampling or
 candidate work. The adapter then preflights both `frames * bones` pose cells
 and `frames * tracks` sampling work for every selected member and admits the
 complete multi-member totals against the inclusive one-million-cell/work
-ceiling before constructing the first metric grid. After planning, it runs the
+ceiling before constructing the first metric grid. The prepared in-memory
+collection retains those exact source pose-cell and sample-evaluation totals so
+a later output proof can share one invocation budget without resampling or
+rereading controls. After planning, it runs the
 core clip-candidate preflight for every member and checks invocation-wide
 candidate-key, retained-value, exact candidate-storage-byte (including name),
 and work totals before constructing the first candidate.

@@ -101,6 +101,62 @@ pub struct FootCycleParameterizationMemberV1 {
     contact_fragment: DependencyResourceKeyV1,
 }
 
+/// Exact proof thresholds declared by one foot-cycle parameterization.
+///
+/// These values are part of the parameterization document's exact byte
+/// identity. V1 has no defaults and does not merge proof policy from another
+/// source.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FootCycleProofPolicyV1 {
+    max_gait_phase_spread: f64,
+    min_lr_amplitude_m: f64,
+    max_contact_boundary_phase_error: f64,
+}
+
+impl FootCycleProofPolicyV1 {
+    /// Construct one complete finite V1 proof policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FootCycleParameterizationError::InvalidProofPolicy`] unless
+    /// phase tolerances are within `[0, 0.5]` and amplitude is non-negative.
+    pub fn new(
+        max_gait_phase_spread: f64,
+        min_lr_amplitude_m: f64,
+        max_contact_boundary_phase_error: f64,
+    ) -> Result<Self, FootCycleParameterizationError> {
+        if !max_gait_phase_spread.is_finite()
+            || !(0.0..=0.5).contains(&max_gait_phase_spread)
+            || !min_lr_amplitude_m.is_finite()
+            || min_lr_amplitude_m < 0.0
+            || !max_contact_boundary_phase_error.is_finite()
+            || !(0.0..=0.5).contains(&max_contact_boundary_phase_error)
+        {
+            return Err(FootCycleParameterizationError::InvalidProofPolicy);
+        }
+        Ok(Self {
+            max_gait_phase_spread: canonical_zero(max_gait_phase_spread),
+            min_lr_amplitude_m: canonical_zero(min_lr_amplitude_m),
+            max_contact_boundary_phase_error: canonical_zero(max_contact_boundary_phase_error),
+        })
+    }
+
+    /// Inclusive maximum circular gait-phase spread.
+    pub const fn max_gait_phase_spread(&self) -> f64 {
+        self.max_gait_phase_spread
+    }
+
+    /// Inclusive minimum left/right gait amplitude in metres.
+    pub const fn min_lr_amplitude_m(&self) -> f64 {
+        self.min_lr_amplitude_m
+    }
+
+    /// Inclusive maximum circular contact-boundary phase error.
+    pub const fn max_contact_boundary_phase_error(&self) -> f64 {
+        self.max_contact_boundary_phase_error
+    }
+}
+
 impl FootCycleParameterizationMemberV1 {
     /// Construct one explicit member declaration.
     pub fn new(id: CollectionLogicalIdV1, contact_fragment: DependencyResourceKeyV1) -> Self {
@@ -132,6 +188,7 @@ pub struct FootCycleParameterizationV1 {
     output_directory: DependencyResourceKeyV1,
     minimum_segment_slope: f64,
     maximum_segment_slope: f64,
+    proof: FootCycleProofPolicyV1,
     members: Vec<FootCycleParameterizationMemberV1>,
 }
 
@@ -140,8 +197,9 @@ impl FootCycleParameterizationV1 {
     ///
     /// # Errors
     ///
-    /// Returns [`FootCycleParameterizationError`] when membership, paths, or
-    /// slope bounds violate the frozen V1 declaration contract.
+    /// Returns [`FootCycleParameterizationError`] when membership, paths,
+    /// proof policy, or slope bounds violate the frozen V1 declaration
+    /// contract.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         manifest: FootCycleManifestBindingV1,
@@ -150,6 +208,7 @@ impl FootCycleParameterizationV1 {
         output_directory: DependencyResourceKeyV1,
         minimum_segment_slope: f64,
         maximum_segment_slope: f64,
+        proof: FootCycleProofPolicyV1,
         members: Vec<FootCycleParameterizationMemberV1>,
     ) -> Result<Self, FootCycleParameterizationError> {
         if members.len() < 2 {
@@ -202,6 +261,7 @@ impl FootCycleParameterizationV1 {
             output_directory,
             minimum_segment_slope: canonical_zero(minimum_segment_slope),
             maximum_segment_slope: canonical_zero(maximum_segment_slope),
+            proof,
             members,
         })
     }
@@ -244,6 +304,11 @@ impl FootCycleParameterizationV1 {
     /// Inclusive maximum accepted segment slope.
     pub const fn maximum_segment_slope(&self) -> f64 {
         self.maximum_segment_slope
+    }
+
+    /// Exact required output-proof policy bound by this declaration.
+    pub const fn proof(&self) -> &FootCycleProofPolicyV1 {
+        &self.proof
     }
 
     /// Members in exact declaration and runtime-set order.
@@ -298,8 +363,10 @@ pub enum FootCycleRootMotionEvidenceV1 {
     Measured {
         /// Exact source and selected-clip witness measured.
         binding: FootCycleRootMotionBindingV1,
-        /// Magnitude of Root/Hips horizontal endpoint displacement in metres.
-        horizontal_endpoint_displacement_m: f64,
+        /// Signed Root/Hips endpoint displacement on the X axis in metres.
+        endpoint_displacement_x_m: f64,
+        /// Signed Root/Hips endpoint displacement on the Z axis in metres.
+        endpoint_displacement_z_m: f64,
         /// Signed accumulated Root/Hips yaw in degrees.
         accumulated_yaw_deg: f64,
     },
@@ -324,12 +391,14 @@ impl FootCycleRootMotionEvidenceV1 {
     /// Construct complete measured evidence.
     pub fn measured(
         binding: FootCycleRootMotionBindingV1,
-        horizontal_endpoint_displacement_m: f64,
+        endpoint_displacement_x_m: f64,
+        endpoint_displacement_z_m: f64,
         accumulated_yaw_deg: f64,
     ) -> Self {
         Self::Measured {
             binding,
-            horizontal_endpoint_displacement_m,
+            endpoint_displacement_x_m,
+            endpoint_displacement_z_m,
             accumulated_yaw_deg,
         }
     }
@@ -460,6 +529,7 @@ pub(crate) fn clip_test_member_plan(
         FootCycleRootMotionBindingV1::new(artifact.clone(), closure_identity.clone(), clip),
         0.0,
         0.0,
+        0.0,
     );
     FootCycleMemberPlanV1 {
         id: CollectionLogicalIdV1::new("com.example/test").expect("test logical id"),
@@ -480,6 +550,7 @@ pub struct FootCyclePlanV1 {
     manifest_input: InputIdentity,
     runtime_set_id: CollectionLogicalIdV1,
     reference_member: CollectionLogicalIdV1,
+    proof: FootCycleProofPolicyV1,
     members: Vec<FootCycleMemberPlanV1>,
 }
 
@@ -502,6 +573,11 @@ impl FootCyclePlanV1 {
     /// Reference member that owns canonical boundary phases.
     pub fn reference_member(&self) -> &CollectionLogicalIdV1 {
         &self.reference_member
+    }
+
+    /// Exact proof policy copied from the identity-bound declaration.
+    pub const fn proof(&self) -> &FootCycleProofPolicyV1 {
+        &self.proof
     }
 
     /// Member plans in exact declared runtime-set order.
@@ -537,6 +613,9 @@ pub enum FootCycleParameterizationError {
     /// Slope bounds were not finite, positive, ordered, bounded, and inclusive of identity.
     #[error("segment-slope bounds must be finite, positive, ordered, include 1, and be within V1")]
     InvalidSlopeBounds,
+    /// Required proof thresholds were non-finite or outside their V1 ranges.
+    #[error("proof policy values must be finite and within their V1 ranges")]
+    InvalidProofPolicy,
     /// A logical member id appeared more than once.
     #[error("duplicate foot-cycle member {member:?}")]
     DuplicateMember {
@@ -787,6 +866,7 @@ pub fn plan_foot_cycle_parameterization_v1(
         manifest_input,
         runtime_set_id: parameterization.runtime_set_id.clone(),
         reference_member: parameterization.reference_member.clone(),
+        proof: parameterization.proof.clone(),
         members: plans,
     })
 }
@@ -806,7 +886,8 @@ fn validate_root_motion(
         });
     }
     let FootCycleRootMotionEvidenceV1::Measured {
-        horizontal_endpoint_displacement_m,
+        endpoint_displacement_x_m,
+        endpoint_displacement_z_m,
         accumulated_yaw_deg,
         ..
     } = evidence
@@ -817,8 +898,8 @@ fn validate_root_motion(
             },
         );
     };
-    if !horizontal_endpoint_displacement_m.is_finite()
-        || *horizontal_endpoint_displacement_m < 0.0
+    if !endpoint_displacement_x_m.is_finite()
+        || !endpoint_displacement_z_m.is_finite()
         || !accumulated_yaw_deg.is_finite()
     {
         return Err(
@@ -827,7 +908,7 @@ fn validate_root_motion(
             },
         );
     }
-    if *horizontal_endpoint_displacement_m
+    if endpoint_displacement_x_m.hypot(*endpoint_displacement_z_m)
         > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M
         || accumulated_yaw_deg.abs() > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG
     {
@@ -1327,6 +1408,15 @@ mod tests {
         minimum_slope: f64,
         maximum_slope: f64,
     ) -> FootCycleParameterizationV1 {
+        declaration_with_proof(manifest_input, minimum_slope, maximum_slope, proof_policy())
+    }
+
+    fn declaration_with_proof(
+        manifest_input: &InputIdentity,
+        minimum_slope: f64,
+        maximum_slope: f64,
+        proof: FootCycleProofPolicyV1,
+    ) -> FootCycleParameterizationV1 {
         FootCycleParameterizationV1::new(
             FootCycleManifestBindingV1::new(
                 CollectionIdV1::new("com.example").unwrap(),
@@ -1338,6 +1428,7 @@ mod tests {
             path("generated/aligned"),
             minimum_slope,
             maximum_slope,
+            proof,
             vec![
                 FootCycleParameterizationMemberV1::new(
                     id("com.example/reference"),
@@ -1350,6 +1441,10 @@ mod tests {
             ],
         )
         .unwrap()
+    }
+
+    fn proof_policy() -> FootCycleProofPolicyV1 {
+        FootCycleProofPolicyV1::new(0.08, 0.05, 0.01).unwrap()
     }
 
     fn detector_extension(left: &str, right: &str) -> ContactExtensionV1 {
@@ -1517,6 +1612,7 @@ mod tests {
         FootCycleRootMotionEvidenceV1::measured(
             root_binding(fragment),
             horizontal_endpoint_displacement_m,
+            0.0,
             accumulated_yaw_deg,
         )
     }
@@ -1730,34 +1826,53 @@ mod tests {
             let binding = accepted[member_index].root_motion.binding().clone();
             accepted[member_index].root_motion = FootCycleRootMotionEvidenceV1::measured(
                 binding,
-                FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M,
+                0.006,
+                -0.008,
                 -FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG,
             );
-            assert!(
-                plan_foot_cycle_parameterization_v1(
-                    &declaration,
-                    parameterization_input(),
-                    &manifest,
-                    manifest_input.clone(),
-                    &accepted,
-                )
-                .is_ok()
-            );
+            let plan = plan_foot_cycle_parameterization_v1(
+                &declaration,
+                parameterization_input(),
+                &manifest,
+                manifest_input.clone(),
+                &accepted,
+            )
+            .unwrap();
+            assert!(matches!(
+                plan.members()[member_index].root_motion(),
+                FootCycleRootMotionEvidenceV1::Measured {
+                    endpoint_displacement_x_m: 0.006,
+                    endpoint_displacement_z_m: -0.008,
+                    accumulated_yaw_deg: -1.0,
+                    ..
+                }
+            ));
         }
 
         for member_index in 0..2 {
-            for unavailable_index in 0..8 {
+            for unavailable_index in 0..9 {
                 let mut source = evidence(&windows, &windows);
                 let binding = source[member_index].root_motion.binding().clone();
                 let unavailable = match unavailable_index {
                     0 => FootCycleRootMotionEvidenceV1::missing(binding),
                     1 => FootCycleRootMotionEvidenceV1::ambiguous(binding),
                     2 => FootCycleRootMotionEvidenceV1::non_finite(binding),
-                    3 => FootCycleRootMotionEvidenceV1::measured(binding, f64::NAN, 0.0),
-                    4 => FootCycleRootMotionEvidenceV1::measured(binding, 0.0, f64::NAN),
-                    5 => FootCycleRootMotionEvidenceV1::measured(binding, f64::INFINITY, 0.0),
-                    6 => FootCycleRootMotionEvidenceV1::measured(binding, 0.0, f64::NEG_INFINITY),
-                    7 => FootCycleRootMotionEvidenceV1::measured(binding, -0.001, 0.0),
+                    3 => FootCycleRootMotionEvidenceV1::measured(binding, f64::NAN, 0.0, 0.0),
+                    4 => FootCycleRootMotionEvidenceV1::measured(binding, 0.0, f64::NAN, 0.0),
+                    5 => FootCycleRootMotionEvidenceV1::measured(binding, 0.0, 0.0, f64::NAN),
+                    6 => FootCycleRootMotionEvidenceV1::measured(binding, f64::INFINITY, 0.0, 0.0),
+                    7 => FootCycleRootMotionEvidenceV1::measured(
+                        binding,
+                        0.0,
+                        f64::NEG_INFINITY,
+                        0.0,
+                    ),
+                    8 => FootCycleRootMotionEvidenceV1::measured(
+                        binding,
+                        0.0,
+                        0.0,
+                        f64::NEG_INFINITY,
+                    ),
                     _ => unreachable!(),
                 };
                 source[member_index].root_motion = unavailable;
@@ -1774,8 +1889,16 @@ mod tests {
             }
         }
 
-        for (horizontal, yaw) in [
+        for (endpoint_x, endpoint_z, yaw) in [
             (
+                f64::from_bits(
+                    FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M.to_bits() + 1,
+                ),
+                0.0,
+                0.0,
+            ),
+            (
+                0.0,
                 f64::from_bits(
                     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M.to_bits() + 1,
                 ),
@@ -1783,11 +1906,13 @@ mod tests {
             ),
             (
                 0.0,
+                0.0,
                 f64::from_bits(
                     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG.to_bits() + 1,
                 ),
             ),
             (
+                0.0,
                 0.0,
                 -f64::from_bits(
                     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG.to_bits() + 1,
@@ -1798,7 +1923,7 @@ mod tests {
                 let mut source = evidence(&windows, &windows);
                 let binding = source[member_index].root_motion.binding().clone();
                 source[member_index].root_motion =
-                    FootCycleRootMotionEvidenceV1::measured(binding, horizontal, yaw);
+                    FootCycleRootMotionEvidenceV1::measured(binding, endpoint_x, endpoint_z, yaw);
                 assert!(matches!(
                     plan_foot_cycle_parameterization_v1(
                         &declaration,
@@ -1902,6 +2027,7 @@ mod tests {
             path("generated/aligned"),
             0.5,
             2.0,
+            proof_policy(),
             vec![
                 FootCycleParameterizationMemberV1::new(
                     id("com.example/reference"),
@@ -3022,6 +3148,7 @@ mod tests {
             path("generated/aligned"),
             0.5,
             2.0,
+            proof_policy(),
             names
                 .iter()
                 .map(|name| {
@@ -3061,6 +3188,62 @@ mod tests {
                 max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS,
             })
         );
+    }
+
+    #[test]
+    fn proof_policy_requires_complete_finite_values_at_exact_inclusive_boundaries() {
+        let lower = FootCycleProofPolicyV1::new(0.0, 0.0, 0.0).unwrap();
+        assert_eq!(lower.max_gait_phase_spread(), 0.0);
+        assert_eq!(lower.min_lr_amplitude_m(), 0.0);
+        assert_eq!(lower.max_contact_boundary_phase_error(), 0.0);
+
+        let upper = FootCycleProofPolicyV1::new(0.5, 0.05, 0.5).unwrap();
+        assert_eq!(upper.max_gait_phase_spread(), 0.5);
+        assert_eq!(upper.min_lr_amplitude_m(), 0.05);
+        assert_eq!(upper.max_contact_boundary_phase_error(), 0.5);
+        assert_eq!(
+            serde_json::to_value(&upper).unwrap(),
+            json!({
+                "max_gait_phase_spread": 0.5,
+                "min_lr_amplitude_m": 0.05,
+                "max_contact_boundary_phase_error": 0.5,
+            })
+        );
+
+        let above_half = f64::from_bits(0.5_f64.to_bits() + 1);
+        for result in [
+            FootCycleProofPolicyV1::new(above_half, 0.0, 0.0),
+            FootCycleProofPolicyV1::new(0.0, -f64::MIN_POSITIVE, 0.0),
+            FootCycleProofPolicyV1::new(0.0, 0.0, above_half),
+            FootCycleProofPolicyV1::new(f64::NAN, 0.0, 0.0),
+            FootCycleProofPolicyV1::new(0.0, f64::INFINITY, 0.0),
+            FootCycleProofPolicyV1::new(0.0, 0.0, f64::NEG_INFINITY),
+        ] {
+            assert_eq!(
+                result,
+                Err(FootCycleParameterizationError::InvalidProofPolicy)
+            );
+        }
+    }
+
+    #[test]
+    fn plan_retains_identity_bound_proof_policy() {
+        let (manifest, manifest_input) = manifest();
+        let distinct = FootCycleProofPolicyV1::new(0.321, 0.123, 0.234).unwrap();
+        let declaration = declaration_with_proof(&manifest_input, 0.5, 2.0, distinct.clone());
+        let windows = [(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)];
+        let parameterization_input = InputIdentity::from_bytes(b"parameterization-with-proof");
+        let plan = plan_foot_cycle_parameterization_v1(
+            &declaration,
+            parameterization_input.clone(),
+            &manifest,
+            manifest_input,
+            &evidence(&windows, &windows),
+        )
+        .unwrap();
+        assert_eq!(plan.parameterization_input(), &parameterization_input);
+        assert_eq!(plan.proof(), &distinct);
+        assert_eq!(plan.proof(), declaration.proof());
     }
 
     #[test]
@@ -3111,6 +3294,7 @@ mod tests {
                     path("generated/aligned"),
                     minimum,
                     maximum,
+                    proof_policy(),
                     vec![
                         FootCycleParameterizationMemberV1::new(
                             id("com.example/reference"),
@@ -3149,6 +3333,7 @@ mod tests {
                     path("generated/aligned"),
                     0.5,
                     2.0,
+                    proof_policy(),
                     members,
                 ),
                 Err(FootCycleParameterizationError::TooFewMembers { found })
@@ -3162,6 +3347,7 @@ mod tests {
                 path("generated/aligned"),
                 0.5,
                 2.0,
+                proof_policy(),
                 vec![
                     FootCycleParameterizationMemberV1::new(
                         id("com.example/reference"),
@@ -3183,6 +3369,7 @@ mod tests {
                 path("generated/aligned"),
                 0.5,
                 2.0,
+                proof_policy(),
                 vec![
                     FootCycleParameterizationMemberV1::new(
                         id("com.example/reference"),
@@ -3204,6 +3391,7 @@ mod tests {
                 path("contacts/member.json"),
                 0.5,
                 2.0,
+                proof_policy(),
                 vec![
                     FootCycleParameterizationMemberV1::new(
                         id("com.example/reference"),
@@ -3225,6 +3413,7 @@ mod tests {
                 path("generated/aligned"),
                 0.5,
                 2.0,
+                proof_policy(),
                 vec![
                     FootCycleParameterizationMemberV1::new(
                         id("com.example/reference"),
@@ -3266,6 +3455,7 @@ mod tests {
                 path("generated/aligned"),
                 0.5,
                 2.0,
+                proof_policy(),
                 members,
             )
         };

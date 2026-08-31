@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:foot-cycle-parameterization:1",
+  "title": "animsmith foot-cycle parameterization v1 (decoded TOML shape)",
+  "description": "Machine-readable shape of the decoded strict TOML foot-cycle parameterization. TOML is the only accepted input spelling; exact-byte identity, aggregate, rooted-path, uniqueness, ordering, reference, and cross-field constraints are enforced by the Rust reader and planner.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "runtime_set_id",
+    "reference_member",
+    "output_directory",
+    "minimum_segment_slope",
+    "maximum_segment_slope",
+    "manifest",
+    "proof",
+    "members"
+  ],
+  "properties": {
+    "schema": { "const": "urn:animsmith:schema:foot-cycle-parameterization:1" },
+    "schema_version": { "const": 1 },
+    "runtime_set_id": { "$ref": "#/$defs/logical_id" },
+    "reference_member": { "$ref": "#/$defs/logical_id" },
+    "output_directory": { "$ref": "#/$defs/relative_path" },
+    "minimum_segment_slope": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1
+    },
+    "maximum_segment_slope": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "manifest": { "$ref": "#/$defs/manifest" },
+    "proof": { "$ref": "#/$defs/proof" },
+    "members": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/member" }
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "logical_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 255,
+      "pattern": "^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)+$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "description": "Exact UTF-8 spelling using slash separators. The Rust reader applies ParserRelativePath policy, including the component limit."
+    },
+    "input_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "bytes"],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8388608
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "schema_version", "collection_id", "input"],
+      "properties": {
+        "schema": { "const": "urn:animsmith:schema:collection-manifest:1" },
+        "schema_version": { "const": 1 },
+        "collection_id": { "$ref": "#/$defs/token" },
+        "input": { "$ref": "#/$defs/input_identity" }
+      }
+    },
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_gait_phase_spread",
+        "min_lr_amplitude_m",
+        "max_contact_boundary_phase_error"
+      ],
+      "properties": {
+        "max_gait_phase_spread": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.5
+        },
+        "min_lr_amplitude_m": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_contact_boundary_phase_error": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.5
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "contact_fragment"],
+      "properties": {
+        "id": { "$ref": "#/$defs/logical_id" },
+        "contact_fragment": { "$ref": "#/$defs/relative_path" }
+      }
+    }
+  }
+}

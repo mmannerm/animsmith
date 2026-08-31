@@ -3962,14 +3962,20 @@ Issue #18's first post-result implementation slice adds the separate strict
 format-neutral map planner. The declaration binds exact manifest bytes, one
 existing ordered `gait-group`, one explicit reference, one safe fragment path
 per member, the future generation directory, and finite positive segment-slope
-bounds whose inclusive interval contains identity slope `1.0`. The planner
+bounds whose inclusive interval contains identity slope `1.0`. It also requires
+a closed `[proof]` table whose finite maximum gait-phase spread and contact
+boundary phase error each lie in `[0, 0.5]`, and whose finite minimum
+left/right amplitude is non-negative. These values are bound by the exact
+parameterization bytes and retained in the plan, with no defaults, config
+lookup, inference, or cross-member merge. The planner
 accepts only canonical collection-scoped fragments with
 the exact known stance-detector V1 provenance and independently measured typed
 Root/Hips evidence bound to the same exact artifact, dependency closure, and
 collection source/take witness. Missing, ambiguous, malformed, or non-finite root evidence
-refuses, as does horizontal endpoint displacement above 0.01 m or absolute
-accumulated yaw above 1 degree; this pure slice does not derive those source
-measurements. It requires positive bilateral
+refuses. It retains signed endpoint X/Z displacement and signed accumulated
+unwrapped yaw, while the unchanged admission applies binary64 horizontal
+`hypot(X, Z)` at 0.01 m and absolute yaw at 1 degree; this pure slice does not
+derive those source measurements. It requires positive bilateral
 windows with one marker each and one identical cyclic alternating boundary
 signature, indexed from each member's first left onset. It pairs boundaries
 positionally, maps them to the reference's authored phases, adds `(0,0)` and
@@ -4041,9 +4047,12 @@ preflights every selected member's `frames * bones` pose cells and `frames *
 tracks` sampling work, including the complete invocation totals, before
 constructing the first `MetricGrids` grid. It uses configured role resolution
 and `root_trajectory_metrics` as the existing authority. Horizontal
-endpoint displacement is the binary64 `hypot` of X/Z endpoint components and
-accumulated yaw is the absolute unwrapped yaw. Missing, ambiguous, non-finite,
+admission is the binary64 `hypot` of retained signed X/Z endpoint components
+and yaw admission is the absolute value of retained signed accumulated
+unwrapped yaw. Missing, ambiguous, non-finite,
 or over-threshold evidence remains typed and makes the core planner refuse. The
+prepared collection retains the exact aggregate source pose-cell and
+sample-evaluation totals for a later shared source/output proof budget. The
 adapter cross-checks every plan's member, source artifact, closure, canonical
 fragment, selected take, duration, and root binding before building the pure
 clip candidate. Any later member failure discards all candidates; preparation
