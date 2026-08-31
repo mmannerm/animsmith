@@ -618,7 +618,7 @@ fn selected_skeleton_identity(
             .map(|(name, selected)| (name.as_str(), selected.node))
             .collect(),
     };
-    let bytes = serde_json::to_vec(&projection)
+    let bytes = serde_jcs::to_vec(&projection)
         .map_err(|_| "cannot serialize selected skeleton identity".to_owned())?;
     Ok(InputIdentity::from_bytes(&bytes))
 }
