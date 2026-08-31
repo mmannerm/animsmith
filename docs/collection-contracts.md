@@ -146,10 +146,28 @@ boundaries are collapsed, and every resulting segment must be finite, strictly
 increasing, continuous, and within the inclusive declared slope range. The
 planner preflights the 4,096-point contact-transform cap and returns one
 duration-preserving `ContactTransformOperationV1::TimeWarp` plus exact
-`ContactTransformBindingV1` per member. It does not mutate LINEAR/STEP tracks,
-handle CUBICSPLINE, transform contact fragments, derive root measurements,
-serialize output artifacts, prove reread results, or publish a generation
-directory; those are later #18 seams.
+`ContactTransformBindingV1` per member.
+
+The separate pure `time_warp_clip_v1` seam consumes one such member plan only
+after its caller has selected and bound the corresponding loaded clip. It
+strictly validates track-local clip/track shape; because this seam has no
+skeleton input, its host must already have bound every track bone index to the
+selected, validated skeleton. Fixed aggregate name-byte, track,
+authored/generated key/value, and work caps refuse before candidate allocation;
+candidate storage has a derived public upper bound from those admitted rows.
+LINEAR tracks map every authored key and insert interior map-knot
+samples; STEP tracks map only authored breakpoints. Exact duplicates collapse
+deterministically, while distinct binary64 source/output instants that collide
+after binary32 narrowing refuse. One-key CUBICSPLINE tracks are retained, and
+multi-key cubic tracks are retained only for bit-exact constant values with zero
+tangents. The value caps are the shape-derived three-values-per-cubic-key
+maxima, so malformed N+1 storage refuses at shape or key bounds before it can
+become a separate valid value-only case.
+
+Neither pure seam transforms contact fragments, derives root measurements,
+binds the selected asset to the plan, serializes output artifacts, proves
+reread results, or publishes a generation directory; those remain later #18
+transaction seams.
 
 ## Contact fragments (#147)
 

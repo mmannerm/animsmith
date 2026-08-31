@@ -440,6 +440,39 @@ impl FootCycleMemberPlanV1 {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn clip_test_member_plan(
+    operation: ContactTransformOperationV1,
+) -> FootCycleMemberPlanV1 {
+    let artifact = InputIdentity::from_bytes(b"foot-cycle-clip-test");
+    let closure = crate::DependencyClosureBuilderV1::new(
+        artifact.clone(),
+        crate::SourceSetCoverageV1::complete(),
+        0,
+    )
+    .finish()
+    .expect("test dependency closure");
+    let closure_identity = closure.identity().expect("complete closure").clone();
+    let clip =
+        ContactClipReferenceV1::collection("com.example/test", "sources/test.glb", 0, "test")
+            .expect("test clip reference");
+    let root_motion = FootCycleRootMotionEvidenceV1::measured(
+        FootCycleRootMotionBindingV1::new(artifact.clone(), closure_identity.clone(), clip),
+        0.0,
+        0.0,
+    );
+    FootCycleMemberPlanV1 {
+        id: CollectionLogicalIdV1::new("com.example/test").expect("test logical id"),
+        input: ContactTransformBindingV1::new(
+            artifact,
+            closure_identity,
+            InputIdentity::from_bytes(b"test-contact-fragment"),
+        ),
+        root_motion,
+        operation,
+    }
+}
+
 /// Complete pure plan for one declared collection ring.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FootCyclePlanV1 {

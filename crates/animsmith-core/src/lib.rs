@@ -38,8 +38,10 @@
 //! [`scale::resolve_assembly_scale_named_selector`].
 //! The [`foot_cycle`] module owns the strict manifest/contact bindings and
 //! pure slope-bounded piecewise-linear map planner for a declared gait ring.
-//! It produces contact-transform V1 operation inputs but deliberately performs
-//! no animation mutation, output proof, or filesystem publication.
+//! It produces contact-transform V1 operation inputs. The separate
+//! [`foot_cycle_clip`] module can apply one validated member plan to a cloned
+//! format-neutral clip candidate; source binding, serialization, output proof,
+//! and filesystem publication remain frontend work.
 //! The [`animsmith-gltf`] and [`animsmith-fbx`] loader crates translate file
 //! formats into this model; their docs.rs pages continue the library path for
 //! format-specific loading and, for glTF, writing.
@@ -141,6 +143,7 @@ pub mod finding;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
 pub mod foot_cycle;
+pub mod foot_cycle_clip;
 pub mod measure;
 pub mod metrics;
 pub mod model;
@@ -295,6 +298,13 @@ pub use foot_cycle::{
     FootCycleParameterizationMemberV1, FootCycleParameterizationV1, FootCyclePlanV1,
     FootCycleRootMotionBindingV1, FootCycleRootMotionEvidenceV1,
     plan_foot_cycle_parameterization_v1,
+};
+pub use foot_cycle_clip::{
+    FOOT_CYCLE_CLIP_V1_MAX_CANDIDATE_BYTES, FOOT_CYCLE_CLIP_V1_MAX_GENERATED_KEYS,
+    FOOT_CYCLE_CLIP_V1_MAX_INPUT_KEYS, FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES,
+    FOOT_CYCLE_CLIP_V1_MAX_NAME_BYTES, FOOT_CYCLE_CLIP_V1_MAX_TRACKS, FOOT_CYCLE_CLIP_V1_MAX_WORK,
+    FootCycleClipPreflightV1, FootCycleClipResourceV1, FootCycleClipWarpError,
+    FootCycleCubicSplineRefusalV1, preflight_time_warp_clip_v1, time_warp_clip_v1,
 };
 /// Re-export of the exact `glam` version used by animsmith's public math
 /// types, so embedders can construct [`Transform`] values without a
