@@ -491,7 +491,7 @@ fn compare(
         &correspondence.mapping,
         &correspondence.tolerances,
         &mut partial,
-    );
+    )?;
     let topology_rest = if !has_evaluable {
         FacetSummary {
             required: true,
@@ -676,7 +676,10 @@ fn select_nodes<'a>(
     }
     let mut selected = BTreeMap::new();
     for name in &subject.node_names {
-        let node = selected_by_name[name.as_str()];
+        let node = selected_by_name.get(name.as_str()).ok_or_else(|| {
+            "skeleton comparison unavailable: selector did not resolve exactly one declared node"
+                .to_owned()
+        })?;
         let mut parent = node.parent_node_index;
         let mut remaining = by_index.len();
         let parent_name = loop {
@@ -709,7 +712,7 @@ fn compare_rows(
     matching: &Matching,
     tolerance: &Tolerances,
     partial: &mut bool,
-) -> (Vec<Row>, bool, bool) {
+) -> Result<(Vec<Row>, bool, bool), String> {
     let map: BTreeMap<String, String> = match matching {
         Matching::ExactName => source
             .keys()
@@ -723,12 +726,14 @@ fn compare_rows(
     let mut evaluable = false;
     let mapped_targets = map.values().cloned().collect::<BTreeSet<_>>();
     for (source_name, target_name) in &map {
-        let source_node = source.get(source_name).expect(
-            "correspondence map must reference only source selector members admitted by parse() and select_nodes()",
-        );
-        let target_node = target.get(target_name).expect(
-            "correspondence map must reference only target selector members admitted by parse() and select_nodes()",
-        );
+        let source_node = source.get(source_name).ok_or_else(|| {
+            "skeleton comparison unavailable: correspondence source is outside the selected skeleton"
+                .to_owned()
+        })?;
+        let target_node = target.get(target_name).ok_or_else(|| {
+            "skeleton comparison unavailable: correspondence target is outside the selected skeleton"
+                .to_owned()
+        })?;
         evaluable = true;
         let parent = parent_state(source_node, target_node, &map);
         let local_rest = rest_deltas(
@@ -791,7 +796,7 @@ fn compare_rows(
             normalized_child_bone_length_ratio: None,
         });
     }
-    (rows, mismatches, evaluable)
+    Ok((rows, mismatches, evaluable))
 }
 
 fn parent_state(
@@ -1152,5 +1157,31 @@ normalized_bone_length_ratio_delta = 0.0
                 "node_names = [\"Root\", \"Root\"]",
             );
         assert!(parse(duplicate_selector.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn row_comparison_refuses_an_internal_selector_mapping_disagreement() {
+        let mut map = BTreeMap::new();
+        map.insert("ghost".to_owned(), "ghost".to_owned());
+        let result = compare_rows(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &Matching::Explicit(map),
+            &Tolerances {
+                translation_m: 0.0,
+                rotation_deg: 0.0,
+                scale_delta: 0.0,
+                normalized_bone_length_ratio_delta: 0.0,
+            },
+            &mut false,
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("selector/mapping disagreement must be refused"),
+        };
+        assert_eq!(
+            error,
+            "skeleton comparison unavailable: correspondence source is outside the selected skeleton"
+        );
     }
 }
