@@ -11,10 +11,17 @@ prediction facets beside its sampled-motion view.
 [`skeleton-compatibility-v1.schema.json`](schemas/skeleton-compatibility-v1.schema.json)
 (`urn:animsmith:schema:skeleton-compatibility:1`) result. Its control plane is
 the exact raw correspondence TOML bytes, recorded as `correspondence.input`.
-That TOML pins the exact source and target primary identities, their selected
-root names, the declared matching mode, and every tolerance. Invalid or stale
+That TOML pins the exact source and target primary identities, their explicit
+selected node-name sets (including each selected root), the declared matching
+mode, and every tolerance. It does not infer skeleton membership from scene
+graph reachability. Invalid or stale
 control input, unreadable input, or an input beyond the 64 MiB primary-source
 bound is an operator error (exit 2) and emits no result.
+
+Each subject records `selected_skeleton_identity`: the exact identity of a
+canonical, name-ordered projection of the selected source-node measurements
+and selector. This is provenance derived from the loaded asset, not another
+authored rest-pose profile.
 
 The result keeps structural topology/rest evidence separate from optional
 source skin-membership, inverse-bind, and deformation-model facets. A result
@@ -25,7 +32,9 @@ correspondence is `not_evaluated`. The last three exit 1. Neither the outcome
 nor any optional facet establishes retargeting, runtime deformation, masking,
 contact, gameplay, or artistic acceptance.
 
-`rows` are deterministically ordered by source then target name. A matched row
+`rows` are deterministic: correspondence-covered source rows are emitted in
+source-name order, followed by unmapped source names and then unmapped target
+names in their respective name orders. A matched row
 contains separate local and rest-world translation, rotation, and scale deltas;
 the world rotation exists only where the existing source measurement proves a
 right-handed unit-orthonormal rest-world linear transform. A child-bone ratio

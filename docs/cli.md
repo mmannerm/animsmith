@@ -86,9 +86,12 @@ runtime deformation, masking, contact, gameplay, or artistic acceptance.
 The correspondence control is strict and identity-pinned. Generate its two
 input identities from the exact source and target bytes you intend to compare;
 a changed asset is a stale control input and exits 2 without a result. The
-root selector names one source-node subtree on each side. Names must be unique
-within every selected subtree. All tolerances are mandatory and have no
-defaults:
+selector declares the complete finite node-name set on each side; it does not
+infer a subtree from `root_name`. The named root must be included, every name
+must resolve exactly once in its input, and only these explicitly selected
+nodes contribute rows. This prevents meshes, props, cameras, and other scene
+attachments from silently becoming skeleton evidence. All tolerances are
+mandatory and have no defaults:
 
 ```toml
 schema = "urn:animsmith:skeleton-correspondence:1"
@@ -96,11 +99,11 @@ schema_version = 1
 
 [source]
 input = { sha256 = "<64 lowercase hex characters>", bytes = 12345 }
-selector = { root_name = "Hips" }
+selector = { root_name = "Hips", node_names = ["Hips", "Spine", "Head"] }
 
 [target]
 input = { sha256 = "<64 lowercase hex characters>", bytes = 23456 }
-selector = { root_name = "Hips" }
+selector = { root_name = "Hips", node_names = ["Hips", "Spine", "Head"] }
 
 [correspondence]
 mode = "exact_name"

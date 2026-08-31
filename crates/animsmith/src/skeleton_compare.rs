@@ -14,7 +14,9 @@ use animsmith_core::measure::{
     AssetMeasurements, LinearTransformMeasurements, SkeletonNodeLocalRestMeasurements,
     SkeletonNodeMeasurements, SkeletonSourceCoverage,
 };
-use animsmith_core::{DependencyClosureIdentityV1, InputIdentity, ToolInfo};
+use animsmith_core::{
+    DependencyClosureIdentityV1, InputIdentity, SourceInverseBindAccessorStatus, ToolInfo,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{EXIT_FINDINGS, LoadedInput, input_format, load_source_bytes_typed};
@@ -152,6 +154,25 @@ fn parse(bytes: &[u8]) -> Result<Correspondence, String> {
 
 fn decode_subject(wire: SubjectWire, label: &str) -> Result<Subject, String> {
     valid_name(&wire.selector.root_name, "skeleton selector")?;
+    if wire.selector.node_names.is_empty() || wire.selector.node_names.len() > MAX_SELECTED_NODES {
+        return Err(format!(
+            "skeleton correspondence control error (invalid-{label}-selector-nodes)"
+        ));
+    }
+    let mut names = BTreeSet::new();
+    for name in &wire.selector.node_names {
+        valid_name(name, "skeleton selector node")?;
+        if !names.insert(name) {
+            return Err(format!(
+                "skeleton correspondence control error (duplicate-{label}-selector-node)"
+            ));
+        }
+    }
+    if !names.contains(&wire.selector.root_name) {
+        return Err(format!(
+            "skeleton correspondence control error (missing-{label}-selector-root)"
+        ));
+    }
     let sha256 = wire.input.sha256;
     if sha256.len() != 64
         || !sha256
@@ -173,6 +194,7 @@ fn decode_subject(wire: SubjectWire, label: &str) -> Result<Subject, String> {
             bytes: wire.input.bytes,
         },
         root_name: wire.selector.root_name,
+        node_names: wire.selector.node_names,
     })
 }
 
@@ -223,6 +245,7 @@ struct IdentityWire {
 #[serde(deny_unknown_fields)]
 struct SelectorWire {
     root_name: String,
+    node_names: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -251,6 +274,7 @@ struct Correspondence {
 struct Subject {
     expected_identity: IdentityPin,
     root_name: String,
+    node_names: Vec<String>,
 }
 
 struct IdentityPin {
@@ -319,6 +343,7 @@ struct OutputTolerances {
 #[derive(Serialize)]
 struct SubjectProvenance {
     input: InputIdentity,
+    selected_skeleton_identity: InputIdentity,
     #[serde(skip_serializing_if = "Option::is_none")]
     dependency_closure_identity: Option<DependencyClosureIdentityV1>,
     dependency_closure_complete: bool,
@@ -329,6 +354,7 @@ struct SubjectProvenance {
 #[derive(Serialize)]
 struct SelectorOut {
     root_name: String,
+    node_names: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -429,13 +455,20 @@ fn compare(
 
     let source_assets = animsmith_core::measure::measure_assets(source.document());
     let target_assets = animsmith_core::measure::measure_assets(target.document());
-    let source_subject = subject_provenance(source, &correspondence.source);
-    let target_subject = subject_provenance(target, &correspondence.target);
+    let source_nodes = select_nodes(&source_assets, &correspondence.source)?;
+    let target_nodes = select_nodes(&target_assets, &correspondence.target)?;
+    let source_subject = subject_provenance(
+        source,
+        &correspondence.source,
+        selected_skeleton_identity(&source_nodes, &correspondence.source)?,
+    );
+    let target_subject = subject_provenance(
+        target,
+        &correspondence.target,
+        selected_skeleton_identity(&target_nodes, &correspondence.target)?,
+    );
     let mut partial =
         !source_subject.dependency_closure_complete || !target_subject.dependency_closure_complete;
-
-    let source_nodes = select_nodes(source, &source_assets, &correspondence.source.root_name)?;
-    let target_nodes = select_nodes(target, &target_assets, &correspondence.target.root_name)?;
     let (rows, has_mismatch, has_evaluable) = compare_rows(
         &source_nodes,
         &target_nodes,
@@ -516,14 +549,20 @@ fn compare(
     })
 }
 
-fn subject_provenance(input: &LoadedInput, subject: &Subject) -> SubjectProvenance {
+fn subject_provenance(
+    input: &LoadedInput,
+    subject: &Subject,
+    selected_skeleton_identity: InputIdentity,
+) -> SubjectProvenance {
     SubjectProvenance {
         input: input.input().clone(),
+        selected_skeleton_identity,
         dependency_closure_identity: input.dependency_closure().identity().cloned(),
         dependency_closure_complete: input.dependency_closure().coverage().is_complete()
             && input.dependency_closure().identity().is_some(),
         selector: SelectorOut {
             root_name: subject.root_name.clone(),
+            node_names: subject.node_names.clone(),
         },
         normalized_units_basis: NormalizedBasis {
             translation: "metres",
@@ -538,23 +577,40 @@ struct SelectedNode<'a> {
     parent_name: Option<String>,
 }
 
+#[derive(Serialize)]
+struct SelectedSkeletonIdentity<'a> {
+    root_name: &'a str,
+    node_names: &'a [String],
+    nodes: BTreeMap<&'a str, &'a SkeletonNodeMeasurements>,
+}
+
+fn selected_skeleton_identity(
+    nodes: &BTreeMap<String, SelectedNode<'_>>,
+    subject: &Subject,
+) -> Result<InputIdentity, String> {
+    let projection = SelectedSkeletonIdentity {
+        root_name: &subject.root_name,
+        node_names: &subject.node_names,
+        nodes: nodes
+            .iter()
+            .map(|(name, selected)| (name.as_str(), selected.node))
+            .collect(),
+    };
+    let bytes = serde_json::to_vec(&projection)
+        .map_err(|_| "cannot serialize selected skeleton identity".to_owned())?;
+    Ok(InputIdentity::from_bytes(&bytes))
+}
+
 type TrsComponents = (Option<[f64; 3]>, Option<[f64; 4]>, Option<[f64; 3]>);
 
 fn select_nodes<'a>(
-    input: &'a LoadedInput,
     assets: &'a AssetMeasurements,
-    root_name: &str,
+    subject: &Subject,
 ) -> Result<BTreeMap<String, SelectedNode<'a>>, String> {
     if assets.skeleton_source_coverage != SkeletonSourceCoverage::Complete {
         return Err(
             "skeleton comparison unavailable: source skeleton identity coverage is unavailable"
                 .to_owned(),
-        );
-    }
-    let source_skeleton = &input.document().assets.source_skeleton;
-    if source_skeleton.nodes.len() > MAX_SELECTED_NODES {
-        return Err(
-            "skeleton comparison unavailable: source skeleton exceeds node budget".to_owned(),
         );
     }
     let mut by_index = BTreeMap::new();
@@ -566,131 +622,63 @@ fn select_nodes<'a>(
             );
         }
     }
-    let mut source_by_index = BTreeMap::new();
-    let mut projected = BTreeSet::new();
-    for node in &source_skeleton.nodes {
-        if source_by_index
-            .insert(node.source_node_index, node)
-            .is_some()
-        {
+    let requested = subject
+        .node_names
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let mut selected_by_name = BTreeMap::new();
+    for node in &assets.skeleton_nodes {
+        let Some(name) = node.name.as_deref() else {
+            continue;
+        };
+        if requested.contains(name) && selected_by_name.insert(name, node).is_some() {
             return Err(
-                "skeleton comparison unavailable: source skeleton has duplicate node identities"
+                "skeleton comparison unavailable: selector did not resolve exactly one declared node"
                     .to_owned(),
             );
         }
-        if node.bone.is_some() {
-            projected.insert(node.source_node_index);
-        }
     }
-    let roots = assets
-        .skeleton_nodes
-        .iter()
-        .filter(|node| {
-            projected.contains(&node.node_index) && node.name.as_deref() == Some(root_name)
-        })
-        .collect::<Vec<_>>();
-    let [root] = roots.as_slice() else {
-        return Err(
-            "skeleton comparison unavailable: selector did not resolve exactly one root".to_owned(),
-        );
-    };
-    let mut selected_indices = BTreeSet::new();
-    selected_indices.insert(root.node_index);
-    let mut parent_cache = BTreeMap::new();
-    loop {
-        let before = selected_indices.len();
-        for index in &projected {
-            if selected_indices.contains(index) {
-                continue;
-            }
-            if projected_parent(*index, &source_by_index, &projected, &mut parent_cache)?
-                .is_some_and(|parent| selected_indices.contains(&parent))
-            {
-                selected_indices.insert(*index);
-            }
-        }
-        if selected_indices.len() == before {
-            break;
-        }
-        if selected_indices.len() > MAX_SELECTED_NODES {
+    let mut selected_by_index = BTreeMap::new();
+    for name in &subject.node_names {
+        let node = selected_by_name.get(name.as_str()).ok_or_else(|| {
+            "skeleton comparison unavailable: selector did not resolve exactly one declared node"
+                .to_owned()
+        })?;
+        if selected_by_index.insert(node.node_index, *node).is_some() {
             return Err(
-                "skeleton comparison unavailable: selected skeleton exceeds node budget".to_owned(),
+                "skeleton comparison unavailable: selector has duplicate node identities"
+                    .to_owned(),
             );
         }
     }
     let mut selected = BTreeMap::new();
-    for index in &selected_indices {
-        let node = by_index.get(index).ok_or_else(|| {
-            "skeleton comparison unavailable: selected node lacks identity".to_owned()
-        })?;
-        let name = node.name.clone().ok_or_else(|| {
-            "skeleton comparison unavailable: selected node lacks name".to_owned()
-        })?;
-        if name.is_empty() || selected.contains_key(&name) {
-            return Err(
-                "skeleton comparison unavailable: selected skeleton has duplicate or empty node names"
-                    .to_owned(),
-            );
-        }
-        let parent_name = projected_parent(
-            node.node_index,
-            &source_by_index,
-            &projected,
-            &mut parent_cache,
-        )?
-        .filter(|parent| selected_indices.contains(parent))
-        .and_then(|parent| by_index.get(&parent))
-        .and_then(|parent| parent.name.clone());
-        selected.insert(name, SelectedNode { node, parent_name });
+    for name in &subject.node_names {
+        let node = selected_by_name[name.as_str()];
+        let mut parent = node.parent_node_index;
+        let mut remaining = by_index.len();
+        let parent_name = loop {
+            let Some(index) = parent else { break None };
+            if remaining == 0 {
+                return Err(
+                    "skeleton comparison unavailable: source parent chain is cyclic".to_owned(),
+                );
+            }
+            remaining -= 1;
+            if let Some(selected_parent) = selected_by_index.get(&index) {
+                break selected_parent.name.clone();
+            }
+            parent = by_index
+                .get(&index)
+                .ok_or_else(|| {
+                    "skeleton comparison unavailable: source parent identity is unavailable"
+                        .to_owned()
+                })?
+                .parent_node_index;
+        };
+        selected.insert(name.clone(), SelectedNode { node, parent_name });
     }
     Ok(selected)
-}
-
-fn projected_parent(
-    index: usize,
-    source_by_index: &BTreeMap<usize, &animsmith_core::SourceNodeAsset>,
-    projected: &BTreeSet<usize>,
-    cache: &mut BTreeMap<usize, Option<usize>>,
-) -> Result<Option<usize>, String> {
-    let mut current = source_by_index
-        .get(&index)
-        .ok_or_else(|| {
-            "skeleton comparison unavailable: selected node lacks source identity".to_owned()
-        })?
-        .parent_source_node_index;
-    let mut remaining = source_by_index.len();
-    let mut traversed = Vec::new();
-    while let Some(parent) = current {
-        if remaining == 0 {
-            return Err(
-                "skeleton comparison unavailable: source parent chain is cyclic".to_owned(),
-            );
-        }
-        remaining -= 1;
-        if projected.contains(&parent) {
-            for index in traversed {
-                cache.insert(index, Some(parent));
-            }
-            return Ok(Some(parent));
-        }
-        if let Some(cached_parent) = cache.get(&parent).copied() {
-            for index in traversed {
-                cache.insert(index, cached_parent);
-            }
-            return Ok(cached_parent);
-        }
-        traversed.push(parent);
-        current = source_by_index
-            .get(&parent)
-            .ok_or_else(|| {
-                "skeleton comparison unavailable: source parent identity is unavailable".to_owned()
-            })?
-            .parent_source_node_index;
-    }
-    for index in traversed {
-        cache.insert(index, None);
-    }
-    Ok(None)
 }
 
 fn compare_rows(
@@ -1074,12 +1062,23 @@ fn evidence_summary(
                     state: FacetState::Unavailable,
                     detail: "no source skin declarations".into(),
                 },
+                SkeletonSourceCoverage::Complete
+                    if assets.skins.iter().all(|skin| {
+                        skin.inverse_bind_accessor.status
+                            == SourceInverseBindAccessorStatus::Available
+                    }) =>
+                {
+                    EvidenceSide {
+                        state: FacetState::Pass,
+                        detail: format!(
+                            "{} source skin declarations have readable inverse-bind accessors",
+                            assets.skins.len()
+                        ),
+                    }
+                }
                 SkeletonSourceCoverage::Complete => EvidenceSide {
-                    state: FacetState::Pass,
-                    detail: format!(
-                        "{} source skin declarations retained; per-skin inverse-bind evidence is available in asset measurements",
-                        assets.skins.len()
-                    ),
+                    state: FacetState::Unavailable,
+                    detail: "one or more source skin inverse-bind accessors are unavailable".into(),
                 },
             },
             EvidenceKind::Deformation => EvidenceSide {
@@ -1127,10 +1126,10 @@ schema_version = 1
 unknown = 1
 [source]
 input = { sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", bytes = 1 }
-selector = { root_name = "Root" }
+selector = { root_name = "Root", node_names = ["Root"] }
 [target]
 input = { sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", bytes = 1 }
-selector = { root_name = "Root" }
+selector = { root_name = "Root", node_names = ["Root"] }
 [correspondence]
 mode = "exact_name"
 [tolerances]
@@ -1158,5 +1157,13 @@ normalized_bone_length_ratio_delta = 0.0
             .replace("unknown = 1\n", "")
             .replace('a', "h");
         assert!(parse(invalid_digest.as_bytes()).is_err());
+        let duplicate_selector = std::str::from_utf8(unknown)
+            .unwrap()
+            .replace("unknown = 1\n", "")
+            .replace(
+                "node_names = [\"Root\"]",
+                "node_names = [\"Root\", \"Root\"]",
+            );
+        assert!(parse(duplicate_selector.as_bytes()).is_err());
     }
 }

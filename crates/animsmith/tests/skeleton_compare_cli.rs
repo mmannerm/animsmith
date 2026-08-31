@@ -18,6 +18,13 @@ fn write_doc(path: &Path, root: &str, child: &str, child_height: f32) {
     animsmith_gltf::write::write(&document, path).expect("writes self-authored skeleton fixture");
 }
 
+fn write_duplicate_name_doc(path: &Path) {
+    let mut document = two_bone_rotation_doc("walk", quats_from_angles(&[0.0; 5]), false);
+    document.skeleton.bones[0].name = "root".into();
+    document.skeleton.bones[1].name = "root".into();
+    animsmith_gltf::write::write(&document, path).expect("writes duplicate-name fixture");
+}
+
 fn write_three_bone_doc(path: &Path, head_parent: usize, spine_rotation: f32, spine_scale: f32) {
     let mut document = two_bone_rotation_doc("walk", quats_from_angles(&[0.0; 5]), false);
     document.skeleton.bones[1].rest.rotation = Quat::from_rotation_y(spine_rotation);
@@ -35,8 +42,37 @@ fn write_three_bone_doc(path: &Path, head_parent: usize, spine_rotation: f32, sp
 }
 
 fn correspondence(source: &Path, target: &Path, explicit: bool, length_tolerance: f64) -> String {
+    correspondence_with_selectors(
+        source,
+        target,
+        explicit,
+        length_tolerance,
+        &["root", "spine"],
+        if explicit {
+            &["target_root", "target_spine"]
+        } else {
+            &["root", "spine"]
+        },
+    )
+}
+
+fn correspondence_with_selectors(
+    source: &Path,
+    target: &Path,
+    explicit: bool,
+    length_tolerance: f64,
+    source_nodes: &[&str],
+    target_nodes: &[&str],
+) -> String {
     let source = InputIdentity::from_bytes(&std::fs::read(source).unwrap());
     let target = InputIdentity::from_bytes(&std::fs::read(target).unwrap());
+    let toml_names = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let matching = if explicit {
         "[correspondence]\nmode = \"explicit\"\nmap = { root = \"target_root\", spine = \"target_spine\" }"
     } else {
@@ -48,11 +84,11 @@ schema_version = 1
 
 [source]
 input = {{ sha256 = "{}", bytes = {} }}
-selector = {{ root_name = "root" }}
+selector = {{ root_name = "root", node_names = [{}] }}
 
 [target]
 input = {{ sha256 = "{}", bytes = {} }}
-selector = {{ root_name = "{}" }}
+selector = {{ root_name = "{}", node_names = [{}] }}
 
 {}
 
@@ -64,9 +100,11 @@ normalized_bone_length_ratio_delta = {}
 "#,
         source.sha256(),
         source.bytes(),
+        toml_names(source_nodes),
         target.sha256(),
         target.bytes(),
         if explicit { "target_root" } else { "root" },
+        toml_names(target_nodes),
         matching,
         length_tolerance,
     )
@@ -128,6 +166,10 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
     );
     assert_eq!(value["outcome"], "compatible");
     assert_eq!(value["correspondence"]["matching_mode"], "exact_name");
+    assert_eq!(
+        value["source"]["selected_skeleton_identity"],
+        value["target"]["selected_skeleton_identity"]
+    );
     assert!(
         value["source"]["dependency_closure_complete"]
             .as_bool()
@@ -141,6 +183,8 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
             .all(|row| row["kind"] == "matched")
     );
     assert_eq!(value["facets"]["deformation_model"]["state"], "unavailable");
+    assert_eq!(value["facets"]["skin_membership"]["state"], "pass");
+    assert_eq!(value["facets"]["inverse_bind"]["state"], "unavailable");
     let repeated = run(&source, &target, &control);
     assert_eq!(output.stdout, repeated.stdout, "serialization is stable");
 
@@ -165,6 +209,61 @@ fn compares_exact_and_explicit_correspondence_with_provenance_and_stable_outcome
 }
 
 #[test]
+fn uses_only_the_explicitly_declared_node_set() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.glb");
+    let target = temp.path().join("target-with-attachment.glb");
+    let control = temp.path().join("correspondence.toml");
+    write_doc(&source, "root", "spine", 0.5);
+    write_three_bone_doc(&target, 1, 0.0, 1.0);
+    std::fs::write(&control, correspondence(&source, &target, false, 0.0)).unwrap();
+
+    let output = run(&source, &target, &control);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value = json(&output);
+    validate(&value);
+    assert_eq!(value["outcome"], "compatible");
+    assert_eq!(value["rows"].as_array().unwrap().len(), 2);
+    assert!(
+        value["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["source_name"] != "head" && row["target_name"] != "head")
+    );
+}
+
+#[test]
+fn refuses_missing_or_ambiguous_declared_selectors_without_a_result() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.glb");
+    let target = temp.path().join("target.glb");
+    let control = temp.path().join("correspondence.toml");
+    write_doc(&source, "root", "spine", 0.5);
+    write_doc(&target, "root", "spine", 0.5);
+    let missing = correspondence(&source, &target, false, 0.0).replace(
+        "node_names = [\"root\", \"spine\"]",
+        "node_names = [\"root\", \"missing\"]",
+    );
+    std::fs::write(&control, missing).unwrap();
+    let output = run(&source, &target, &control);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("exactly one declared node"));
+
+    write_duplicate_name_doc(&source);
+    std::fs::write(&control, correspondence(&source, &target, false, 0.0)).unwrap();
+    let output = run(&source, &target, &control);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("exactly one declared node"));
+}
+
+#[test]
 fn reports_missing_parent_rotation_scale_and_unavailable_rotation_as_distinct_evidence() {
     let temp = tempfile::tempdir().unwrap();
     let two = temp.path().join("two.glb");
@@ -173,7 +272,18 @@ fn reports_missing_parent_rotation_scale_and_unavailable_rotation_as_distinct_ev
     let control = temp.path().join("correspondence.toml");
     write_doc(&two, "root", "spine", 0.5);
     write_three_bone_doc(&target, 1, 0.0, 1.0);
-    std::fs::write(&control, correspondence(&two, &target, false, 0.0)).unwrap();
+    std::fs::write(
+        &control,
+        correspondence_with_selectors(
+            &two,
+            &target,
+            false,
+            0.0,
+            &["root", "spine"],
+            &["root", "spine", "head"],
+        ),
+    )
+    .unwrap();
     let missing = run(&two, &target, &control);
     assert_eq!(missing.status.code(), Some(1));
     let missing_json = json(&missing);
@@ -188,7 +298,18 @@ fn reports_missing_parent_rotation_scale_and_unavailable_rotation_as_distinct_ev
 
     write_three_bone_doc(&source, 1, 0.0, 1.0);
     write_three_bone_doc(&target, 0, 0.0, 1.0);
-    std::fs::write(&control, correspondence(&source, &target, false, 0.0)).unwrap();
+    std::fs::write(
+        &control,
+        correspondence_with_selectors(
+            &source,
+            &target,
+            false,
+            0.0,
+            &["root", "spine", "head"],
+            &["root", "spine", "head"],
+        ),
+    )
+    .unwrap();
     let parent = json(&run(&source, &target, &control));
     let head = parent["rows"]
         .as_array()
@@ -200,7 +321,18 @@ fn reports_missing_parent_rotation_scale_and_unavailable_rotation_as_distinct_ev
     assert_eq!(head["parent_correspondence"], "mismatch");
 
     write_three_bone_doc(&target, 1, 0.5, 1.0);
-    std::fs::write(&control, correspondence(&source, &target, false, 0.0)).unwrap();
+    std::fs::write(
+        &control,
+        correspondence_with_selectors(
+            &source,
+            &target,
+            false,
+            0.0,
+            &["root", "spine", "head"],
+            &["root", "spine", "head"],
+        ),
+    )
+    .unwrap();
     let rotation = json(&run(&source, &target, &control));
     let spine = rotation["rows"]
         .as_array()
@@ -212,7 +344,18 @@ fn reports_missing_parent_rotation_scale_and_unavailable_rotation_as_distinct_ev
     assert_eq!(spine["rest_world"]["rotation_deg"]["state"], "mismatch");
 
     write_three_bone_doc(&target, 1, 0.0, 2.0);
-    std::fs::write(&control, correspondence(&source, &target, false, 0.0)).unwrap();
+    std::fs::write(
+        &control,
+        correspondence_with_selectors(
+            &source,
+            &target,
+            false,
+            0.0,
+            &["root", "spine", "head"],
+            &["root", "spine", "head"],
+        ),
+    )
+    .unwrap();
     let scale = json(&run(&source, &target, &control));
     let spine = scale["rows"]
         .as_array()

@@ -63,12 +63,13 @@
     "subject": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["input", "dependency_closure_complete", "selector", "normalized_units_basis"],
-      "properties": {
-        "input": {"$ref": "#/$defs/identity"},
+        "required": ["input", "selected_skeleton_identity", "dependency_closure_complete", "selector", "normalized_units_basis"],
+        "properties": {
+          "input": {"$ref": "#/$defs/identity"},
+          "selected_skeleton_identity": {"$ref": "#/$defs/identity"},
         "dependency_closure_identity": {"$ref": "#/$defs/identity"},
         "dependency_closure_complete": {"type": "boolean"},
-        "selector": {"type": "object", "additionalProperties": false, "required": ["root_name"], "properties": {"root_name": {"type": "string", "minLength": 1}}},
+        "selector": {"type": "object", "additionalProperties": false, "required": ["root_name", "node_names"], "properties": {"root_name": {"type": "string", "minLength": 1}, "node_names": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}}},
         "normalized_units_basis": {"type": "object", "additionalProperties": false, "required": ["translation", "rotation"], "properties": {"translation": {"const": "metres"}, "rotation": {"const": "right-handed normalized coordinates"}}}
       }
     },
