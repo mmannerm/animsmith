@@ -147,9 +147,11 @@ and factor. The same compiled plan supplies the pre-remap translation and
 `animsmith_core::foot_cycle` owns the strict format-neutral V1 declaration and
 pure map planner for a manifest-declared in-place gait ring. It binds canonical
 contact fragments to exact manifest clip witnesses, consumes independently
-measured typed Root/Hips evidence for the inclusive 0.01 m / 1 degree in-place
+measured typed Root/Hips evidence bound to the same artifact, dependency
+closure, and collection source/take for the inclusive 0.01 m / 1 degree in-place
 gate, validates the known stance-detector provenance and alternating bilateral
-support topology, and returns one slope-bounded, endpoint-preserving contact
+support topology under one exact ring-wide detector threshold, bounds aggregate
+canonicalization work, and returns one slope-bounded, endpoint-preserving contact
 `time_warp` operation per member. The reference member's authored boundary
 phases are canonical; the planner never guesses correspondence or rotates phase
 zero. The CLI crate owns the bounded TOML reader. Asset loading, root-motion

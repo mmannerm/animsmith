@@ -14,7 +14,8 @@ use crate::{
     COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES, CollectionIdV1, CollectionLogicalIdV1,
     CollectionManifestV1, CollectionRuntimeSetKindV1, ContactClipReferenceV1, ContactEventKindV1,
     ContactFragmentV1, ContactPhaseV1, ContactRoleV1, ContactTimeWarpControlPointV1,
-    ContactTransformBindingV1, ContactTransformOperationV1, DependencyResourceKeyV1, InputIdentity,
+    ContactTransformBindingV1, ContactTransformOperationV1, DependencyClosureIdentityV1,
+    DependencyResourceKeyV1, InputIdentity,
 };
 
 /// Immutable schema identity for the foot-cycle parameterization declaration.
@@ -32,6 +33,12 @@ pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS: usize = 4_096;
 /// at the member cap while preventing per-fragment limits from multiplying.
 pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS: usize =
     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS * 4;
+/// Maximum aggregate canonical contact-fragment bytes inspected by one plan.
+///
+/// Exact supplied byte identities are preflighted before canonicalization. A
+/// lying identity can therefore cost at most one fragment's existing 8 MiB
+/// canonical-output bound before exact identity comparison refuses it.
+pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES: u64 = 32 * 1024 * 1024;
 /// Maximum source-to-output control points, shared with contact-transform V1.
 pub const FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS: usize =
     crate::CONTACT_TRANSFORM_RESULT_V1_MAX_CONTROL_POINTS;
@@ -245,34 +252,110 @@ impl FootCycleParameterizationV1 {
     }
 }
 
-/// Independently measured in-place evidence for one source clip.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+/// Exact source witness for independently measured Root/Hips facts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FootCycleRootMotionBindingV1 {
+    artifact: InputIdentity,
+    dependency_closure_identity: DependencyClosureIdentityV1,
+    clip: ContactClipReferenceV1,
+}
+
+impl FootCycleRootMotionBindingV1 {
+    /// Bind a measurement to one exact loaded source and selected clip.
+    pub fn new(
+        artifact: InputIdentity,
+        dependency_closure_identity: DependencyClosureIdentityV1,
+        clip: ContactClipReferenceV1,
+    ) -> Self {
+        Self {
+            artifact,
+            dependency_closure_identity,
+            clip,
+        }
+    }
+
+    /// Exact primary source artifact identity.
+    pub const fn artifact(&self) -> &InputIdentity {
+        &self.artifact
+    }
+
+    /// Exact dependency closure from the same load.
+    pub const fn dependency_closure_identity(&self) -> &DependencyClosureIdentityV1 {
+        &self.dependency_closure_identity
+    }
+
+    /// Exact selected collection source/take witness.
+    pub const fn clip(&self) -> &ContactClipReferenceV1 {
+        &self.clip
+    }
+}
+
+/// Independently measured in-place evidence for one exact source clip.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum FootCycleRootMotionEvidenceV1 {
     /// Complete finite source measurements.
     Measured {
+        /// Exact source and selected-clip witness measured.
+        binding: FootCycleRootMotionBindingV1,
         /// Magnitude of Root/Hips horizontal endpoint displacement in metres.
         horizontal_endpoint_displacement_m: f64,
         /// Signed accumulated Root/Hips yaw in degrees.
         accumulated_yaw_deg: f64,
     },
     /// Required Root/Hips evidence was absent.
-    Missing,
+    Missing {
+        /// Exact source and selected-clip witness inspected.
+        binding: FootCycleRootMotionBindingV1,
+    },
     /// More than one source authority could own the measurement.
-    Ambiguous,
+    Ambiguous {
+        /// Exact source and selected-clip witness inspected.
+        binding: FootCycleRootMotionBindingV1,
+    },
     /// Source sampling encountered a non-finite value.
-    NonFinite,
+    NonFinite {
+        /// Exact source and selected-clip witness inspected.
+        binding: FootCycleRootMotionBindingV1,
+    },
 }
 
 impl FootCycleRootMotionEvidenceV1 {
     /// Construct complete measured evidence.
-    pub const fn measured(
+    pub fn measured(
+        binding: FootCycleRootMotionBindingV1,
         horizontal_endpoint_displacement_m: f64,
         accumulated_yaw_deg: f64,
     ) -> Self {
         Self::Measured {
+            binding,
             horizontal_endpoint_displacement_m,
             accumulated_yaw_deg,
+        }
+    }
+
+    /// Construct evidence that the exact source lacked Root/Hips authority.
+    pub fn missing(binding: FootCycleRootMotionBindingV1) -> Self {
+        Self::Missing { binding }
+    }
+
+    /// Construct evidence that the exact source had ambiguous Root/Hips authority.
+    pub fn ambiguous(binding: FootCycleRootMotionBindingV1) -> Self {
+        Self::Ambiguous { binding }
+    }
+
+    /// Construct evidence that the exact source produced non-finite samples.
+    pub fn non_finite(binding: FootCycleRootMotionBindingV1) -> Self {
+        Self::NonFinite { binding }
+    }
+
+    /// Exact source and selected-clip witness inspected.
+    pub const fn binding(&self) -> &FootCycleRootMotionBindingV1 {
+        match self {
+            Self::Measured { binding, .. }
+            | Self::Missing { binding }
+            | Self::Ambiguous { binding }
+            | Self::NonFinite { binding } => binding,
         }
     }
 }
@@ -321,8 +404,8 @@ impl FootCycleMemberEvidenceV1 {
     }
 
     /// Independently measured Root/Hips in-place evidence.
-    pub const fn root_motion(&self) -> FootCycleRootMotionEvidenceV1 {
-        self.root_motion
+    pub const fn root_motion(&self) -> &FootCycleRootMotionEvidenceV1 {
+        &self.root_motion
     }
 }
 
@@ -347,8 +430,8 @@ impl FootCycleMemberPlanV1 {
     }
 
     /// Accepted in-place root evidence consumed by this plan.
-    pub const fn root_motion(&self) -> FootCycleRootMotionEvidenceV1 {
-        self.root_motion
+    pub const fn root_motion(&self) -> &FootCycleRootMotionEvidenceV1 {
+        &self.root_motion
     }
 
     /// Validated time-warp operation preserving the source duration.
@@ -459,6 +542,16 @@ pub enum FootCycleParameterizationError {
         /// Frozen maximum.
         max: usize,
     },
+    /// Aggregate canonical-fragment bytes exceeded V1 before canonicalization.
+    #[error(
+        "foot-cycle evidence has {found} canonical contact-fragment bytes, exceeding V1 aggregate limit {max}"
+    )]
+    TooManyContactFragmentBytes {
+        /// Observed aggregate bytes, capped at the first excess witness.
+        found: u64,
+        /// Frozen aggregate maximum.
+        max: u64,
+    },
     /// Evidence id or locator differed from the corresponding declaration row.
     #[error("foot-cycle evidence does not match declared member order and paths")]
     EvidenceMemberMismatch,
@@ -474,6 +567,15 @@ pub enum FootCycleParameterizationError {
     /// Detector provenance payload was malformed or contradicted event roles.
     #[error("contact fragment stance detector provenance is invalid")]
     InvalidDetectorProvenance,
+    /// Detector thresholds differed, so support boundaries were not comparable.
+    #[error("contact fragments must use one exact stance-detector threshold across the ring")]
+    DetectorPolicyMismatch,
+    /// Root/Hips facts named a different artifact, closure, or selected clip.
+    #[error("member {member:?} Root/Hips evidence does not match its exact source clip")]
+    RootMotionBindingMismatch {
+        /// Logical member whose source witness refused.
+        member: String,
+    },
     /// Root/Hips measurements were absent, ambiguous, malformed, or non-finite.
     #[error("member {member:?} does not have complete finite Root/Hips in-place evidence")]
     RootMotionEvidenceUnavailable {
@@ -543,6 +645,7 @@ struct MemberTopology {
     evidence_index: usize,
     signature: Vec<BoundaryKind>,
     rotated_boundaries: Vec<Boundary>,
+    contact_height_m_bits: u64,
 }
 
 /// Plan exact source-to-reference normalized maps for one collection ring.
@@ -575,6 +678,7 @@ pub fn plan_foot_cycle_parameterization_v1(
     validate_aggregate_contact_event_budget(
         evidence.iter().map(|row| row.fragment.events().len()),
     )?;
+    validate_aggregate_contact_fragment_byte_budget(evidence.iter().map(|row| row.input.bytes()))?;
 
     let mut topologies = Vec::with_capacity(evidence.len());
     for (index, (declaration, evidence)) in
@@ -587,18 +691,21 @@ pub fn plan_foot_cycle_parameterization_v1(
         }
         let canonical = evidence
             .fragment
-            .canonical_identity()
+            .canonical_json()
             .map_err(|_| FootCycleParameterizationError::NonCanonicalFragment)?;
-        if canonical != evidence.input {
+        if canonical.len() as u64 != evidence.input.bytes()
+            || InputIdentity::from_bytes(&canonical) != evidence.input
+        {
             return Err(FootCycleParameterizationError::NonCanonicalFragment);
         }
         validate_clip_witness(manifest, &declaration.id, &evidence.fragment)?;
-        validate_root_motion(&declaration.id, evidence.root_motion)?;
+        validate_root_motion(&declaration.id, &evidence.fragment, &evidence.root_motion)?;
         let topology = topology(&evidence.fragment)?;
         topologies.push(MemberTopology {
             evidence_index: index,
             signature: topology.0,
             rotated_boundaries: topology.1,
+            contact_height_m_bits: topology.2,
         });
     }
 
@@ -609,6 +716,9 @@ pub fn plan_foot_cycle_parameterization_v1(
         .ok_or(FootCycleParameterizationError::MissingReferenceMember)?;
     let reference = &topologies[reference_index];
     for member in &topologies {
+        if member.contact_height_m_bits != reference.contact_height_m_bits {
+            return Err(FootCycleParameterizationError::DetectorPolicyMismatch);
+        }
         if member.signature != reference.signature {
             return Err(FootCycleParameterizationError::TopologyMismatch);
         }
@@ -631,7 +741,7 @@ pub fn plan_foot_cycle_parameterization_v1(
         plans.push(FootCycleMemberPlanV1 {
             id: source.id.clone(),
             input: binding,
-            root_motion: source.root_motion,
+            root_motion: source.root_motion.clone(),
             operation: ContactTransformOperationV1::time_warp(
                 source.fragment.duration_s(),
                 control_points,
@@ -650,11 +760,22 @@ pub fn plan_foot_cycle_parameterization_v1(
 
 fn validate_root_motion(
     member: &CollectionLogicalIdV1,
-    evidence: FootCycleRootMotionEvidenceV1,
+    fragment: &ContactFragmentV1,
+    evidence: &FootCycleRootMotionEvidenceV1,
 ) -> Result<(), FootCycleParameterizationError> {
+    let binding = evidence.binding();
+    if binding.artifact != *fragment.artifact()
+        || binding.dependency_closure_identity != *fragment.dependency_closure_identity()
+        || binding.clip != *fragment.clip()
+    {
+        return Err(FootCycleParameterizationError::RootMotionBindingMismatch {
+            member: member.as_str().to_owned(),
+        });
+    }
     let FootCycleRootMotionEvidenceV1::Measured {
         horizontal_endpoint_displacement_m,
         accumulated_yaw_deg,
+        ..
     } = evidence
     else {
         return Err(
@@ -664,7 +785,7 @@ fn validate_root_motion(
         );
     };
     if !horizontal_endpoint_displacement_m.is_finite()
-        || horizontal_endpoint_displacement_m < 0.0
+        || *horizontal_endpoint_displacement_m < 0.0
         || !accumulated_yaw_deg.is_finite()
     {
         return Err(
@@ -673,7 +794,7 @@ fn validate_root_motion(
             },
         );
     }
-    if horizontal_endpoint_displacement_m
+    if *horizontal_endpoint_displacement_m
         > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M
         || accumulated_yaw_deg.abs() > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG
     {
@@ -697,6 +818,26 @@ fn validate_aggregate_contact_event_budget(
                 found: total.min(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS + 1),
                 max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_EVENTS,
             });
+        }
+    }
+    Ok(())
+}
+
+fn validate_aggregate_contact_fragment_byte_budget(
+    counts: impl IntoIterator<Item = u64>,
+) -> Result<(), FootCycleParameterizationError> {
+    let mut total = 0u64;
+    for count in counts {
+        total = total
+            .checked_add(count)
+            .unwrap_or(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES + 1);
+        if total > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES {
+            return Err(
+                FootCycleParameterizationError::TooManyContactFragmentBytes {
+                    found: total.min(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES + 1),
+                    max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES,
+                },
+            );
         }
     }
     Ok(())
@@ -742,8 +883,9 @@ fn validate_clip_witness(
 ) -> Result<(), FootCycleParameterizationError> {
     let clip = manifest
         .clips()
-        .iter()
-        .find(|clip| clip.id() == member)
+        .binary_search_by(|clip| clip.id().cmp(member))
+        .ok()
+        .and_then(|index| manifest.clips().get(index))
         .ok_or(FootCycleParameterizationError::FragmentClipMismatch)?;
     match fragment.clip() {
         ContactClipReferenceV1::Collection {
@@ -766,12 +908,12 @@ fn validate_clip_witness(
 
 fn topology(
     fragment: &ContactFragmentV1,
-) -> Result<(Vec<BoundaryKind>, Vec<Boundary>), FootCycleParameterizationError> {
-    let roles = validate_detector_extension(fragment)?;
+) -> Result<(Vec<BoundaryKind>, Vec<Boundary>, u64), FootCycleParameterizationError> {
+    let detector = validate_detector_extension(fragment)?;
     let mut windows = Vec::new();
     let mut markers = Vec::new();
     for event in fragment.events() {
-        let side = event_side(event.role(), roles)
+        let side = event_side(event.role(), detector.roles)
             .ok_or(FootCycleParameterizationError::InvalidDetectorProvenance)?;
         match (event.phase(), event.kind()) {
             (ContactPhaseV1::Begin, ContactEventKindV1::Window(window))
@@ -840,12 +982,18 @@ fn topology(
             boundaries.push(Boundary { kind, time });
         }
     }
-    Ok((signature, boundaries))
+    Ok((signature, boundaries, detector.contact_height_m_bits))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DetectorProvenance {
+    roles: [ContactRoleV1; 2],
+    contact_height_m_bits: u64,
 }
 
 fn validate_detector_extension(
     fragment: &ContactFragmentV1,
-) -> Result<[ContactRoleV1; 2], FootCycleParameterizationError> {
+) -> Result<DetectorProvenance, FootCycleParameterizationError> {
     let [extension] = fragment.extensions() else {
         return Err(FootCycleParameterizationError::UnsupportedContactExtension);
     };
@@ -867,6 +1015,12 @@ fn validate_detector_extension(
     ]
     .into_iter()
     .collect::<BTreeSet<_>>();
+    let Some(contact_height_m) = payload
+        .get("contact_height_m")
+        .and_then(serde_json::Value::as_f64)
+    else {
+        return Err(FootCycleParameterizationError::InvalidDetectorProvenance);
+    };
     if payload.keys().map(String::as_str).collect::<BTreeSet<_>>() != expected
         || payload.get("algorithm").and_then(serde_json::Value::as_str)
             != Some(CONTACT_SUPPORT_DETECTOR_V1_ALGORITHM)
@@ -876,10 +1030,8 @@ fn validate_detector_extension(
             .get("max_frames")
             .and_then(serde_json::Value::as_u64)
             != Some(CONTACT_SUPPORT_DETECTOR_V1_MAX_FRAMES)
-        || payload
-            .get("contact_height_m")
-            .and_then(serde_json::Value::as_f64)
-            .is_none_or(|value| !value.is_finite() || value < 0.0)
+        || !contact_height_m.is_finite()
+        || contact_height_m < 0.0
     {
         return Err(FootCycleParameterizationError::InvalidDetectorProvenance);
     }
@@ -902,7 +1054,10 @@ fn validate_detector_extension(
         Some("right_toe") => ContactRoleV1::RightToe,
         _ => return Err(FootCycleParameterizationError::InvalidDetectorProvenance),
     };
-    Ok([left, right])
+    Ok(DetectorProvenance {
+        roles: [left, right],
+        contact_height_m_bits: canonical_zero(contact_height_m).to_bits(),
+    })
 }
 
 fn event_side(role: ContactRoleV1, roles: [ContactRoleV1; 2]) -> Option<Side> {
@@ -1092,11 +1247,19 @@ mod tests {
     }
 
     fn detector_extension(left: &str, right: &str) -> ContactExtensionV1 {
+        detector_extension_with_height(left, right, 0.03)
+    }
+
+    fn detector_extension_with_height(
+        left: &str,
+        right: &str,
+        contact_height_m: f64,
+    ) -> ContactExtensionV1 {
         detector_extension_with_payload(json!({
             "algorithm": "stance-support-v1",
             "sampling": "metric-grid-longest-authored-channel",
             "max_frames": 1_000_000,
-            "contact_height_m": 0.03,
+            "contact_height_m": contact_height_m,
             "roles": {"left": left, "right": right},
         }))
     }
@@ -1232,6 +1395,26 @@ mod tests {
         .unwrap()
     }
 
+    fn root_binding(fragment: &ContactFragmentV1) -> FootCycleRootMotionBindingV1 {
+        FootCycleRootMotionBindingV1::new(
+            fragment.artifact().clone(),
+            fragment.dependency_closure_identity().clone(),
+            fragment.clip().clone(),
+        )
+    }
+
+    fn measured_root(
+        fragment: &ContactFragmentV1,
+        horizontal_endpoint_displacement_m: f64,
+        accumulated_yaw_deg: f64,
+    ) -> FootCycleRootMotionEvidenceV1 {
+        FootCycleRootMotionEvidenceV1::measured(
+            root_binding(fragment),
+            horizontal_endpoint_displacement_m,
+            accumulated_yaw_deg,
+        )
+    }
+
     fn evidence(
         reference_windows: &[(Side, f64, f64)],
         member_windows: &[(Side, f64, f64)],
@@ -1243,12 +1426,13 @@ mod tests {
         .into_iter()
         .map(|(member, take, source, windows)| {
             let fragment = fragment(member, take, windows);
+            let root_motion = measured_root(&fragment, 0.0, 0.0);
             FootCycleMemberEvidenceV1::new(
                 id(&format!("com.example/{member}")),
                 path(source),
                 fragment.canonical_identity().unwrap(),
                 fragment,
-                FootCycleRootMotionEvidenceV1::measured(0.0, 0.0),
+                root_motion,
             )
         })
         .collect()
@@ -1437,7 +1621,9 @@ mod tests {
 
         for member_index in 0..2 {
             let mut accepted = evidence(&windows, &windows);
+            let binding = accepted[member_index].root_motion.binding().clone();
             accepted[member_index].root_motion = FootCycleRootMotionEvidenceV1::measured(
+                binding,
                 FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M,
                 -FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG,
             );
@@ -1454,17 +1640,20 @@ mod tests {
         }
 
         for member_index in 0..2 {
-            for unavailable in [
-                FootCycleRootMotionEvidenceV1::Missing,
-                FootCycleRootMotionEvidenceV1::Ambiguous,
-                FootCycleRootMotionEvidenceV1::NonFinite,
-                FootCycleRootMotionEvidenceV1::measured(f64::NAN, 0.0),
-                FootCycleRootMotionEvidenceV1::measured(0.0, f64::NAN),
-                FootCycleRootMotionEvidenceV1::measured(f64::INFINITY, 0.0),
-                FootCycleRootMotionEvidenceV1::measured(0.0, f64::NEG_INFINITY),
-                FootCycleRootMotionEvidenceV1::measured(-0.001, 0.0),
-            ] {
+            for unavailable_index in 0..8 {
                 let mut source = evidence(&windows, &windows);
+                let binding = source[member_index].root_motion.binding().clone();
+                let unavailable = match unavailable_index {
+                    0 => FootCycleRootMotionEvidenceV1::missing(binding),
+                    1 => FootCycleRootMotionEvidenceV1::ambiguous(binding),
+                    2 => FootCycleRootMotionEvidenceV1::non_finite(binding),
+                    3 => FootCycleRootMotionEvidenceV1::measured(binding, f64::NAN, 0.0),
+                    4 => FootCycleRootMotionEvidenceV1::measured(binding, 0.0, f64::NAN),
+                    5 => FootCycleRootMotionEvidenceV1::measured(binding, f64::INFINITY, 0.0),
+                    6 => FootCycleRootMotionEvidenceV1::measured(binding, 0.0, f64::NEG_INFINITY),
+                    7 => FootCycleRootMotionEvidenceV1::measured(binding, -0.001, 0.0),
+                    _ => unreachable!(),
+                };
                 source[member_index].root_motion = unavailable;
                 assert!(matches!(
                     plan_foot_cycle_parameterization_v1(
@@ -1479,20 +1668,20 @@ mod tests {
             }
         }
 
-        for excess in [
-            FootCycleRootMotionEvidenceV1::measured(
+        for (horizontal, yaw) in [
+            (
                 f64::from_bits(
                     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_HORIZONTAL_DISPLACEMENT_M.to_bits() + 1,
                 ),
                 0.0,
             ),
-            FootCycleRootMotionEvidenceV1::measured(
+            (
                 0.0,
                 f64::from_bits(
                     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG.to_bits() + 1,
                 ),
             ),
-            FootCycleRootMotionEvidenceV1::measured(
+            (
                 0.0,
                 -f64::from_bits(
                     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_ACCUMULATED_YAW_DEG.to_bits() + 1,
@@ -1501,7 +1690,9 @@ mod tests {
         ] {
             for member_index in 0..2 {
                 let mut source = evidence(&windows, &windows);
-                source[member_index].root_motion = excess;
+                let binding = source[member_index].root_motion.binding().clone();
+                source[member_index].root_motion =
+                    FootCycleRootMotionEvidenceV1::measured(binding, horizontal, yaw);
                 assert!(matches!(
                     plan_foot_cycle_parameterization_v1(
                         &declaration,
@@ -1517,6 +1708,41 @@ mod tests {
     }
 
     #[test]
+    fn root_motion_artifact_closure_and_clip_witnesses_cannot_be_cross_wired() {
+        let (manifest, manifest_input) = manifest();
+        let declaration = declaration(&manifest_input, 0.5, 2.0);
+        let windows = [(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)];
+        for member_index in 0..2 {
+            let other_index = 1 - member_index;
+            for coordinate in 0..3 {
+                let mut source = evidence(&windows, &windows);
+                let other = source[other_index].root_motion.binding().clone();
+                let FootCycleRootMotionEvidenceV1::Measured { binding, .. } =
+                    &mut source[member_index].root_motion
+                else {
+                    unreachable!();
+                };
+                match coordinate {
+                    0 => binding.artifact = other.artifact,
+                    1 => binding.dependency_closure_identity = other.dependency_closure_identity,
+                    2 => binding.clip = other.clip,
+                    _ => unreachable!(),
+                }
+                assert!(matches!(
+                    plan_foot_cycle_parameterization_v1(
+                        &declaration,
+                        InputIdentity::from_bytes(b"parameterization"),
+                        &manifest,
+                        manifest_input.clone(),
+                        &source,
+                    ),
+                    Err(FootCycleParameterizationError::RootMotionBindingMismatch { .. })
+                ));
+            }
+        }
+    }
+
+    #[test]
     fn cyclic_topology_is_compared_from_each_first_left_onset() {
         let (manifest, manifest_input) = manifest();
         let declaration = declaration(&manifest_input, 0.5, 2.0);
@@ -1524,16 +1750,124 @@ mod tests {
             &[(Side::Right, 0.1, 0.2), (Side::Left, 0.6, 0.7)],
             &[(Side::Right, 0.15, 0.25), (Side::Left, 0.65, 0.75)],
         );
-        assert!(
-            plan_foot_cycle_parameterization_v1(
-                &declaration,
-                InputIdentity::from_bytes(b"parameterization"),
-                &manifest,
-                manifest_input.clone(),
-                &evidence,
-            )
-            .is_ok()
+        let plan = plan_foot_cycle_parameterization_v1(
+            &declaration,
+            InputIdentity::from_bytes(b"parameterization"),
+            &manifest,
+            manifest_input.clone(),
+            &evidence,
+        )
+        .unwrap();
+        assert_eq!(
+            points(&plan.members()[0]),
+            [
+                (0.0, 0.0),
+                (0.1, 0.1),
+                (0.2, 0.2),
+                (0.6, 0.6),
+                (0.7, 0.7),
+                (1.0, 1.0),
+            ]
         );
+        assert_eq!(
+            points(&plan.members()[1]),
+            [
+                (0.0, 0.0),
+                (0.15, 0.1),
+                (0.25, 0.2),
+                (0.65, 0.6),
+                (0.75, 0.7),
+                (1.0, 1.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn nonfirst_reference_member_owns_exact_phases_without_reordering_plans() {
+        let (manifest, manifest_input) = manifest();
+        let declaration = FootCycleParameterizationV1::new(
+            FootCycleManifestBindingV1::new(
+                CollectionIdV1::new("com.example").unwrap(),
+                manifest_input.clone(),
+            )
+            .unwrap(),
+            id("com.example/sets/walk"),
+            id("com.example/member"),
+            path("generated/aligned"),
+            0.5,
+            2.0,
+            vec![
+                FootCycleParameterizationMemberV1::new(
+                    id("com.example/reference"),
+                    path("contacts/reference.json"),
+                ),
+                FootCycleParameterizationMemberV1::new(
+                    id("com.example/member"),
+                    path("contacts/member.json"),
+                ),
+            ],
+        )
+        .unwrap();
+        let plan = plan_foot_cycle_parameterization_v1(
+            &declaration,
+            InputIdentity::from_bytes(b"parameterization"),
+            &manifest,
+            manifest_input,
+            &evidence(
+                &[(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)],
+                &[(Side::Left, 0.2, 0.3), (Side::Right, 0.7, 0.8)],
+            ),
+        )
+        .unwrap();
+        assert_eq!(plan.reference_member(), &id("com.example/member"));
+        assert_eq!(plan.members()[0].id(), &id("com.example/reference"));
+        assert_eq!(plan.members()[1].id(), &id("com.example/member"));
+        assert_eq!(
+            points(&plan.members()[0]),
+            [
+                (0.0, 0.0),
+                (0.1, 0.2),
+                (0.2, 0.3),
+                (0.6, 0.7),
+                (0.7, 0.8),
+                (1.0, 1.0),
+            ]
+        );
+        assert_eq!(
+            points(&plan.members()[1]),
+            [
+                (0.0, 0.0),
+                (0.2, 0.2),
+                (0.3, 0.3),
+                (0.7, 0.7),
+                (0.8, 0.8),
+                (1.0, 1.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn planner_refuses_missing_and_extra_evidence_rows() {
+        let (manifest, manifest_input) = manifest();
+        let declaration = declaration(&manifest_input, 0.5, 2.0);
+        let windows = [(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)];
+        let source = evidence(&windows, &windows);
+        for invalid in [source[..1].to_vec(), {
+            let mut extra = source.clone();
+            extra.push(source[0].clone());
+            extra
+        }] {
+            assert_eq!(
+                plan_foot_cycle_parameterization_v1(
+                    &declaration,
+                    InputIdentity::from_bytes(b"parameterization"),
+                    &manifest,
+                    manifest_input.clone(),
+                    &invalid,
+                ),
+                Err(FootCycleParameterizationError::EvidenceCountMismatch)
+            );
+        }
     }
 
     #[test]
@@ -1824,6 +2158,16 @@ mod tests {
         ));
 
         for member_index in 0..2 {
+            let mut wrong_digest = source.clone();
+            wrong_digest[member_index].input = InputIdentity::from_sha256_digest(
+                [0; 32],
+                wrong_digest[member_index].input.bytes(),
+            );
+            cases.push((
+                wrong_digest,
+                FootCycleParameterizationError::NonCanonicalFragment,
+            ));
+
             let mut wrong_id = source.clone();
             wrong_id[member_index].id = id("com.example/wrong");
             cases.push((
@@ -1943,6 +2287,16 @@ mod tests {
         assert_eq!(
             plan_foot_cycle_parameterization_v1(
                 &declaration,
+                InputIdentity::from_bytes(b"parameterization"),
+                &manifest,
+                InputIdentity::from_sha256_digest([0; 32], manifest_input.bytes()),
+                &source,
+            ),
+            Err(FootCycleParameterizationError::ManifestMismatch)
+        );
+        assert_eq!(
+            plan_foot_cycle_parameterization_v1(
+                &declaration,
                 InputIdentity::from_sha256_digest(
                     [0; 32],
                     FOOT_CYCLE_PARAMETERIZATION_V1_MAX_BYTES + 1,
@@ -2016,6 +2370,34 @@ mod tests {
                 &source,
             ),
             Err(FootCycleParameterizationError::MemberOrderMismatch)
+        );
+    }
+
+    #[test]
+    fn manifest_clip_lookup_accepts_late_maximum_long_prefix_member() {
+        let prefix = "x".repeat(220);
+        let names = (0..FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS)
+            .map(|index| format!("{prefix}{index:04}"))
+            .collect::<Vec<_>>();
+        let name_refs = names.iter().map(String::as_str).collect::<Vec<_>>();
+        let (manifest, _) = manifest_for_members(
+            CollectionRuntimeSetKindV1::GaitGroup,
+            &name_refs,
+            &name_refs[..2],
+        );
+        let last_index = FOOT_CYCLE_PARAMETERIZATION_V1_MAX_MEMBERS - 1;
+        let fragment = fragment(
+            &names[last_index],
+            last_index as u32,
+            &[(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)],
+        );
+        assert_eq!(
+            validate_clip_witness(
+                &manifest,
+                &id(&format!("com.example/{}", names[last_index])),
+                &fragment,
+            ),
+            Ok(())
         );
     }
 
@@ -2225,6 +2607,74 @@ mod tests {
     }
 
     #[test]
+    fn mixed_detector_thresholds_refuse_in_either_member_order() {
+        let windows = [(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)];
+        let (manifest, manifest_input) = manifest();
+        let declaration = declaration(&manifest_input, 0.5, 2.0);
+        let threshold_successor = f64::from_bits(0.03_f64.to_bits() + 1);
+
+        let mut common_non_default = evidence(&windows, &windows);
+        for (member_index, (member, take_index)) in
+            [("reference", 0), ("member", 1)].into_iter().enumerate()
+        {
+            let changed = fragment_with_extensions(
+                member,
+                take_index,
+                &windows,
+                vec![detector_extension_with_height(
+                    "left_foot",
+                    "right_foot",
+                    threshold_successor,
+                )],
+            );
+            common_non_default[member_index].input = changed.canonical_identity().unwrap();
+            common_non_default[member_index].root_motion = measured_root(&changed, 0.0, 0.0);
+            common_non_default[member_index].fragment = changed;
+        }
+        assert!(
+            plan_foot_cycle_parameterization_v1(
+                &declaration,
+                InputIdentity::from_bytes(b"parameterization"),
+                &manifest,
+                manifest_input.clone(),
+                &common_non_default,
+            )
+            .is_ok()
+        );
+
+        for changed_index in 0..2 {
+            let (member, take_index) = if changed_index == 0 {
+                ("reference", 0)
+            } else {
+                ("member", 1)
+            };
+            let changed = fragment_with_extensions(
+                member,
+                take_index,
+                &windows,
+                vec![detector_extension_with_height(
+                    "left_foot",
+                    "right_foot",
+                    threshold_successor,
+                )],
+            );
+            let mut source = evidence(&windows, &windows);
+            source[changed_index].input = changed.canonical_identity().unwrap();
+            source[changed_index].fragment = changed;
+            assert_eq!(
+                plan_foot_cycle_parameterization_v1(
+                    &declaration,
+                    InputIdentity::from_bytes(b"parameterization"),
+                    &manifest,
+                    manifest_input.clone(),
+                    &source,
+                ),
+                Err(FootCycleParameterizationError::DetectorPolicyMismatch)
+            );
+        }
+    }
+
+    #[test]
     fn control_point_cap_accepts_exact_and_rejects_first_excess() {
         assert_eq!(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS, 4_096);
         fn boundaries(count: usize) -> Vec<Boundary> {
@@ -2307,6 +2757,76 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_fragment_byte_budget_accepts_exact_and_stops_at_first_excess() {
+        assert_eq!(
+            FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES,
+            32 * 1024 * 1024
+        );
+        assert_eq!(
+            validate_aggregate_contact_fragment_byte_budget([
+                FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES - 1,
+                1,
+            ]),
+            Ok(())
+        );
+        assert_eq!(
+            validate_aggregate_contact_fragment_byte_budget([
+                FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES,
+                u64::MAX,
+            ]),
+            Err(
+                FootCycleParameterizationError::TooManyContactFragmentBytes {
+                    found: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES + 1,
+                    max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn planner_preflights_fragment_byte_budget_before_canonicalization() {
+        let windows = [(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)];
+        let (manifest, manifest_input) = manifest();
+        let declaration = declaration(&manifest_input, 0.5, 2.0);
+        let mut source = evidence(&windows, &windows);
+        let second_bytes = source[1].input.bytes();
+        source[0].input = InputIdentity::from_sha256_digest(
+            [0; 32],
+            FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES - second_bytes,
+        );
+        assert_eq!(
+            plan_foot_cycle_parameterization_v1(
+                &declaration,
+                InputIdentity::from_bytes(b"parameterization"),
+                &manifest,
+                manifest_input.clone(),
+                &source,
+            ),
+            Err(FootCycleParameterizationError::NonCanonicalFragment)
+        );
+
+        source[0].input = InputIdentity::from_sha256_digest(
+            [0; 32],
+            FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES - second_bytes + 1,
+        );
+        assert_eq!(
+            plan_foot_cycle_parameterization_v1(
+                &declaration,
+                InputIdentity::from_bytes(b"parameterization"),
+                &manifest,
+                manifest_input,
+                &source,
+            ),
+            Err(
+                FootCycleParameterizationError::TooManyContactFragmentBytes {
+                    found: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES + 1,
+                    max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTACT_FRAGMENT_BYTES,
+                }
+            )
+        );
+    }
+
+    #[test]
     fn planner_preflights_aggregate_contact_events_before_topology_retention() {
         let names = ["reference", "member-1", "member-2", "member-3", "member-4"];
         let (manifest, manifest_input) =
@@ -2344,7 +2864,7 @@ mod tests {
                     path(&format!("contacts/{name}.json")),
                     fragment_input.clone(),
                     oversized_fragment.clone(),
-                    FootCycleRootMotionEvidenceV1::measured(0.0, 0.0),
+                    measured_root(&oversized_fragment, 0.0, 0.0),
                 )
             })
             .collect::<Vec<_>>();
@@ -2367,6 +2887,26 @@ mod tests {
     fn declaration_rejects_invalid_slopes_duplicates_and_path_collisions() {
         assert_eq!(FOOT_CYCLE_PARAMETERIZATION_V1_MAX_SLOPE, 1_000_000.0);
         let (_, manifest_input) = manifest();
+        assert!(
+            FootCycleManifestBindingV1::new(
+                CollectionIdV1::new("com.example").unwrap(),
+                InputIdentity::from_sha256_digest(
+                    [0; 32],
+                    COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES,
+                ),
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            FootCycleManifestBindingV1::new(
+                CollectionIdV1::new("com.example").unwrap(),
+                InputIdentity::from_sha256_digest(
+                    [0; 32],
+                    COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES + 1,
+                ),
+            ),
+            Err(FootCycleParameterizationError::ManifestTooLarge)
+        );
         for (minimum, maximum) in [
             (0.0, 1.0),
             (-1.0, 1.0),
@@ -2413,6 +2953,27 @@ mod tests {
             )
             .unwrap()
         };
+        for members in [
+            Vec::new(),
+            vec![FootCycleParameterizationMemberV1::new(
+                id("com.example/reference"),
+                path("contacts/reference.json"),
+            )],
+        ] {
+            let found = members.len();
+            assert_eq!(
+                FootCycleParameterizationV1::new(
+                    binding(),
+                    id("com.example/sets/walk"),
+                    id("com.example/reference"),
+                    path("generated/aligned"),
+                    0.5,
+                    2.0,
+                    members,
+                ),
+                Err(FootCycleParameterizationError::TooFewMembers { found })
+            );
+        }
         assert!(matches!(
             FootCycleParameterizationV1::new(
                 binding(),

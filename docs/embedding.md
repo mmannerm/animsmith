@@ -310,10 +310,12 @@ For the library cutover itself:
 boundary for a manifest-declared in-place gait ring. A host supplies the strict
 typed parameterization, its exact byte identity, the already validated
 collection manifest and exact byte identity, plus canonical contact fragments
-and independently measured typed Root/Hips in-place evidence in declared
+and independently measured typed Root/Hips in-place evidence bound to each
+fragment's exact artifact, dependency closure, and selected collection take in declared
 member/path order. The planner validates manifest clip witnesses,
-the known stance-detector provenance, alternating bilateral support topology,
-positional boundary correspondence, and every declared segment-slope bound.
+the known stance-detector provenance and exact common detector threshold,
+bounded aggregate canonical-fragment work, alternating bilateral support
+topology, positional boundary correspondence, and every declared segment-slope bound.
 It returns one exact `ContactTransformBindingV1` and duration-preserving
 `ContactTransformOperationV1::TimeWarp` per member.
 

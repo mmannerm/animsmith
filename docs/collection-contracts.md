@@ -99,8 +99,12 @@ contact_fragment = "contacts/walk-right.json"
 ```
 
 The reader is closed and bounded at 8 MiB and 4,096 members. Planning admits at
-most 16,384 contact events across the whole declared ring, so independent
-per-fragment limits cannot multiply into unbounded retained topology or work.
+most 16,384 contact events and 32 MiB of canonical contact-fragment bytes
+across the whole declared ring, so independent per-fragment limits cannot
+multiply into unbounded retained topology or canonicalization work. Exact
+supplied byte counts are preflighted before canonicalization; a false count is
+then caught by exact canonical byte-count and digest comparison on the first
+such row.
 Safe locators use the same lexical relative-path contract as collection
 manifests. It rejects unknown fields, unsupported identities/versions, unsafe
 or duplicate paths, duplicate/missing members, an absent reference, invalid
@@ -112,14 +116,19 @@ transactional collection adapter; this parser performs no filesystem I/O.
 The pure core planner additionally requires each supplied sidecar byte identity
 to equal its canonical `contact-fragment:1` identity and its collection clip
 witness to equal the manifest's exact logical/source/take-index/take-name row.
-Each member also supplies independently measured typed Root/Hips evidence. A
+Each member also supplies independently measured typed Root/Hips evidence bound
+to the fragment's exact artifact, dependency closure, and collection clip
+source/take witness. Cross-wired or stale measurements refuse before their
+values are used. A
 missing, ambiguous, malformed, or non-finite witness refuses, as does horizontal
 endpoint displacement above 0.01 m or absolute accumulated yaw above 1 degree;
 both thresholds are inclusive. The planner consumes and retains those facts but
 does not sample an animation asset itself.
 V1 recognizes exactly AnimSmith's `contact-support-detector:1` extension and
 validates its closed algorithm, sampling, frame-cap, threshold, and selected
-left/right foot-or-toe role provenance. Other extensions refuse because no
+left/right foot-or-toe role provenance. Every member must carry the exact same
+finite non-negative `contact_height_m` binary64 value because that policy
+determines the compared window boundaries. Other extensions refuse because no
 operation-specific transform handler has run.
 
 Each member must contain complete positive left/right support windows, each
