@@ -617,10 +617,11 @@ fn emit_refusal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use animsmith_core::model::SceneAsset;
     use animsmith_core::{
-        DependencyClosureBuilderV1, InputIdentity, SourceChannelFactV1, SourceLoaderDispositionV1,
-        SourceObservationV1, SourceProvenanceV1, SourceSetCoverageV1, SourceTextV1,
-        SourceTimeRangeV1,
+        DependencyClosureBuilderV1, Document, InputIdentity, RawSourceFactsBuilderV1,
+        SourceChannelFactV1, SourceFormatV1, SourceLoaderDispositionV1, SourceObservationV1,
+        SourceProvenanceV1, SourceSetCoverageV1, SourceTextV1, SourceTimeRangeV1,
     };
 
     fn window(start: f64, end: f64) -> ContactEventV1 {
@@ -749,5 +750,43 @@ mod tests {
     fn frame_cap_accepts_one_million_and_refuses_next_frame() {
         assert!(validate_frame_count(MAX_FRAMES).is_ok());
         assert!(validate_frame_count(MAX_FRAMES + 1).is_err());
+    }
+
+    #[test]
+    fn fragment_boundary_rejects_a_malformed_later_scene_root() {
+        let mut document = Document::default();
+        document.assets.scenes = vec![
+            SceneAsset::default(),
+            SceneAsset {
+                roots: vec![0],
+                ..SceneAsset::default()
+            },
+        ];
+        let source = RawSourceFactsBuilderV1::new(
+            SourceFormatV1::Glb,
+            InputIdentity::from_bytes(b"malformed-scene-root"),
+        )
+        .finish(document)
+        .unwrap();
+        let loaded = LoadedInput {
+            source,
+            engine: None,
+            engine_v2: None,
+            engine_v4: None,
+        };
+        let selection = ClipSelection {
+            reference: ContactClipReferenceV1::document("walk").unwrap(),
+            normalized_index: 0,
+        };
+
+        let rejection = build_fragment(&loaded, &LoadedConfig::without_file(), selection)
+            .expect_err("shared scene-root validation must run before contact analysis");
+
+        assert_eq!(rejection.stage, Stage::Analysis);
+        assert_eq!(rejection.kind, Kind::IncompleteEvidence);
+        assert_eq!(
+            rejection.detail,
+            "source document shape is not valid for strict contact evidence"
+        );
     }
 }

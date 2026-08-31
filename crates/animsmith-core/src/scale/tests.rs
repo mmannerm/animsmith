@@ -6162,6 +6162,139 @@ fn build_runs_the_shared_shape_checker_on_the_candidate_it_generated() {
 }
 
 #[test]
+fn scale_strict_boundaries_reject_scene_roots_through_shared_shape_error() {
+    let mut document = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        ..Document::default()
+    };
+    document.assets.scenes = vec![
+        crate::model::SceneAsset {
+            roots: vec![0],
+            ..crate::model::SceneAsset::default()
+        },
+        crate::model::SceneAsset {
+            roots: vec![99],
+            ..crate::model::SceneAsset::default()
+        },
+    ];
+    document.assets.source_skeleton.nodes.push({
+        let mut source_node = crate::model::SourceNodeAsset::new(
+            0,
+            crate::model::SourceNodeLocalRest::Trs {
+                translation: Vec3::ZERO,
+                rotation: glam::Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+        );
+        source_node.bone = Some(0);
+        source_node
+    });
+    document.assets.source_skeleton.coverage = crate::model::SourceSkeletonCoverage::Complete;
+    let capability = complete_capability();
+    assert_eq!(
+        plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+            document: &document,
+            capability: &capability,
+        })
+        .unwrap_err(),
+        ScaleError::InvalidDocumentShape(DocumentShapeError::SceneRootOutOfBounds {
+            scene_index: 1,
+            root_index: 0,
+            bone: 99,
+        })
+    );
+
+    let mut valid = document.clone();
+    valid.assets.scenes[1].roots[0] = 0;
+    let plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+        document: &valid,
+        capability: &capability,
+    })
+    .unwrap();
+    let mut malformed_candidate = valid.clone();
+    malformed_candidate.assets.scenes[1].roots[0] = 99;
+    assert_eq!(
+        prove_scale(
+            &valid,
+            &ScaleCandidate::from_document(malformed_candidate),
+            &plan,
+        )
+        .unwrap_err(),
+        ScaleError::InvalidDocumentShape(DocumentShapeError::SceneRootOutOfBounds {
+            scene_index: 1,
+            root_index: 0,
+            bone: 99,
+        })
+    );
+}
+
+#[test]
+fn scale_plan_and_proof_reject_shared_scene_root_shape_errors() {
+    let mut document = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        ..Document::default()
+    };
+    document.assets.scenes = vec![
+        crate::model::SceneAsset {
+            roots: vec![0],
+            ..Default::default()
+        },
+        crate::model::SceneAsset {
+            roots: vec![99],
+            ..Default::default()
+        },
+    ];
+    let capability = complete_capability();
+    assert_eq!(
+        plan_scale(&ScaleRequest {
+            operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+            document: &document,
+            capability: &capability,
+        })
+        .unwrap_err(),
+        ScaleError::InvalidDocumentShape(DocumentShapeError::SceneRootOutOfBounds {
+            scene_index: 1,
+            root_index: 0,
+            bone: 99,
+        })
+    );
+    let mut valid = document.clone();
+    valid.assets.scenes[1].roots[0] = 0;
+    let plan = plan_scale(&ScaleRequest {
+        operation: ScaleOperation::WholeDocumentLinearUnits { factor: 2.0 },
+        document: &valid,
+        capability: &capability,
+    })
+    .unwrap();
+    let mut malformed = valid.clone();
+    malformed.assets.scenes[1].roots[0] = 99;
+    assert_eq!(
+        prove_scale(&valid, &ScaleCandidate::from_document(malformed), &plan).unwrap_err(),
+        ScaleError::InvalidDocumentShape(DocumentShapeError::SceneRootOutOfBounds {
+            scene_index: 1,
+            root_index: 0,
+            bone: 99,
+        })
+    );
+}
+
+#[test]
 fn missing_inverse_bind_evidence_rejects_instead_of_defaulting_to_identity() {
     let doc = compensated_document();
     let capability = complete_capability();
