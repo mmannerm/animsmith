@@ -32,9 +32,12 @@ the apex.
 
 `animsmith.css` defines these on `.light` and on `.navy` as `--as-*`
 custom properties, then maps them onto the mdBook theme variables. The
-dark values are the palette
+dark ground, surface, ink, muted, accent, error and warning values are the
+palette
 [`crates/animsmith-report/assets/viewer.css`](../../crates/animsmith-report/assets/viewer.css)
-already uses, so an embedded report reads as part of the page. The other
+already uses, so an embedded report reads as part of the page; the line,
+accent-ink, accent-soft, pass, note and code-bg tokens are new here and the
+viewer adopts the full set in its own change. The other
 three built-in themes (`coal`, `ayu`, `rust`) keep their stock palettes:
 rules outside the two theme blocks read tokens through
 `var(--as-x, <mdBook fallback>)`.
