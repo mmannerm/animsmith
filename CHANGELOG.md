@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/mmannerm/animsmith/compare/v0.9.0...v0.10.0) - 2026-09-01
+
+### Added
+
+- publish declared foot-cycle generations ([#643](https://github.com/mmannerm/animsmith/pull/643))
+- add no-replace generation directories ([#640](https://github.com/mmannerm/animsmith/pull/640))
+- prove serialized foot-cycle candidates
+- bind foot-cycle proof policy ([#638](https://github.com/mmannerm/animsmith/pull/638))
+- prepare source-bound foot-cycle candidates ([#636](https://github.com/mmannerm/animsmith/pull/636))
+- plan declared foot-cycle parameterization
+- compare declared skeleton compatibility
+- build foot-cycle clip candidates ([#634](https://github.com/mmannerm/animsmith/pull/634))
+- implement strict contact transform contract
+- bound strict in-memory GLB candidates
+
+### Fixed
+
+- share scene-root shape validation across transform producers ([#639](https://github.com/mmannerm/animsmith/pull/639))
+- transfer proved foot-cycle artifacts into publication
+- close foot-cycle reciprocal audit blockers
+- close foot-cycle producer audit gaps
+- harden foot-cycle producer contracts
+- complete foot-cycle proof audit coverage
+- close foot-cycle proof audit gaps
+- preflight proof work before serialization
+- repair merged Windows and contact integration
+- complete skeleton comparison report
+- scope skeleton evidence facets
+- keep skeleton comparison panic-free
+- tighten skeleton comparison row contract
+- canonicalize skeleton comparison identity bytes
+- canonicalize skeleton comparison evidence
+- bind skeleton mappings to selectors
+- make skeleton comparison selection explicit
+- *(docs)* publish animation pack report pages
+- *(core)* bound foot-cycle evidence comparability
+- *(core)* bound and gate foot-cycle planning
+- enforce contact transform proof context
+- *(gltf)* harden strict GLB candidate preflight
+- *(engine)* pin exact Bevy 0.19.0 readback graph
+
 ## [0.9.0](https://github.com/mmannerm/animsmith/compare/v0.8.0...v0.9.0) - 2026-08-30
 
 ### Added

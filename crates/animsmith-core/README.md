@@ -54,8 +54,8 @@ pre-1.0 struct-literal break: exhaustive `Config` literals must add it or use
 
 ```toml
 [dependencies]
-animsmith-core = "0.9"
-animsmith-gltf = "0.9"
+animsmith-core = "0.10"
+animsmith-gltf = "0.10"
 ```
 
 ## Feature Flags
