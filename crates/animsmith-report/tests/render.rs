@@ -1641,27 +1641,55 @@ fn both_reports_paint_only_from_the_shared_token_set() {
 }
 
 #[test]
-fn the_shared_runtime_falls_back_to_the_stylesheet_dark_values() {
+fn the_runtime_fallback_palette_is_emitted_from_the_stylesheet() {
     // The viewers paint through the tokens, but a browser that cannot resolve
     // a custom property falls back to a table inside the runtime. That table
-    // is only right if it is the stylesheet's own dark set.
-    let code = document_code(&themed_documents()[0].1);
-    let (dark_start, dark_end) = rule_block(&code, ":root {");
-    let dark = &code[dark_start..dark_end];
-    let fallback_start = code
-        .find("ANIMSMITH_DEFAULT_PALETTE = {")
-        .expect("runtime declares its fallback palette");
-    let fallback_end = code[fallback_start..].find("};").expect("palette closes") + fallback_start;
-    let fallback = &code[fallback_start..fallback_end];
-    for (name, value) in TOKEN_NAMES.iter().zip(DARK_TOKENS) {
+    // is not written twice: the report substitutes the stylesheet's own dark
+    // values into the runtime as it emits the document.
+    for (kind, html) in themed_documents() {
+        let code = document_code(&html);
         assert!(
-            dark.contains(&format!("--{name}: {value}")),
-            "bare :root sets --{name} to {value}"
+            !code.contains("__ANIMSMITH_DARK_TOKENS__"),
+            "{kind}: the fallback placeholder is always substituted"
         );
-        assert!(
-            fallback.contains(&format!("{name}: \"{value}\"")),
-            "the runtime falls back to the stylesheet's --{name}"
+        let start = code
+            .find("ANIMSMITH_DEFAULT_PALETTE = ")
+            .expect("runtime declares its fallback palette")
+            + "ANIMSMITH_DEFAULT_PALETTE = ".len();
+        let end = code[start..].find(";\n").expect("declaration ends") + start;
+        let fallback: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(&code[start..end]).expect("the fallback palette is a JS object");
+
+        let (dark_start, dark_end) = rule_block(&code, ":root {");
+        let declared: std::collections::BTreeMap<String, String> = code[dark_start..dark_end]
+            .split_once('{')
+            .expect("rule opens")
+            .1
+            .split(';')
+            .filter_map(|declaration| declaration.split_once(':'))
+            .filter_map(|(name, value)| {
+                Some((
+                    name.trim().strip_prefix("--")?.to_owned(),
+                    value.trim().to_owned(),
+                ))
+            })
+            .collect();
+        assert_eq!(
+            fallback, declared,
+            "{kind}: the runtime falls back to exactly the stylesheet's dark tokens"
         );
+        assert_eq!(
+            declared.len(),
+            TOKEN_NAMES.len(),
+            "{kind}: every token has a dark value"
+        );
+        for (name, value) in TOKEN_NAMES.iter().zip(DARK_TOKENS) {
+            assert_eq!(
+                declared.get(*name).map(String::as_str),
+                Some(value),
+                "--{name}"
+            );
+        }
     }
 }
 
@@ -2071,10 +2099,15 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
     ] {
         assert_eq!(data[key], full_data[key], "{key} is unchanged");
     }
+    let figures = chart_figures(&html);
+    assert!(
+        !figures.is_empty(),
+        "the fixture must really render charts for this to mean anything"
+    );
     assert_eq!(
-        chart_figures(&html),
+        figures,
         chart_figures(&full_html),
-        "the metric charts are the same evidence"
+        "the single-clip charts are the same evidence"
     );
 
     // The document, not the viewer, decides there is no pose view.
@@ -2198,9 +2231,28 @@ fn an_evidence_only_comparison_drops_both_pose_grids() {
     }
     assert_eq!(data["correspondence"], full_data["correspondence"]);
 
-    // Every pose surface is replaced by its own notice, and the shared phase
-    // has nothing left to scrub.
-    for surface in ["before-gl", "after-gl", "comparison-root-path"] {
+    // Every comparison panel is drawn by the viewer from the pose grid — the
+    // two canvases, the shared root chart, and both sides' trajectory and
+    // gait panels — so all of them are replaced by the notice rather than
+    // left as boxes that could never be filled. The shared phase then has
+    // nothing left to scrub.
+    assert!(
+        chart_figures(&html).is_empty() && chart_figures(&full_html).is_empty(),
+        "a comparison has no Rust-rendered chart figures in either form"
+    );
+    assert!(
+        !html.contains("<svg id="),
+        "no comparison chart surface survives without its poses"
+    );
+    for surface in [
+        "before-gl",
+        "after-gl",
+        "comparison-root-path",
+        "before-path",
+        "after-path",
+        "before-gait",
+        "after-gait",
+    ] {
         assert!(!has_id(&html, surface), "{surface} is not rendered");
         assert!(
             element_with_id(&html, &format!("{surface}-notice")).contains("Pose playback omitted"),

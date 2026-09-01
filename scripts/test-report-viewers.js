@@ -4,14 +4,15 @@
 // full and evidence-only shape. The DOM and WebGL stubs are deliberately
 // thin — everything asserted here is something a reader would see.
 const fs = require("fs"), vm = require("vm");
-if (process.argv.length !== 6) {
-  throw new Error("usage: test-report-viewers.js COMPARISON.html COMPARISON-EVIDENCE.html REPORT.html REPORT-EVIDENCE.html");
+if (process.argv.length !== 7) {
+  throw new Error("usage: test-report-viewers.js COMPARISON.html COMPARISON-EVIDENCE.html REPORT.html REPORT-EVIDENCE.html REPORT-MULTI-CLIP.html");
 }
-const [, , comparisonPath, comparisonEvidencePath, singlePath, singleEvidencePath] = process.argv;
+const [, , comparisonPath, comparisonEvidencePath, singlePath, singleEvidencePath, multiPath] = process.argv;
 const html = fs.readFileSync(comparisonPath, "utf8");
 const comparisonEvidenceHtml = fs.readFileSync(comparisonEvidencePath, "utf8");
 const singleHtml = fs.readFileSync(singlePath, "utf8");
 const singleEvidenceHtml = fs.readFileSync(singleEvidencePath, "utf8");
+const multiHtml = fs.readFileSync(multiPath, "utf8");
 
 function generatedReportParts(source) {
   const match = source.match(/<script>([\s\S]*?)<\/script><script type="application\/json" id="comparison-report-data">([\s\S]*?)<\/script><script>([\s\S]*?)<\/script><\/body><\/html>\s*$/);
@@ -178,6 +179,15 @@ if(nodes.scrub.value != 2001) throw new Error("an out-of-range frame was not cla
 if(documentElement.attrs["data-theme"] !== "light") throw new Error("a fragment that never mentions the theme must leave it pinned");
 context.location.hash="#theme=neon&embed=0"; windowListeners.hashchange();
 if("data-embed" in documentElement.attrs || "data-theme" in documentElement.attrs) throw new Error("an explicitly unusable value must restore the document default");
+// The same three states for the shared phase: honoured, unusable (default
+// restored), absent (left alone).
+context.location.hash="#frame=800"; windowListeners.hashchange();
+if(nodes.scrub.value != 800) throw new Error("a valid frame did not move the shared phase");
+context.location.hash="#frame=-1"; windowListeners.hashchange();
+if(nodes.scrub.value != 0) throw new Error("an unusable frame did not restore the default shared phase");
+context.location.hash="#frame=800"; windowListeners.hashchange();
+context.location.hash="#theme=dark"; windowListeners.hashchange();
+if(nodes.scrub.value != 800) throw new Error("a fragment without a frame moved the shared phase");
 
 // A non-finite sampled range must degrade the drawing, not abort navigation
 // or hide the already-rendered findings and coverage lists.
@@ -224,28 +234,30 @@ const comparisonEvidence = generatedReportParts(comparisonEvidenceHtml);
 const evidencePayload = JSON.parse(comparisonEvidence.payload);
 if (evidencePayload.evidence_only !== true) throw new Error("the evidence-only comparison is not marked as one");
 if (comparisonEvidenceHtml.includes('"positions"')) throw new Error("the evidence-only comparison still embeds a pose grid");
-for (const surface of ["before-gl", "after-gl", "comparison-root-path"]) {
+const poseSurfaces = ["before-gl", "after-gl", "comparison-root-path", "before-path", "after-path", "before-gait", "after-gait"];
+// Every comparison panel is drawn client-side from the pose grid, so an
+// evidence-only comparison replaces all of them with the notice rather than
+// leaving blank boxes behind. This is exactly what the documented contract
+// now says, and what the follow-up Rust chart producer would change.
+for (const surface of poseSurfaces) {
   if (comparisonEvidenceHtml.includes(`id="${surface}"`)) throw new Error(`${surface} is still rendered in an evidence-only comparison`);
   if (!comparisonEvidenceHtml.includes(`id="${surface}-notice"`)) throw new Error(`${surface} lost its omission notice`);
 }
-const evidenceIds = comparisonIds.filter(id => !["before-gl", "after-gl", "comparison-root-path"].includes(id));
+if (/<svg\s+id=/.test(comparisonEvidenceHtml)) throw new Error("an evidence-only comparison still carries a chart surface it cannot draw");
+if (!/<figure class="chart"/.test(singleEvidenceHtml)) throw new Error("an evidence-only single-clip report lost its Rust-rendered charts");
+if (!/<path class="root-path"/.test(singleEvidenceHtml)) throw new Error("an evidence-only single-clip report lost its plotted root path");
+const evidenceIds = comparisonIds.filter(id => !poseSurfaces.includes(id));
 const evidenceRun = run(comparisonEvidence, "comparison-report-data", evidenceIds, evidencePayload);
 const evidenceNodes = evidenceRun.nodes;
 if (!evidenceNodes.scrub.disabled) throw new Error("the shared phase stayed scrubbable with no pose grid behind it");
 if (evidenceNodes["before-findings"].children.length !== evidencePayload.before.findings.length || !evidenceNodes["before-identity"].textContent.includes(evidencePayload.before.dependency_closure_identity.sha256)) throw new Error("an evidence-only comparison dropped findings or identities");
 if (!evidenceNodes.times.textContent.includes("not a time warp") || !evidenceNodes.mapping.textContent) throw new Error("an evidence-only comparison dropped its phase disclosures");
-for (const id of ["before-path","after-path","before-gait","after-gait"]) {
-  if (evidenceNodes[id].children.length) throw new Error(`${id} drew from a pose grid the document does not carry`);
-}
-assertNoBareSvgText(evidenceNodes, ["before-path","after-path","before-gait","after-gait"], "evidence-only comparison");
+
 // Navigating an evidence-only comparison stays inert: the theme still
 // applies, and no panel starts drawing from a grid the document lacks.
 evidenceRun.context.location.hash = "#frame=5&theme=light";
 evidenceRun.listeners.hashchange();
 if (evidenceRun.root.attrs["data-theme"] !== "light") throw new Error("an evidence-only comparison stopped honouring the theme option");
-for (const id of ["before-path","after-path","before-gait","after-gait"]) {
-  if (evidenceNodes[id].children.length) throw new Error(`${id} drew after a navigation without a pose grid`);
-}
 
 // ---- fragment parser ---------------------------------------------------
 // One parser serves both documents, so it is exercised once, directly, with
@@ -413,5 +425,47 @@ if (Math.abs(evidencePlayhead - (chartPad + chartPlotW)) > 1e-6) throw new Error
 if (!evidenceSingle.nodes.time.textContent.includes("frame")) throw new Error("an evidence-only report stopped reporting the selected frame");
 const evidenceDeep = runSingle(singleEvidence, evidenceSinglePayload, evidenceSingleIds, {hash: `#finding=${evidenceSinglePayload.findings.length - 1}&theme=light`});
 if (evidenceDeep.root.attrs["data-theme"] !== "light" || !evidenceDeep.nodes.findings.children[evidenceSinglePayload.findings.length - 1].classes.has("selected")) throw new Error("an evidence-only report stopped honouring deep links");
+
+// ---- navigating the single-clip viewer ---------------------------------
+// Each option has the same three states on a hash transition as it has on
+// load: honoured, present but unusable (default restored), absent (left
+// alone).
+function navigate(state, hash) { state.context.location.hash = hash; state.listeners.hashchange(); }
+const selectionNav = runSingle(single, singlePayload, singleIds);
+navigate(selectionNav, `#finding=${findingIndex}`);
+if (!selectionNav.nodes.findings.children[findingIndex].classes.has("selected")) throw new Error("navigating to a finding did not select it");
+navigate(selectionNav, "#finding=999999999");
+if (selectionNav.nodes.findings.children.some(row => row.classes.has("selected"))) throw new Error("an unusable finding index left a selection standing");
+navigate(selectionNav, `#finding=${findingIndex}`);
+navigate(selectionNav, "#theme=dark");
+if (!selectionNav.nodes.findings.children[findingIndex].classes.has("selected")) throw new Error("a fragment without a finding cleared the selection");
+navigate(selectionNav, "#frame=2");
+if (Number(selectionNav.nodes.scrub.value) !== 2) throw new Error("navigating to a frame did not scrub");
+navigate(selectionNav, "#frame=1.5");
+if (Number(selectionNav.nodes.scrub.value) !== 0) throw new Error("an unusable frame did not restore frame 0");
+navigate(selectionNav, "#frame=2");
+navigate(selectionNav, "#embed=1");
+if (Number(selectionNav.nodes.scrub.value) !== 2) throw new Error("a fragment without a frame moved the playhead");
+
+// ---- multi-clip report -------------------------------------------------
+// Clip selection needs a document with more than one clip to mean anything.
+const multi = singleReportParts(multiHtml);
+const multiPayload = JSON.parse(multi.payload);
+if (multiPayload.clips.length < 2) throw new Error("the multi-clip fixture must embed at least two clips");
+const [firstClip, secondClip] = multiPayload.clips;
+if (firstClip.name === secondClip.name) throw new Error("the multi-clip fixture must embed two distinguishable clips");
+const runMulti = (hash) => runSingle(multi, multiPayload, singleIds, hash === undefined ? undefined : {hash});
+if (runMulti().nodes["clip-select"].value !== firstClip.name) throw new Error("a report opens on its first clip");
+if (runMulti(`#clip=${encodeURIComponent(secondClip.name)}`).nodes["clip-select"].value !== secondClip.name) throw new Error("clip= did not select the named clip");
+if (runMulti("#clip=no-such-clip").nodes["clip-select"].value !== firstClip.name) throw new Error("an unknown clip did not restore the first clip");
+if (runMulti("#clip=%E0%A4%A").nodes["clip-select"].value !== firstClip.name) throw new Error("a malformed clip did not restore the first clip");
+const clipNav = runMulti();
+navigate(clipNav, `#clip=${encodeURIComponent(secondClip.name)}`);
+if (clipNav.nodes["clip-select"].value !== secondClip.name) throw new Error("navigating to a clip did not select it");
+navigate(clipNav, "#clip=no-such-clip");
+if (clipNav.nodes["clip-select"].value !== firstClip.name) throw new Error("an unusable clip did not restore the first clip on navigation");
+navigate(clipNav, `#clip=${encodeURIComponent(secondClip.name)}`);
+navigate(clipNav, "#theme=light");
+if (clipNav.nodes["clip-select"].value !== secondClip.name) throw new Error("a fragment without a clip changed the selected clip");
 
 console.log("report viewer harness passed");

@@ -150,7 +150,8 @@ report-browser:
     comparison_evidence="$(mktemp)"
     report="$(mktemp)"
     report_evidence="$(mktemp)"
-    trap 'rm -f "${comparison}" "${comparison_evidence}" "${report}" "${report_evidence}"' EXIT
+    report_multi="$(mktemp)"
+    trap 'rm -f "${comparison}" "${comparison_evidence}" "${report}" "${report_evidence}" "${report_multi}"' EXIT
     compare() {
       target/debug/animsmith --config examples/report-comparison.animsmith.toml report \
         examples/assets/report-comparison-before.glb \
@@ -165,8 +166,10 @@ report-browser:
     compare --output "${comparison_evidence}" --evidence-only
     single --output "${report}"
     single --output "${report_evidence}" --evidence-only
+    # A two-clip document, so clip selection is exercised on a real report.
+    target/debug/animsmith report crates/animsmith-report/testdata/rig.gltf --output "${report_multi}"
     node scripts/test-report-viewers.js "${comparison}" "${comparison_evidence}" \
-      "${report}" "${report_evidence}"
+      "${report}" "${report_evidence}" "${report_multi}"
 
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package
