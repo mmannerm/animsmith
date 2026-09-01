@@ -189,10 +189,15 @@ its own panels carry, because its clip correspondence is declared by the two
 inputs rather than chosen in the viewer.
 
 A key that is absent leaves that state as it is, so following one of those
-anchors inside an embedded, theme-pinned report does not un-pin it; a key
-present with a value the report cannot honour returns that state to its
-default. Unknown keys, malformed pairs, and out-of-range values are ignored,
-and no option changes what the report measured.
+anchors inside an embedded, theme-pinned report does not un-pin it. A key that
+is present is applied as far as the document allows: a syntactically valid
+`frame` beyond the clip is clamped to its last frame, and a `clip` the document
+does not contain selects the first one, because a reader who asks for a
+position wants the nearest one the report can show. A value the parser cannot
+read at all restores that state's default instead — an unparsable `frame`
+restores frame 0, an unparsable `clip` the first clip, and a `finding` index
+the document cannot address clears the selection. Unknown keys and malformed
+pairs are ignored, and no option changes what the report measured.
 
 The checked-in [synthetic comparison walkthrough](../examples/README.md#5-converting-exports-and-generating-reports-default-features-only)
 demonstrates seam endpoints, sampled stance and foot trajectories, shared-scale

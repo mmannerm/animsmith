@@ -330,8 +330,9 @@ function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   documentPalette = animsmithPalette();
   if (options.frame === undefined) return;
-  // A frame this document cannot honour returns the shared phase to its
-  // default rather than leaving the previous selection standing.
+  // A frame past the end of the shared phase clamps to its last frame; one
+  // the parser could not read restores frame 0. Either way the previous
+  // selection does not stand.
   selectedFrames = null; selectedContext = null;
   q("scrub").value = options.frame == null ? 0 : Math.min(options.frame, sharedFrameMax);
 }

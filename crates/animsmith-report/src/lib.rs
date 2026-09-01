@@ -46,6 +46,25 @@
 //!
 //! [licensed-asset policy]: https://github.com/mmannerm/animsmith/blob/main/DEVELOPMENT.md#golden-tests
 //!
+//! # Deep links and embedding
+//!
+//! Both documents read their URL fragment as `&`-separated `key=value` pairs
+//! and never write it back. `theme=light|dark` pins the palette that otherwise
+//! follows `prefers-color-scheme`, `embed=1` drops the running title and the
+//! interaction hint for an `<iframe>`, and `frame=N` scrubs. [`render`]'s
+//! document also takes `clip=NAME` and `finding=INDEX`; [`render_comparison`]'s
+//! addresses a finding through the `#finding-<side>-<anchor>` links its own
+//! panels carry.
+//!
+//! A key that is absent leaves that state alone. A key that is present is
+//! applied as far as the document allows: a syntactically valid frame beyond
+//! the clip is clamped to its last frame, and a clip the document does not
+//! contain selects the first one. A value the parser cannot read restores that
+//! state's default instead — an unparsable frame restores frame 0, an
+//! unparsable clip the first clip, and an unaddressable finding index clears
+//! the selection. Unknown keys and malformed pairs are ignored, and nothing in
+//! a fragment can change what the report measured.
+//!
 //! # Build and API status
 //!
 //! The library crate has no public feature flags and supports the workspace

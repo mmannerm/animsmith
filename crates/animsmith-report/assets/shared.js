@@ -39,8 +39,11 @@ function animsmithRgb(hex) {
 //
 // Each option has three states, because a fragment is navigated as well as
 // loaded: `undefined` when the key never appeared (leave that state alone),
-// `null`/`false` when the key appeared with a value this report will not
-// honour (return that state to its default), and the value otherwise.
+// `null`/`false` when the value cannot be read at all (return that state to
+// its default), and the value otherwise. A value that reads but overshoots is
+// the caller's to place: a frame past the end of a clip is clamped to its last
+// frame, not discarded, because a reader who asks for a position wants the
+// nearest one the document can show.
 // Unknown keys, pairs without a key, and malformed percent escapes are
 // ignored rather than thrown, and the fragment is read but never written, so
 // no fragment can raise an exception or drive a loop. The work is bounded by

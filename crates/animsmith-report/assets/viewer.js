@@ -367,12 +367,14 @@ for (const row of data.predictions) {
   }
 }
 
-// Fragment selection runs once the clip list, charts, and findings exist,
-// so a deep link lands exactly where the equivalent click would. Each option
-// that appears is applied in order — clip, then finding, then frame — and one
-// that appears with a value this document cannot honour returns that state to
-// its default: the first clip, no selected finding, frame 0. An option that
-// does not appear is left alone. setFrame clamps to the judged frame grid.
+// Fragment selection runs once the clip list, charts, and findings exist, so
+// a deep link lands exactly where the equivalent click would. Each option that
+// appears is applied in order — clip, then finding, then frame — as far as
+// this document allows: setFrame clamps a frame past the end to the last
+// judged frame, and a clip name the document does not carry selects the first
+// clip. A value the parser could not read restores that state's default
+// instead: frame 0, the first clip, no selected finding. An option that does
+// not appear is left alone.
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
