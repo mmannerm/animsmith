@@ -216,6 +216,26 @@ fn run_ring_reports_the_phase_shifted_member() {
             "the three coherent members share a stride anchor: {message}"
         );
     }
+    // The rendered spread and cap are what examples/assets/README.md
+    // quotes for this fixture, so pin the rendering, not just the phases
+    // it was derived from.
+    assert!(
+        message.contains("spread by 0.20 cycle (cap 0.15)"),
+        "the finding prints the spread against the declared cap: {message}"
+    );
+    // And pin the value analytically. The spread is the largest deviation
+    // from the members' circular mean: three unit vectors at phase 0.75
+    // (angle -TAU/4) plus one at 0.50 (angle TAU/2) sum to (-1, -3) in
+    // (cos, sin), so the mean lies atan(3) radians from the shifted
+    // member — arctan(3) / TAU of a cycle, which is 0.1988 and over the
+    // declared 0.15 cap.
+    let expected_spread = 3.0f64.atan() / std::f64::consts::TAU;
+    let measured_spread = measured(&json, "gait-group");
+    assert!(
+        (measured_spread - expected_spread).abs() < 1e-9,
+        "the quarter-cycle shift spreads the ring by {expected_spread}, \
+         measured {measured_spread}"
+    );
 
     // The declaration is what arms the check: a blend ring is a runtime
     // intent, not something the four clips reveal on their own.
