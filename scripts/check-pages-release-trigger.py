@@ -48,6 +48,10 @@ PUBLICATION_GATE = f"needs.{PUBLICATION_JOB}.outputs.{PUBLICATION_OUTPUT} == 'tr
 # Only the repository token is allowed: the fix must not depend on a personal
 # access token that a maintainer has to mint and rotate.
 REPOSITORY_TOKENS = ("${{ github.token }}", "${{ secrets.GITHUB_TOKEN }}")
+# The publication itself. The gate is only as good as the value behind it, so
+# the output must forward this action's own report, not a literal or another
+# step's result.
+RELEASE_ACTION = "release-plz/action@"
 DEPLOY_ACTION = "actions/deploy-pages@"
 # Pages deploys only when an eligible published release was found. Matched
 # whole as well, so `... || true` cannot widen it.
@@ -147,6 +151,25 @@ def check_release_workflow_text(text: str, source: str) -> None:
             f"{source}: the {PUBLICATION_JOB} job must publish the "
             f"{PUBLICATION_OUTPUT} output the dispatch is gated on"
         )
+    forwarded = {
+        f"${{{{ steps.{step['id']}.outputs.{PUBLICATION_OUTPUT} }}}}"
+        for step in steps_of(producer, f"{source}: {PUBLICATION_JOB} job")
+        if isinstance(step.get("uses"), str)
+        and step["uses"].startswith(RELEASE_ACTION)
+        and isinstance(step.get("id"), str)
+    }
+    if not forwarded:
+        raise WorkflowContractError(
+            f"{source}: the {PUBLICATION_JOB} job must run an identified "
+            f"{RELEASE_ACTION}* step for its {PUBLICATION_OUTPUT} output to report"
+        )
+    published = normalized_text(outputs[PUBLICATION_OUTPUT])
+    if published not in forwarded:
+        raise WorkflowContractError(
+            f"{source}: the {PUBLICATION_JOB} job's {PUBLICATION_OUTPUT} output must "
+            f"forward the release-plz step, one of {sorted(forwarded)}, not "
+            f"{published!r}"
+        )
 
     token = None
     for scope in (step, job, document):
@@ -205,8 +228,11 @@ jobs:
     outputs:
       releases_created: ${{ steps.release_plz.outputs.releases_created }}
     steps:
-      - id: release_plz
-        run: release-plz release
+      - name: Run release-plz
+        id: release_plz
+        uses: release-plz/action@v0.5.131
+        with:
+          command: release
   release_pages:
     needs: [release]
     if: ${{ needs.release.outputs.releases_created == 'true' }}
@@ -248,6 +274,10 @@ DISPATCH_STEP = """\
 """
 
 NEEDS_LINE = "    needs: [release]\n"
+RELEASE_OUTPUT_LINE = (
+    "      releases_created: ${{ steps.release_plz.outputs.releases_created }}\n"
+)
+RELEASE_ACTION_LINE = "        uses: release-plz/action@v0.5.131\n"
 RELEASE_OUTPUTS_BLOCK = (
     "    outputs:\n"
     "      releases_created: ${{ steps.release_plz.outputs.releases_created }}\n"
@@ -369,6 +399,24 @@ def self_test() -> None:
         "widened-needs fixture", NEEDS_LINE, "    needs: [release, release_binaries]\n"
     )
     released("unproduced-gate fixture", RELEASE_OUTPUTS_BLOCK, "")
+    # An output that does not report the publication is not evidence of one.
+    released(
+        "hardcoded-output fixture",
+        RELEASE_OUTPUT_LINE,
+        "      releases_created: true\n",
+    )
+    released(
+        "miswired-output fixture",
+        RELEASE_OUTPUT_LINE,
+        "      releases_created: ${{ steps.release_metadata.outputs"
+        ".releases_created }}\n",
+    )
+    released(
+        "non-action-step fixture",
+        RELEASE_ACTION_LINE,
+        "        run: release-plz release\n",
+    )
+    released("unidentified-action fixture", "        id: release_plz\n", "")
     # A gate that passes when nothing was published is not a release trigger.
     released(
         "negated-gate fixture",
