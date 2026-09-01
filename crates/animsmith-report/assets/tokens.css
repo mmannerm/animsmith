@@ -7,15 +7,17 @@
      2. prefers-color-scheme  — light, unless the document pins dark.
      3. [data-theme]          — an explicit `#theme=light|dark` fragment wins.
 
-   Roles: ground = page/plot backdrop, surface = raised panel,
-   ink = body text, muted = secondary text and bone lines, line = borders and
-   row hover, accent = headings, left-side series and the hips trail,
+   Roles: ground = page/plot backdrop, surface = panel, raised = a row or
+   control lifted off a panel, ink = body text, muted = secondary text and
+   bone lines, line = borders and row hover, accent = headings, selection
+   outline, left-side series and the hips trail,
    error = failing findings, playhead and the right-foot trail,
    warning = warning findings and the left-foot trail,
    pass = root trajectory, note = note findings and structural evidence. */
 :root {
   --ground: #17171f;
   --surface: #1e1e2a;
+  --raised: #232331;
   --ink: #d5d9e5;
   --muted: #9099b2;
   --line: #3a3a4e;
@@ -29,6 +31,7 @@
   :root:not([data-theme="dark"]) {
     --ground: #f4f5f9;
     --surface: #ffffff;
+    --raised: #eef0f6;
     --ink: #1a1e2c;
     --muted: #5b6382;
     --line: #d9deea;
@@ -42,6 +45,7 @@
 :root[data-theme="light"] {
   --ground: #f4f5f9;
   --surface: #ffffff;
+  --raised: #eef0f6;
   --ink: #1a1e2c;
   --muted: #5b6382;
   --line: #d9deea;

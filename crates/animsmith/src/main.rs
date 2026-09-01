@@ -1971,6 +1971,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     before_name,
                     &after_loaded.source,
                     after_name,
+                    report_options,
                 )
                 .map_err(|error| error.to_string())?;
                 let mut comparison_inputs = vec![

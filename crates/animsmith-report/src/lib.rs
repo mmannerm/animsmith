@@ -34,6 +34,12 @@
 //! to a vendor where the source asset itself may not go (see the
 //! [licensed-asset policy]).
 //!
+//! The boundary is the pose grid, and it is worth stating exactly: the
+//! retained charts still plot the root's X/Z path and the feet's heights
+//! relative to the hips, because those curves are the evidence a reader is
+//! being shown. What an evidence-only report drops is every other bone, every
+//! other axis, and the per-frame grid a viewer could re-export as animation.
+//!
 //! [licensed-asset policy]: https://github.com/mmannerm/animsmith/blob/main/DEVELOPMENT.md#golden-tests
 //!
 //! # Build and API status
@@ -68,6 +74,9 @@ use std::io::{self, Write};
 /// light under `prefers-color-scheme`, and either one pinned by a
 /// `#theme=` fragment.
 const TOKENS_CSS: &str = include_str!("../assets/tokens.css");
+/// Surfaces both documents share: the page ground, evidence rows, the
+/// omission notice, and the `#embed=1` chrome rules.
+const BASE_CSS: &str = include_str!("../assets/report-base.css");
 /// Pure helpers shared by both viewers (design-token palette).
 const SHARED_JS: &str = include_str!("../assets/shared.js");
 const VIEWER_JS: &str = include_str!("../assets/viewer.js");
@@ -123,10 +132,16 @@ pub struct ReportOptions {
     ///
     /// The grid is the motion — every bone's model-space position on every
     /// judged frame — so a full report of a licensed clip carries that clip.
-    /// With this set the viewer shows a notice where the pose view would be
-    /// and playback is disabled, while findings, coverage gaps, engine
+    /// With this set the document renders a notice where each pose view would
+    /// be and playback is disabled, while findings, coverage gaps, engine
     /// predictions, charts, and input identities are unchanged, so the
     /// evidence can be shared where the source asset cannot.
+    ///
+    /// The retained charts still plot root X/Z and foot heights relative to
+    /// the hips; the omission is the pose grid itself, not every number
+    /// derived from it. A comparison rendered this way also stops being
+    /// bounded by [`MAX_COMPARISON_POSE_BYTES`], which limits what a document
+    /// embeds rather than what it may describe.
     pub evidence_only: bool,
 }
 
@@ -301,6 +316,7 @@ pub fn preflight_comparison(
     before_clip_name: &str,
     after: &animsmith_core::Document,
     after_clip_name: &str,
+    options: ReportOptions,
 ) -> Result<ComparisonPreflight, ComparisonError> {
     validate_skeletons(before, after)?;
     input_text_bytes(before, "before")?;
@@ -318,8 +334,13 @@ pub fn preflight_comparison(
             side: "after",
             clip: after_clip_name.to_owned(),
         })?;
-    comparison_pose_bytes(before_frames, before.skeleton.bones.len(), "before")?;
-    comparison_pose_bytes(after_frames, after.skeleton.bones.len(), "after")?;
+    // The pose budget bounds what the document will embed. An evidence-only
+    // report embeds no poses, so the pair it can describe is not limited by
+    // a grid it will never carry; every other bound still applies.
+    if !options.evidence_only {
+        comparison_pose_bytes(before_frames, before.skeleton.bones.len(), "before")?;
+        comparison_pose_bytes(after_frames, after.skeleton.bones.len(), "after")?;
+    }
     Ok(ComparisonPreflight {
         before_clip_index: before_clip.0,
         after_clip_index: after_clip.0,
@@ -339,12 +360,14 @@ pub fn preflight_comparison_sources(
     before_clip_name: &str,
     after: &LoadedSource,
     after_clip_name: &str,
+    options: ReportOptions,
 ) -> Result<ComparisonPreflight, ComparisonError> {
     let preflight = preflight_comparison(
         before.document(),
         before_clip_name,
         after.document(),
         after_clip_name,
+        options,
     )?;
     let before_identity = complete_source_closure_identity(before, "before")?;
     let after_identity = complete_source_closure_identity(after, "after")?;
@@ -373,8 +396,13 @@ pub fn render_comparison(
     let after_doc = after.grids.document();
     validate_side_authority(before, "before")?;
     validate_side_authority(after, "after")?;
-    let preflight =
-        preflight_comparison_sources(before.source, before.clip, after.source, after.clip)?;
+    let preflight = preflight_comparison_sources(
+        before.source,
+        before.clip,
+        after.source,
+        after.clip,
+        options,
+    )?;
     let before_report = preflight_side_report_work(before, before.clip, "before")?;
     let after_report = preflight_side_report_work(after, after.clip, "after")?;
     preflight_report_allocation(
@@ -439,6 +467,11 @@ pub fn render_comparison(
     let after_clip_anchor = semantic_anchor("clip", after.clip);
     let before_pose = pose_surface("before-gl", options.evidence_only);
     let after_pose = pose_surface("after-gl", options.evidence_only);
+    let shared_pose = if options.evidence_only {
+        pose_surface("comparison-root-path", true)
+    } else {
+        "<svg id=\"comparison-root-path\" viewBox=\"0 0 720 220\"></svg>".to_owned()
+    };
     // Every comparison panel is drawn from the pose grid, so an
     // evidence-only document has no shared phase left to scrub.
     let scrub_state = if options.evidence_only {
@@ -449,11 +482,12 @@ pub fn render_comparison(
     Ok(format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>animsmith — visual comparison</title><style>{TOKENS_CSS}{COMPARISON_CSS}</style></head>\n\
-         <body><header><h1>animsmith visual comparison</h1><p id=\"mapping\"></p>\n\
-         <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></header>\n\
+         <title>animsmith — visual comparison</title><style>{TOKENS_CSS}{BASE_CSS}{COMPARISON_CSS}</style></head>\n\
+         <body><header><h1>animsmith visual comparison</h1></header>\n\
+         <section class=\"disclosure\"><p id=\"mapping\"></p>\n\
+         <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>\n\
          <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
-         <section class=\"shared-chart\"><h2>Before/after root trajectory</h2><svg id=\"comparison-root-path\" viewBox=\"0 0 720 220\"></svg></section>\n\
+         <section class=\"shared-chart\"><h2>Before/after root trajectory</h2>{shared_pose}</section>\n\
          <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"before-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"before-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
          <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"after-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"after-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
          <script>{SHARED_JS}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
@@ -959,11 +993,9 @@ fn comparison_side_json(
 ) -> Result<Value, ComparisonError> {
     let frames = grid.frame_count();
     let bones = side.grids.document().skeleton.bones.len();
-    // The budget is checked for either kind of report, so which pose grids a
-    // comparison will accept never depends on a presentation option.
-    let bytes = comparison_pose_bytes(frames, bones, side_name)?;
     let mut positions = Vec::new();
     if !options.evidence_only {
+        let bytes = comparison_pose_bytes(frames, bones, side_name)?;
         positions.reserve_exact(bytes as usize);
         for frame in 0..frames {
             for bone in 0..bones {
@@ -1568,7 +1600,7 @@ pub fn render(
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>animsmith — {title}</title>\n<style>{TOKENS_CSS}{VIEWER_CSS}</style>\n</head>\n<body>\n\
+         <title>animsmith — {title}</title>\n<style>{TOKENS_CSS}{BASE_CSS}{VIEWER_CSS}</style>\n</head>\n<body>\n\
          <header><h1>animsmith report</h1><span id=\"file\"></span></header>\n\
          <main>\n\
          <section id=\"viewer-panel\">\n\
@@ -1710,6 +1742,87 @@ struct Series<'a> {
     values: &'a [f64],
 }
 
+/// One axis label, placed in a chart's gutters.
+struct AxisLabel {
+    x: f64,
+    y: f64,
+    /// Right-aligned labels sit against the plot's right edge.
+    end_anchored: bool,
+    text: String,
+}
+
+/// The shell every chart shares: the `<figure>` and its `<svg>`, the title,
+/// the legend, and the axis labels. A caller contributes only the geometry it
+/// plots and the words that describe it, so the two chart kinds cannot drift
+/// apart on the parts a reader — or the documentation site's extractor —
+/// depends on.
+struct Chart<'a> {
+    clip: &'a str,
+    kind: &'static str,
+    title: &'static str,
+    /// Tail of the `aria-label`, after the clip name.
+    description: String,
+    legend: &'a [(&'static str, &'static str)],
+    axis: Vec<AxisLabel>,
+    /// Publishes the plot rectangle the viewer's playhead is placed in.
+    plot_hooks: bool,
+    body: String,
+    /// Anything the figure carries outside its `<svg>`.
+    trailer: String,
+}
+
+impl Chart<'_> {
+    fn render(&self) -> String {
+        let clip = esc(self.clip);
+        let caption = format!("{clip} — {}", esc(self.title));
+        let mut legend = String::new();
+        let mut cursor = PAD_LEFT;
+        for (class, label) in self.legend {
+            let text_x = cursor + 13.0;
+            legend.push_str(&format!(
+                "<line class=\"{class}\" x1=\"{cursor:.1}\" x2=\"{:.1}\" y1=\"{LEGEND_Y}\" \
+                 y2=\"{LEGEND_Y}\"/><text class=\"legend\" x=\"{text_x:.1}\" y=\"{:.1}\">{}</text>",
+                cursor + 10.0,
+                LEGEND_Y + 3.0,
+                esc(label)
+            ));
+            cursor = text_x + label.chars().count() as f64 * LEGEND_CHAR_W + 10.0;
+        }
+        let axis: String = self
+            .axis
+            .iter()
+            .map(|label| {
+                let anchor = if label.end_anchored {
+                    " text-anchor=\"end\""
+                } else {
+                    ""
+                };
+                format!(
+                    "<text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\"{anchor}>{}</text>",
+                    label.x,
+                    label.y,
+                    esc(&label.text)
+                )
+            })
+            .collect();
+        let hooks = if self.plot_hooks {
+            format!(" data-pad=\"{PAD_LEFT}\" data-plotw=\"{PLOT_W}\"")
+        } else {
+            String::new()
+        };
+        format!(
+            "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"{}\"{hooks}>\
+             <figcaption>{caption}</figcaption>\
+             <svg viewBox=\"0 0 {W} {H}\" width=\"100%\" role=\"img\" \
+             aria-label=\"{clip} — {}\"><title>{caption}</title>{legend}{}{axis}</svg>{}</figure>",
+            self.kind,
+            esc(&self.description),
+            self.body,
+            self.trailer,
+        )
+    }
+}
+
 const W: f64 = 360.0;
 const H: f64 = 150.0;
 /// Gutters for the y-axis labels, the legend row, and the x-axis labels. The
@@ -1728,20 +1841,12 @@ const LEGEND_Y: f64 = 9.0;
 /// on purpose — the entries only have to stay inside the plot width.
 const LEGEND_CHAR_W: f64 = 4.6;
 
-fn legend_entry(x: &mut f64, class: &str, label: &str) -> String {
-    let swatch = *x;
-    let text = swatch + 13.0;
-    *x = text + label.chars().count() as f64 * LEGEND_CHAR_W + 10.0;
-    format!(
-        "<line class=\"{class}\" x1=\"{swatch:.1}\" x2=\"{:.1}\" y1=\"{LEGEND_Y}\" y2=\"{LEGEND_Y}\"/>\
-         <text class=\"legend\" x=\"{text:.1}\" y=\"{:.1}\">{}</text>",
-        swatch + 10.0,
-        LEGEND_Y + 3.0,
-        esc(label)
-    )
-}
-
-fn line_chart(clip: &str, kind: &str, title: &str, series: &[Series<'_>]) -> String {
+fn line_chart(
+    clip: &str,
+    kind: &'static str,
+    title: &'static str,
+    series: &[Series<'_>],
+) -> String {
     let all: Vec<f64> = series
         .iter()
         .flat_map(|s| s.values.iter().copied())
@@ -1749,7 +1854,6 @@ fn line_chart(clip: &str, kind: &str, title: &str, series: &[Series<'_>]) -> Str
     if all.is_empty() {
         return String::new();
     }
-    let clip = &esc(clip);
     let min = all.iter().copied().fold(f64::MAX, f64::min);
     let max = all.iter().copied().fold(f64::MIN, f64::max);
     let span = (max - min).max(1e-6);
@@ -1759,9 +1863,7 @@ fn line_chart(clip: &str, kind: &str, title: &str, series: &[Series<'_>]) -> Str
     let x = |i: usize| PAD_LEFT + PLOT_W * i as f64 / (n - 1) as f64;
     let y = |v: f64| H - PAD_BOTTOM - PLOT_H * (v - min) / span;
 
-    let mut paths = String::new();
-    let mut legend = String::new();
-    let mut legend_x = PAD_LEFT;
+    let mut body = String::new();
     for entry in series {
         let d: Vec<String> = entry
             .values
@@ -1769,44 +1871,66 @@ fn line_chart(clip: &str, kind: &str, title: &str, series: &[Series<'_>]) -> Str
             .enumerate()
             .map(|(i, &v)| format!("{}{:.1},{:.1}", if i == 0 { "M" } else { "L" }, x(i), y(v)))
             .collect();
-        paths.push_str(&format!(
+        body.push_str(&format!(
             "<path class=\"{}\" d=\"{}\" fill=\"none\"/>",
             entry.class,
             d.join("")
         ));
-        legend.push_str(&legend_entry(&mut legend_x, entry.class, entry.label));
     }
-    let labels: Vec<&str> = series.iter().map(|entry| entry.label).collect();
-    let caption = format!("{clip} — {}", esc(title));
-    let description = esc(&format!(
-        "{title}: {} over frames 0 to {last_frame}, {min:.2} to {max:.2} {UNIT}",
-        labels.join(", ")
+    body.push_str(&format!(
+        "<line class=\"playhead\" x1=\"{PAD_LEFT}\" x2=\"{PAD_LEFT}\" y1=\"{PAD_TOP}\" y2=\"{:.1}\"/>",
+        H - PAD_BOTTOM
     ));
-    format!(
-        "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"{kind}\" data-pad=\"{PAD_LEFT}\" \
-         data-plotw=\"{PLOT_W}\"><figcaption>{caption}</figcaption>\
-         <svg viewBox=\"0 0 {W} {H}\" width=\"100%\" role=\"img\" aria-label=\"{clip} — {description}\">\
-         <title>{caption}</title>{legend}{paths}\
-         <text class=\"axis\" x=\"2\" y=\"{:.1}\">{max:.2} {UNIT}</text>\
-         <text class=\"axis\" x=\"2\" y=\"{:.1}\">{min:.2} {UNIT}</text>\
-         <text class=\"axis\" x=\"{PAD_LEFT}\" y=\"{:.1}\">frame 0</text>\
-         <text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">frame {last_frame}</text>\
-         <line class=\"playhead\" x1=\"{PAD_LEFT}\" x2=\"{PAD_LEFT}\" y1=\"{PAD_TOP}\" \
-         y2=\"{:.1}\"/></svg></figure>",
-        PAD_TOP + 3.0,
-        H - PAD_BOTTOM,
-        H - 4.0,
-        W - PAD_RIGHT,
-        H - 4.0,
-        H - PAD_BOTTOM,
-    )
+    let labels: Vec<&str> = series.iter().map(|entry| entry.label).collect();
+    Chart {
+        clip,
+        kind,
+        title,
+        description: format!(
+            "{title}: {} over frames 0 to {last_frame}, {min:.2} to {max:.2} {UNIT}",
+            labels.join(", ")
+        ),
+        legend: &series
+            .iter()
+            .map(|entry| (entry.class, entry.label))
+            .collect::<Vec<_>>(),
+        axis: vec![
+            AxisLabel {
+                x: 2.0,
+                y: PAD_TOP + 3.0,
+                end_anchored: false,
+                text: format!("{max:.2} {UNIT}"),
+            },
+            AxisLabel {
+                x: 2.0,
+                y: H - PAD_BOTTOM,
+                end_anchored: false,
+                text: format!("{min:.2} {UNIT}"),
+            },
+            AxisLabel {
+                x: PAD_LEFT,
+                y: H - 4.0,
+                end_anchored: false,
+                text: "frame 0".to_owned(),
+            },
+            AxisLabel {
+                x: W - PAD_RIGHT,
+                y: H - 4.0,
+                end_anchored: true,
+                text: format!("frame {last_frame}"),
+            },
+        ],
+        plot_hooks: true,
+        body,
+        trailer: String::new(),
+    }
+    .render()
 }
 
-fn path_chart(clip: &str, title: &str, xs: &[f64], zs: &[f64]) -> String {
+fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String {
     if xs.is_empty() {
         return String::new();
     }
-    let clip = &esc(clip);
     let (min_x, max_x) = (
         xs.iter().copied().fold(f64::MAX, f64::min),
         xs.iter().copied().fold(f64::MIN, f64::max),
@@ -1833,32 +1957,44 @@ fn path_chart(clip: &str, title: &str, xs: &[f64], zs: &[f64]) -> String {
         .enumerate()
         .map(|(i, point)| format!("{}{point}", if i == 0 { "M" } else { "L" }))
         .collect();
-    let mut legend_x = PAD_LEFT;
-    let legend = legend_entry(&mut legend_x, "root-path", "root");
-    let caption = format!("{clip} — {}", esc(title));
-    let description = esc(&format!(
-        "{title}: X {min_x:.2} to {max_x:.2} {UNIT}, Z {min_z:.2} to {max_z:.2} {UNIT}, \
-         {} frames on one uniform scale",
-        xs.len()
-    ));
-    format!(
-        "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"rootpath\">\
-         <figcaption>{caption}</figcaption>\
-         <svg viewBox=\"0 0 {W} {H}\" width=\"100%\" role=\"img\" aria-label=\"{clip} — {description}\">\
-         <title>{caption}</title>{legend}\
-         <path class=\"root-path\" d=\"{}\" fill=\"none\"/>\
-         <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>\
-         <text class=\"axis\" x=\"2\" y=\"{:.1}\">X {min_x:.2}…{max_x:.2} {UNIT}</text>\
-         <text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">Z {min_z:.2}…{max_z:.2} {UNIT}</text>\
-         </svg><template class=\"pathpoints\">{}</template></figure>",
-        d.join(""),
-        x(xs[0]),
-        y(zs[0]),
-        H - 4.0,
-        W - PAD_RIGHT,
-        H - 4.0,
-        points.join(";"),
-    )
+    Chart {
+        clip,
+        kind: "rootpath",
+        title,
+        description: format!(
+            "{title}: X {min_x:.2} to {max_x:.2} {UNIT}, Z {min_z:.2} to {max_z:.2} {UNIT}, \
+             {} frames on one uniform scale",
+            xs.len()
+        ),
+        legend: &[("root-path", "root")],
+        axis: vec![
+            AxisLabel {
+                x: 2.0,
+                y: H - 4.0,
+                end_anchored: false,
+                text: format!("X {min_x:.2}…{max_x:.2} {UNIT}"),
+            },
+            AxisLabel {
+                x: W - PAD_RIGHT,
+                y: H - 4.0,
+                end_anchored: true,
+                text: format!("Z {min_z:.2}…{max_z:.2} {UNIT}"),
+            },
+        ],
+        plot_hooks: false,
+        body: format!(
+            "<path class=\"root-path\" d=\"{}\" fill=\"none\"/>\
+             <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",
+            d.join(""),
+            x(xs[0]),
+            y(zs[0])
+        ),
+        trailer: format!(
+            "<template class=\"pathpoints\">{}</template>",
+            points.join(";")
+        ),
+    }
+    .render()
 }
 
 #[cfg(test)]

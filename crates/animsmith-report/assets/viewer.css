@@ -1,8 +1,6 @@
-/* Single-clip report layout. Every colour comes from the shared tokens in
-   tokens.css, so the light theme and the `#theme=` override need no rules
-   of their own here. */
-* { box-sizing: border-box; margin: 0; }
-body { background: var(--ground); color: var(--ink); font: 14px/1.5 system-ui, sans-serif; }
+/* Single-clip report layout. Colour lives in tokens.css and the shared
+   surfaces in report-base.css; this sheet only places things. */
+* { margin: 0; }
 header { display: flex; gap: 1rem; align-items: baseline; padding: 0.7rem 1rem; }
 header h1 { font-size: 1.05rem; color: var(--accent); }
 #file { color: var(--muted); font-size: 0.85rem; }
@@ -11,7 +9,7 @@ main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); 
 section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 #controls { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.6rem; }
 #controls select, #controls button {
-  background: var(--ground); color: var(--ink); border: 1px solid var(--line);
+  background: var(--raised); color: var(--ink); border: 1px solid var(--line);
   border-radius: 5px; padding: 0.25rem 0.6rem; font: inherit; cursor: pointer;
 }
 #scrub { flex: 1; accent-color: var(--accent); }
@@ -20,8 +18,7 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 .hint { color: var(--muted); font-size: 0.75rem; margin-top: 0.4rem; }
 #side h2 { font-size: 0.9rem; color: var(--accent); margin: 0.4rem 0; }
 #findings { list-style: none; max-height: 34vh; overflow-y: auto; }
-.finding { padding: 0.4rem 0.5rem; border-radius: 5px; margin-bottom: 0.3rem; background: var(--ground); cursor: pointer; font-size: 0.82rem; }
-.finding:hover { background: var(--line); }
+.finding { padding: 0.4rem 0.5rem; margin-bottom: 0.3rem; font-size: 0.82rem; }
 .finding .sev { font-weight: 600; margin-right: 0.4rem; text-transform: uppercase; font-size: 0.7rem; }
 .finding.error .sev { color: var(--error); }
 .finding.warning .sev { color: var(--warning); }
@@ -41,9 +38,3 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 .axis, .legend { fill: var(--muted); font-size: 8px; }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
-/* `#embed=1`: drop the page chrome so the document sits inside an iframe
-   without a second title bar or an outer margin. */
-:root[data-embed] header, :root[data-embed] .hint { display: none; }
-:root[data-embed] main { padding: 0; }
-.finding.selected { outline: 2px solid var(--accent); }
-.notice { background: var(--ground); border: 1px dashed var(--line); border-radius: 6px; color: var(--muted); padding: 2rem 1rem; text-align: center; }
