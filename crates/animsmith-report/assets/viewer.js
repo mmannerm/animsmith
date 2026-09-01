@@ -5,8 +5,10 @@
 
 const data = JSON.parse(document.getElementById("report-data").textContent);
 // Theme and embed switches are applied before anything is measured or
-// painted, so the 3D view samples the palette the document will show.
+// painted, and the palette is resolved once per theme change rather than per
+// frame, so the 3D view always paints what the document shows.
 animsmithApplyDocument(animsmithFragmentOptions(location.hash));
+let palette = animsmithPalette();
 document.getElementById("file").textContent =
   (data.file || "") + "  ·  rig profile: " + (data.profile || "none");
 
@@ -17,11 +19,12 @@ function decodePositions(b64) {
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   return new Float32Array(bytes.buffer);
 }
-// An evidence-only report ships no pose grid: there is nothing to decode,
-// nothing to play back, and the document already carries a notice where the
-// canvas would be. Findings, coverage, charts, and identities are unchanged.
-const evidenceOnly = data.evidence_only === true;
-for (const clip of data.clips) clip.pos = evidenceOnly ? null : decodePositions(clip.positions);
+// The document itself says whether poses are available: an evidence-only
+// report renders a notice in place of the canvas, so an absent canvas means
+// there is nothing to decode, play back, or draw. Findings, coverage gaps,
+// charts, and identities are unchanged either way.
+const canvas = document.getElementById("gl");
+for (const clip of data.clips) clip.pos = canvas ? decodePositions(clip.positions) : null;
 
 const boneCount = data.bones.length;
 const parents = data.bones.map((b) => b.parent);
@@ -52,7 +55,6 @@ const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], 
 function norm3(v) { const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
 
 // ---- WebGL setup ------------------------------------------------------
-const canvas = document.getElementById("gl");
 const VS = `#version 300 es
 layout(location=0) in vec3 pos;
 layout(location=1) in vec3 color;
@@ -73,7 +75,7 @@ function shader(type, src) {
   if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
   return s;
 }
-if (canvas && !evidenceOnly) {
+if (canvas) {
   gl = canvas.getContext("webgl2", { antialias: true });
   const prog = gl.createProgram();
   gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
@@ -156,7 +158,6 @@ function draw() {
   const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   gl.viewport(0, 0, w, h);
-  const palette = animsmithPalette();
   const ground = animsmithRgb(palette.ground);
   gl.clearColor(ground[0], ground[1], ground[2], 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -242,7 +243,7 @@ function updateCharts() {
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
 scrub.addEventListener("input", () => { playing = false; playBtn.textContent = "▶"; setFrame(+scrub.value); });
 playBtn.addEventListener("click", () => {
-  if (evidenceOnly) return;
+  if (!canvas) return;
   playing = !playing;
   playBtn.textContent = playing ? "⏸" : "▶";
   if (playing) { last = performance.now(); requestAnimationFrame(tick); }
@@ -371,6 +372,7 @@ for (const row of data.predictions) {
 // clamps to the judged frame grid.
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
+  palette = animsmithPalette();
   if (options.clip != null && data.clips.some((c) => c.name === options.clip))
     selectClip(options.clip);
   if (options.finding != null && options.finding < data.findings.length)

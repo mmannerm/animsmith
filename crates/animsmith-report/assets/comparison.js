@@ -9,23 +9,25 @@ const decode = (encoded) => {
   for (let index = 0; index < raw.length; index++) bytes[index] = raw.charCodeAt(index);
   return new Float32Array(bytes.buffer);
 };
-// An evidence-only comparison ships no pose grids. Every panel drawing here
-// is derived from them, so each one says so and the shared phase has nothing
-// left to scrub; findings, coverage, contexts, and identities are unchanged.
-const evidenceOnly = data.evidence_only === true;
-const POSE_OMITTED = "Pose playback omitted: evidence-only report";
-for (const side of [data.before, data.after]) side.clip.pos = evidenceOnly ? new Float32Array(0) : decode(side.clip.positions);
+// The document says whether poses are available: an evidence-only comparison
+// renders a notice in place of every pose view, so an absent pose surface
+// means there is nothing to decode and nothing to draw. The notice is
+// rendered once per surface by the report itself and never repeated here.
+// Findings, coverage, contexts, and identities are unchanged either way.
+const posesOmitted = q("before-gl") === null;
+for (const side of [data.before, data.after]) side.clip.pos = posesOmitted ? new Float32Array(0) : decode(side.clip.positions);
 q("mapping").textContent = data.correspondence.disclosure;
 const parents = data.bones.map((bone) => bone.parent);
 const sharedFrameMax = Math.max(data.before.clip.frames, data.after.clip.frames) - 1;
 q("scrub").max = sharedFrameMax;
-if (evidenceOnly) q("scrub").disabled = true;
+if (posesOmitted) q("scrub").disabled = true;
 let selectedFrames = null;
 let selectedContext = null;
 // Canvas and SVG paint comes from the shared design tokens, so both panels
 // follow the document theme. `--error` marks the subject of a selected
 // finding and the gait playhead: the most salient token in either theme.
-let palette = animsmithPalette();
+// Resolved once per theme change and handed to the drawing functions.
+let documentPalette = animsmithPalette();
 
 function finiteRange(values) {
   let min = Infinity, max = -Infinity;
@@ -76,6 +78,13 @@ function svgElement(tag, attrs, label) {
   if (label != null) element.textContent = label;
   return element;
 }
+// SVG shows no text unless an element carries it, so a panel that cannot be
+// drawn says so through a <text> child. Assigning to an <svg>'s textContent
+// would leave a blank box in a real browser.
+function svgMessage(svg, palette, message) {
+  svg.replaceChildren();
+  svg.append(svgElement("text", { x: 8, y: 20, fill: palette.muted }, message));
+}
 function topDownMap(bounds, width, height, pad) {
   const spanX = Math.max(.001, bounds.x[1] - bounds.x[0]);
   const spanZ = Math.max(.001, bounds.z[1] - bounds.z[0]);
@@ -95,11 +104,12 @@ function pathData(points, map) {
   return path;
 }
 
-function drawSide(name, phase, highlighted) {
+function drawSide(name, palette, phase, highlighted) {
   const side = data[name];
   const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
-  if (evidenceOnly) { q(`${name}-pose-context`).textContent = POSE_OMITTED; return frame; }
-  const canvas = q(`${name}-gl`), context = canvas.getContext("2d");
+  const canvas = q(`${name}-gl`);
+  if (!canvas) return frame;
+  const context = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1, width = canvas.clientWidth * dpr, height = canvas.clientHeight * dpr;
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
@@ -148,10 +158,11 @@ function drawSide(name, phase, highlighted) {
   return frame;
 }
 
-function drawRootComparison(phase) {
-  const svg = q("comparison-root-path"); svg.replaceChildren();
-  if (evidenceOnly) { svg.textContent = POSE_OMITTED; return; }
-  if (!sharedRootBounds) { svg.textContent = "root trajectories unavailable: no input has finite resolved Root samples"; return; }
+function drawRootComparison(palette, phase) {
+  const svg = q("comparison-root-path");
+  if (!svg) return;
+  svg.replaceChildren();
+  if (!sharedRootBounds) { svgMessage(svg, palette, "root trajectories unavailable: no input has finite resolved Root samples"); return; }
   const map = topDownMap(sharedRootBounds, 720, 220, 28);
   const styles = { before: palette.accent, after: palette.warning };
   for (const name of ["before", "after"]) {
@@ -182,10 +193,10 @@ const TRAIL_TOKENS = {
   root: ["pass", "root"], hips: ["note", "hips"],
   left_foot: ["accent", "left foot"], right_foot: ["warning", "right foot"],
 };
-function drawTrails(name, phase) {
+function drawTrails(name, palette, phase) {
   const side = data[name], svg = q(`${name}-path`); svg.replaceChildren();
-  if (evidenceOnly) { svg.textContent = POSE_OMITTED; return; }
-  if (!sharedTrailBounds) { svg.textContent = "role trajectories unavailable"; return; }
+  if (posesOmitted) return;
+  if (!sharedTrailBounds) { svgMessage(svg, palette, "role trajectories unavailable"); return; }
   const map = topDownMap(sharedTrailBounds, 360, 180, 24);
   let legendX = 8, unavailable = [], incomplete = [];
   for (const role of Object.keys(TRAIL_TOKENS)) {
@@ -208,10 +219,10 @@ function drawTrails(name, phase) {
   svg.append(svgElement("text", { x: 8, y: 174, fill: palette.muted }, `top-down X/Z metres · shared scale across both inputs${missing}${partial}`));
 }
 
-function drawGait(name, phase) {
+function drawGait(name, palette, phase) {
   const side = data[name], svg = q(`${name}-gait`), gait = side.contexts.gait; svg.replaceChildren();
-  if (evidenceOnly) { svg.textContent = POSE_OMITTED; return; }
-  if (!gait) { svg.textContent = "gait unavailable: hips and bilateral foot/toe roles did not all resolve"; return; }
+  if (posesOmitted) return;
+  if (!gait) { svgMessage(svg, palette, "gait unavailable: hips and bilateral foot/toe roles did not all resolve"); return; }
   const series = { left: [], right: [] };
   for (let frame = 0; frame < side.clip.frames; frame++) {
     const hipsY = posePoint(side, frame, gait.hips)[1];
@@ -220,7 +231,7 @@ function drawGait(name, phase) {
   }
   const gaitFinite = series.left.every(Number.isFinite) && series.right.every(Number.isFinite);
   const yrange = finiteRange(series.left.concat(series.right));
-  if (!yrange) { svg.textContent = "gait drawing unavailable: sampled relative heights are non-finite; stance and coverage evidence remain listed"; return; }
+  if (!yrange) { svgMessage(svg, palette, "gait drawing unavailable: sampled relative heights are non-finite; stance and coverage evidence remain listed"); return; }
   const span = Math.max(.001, yrange[1] - yrange[0]);
   const x = (frame) => 20 + frame * 320 / Math.max(1, side.clip.frames - 1);
   const y = (value) => 150 - (value - yrange[0]) * 120 / span;
@@ -244,10 +255,10 @@ function drawGait(name, phase) {
 
 let highlight = { before: null, after: null };
 function update() {
-  palette = animsmithPalette();
+  const palette = documentPalette;
   const phase = Number(q("scrub").value) / Math.max(1, sharedFrameMax);
-  const beforeFrame = drawSide("before", phase, highlight.before), afterFrame = drawSide("after", phase, highlight.after);
-  drawRootComparison(phase); drawTrails("before", phase); drawTrails("after", phase); drawGait("before", phase); drawGait("after", phase);
+  const beforeFrame = drawSide("before", palette, phase, highlight.before), afterFrame = drawSide("after", palette, phase, highlight.after);
+  drawRootComparison(palette, phase); drawTrails("before", palette, phase); drawTrails("after", palette, phase); drawGait("before", palette, phase); drawGait("after", palette, phase);
   const time = (side, frame) => Number.isFinite(side.clip.times[frame]) ? side.clip.times[frame].toFixed(3) : "unavailable";
   q("times").textContent = `before ${time(data.before, beforeFrame)}s · after ${time(data.after, afterFrame)}s (normalized phase; not a time warp)`;
 }
@@ -315,6 +326,7 @@ function selectHash() {
 // through selectHash, so neither is read from a key=value pair here.
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
+  documentPalette = animsmithPalette();
   if (options.frame == null) return;
   selectedFrames = null; selectedContext = null;
   q("scrub").value = Math.min(options.frame, sharedFrameMax);
