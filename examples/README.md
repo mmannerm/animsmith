@@ -486,6 +486,13 @@ The contract is load-bearing: a bare `animsmith lint examples/assets/walk-dirty.
 loop checks are explicitly not applicable. Semantic checks
 enforce *your* declared expectations, not a guess.
 
+`walk-dirty.glb` is one of a set. `examples/assets/` commits one mutation
+of this same walk per runtime symptom — a channel that ends early, a clip
+that travels, a blend ring whose members disagree, a frozen arm, an
+animated non-uniform scale — each alongside the contract config that arms
+its checks. The [asset table](assets/README.md) lists what every fixture
+fires and which config to pass.
+
 ### Keeping the exported rig shape stable
 
 `animates_bones` is deliberately per clip: it says that a named bone must
