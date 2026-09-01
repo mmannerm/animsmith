@@ -16,6 +16,22 @@ plays back exactly those frames in a small hand-written WebGL viewer.
 There is no CDN, no three.js dependency, and no JavaScript resampling;
 when a finding names a frame, the viewer scrubs to that judged frame.
 
+Every colour in a generated document resolves through one set of design
+tokens: dark by default, light under `prefers-color-scheme`, and either one
+pinned by a `#theme=light|dark` URL fragment. The same fragment carries
+`embed=1` for an `<iframe>` and `clip`, `frame`, and `finding` deep links,
+all parsed by one bounded, total parser that ignores anything it does not
+recognize.
+
+Each chart is a self-describing `<figure>`: the `<svg>` carries `viewBox`,
+`role="img"`, an `aria-label` naming the plotted series with their units, an
+in-chart legend, and axis labels, while the paint comes from stable series
+classes (`series-left`, `series-right`, `series-diff`, `root-path`) rather
+than per-element attributes. A figure lifted out of the report therefore keeps
+its meaning under an injected copy of those rules, and the `data-clip`,
+`data-kind`, `data-pad`, and `data-plotw` hooks the playhead uses stay part of
+the contract.
+
 `render_comparison` is the deliberately narrow before/after companion. Call
 `preflight_comparison_sources` on the two exact `LoadedSource` authorities
 before evaluating checks, then pass two explicit clip names and the exact

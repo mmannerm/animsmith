@@ -29,15 +29,16 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 .finding code { color: var(--accent); }
 .chart { margin-bottom: 0.7rem; }
 .chart figcaption { color: var(--muted); font-size: 0.75rem; margin-bottom: 0.2rem; }
-.chart svg { background: var(--ground); border-radius: 5px; color: var(--muted); }
-/* Chart paint lives in these classes, never in per-element attributes, so a
-   chart <svg> lifted out of the report keeps its meaning under an injected
-   copy of tokens.css. */
+.chart svg { background: var(--ground); border-radius: 5px; }
+/* Chart paint lives in these classes, never in per-element attributes, and
+   the selectors stay unscoped, so a chart <svg> lifted out of the report
+   keeps its meaning under an injected copy of these rules and tokens.css. */
+.series-left, .series-right, .series-diff, .root-path { fill: none; stroke-width: 1.5; }
 .series-left { stroke: var(--accent); }
 .series-right { stroke: var(--warning); }
 .series-diff { stroke: var(--muted); }
 .root-path { stroke: var(--pass); }
-.chart .axis, .chart .legend { fill: currentColor; font-size: 8px; }
+.axis, .legend { fill: var(--muted); font-size: 8px; }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
 /* `#embed=1`: drop the page chrome so the document sits inside an iframe

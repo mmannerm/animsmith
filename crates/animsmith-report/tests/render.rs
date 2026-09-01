@@ -1595,3 +1595,154 @@ fn both_reports_embed_one_shared_fragment_runtime_and_its_embed_rules() {
         );
     }
 }
+
+/// Each `<figure class="chart">` block, which is the unit the documentation
+/// site lifts out of a report.
+fn chart_figures(html: &str) -> Vec<String> {
+    let mut figures = Vec::new();
+    let mut rest = html;
+    while let Some(open) = rest.find("<figure class=\"chart\"") {
+        let close = rest[open..].find("</figure>").expect("figure closes") + open + 9;
+        figures.push(rest[open..close].to_owned());
+        rest = &rest[close..];
+    }
+    figures
+}
+
+fn attribute(source: &str, name: &str) -> String {
+    let key = format!("{name}=\"");
+    let start = source
+        .find(&key)
+        .unwrap_or_else(|| panic!("{name} attribute is present"))
+        + key.len();
+    let end = source[start..].find('"').expect("attribute closes") + start;
+    source[start..end].to_owned()
+}
+
+#[test]
+fn charts_keep_their_sync_hooks_and_describe_themselves() {
+    let mut doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let mut right_foot = doc.skeleton.bones[2].clone();
+    right_foot.name = "right_foot".into();
+    doc.skeleton.bones.push(right_foot);
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let html = animsmith_report::render(&grids, &roles, &[], None, Some("walk"));
+    assert_self_contained(&html);
+
+    let figures = chart_figures(&html);
+    let kinds: Vec<String> = figures
+        .iter()
+        .map(|figure| attribute(figure, "data-kind"))
+        .collect();
+    assert_eq!(kinds, vec!["gait", "rootpath"]);
+
+    for figure in &figures {
+        let kind = attribute(figure, "data-kind");
+        assert_eq!(attribute(figure, "data-clip"), "walk", "{kind}");
+        assert_eq!(attribute(figure, "viewBox"), "0 0 360 150", "{kind}");
+        assert_eq!(attribute(figure, "role"), "img", "{kind}");
+        let described = attribute(figure, "aria-label");
+        assert!(
+            described.starts_with("walk — ") && described.contains(" m"),
+            "{kind}: the label names the clip and states its unit: {described}"
+        );
+        assert!(figure.contains("<title>walk — "), "{kind}: titled");
+        assert!(figure.contains("class=\"legend\""), "{kind}: has a legend");
+        assert!(figure.contains("class=\"axis\""), "{kind}: has axis labels");
+        assert!(
+            !figure.contains("stroke=\"") && !figure.contains("fill=\"#"),
+            "{kind}: colour comes from classes, never from attributes"
+        );
+    }
+
+    let gait = &figures[0];
+    for class in ["series-left", "series-right", "series-diff"] {
+        assert!(gait.contains(&format!("class=\"{class}\"")), "{class}");
+    }
+    // The playhead starts at the plot origin the viewer computes from the
+    // data attributes: `x = data-pad + data-plotw * phase`.
+    let pad = attribute(gait, "data-pad");
+    assert_eq!(attribute(gait, "data-plotw"), "318");
+    let playhead = gait
+        .split_once("class=\"playhead\"")
+        .expect("playhead line")
+        .1;
+    assert_eq!(attribute(playhead, "x1"), pad);
+    assert_eq!(attribute(playhead, "x2"), pad);
+
+    let path = &figures[1];
+    assert!(path.contains("class=\"root-path\""));
+    assert!(path.contains("class=\"pathdot\""));
+    assert!(path.contains("<template class=\"pathpoints\">"));
+}
+
+#[test]
+fn the_root_path_chart_plots_x_and_z_on_one_scale() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    // An L: one metre along +X, then one metre along +Z. A chart that gave
+    // the two axes different scales would draw the second leg longer.
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![Clip {
+            name: "corner".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::ZERO,
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(1.0, 0.0, 1.0),
+                ]),
+            }],
+        }],
+        ..Document::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None);
+
+    let figure = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+    let points = figure
+        .split_once("<template class=\"pathpoints\">")
+        .expect("plotted points")
+        .1
+        .split_once("</template>")
+        .expect("points close")
+        .0;
+    let plotted: Vec<(f64, f64)> = points
+        .split(';')
+        .map(|point| {
+            let (x, y) = point.split_once(',').expect("x,y point");
+            (x.parse().expect("x"), y.parse().expect("y"))
+        })
+        .collect();
+    let extent = |values: Vec<f64>| {
+        values.iter().copied().fold(f64::MIN, f64::max)
+            - values.iter().copied().fold(f64::MAX, f64::min)
+    };
+    let width = extent(plotted.iter().map(|point| point.0).collect());
+    let height = extent(plotted.iter().map(|point| point.1).collect());
+    assert!(width > 1.0, "the X leg is plotted");
+    assert!(
+        (width - height).abs() <= 0.2,
+        "one metre of X and one metre of Z must be the same length: {width} vs {height}"
+    );
+}

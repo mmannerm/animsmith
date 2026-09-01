@@ -1537,9 +1537,16 @@ q('evaluation').textContent=JSON.stringify(d.evaluation,null,2);
     )
 }
 
-/// SVG metric charts for one clip: gait signal (L/R foot heights and
-/// their difference) and the top-down root path. Rust-rendered; a JS
-/// playhead line is moved across them in sync with the 3D view.
+/// SVG metric charts for one clip: the gait signal (L/R foot heights and
+/// their difference) and the top-down root path.
+///
+/// The charts are Rust-rendered and legible on their own: each carries a
+/// `<title>`, a legend, axis labels with units, `role="img"`, and an
+/// `aria-label`, and takes its paint from stable series classes rather than
+/// per-element attributes, so a `<figure>` lifted out of the report keeps its
+/// meaning under an injected copy of the report tokens. The `data-*` hooks and
+/// the `.playhead`/`.pathdot` elements the viewer syncs are part of that
+/// contract too.
 fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> String {
     let mut out = String::new();
     let frames = grid.frame_count();
@@ -1557,8 +1564,24 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
         out.push_str(&line_chart(
             clip_name,
             "gait",
-            "foot height rel hips (m) — L blue · R orange · L−R grey",
-            &[("#7aa2f7", &l), ("#e0af68", &r), ("#9099b2", &d)],
+            "foot height relative to hips",
+            &[
+                Series {
+                    class: "series-left",
+                    label: "L foot",
+                    values: &l,
+                },
+                Series {
+                    class: "series-right",
+                    label: "R foot",
+                    values: &r,
+                },
+                Series {
+                    class: "series-diff",
+                    label: "L−R",
+                    values: &d,
+                },
+            ],
         ));
     }
 
@@ -1570,53 +1593,116 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
         let zs: Vec<f64> = (0..frames)
             .map(|f| grid.model_position(f, root).z as f64)
             .collect();
-        out.push_str(&path_chart(clip_name, "root path (top-down, m)", &xs, &zs));
+        out.push_str(&path_chart(clip_name, "root path (top-down)", &xs, &zs));
     }
     out
 }
 
-const W: f64 = 360.0;
-const H: f64 = 120.0;
-const PAD: f64 = 8.0;
+/// One plotted series: the stable class the stylesheet and any chart
+/// extractor targets, its legend label, and the samples.
+struct Series<'a> {
+    class: &'static str,
+    label: &'static str,
+    values: &'a [f64],
+}
 
-fn line_chart(clip: &str, kind: &str, label: &str, series: &[(&str, &Vec<f64>)]) -> String {
-    let clip = &esc(clip);
-    let all: Vec<f64> = series.iter().flat_map(|(_, v)| v.iter().copied()).collect();
+const W: f64 = 360.0;
+const H: f64 = 150.0;
+/// Gutters for the y-axis labels, the legend row, and the x-axis labels. The
+/// plot rectangle between them is what `data-pad`/`data-plotw` describe.
+const PAD_LEFT: f64 = 34.0;
+const PAD_RIGHT: f64 = 8.0;
+const PAD_TOP: f64 = 18.0;
+const PAD_BOTTOM: f64 = 16.0;
+const PLOT_W: f64 = W - PAD_LEFT - PAD_RIGHT;
+const PLOT_H: f64 = H - PAD_TOP - PAD_BOTTOM;
+/// Every chart plots metres; the unit is stated in the axis labels rather
+/// than left to the caption.
+const UNIT: &str = "m";
+const LEGEND_Y: f64 = 9.0;
+/// Advance per legend entry: a swatch, a gap, and an 8px label. Approximate
+/// on purpose — the entries only have to stay inside the plot width.
+const LEGEND_CHAR_W: f64 = 4.6;
+
+fn legend_entry(x: &mut f64, class: &str, label: &str) -> String {
+    let swatch = *x;
+    let text = swatch + 13.0;
+    *x = text + label.chars().count() as f64 * LEGEND_CHAR_W + 10.0;
+    format!(
+        "<line class=\"{class}\" x1=\"{swatch:.1}\" x2=\"{:.1}\" y1=\"{LEGEND_Y}\" y2=\"{LEGEND_Y}\"/>\
+         <text class=\"legend\" x=\"{text:.1}\" y=\"{:.1}\">{}</text>",
+        swatch + 10.0,
+        LEGEND_Y + 3.0,
+        esc(label)
+    )
+}
+
+fn line_chart(clip: &str, kind: &str, title: &str, series: &[Series<'_>]) -> String {
+    let all: Vec<f64> = series
+        .iter()
+        .flat_map(|s| s.values.iter().copied())
+        .collect();
     if all.is_empty() {
         return String::new();
     }
+    let clip = &esc(clip);
     let min = all.iter().copied().fold(f64::MAX, f64::min);
     let max = all.iter().copied().fold(f64::MIN, f64::max);
     let span = (max - min).max(1e-6);
-    let n = series[0].1.len().max(2);
-    let x = |i: usize| PAD + (W - 2.0 * PAD) * i as f64 / (n - 1) as f64;
-    let y = |v: f64| H - PAD - (H - 2.0 * PAD) * (v - min) / span;
+    let frames = series[0].values.len();
+    let n = frames.max(2);
+    let last_frame = frames.saturating_sub(1);
+    let x = |i: usize| PAD_LEFT + PLOT_W * i as f64 / (n - 1) as f64;
+    let y = |v: f64| H - PAD_BOTTOM - PLOT_H * (v - min) / span;
+
     let mut paths = String::new();
-    for (color, values) in series {
-        let d: Vec<String> = values
+    let mut legend = String::new();
+    let mut legend_x = PAD_LEFT;
+    for entry in series {
+        let d: Vec<String> = entry
+            .values
             .iter()
             .enumerate()
             .map(|(i, &v)| format!("{}{:.1},{:.1}", if i == 0 { "M" } else { "L" }, x(i), y(v)))
             .collect();
         paths.push_str(&format!(
-            "<path d=\"{}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"1.5\"/>",
+            "<path class=\"{}\" d=\"{}\" fill=\"none\"/>",
+            entry.class,
             d.join("")
         ));
+        legend.push_str(&legend_entry(&mut legend_x, entry.class, entry.label));
     }
+    let labels: Vec<&str> = series.iter().map(|entry| entry.label).collect();
+    let caption = format!("{clip} — {}", esc(title));
+    let description = esc(&format!(
+        "{title}: {} over frames 0 to {last_frame}, {min:.2} to {max:.2} {UNIT}",
+        labels.join(", ")
+    ));
     format!(
-        "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"{kind}\" data-pad=\"{PAD}\" \
-         data-plotw=\"{}\"><figcaption>{clip} — {label}</figcaption>\
-         <svg viewBox=\"0 0 {W} {H}\" width=\"100%\">{paths}\
-         <line class=\"playhead\" x1=\"{PAD}\" x2=\"{PAD}\" y1=\"0\" y2=\"{H}\"/></svg></figure>",
-        W - 2.0 * PAD
+        "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"{kind}\" data-pad=\"{PAD_LEFT}\" \
+         data-plotw=\"{PLOT_W}\"><figcaption>{caption}</figcaption>\
+         <svg viewBox=\"0 0 {W} {H}\" width=\"100%\" role=\"img\" aria-label=\"{clip} — {description}\">\
+         <title>{caption}</title>{legend}{paths}\
+         <text class=\"axis\" x=\"2\" y=\"{:.1}\">{max:.2} {UNIT}</text>\
+         <text class=\"axis\" x=\"2\" y=\"{:.1}\">{min:.2} {UNIT}</text>\
+         <text class=\"axis\" x=\"{PAD_LEFT}\" y=\"{:.1}\">frame 0</text>\
+         <text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">frame {last_frame}</text>\
+         <line class=\"playhead\" x1=\"{PAD_LEFT}\" x2=\"{PAD_LEFT}\" y1=\"{PAD_TOP}\" \
+         y2=\"{:.1}\"/></svg></figure>",
+        PAD_TOP + 3.0,
+        H - PAD_BOTTOM,
+        H - 4.0,
+        W - PAD_RIGHT,
+        H - 4.0,
+        H - PAD_BOTTOM,
     )
 }
 
-fn path_chart(clip: &str, label: &str, xs: &[f64], zs: &[f64]) -> String {
-    let clip = &esc(clip);
+fn path_chart(clip: &str, title: &str, xs: &[f64], zs: &[f64]) -> String {
     if xs.is_empty() {
         return String::new();
     }
+    let clip = &esc(clip);
     let (min_x, max_x) = (
         xs.iter().copied().fold(f64::MAX, f64::min),
         xs.iter().copied().fold(f64::MIN, f64::max),
@@ -1625,37 +1711,49 @@ fn path_chart(clip: &str, label: &str, xs: &[f64], zs: &[f64]) -> String {
         zs.iter().copied().fold(f64::MAX, f64::min),
         zs.iter().copied().fold(f64::MIN, f64::max),
     );
+    // One metres scale for both axes: a top-down path that is squashed in Z
+    // would misdescribe the trajectory it is evidence for.
     let span = (max_x - min_x).max(max_z - min_z).max(1e-3);
-    let x = |v: f64| PAD + (W - 2.0 * PAD) * (v - min_x) / span;
-    let y = |v: f64| H - PAD - (H - 2.0 * PAD) * (v - min_z) / span;
-    let d: Vec<String> = xs
+    let scale = PLOT_W.min(PLOT_H) / span;
+    let center_x = PAD_LEFT + PLOT_W / 2.0;
+    let center_y = PAD_TOP + PLOT_H / 2.0;
+    let x = |v: f64| center_x + (v - (min_x + max_x) / 2.0) * scale;
+    let y = |v: f64| center_y - (v - (min_z + max_z) / 2.0) * scale;
+    let points: Vec<String> = xs
         .iter()
         .zip(zs)
-        .enumerate()
-        .map(|(i, (&px, &pz))| {
-            format!(
-                "{}{:.1},{:.1}",
-                if i == 0 { "M" } else { "L" },
-                x(px),
-                y(pz)
-            )
-        })
+        .map(|(&px, &pz)| format!("{:.1},{:.1}", x(px), y(pz)))
         .collect();
+    let d: Vec<String> = points
+        .iter()
+        .enumerate()
+        .map(|(i, point)| format!("{}{point}", if i == 0 { "M" } else { "L" }))
+        .collect();
+    let mut legend_x = PAD_LEFT;
+    let legend = legend_entry(&mut legend_x, "root-path", "root");
+    let caption = format!("{clip} — {}", esc(title));
+    let description = esc(&format!(
+        "{title}: X {min_x:.2} to {max_x:.2} {UNIT}, Z {min_z:.2} to {max_z:.2} {UNIT}, \
+         {} frames on one uniform scale",
+        xs.len()
+    ));
     format!(
         "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"rootpath\">\
-         <figcaption>{clip} — {label}</figcaption>\
-         <svg viewBox=\"0 0 {W} {H}\" width=\"100%\">\
-         <path d=\"{}\" fill=\"none\" stroke=\"#9ece6a\" stroke-width=\"1.5\"/>\
-         <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/></svg>\
-         <template class=\"pathpoints\">{}</template></figure>",
+         <figcaption>{caption}</figcaption>\
+         <svg viewBox=\"0 0 {W} {H}\" width=\"100%\" role=\"img\" aria-label=\"{clip} — {description}\">\
+         <title>{caption}</title>{legend}\
+         <path class=\"root-path\" d=\"{}\" fill=\"none\"/>\
+         <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>\
+         <text class=\"axis\" x=\"2\" y=\"{:.1}\">X {min_x:.2}…{max_x:.2} {UNIT}</text>\
+         <text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">Z {min_z:.2}…{max_z:.2} {UNIT}</text>\
+         </svg><template class=\"pathpoints\">{}</template></figure>",
         d.join(""),
         x(xs[0]),
         y(zs[0]),
-        xs.iter()
-            .zip(zs)
-            .map(|(&px, &pz)| format!("{:.1},{:.1}", x(px), y(pz)))
-            .collect::<Vec<_>>()
-            .join(";")
+        H - 4.0,
+        W - PAD_RIGHT,
+        H - 4.0,
+        points.join(";"),
     )
 }
 
