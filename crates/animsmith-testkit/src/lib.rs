@@ -8,6 +8,12 @@
 //! is the common shape behind `crates/animsmith-gltf/tests/fix.rs`,
 //! `crates/animsmith/tests/cli_contract.rs`, and the committed example
 //! assets.
+//!
+//! [`docs_visuals`] carries the same discipline one step further: it
+//! names the committed documentation pictures under `docs/visuals/` and
+//! the CLI invocations that produce them.
+
+pub mod docs_visuals;
 
 use animsmith_core::model::*;
 use glam::{Quat, Vec3};
