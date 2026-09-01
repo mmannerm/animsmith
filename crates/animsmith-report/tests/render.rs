@@ -191,8 +191,9 @@ fn comparison_refuses_incompatible_named_hierarchy_before_rendering() {
     let before_doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let mut after_doc = before_doc.clone();
     after_doc.skeleton.bones[1].parent = None;
-    let error = animsmith_report::preflight_comparison(&before_doc, "walk", &after_doc, "walk")
-        .expect_err("different named parent must refuse");
+    let error =
+        animsmith_report::preflight_comparison(&before_doc, "walk", &after_doc, "walk", full())
+            .expect_err("different named parent must refuse");
     assert!(matches!(
         error,
         animsmith_report::ComparisonError::IncompatibleSkeleton { .. }
@@ -209,7 +210,8 @@ fn comparison_public_preflight_refuses_normalized_document_clip_ambiguity() {
             &before,
             "acceptance-matrix",
             &after,
-            "acceptance-matrix"
+            "acceptance-matrix",
+            full(),
         ),
         Err(animsmith_report::ComparisonError::AmbiguousClip { side: "before", .. })
     ));
@@ -236,6 +238,7 @@ fn comparison_public_input_text_boundary_accepts_max_and_refuses_n_plus_one() {
         "acceptance-matrix",
         &after,
         "acceptance-matrix",
+        full(),
     )
     .expect("exact input-text limit is admitted");
     before.skeleton.bones[0].name.push('x');
@@ -245,7 +248,8 @@ fn comparison_public_input_text_boundary_accepts_max_and_refuses_n_plus_one() {
             &before,
             "acceptance-matrix",
             &after,
-            "acceptance-matrix"
+            "acceptance-matrix",
+            full(),
         ),
         Err(animsmith_report::ComparisonError::InputTextWorkExceeded {
             side: "before",
@@ -267,6 +271,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &baseline,
                 "acceptance-matrix",
+                full(),
             )
         } else {
             animsmith_report::preflight_comparison(
@@ -274,6 +279,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &duplicate,
                 "acceptance-matrix",
+                full(),
             )
         };
         assert!(
@@ -288,6 +294,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &baseline,
                 "acceptance-matrix",
+                full(),
             )
         } else {
             animsmith_report::preflight_comparison(
@@ -295,6 +302,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &later_parent,
                 "acceptance-matrix",
+                full(),
             )
         };
         assert!(
@@ -309,6 +317,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &baseline,
                 "acceptance-matrix",
+                full(),
             )
         } else {
             animsmith_report::preflight_comparison(
@@ -316,6 +325,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &invalid_parent,
                 "acceptance-matrix",
+                full(),
             )
         };
         assert!(
@@ -330,6 +340,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &baseline,
                 "acceptance-matrix",
+                full(),
             )
         } else {
             animsmith_report::preflight_comparison(
@@ -337,6 +348,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &unavailable,
                 "acceptance-matrix",
+                full(),
             )
         };
         assert!(
@@ -351,7 +363,8 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
             &baseline,
             "acceptance-matrix",
             &reordered,
-            "acceptance-matrix"
+            "acceptance-matrix",
+            full(),
         ),
         Err(animsmith_report::ComparisonError::IncompatibleSkeleton { .. })
     ));
@@ -361,7 +374,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
 fn comparison_refuses_the_same_complete_loader_authority() {
     let source = animsmith_gltf::load_source(&fixture()).expect("fixture loads");
     assert_eq!(
-        animsmith_report::preflight_comparison_sources(&source, "walk", &source, "idle"),
+        animsmith_report::preflight_comparison_sources(&source, "walk", &source, "idle", full()),
         Err(animsmith_report::ComparisonError::IdenticalAuthorities)
     );
 }
@@ -1454,16 +1467,23 @@ fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
     }
 }
 
-/// The ten design tokens, dark first. Both generated documents must resolve
-/// every colour through exactly this set: a stray literal anywhere in the
-/// stylesheet or either viewer would not follow the theme.
-const DARK_TOKENS: [&str; 10] = [
-    "#17171f", "#1e1e2a", "#d5d9e5", "#9099b2", "#3a3a4e", "#7aa2f7", "#f7768e", "#e0af68",
-    "#9ece6a", "#bb9af7",
+// ---------------------------------------------------------------------------
+// Generated-document contracts: one token set, one shared runtime, charts that
+// survive extraction, and an evidence-only form that carries no motion.
+// ---------------------------------------------------------------------------
+
+/// Token names in the order both value tables use.
+const TOKEN_NAMES: [&str; 11] = [
+    "ground", "surface", "raised", "ink", "muted", "line", "accent", "error", "warning", "pass",
+    "note",
 ];
-const LIGHT_TOKENS: [&str; 10] = [
-    "#f4f5f9", "#ffffff", "#1a1e2c", "#5b6382", "#d9deea", "#3b67d6", "#cf3f5b", "#946414",
-    "#287a3b", "#6b7390",
+const DARK_TOKENS: [&str; 11] = [
+    "#17171f", "#1e1e2a", "#232331", "#d5d9e5", "#9099b2", "#3a3a4e", "#7aa2f7", "#f7768e",
+    "#e0af68", "#9ece6a", "#bb9af7",
+];
+const LIGHT_TOKENS: [&str; 11] = [
+    "#f4f5f9", "#ffffff", "#eef0f6", "#1a1e2c", "#5b6382", "#d9deea", "#3b67d6", "#cf3f5b",
+    "#946414", "#287a3b", "#6b7390",
 ];
 
 /// Everything the browser executes or styles: the embedded JSON payload is
@@ -1480,39 +1500,100 @@ fn document_code(html: &str) -> String {
     kept
 }
 
+/// Every colour literal, in any CSS hex form. Short and alpha forms are
+/// reported as themselves so a `#abc` or `#rrggbbaa` cannot slip past a
+/// six-digit comparison by being invisible to it.
 fn hex_colours(source: &str) -> std::collections::BTreeSet<String> {
     let bytes = source.as_bytes();
     let mut found = std::collections::BTreeSet::new();
     for (index, _) in source.match_indices('#') {
-        let digits = &bytes[index + 1..(index + 7).min(bytes.len())];
-        let next = bytes.get(index + 7).copied().unwrap_or(b' ');
-        if digits.len() == 6
-            && digits.iter().all(u8::is_ascii_hexdigit)
-            && !next.is_ascii_hexdigit()
-        {
-            found.insert(source[index..index + 7].to_ascii_lowercase());
+        let digits = bytes[index + 1..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_hexdigit())
+            .count();
+        if [3, 4, 6, 8].contains(&digits) {
+            found.insert(source[index..index + 1 + digits].to_ascii_lowercase());
         }
     }
     found
 }
 
-fn themed_documents() -> Vec<(&'static str, String)> {
-    let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
-    let grids = MetricGrids::new(&doc);
-    let roles = chart_roles(&doc);
-    let single = animsmith_report::render(&grids, &roles, &[], None, None, full());
+/// The `{ … }` body of the first rule whose selector contains `selector`,
+/// with the byte range it occupies in `code`.
+fn rule_block(code: &str, selector: &str) -> (usize, usize) {
+    let at = code
+        .find(selector)
+        .unwrap_or_else(|| panic!("stylesheet declares {selector}"));
+    let open = code[at..].find('{').expect("rule opens") + at;
+    let mut depth = 0usize;
+    for (offset, byte) in code[open..].bytes().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (at, open + offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("rule {selector} never closes");
+}
 
+/// Stylesheet text with its `/* … */` comments removed, so prose about a
+/// rule cannot be read as part of the rule.
+fn without_block_comments(source: &str) -> String {
+    let mut kept = String::new();
+    let mut rest = source;
+    while let Some(open) = rest.find("/*") {
+        kept.push_str(&rest[..open]);
+        let close = rest[open..]
+            .find("*/")
+            .map_or(rest.len(), |at| open + at + 2);
+        rest = &rest[close..];
+    }
+    kept.push_str(rest);
+    kept
+}
+
+/// The opening tag carrying `id`, plus any text up to its closing tag.
+fn element_with_id(html: &str, id: &str) -> String {
+    let key = format!("id=\"{id}\"");
+    let at = html
+        .find(&key)
+        .unwrap_or_else(|| panic!("no element carries id {id}"));
+    let start = html[..at].rfind('<').expect("tag opens");
+    let end = html[start..].find('>').expect("tag closes") + start + 1;
+    let tail = &html[end..];
+    let text = tail.find('<').unwrap_or(0);
+    format!("{}{}", &html[start..end], &tail[..text])
+}
+
+fn has_id(html: &str, id: &str) -> bool {
+    html.contains(&format!("id=\"{id}\""))
+}
+
+fn chart_roles_fixture() -> animsmith_core::Document {
+    let mut doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let mut right_foot = doc.skeleton.bones[2].clone();
+    right_foot.name = "right_foot".into();
+    doc.skeleton.bones.push(right_foot);
+    doc
+}
+
+fn comparison_documents(options: animsmith_report::ReportOptions) -> String {
     let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
     let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
     let before_grids = MetricGrids::new(before_source.document());
     let after_grids = MetricGrids::new(after_source.document());
-    let default_roles = ResolvedRoles::default();
+    let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
-    let comparison = animsmith_report::render_comparison(
+    animsmith_report::render_comparison(
         comparison_side(
             &before_source,
             &before_grids,
-            &default_roles,
+            &roles,
             &[],
             &config,
             "acceptance-matrix",
@@ -1520,15 +1601,27 @@ fn themed_documents() -> Vec<(&'static str, String)> {
         comparison_side(
             &after_source,
             &after_grids,
-            &default_roles,
+            &roles,
             &[],
             &config,
             "acceptance-matrix",
         ),
-        full(),
+        options,
     )
-    .expect("comparison renders");
-    vec![("single-clip", single), ("comparison", comparison)]
+    .expect("comparison renders")
+}
+
+fn themed_documents() -> Vec<(&'static str, String)> {
+    let doc = chart_roles_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    vec![
+        (
+            "single-clip",
+            animsmith_report::render(&grids, &roles, &[], None, None, full()),
+        ),
+        ("comparison", comparison_documents(full())),
+    ]
 }
 
 #[test]
@@ -1548,56 +1641,104 @@ fn both_reports_paint_only_from_the_shared_token_set() {
 }
 
 #[test]
-fn both_reports_default_to_dark_and_offer_light_by_scheme_or_data_theme() {
+fn the_shared_runtime_falls_back_to_the_stylesheet_dark_values() {
+    // The viewers paint through the tokens, but a browser that cannot resolve
+    // a custom property falls back to a table inside the runtime. That table
+    // is only right if it is the stylesheet's own dark set.
+    let code = document_code(&themed_documents()[0].1);
+    let (dark_start, dark_end) = rule_block(&code, ":root {");
+    let dark = &code[dark_start..dark_end];
+    let fallback_start = code
+        .find("ANIMSMITH_DEFAULT_PALETTE = {")
+        .expect("runtime declares its fallback palette");
+    let fallback_end = code[fallback_start..].find("};").expect("palette closes") + fallback_start;
+    let fallback = &code[fallback_start..fallback_end];
+    for (name, value) in TOKEN_NAMES.iter().zip(DARK_TOKENS) {
+        assert!(
+            dark.contains(&format!("--{name}: {value}")),
+            "bare :root sets --{name} to {value}"
+        );
+        assert!(
+            fallback.contains(&format!("{name}: \"{value}\"")),
+            "the runtime falls back to the stylesheet's --{name}"
+        );
+    }
+}
+
+#[test]
+fn light_values_live_only_in_the_two_guarded_blocks() {
     for (kind, html) in themed_documents() {
         let code = document_code(&html);
-        let bare_root = code.find(":root {").expect("bare :root token block");
-        let media = code
-            .find("@media (prefers-color-scheme: light)")
-            .unwrap_or_else(|| panic!("{kind} report offers a light scheme"));
-        let pinned = code
-            .find(":root[data-theme=\"light\"]")
-            .unwrap_or_else(|| panic!("{kind} report honours a pinned theme"));
+        let (_, bare_end) = rule_block(&code, ":root {");
+        let (media_start, media_end) = rule_block(&code, "@media (prefers-color-scheme: light)");
+        let (pinned_start, pinned_end) = rule_block(&code, ":root[data-theme=\"light\"]");
         assert!(
-            bare_root < media && media < pinned,
-            "{kind}: dark defaults, then the scheme query, then the explicit override"
+            bare_end <= media_start && media_end <= pinned_start,
+            "{kind}: dark defaults, then the scheme query, then the explicit pin"
         );
         assert!(
-            code.contains(":root:not([data-theme=\"dark\"])"),
+            code[media_start..media_end].contains(":root:not([data-theme=\"dark\"])"),
             "{kind}: a document pinned to dark ignores a light system scheme"
         );
-        for (token, dark) in [
-            "ground", "surface", "ink", "muted", "line", "accent", "error", "warning", "pass",
-            "note",
-        ]
-        .iter()
-        .zip(DARK_TOKENS)
-        {
+        for (name, light) in TOKEN_NAMES.iter().zip(LIGHT_TOKENS) {
+            let declaration = format!("--{name}: {light}");
+            let places: Vec<usize> = code.match_indices(&declaration).map(|(at, _)| at).collect();
+            assert_eq!(places.len(), 2, "{kind}: --{name} is set light twice");
             assert!(
-                code[bare_root..media].contains(&format!("--{token}: {dark}")),
-                "{kind}: bare :root keeps the historical dark value of --{token}"
-            );
-        }
-        for (token, light) in [
-            "ground", "surface", "ink", "muted", "line", "accent", "error", "warning", "pass",
-            "note",
-        ]
-        .iter()
-        .zip(LIGHT_TOKENS)
-        {
-            assert_eq!(
-                code[media..]
-                    .matches(&format!("--{token}: {light}"))
-                    .count(),
-                2,
-                "{kind}: --{token} has the same light value by scheme and by data-theme"
+                (media_start..media_end).contains(&places[0])
+                    && (pinned_start..pinned_end).contains(&places[1]),
+                "{kind}: --{name}'s light value only ever appears inside the two guarded blocks"
             );
         }
     }
 }
 
 #[test]
-fn both_reports_embed_one_shared_fragment_runtime_and_its_embed_rules() {
+fn embed_hides_the_same_chrome_in_both_documents_and_hides_no_evidence() {
+    for (kind, html) in themed_documents() {
+        let code = without_block_comments(&document_code(&html));
+        let mut hidden: Vec<String> = Vec::new();
+        let mut rest = code.as_str();
+        while let Some(at) = rest.find("[data-embed]") {
+            let selector_start = rest[..at].rfind('}').map_or(0, |end| end + 1);
+            let (_, block_end) = rule_block(&rest[selector_start..], "[data-embed]");
+            let rule = &rest[selector_start..selector_start + block_end];
+            let (selectors, body) = rule.split_once('{').expect("rule opens");
+            for evidence in [
+                "findings",
+                "gaps",
+                "predictions",
+                "chart",
+                "notice",
+                "side",
+                "disclosure",
+                "warning",
+            ] {
+                assert!(
+                    !selectors.contains(evidence),
+                    "{kind}: `#embed=1` must not touch {evidence}: {selectors}"
+                );
+            }
+            if body.contains("display: none") || body.contains("display:none") {
+                hidden.extend(
+                    selectors
+                        .split(',')
+                        .map(|one| one.trim().replace(":root[data-embed] ", "")),
+                );
+            }
+            rest = &rest[selector_start + block_end..];
+        }
+        hidden.sort();
+        assert_eq!(
+            hidden,
+            vec![".hint".to_owned(), "header".to_owned()],
+            "{kind}: `#embed=1` hides the running title and the hint, and nothing else"
+        );
+    }
+}
+
+#[test]
+fn both_reports_embed_one_shared_fragment_runtime() {
     for (kind, html) in themed_documents() {
         let code = document_code(&html);
         assert_eq!(
@@ -1613,10 +1754,6 @@ fn both_reports_embed_one_shared_fragment_runtime_and_its_embed_rules() {
         assert!(
             code.contains("animsmithApplyDocument(animsmithFragmentOptions(location.hash))"),
             "{kind}: the viewer applies the fragment's document switches"
-        );
-        assert!(
-            code.contains(":root[data-embed]"),
-            "{kind}: `#embed=1` has stylesheet consequences"
         );
     }
 }
@@ -1635,21 +1772,62 @@ fn chart_figures(html: &str) -> Vec<String> {
 }
 
 fn attribute(source: &str, name: &str) -> String {
-    let key = format!("{name}=\"");
-    let start = source
-        .find(&key)
+    attribute_values(source, name)
+        .into_iter()
+        .next()
         .unwrap_or_else(|| panic!("{name} attribute is present"))
-        + key.len();
-    let end = source[start..].find('"').expect("attribute closes") + start;
-    source[start..end].to_owned()
+}
+
+fn attribute_values(source: &str, name: &str) -> Vec<String> {
+    let key = format!("{name}=\"");
+    let mut values = Vec::new();
+    let mut rest = source;
+    while let Some(at) = rest.find(&key) {
+        let start = at + key.len();
+        let end = rest[start..].find('"').expect("attribute closes") + start;
+        values.push(rest[start..end].to_owned());
+        rest = &rest[end..];
+    }
+    values
+}
+
+/// Every `<tag …>` in a fragment, so a test can ask about one element
+/// instead of about every attribute in the figure.
+fn tags(source: &str) -> Vec<String> {
+    source
+        .split('<')
+        .skip(1)
+        .filter_map(|rest| rest.split_once('>').map(|(tag, _)| tag.to_owned()))
+        .collect()
+}
+
+/// The right-most edge any legend entry reaches: swatch lines carry a series
+/// class, labels carry `class="legend"`.
+fn legend_right_edge(figure: &str) -> f64 {
+    tags(figure)
+        .iter()
+        .filter_map(|tag| {
+            let class = attribute_values(tag, "class").into_iter().next()?;
+            if class == "legend" {
+                attribute_values(tag, "x").first()?.parse().ok()
+            } else if tag.starts_with("line") {
+                attribute_values(tag, "x2").first()?.parse().ok()
+            } else {
+                None
+            }
+        })
+        .fold(f64::MIN, f64::max)
+}
+
+fn number(source: &str, name: &str) -> f64 {
+    attribute(source, name)
+        .parse()
+        .unwrap_or_else(|_| panic!("{name} is numeric"))
 }
 
 #[test]
 fn charts_keep_their_sync_hooks_and_describe_themselves() {
-    let mut doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
-    let mut right_foot = doc.skeleton.bones[2].clone();
-    right_foot.name = "right_foot".into();
-    doc.skeleton.bones.push(right_foot);
+    let doc = chart_roles_fixture();
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
     let html = animsmith_report::render(&grids, &roles, &[], None, Some("walk"), full());
@@ -1665,19 +1843,54 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
     for figure in &figures {
         let kind = attribute(figure, "data-kind");
         assert_eq!(attribute(figure, "data-clip"), "walk", "{kind}");
-        assert_eq!(attribute(figure, "viewBox"), "0 0 360 150", "{kind}");
         assert_eq!(attribute(figure, "role"), "img", "{kind}");
+        let view_box: Vec<f64> = attribute(figure, "viewBox")
+            .split_whitespace()
+            .map(|part| part.parse().expect("viewBox number"))
+            .collect();
+        assert_eq!(view_box.len(), 4, "{kind}: a scalable viewBox");
+        let (width, height) = (view_box[2], view_box[3]);
+        assert!(width > 0.0 && height > 0.0, "{kind}");
+
         let described = attribute(figure, "aria-label");
         assert!(
             described.starts_with("walk — ") && described.contains(" m"),
             "{kind}: the label names the clip and states its unit: {described}"
         );
         assert!(figure.contains("<title>walk — "), "{kind}: titled");
-        assert!(figure.contains("class=\"legend\""), "{kind}: has a legend");
         assert!(figure.contains("class=\"axis\""), "{kind}: has axis labels");
+
+        // Colour comes from the classes alone, so an extracted figure keeps
+        // its meaning under an injected style block.
         assert!(
-            !figure.contains("stroke=\"") && !figure.contains("fill=\"#"),
-            "{kind}: colour comes from classes, never from attributes"
+            !figure.contains("style="),
+            "{kind}: no inline style overrides the classes"
+        );
+        assert!(
+            !figure.contains("stroke=\""),
+            "{kind}: stroke comes from a class"
+        );
+        for fill in attribute_values(figure, "fill") {
+            assert_eq!(fill, "none", "{kind}: the only fill attribute is none");
+        }
+
+        // Every label sits inside the box it describes, and the legend
+        // inside the plot it labels.
+        for tag in tags(figure) {
+            for name in ["x", "x2", "cx"] {
+                for value in attribute_values(&tag, name) {
+                    if let Ok(at) = value.parse::<f64>() {
+                        assert!(
+                            (0.0..=width).contains(&at),
+                            "{kind}: {name}={at} escapes the {width}-wide viewBox"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            legend_right_edge(figure) < width,
+            "{kind}: the legend stays inside the chart"
         );
     }
 
@@ -1685,16 +1898,32 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
     for class in ["series-left", "series-right", "series-diff"] {
         assert!(gait.contains(&format!("class=\"{class}\"")), "{class}");
     }
-    // The playhead starts at the plot origin the viewer computes from the
-    // data attributes: `x = data-pad + data-plotw * phase`.
-    let pad = attribute(gait, "data-pad");
-    assert_eq!(attribute(gait, "data-plotw"), "318");
+    // The viewer places the playhead at `data-pad + data-plotw * phase`, so
+    // those two numbers must describe a real rectangle inside the chart and
+    // the playhead must start at its origin.
+    let pad = number(gait, "data-pad");
+    let plot_width = number(gait, "data-plotw");
+    let width: f64 = attribute(gait, "viewBox")
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(pad > 0.0, "the plot leaves room for its y-axis labels");
+    assert!(plot_width > 0.0, "the plot has width");
+    assert!(pad + plot_width <= width, "the plot fits its viewBox");
     let playhead = gait
         .split_once("class=\"playhead\"")
         .expect("playhead line")
         .1;
-    assert_eq!(attribute(playhead, "x1"), pad);
-    assert_eq!(attribute(playhead, "x2"), pad);
+    assert_eq!(number(playhead, "x1"), pad, "playhead starts at the origin");
+    assert_eq!(number(playhead, "x2"), pad);
+    assert!(
+        legend_right_edge(gait) <= pad + plot_width,
+        "the legend fits the plot rectangle: {} vs {}",
+        legend_right_edge(gait),
+        pad + plot_width
+    );
 
     let path = &figures[1];
     assert!(path.contains("class=\"root-path\""));
@@ -1709,8 +1938,9 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
         Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
     };
 
-    // An L: one metre along +X, then one metre along +Z. A chart that gave
-    // the two axes different scales would draw the second leg longer.
+    // Two metres along +X, then one metre along +Z. Per-axis normalization
+    // would draw both legs the same length; one shared scale draws the X leg
+    // exactly twice as long.
     let doc = Document {
         skeleton: Skeleton {
             bones: vec![Bone {
@@ -1730,8 +1960,8 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
                 times: vec![0.0, 0.5, 1.0],
                 values: TrackValues::Vec3s(vec![
                     Vec3::ZERO,
-                    Vec3::new(1.0, 0.0, 0.0),
-                    Vec3::new(1.0, 0.0, 1.0),
+                    Vec3::new(2.0, 0.0, 0.0),
+                    Vec3::new(2.0, 0.0, 1.0),
                 ]),
             }],
         }],
@@ -1767,17 +1997,40 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
     let height = extent(plotted.iter().map(|point| point.1).collect());
     assert!(width > 1.0, "the X leg is plotted");
     assert!(
-        (width - height).abs() <= 0.2,
-        "one metre of X and one metre of Z must be the same length: {width} vs {height}"
+        (width - 2.0 * height).abs() <= 0.2,
+        "two metres of X must plot twice as long as one metre of Z: {width} vs {height}"
     );
+}
+
+/// Every sampled pose byte the document embeds, from any clip or any side.
+fn embedded_pose_bytes(html: &str, id: &str) -> Vec<u8> {
+    fn walk(value: &Value, out: &mut Vec<u8>) {
+        match value {
+            Value::Object(map) => {
+                for (key, item) in map {
+                    if key == "positions" {
+                        let encoded = item.as_str().expect("positions is base64 text");
+                        out.extend(
+                            base64::engine::general_purpose::STANDARD
+                                .decode(encoded)
+                                .expect("positions decode"),
+                        );
+                    }
+                    walk(item, out);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut bytes = Vec::new();
+    walk(&embedded_json(html, id), &mut bytes);
+    bytes
 }
 
 #[test]
 fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
-    let mut doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
-    let mut right_foot = doc.skeleton.bones[2].clone();
-    right_foot.name = "right_foot".into();
-    doc.skeleton.bones.push(right_foot);
+    let doc = chart_roles_fixture();
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
     let checks = evaluations(vec![
@@ -1795,17 +2048,18 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
     let data = report_data(&html);
     assert_eq!(full_data["evidence_only"], false);
     assert_eq!(data["evidence_only"], true);
+    assert!(
+        embedded_pose_bytes(&html, "report-data").is_empty(),
+        "an evidence-only report embeds no sampled motion"
+    );
+    assert!(!embedded_pose_bytes(&full_html, "report-data").is_empty());
     for clip in data["clips"].as_array().expect("clips array") {
         assert!(
             clip.get("positions").is_none(),
-            "an evidence-only report embeds no sampled motion"
+            "the key is absent, not empty"
         );
         assert!(clip["frames"].as_u64().expect("frame count") > 0);
     }
-    assert!(
-        full_data["clips"][0]["positions"].is_string(),
-        "a full report still carries its pose grid"
-    );
     for key in [
         "file",
         "profile",
@@ -1822,16 +2076,21 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
         chart_figures(&full_html),
         "the metric charts are the same evidence"
     );
-    assert!(html.contains(
-        "<p class=\"notice\" id=\"gl-notice\">Pose playback omitted: evidence-only report</p>"
-    ));
+
+    // The document, not the viewer, decides there is no pose view.
+    assert!(!has_id(&html, "gl"), "no canvas is rendered");
     assert!(
-        !html.contains("<canvas id=\"gl\">") && html.contains("<button id=\"play\" disabled>"),
-        "the pose view is replaced and playback is disabled"
+        element_with_id(&html, "gl-notice").contains("Pose playback omitted"),
+        "a notice stands where the pose view would be"
     );
     assert!(
-        full_html.contains("<canvas id=\"gl\">") && !full_html.contains("Pose playback omitted"),
-        "a full report is unchanged"
+        element_with_id(&html, "play").contains("disabled"),
+        "playback is disabled"
+    );
+    assert!(has_id(&full_html, "gl"), "a full report keeps its canvas");
+    assert!(
+        !element_with_id(&full_html, "play").contains("disabled"),
+        "a full report can play"
     );
     assert!(
         html.len() < full_html.len(),
@@ -1840,49 +2099,87 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
 }
 
 #[test]
-fn an_evidence_only_comparison_drops_both_pose_grids() {
-    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
-    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
-    let before_grids = MetricGrids::new(before_source.document());
-    let after_grids = MetricGrids::new(after_source.document());
-    let roles = ResolvedRoles::default();
-    let config = animsmith_core::Config::default();
-    let sides = || {
-        (
-            comparison_side(
-                &before_source,
-                &before_grids,
-                &roles,
-                &[],
-                &config,
-                "acceptance-matrix",
-            ),
-            comparison_side(
-                &after_source,
-                &after_grids,
-                &roles,
-                &[],
-                &config,
-                "acceptance-matrix",
-            ),
-        )
+fn an_evidence_only_report_carries_no_unplotted_sample() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
     };
-    let (before, after) = sides();
-    let full_html = animsmith_report::render_comparison(before, after, full()).unwrap();
-    let (before, after) = sides();
-    let html = animsmith_report::render_comparison(before, after, evidence_only()).unwrap();
+
+    // A bone that is neither the root nor a foot never reaches a chart, so
+    // this coordinate exists only inside the sampled pose grid.
+    const WITNESS: f32 = 123.456;
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![
+                Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "spine".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        },
+        clips: vec![Clip {
+            name: "witness".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::new(WITNESS, 0.0, 0.0),
+                    Vec3::new(WITNESS, 0.0, 0.0),
+                    Vec3::new(WITNESS, 0.0, 0.0),
+                ]),
+            }],
+        }],
+        ..Document::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+    let full_html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, evidence_only());
+
+    let witness = WITNESS.to_le_bytes();
+    let carries = |bytes: &[u8]| bytes.windows(witness.len()).any(|slice| slice == witness);
+    assert!(
+        carries(&embedded_pose_bytes(&full_html, "report-data")),
+        "the fixture must really be a witness in a full report"
+    );
+    assert!(
+        !carries(&embedded_pose_bytes(&html, "report-data")),
+        "no sampled coordinate survives in an evidence-only report"
+    );
+    assert!(
+        !html.contains("123.456"),
+        "and none survives in the document's own text"
+    );
+}
+
+#[test]
+fn an_evidence_only_comparison_drops_both_pose_grids() {
+    let full_html = comparison_documents(full());
+    let html = comparison_documents(evidence_only());
     assert_self_contained(&html);
 
     let full_data = embedded_json(&full_html, "comparison-report-data");
     let data = embedded_json(&html, "comparison-report-data");
     assert_eq!(full_data["evidence_only"], false);
     assert_eq!(data["evidence_only"], true);
+    assert!(
+        embedded_pose_bytes(&html, "comparison-report-data").is_empty(),
+        "neither side embeds sampled motion"
+    );
+    assert!(!embedded_pose_bytes(&full_html, "comparison-report-data").is_empty());
     for side in ["before", "after"] {
-        assert!(
-            data[side]["clip"].get("positions").is_none(),
-            "{side}: no sampled motion is embedded"
-        );
-        assert!(full_data[side]["clip"]["positions"].is_string(), "{side}");
+        assert!(data[side]["clip"].get("positions").is_none(), "{side}");
         assert!(
             data[side]["clip"]["times"].is_array(),
             "{side}: judged frame times remain"
@@ -1900,21 +2197,78 @@ fn an_evidence_only_comparison_drops_both_pose_grids() {
         }
     }
     assert_eq!(data["correspondence"], full_data["correspondence"]);
-    for side in ["before", "after"] {
+
+    // Every pose surface is replaced by its own notice, and the shared phase
+    // has nothing left to scrub.
+    for surface in ["before-gl", "after-gl", "comparison-root-path"] {
+        assert!(!has_id(&html, surface), "{surface} is not rendered");
         assert!(
-            html.contains(&format!(
-                "<p class=\"notice\" id=\"{side}-gl-notice\">Pose playback omitted: evidence-only report</p>"
-            )),
-            "{side}: the panel says where its pose view went"
+            element_with_id(&html, &format!("{surface}-notice")).contains("Pose playback omitted"),
+            "{surface} is replaced by a notice"
+        );
+        assert!(
+            has_id(&full_html, surface),
+            "{surface} stands in a full report"
         );
     }
-    assert!(
-        !html.contains("<canvas")
-            && html.contains(
-                "id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\" disabled>"
-            ),
-        "no canvas remains and the shared phase is disabled"
-    );
-    assert!(full_html.contains("<canvas id=\"before-gl\">"));
+    assert!(element_with_id(&html, "scrub").contains("disabled"));
+    assert!(!element_with_id(&full_html, "scrub").contains("disabled"));
     assert!(html.len() < full_html.len());
+}
+
+#[test]
+fn an_evidence_only_comparison_is_not_bound_by_the_embedded_pose_budget() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    // 300 bones over 10,000 judged frames is ~36 MiB of pose grid, past the
+    // embedded-pose budget. An evidence-only report embeds none of it, so
+    // that budget must not decide which pairs it can describe.
+    const BONES: usize = 300;
+    const FRAMES: usize = 10_000;
+    const {
+        assert!(
+            BONES * FRAMES * 12 > animsmith_report::MAX_COMPARISON_POSE_BYTES,
+            "the fixture must exceed the budget it is testing"
+        )
+    };
+    let bones = (0..BONES)
+        .map(|index| Bone {
+            name: format!("bone{index}"),
+            parent: index.checked_sub(1),
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        })
+        .collect();
+    let doc = Document {
+        skeleton: Skeleton { bones },
+        clips: vec![Clip {
+            name: "walk".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: (0..FRAMES)
+                    .map(|frame| frame as f32 / FRAMES as f32)
+                    .collect(),
+                values: TrackValues::Vec3s(vec![Vec3::ZERO; FRAMES]),
+            }],
+        }],
+        ..Document::default()
+    };
+
+    let refused = animsmith_report::preflight_comparison(&doc, "walk", &doc, "walk", full())
+        .expect_err("a full report would have to embed the grid");
+    assert!(
+        matches!(
+            refused,
+            animsmith_report::ComparisonError::PoseWorkExceeded { .. }
+        ),
+        "{refused:?}"
+    );
+    animsmith_report::preflight_comparison(&doc, "walk", &doc, "walk", evidence_only())
+        .expect("an evidence-only comparison embeds no grid, so the budget does not apply");
 }
