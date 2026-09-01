@@ -4,6 +4,12 @@ on:
   pull_request:
   push:
     branches: [main]
+  # A release published by release-plz is created with the repository
+  # GITHUB_TOKEN, and GitHub creates no workflow run for such an event; that
+  # publication reaches this workflow through the explicit dispatch in
+  # release-plz.yml instead (#652). This trigger still covers a release
+  # published by hand, and workflow_dispatch is also the manual recovery path
+  # documented in RELEASING.md.
   release:
     types: [published]
   workflow_dispatch:
