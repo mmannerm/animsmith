@@ -226,10 +226,14 @@ fn sin_quarter_cycle_late(theta: f64) -> f64 {
     libm::sin(theta + std::f64::consts::FRAC_PI_2)
 }
 
+/// One directional-ring member: the clip's name and the sine that places
+/// its gait in the cycle.
+type RingMember = (&'static str, fn(f64) -> f64);
+
 /// The directional ring's members. Three share the walk's sine, so their
 /// stride anchors agree at phase 0.75; `run_left` is a quarter cycle
 /// late, which is the spread `gait-group` measures.
-const RUN_RING_MEMBERS: [(&str, fn(f64) -> f64); 4] = [
+const RUN_RING_MEMBERS: [RingMember; 4] = [
     ("run_forward", libm::sin),
     ("run_backward", libm::sin),
     ("run_left", sin_quarter_cycle_late),
