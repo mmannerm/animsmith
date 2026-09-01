@@ -5,8 +5,9 @@
 #   animsmith lint --config examples/walk-travel-in-place.animsmith.toml \
 #       examples/assets/walk-travel.glb
 #
-# The same contract passes examples/assets/walk.glb — the clean in-place
-# cycle this fixture is the travelling mutation of.
+# The declaration below is keyed to this fixture's clip name. The clean
+# cycle it mutates, examples/assets/walk.glb, names its clip `walk`;
+# declare that name here as well if you want one contract to judge both.
 
 [rig]
 # pelvis / foot_l / foot_r resolve the built-in ue-mannequin profile, so
