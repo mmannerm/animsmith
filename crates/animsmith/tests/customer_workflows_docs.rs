@@ -4,7 +4,7 @@
 //! lines: navigation and canonical links must survive normal Markdown syntax,
 //! and the runnable examples must continue to agree with the current CLI.
 
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -114,20 +114,32 @@ fn headings(markdown: &str) -> Vec<String> {
     headings
 }
 
-fn tables(markdown: &str) -> Vec<Vec<Vec<String>>> {
+/// One rendered table cell: its text and the destinations it links to.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Cell {
+    text: String,
+    links: Vec<String>,
+}
+
+fn linked_tables(markdown: &str) -> Vec<Vec<Vec<Cell>>> {
     let mut tables = Vec::new();
     let mut table = None;
     let mut row = None;
-    let mut cell = None;
+    let mut cell: Option<Cell> = None;
     for event in Parser::new_ext(markdown, options()) {
         match event {
             Event::Start(Tag::Table(_)) => table = Some(Vec::new()),
             Event::Start(Tag::TableHead) => row = Some(Vec::new()),
             Event::Start(Tag::TableRow) => row = Some(Vec::new()),
-            Event::Start(Tag::TableCell) => cell = Some(String::new()),
+            Event::Start(Tag::TableCell) => cell = Some(Cell::default()),
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                if let Some(cell) = cell.as_mut() {
+                    cell.links.push(dest_url.into_string());
+                }
+            }
             Event::Text(text) | Event::Code(text) => {
                 if let Some(cell) = cell.as_mut() {
-                    cell.push_str(&text);
+                    cell.text.push_str(&text);
                 }
             }
             Event::End(TagEnd::TableCell) => {
@@ -152,6 +164,111 @@ fn tables(markdown: &str) -> Vec<Vec<Vec<String>>> {
         }
     }
     tables
+}
+
+fn tables(markdown: &str) -> Vec<Vec<Vec<String>>> {
+    linked_tables(markdown)
+        .into_iter()
+        .map(|table| {
+            table
+                .into_iter()
+                .map(|row| row.into_iter().map(|cell| cell.text).collect())
+                .collect()
+        })
+        .collect()
+}
+
+/// The one table in `markdown` whose first heading cell is `column`.
+fn table_headed_by(markdown: &str, column: &str) -> Vec<Vec<Cell>> {
+    let mut matching = linked_tables(markdown).into_iter().filter(|table| {
+        table
+            .first()
+            .and_then(|heading| heading.first())
+            .is_some_and(|cell| cell.text == column)
+    });
+    let table = matching
+        .next()
+        .unwrap_or_else(|| panic!("no table is headed by {column}"));
+    assert!(
+        matching.next().is_none(),
+        "exactly one table is headed by {column}"
+    );
+    table
+}
+
+/// The labelled blockquote lines a maintained report carries above its first
+/// `##` section, as rendered text plus the bold spans of each line.
+///
+/// The animation-pack skill owns that grammar. `_bold_metadata_value` in
+/// `.agents/skills/evaluate-animation-packs/scripts/validate_report.py` is the
+/// authority `just animation-pack-skill` runs over every pair under
+/// `docs/reports/`, and it recognizes nothing itself: it reads this same pinned
+/// `pulldown-cmark` through the `animation_pack_markdown_ast` example, which a
+/// Cargo test cannot borrow without nesting a Cargo build inside a test. So
+/// this reads the same rendered structure with the same parser and asserts
+/// nothing about which values are legal — a grammar or vocabulary change fails
+/// the owning validator first, and this gate only projects what it accepted.
+fn header_block(markdown: &str) -> Vec<(String, Vec<String>)> {
+    let mut block = Vec::new();
+    let mut quoted = 0usize;
+    let mut line: Option<(String, Vec<String>)> = None;
+    let mut bold: Option<String> = None;
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Heading { level, .. })
+                if quoted == 0 && level != HeadingLevel::H1 =>
+            {
+                break;
+            }
+            Event::Start(Tag::BlockQuote(_)) => quoted += 1,
+            Event::End(TagEnd::BlockQuote(_)) => quoted = quoted.saturating_sub(1),
+            Event::Start(Tag::Paragraph) if quoted > 0 => line = Some((String::new(), Vec::new())),
+            Event::Start(Tag::Strong) if line.is_some() => bold = Some(String::new()),
+            Event::Text(text) | Event::Code(text) => {
+                if let Some((rendered, _)) = line.as_mut() {
+                    rendered.push_str(&text);
+                }
+                if let Some(bold) = bold.as_mut() {
+                    bold.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::Strong) => {
+                if let (Some(value), Some((_, spans))) = (bold.take(), line.as_mut()) {
+                    spans.push(value);
+                }
+            }
+            Event::End(TagEnd::Paragraph) => {
+                if let Some(rendered) = line.take() {
+                    block.push(rendered);
+                }
+            }
+            _ => {}
+        }
+    }
+    block
+}
+
+/// The published value of one header-block field: the single bold span of the
+/// `Label: **Value**` line, which may carry a ` — boundary` clause after it.
+fn header_value(report: &str, markdown: &str, label: &str) -> String {
+    let prefix = format!("{label}: ");
+    let mut declaring = header_block(markdown)
+        .into_iter()
+        .filter(|(text, _)| text.starts_with(&prefix));
+    let (text, bold) = declaring
+        .next()
+        .unwrap_or_else(|| panic!("{report} header block must declare {label}"));
+    assert!(
+        declaring.next().is_none(),
+        "{report} header block must declare {label} once"
+    );
+    assert_eq!(bold.len(), 1, "{report} must declare one bold {label}");
+    let declared = format!("{prefix}{}", bold[0]);
+    assert!(
+        text == declared || text.starts_with(&format!("{declared} — ")),
+        "{report} must declare {label} as a bold value with an optional boundary clause: {text}"
+    );
+    bold[0].clone()
 }
 
 fn documented_commands(path: &str) -> Vec<(i32, String)> {
@@ -410,6 +527,74 @@ fn commercial_report_index_equals_the_maintained_on_disk_pairs() {
                     "{report} must keep historical-reader content in Changes"
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn commercial_report_scorecard_projects_each_published_header_block() {
+    let index = markdown("docs/reports/README.md");
+    let scorecard = table_headed_by(&index, "Pack");
+    let canonical = table_headed_by(&index, "Technical report");
+    assert_eq!(
+        scorecard[0]
+            .iter()
+            .map(|cell| cell.text.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Pack",
+            "Technical verdict",
+            "Evaluation completeness",
+            "Confidence",
+            "Evaluation date",
+            "Current evaluator",
+        ],
+        "the scorecard's columns are exactly the report header-block fields"
+    );
+
+    let packs = |rows: &[Vec<Cell>], what: &str| -> Vec<(String, String)> {
+        rows.iter()
+            .map(|row| {
+                let pack = row
+                    .first()
+                    .unwrap_or_else(|| panic!("{what} row has cells"));
+                assert_eq!(
+                    pack.links.len(),
+                    1,
+                    "{what} row must name exactly one report: {}",
+                    pack.text
+                );
+                (pack.text.clone(), pack.links[0].clone())
+            })
+            .collect()
+    };
+    let scored = packs(&scorecard[1..], "scorecard");
+    assert_eq!(
+        scored,
+        packs(&canonical[1..], "current-reports"),
+        "the scorecard must carry one row per maintained pair, named and ordered \
+         by the canonical current-reports table"
+    );
+
+    for (row, (_, report)) in scorecard[1..].iter().zip(&scored) {
+        assert_eq!(row.len(), 6, "scorecard row shape for {report}");
+        let published = markdown(&format!("docs/reports/{report}"));
+        for (column, label) in [
+            (1, "Technical verdict"),
+            (2, "Evaluation completeness"),
+            (3, "Confidence"),
+            (4, "Evaluation date"),
+            (5, "Current evaluator"),
+        ] {
+            assert_eq!(
+                row[column].text,
+                header_value(report, &published, label),
+                "the scorecard must copy the published {label} of {report}"
+            );
+            assert!(
+                row[column].links.is_empty(),
+                "scorecard {label} of {report} is a copied value, not a route"
+            );
         }
     }
 }
