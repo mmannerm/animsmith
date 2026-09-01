@@ -18,9 +18,7 @@
 
 The official AnimSmith 0.10.0 release reran [Basic Locomotion](protofactor-basic-locomotion.md), [Sword & Shield](protofactor-sword-and-shield.md), [Campfire](protofactor-campfire.md), [Climbing](protofactor-climbing.md), [Injured](protofactor-injured.md), [1-Handed Melee](protofactor-one-handed-melee.md), [2-Handed Melee](protofactor-two-handed-melee.md), and [Dual Swords](protofactor-dual-swords.md). They contain 918 source candidates, including 895 individual motion-labelled inputs. This is current mechanical intake evidence, not collection-level approval.
 
-No current collection binding was rendered, so this rollup has no accepted canonical logical-motion inventory, semantic roles, runtime sets, cross-pack handoffs, or package-wide remediation result. The four melee constituents produced 103 external transform candidates, but none was promoted or accepted for an engine. A project must make its own clip-selection, root-authority, contact, controller, and target-character decisions.
-
-An earlier shared-path comparison is retained as a dated observation: its 28 pairings compared 25 paths each, with 700 byte-identical comparisons and no conflict. Dated Unity 6000.5.8f1 graph probes also remain recorded: 22/22 contextual and 33/33 melee required checks, with four expected Generic-rig failures isolated. Neither observation was rerun in this refresh and neither establishes current engine, visual, artistic, or gameplay readiness.
+No current collection binding was rendered, so this rollup has no accepted canonical logical-motion inventory, semantic roles, runtime sets, cross-pack handoffs, or package-wide remediation result. The eight constituents produced 159 external transform candidates, but none was promoted or accepted for an engine. A project must make its own clip-selection, root-authority, contact, controller, and target-character decisions.
 
 ## Capability coverage
 
@@ -31,8 +29,7 @@ An earlier shared-path comparison is retained as a dated observation: its 28 pai
 
 ### Partial supporting gameplay
 
-- Four melee constituents have external AnimSmith transform candidates; their runtime selection, visual result, and gameplay suitability remain untested.
-- Retained dated shared-path and Unity graph observations can inform a new test plan, but are not current compatibility acceptance.
+- All eight constituents have bounded external AnimSmith transform candidates; their runtime selection, visual result, and gameplay suitability remain untested.
 
 ### Absent
 
@@ -57,14 +54,14 @@ No important runtime sets were identified.
 |---|---|---|---|---|---|---|
 | UC-010 | blocker | No current collection binding, role taxonomy, or runtime-set inventory exists, so the corpus cannot safely define collection graphs. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder) applies. | unknown | Select clips and declare collection roles, sets, and ownership in the target project. | A current collection manifest could preserve declared grouping evidence. | `not-evaluated`; 895 motion-labelled inputs remain unclassified at collection level. |
 | UC-011 | major | Current declared-contract findings require clip-by-clip loop and continuity decisions before blend or transition use. Guidance: not applicable. | artist-author | Repair or re-export malformed source where required; otherwise document intended policy. | Declared mechanical diagnostics can support review, not infer intent. | `observed-animsmith`; constituent-specific results are linked above. |
-| UC-012 | major | Cross-pack co-installation and Unity graph behavior are dated observations, not current engine validation. Guidance: not applicable. | engine-config | Repeat only project-relevant compatibility and engine tests using selected clips. | Cross-pack diagnostics could make the comparison reproducible. | Retained dated observation; no current engine run. |
+| UC-012 | major | Cross-pack co-installation and engine behavior have no current validation. Guidance: not applicable. | engine-config | Run only project-relevant compatibility and engine tests using selected clips. | Cross-pack diagnostics could make the comparison reproducible. | `not-evaluated`; no current engine run. |
 | UC-013 | major | Fifteen constituents are excluded, so this partial rollup cannot support a collection-wide coverage, compatibility, or value conclusion. Guidance: not applicable. | unknown | Evaluate additional constituents in bounded waves with a defined game decision. | Tooling cannot establish evidence for excluded content. | `not-evaluated`; explicit scope boundary. |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | retained dated engine observation | Earlier contextual and melee probes recorded 22/22 and 33/33 required graph checks; four expected Generic-rig failures were isolated. No current import or playback run occurred. | Current co-import, controller, visual, root-motion, contacts, retarget, compression, and build tests. |
+| Unity | not-evaluated | No current import or playback run. | Co-import, controller, visual, root-motion, contacts, retarget, compression, and build tests. |
 | Unreal Engine | not-evaluated | No current import or playback run. | Import, retarget, graph, contact, and build tests. |
 | Godot | not-evaluated | No current conversion, import, or playback run. | Conversion/import, graph, contact, and export tests. |
 | Bevy | not-evaluated | No current conversion, addressability, or runtime run. | Conversion, target mapping, runtime, and performance tests. |
@@ -77,15 +74,15 @@ It is a poor basis for approving a universal locomotion graph, seamless cross-pa
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — official release evidence revalidated all eight constituent source baselines and declared contracts. The current rollup intentionally records only constituent-derived counts and findings; collection-level taxonomy, runtime sets, and compatibility were not regenerated.
+AnimSmith 0.10.0 — official release evidence revalidated all eight constituent source baselines, declared contracts, and 159 bounded constituent remediation candidates. The current rollup intentionally records only constituent-derived counts and findings; collection-level taxonomy, runtime sets, and compatibility were not regenerated.
 
 AnimSmith 0.7.0 — historical collection output recorded 582 logical motions, 90 runtime-set records, 14 cross-pack candidates, and 159 external candidates. Those superseded collection-derived claims are retained as historical context only and are not current evidence.
 
-AnimSmith 0.4.0 — retained dated Unity probes and shared-path comparison predate this refresh; they remain separately labeled observations.
+AnimSmith 0.4.0 — retained dated Unity 6000.5.8f1 graph probes recorded 22/22 contextual and 33/33 melee required checks with four expected Generic-rig failures; a shared-path comparison recorded 700 byte-identical comparisons across 28 constituent pairs. Neither result was rerun and neither is current engine or compatibility evidence.
 
 ## Evidence status
 
-Current evidence is the official 0.10.0 constituent rerun: 918 source candidates, 895 individual motion-labelled inputs, 3,672 baseline commands, and 103 external transform candidates from four melee constituents. Current canonical logical-motion and runtime-set totals are both zero because no collection classification or binding was accepted. Retained dated shared-path and Unity observations are not current evaluator, engine, or readiness claims. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) define the exact boundary.
+Current evidence is the official 0.10.0 constituent rerun: 918 source candidates, 895 individual motion-labelled inputs, 3,672 baseline commands, and 159 external transform candidates across all eight constituents. Current canonical logical-motion and runtime-set totals are both zero because no collection classification or binding was accepted. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) define the exact boundary.
 
 ## Sources
 

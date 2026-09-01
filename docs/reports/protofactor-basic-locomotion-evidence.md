@@ -74,11 +74,11 @@ No runtime sets were identified.
 | Inspect | `evaluated-finding` | 179 baseline attempts completed |
 | Segment | `not-evaluated` | No separate segmentation trial selected |
 | Root motion | `not-evaluated` | Measurements completed; no root-motion policy or controller acceptance was evaluated |
-| Conform | `not-evaluated` | No target rig, retarget trial, or conformance policy |
+| Conform | `partially-evaluated` | Twelve declared slices and 24 declared in-place gait anchors generated external candidates; no target-rig or engine acceptance was run |
 | Validate | `evaluated-finding` | Default lint completed for every FBX |
-| Optimize | `not-evaluated` | No source change authorized |
-| Export | `not-evaluated` | No export handoff selected |
-| Gate/report | `partially-evaluated` | Current baseline and boundary recorded |
+| Optimize | `partially-evaluated` | Three external constant-track candidates were generated; source was unchanged and runtime equivalence remains unproved |
+| Export | `partially-evaluated` | Candidates were written as external GLBs only; no engine handoff was selected |
+| Gate/report | `partially-evaluated` | Current baseline, remediation, and boundary recorded |
 
 ### Readiness evidence by clip set
 
@@ -117,7 +117,9 @@ The scrubbed inventory records 385 regular files totaling 296,205,291 bytes; 179
 
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
-| Current source loading | No transform or repair trial is applicable | Loaded successfully; no transform trial was selected | Official baseline is exhaustive | No generated output was selected |
+| 36 negative-time findings in 12 inputs | Declared `transform --slice` windows at 30 FPS | 12/12 generated candidates; the 36 `time-monotonic` errors are absent after slicing | Every output passed `inspect`, JSON `measure`, and `fix --dry-run`; `diff` exited 1 for the intended change | Remaining loop-seam findings; candidates are unpromoted and no engine/visual result exists |
+| In-place locomotion phase disagreement | Declared `transform --gait-anchor` on 24 selected in-place members | 24/24 generated candidates; circular spreads changed 0.7156245→0.0501911, 0.4630161→0.0938395, and 0.6597812→0.0724415 | Every output passed `inspect`, JSON `measure`, and `fix --dry-run`; `diff` exited 1 for the intended change | Post-output declared lint findings remain; no root-motion, engine, visual, or gameplay acceptance is claimed |
+| Dense constant tracks | Declared `transform --prune-constant-tracks` on three representatives | 3/3 generated candidates | Every output passed `inspect`, JSON `measure`, and `fix --dry-run`; `diff` exited 1 for the intended change | Semantic/runtime equivalence is unproved; candidates are unpromoted |
 
 ## Engine procedures and evidence
 
@@ -141,11 +143,11 @@ The scrubbed inventory records 385 regular files totaling 296,205,291 bytes; 179
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — official baseline reran the corpus with the verified release. Earlier 0.7.0 results are superseded historical evidence and are not used by the current report.
+AnimSmith 0.10.0 — official baseline reran the corpus with the verified release, then produced the current 39-candidate remediation evidence. Earlier 0.7.0 evaluator and any engine/offline results are superseded historical evidence and are not used by the current report.
 
 ## Reproduction
 
-Evaluator: official tag `v0.10.0`, peeled source commit `db91d8dda3326f97f581d4d62104d928caec383f`, binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`. Bounded version/help/capability capture and representative FBX admission succeeded before the exhaustive batch. The scrubbed command manifest digest is `37303fc996d73b11da8abc0980505e862cc00dac905dfdb8c1fe3f7517624b4c`; each of the 179 files received `inspect`, JSON `measure`, JSON `lint`, and Markdown `lint`, all completed with preserved output.
+Evaluator archive: [official Linux release archive](https://github.com/mmannerm/animsmith/releases/download/v0.10.0/animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz), SHA-256 `8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662`; member `animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith`, tag `v0.10.0`, peeled commit `db91d8dda3326f97f581d4d62104d928caec383f`, binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`. Working tree: N/A (official archive). The binary had the expected `fbx` and `report` feature surface; version, top-level help, and help for `inspect`, `measure`, `lint`, `transform`, `diff`, and `fix` all succeeded, as did representative FBX admission. Current outputs are output schema v19 / measurements schema v18. The safe external evidence locators are `external:protofactor-remediation-0.10.0/basic-locomotion/remediation-v0.10.0-final/preflight.json` (SHA-256 `4fdb2d20e3067c47342cac542d28e7cd5e3272f01843a302827fff5c94af86c9`), `remediation-results.json` (`523cca49b496690cf47e7301a72e3839e893721b4acc7e9430e670c830480ea3`), and `public-summary.json` (`0574ba377f74d2063cfba8d630f15f595d862ca2bc5ed217984dc8eb2128d466`). Each of the 179 source files received `inspect`, JSON `measure`, JSON `lint`, and Markdown `lint`; all remediation command output and digests remain external.
 
 ## Sources
 

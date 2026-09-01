@@ -16,7 +16,7 @@
 
 ## Technical decision
 
-The current baseline is mechanically readable with AnimSmith 0.10.0, but this pack is not a blanket game-ready asset. 544 baseline commands completed successfully; strict contracts require loop and blend review. 28 bounded remediation candidates transformed successfully; they remain candidates pending engine, contact, and visual review.
+The current baseline is mechanically readable with AnimSmith 0.10.0, but this pack is not a blanket game-ready asset. 544 baseline commands completed successfully; strict contracts require loop and blend review. The 28 bounded remediation candidates comprise 24 gait-anchor, 3 prune-constant-tracks, and 1 duplicate-loop-endpoint removal transform; all exited 0 with post-output checks recorded in the external evidence projection. They remain external, unpromoted candidates pending engine, contact, and visual review.
 
 ## Capability coverage
 

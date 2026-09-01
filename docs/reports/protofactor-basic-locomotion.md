@@ -16,7 +16,7 @@
 
 ## Technical decision
 
-The verified AnimSmith 0.10.0 release loads all 179 delivered FBXs. Untouched lint finds 24,186 `constant-track` notes and 36 `time-monotonic` errors across 12 files. Current declared contracts cover 177 individual motions; 58 command invocations pass and 119 fail per format, so loop and continuity results are conditions rather than approval. No engine, visual, retarget, contact, or gameplay run occurred.
+The verified AnimSmith 0.10.0 release loads all 179 delivered FBXs. Untouched lint finds 24,186 `constant-track` notes and 36 `time-monotonic` errors across 12 files. Current declared contracts cover 177 individual motions; 58 command invocations pass and 119 fail per format, so loop and continuity results are conditions rather than approval. The declared remediation rerun generated all 39 candidates: 12 slices removed the 36 time-ordering errors, 24 in-place gait anchors reduced the three measured circular spreads from 0.7156245/0.4630161/0.6597812 to 0.0501911/0.0938395/0.0724415, and three constant-track candidates were emitted. These are mechanically verified, unpromoted candidates; no engine, visual, retarget, contact, or gameplay run occurred.
 
 ## Capability coverage
 
@@ -26,7 +26,7 @@ The verified AnimSmith 0.10.0 release loads all 179 delivered FBXs. Untouched li
 
 ### Partial supporting gameplay
 
-- Mechanical input health is measured, but contract failures require loop and continuity decisions before locomotion blend adoption.
+- Mechanical input health is measured. The current slices remove their known time-ordering errors, while remaining contract findings require loop and continuity decisions before locomotion blend adoption.
 
 ### Absent
 
@@ -48,7 +48,7 @@ No important runtime sets were identified.
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| BL-010 | major | [Time ordering and loop continuity](../game-ready-clips.md#the-readiness-ladder) require declared review before runtime use. | artist-author | Repair or re-export malformed source and decide intended loop policy. | Only declared mechanical checks are current; no automatic motion repair is established. | `observed-animsmith`; 12 baseline time errors and 119 failing contract invocations per format. |
+| BL-010 | major | [Time ordering and loop continuity](../game-ready-clips.md#the-readiness-ladder) require declared review before runtime use. | artist-author | Review the 12 external slice candidates and decide loop policy before promotion. | Current declared slicing, gait anchoring, and constant-track pruning are mechanical candidates only; no automatic artistic repair is established. | `observed-animsmith`; slices remove 36 time errors, while original contracts still have 119 failing invocations per format. |
 
 ## Engine status
 
@@ -65,7 +65,7 @@ Best fit is an engine project willing to declare and validate its locomotion con
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — official release revalidated the 179-FBX baseline and 177 declared contracts. Earlier 0.7.0 evidence is retained historical evidence only.
+AnimSmith 0.10.0 — official release revalidated the 179-FBX baseline and 177 declared contracts, then reran 12 declared slices, 24 in-place gait anchors, and three constant-track trials. Earlier 0.7.0 evaluator and any engine or offline evidence are historical only.
 
 ## Evidence status
 

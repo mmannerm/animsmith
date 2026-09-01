@@ -16,7 +16,7 @@
 
 ## Technical decision
 
-Official AnimSmith 0.10.0 loads all 77 delivered FBXs. The untouched baseline has 9,011 `constant-track` notes and no errors. Contracts cover 75 motion files: 34 pass and 41 fail, with 26 loop-closure, 41 rotational loop-seam, and 39 velocity loop-seam errors. No current traversal, contact, root-motion, engine, or visual test establishes runtime acceptance.
+Official AnimSmith 0.10.0 loads all 77 delivered FBXs. The untouched baseline has 9,011 `constant-track` notes and no errors. Contracts cover 75 motion files: 34 pass and 41 fail, with 26 loop-closure, 41 rotational loop-seam, and 39 velocity loop-seam errors. One current constant-track candidate was generated and mechanically verified as part of the combined 17-candidate remediation rerun; it remains unpromoted. No current traversal, contact, root-motion, engine, or visual test establishes runtime acceptance.
 
 ## Capability coverage
 
@@ -65,7 +65,7 @@ Use only after target-engine traversal and contact acceptance. Cross-pack and ar
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — official release revalidated all 77 FBXs and 75 declared contracts. Earlier 0.7.0 evidence is superseded historical evidence only.
+AnimSmith 0.10.0 — official release revalidated all 77 FBXs and 75 declared contracts, then ran one constant-track pruning candidate in the combined remediation pass. Earlier 0.7.0 evaluator and any engine or offline evidence are historical only.
 
 ## Evidence status
 

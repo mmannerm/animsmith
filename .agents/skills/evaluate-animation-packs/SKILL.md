@@ -124,10 +124,13 @@ Before assessing assets:
 Before any exhaustive inventory, baseline, or remediation batch, perform and
 record a bounded preflight of the exact evaluator that batch will use. Prefer
 an official artifact for the requested tag/release, or build into a dedicated
-feature-isolated target directory. Record the binary path, version, SHA-256,
-source tag or commit, dirty state, and expected feature surface (including the
-source formats and commands required by the batch). A version string and
-binary digest alone do not identify the evaluator's feature surface.
+feature-isolated target directory. Record the artifact locator, archive
+SHA-256, exact binary member path, binary version and SHA-256, source tag or
+commit, working-tree state (`N/A` for an official artifact), and expected
+feature surface (including the source formats and commands required by the
+batch). Keep machine-local paths in external evidence rather than public
+reports. A version string and binary digest alone do not identify the
+evaluator's feature surface.
 
 Run the binary's top-level and required-command `--help` checks, then run
 capability checks and a bounded representative-input admission for every
@@ -135,11 +138,13 @@ source format in scope (for example, an authorized synthetic or self-authored
 fixture when the format permits it). The admission must demonstrate that the
 selected evaluator can load the format and expose the operation the batch
 requires before exhaustive work begins. Preserve commands, inputs, exit codes,
-and stdout/stderr as preflight evidence. If any required capability or format
-admission is absent, stop or refuse the batch before exhaustive work; do not
-reinterpret the refusal as a defect in the animation pack. A tool-feature
-unavailability is an evaluator/operator limitation, not a pack defect, and
-must remain distinct from pack findings.
+and stdout/stderr as preflight evidence. Publish a scrubbed logical evidence
+locator plus digest so the report can identify that durable record without
+exposing licensed assets or private paths. If any required capability or
+format admission is absent, stop or refuse the batch before exhaustive work;
+do not reinterpret the refusal as a defect in the animation pack. A
+tool-feature unavailability is an evaluator/operator limitation, not a pack
+defect, and must remain distinct from pack findings.
 
 Never select an evaluator from an ambiguous shared `target/release` after
 mixed-feature builds. If that directory may contain artifacts from different

@@ -34,7 +34,7 @@ Current evidence boundary; the [canonical readiness ladder](../game-ready-clips.
 | Rigs/export variants | 132 animation-bearing candidates | partial | Mechanical inspection only | Runtime compatibility not run |
 | AnimSmith baseline | 136 | 136 | 544 baseline commands completed successfully; strict contracts require loop and blend review. | N/A |
 | Declared contracts | 132 selected motion inputs | 132 | 132 declared-contract inputs: 34 clean and 230 non-clean command results. | Engine behavior is out of scope |
-| Remediation candidates | 28 | 28 | All transforms exit 0 | Engine/visual review pending |
+| Remediation candidates | 28 | 28 | 24 gait-anchor + 3 prune-constant-tracks + 1 duplicate-loop-endpoint removal; all transforms exit 0 | External candidates remain unpromoted; engine/visual review pending |
 | Engine import/playback | Unknown | 0 | 0 | Not run |
 | Blend/mask/retarget | Unknown | 0 | 0 | Not run |
 
@@ -117,7 +117,7 @@ Current inventory found 136 FBX candidates, including 132 animation-bearing cand
 
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
-| Mechanical cleanup and gait candidates | Bounded external transform trials | 28/28 transform commands exit 0 | Scripted post-transform checks recorded externally | Not engine, visual, or artistic acceptance |
+| Mechanical cleanup and gait candidates | 24 gait-anchor, 3 prune-constant-tracks, 1 duplicate-loop-endpoint removal | 28/28 transform commands exit 0 | Post-output inspect/measure/diff/config-lint recorded in `external:protofactor-melee-remediation-0.10.0/public-evidence-projection.json` (SHA-256 `4004862e2f2f7f3719e796c2cedb9d3c264eb943588d5cb2ae78baf917737ac7`) | External candidates remain unpromoted; no engine, visual, or artistic acceptance |
 
 ## Engine procedures and evidence
 
@@ -146,7 +146,7 @@ AnimSmith 0.10.0 — revalidated inventory, baseline, contracts, and bounded rem
 
 ## Reproduction
 
-Official tag `v0.10.0`; peeled source commit `db91d8dda3326f97f581d4d62104d928caec383f`; evaluator `animsmith 0.10.0`; binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`. Bounded help/capability capture and representative FBX admission succeeded before the exhaustive serial batch. External evidence retains version/help, source inventory, baseline, contract, and remediation records. No licensed asset, derivative, private path, or output file is published.
+Official release archive URL `https://github.com/mmannerm/animsmith/releases/download/v0.10.0/animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz`; archive SHA-256 `8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662`; member `animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith`; evaluator binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`; tag `v0.10.0`, peeled commit `db91d8dda3326f97f581d4d62104d928caec383f`; working tree `N/A`; compiled features `fbx/report`. Expected command/help surface and representative FBX admission succeeded before the exhaustive serial batch. Current operation trace and scrubbed preflight are recorded at `external:protofactor-melee-remediation-0.10.0/public-evidence-projection.json` (SHA-256 `4004862e2f2f7f3719e796c2cedb9d3c264eb943588d5cb2ae78baf917737ac7`). No licensed asset, derivative, private path, or output file is published.
 
 ## Sources
 

@@ -3234,6 +3234,142 @@ class ReportValidatorTests(unittest.TestCase):
                     [],
                 )
 
+    def test_published_reports_pin_official_evaluator_preflight(self) -> None:
+        repository = Path(__file__).resolve().parents[4]
+        appendices = sorted((repository / "docs" / "reports").glob("*-evidence.md"))
+        artifact_url = (
+            "https://github.com/mmannerm/animsmith/releases/download/v0.10.0/"
+            "animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz"
+        )
+        required = (
+            "8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662",
+            "animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith",
+            "2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387",
+            "db91d8dda3326f97f581d4d62104d928caec383f",
+            "representative FBX admission",
+        )
+        for appendix in appendices:
+            document = report_validator.parse_markdown(
+                appendix.read_text(encoding="utf-8")
+            )
+            reproduction = "\n".join(
+                paragraph["text"]
+                for paragraph in document["paragraphs"]
+                if paragraph["section"] == "Reproduction"
+            )
+            reproduction_links = {
+                link["destination"]
+                for paragraph in document["paragraphs"]
+                if paragraph["section"] == "Reproduction"
+                for link in paragraph["links"]
+            }
+            with self.subTest(appendix=appendix.name):
+                self.assertTrue(
+                    artifact_url in reproduction or artifact_url in reproduction_links
+                )
+                for field in required:
+                    self.assertIn(field, reproduction)
+                self.assertRegex(
+                    reproduction,
+                    r"(?i)working[- ]tree(?: state)?(?: is|:)? N/A",
+                )
+                self.assertIn("fbx", reproduction)
+                self.assertIn("report", reproduction)
+                self.assertIn("preflight", reproduction)
+                self.assertRegex(reproduction, r"[0-9a-f]{64}")
+                if appendix.name.startswith("mixamo-"):
+                    self.assertIn("preflight-status-v1", reproduction)
+                    self.assertIn(
+                        "739930cd9c04189be3ffe1d3f7381800898d8d4b35c75c9a519e57f6cfad1fad",
+                        reproduction,
+                    )
+
+    def test_published_history_boundary_rejects_a_body_regression(self) -> None:
+        repository = Path(__file__).resolve().parents[4]
+        report = repository / "docs" / "reports" / "mixamo-basic-locomotion.md"
+        text = report.read_text(encoding="utf-8")
+        mutated = text.replace(
+            "## Technical decision\n",
+            "## Technical decision\n\nAnimSmith 0.7.0 produced this retained result.\n",
+            1,
+        )
+        errors = report_validator.validate(mutated)
+        self.assertIn(
+            "AnimSmith version history must appear only under Changes between AnimSmith versions: 0.7.0",
+            errors,
+        )
+
+    def test_mixamo_collection_inventory_reconciles_constituent_appendices(self) -> None:
+        repository = Path(__file__).resolve().parents[4]
+        reports = repository / "docs" / "reports"
+        collection = report_validator.parse_markdown(
+            (reports / "mixamo-locomotion-collection-evidence.md").read_text(
+                encoding="utf-8"
+            )
+        )
+        tables = [
+            table
+            for table in collection["tables"]
+            if table["section"] == "Pack inventory and content evidence"
+            and [cell["text"] for cell in table["header"]]
+            == ["Constituent", "FBX files", "Manifest-declared motions"]
+        ]
+        self.assertEqual(len(tables), 1)
+        rows = {
+            row[0]["text"]: (int(row[1]["text"]), int(row[2]["text"]))
+            for row in tables[0]["rows"]
+        }
+        total = rows.pop("Total")
+        constituents = {
+            "Basic": "mixamo-basic-locomotion-evidence.md",
+            "Female Basic": "mixamo-female-basic-locomotion-evidence.md",
+            "Female": "mixamo-female-locomotion-evidence.md",
+            "Locomotion": "mixamo-locomotion-evidence.md",
+            "Longbow": "mixamo-longbow-locomotion-evidence.md",
+            "Magic": "mixamo-magic-locomotion-evidence.md",
+            "Male": "mixamo-male-locomotion-evidence.md",
+            "Pistol/Handgun": "mixamo-pistol-handgun-locomotion-evidence.md",
+            "Rifle 8-Way": "mixamo-rifle-8-way-locomotion-evidence.md",
+        }
+        self.assertEqual(set(rows), set(constituents))
+        for name, filename in constituents.items():
+            document = report_validator.parse_markdown(
+                (reports / filename).read_text(encoding="utf-8")
+            )
+            field_tables = [
+                table
+                for table in document["tables"]
+                if table["section"] == "Evaluation scope and provenance"
+                and [cell["text"] for cell in table["header"]] == ["Field", "Value"]
+            ]
+            self.assertEqual(len(field_tables), 1, filename)
+            fields = {
+                row[0]["text"]: row[1]["text"] for row in field_tables[0]["rows"]
+            }
+            delivered = re.fullmatch(
+                r"(\d+) extracted FBX files from paired archive variants",
+                fields["Delivered scope"],
+            )
+            self.assertIsNotNone(delivered, filename)
+            prose = "\n".join(
+                paragraph["text"]
+                for paragraph in document["paragraphs"]
+                if paragraph["section"] == "Evaluation scope and provenance"
+            )
+            motions = re.search(
+                r"; (\d+) remains separate source metadata\.", prose
+            )
+            self.assertIsNotNone(motions, filename)
+            expected = (int(delivered.group(1)), int(motions.group(1)))
+            self.assertEqual(rows[name], expected, filename)
+        self.assertEqual(
+            total,
+            tuple(
+                sum(values[index] for values in rows.values())
+                for index in range(2)
+            ),
+        )
+
 
 class RegenerationContractTests(unittest.TestCase):
     repository = Path(__file__).resolve().parents[4]
@@ -3440,7 +3576,9 @@ class RegenerationContractTests(unittest.TestCase):
         )
         self.assertIn("official artifact for the requested tag/release", skill)
         self.assertIn("dedicated feature-isolated target directory", skill)
-        self.assertIn("version, SHA-256, source tag or commit, dirty state", skill)
+        self.assertIn("artifact locator, archive SHA-256", skill)
+        self.assertIn("binary version and SHA-256, source tag or commit", skill)
+        self.assertIn("working-tree state (N/A for an official artifact)", skill)
         self.assertIn("expected feature surface", skill)
         self.assertIn("top-level and required-command --help checks", skill)
         self.assertIn("representative-input admission for every", skill)

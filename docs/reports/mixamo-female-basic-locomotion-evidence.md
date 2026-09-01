@@ -36,7 +36,7 @@ The evaluation manifest schema is `urn:animsmith:skill:animation-pack-evaluation
 | Rigs/export variants | 1 | 1 | Mixamo profile used | Retarget behavior unavailable |
 | AnimSmith baseline | 20 | 20 | 0 errors; 5 warnings; 2,843 notes | — |
 | Declared contracts | 20 | 20 | 6 root-motion stationary-root errors; 2 in-place and 3 root-motion duration warnings | Per-clip intent unavailable |
-| Offline visual reports | 2 | 0 | 0 | Generated externally but not visually inspected |
+| AnimSmith visual reports | 2 | 0 | 0 | Generated externally but not visually inspected |
 | Engine import/playback | 4 | 0 | 0 | No engines/project supplied |
 | Blend/mask/retarget | 1 | 0 | 0 | No runtime contract supplied |
 
@@ -104,7 +104,7 @@ No runtime sets were identified.
 
 ## Pack inventory and content evidence
 
-The external inventory contains 20 FBX files and 18 manifest-declared motions. Archive member counts exceed manifest motion counts by one non-motion/reference asset per archive. Delivered metadata declares 30 fps FBX 2019 export preferences, but this is not a target-engine import result.
+The external inventory contains 20 FBX files and 18 manifest-declared motions. Archive member counts exceed manifest motion counts by one non-motion/reference asset per archive. Delivered metadata declares 30 fps FBX export preferences, but this is not a target-engine import result.
 
 ## Mechanical baseline
 
@@ -145,7 +145,11 @@ AnimSmith 0.10.0 — Official `v0.10.0` rerun revalidated output schema v19 and 
 
 ## Reproduction
 
-AnimSmith `0.10.0` (tag `v0.10.0`, commit `db91d8dda3326f97f581d4d62104d928caec383f`, binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`, output schema v19, measurements schema v18) was preflighted with top-level and required-command help plus a representative FBX admission, then captured with external empty-baseline and variant-contract configs. Source and extracted inventories, command outputs, exit codes, and SHA-256 digests remain outside the repository.
+working-tree state is N/A (official release artifact).
+
+Reproduction used the official release artifact: URL `https://github.com/mmannerm/animsmith/releases/download/v0.10.0/animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz`; archive SHA-256 `8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662`; member `animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith`; binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`. Official tag is `v0.10.0`, peeled commit `db91d8dda3326f97f581d4d62104d928caec383f`; working-tree state `N/A`; compiled features `fbx,report`; output schema v19 and measurements schema v18.
+
+Expected surface was `--version`, top-level `--help`, `inspect --help`, `measure --help`, `lint --help`, and `report --help`, plus representative FBX admission. Safe normalized preflight status is `preflight-status-v1`, SHA-256 `739930cd9c04189be3ffe1d3f7381800898d8d4b35c75c9a519e57f6cfad1fad`; available help-digest prefixes are version `35bb24c48d2e2fcf9ae5753338f09722ee50f9c002d00df7d0d30afa5d2ac4a0`, top-level `905f42d113783490bc8f3dea6bcda6bfc648a7e2f29b71fec99c41e6701099c8`, inspect `c45acaabc9e357af7c2c6265a18dccbb67b6cf1cb7dc45263652e0f5fa922c0b`, measure `cca0b44510c65ee671ac13b591712b6c67f6b1a4f2efdb0aca4ba26293e3d169`, lint `e216ccd638df639853687025f4eaab35e03c32d306b0dbcd0cb2c5c19ff53def`, and report `8298b2c9358bc796362eae5aeae22d86c9a06843c0dec7eb0f06cee82b27ad03`. External empty-baseline and variant-contract configs, inventories, command outputs, exit codes, and remaining digests are retained outside the repository.
 
 ## Sources
 

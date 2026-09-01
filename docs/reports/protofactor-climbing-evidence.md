@@ -74,11 +74,11 @@ No runtime sets were identified.
 | Inspect | `evaluated-finding` | 77 baseline attempts completed |
 | Segment | `not-evaluated` | No separate segmentation trial selected |
 | Root motion | `not-evaluated` | Measurements completed; no root-motion policy or controller acceptance was evaluated |
-| Conform | `not-evaluated` | No conformance trial selected |
+| Conform | `not-evaluated` | No target rig or conformance policy was selected |
 | Validate | `evaluated-finding` | Lint completed for every FBX |
-| Optimize | `not-evaluated` | No transform trial |
-| Export | `not-evaluated` | No export or handoff trial selected |
-| Gate/report | `partially-evaluated` | Current baseline recorded |
+| Optimize | `partially-evaluated` | One external constant-track candidate was generated; source was unchanged and runtime equivalence remains unproved |
+| Export | `partially-evaluated` | Candidate was written as an external GLB only; no engine handoff was selected |
+| Gate/report | `partially-evaluated` | Current baseline, remediation, and boundary recorded |
 
 ### Readiness evidence by clip set
 
@@ -117,7 +117,7 @@ The scrubbed inventory records 179 regular files totaling 194,505,327 bytes; 77 
 
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
-| Current source loading | No repair or transform applicable | Loaded successfully; no transform trial was selected | Exhaustive official baseline | No generated output was selected |
+| Dense constant tracks | Declared `transform --prune-constant-tracks` on one representative | 1/1 external candidate generated in the combined 17-candidate rerun | Transform, `inspect`, and JSON `measure` exited 0; `diff` exited 1 for the intended change | Retained lint findings; runtime equivalence, engine behavior, and visual acceptance are unproved |
 
 ## Engine procedures and evidence
 
@@ -141,11 +141,11 @@ The scrubbed inventory records 179 regular files totaling 194,505,327 bytes; 77 
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — exhaustive current baseline reran all 77 FBXs with the verified official release. Earlier 0.7.0 evidence is superseded historical evidence only.
+AnimSmith 0.10.0 — exhaustive current baseline reran all 77 FBXs with the verified official release, then produced one current pruning candidate in the combined remediation pass. Earlier 0.7.0 evaluator and any engine/offline results are historical only.
 
 ## Reproduction
 
-Evaluator: official tag `v0.10.0`, peeled source commit `db91d8dda3326f97f581d4d62104d928caec383f`, binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`. Bounded version/help/capability capture and representative FBX admission succeeded before the exhaustive batch. Command manifest SHA-256 `32a23ffd874eae0c9f20d821b195cdd05520cbb1ce27068c65dbfd6569baa991`; every baseline invocation completed with preserved command output.
+Evaluator archive: [official Linux release archive](https://github.com/mmannerm/animsmith/releases/download/v0.10.0/animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz), SHA-256 `8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662`; member `animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith`, tag `v0.10.0`, peeled commit `db91d8dda3326f97f581d4d62104d928caec383f`, binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`. Working tree: N/A (official archive). The binary had the expected `fbx` and `report` feature surface; version, top-level help, and help for `inspect`, `measure`, `lint`, `transform`, `diff`, and `fix` all succeeded, as did representative FBX admission. Current outputs are output schema v19 / measurements schema v18. Safe evidence is external at `external:protofactor-remediation-0.10.0/`: preflight SHA-256 `dde0aa485d392c360736346041558b72f39798de7fdcc443ad7aaba9fc8b445a`, status SHA-256 `d85a1c53d5d1fcb829e0574051f173f6e1c08a409358385f4400940e11652e1f`, and ledger SHA-256 `fdab771891c1ee7d316bab224f0dc2bb65cd286f84b21c9c91cab171f580f5ec`. All transform, `inspect`, and JSON `measure` invocations exited 0; `diff` exited 1 for intentional output changes. Retained lint findings and all candidate payloads remain external.
 
 ## Sources
 

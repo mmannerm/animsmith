@@ -16,7 +16,7 @@
 
 ## Technical decision
 
-Official AnimSmith 0.10.0 loads all 72 delivered FBXs. The untouched baseline has 9,915 `constant-track` notes and no errors. Contracts cover 70 motion files: 28 pass and 42 fail, with 15 loop-closure, 42 rotational loop-seam, and 31 velocity loop-seam errors. No current blend, root-motion, engine, retarget, contact, or visual test establishes acceptance.
+Official AnimSmith 0.10.0 loads all 72 delivered FBXs. The untouched baseline has 9,915 `constant-track` notes and no errors. Contracts cover 70 motion files: 28 pass and 42 fail, with 15 loop-closure, 42 rotational loop-seam, and 31 velocity loop-seam errors. Fourteen declared in-place gait candidates and one constant-track candidate were generated and mechanically verified in the combined 17-candidate remediation rerun; all remain unpromoted. No current blend, root-motion, engine, retarget, contact, or visual test establishes acceptance.
 
 ## Capability coverage
 
@@ -26,7 +26,7 @@ Official AnimSmith 0.10.0 loads all 72 delivered FBXs. The untouched baseline ha
 
 ### Partial supporting gameplay
 
-- Current contract evidence covers 14 declared in-place files, but loop and blend conditions remain unresolved.
+- Current contract evidence covers 14 declared in-place files. Their external gait candidates are mechanically verified, but loop and blend conditions remain unresolved.
 
 ### Absent
 
@@ -65,7 +65,7 @@ Use only after loop, blend, retarget, and visual acceptance. Cross-pack compatib
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — official release revalidated all 72 FBXs and 70 declared contracts. Earlier 0.7.0 evidence is superseded historical evidence only.
+AnimSmith 0.10.0 — official release revalidated all 72 FBXs and 70 declared contracts, then ran 14 declared in-place gait anchors and one constant-track pruning candidate in the combined remediation pass. Earlier 0.7.0 evaluator and any engine or offline evidence are historical only.
 
 ## Evidence status
 
