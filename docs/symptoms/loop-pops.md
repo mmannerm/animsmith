@@ -26,7 +26,7 @@ close.
 
 | Before: `walk-dirty.glb` | After: `walk.glb` |
 |---|---|
-| ![Foot height before the fix: the curves end away from their start](../visuals/walk-dirty.foot-height.svg) | ![Foot height after the fix: the curves return to their start](../visuals/walk.foot-height.svg) |
+| <img src="../visuals/walk-dirty.foot-height.svg" alt="Foot height before the fix: the curves end away from their start" width="360"> | <img src="../visuals/walk.foot-height.svg" alt="Foot height after the fix: the curves return to their start" width="360"> |
 
 <iframe src="../visuals/walk-dirty.report.html#embed=1&finding=0" title="AnimSmith report for walk-dirty.glb, scrubbed to the judged seam frame" width="100%" height="520" loading="lazy"></iframe>
 
