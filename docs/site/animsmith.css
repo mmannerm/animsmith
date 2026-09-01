@@ -1,0 +1,753 @@
+/*
+ * AnimSmith documentation theme.
+ *
+ * Loaded as mdBook `additional-css`, after variables.css, general.css and
+ * chrome.css, so it wins ties on equal specificity.  It redefines the mdBook
+ * theme variables for `light` and `navy` only; `coal`, `ayu` and `rust` keep
+ * their stock palettes.  Rules outside those two blocks read AnimSmith tokens
+ * through `var(--as-x, <mdBook fallback>)` so the other three themes stay
+ * usable.
+ *
+ * The dark palette is the animsmith-report viewer palette
+ * (crates/animsmith-report/assets/viewer.css), so an embedded report reads as
+ * part of the page.
+ *
+ * Fonts are self-hosted subsets, declared in fonts/fonts.css.  No external
+ * requests are made from this stylesheet.
+ */
+
+/* ------------------------------------------------------------------ *
+ * 1. Global metrics and font stacks
+ * ------------------------------------------------------------------ */
+
+:root {
+    --as-display-font: "Barlow Semi Condensed", "Barlow SemiCondensed",
+        "Roboto Condensed", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --as-sans-font: "Source Sans 3", "Source Sans Pro", system-ui, -apple-system,
+        "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono-font: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono",
+        Menlo, Consolas, "Liberation Mono", monospace;
+
+    --content-max-width: 820px;
+    --sidebar-target-width: 290px;
+    --code-font-size: 0.86em;
+
+    /* Copy-to-clipboard glyph, drawn as a mask so it can take a token colour
+       instead of mdBook's hand-tuned filter chain.  Path data from octicons
+       v2.0.0 (MIT), the same artwork chrome.css uses. */
+    --as-copy-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='21' height='20' viewBox='0 0 24 25'%3E%3Cpath d='M18 20h2v3c0 1-1 2-2 2H2c-.998 0-2-1-2-2V5c0-.911.755-1.667 1.667-1.667h5A3.323 3.323 0 0110 0a3.323 3.323 0 013.333 3.333h5C19.245 3.333 20 4.09 20 5v8.333h-2V9H2v14h16v-3zM3 7h14c0-.911-.793-1.667-1.75-1.667H13.5c-.957 0-1.75-.755-1.75-1.666C11.75 2.755 10.957 2 10 2s-1.75.755-1.75 1.667c0 .911-.793 1.666-1.75 1.666H4.75C3.793 5.333 3 6.09 3 7z'/%3E%3Cpath d='M4 19h6v2H4zM12 11H4v2h8zM4 17h4v-2H4zM15 15v-3l-4.5 4.5L15 21v-3l8.027-.032L23 15z'/%3E%3C/svg%3E");
+
+    --as-logo: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 282 52' width='282' height='52' role='img' aria-label='AnimSmith'%3E%3Cg transform='translate(0 -0.25) scale(0.84)' fill='none' stroke-linecap='round'%3E%3Cpath d='M32 12 13 54' stroke='%231a1e2c' stroke-width='5.5'/%3E%3Cpath d='M32 12 51 54' stroke='%231a1e2c' stroke-width='5.5'/%3E%3Cpath d='M20 40 44 40' stroke='%233b67d6' stroke-width='5.5'/%3E%3Cg fill='%23ffffff' stroke='%231a1e2c' stroke-width='3.0'%3E%3Ccircle cx='13' cy='54' r='4.0'/%3E%3Ccircle cx='51' cy='54' r='4.0'/%3E%3Ccircle cx='20' cy='40' r='4.0'/%3E%3Ccircle cx='44' cy='40' r='4.0'/%3E%3C/g%3E%3Cpath d='M32 3 40 12 32 21 24 12Z' fill='%233b67d6'/%3E%3C/g%3E%3Cpath d='M81.9 42.5 80.7 37.8Q80.7 37.6 80.5 37.6H71.4Q71.2 37.6 71.2 37.8L70.1 42.5Q69.9 43 69.4 43H63.6Q62.9 43 63.1 42.4L71.8 9.5Q72 9 72.5 9H79.5Q80.1 9 80.2 9.5L89 42.4L89 42.6Q89 43 88.5 43H82.5Q82 43 81.9 42.5ZM72.7 32.3H79.1Q79.2 32.3 79.3 32.2Q79.4 32.1 79.4 32L76 17.9Q76 17.7 75.9 17.7Q75.8 17.7 75.7 17.9L72.5 32Q72.4 32.1 72.5 32.2Q72.6 32.3 72.7 32.3ZM112.1 26.2V42.4Q112.1 42.7 112 42.8Q111.8 43 111.5 43H105.9Q105.6 43 105.4 42.8Q105.3 42.7 105.3 42.4V27.2Q105.3 25.5 104.5 24.5Q103.6 23.5 102.2 23.5Q100.8 23.5 99.9 24.5Q99.1 25.5 99.1 27.2V42.4Q99.1 42.7 98.9 42.8Q98.7 43 98.5 43H92.8Q92.6 43 92.4 42.8Q92.2 42.7 92.2 42.4V18.6Q92.2 18.4 92.4 18.2Q92.6 18 92.8 18H98.5Q98.7 18 98.9 18.2Q99.1 18.4 99.1 18.6V20Q99.1 20.1 99.2 20.1Q99.3 20.2 99.4 20Q101.1 17.6 104.5 17.6Q108.1 17.6 110.1 19.9Q112.1 22.2 112.1 26.2ZM116.1 11.4Q116.1 9.7 117.2 8.6Q118.2 7.5 119.9 7.5Q121.6 7.5 122.7 8.6Q123.7 9.7 123.7 11.4Q123.7 13 122.6 14.1Q121.5 15.2 119.9 15.2Q118.2 15.2 117.2 14.1Q116.1 13 116.1 11.4ZM116.5 42.4V18.6Q116.5 18.4 116.7 18.2Q116.8 18 117.1 18H122.8Q123 18 123.2 18.2Q123.3 18.4 123.3 18.6V42.4Q123.3 42.7 123.2 42.8Q123 43 122.8 43H117.1Q116.8 43 116.7 42.8Q116.5 42.7 116.5 42.4ZM160.4 26.2V42.4Q160.4 42.7 160.2 42.8Q160 43 159.8 43H154.1Q153.9 43 153.7 42.8Q153.6 42.7 153.6 42.4V27.2Q153.6 25.5 152.8 24.5Q152 23.5 150.6 23.5Q149.2 23.5 148.4 24.5Q147.5 25.5 147.5 27.2V42.4Q147.5 42.7 147.4 42.8Q147.2 43 147 43H141.3Q141.1 43 140.9 42.8Q140.7 42.7 140.7 42.4V27.2Q140.7 25.5 139.9 24.5Q139.1 23.5 137.7 23.5Q136.3 23.5 135.5 24.5Q134.7 25.5 134.7 27.2V42.4Q134.7 42.7 134.5 42.8Q134.3 43 134.1 43H128.4Q128.2 43 128 42.8Q127.9 42.7 127.9 42.4V18.6Q127.9 18.4 128 18.2Q128.2 18 128.4 18H134.1Q134.3 18 134.5 18.2Q134.7 18.4 134.7 18.6V19.9Q134.7 20 134.8 20.1Q134.9 20.1 135 20Q136 18.8 137.3 18.2Q138.7 17.6 140.2 17.6Q142.4 17.6 144 18.5Q145.6 19.4 146.5 21.1Q146.5 21.2 146.6 21.2Q146.7 21.2 146.8 21Q147.9 19.2 149.5 18.4Q151.2 17.6 153.1 17.6Q156.6 17.6 158.5 19.9Q160.4 22.2 160.4 26.2ZM164 33.9V32.6Q164 32.4 164.1 32.2Q164.3 32 164.5 32H170.1Q170.4 32 170.5 32.2Q170.7 32.4 170.7 32.6V33.5Q170.7 35.2 172 36.4Q173.2 37.5 175.4 37.5Q177.3 37.5 178.3 36.5Q179.3 35.6 179.3 34.1Q179.3 32.9 178.6 32.1Q178 31.3 176.8 30.6Q175.7 29.9 173.3 28.7Q170.4 27.3 168.6 26Q166.7 24.7 165.4 22.7Q164.1 20.8 164.1 17.9Q164.1 15.1 165.4 13Q166.8 10.9 169.2 9.8Q171.6 8.6 174.7 8.6Q178 8.6 180.5 9.8Q183 11.1 184.4 13.3Q185.9 15.6 185.9 18.5V19.4Q185.9 19.7 185.7 19.9Q185.5 20 185.3 20H179.7Q179.4 20 179.3 19.9Q179.1 19.7 179.1 19.4V18.6Q179.1 16.8 177.9 15.7Q176.7 14.5 174.6 14.5Q172.8 14.5 171.8 15.4Q170.8 16.3 170.8 17.9Q170.8 19 171.4 19.8Q172 20.7 173.2 21.4Q174.4 22.2 176.9 23.4L177.9 24Q180.8 25.5 182.3 26.7Q183.9 27.8 185 29.5Q186.1 31.3 186.1 33.8Q186.1 38.2 183.1 40.8Q180.1 43.4 175.1 43.4Q171.8 43.4 169.2 42.2Q166.7 41 165.3 38.8Q164 36.7 164 33.9ZM222.3 26.2V42.4Q222.3 42.7 222.1 42.8Q221.9 43 221.7 43H216.1Q215.8 43 215.7 42.8Q215.5 42.7 215.5 42.4V27.2Q215.5 25.5 214.7 24.5Q213.9 23.5 212.5 23.5Q211.1 23.5 210.3 24.5Q209.5 25.5 209.5 27.2V42.4Q209.5 42.7 209.3 42.8Q209.1 43 208.9 43H203.2Q203 43 202.8 42.8Q202.7 42.7 202.7 42.4V27.2Q202.7 25.5 201.8 24.5Q201 23.5 199.7 23.5Q198.2 23.5 197.4 24.5Q196.6 25.5 196.6 27.2V42.4Q196.6 42.7 196.4 42.8Q196.3 43 196 43H190.4Q190.1 43 190 42.8Q189.8 42.7 189.8 42.4V18.6Q189.8 18.4 190 18.2Q190.1 18 190.4 18H196Q196.3 18 196.4 18.2Q196.6 18.4 196.6 18.6V19.9Q196.6 20 196.7 20.1Q196.8 20.1 196.9 20Q197.9 18.8 199.3 18.2Q200.6 17.6 202.2 17.6Q204.4 17.6 205.9 18.5Q207.5 19.4 208.4 21.1Q208.4 21.2 208.5 21.2Q208.6 21.2 208.7 21Q209.8 19.2 211.5 18.4Q213.1 17.6 215 17.6Q218.5 17.6 220.4 19.9Q222.3 22.2 222.3 26.2ZM226.2 11.4Q226.2 9.7 227.3 8.6Q228.3 7.5 230 7.5Q231.7 7.5 232.8 8.6Q233.8 9.7 233.8 11.4Q233.8 13 232.8 14.1Q231.7 15.2 230 15.2Q228.4 15.2 227.3 14.1Q226.2 13 226.2 11.4ZM226.6 42.4V18.6Q226.6 18.4 226.8 18.2Q226.9 18 227.2 18H232.9Q233.1 18 233.3 18.2Q233.5 18.4 233.5 18.6V42.4Q233.5 42.7 233.3 42.8Q233.1 43 232.9 43H227.2Q226.9 43 226.8 42.8Q226.6 42.7 226.6 42.4ZM250.3 23.2H246.5Q246.3 23.2 246.3 23.4V34.4Q246.3 35.9 246.9 36.5Q247.5 37.2 248.8 37.1H249.7Q250 37.1 250.1 37.3Q250.3 37.5 250.3 37.7V42.4Q250.3 43 249.7 43Q248.9 43 247.3 43Q243.5 43 241.6 41.8Q239.7 40.5 239.7 37V23.4Q239.7 23.2 239.5 23.2H237.2Q237 23.2 236.8 23Q236.7 22.8 236.7 22.6V18.6Q236.7 18.4 236.8 18.2Q237 18 237.2 18H239.5Q239.7 18 239.7 17.8V12.2Q239.7 12 239.9 11.8Q240.1 11.6 240.3 11.6H245.7Q245.9 11.6 246.1 11.8Q246.3 12 246.3 12.2V17.8Q246.3 18 246.5 18H250.3Q250.5 18 250.7 18.2Q250.8 18.4 250.8 18.6V22.6Q250.8 22.8 250.7 23Q250.5 23.2 250.3 23.2ZM274.2 26.2V42.4Q274.2 42.7 274 42.8Q273.8 43 273.6 43H267.9Q267.7 43 267.5 42.8Q267.3 42.7 267.3 42.4V27.2Q267.3 25.5 266.5 24.5Q265.7 23.5 264.3 23.5Q262.8 23.5 261.9 24.5Q261.1 25.5 261.1 27.2V42.4Q261.1 42.7 260.9 42.8Q260.8 43 260.5 43H254.8Q254.6 43 254.4 42.8Q254.2 42.7 254.2 42.4V9.6Q254.2 9.3 254.4 9.2Q254.6 9 254.8 9H260.5Q260.8 9 260.9 9.2Q261.1 9.3 261.1 9.6V20Q261.1 20.1 261.2 20.1Q261.3 20.2 261.4 20Q263.2 17.6 266.6 17.6Q270.1 17.6 272.1 19.9Q274.2 22.2 274.2 26.2Z' fill='%231a1e2c'/%3E%3C/svg%3E");
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. Tokens, and the mdBook variables they drive
+ * ------------------------------------------------------------------ */
+
+.light,
+html:not(.js) {
+    --as-ground: #f4f5f9;
+    --as-surface: #ffffff;
+    --as-ink: #1a1e2c;
+    --as-muted: #5b6382;
+    --as-line: #d9deea;
+    --as-line-strong: #b9c1d6;
+    --as-accent: #3b67d6;
+    --as-accent-ink: #2f56b8;
+    --as-accent-soft: #e7edfb;
+    --as-error: #cf3f5b;
+    --as-warning: #946414;
+    --as-pass: #287a3b;
+    --as-note: #6b7390;
+    --as-code-bg: #eef0f6;
+
+    /* Reading column is the lighter of the two; chrome is the tinted one. */
+    --as-page: var(--as-surface);
+    --as-panel: var(--as-ground);
+
+    --bg: var(--as-page);
+    --fg: var(--as-ink);
+
+    --sidebar-bg: var(--as-panel);
+    --sidebar-fg: var(--as-ink);
+    --sidebar-non-existant: var(--as-note);
+    --sidebar-active: var(--as-accent);
+    --sidebar-spacer: var(--as-line);
+
+    --scrollbar: var(--as-line-strong);
+
+    --icons: var(--as-muted);
+    --icons-hover: var(--as-ink);
+
+    --links: var(--as-accent-ink);
+    --inline-code-color: var(--as-ink);
+
+    --theme-popup-bg: var(--as-surface);
+    --theme-popup-border: var(--as-line-strong);
+    --theme-hover: var(--as-code-bg);
+
+    --quote-bg: var(--as-panel);
+    --quote-border: var(--as-line);
+
+    --warning-border: var(--as-warning);
+
+    --table-border-color: var(--as-line);
+    --table-header-bg: var(--as-code-bg);
+    --table-alternate-bg: var(--as-panel);
+
+    --searchbar-border-color: var(--as-line-strong);
+    --searchbar-bg: var(--as-surface);
+    --searchbar-fg: var(--as-ink);
+    --searchbar-shadow-color: var(--as-accent);
+    --searchresults-header-fg: var(--as-muted);
+    --searchresults-border-color: var(--as-line);
+    --searchresults-li-bg: var(--as-accent-soft);
+    --search-mark-bg: var(--as-accent-soft);
+
+    --footnote-highlight: var(--as-accent);
+    --overlay-bg: rgba(26, 30, 44, 0.32);
+
+    --color-scheme: light;
+}
+
+.navy {
+    --as-ground: #17171f;
+    --as-surface: #1e1e2a;
+    --as-ink: #d5d9e5;
+    --as-muted: #9099b2;
+    --as-line: #2c2c3c;
+    --as-line-strong: #3d3d52;
+    --as-accent: #7aa2f7;
+    --as-accent-ink: #9ab8ff;
+    --as-accent-soft: #252c48;
+    --as-error: #f7768e;
+    --as-warning: #e0af68;
+    --as-pass: #9ece6a;
+    --as-note: #9099b2;
+    --as-code-bg: #23232f;
+
+    /* Inverted for dark: the reading column is the darker of the two. */
+    --as-page: var(--as-ground);
+    --as-panel: var(--as-surface);
+
+    --bg: var(--as-page);
+    --fg: var(--as-ink);
+
+    --sidebar-bg: var(--as-panel);
+    --sidebar-fg: var(--as-ink);
+    --sidebar-non-existant: var(--as-note);
+    --sidebar-active: var(--as-accent);
+    --sidebar-spacer: var(--as-line);
+
+    --scrollbar: var(--as-line-strong);
+
+    --icons: var(--as-muted);
+    --icons-hover: var(--as-ink);
+
+    --links: var(--as-accent-ink);
+    --inline-code-color: var(--as-ink);
+
+    --theme-popup-bg: var(--as-surface);
+    --theme-popup-border: var(--as-line-strong);
+    --theme-hover: var(--as-code-bg);
+
+    --quote-bg: var(--as-panel);
+    --quote-border: var(--as-line);
+
+    --warning-border: var(--as-warning);
+
+    --table-border-color: var(--as-line);
+    --table-header-bg: var(--as-code-bg);
+    --table-alternate-bg: var(--as-panel);
+
+    --searchbar-border-color: var(--as-line-strong);
+    --searchbar-bg: var(--as-code-bg);
+    --searchbar-fg: var(--as-ink);
+    --searchbar-shadow-color: var(--as-accent);
+    --searchresults-header-fg: var(--as-muted);
+    --searchresults-border-color: var(--as-line);
+    --searchresults-li-bg: var(--as-accent-soft);
+    --search-mark-bg: var(--as-accent-soft);
+
+    --footnote-highlight: var(--as-accent);
+    --overlay-bg: rgba(10, 10, 16, 0.55);
+
+    --color-scheme: dark;
+}
+
+/* The wordmark is a background image, so it cannot inherit a colour.  Every
+   theme gets whichever of the two cuts reads on its page background. */
+.navy,
+.coal,
+.ayu {
+    --as-logo: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 282 52' width='282' height='52' role='img' aria-label='AnimSmith'%3E%3Cg transform='translate(0 -0.25) scale(0.84)' fill='none' stroke-linecap='round'%3E%3Cpath d='M32 12 13 54' stroke='%23d5d9e5' stroke-width='5.5'/%3E%3Cpath d='M32 12 51 54' stroke='%23d5d9e5' stroke-width='5.5'/%3E%3Cpath d='M20 40 44 40' stroke='%237aa2f7' stroke-width='5.5'/%3E%3Cg fill='%231e1e2a' stroke='%23d5d9e5' stroke-width='3.0'%3E%3Ccircle cx='13' cy='54' r='4.0'/%3E%3Ccircle cx='51' cy='54' r='4.0'/%3E%3Ccircle cx='20' cy='40' r='4.0'/%3E%3Ccircle cx='44' cy='40' r='4.0'/%3E%3C/g%3E%3Cpath d='M32 3 40 12 32 21 24 12Z' fill='%237aa2f7'/%3E%3C/g%3E%3Cpath d='M81.9 42.5 80.7 37.8Q80.7 37.6 80.5 37.6H71.4Q71.2 37.6 71.2 37.8L70.1 42.5Q69.9 43 69.4 43H63.6Q62.9 43 63.1 42.4L71.8 9.5Q72 9 72.5 9H79.5Q80.1 9 80.2 9.5L89 42.4L89 42.6Q89 43 88.5 43H82.5Q82 43 81.9 42.5ZM72.7 32.3H79.1Q79.2 32.3 79.3 32.2Q79.4 32.1 79.4 32L76 17.9Q76 17.7 75.9 17.7Q75.8 17.7 75.7 17.9L72.5 32Q72.4 32.1 72.5 32.2Q72.6 32.3 72.7 32.3ZM112.1 26.2V42.4Q112.1 42.7 112 42.8Q111.8 43 111.5 43H105.9Q105.6 43 105.4 42.8Q105.3 42.7 105.3 42.4V27.2Q105.3 25.5 104.5 24.5Q103.6 23.5 102.2 23.5Q100.8 23.5 99.9 24.5Q99.1 25.5 99.1 27.2V42.4Q99.1 42.7 98.9 42.8Q98.7 43 98.5 43H92.8Q92.6 43 92.4 42.8Q92.2 42.7 92.2 42.4V18.6Q92.2 18.4 92.4 18.2Q92.6 18 92.8 18H98.5Q98.7 18 98.9 18.2Q99.1 18.4 99.1 18.6V20Q99.1 20.1 99.2 20.1Q99.3 20.2 99.4 20Q101.1 17.6 104.5 17.6Q108.1 17.6 110.1 19.9Q112.1 22.2 112.1 26.2ZM116.1 11.4Q116.1 9.7 117.2 8.6Q118.2 7.5 119.9 7.5Q121.6 7.5 122.7 8.6Q123.7 9.7 123.7 11.4Q123.7 13 122.6 14.1Q121.5 15.2 119.9 15.2Q118.2 15.2 117.2 14.1Q116.1 13 116.1 11.4ZM116.5 42.4V18.6Q116.5 18.4 116.7 18.2Q116.8 18 117.1 18H122.8Q123 18 123.2 18.2Q123.3 18.4 123.3 18.6V42.4Q123.3 42.7 123.2 42.8Q123 43 122.8 43H117.1Q116.8 43 116.7 42.8Q116.5 42.7 116.5 42.4ZM160.4 26.2V42.4Q160.4 42.7 160.2 42.8Q160 43 159.8 43H154.1Q153.9 43 153.7 42.8Q153.6 42.7 153.6 42.4V27.2Q153.6 25.5 152.8 24.5Q152 23.5 150.6 23.5Q149.2 23.5 148.4 24.5Q147.5 25.5 147.5 27.2V42.4Q147.5 42.7 147.4 42.8Q147.2 43 147 43H141.3Q141.1 43 140.9 42.8Q140.7 42.7 140.7 42.4V27.2Q140.7 25.5 139.9 24.5Q139.1 23.5 137.7 23.5Q136.3 23.5 135.5 24.5Q134.7 25.5 134.7 27.2V42.4Q134.7 42.7 134.5 42.8Q134.3 43 134.1 43H128.4Q128.2 43 128 42.8Q127.9 42.7 127.9 42.4V18.6Q127.9 18.4 128 18.2Q128.2 18 128.4 18H134.1Q134.3 18 134.5 18.2Q134.7 18.4 134.7 18.6V19.9Q134.7 20 134.8 20.1Q134.9 20.1 135 20Q136 18.8 137.3 18.2Q138.7 17.6 140.2 17.6Q142.4 17.6 144 18.5Q145.6 19.4 146.5 21.1Q146.5 21.2 146.6 21.2Q146.7 21.2 146.8 21Q147.9 19.2 149.5 18.4Q151.2 17.6 153.1 17.6Q156.6 17.6 158.5 19.9Q160.4 22.2 160.4 26.2ZM164 33.9V32.6Q164 32.4 164.1 32.2Q164.3 32 164.5 32H170.1Q170.4 32 170.5 32.2Q170.7 32.4 170.7 32.6V33.5Q170.7 35.2 172 36.4Q173.2 37.5 175.4 37.5Q177.3 37.5 178.3 36.5Q179.3 35.6 179.3 34.1Q179.3 32.9 178.6 32.1Q178 31.3 176.8 30.6Q175.7 29.9 173.3 28.7Q170.4 27.3 168.6 26Q166.7 24.7 165.4 22.7Q164.1 20.8 164.1 17.9Q164.1 15.1 165.4 13Q166.8 10.9 169.2 9.8Q171.6 8.6 174.7 8.6Q178 8.6 180.5 9.8Q183 11.1 184.4 13.3Q185.9 15.6 185.9 18.5V19.4Q185.9 19.7 185.7 19.9Q185.5 20 185.3 20H179.7Q179.4 20 179.3 19.9Q179.1 19.7 179.1 19.4V18.6Q179.1 16.8 177.9 15.7Q176.7 14.5 174.6 14.5Q172.8 14.5 171.8 15.4Q170.8 16.3 170.8 17.9Q170.8 19 171.4 19.8Q172 20.7 173.2 21.4Q174.4 22.2 176.9 23.4L177.9 24Q180.8 25.5 182.3 26.7Q183.9 27.8 185 29.5Q186.1 31.3 186.1 33.8Q186.1 38.2 183.1 40.8Q180.1 43.4 175.1 43.4Q171.8 43.4 169.2 42.2Q166.7 41 165.3 38.8Q164 36.7 164 33.9ZM222.3 26.2V42.4Q222.3 42.7 222.1 42.8Q221.9 43 221.7 43H216.1Q215.8 43 215.7 42.8Q215.5 42.7 215.5 42.4V27.2Q215.5 25.5 214.7 24.5Q213.9 23.5 212.5 23.5Q211.1 23.5 210.3 24.5Q209.5 25.5 209.5 27.2V42.4Q209.5 42.7 209.3 42.8Q209.1 43 208.9 43H203.2Q203 43 202.8 42.8Q202.7 42.7 202.7 42.4V27.2Q202.7 25.5 201.8 24.5Q201 23.5 199.7 23.5Q198.2 23.5 197.4 24.5Q196.6 25.5 196.6 27.2V42.4Q196.6 42.7 196.4 42.8Q196.3 43 196 43H190.4Q190.1 43 190 42.8Q189.8 42.7 189.8 42.4V18.6Q189.8 18.4 190 18.2Q190.1 18 190.4 18H196Q196.3 18 196.4 18.2Q196.6 18.4 196.6 18.6V19.9Q196.6 20 196.7 20.1Q196.8 20.1 196.9 20Q197.9 18.8 199.3 18.2Q200.6 17.6 202.2 17.6Q204.4 17.6 205.9 18.5Q207.5 19.4 208.4 21.1Q208.4 21.2 208.5 21.2Q208.6 21.2 208.7 21Q209.8 19.2 211.5 18.4Q213.1 17.6 215 17.6Q218.5 17.6 220.4 19.9Q222.3 22.2 222.3 26.2ZM226.2 11.4Q226.2 9.7 227.3 8.6Q228.3 7.5 230 7.5Q231.7 7.5 232.8 8.6Q233.8 9.7 233.8 11.4Q233.8 13 232.8 14.1Q231.7 15.2 230 15.2Q228.4 15.2 227.3 14.1Q226.2 13 226.2 11.4ZM226.6 42.4V18.6Q226.6 18.4 226.8 18.2Q226.9 18 227.2 18H232.9Q233.1 18 233.3 18.2Q233.5 18.4 233.5 18.6V42.4Q233.5 42.7 233.3 42.8Q233.1 43 232.9 43H227.2Q226.9 43 226.8 42.8Q226.6 42.7 226.6 42.4ZM250.3 23.2H246.5Q246.3 23.2 246.3 23.4V34.4Q246.3 35.9 246.9 36.5Q247.5 37.2 248.8 37.1H249.7Q250 37.1 250.1 37.3Q250.3 37.5 250.3 37.7V42.4Q250.3 43 249.7 43Q248.9 43 247.3 43Q243.5 43 241.6 41.8Q239.7 40.5 239.7 37V23.4Q239.7 23.2 239.5 23.2H237.2Q237 23.2 236.8 23Q236.7 22.8 236.7 22.6V18.6Q236.7 18.4 236.8 18.2Q237 18 237.2 18H239.5Q239.7 18 239.7 17.8V12.2Q239.7 12 239.9 11.8Q240.1 11.6 240.3 11.6H245.7Q245.9 11.6 246.1 11.8Q246.3 12 246.3 12.2V17.8Q246.3 18 246.5 18H250.3Q250.5 18 250.7 18.2Q250.8 18.4 250.8 18.6V22.6Q250.8 22.8 250.7 23Q250.5 23.2 250.3 23.2ZM274.2 26.2V42.4Q274.2 42.7 274 42.8Q273.8 43 273.6 43H267.9Q267.7 43 267.5 42.8Q267.3 42.7 267.3 42.4V27.2Q267.3 25.5 266.5 24.5Q265.7 23.5 264.3 23.5Q262.8 23.5 261.9 24.5Q261.1 25.5 261.1 27.2V42.4Q261.1 42.7 260.9 42.8Q260.8 43 260.5 43H254.8Q254.6 43 254.4 42.8Q254.2 42.7 254.2 42.4V9.6Q254.2 9.3 254.4 9.2Q254.6 9 254.8 9H260.5Q260.8 9 260.9 9.2Q261.1 9.3 261.1 9.6V20Q261.1 20.1 261.2 20.1Q261.3 20.2 261.4 20Q263.2 17.6 266.6 17.6Q270.1 17.6 272.1 19.9Q274.2 22.2 274.2 26.2Z' fill='%23d5d9e5'/%3E%3C/svg%3E");
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. Typography
+ * ------------------------------------------------------------------ */
+
+html {
+    font-family: var(--as-sans-font);
+    font-feature-settings: "kern" 1;
+    text-rendering: optimizeLegibility;
+}
+
+body {
+    font-size: 1.7rem;
+    line-height: 1.55;
+}
+
+.content main {
+    padding-block-end: 3rem;
+}
+
+.content h1,
+.content h2,
+.content h3,
+.content h4,
+.content h5,
+.content h6 {
+    font-family: var(--as-display-font);
+    font-weight: 600;
+    line-height: 1.15;
+    text-wrap: balance;
+    color: var(--fg);
+}
+
+.content h1 {
+    font-size: 4rem;
+    font-weight: 700;
+    letter-spacing: -0.012em;
+    margin-block: 0.2em 0.5em;
+}
+
+.content h2 {
+    font-size: 2.8rem;
+    letter-spacing: -0.008em;
+    margin-block: 1.65em 0.45em;
+    padding-block-end: 0.28em;
+    border-block-end: 1px solid var(--as-line, var(--table-border-color));
+}
+
+.content h3 {
+    font-size: 2.1rem;
+    margin-block: 1.9em 0.45em;
+}
+
+.content h4 {
+    font-size: 1.8rem;
+    margin-block: 1.9em 0.4em;
+}
+
+.content h5,
+.content h6 {
+    font-size: 1.6rem;
+    margin-block: 1.8em 0.4em;
+}
+
+.content .header + .header h3,
+.content .header + .header h4,
+.content .header + .header h5 {
+    margin-block-start: 0.9em;
+}
+
+.content p,
+.content ol,
+.content ul {
+    line-height: 1.65;
+}
+
+.content p {
+    margin-block: 0 1.05em;
+}
+
+.content li {
+    margin-block: 0.28em;
+}
+
+.content ul,
+.content ol {
+    padding-inline-start: 1.35em;
+}
+
+.content hr {
+    border: 0;
+    border-block-start: 1px solid var(--as-line, var(--table-border-color));
+    margin-block: 2.6em;
+}
+
+.content a:link,
+.content a:visited {
+    color: var(--links);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: from-font;
+}
+
+.content a:hover,
+.content a:focus-visible {
+    text-decoration: underline;
+}
+
+.content strong,
+.content b {
+    font-weight: 600;
+}
+
+/* Anchor links keep the heading colour and only reveal the marker on hover. */
+.content .header:link,
+.content .header:visited {
+    color: var(--fg);
+    text-decoration: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. Chrome: menu bar, sidebar, search, popups
+ * ------------------------------------------------------------------ */
+
+#menu-bar {
+    background-color: var(--bg);
+}
+
+#menu-bar.bordered {
+    border-block-end-color: var(--as-line, var(--table-border-color));
+}
+
+/* The menu title becomes the logo.  Text stays in the DOM (and in the
+   accessibility tree) and is pushed out of the visible box. */
+.menu-title {
+    background-image: var(--as-logo);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: auto 24px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-indent: 110%;
+    min-width: 0;
+}
+
+.right-buttons a,
+.right-buttons .icon-button {
+    color: var(--icons);
+}
+
+/* -- sidebar ------------------------------------------------------- */
+
+.sidebar {
+    font-size: 0.88em;
+    border-inline-end: 1px solid var(--as-line, var(--sidebar-spacer));
+}
+
+.sidebar .sidebar-scrollbox {
+    padding: 14px 14px 32px;
+}
+
+.chapter {
+    line-height: 1.5;
+}
+
+.chapter li.part-title {
+    font-family: var(--mono-font);
+    font-size: 1.15rem;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--as-muted, var(--sidebar-non-existant));
+    margin-block: 2em 0.6em;
+}
+
+.chapter li.part-title:first-child {
+    margin-block-start: 0.4em;
+}
+
+.chapter li.chapter-item {
+    line-height: 1.45;
+    margin-block-start: 0.15em;
+}
+
+.chapter li a {
+    padding: 5px 8px;
+    margin-inline-start: -8px;
+    border-radius: 5px;
+    flex: 1;
+}
+
+.chapter li a:hover {
+    color: var(--sidebar-fg);
+    background-color: var(--as-code-bg, var(--theme-hover));
+}
+
+.chapter li a.active {
+    color: var(--sidebar-active);
+    background-color: var(--as-accent-soft, var(--theme-hover));
+    font-weight: 600;
+}
+
+.chapter li > a.toggle {
+    opacity: 1;
+    flex: 0 0 auto;
+    margin-inline-start: auto;
+    padding: 5px 6px;
+    color: var(--as-muted, var(--icons));
+    font-size: 0.85em;
+    border-radius: 5px;
+}
+
+.chapter li > a.toggle:hover {
+    color: var(--sidebar-active);
+    background-color: var(--as-code-bg, var(--theme-hover));
+}
+
+/* Nested sections get a hairline spine instead of bare indentation. */
+.section {
+    padding-inline-start: 12px;
+    margin-inline-start: 6px;
+    border-inline-start: 1px solid var(--as-line, var(--sidebar-spacer));
+    line-height: 1.5;
+}
+
+.chapter .spacer {
+    height: 1px;
+    margin: 14px 0;
+    background-color: var(--as-line, var(--sidebar-spacer));
+}
+
+/* -- search and popups --------------------------------------------- */
+
+/* One visible focus ring everywhere, in the accent, replacing the UA default. */
+.content a:focus-visible,
+.chapter li a:focus-visible,
+.icon-button:focus-visible,
+.menu-title:focus-visible,
+summary:focus-visible,
+#searchbar:focus-visible,
+#searchresults a:focus-visible {
+    outline: 2px solid var(--as-accent, var(--links));
+    outline-offset: 2px;
+    border-radius: 3px;
+}
+
+#searchbar {
+    border-radius: 6px;
+    padding: 9px 14px;
+    font-family: inherit;
+    font-size: 0.95em;
+}
+
+.searchresults-header {
+    font-family: var(--mono-font);
+    font-size: 1.2rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.theme-popup {
+    font-size: 0.82em;
+    border-radius: 6px;
+}
+
+.theme-popup .theme {
+    font-family: inherit;
+    padding: 5px 20px;
+}
+
+/* ------------------------------------------------------------------ *
+ * 5. Content blocks
+ * ------------------------------------------------------------------ */
+
+/* -- tables -------------------------------------------------------- */
+
+.content table {
+    width: 100%;
+    margin-block: 1.6em;
+    font-size: 0.94em;
+    font-variant-numeric: tabular-nums;
+    border-block-end: 1px solid var(--table-border-color);
+}
+
+.content table thead {
+    background: var(--table-header-bg);
+}
+
+.content table thead th {
+    font-family: var(--mono-font);
+    font-size: 0.78em;
+    font-weight: 500;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    text-align: start;
+    color: var(--as-muted, var(--fg));
+    padding: 9px 14px;
+    border: 0;
+    border-block-end: 2px solid var(--as-line-strong, var(--table-border-color));
+}
+
+.content table td {
+    padding: 8px 14px;
+    border: 0;
+    vertical-align: top;
+}
+
+.content table tbody tr:nth-child(2n) {
+    background: var(--table-alternate-bg);
+}
+
+/* -- code ---------------------------------------------------------- */
+
+.content code {
+    font-variant-ligatures: none;
+    font-feature-settings: "calt" 0;
+}
+
+.content pre {
+    margin-block: 1.5em;
+    border: 1px solid var(--as-line, var(--table-border-color));
+    border-radius: 8px;
+    background-color: var(--as-code-bg, var(--quote-bg));
+}
+
+/* Rust blocks are nested `<pre><pre class="playground">` for the playground
+   buttons; only the outer element carries the frame. */
+.content pre > pre.playground {
+    margin: 0;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+}
+
+.content pre > code,
+.content pre > code.hljs {
+    background: transparent;
+    color: var(--fg);
+    padding: 14px 16px;
+    line-height: 1.55;
+    border-radius: 8px;
+}
+
+.content :not(pre) > code,
+.content :not(pre):not(a) > code.hljs {
+    background-color: var(--as-code-bg, var(--quote-bg));
+    border: 1px solid var(--as-line, var(--table-border-color));
+    border-radius: 4px;
+    padding: 0.06em 0.34em;
+    color: var(--inline-code-color);
+    /* Keep the chip intact when an inline span wraps across lines. */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+}
+
+.content a > code,
+.content a > code.hljs {
+    color: var(--links);
+}
+
+.sidebar code {
+    background: none;
+    border: 0;
+    padding: 0;
+}
+
+/* Copy button: mask the octicons glyph so it takes a token colour directly. */
+.content pre > .buttons button.clip-button::before {
+    content: "";
+    display: block;
+    width: 21px;
+    height: 20px;
+    filter: none;
+    background-color: var(--as-muted, var(--icons));
+    -webkit-mask: var(--as-copy-icon) center / contain no-repeat;
+    mask: var(--as-copy-icon) center / contain no-repeat;
+}
+
+.content pre > .buttons button.clip-button:hover::before {
+    filter: none;
+    background-color: var(--as-accent-ink, var(--icons-hover));
+}
+
+.content pre > .buttons button {
+    border-radius: 6px;
+}
+
+/* -- quotes, warnings, details ------------------------------------- */
+
+.content blockquote {
+    margin-block: 1.5em;
+    padding: 14px 20px;
+    border: 1px solid var(--quote-border);
+    border-radius: 8px;
+    background-color: var(--quote-bg);
+}
+
+.content blockquote > :last-child {
+    margin-block-end: 0;
+}
+
+.content details {
+    margin-block: 1.5em;
+    padding: 0 18px;
+    border: 1px solid var(--as-line, var(--table-border-color));
+    border-radius: 8px;
+    background-color: var(--as-panel, var(--quote-bg));
+}
+
+.content details > summary {
+    font-family: var(--as-display-font);
+    font-size: 1.15em;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 12px 18px;
+    margin-inline: -18px;
+    list-style: none;
+}
+
+.content details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.content details > summary::before {
+    content: "";
+    display: inline-block;
+    width: 0;
+    height: 0;
+    margin-inline-end: 10px;
+    vertical-align: 0.04em;
+    border-inline-start: 6px solid currentColor;
+    border-block: 5px solid transparent;
+    transition: transform 0.15s ease;
+}
+
+.content details[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+.content details[open] > summary {
+    border-block-end: 1px solid var(--as-line, var(--table-border-color));
+    margin-block-end: 12px;
+}
+
+.content details > :last-child {
+    margin-block-end: 16px;
+}
+
+/* mdBook's warning marker is U+24D8, which is outside the font subsets and
+   not dependable in fallback stacks.  Draw the badge instead. */
+.content .warning::before {
+    content: "!";
+    width: 2.2rem;
+    height: 2.2rem;
+    margin-inline-start: calc(-1.1rem - 21px);
+    border: 2px solid var(--warning-border);
+    border-radius: 50%;
+    box-sizing: border-box;
+    font-family: var(--as-display-font);
+    font-size: 1.5rem;
+    line-height: 1.85rem;
+}
+
+.content .warning {
+    margin-inline: 0;
+    margin-block: 1.5em;
+    padding-inline: 20px;
+}
+
+/* -- figures and images -------------------------------------------- */
+
+.content img,
+.content video,
+.content svg {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+}
+
+.content figure {
+    margin: 1.6em 0;
+}
+
+.content figcaption {
+    margin-block-start: 0.6em;
+    font-size: 0.88em;
+    color: var(--as-muted, var(--fg));
+}
+
+.mobile-nav-chapters {
+    border: 1px solid var(--as-line, var(--table-border-color));
+    border-radius: 6px;
+    color: var(--as-muted, var(--icons));
+}
+
+.content kbd {
+    font-size: 0.82em;
+    line-height: 1.2;
+    padding: 3px 6px;
+    border-radius: 5px;
+}
+
+.content .footnote-definition {
+    font-size: 0.92em;
+    color: var(--as-muted, var(--fg));
+}
+
+/* ------------------------------------------------------------------ *
+ * 6. Responsive and motion
+ * ------------------------------------------------------------------ */
+
+@media only screen and (max-width: 1080px) {
+    body {
+        font-size: 1.65rem;
+    }
+
+    .content h1 {
+        font-size: 3.4rem;
+    }
+
+    .content h2 {
+        font-size: 2.5rem;
+    }
+}
+
+@media only screen and (max-width: 620px) {
+    body {
+        font-size: 1.6rem;
+    }
+
+    .content h1 {
+        font-size: 3rem;
+    }
+
+    .content h2 {
+        font-size: 2.4rem;
+        margin-block-start: 1.4em;
+    }
+
+    .content h3 {
+        font-size: 1.9rem;
+    }
+
+    .menu-title {
+        background-size: auto 21px;
+    }
+
+    .content table {
+        font-size: 0.9em;
+    }
+
+    .content table thead th,
+    .content table td {
+        padding: 7px 10px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    /* `!important` is the accepted idiom here: it has to beat the inline and
+       component transitions mdBook's own stylesheets set. */
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
