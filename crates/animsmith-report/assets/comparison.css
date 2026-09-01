@@ -1,0 +1,24 @@
+/* Before/after comparison layout. Colour authority is tokens.css, which is
+   emitted immediately before this sheet in the generated document. */
+* { box-sizing: border-box }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 14px/1.5 system-ui, sans-serif }
+header, .sync, .shared-chart { padding: .8rem 1rem }
+h1, h2, h3 { color: var(--accent) }
+h1 { font-size: 1.1rem }
+.warning { color: var(--warning) }
+.sync { background: var(--surface); display: flex; gap: 1rem; align-items: center }
+.sync input { min-width: 20rem }
+.shared-chart { margin: 0 1rem; background: var(--surface); border-radius: 8px }
+.shared-chart h2 { font-size: 1rem; margin: .2rem 0 }
+main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 1rem }
+@media (max-width: 900px) { main { grid-template-columns: 1fr } .sync input { min-width: 10rem } }
+.side { background: var(--surface); border-radius: 8px; padding: .8rem }
+canvas { width: 100%; aspect-ratio: 4/3; background: var(--ground); border-radius: 5px }
+svg { width: 100%; background: var(--ground); border-radius: 5px; margin-top: .6rem; color: var(--muted) }
+ul { padding-left: 1.3rem; max-height: 13rem; overflow: auto }
+.finding { cursor: pointer; padding: .3rem; margin: .2rem 0; background: var(--ground); border-radius: 4px }
+.finding:hover { background: var(--line) }
+.context-label, .context { color: var(--muted) }
+.structural { border-left: 3px solid var(--note); padding-left: .5rem }
+pre { white-space: pre-wrap; word-break: break-word; color: var(--muted) }
+.selected { outline: 2px solid var(--warning) }

@@ -3,22 +3,27 @@ const fs = require("fs"), vm = require("vm");
 if (process.argv.length !== 3) throw new Error("usage: test-comparison-viewer.js GENERATED_REPORT.html");
 const html = fs.readFileSync(process.argv[2], "utf8");
 function generatedReportParts(source) {
-  const match = source.match(/<script type="application\/json" id="comparison-report-data">([\s\S]*?)<\/script><script>([\s\S]*?)<\/script><\/body><\/html>\s*$/);
+  const match = source.match(/<script>([\s\S]*?)<\/script><script type="application\/json" id="comparison-report-data">([\s\S]*?)<\/script><script>([\s\S]*?)<\/script><\/body><\/html>\s*$/);
   if (!match) throw new Error("Rust-generated payload and immediately following inline viewer are absent");
-  if (!match[2].startsWith("// animsmith comparison viewer:")) throw new Error("wrong inline comparison viewer");
-  return { payload: match[1], viewer: match[2] };
+  if (!match[1].startsWith("// animsmith report shared runtime")) throw new Error("wrong inline shared runtime");
+  if (!match[3].startsWith("// animsmith comparison viewer:")) throw new Error("wrong inline comparison viewer");
+  return { shared: match[1], payload: match[2], viewer: match[3] };
 }
 const generated = generatedReportParts(html);
 for (const mutation of [
   html.replace("</script><script>// animsmith comparison viewer:", "</script><script>// misplaced</script><script>// animsmith comparison viewer:"),
   html.replace("// animsmith comparison viewer:", "// wrong viewer:"),
+  html.replace("// animsmith report shared runtime", "// wrong shared runtime"),
   html.replace(/<\/script><\/body><\/html>\s*$/, "</body></html>"),
 ]) {
   let refused = false;
   try { generatedReportParts(mutation); } catch (_) { refused = true; }
   if (!refused) throw new Error("generated HTML viewer placement/identity mutation was accepted");
 }
-const data = JSON.parse(generated.payload), viewer = generated.viewer;
+const data = JSON.parse(generated.payload), viewer = `${generated.shared}\n${generated.viewer}`;
+// The generated documents resolve every colour through the design tokens; a
+// harness with no stylesheet exercises the documented dark fallbacks.
+const noStyles = { getPropertyValue: () => "" };
 if (data.kind !== "animsmith-comparison-v1") throw new Error("unexpected Rust comparison contract");
 const frames = 2002, bones = data.bones.length, positions = Buffer.alloc(frames * bones * 3 * 4);
 for (let frame = 0; frame < frames; frame++) for (let bone = 0; bone < bones; bone++) {
@@ -64,7 +69,8 @@ if (!afterFinding) {
 afterFinding.time = 1.234;
 nodes["comparison-report-data"].textContent=JSON.stringify(data);
 const windowListeners={};
-const context={document:{getElementById:id=>nodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(k,f){windowListeners[k]=f}},location:{hash:""},atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
+const documentElement=new Node("documentElement");
+const context={document:{documentElement,getElementById:id=>nodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(k,f){windowListeners[k]=f}},location:{hash:""},getComputedStyle:()=>noStyles,atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
 vm.createContext(context); vm.runInContext(viewer,context);
 if(nodes.scrub.max !== 2001 || !nodes["before-findings"].children.some(child=>child.textContent.includes("<img>"))) throw new Error("viewer did not retain exact frames or safe finding text");
 if(!nodes["before-identity"].textContent.includes(data.before.dependency_closure_identity.sha256) || !nodes["after-identity"].textContent.includes(data.after.dependency_closure_identity.sha256)) throw new Error("viewer does not disclose complete closure identities");
@@ -75,7 +81,7 @@ if(!nodes["before-gait"].children.some(child=>child.attrs["data-stance-side"]===
 const seamIndex = data.before.findings.indexOf(seamFinding), structuralIndex = data.before.findings.indexOf(structuralFinding), afterIndex = data.after.findings.indexOf(afterFinding);
 nodes["before-findings"].children[seamIndex].listeners.click();
 if(nodes.scrub.value != 1501 || !nodes["before-pose-context"].textContent.includes("first 0.000s") || !nodes["before-pose-context"].textContent.includes(`affected ${seam.subject_bone_name}`)) throw new Error("seam finding did not select exact frame and endpoint/subject context");
-if(!nodes["before-gl"].context.arcs.some(row=>row.args[2]===6 && row.fillStyle==="#f0cb83")) throw new Error("finding did not highlight its Rust-projected bone on canvas");
+if(!nodes["before-gl"].context.arcs.some(row=>row.args[2]===6 && row.fillStyle==="#f7768e")) throw new Error("finding did not highlight its Rust-projected bone on canvas");
 nodes["before-findings"].children[structuralIndex].listeners.click();
 if(!nodes["before-pose-context"].textContent.includes("structural evidence") || !nodes["before-contexts"].children.some(child=>child.className.includes("structural"))) throw new Error("structural finding was not distinguished from visible pose evidence");
 nodes["after-findings"].children[afterIndex].listeners.click(); if(nodes.scrub.value != 1234) throw new Error("after finding did not select exact frame");
@@ -90,7 +96,7 @@ const cleanBefore = data.before.clip.positions, cleanAfter = data.after.clip.pos
 function execute(payload) {
   const testNodes = Object.fromEntries(ids.map(id=>[id,new Node(id)]));
   testNodes["comparison-report-data"].textContent=JSON.stringify(payload);
-  const testContext={document:{getElementById:id=>testNodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(){}},location:{hash:""},atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
+  const testContext={document:{documentElement:new Node("documentElement"),getElementById:id=>testNodes[id],createElement:()=>new Node(),createElementNS:()=>new Node()},window:{addEventListener(){}},location:{hash:""},getComputedStyle:()=>noStyles,atob:s=>Buffer.from(s,"base64").toString("binary"),Uint8Array,Float32Array,Math,Map,Array,Number,Object,Infinity,JSON,console};
   vm.createContext(testContext); vm.runInContext(viewer, testContext);
   return testNodes;
 }

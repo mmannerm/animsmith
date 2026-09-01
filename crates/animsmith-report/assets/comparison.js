@@ -16,6 +16,10 @@ const sharedFrameMax = Math.max(data.before.clip.frames, data.after.clip.frames)
 q("scrub").max = sharedFrameMax;
 let selectedFrames = null;
 let selectedContext = null;
+// Canvas and SVG paint comes from the shared design tokens, so both panels
+// follow the document theme. `--error` marks the subject of a selected
+// finding and the gait playhead: the most salient token in either theme.
+let palette = animsmithPalette();
 
 function finiteRange(values) {
   let min = Infinity, max = -Infinity;
@@ -111,20 +115,20 @@ function drawSide(name, phase, highlighted) {
     for (let bone = 0; bone < data.bones.length; bone++) {
       const point = project(posePoint(side, poseFrame, bone));
       if (!finitePoint(point)) continue;
-      context.fillStyle = bone === subject ? "#f0cb83" : fill;
+      context.fillStyle = bone === subject ? palette.error : fill;
       context.beginPath(); context.arc(...point, bone === subject ? 6 : 3, 0, Math.PI * 2); context.fill();
     }
   };
   const seam = selectedContext && selectedContext.name === name && selectedContext.kind === "seam" ? selectedContext.value : null;
   if (seam) {
-    drawFrame(seam.first_frame, "#7aa2f7", "#7aa2f7", seam.subject_bone);
-    drawFrame(seam.last_frame, "#e0af68", "#e0af68", seam.subject_bone);
+    drawFrame(seam.first_frame, palette.accent, palette.accent, seam.subject_bone);
+    drawFrame(seam.last_frame, palette.warning, palette.warning, seam.subject_bone);
     const exact = frameFinite(side, seam.first_frame) && frameFinite(side, seam.last_frame);
     q(`${name}-pose-context`).textContent = exact
       ? `loop seam exact endpoint poses — first ${seam.first_s.toFixed(3)}s blue · last ${seam.last_s.toFixed(3)}s orange · affected ${seam.subject_bone_name || "bone unavailable"}`
       : `loop seam pose drawing incomplete: an endpoint contains non-finite positions; finding and coverage evidence remain listed · affected ${seam.subject_bone_name || "bone unavailable"}`;
   } else {
-    drawFrame(frame, "#8e99bc", "#d5d9e5", highlighted);
+    drawFrame(frame, palette.muted, palette.ink, highlighted);
     q(`${name}-pose-context`).textContent = structural
       ? frameFinite(side, frame)
         ? structural.label
@@ -140,7 +144,7 @@ function drawRootComparison(phase) {
   const svg = q("comparison-root-path"); svg.replaceChildren();
   if (!sharedRootBounds) { svg.textContent = "root trajectories unavailable: no input has finite resolved Root samples"; return; }
   const map = topDownMap(sharedRootBounds, 720, 220, 28);
-  const styles = { before: "#7aa2f7", after: "#e0af68" };
+  const styles = { before: palette.accent, after: palette.warning };
   for (const name of ["before", "after"]) {
     const side = data[name], root = side.clip.trails.root;
     if (root == null) continue;
@@ -159,25 +163,25 @@ function drawRootComparison(phase) {
   const beforeState = rootState(data.before), afterState = rootState(data.after);
   const beforeLabel = `before root ${beforeState}`;
   const afterLabel = `after root ${afterState}`;
-  svg.append(svgElement("text", { x: 18, y: 20, fill: beforeState === "unavailable" ? "#aab1c5" : "#7aa2f7" }, beforeLabel));
-  svg.append(svgElement("text", { x: 170, y: 20, fill: afterState === "unavailable" ? "#aab1c5" : "#e0af68" }, afterLabel));
-  svg.append(svgElement("text", { x: 330, y: 20, fill: "#aab1c5" }, "top-down · one shared uniform metres scale"));
-  svg.append(svgElement("text", { x: 18, y: 212, fill: "#aab1c5" }, `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m · Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m`));
+  svg.append(svgElement("text", { x: 18, y: 20, fill: beforeState === "unavailable" ? palette.muted : palette.accent }, beforeLabel));
+  svg.append(svgElement("text", { x: 170, y: 20, fill: afterState === "unavailable" ? palette.muted : palette.warning }, afterLabel));
+  svg.append(svgElement("text", { x: 330, y: 20, fill: palette.muted }, "top-down · one shared uniform metres scale"));
+  svg.append(svgElement("text", { x: 18, y: 212, fill: palette.muted }, `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m · Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m`));
 }
 
-const trailStyles = {
-  root: ["#9ece6a", "root"], hips: ["#bb9af7", "hips"],
-  left_foot: ["#7aa2f7", "left foot"], right_foot: ["#e0af68", "right foot"],
+const TRAIL_TOKENS = {
+  root: ["pass", "root"], hips: ["note", "hips"],
+  left_foot: ["accent", "left foot"], right_foot: ["warning", "right foot"],
 };
 function drawTrails(name, phase) {
   const side = data[name], svg = q(`${name}-path`); svg.replaceChildren();
   if (!sharedTrailBounds) { svg.textContent = "role trajectories unavailable"; return; }
   const map = topDownMap(sharedTrailBounds, 360, 180, 24);
   let legendX = 8, unavailable = [], incomplete = [];
-  for (const role of Object.keys(trailStyles)) {
+  for (const role of Object.keys(TRAIL_TOKENS)) {
     const bone = side.clip.trails[role];
-    if (bone == null) { unavailable.push(trailStyles[role][1]); continue; }
-    const points = trailPoints(side, bone), [color, label] = trailStyles[role];
+    if (bone == null) { unavailable.push(TRAIL_TOKENS[role][1]); continue; }
+    const points = trailPoints(side, bone), [token, label] = TRAIL_TOKENS[role], color = palette[token];
     const finite = points.filter(finitePoint).length;
     if (finite === 0) { unavailable.push(`${label} (non-finite)`); continue; }
     if (finite !== points.length) incomplete.push(label);
@@ -191,7 +195,7 @@ function drawTrails(name, phase) {
   }
   const missing = unavailable.length ? ` · unavailable: ${unavailable.join(", ")}` : "";
   const partial = incomplete.length ? ` · incomplete non-finite samples: ${incomplete.join(", ")}` : "";
-  svg.append(svgElement("text", { x: 8, y: 174, fill: "#aab1c5" }, `top-down X/Z metres · shared scale across both inputs${missing}${partial}`));
+  svg.append(svgElement("text", { x: 8, y: 174, fill: palette.muted }, `top-down X/Z metres · shared scale across both inputs${missing}${partial}`));
 }
 
 function drawGait(name, phase) {
@@ -211,24 +215,25 @@ function drawGait(name, phase) {
   const y = (value) => 150 - (value - yrange[0]) * 120 / span;
   for (const stance of side.contexts.stances) for (const run of stance.runs) {
     const selected = selectedContext && selectedContext.name === name && selectedContext.kind === "stance" && selectedContext.value.bone === stance.bone;
-    svg.append(svgElement("rect", { x: x(run.start_frame), y: 24, width: Math.max(2, x(run.end_frame) - x(run.start_frame)), height: 130, fill: stance.side === "left" ? "#7aa2f7" : "#e0af68", opacity: selected ? .32 : .16, "data-stance-side": stance.side }));
+    svg.append(svgElement("rect", { x: x(run.start_frame), y: 24, width: Math.max(2, x(run.end_frame) - x(run.start_frame)), height: 130, fill: stance.side === "left" ? palette.accent : palette.warning, opacity: selected ? .32 : .16, "data-stance-side": stance.side }));
   }
-  for (const [label, color] of [["left", "#7aa2f7"], ["right", "#e0af68"]]) {
+  for (const [label, color] of [["left", palette.accent], ["right", palette.warning]]) {
     const points = series[label].map((value, frame) => [x(frame), y(value)]);
     svg.append(svgElement("path", { d: pathData(points, (point) => point), fill: "none", stroke: color, "stroke-width": 2, "data-gait-side": label }));
   }
   const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
-  svg.append(svgElement("line", { x1: x(frame), x2: x(frame), y1: 20, y2: 154, stroke: "#f0cb83", "stroke-width": 1 }));
+  svg.append(svgElement("line", { x1: x(frame), x2: x(frame), y1: 20, y2: 154, stroke: palette.error, "stroke-width": 1 }));
   const roleLabel = (role) => role.replace("_", " ");
-  svg.append(svgElement("text", { x: 8, y: 14, fill: "#7aa2f7" }, `${roleLabel(gait.left_role)} height rel hips`));
-  svg.append(svgElement("text", { x: 170, y: 14, fill: "#e0af68" }, `${roleLabel(gait.right_role)} height rel hips`));
-  svg.append(svgElement("text", { x: 8, y: 174, fill: "#aab1c5" }, gaitFinite
+  svg.append(svgElement("text", { x: 8, y: 14, fill: palette.accent }, `${roleLabel(gait.left_role)} height rel hips`));
+  svg.append(svgElement("text", { x: 170, y: 14, fill: palette.warning }, `${roleLabel(gait.right_role)} height rel hips`));
+  svg.append(svgElement("text", { x: 8, y: 174, fill: palette.muted }, gaitFinite
     ? "exact sampled height in metres · shaded runs are sampled foot-slide stance evidence"
     : "gait drawing incomplete: non-finite sampled heights; stance and coverage evidence remain listed"));
 }
 
 let highlight = { before: null, after: null };
 function update() {
+  palette = animsmithPalette();
   const phase = Number(q("scrub").value) / Math.max(1, sharedFrameMax);
   const beforeFrame = drawSide("before", phase, highlight.before), afterFrame = drawSide("after", phase, highlight.after);
   drawRootComparison(phase); drawTrails("before", phase); drawTrails("after", phase); drawGait("before", phase); drawGait("after", phase);

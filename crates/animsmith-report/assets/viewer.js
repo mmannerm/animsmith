@@ -100,10 +100,13 @@ function fitCamera() {
   dist = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 0.5) * 1.8;
 }
 
-const TRAIL_COLORS = { root: [0.61, 0.81, 0.42], hips: [0.48, 0.64, 0.97],
-                       left_foot: [0.88, 0.69, 0.41], right_foot: [0.96, 0.46, 0.56] };
+// Trail, bone, joint, and clear colours are the shared design tokens, so the
+// 3D view follows the light/dark theme with the rest of the document.
+const TRAIL_TOKENS = { root: "pass", hips: "accent", left_foot: "warning", right_foot: "error" };
 
-function buildVertices() {
+function buildVertices(palette) {
+  const boneColor = animsmithRgb(palette.muted);
+  const jointColor = animsmithRgb(palette.ink);
   // interleaved pos+color: bone lines, joint points appended after.
   const verts = [];
   const f = Math.round(frame);
@@ -111,16 +114,16 @@ function buildVertices() {
   const p = (b) => [clip.pos[base + b * 3], clip.pos[base + b * 3 + 1], clip.pos[base + b * 3 + 2]];
   for (let b = 0; b < boneCount; b++) {
     if (parents[b] < 0) continue;
-    verts.push(...p(parents[b]), 0.55, 0.6, 0.75, ...p(b), 0.55, 0.6, 0.75);
+    verts.push(...p(parents[b]), ...boneColor, ...p(b), ...boneColor);
   }
   const lineVerts = verts.length / 6;
-  for (let b = 0; b < boneCount; b++) verts.push(...p(b), 0.85, 0.87, 0.95);
+  for (let b = 0; b < boneCount; b++) verts.push(...p(b), ...jointColor);
   const pointVerts = boneCount;
   // trails: full path of tracked bones up to the current frame.
   let trailStart = lineVerts + pointVerts;
   const trailRanges = [];
   for (const [name, bone] of Object.entries(clip.trails || {})) {
-    const color = TRAIL_COLORS[name] || [0.6, 0.6, 0.6];
+    const color = animsmithRgb(palette[TRAIL_TOKENS[name]] || palette.muted);
     const start = verts.length / 6;
     for (let tf = 0; tf <= f; tf++) {
       const tb = tf * boneCount * 3 + bone * 3;
@@ -143,7 +146,9 @@ function draw() {
   const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   gl.viewport(0, 0, w, h);
-  gl.clearColor(0.09, 0.09, 0.13, 1);
+  const palette = animsmithPalette();
+  const ground = animsmithRgb(palette.ground);
+  gl.clearColor(ground[0], ground[1], ground[2], 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   const eye = [
@@ -154,7 +159,7 @@ function draw() {
   const mvp = mul4(perspective(0.9, w / h, 0.01, 100), lookAt(eye, center, [0, 1, 0]));
   gl.uniformMatrix4fv(uMvp, false, new Float32Array(mvp));
 
-  const { verts, lineVerts, pointVerts, trailRanges } = buildVertices();
+  const { verts, lineVerts, pointVerts, trailRanges } = buildVertices(palette);
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
   gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
   gl.uniform1f(uPointSize, 5 * dpr);

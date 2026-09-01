@@ -1,0 +1,53 @@
+/* animsmith report design tokens — the single colour authority for every
+   generated report surface: CSS rules, Rust-rendered chart classes, and the
+   WebGL/canvas pose views, which read these same custom properties.
+
+   Three states, in cascade order:
+     1. bare :root            — dark, the historical default look.
+     2. prefers-color-scheme  — light, unless the document pins dark.
+     3. [data-theme]          — an explicit `#theme=light|dark` fragment wins.
+
+   Roles: ground = page/plot backdrop, surface = raised panel,
+   ink = body text, muted = secondary text and bone lines, line = borders and
+   row hover, accent = headings, left-side series and the hips trail,
+   error = failing findings, playhead and the right-foot trail,
+   warning = warning findings and the left-foot trail,
+   pass = root trajectory, note = note findings and structural evidence. */
+:root {
+  --ground: #17171f;
+  --surface: #1e1e2a;
+  --ink: #d5d9e5;
+  --muted: #9099b2;
+  --line: #3a3a4e;
+  --accent: #7aa2f7;
+  --error: #f7768e;
+  --warning: #e0af68;
+  --pass: #9ece6a;
+  --note: #bb9af7;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --ground: #f4f5f9;
+    --surface: #ffffff;
+    --ink: #1a1e2c;
+    --muted: #5b6382;
+    --line: #d9deea;
+    --accent: #3b67d6;
+    --error: #cf3f5b;
+    --warning: #946414;
+    --pass: #287a3b;
+    --note: #6b7390;
+  }
+}
+:root[data-theme="light"] {
+  --ground: #f4f5f9;
+  --surface: #ffffff;
+  --ink: #1a1e2c;
+  --muted: #5b6382;
+  --line: #d9deea;
+  --accent: #3b67d6;
+  --error: #cf3f5b;
+  --warning: #946414;
+  --pass: #287a3b;
+  --note: #6b7390;
+}

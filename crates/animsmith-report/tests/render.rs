@@ -1429,3 +1429,144 @@ fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
         assert!(html.contains("Coverage gaps"));
     }
 }
+
+/// The ten design tokens, dark first. Both generated documents must resolve
+/// every colour through exactly this set: a stray literal anywhere in the
+/// stylesheet or either viewer would not follow the theme.
+const DARK_TOKENS: [&str; 10] = [
+    "#17171f", "#1e1e2a", "#d5d9e5", "#9099b2", "#3a3a4e", "#7aa2f7", "#f7768e", "#e0af68",
+    "#9ece6a", "#bb9af7",
+];
+const LIGHT_TOKENS: [&str; 10] = [
+    "#f4f5f9", "#ffffff", "#1a1e2c", "#5b6382", "#d9deea", "#3b67d6", "#cf3f5b", "#946414",
+    "#287a3b", "#6b7390",
+];
+
+/// Everything the browser executes or styles: the embedded JSON payload is
+/// asset-derived text, not part of the document's own paint.
+fn document_code(html: &str) -> String {
+    let mut kept = String::new();
+    let mut rest = html;
+    while let Some(open) = rest.find("<script type=\"application/json\"") {
+        kept.push_str(&rest[..open]);
+        let close = rest[open..].find("</script>").expect("data script closes") + open;
+        rest = &rest[close..];
+    }
+    kept.push_str(rest);
+    kept
+}
+
+fn hex_colours(source: &str) -> std::collections::BTreeSet<String> {
+    let bytes = source.as_bytes();
+    let mut found = std::collections::BTreeSet::new();
+    for (index, _) in source.match_indices('#') {
+        let digits = &bytes[index + 1..(index + 7).min(bytes.len())];
+        let next = bytes.get(index + 7).copied().unwrap_or(b' ');
+        if digits.len() == 6
+            && digits.iter().all(u8::is_ascii_hexdigit)
+            && !next.is_ascii_hexdigit()
+        {
+            found.insert(source[index..index + 7].to_ascii_lowercase());
+        }
+    }
+    found
+}
+
+fn themed_documents() -> Vec<(&'static str, String)> {
+    let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let single = animsmith_report::render(&grids, &roles, &[], None, None);
+
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let default_roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let comparison = animsmith_report::render_comparison(
+        comparison_side(
+            &before_source,
+            &before_grids,
+            &default_roles,
+            &[],
+            &config,
+            "acceptance-matrix",
+        ),
+        comparison_side(
+            &after_source,
+            &after_grids,
+            &default_roles,
+            &[],
+            &config,
+            "acceptance-matrix",
+        ),
+    )
+    .expect("comparison renders");
+    vec![("single-clip", single), ("comparison", comparison)]
+}
+
+#[test]
+fn both_reports_paint_only_from_the_shared_token_set() {
+    let expected: std::collections::BTreeSet<String> = DARK_TOKENS
+        .iter()
+        .chain(LIGHT_TOKENS.iter())
+        .map(|value| (*value).to_owned())
+        .collect();
+    for (kind, html) in themed_documents() {
+        assert_eq!(
+            hex_colours(&document_code(&html)),
+            expected,
+            "{kind} report must resolve every colour through the shared tokens"
+        );
+    }
+}
+
+#[test]
+fn both_reports_default_to_dark_and_offer_light_by_scheme_or_data_theme() {
+    for (kind, html) in themed_documents() {
+        let code = document_code(&html);
+        let bare_root = code.find(":root {").expect("bare :root token block");
+        let media = code
+            .find("@media (prefers-color-scheme: light)")
+            .unwrap_or_else(|| panic!("{kind} report offers a light scheme"));
+        let pinned = code
+            .find(":root[data-theme=\"light\"]")
+            .unwrap_or_else(|| panic!("{kind} report honours a pinned theme"));
+        assert!(
+            bare_root < media && media < pinned,
+            "{kind}: dark defaults, then the scheme query, then the explicit override"
+        );
+        assert!(
+            code.contains(":root:not([data-theme=\"dark\"])"),
+            "{kind}: a document pinned to dark ignores a light system scheme"
+        );
+        for (token, dark) in [
+            "ground", "surface", "ink", "muted", "line", "accent", "error", "warning", "pass",
+            "note",
+        ]
+        .iter()
+        .zip(DARK_TOKENS)
+        {
+            assert!(
+                code[bare_root..media].contains(&format!("--{token}: {dark}")),
+                "{kind}: bare :root keeps the historical dark value of --{token}"
+            );
+        }
+        for (token, light) in [
+            "ground", "surface", "ink", "muted", "line", "accent", "error", "warning", "pass",
+            "note",
+        ]
+        .iter()
+        .zip(LIGHT_TOKENS)
+        {
+            assert_eq!(
+                code[media..]
+                    .matches(&format!("--{token}: {light}"))
+                    .count(),
+                2,
+                "{kind}: --{token} has the same light value by scheme and by data-theme"
+            );
+        }
+    }
+}

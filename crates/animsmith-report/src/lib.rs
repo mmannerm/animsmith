@@ -50,9 +50,16 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 
+/// The one colour authority for every generated document: dark by default,
+/// light under `prefers-color-scheme`, and either one pinned by a
+/// `#theme=` fragment.
+const TOKENS_CSS: &str = include_str!("../assets/tokens.css");
+/// Pure helpers shared by both viewers (design-token palette).
+const SHARED_JS: &str = include_str!("../assets/shared.js");
 const VIEWER_JS: &str = include_str!("../assets/viewer.js");
 const VIEWER_CSS: &str = include_str!("../assets/viewer.css");
 const COMPARISON_VIEWER_JS: &str = include_str!("../assets/comparison.js");
+const COMPARISON_CSS: &str = include_str!("../assets/comparison.css");
 
 /// Maximum pose-data bytes embedded by one side of a comparison report.
 ///
@@ -396,20 +403,16 @@ pub fn render_comparison(
     Ok(format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>animsmith — visual comparison</title><style>{COMPARISON_CSS}</style></head>\n\
+         <title>animsmith — visual comparison</title><style>{TOKENS_CSS}{COMPARISON_CSS}</style></head>\n\
          <body><header><h1>animsmith visual comparison</h1><p id=\"mapping\"></p>\n\
          <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></header>\n\
          <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"></label><span id=\"times\"></span></section>\n\
          <section class=\"shared-chart\"><h2>Before/after root trajectory</h2><svg id=\"comparison-root-path\" viewBox=\"0 0 720 220\"></svg></section>\n\
          <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><canvas id=\"before-gl\"></canvas><p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"before-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"before-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
          <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><canvas id=\"after-gl\"></canvas><p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"after-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"after-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
-         <script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
+         <script>{SHARED_JS}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
     ))
 }
-
-const COMPARISON_CSS: &str = r#"
-:root{--bg:#17171f;--panel:#1e1e2a;--text:#d5d9e5;--muted:#aab1c5;--accent:#7aa2f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}header,.sync,.shared-chart{padding:.8rem 1rem}h1,h2,h3{color:var(--accent)}h1{font-size:1.1rem}.warning{color:#f0cb83}.sync{background:#20202c;display:flex;gap:1rem;align-items:center}.sync input{min-width:20rem}.shared-chart{margin:0 1rem;background:var(--panel);border-radius:8px}.shared-chart h2{font-size:1rem;margin:.2rem 0}main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;padding:1rem}@media(max-width:900px){main{grid-template-columns:1fr}.sync input{min-width:10rem}}.side{background:var(--panel);border-radius:8px;padding:.8rem}canvas{width:100%;aspect-ratio:4/3;background:#12121a;border-radius:5px}svg{width:100%;background:#12121a;border-radius:5px;margin-top:.6rem}ul{padding-left:1.3rem;max-height:13rem;overflow:auto}.finding{cursor:pointer;padding:.3rem;margin:.2rem 0;background:#272738;border-radius:4px}.finding:hover{background:#34344a}.context-label,.context{color:var(--muted)}.structural{border-left:3px solid #bb9af7;padding-left:.5rem}pre{white-space:pre-wrap;word-break:break-word;color:var(--muted)}.selected{outline:2px solid #f0cb83}
-"#;
 
 fn select_clip<'a>(
     doc: &'a animsmith_core::Document,
@@ -1460,7 +1463,7 @@ pub fn render(
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>animsmith — {title}</title>\n<style>{VIEWER_CSS}</style>\n</head>\n<body>\n\
+         <title>animsmith — {title}</title>\n<style>{TOKENS_CSS}{VIEWER_CSS}</style>\n</head>\n<body>\n\
          <header><h1>animsmith report</h1><span id=\"file\"></span></header>\n\
          <main>\n\
          <section id=\"viewer-panel\">\n\
@@ -1481,6 +1484,7 @@ pub fn render(
            <h2>Charts</h2>\n<div id=\"charts\">{charts_html}</div>\n\
          </section>\n\
          </main>\n\
+         <script>{SHARED_JS}</script>\n\
          <script type=\"application/json\" id=\"report-data\">{data}</script>\n\
          <script>{VIEWER_JS}</script>\n</body>\n</html>\n"
     )
