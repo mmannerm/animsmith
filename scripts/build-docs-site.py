@@ -2,11 +2,16 @@
 """Stage and build the Pages book from the tracked repository Markdown.
 
 The repository remains the documentation authority.  This script copies the
-tracked tree into an ignored staging directory, derives mdBook's top-level
-SUMMARY from docs/README.md, and adds the canonical animation-report pairs from
-docs/reports/README.md as nested chapters.  It deliberately never writes into
-the source tree, refuses symbolic links in the staged input, and validates that
-every rendered local link resolves inside the built artifact.
+tracked tree into an ignored staging directory, derives mdBook's navigation
+from the Category column of docs/README.md, and nests the canonical
+animation-report pairs from docs/reports/README.md as sub-chapters.  A
+Category cell is either a part name or "Part <separator> Group"; parts become
+mdBook part titles and groups become generated chapter pages that collect
+their member rows.  Tracked docs/site files are staged as mdBook's theme
+override directory rather than as publishable source.  The script
+deliberately never writes into the source tree, refuses symbolic links in the
+staged input, and validates that every rendered local link resolves inside the
+built artifact.
 """
 
 from __future__ import annotations
@@ -14,26 +19,59 @@ from __future__ import annotations
 import argparse
 import os
 import posixpath
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unicodedata
 from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 from hashlib import sha256
+from typing import NamedTuple
 from urllib.parse import quote, unquote, urlsplit
 
 
 INDEX = Path("docs/README.md")
 REPORT_INDEX = Path("docs/reports/README.md")
+REPORT_INDEX_ROW = REPORT_INDEX.relative_to(INDEX.parent).as_posix()
+SITE = Path("docs/site")
+REDIRECTS = SITE / "redirects.toml"
+THEME_CSS = "animsmith.css"
 PIN = Path(".mdbook-version")
 GENERATED_EXTERNAL_DIR = Path("_generated/external")
+GENERATED_GROUP_DIR = Path("_generated/groups")
+GROUP_SEPARATOR = " › "
+INLINE_LINK = re.compile(r"\]\((?P<destination>[^()\s]*)\)")
 MAX_EXTERNAL_URL_BYTES = 2048
 MAX_LABEL_BYTES = 256
 MAX_SOURCE_REF_BYTES = 255
 REPO_URL = "https://github.com/mmannerm/animsmith"
+
+
+class Row(NamedTuple):
+    """One canonical docs/README.md index row."""
+
+    category: str
+    label: str
+    destination: str
+    description: str
+
+
+class Group(NamedTuple):
+    """Consecutive rows sharing one group, or bare chapters when unnamed."""
+
+    name: str
+    rows: list[Row]
+
+
+class Part(NamedTuple):
+    """One mdBook part title and the groups published under it."""
+
+    title: str
+    groups: list[Group]
 
 
 def tracked_files(source: Path) -> list[Path]:
@@ -45,7 +83,7 @@ def tracked_files(source: Path) -> list[Path]:
     return [Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item]
 
 
-def index_rows(index: Path) -> list[tuple[str, str, str]]:
+def index_rows(index: Path) -> list[Row]:
     lines = index.read_text(encoding="utf-8").splitlines()
     header = "| Document | Use it to… | Category |"
     try:
@@ -60,12 +98,13 @@ def index_rows(index: Path) -> list[tuple[str, str, str]]:
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) != 3:
             raise ValueError(f"{index}: malformed index row: {line}")
-        document, _, category = cells
+        document, description, category = cells
         label, destination = markdown_link(document, f"{index}: Document cell")
         if not category:
             raise ValueError(f"{index}: document category is required")
-        validate_category(category)
-        rows.append((category, label, destination))
+        validate_text(category, "category")
+        validate_text(description, "description")
+        rows.append(Row(category, label, destination, description))
     if not rows:
         raise ValueError(f"{index}: canonical index table has no rows")
     return rows
@@ -77,7 +116,7 @@ def markdown_link(cell: str, context: str) -> tuple[str, str]:
     label, destination = cell[1:-1].split("](", 1)
     if not label or not destination:
         raise ValueError(f"{context} link label and destination are required")
-    validate_label(label)
+    validate_text(label, "label")
     return label, destination
 
 
@@ -117,14 +156,9 @@ def has_non_printable(value: str) -> bool:
     return any(unicodedata.category(character).startswith("C") for character in value)
 
 
-def validate_label(label: str) -> None:
-    if has_non_printable(label):
-        raise ValueError("index label contains control or non-printable characters")
-
-
-def validate_category(category: str) -> None:
-    if has_non_printable(category):
-        raise ValueError("index category contains control or non-printable characters")
+def validate_text(value: str, what: str) -> None:
+    if has_non_printable(value):
+        raise ValueError(f"index {what} contains control or non-printable characters")
 
 
 def validate_source_ref(source_ref: str) -> None:
@@ -143,8 +177,15 @@ def github_source_url(kind: str, source_ref: str, relative: Path) -> str:
     return f"{REPO_URL}/{kind}/{encoded_ref}/{encoded_path}"
 
 
+def is_external(destination: str) -> bool:
+    """Report a URL scheme.  A drive prefix is a local path on every host."""
+    if len(destination) >= 2 and destination[0].isalpha() and destination[1] == ":":
+        return False
+    return bool(urlsplit(destination).scheme)
+
+
 def external_proxy(source: Path, label: str, destination: str, proxies: dict[Path, str]) -> str:
-    validate_label(label)
+    validate_text(label, "label")
     if len(label.encode("utf-8")) > MAX_LABEL_BYTES:
         raise ValueError("external index label exceeds the generated Markdown bound")
     if len(destination.encode("utf-8")) > MAX_EXTERNAL_URL_BYTES:
@@ -165,18 +206,25 @@ def external_proxy(source: Path, label: str, destination: str, proxies: dict[Pat
             raise ValueError(f"external index destinations collide at {relative}")
         return relative.as_posix()
     proxies[relative] = destination
-    if (source / relative).exists():
-        raise ValueError(f"generated external-reference path is reserved: {relative}")
-    proxy = source / relative
-    proxy.parent.mkdir(parents=True, exist_ok=True)
     escaped_label = markdown_text(label)
-    proxy.write_text(
+    write_generated_page(
+        source,
+        relative,
         f"# {escaped_label}\n\n"
         "This reference is published outside the AnimSmith Pages site.\n\n"
         f"[Open {escaped_label}](<{destination}>)\n",
-        encoding="utf-8",
+        "external-reference",
     )
     return relative.as_posix()
+
+
+def write_generated_page(source: Path, relative: Path, text: str, kind: str) -> None:
+    """Publish a generated chapter without overwriting a canonical page."""
+    page = source / relative
+    if page.exists():
+        raise ValueError(f"generated {kind} path is reserved: {relative}")
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(text, encoding="utf-8")
 
 
 def local_summary_destination(destination: str, base: str = "docs") -> str:
@@ -196,64 +244,211 @@ def local_summary_destination(destination: str, base: str = "docs") -> str:
     normalized = posixpath.normpath(posixpath.join(base, target))
     if normalized == ".." or normalized.startswith("../"):
         raise ValueError(f"canonical index destination escapes staged source: {destination}")
+    if target.endswith("/"):
+        normalized += "/"
     return f"{normalized}#{fragment}" if separator else normalized
 
 
-def write_book_files(
-    stage: Path,
-    rows: list[tuple[str, str, str]],
-    reports: list[tuple[str, str, str]],
-    site_url: str,
-) -> None:
-    source = stage / "src"
-    summary = ["# Summary", "", "- [Documentation](docs/README.md)"]
-    category = None
-    proxies: dict[Path, str] = {}
-    for row_category, label, destination in rows:
-        validate_label(label)
-        validate_category(row_category)
-        if row_category != category:
-            category = row_category
-            summary.extend(["", f"# {category}"])
-        # Table destinations are relative to docs/README.md; SUMMARY.md lives
-        # at the staged repository root, so retain the canonical destination's
-        # meaning while changing only its presentation location.
-        # A drive-prefixed path is not a URL scheme.  Route it through the
-        # canonical local-path guard so every host refuses it consistently.
-        if len(destination) >= 2 and destination[0].isalpha() and destination[1] == ":":
-            destination = local_summary_destination(destination)
-        elif urlsplit(destination).scheme:
-            destination = external_proxy(source, label, destination, proxies)
-        elif not destination.startswith("#"):
-            destination = local_summary_destination(destination)
-        summary.append(f"- [{markdown_text(label)}]({destination})")
-        if destination == REPORT_INDEX.as_posix():
-            for report_label, report_destination, evidence_destination in reports:
-                report_destination = local_summary_destination(
-                    report_destination, REPORT_INDEX.parent.as_posix()
-                )
-                evidence_destination = local_summary_destination(
-                    evidence_destination, REPORT_INDEX.parent.as_posix()
-                )
-                summary.append(
-                    f"  - [{markdown_text(report_label)}]({report_destination})"
-                )
-                summary.append(
-                    f"    - [{markdown_text(report_label)} evidence]({evidence_destination})"
-                )
-    (source / "SUMMARY.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
-    (stage / "book.toml").write_text(
-        "[book]\n"
-        "title = \"AnimSmith documentation\"\n"
-        "authors = [\"AnimSmith contributors\"]\n"
-        "language = \"en\"\n"
-        "src = \"src\"\n\n"
-        "[output.html]\n"
-        f"site-url = \"{site_url}\"\n"
-        "git-repository-url = \"https://github.com/mmannerm/animsmith\"\n"
-        "edit-url-template = \"https://github.com/mmannerm/animsmith/edit/main/{path}\"\n",
-        encoding="utf-8",
+def page_relative(destination: str, page: Path) -> str:
+    """Present a staged-root destination from a generated page's directory."""
+    target, separator, fragment = destination.partition("#")
+    if target:
+        relative = posixpath.relpath(target, page.parent.as_posix())
+        target = f"{relative}/" if target.endswith("/") else relative
+    return f"{target}#{fragment}" if separator else target
+
+
+def relocate_links(description: str, page: Path) -> str:
+    """Keep a canonical description's local links valid on a generated page."""
+
+    def relocate(match: re.Match[str]) -> str:
+        destination = match["destination"]
+        if not destination or destination.startswith("#") or is_external(destination):
+            return match[0]
+        return f"]({page_relative(local_summary_destination(destination), page)})"
+
+    return INLINE_LINK.sub(relocate, description)
+
+
+def split_category(category: str) -> tuple[str, str]:
+    """Split a canonical Category cell into its part title and optional group."""
+    title, separator, group = category.partition(GROUP_SEPARATOR)
+    title, group = title.strip(), group.strip()
+    # The separator character is reserved, so a stray one is a malformed cell
+    # rather than a part or group name.
+    if not title or (separator and not group) or any("›" in name for name in (title, group)):
+        raise ValueError(
+            f"index category must be 'Part' or 'Part{GROUP_SEPARATOR}Group': {category}"
+        )
+    return title, group
+
+
+def group_slug(group: str) -> str:
+    """Derive a generated group page name from its canonical title."""
+    words = "".join(
+        character if character.isascii() and character.isalnum() else " "
+        for character in group.lower()
+    ).split()
+    if not words:
+        raise ValueError(f"index group has no slug characters: {group}")
+    return "-".join(words)
+
+
+def navigation(rows: list[Row]) -> list[Part]:
+    """Order canonical rows into contiguous parts and contiguous group chapters."""
+    parts: list[Part] = []
+    seen_parts: set[str] = set()
+    group_parts: dict[str, str] = {}
+    slugs: dict[str, str] = {}
+    for row in rows:
+        title, group = split_category(row.category)
+        if not parts or parts[-1].title != title:
+            if title in seen_parts:
+                raise ValueError(f"index part is not contiguous: {title}")
+            seen_parts.add(title)
+            parts.append(Part(title, []))
+        groups = parts[-1].groups
+        if not groups or groups[-1].name != group:
+            if group:
+                if group_parts.setdefault(group, title) != title:
+                    raise ValueError(f"index group appears in two parts: {group}")
+                if any(published.name == group for published in groups):
+                    raise ValueError(f"index group is not contiguous: {group}")
+                slug = group_slug(group)
+                if slugs.setdefault(slug, group) != group:
+                    raise ValueError(
+                        f"index groups collide at {slug}.md: {slugs[slug]} and {group}"
+                    )
+            groups.append(Group(group, []))
+        groups[-1].rows.append(row)
+    return parts
+
+
+def chapter_destination(source: Path, row: Row, proxies: dict[Path, str]) -> str:
+    """Resolve a canonical index destination to a staged SUMMARY chapter.
+
+    Table destinations are relative to docs/README.md; SUMMARY.md lives at the
+    staged repository root, so retain the canonical destination's meaning while
+    changing only its presentation location.
+    """
+    if is_external(row.destination):
+        return external_proxy(source, row.label, row.destination, proxies)
+    if row.destination.startswith("#"):
+        return row.destination
+    return local_summary_destination(row.destination)
+
+
+def chapter(depth: int, label: str, destination: str) -> str:
+    return f"{'  ' * depth}- [{markdown_text(label)}]({destination})"
+
+
+def report_chapters(depth: int, destination: str, reports: list[tuple[str, str, str]]) -> list[str]:
+    """Nest the canonical report/evidence pairs under the reports index chapter."""
+    if destination != REPORT_INDEX.as_posix():
+        return []
+    base = REPORT_INDEX.parent.as_posix()
+    lines = []
+    for label, report, evidence in reports:
+        lines.append(chapter(depth, label, local_summary_destination(report, base)))
+        lines.append(
+            chapter(depth + 1, f"{label} evidence", local_summary_destination(evidence, base))
+        )
+    return lines
+
+
+def write_group_page(source: Path, group: Group, proxies: dict[Path, str]) -> str:
+    """Publish a generated group chapter derived from its member rows."""
+    relative = GENERATED_GROUP_DIR / f"{group_slug(group.name)}.md"
+    members = [
+        f"- [{markdown_text(row.label)}]"
+        f"({page_relative(chapter_destination(source, row, proxies), relative)})"
+        f" — {relocate_links(row.description, relative)}"
+        for row in group.rows
+    ]
+    write_generated_page(
+        source,
+        relative,
+        f"# {markdown_text(group.name)}\n\n" + "\n".join(members) + "\n",
+        "group",
     )
+    return relative.as_posix()
+
+
+def summary_markdown(
+    source: Path, parts: list[Part], reports: list[tuple[str, str, str]]
+) -> str:
+    """Render SUMMARY.md, publishing every page the navigation generates."""
+    proxies: dict[Path, str] = {}
+    summary = ["# Summary", "", "- [Documentation](docs/README.md)"]
+    for part in parts:
+        summary.extend(["", f"# {part.title}"])
+        for group in part.groups:
+            depth = 0
+            if group.name:
+                summary.append(chapter(0, group.name, write_group_page(source, group, proxies)))
+                depth = 1
+            for row in group.rows:
+                destination = chapter_destination(source, row, proxies)
+                summary.append(chapter(depth, row.label, destination))
+                summary.extend(report_chapters(depth + 1, destination, reports))
+    return "\n".join(summary) + "\n"
+
+
+def redirect_entries(path: Path) -> dict[str, str]:
+    """Read the tracked Pages redirect map, validated at the configuration boundary."""
+    if not path.is_file():
+        return {}
+    try:
+        entries = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as error:
+        raise ValueError(f"{path} is not a valid redirect map: {error}") from error
+    for route, target in entries.items():
+        if not isinstance(target, str):
+            raise ValueError(f"{path}: redirect target must be a string: {route}")
+        for value in (route, target):
+            if (
+                has_non_printable(value)
+                or any(character.isspace() for character in value)
+                or any(character in '":\\' for character in value)
+            ):
+                raise ValueError(f"{path}: redirect entry is not a plain site path: {route}")
+        if not route.startswith("/") or not route.endswith(".html"):
+            raise ValueError(
+                f"{path}: redirect route must be a site-root path ending in .html: {route}"
+            )
+        if not target or target.startswith("/"):
+            raise ValueError(f"{path}: redirect target must be a relative path: {target}")
+    return entries
+
+
+def book_toml(site_url: str, theme_css: bool, redirects: dict[str, str]) -> str:
+    """Render book.toml, wiring only the theme assets the checkout tracks.
+
+    Release-tag checkouts predating docs/site have no theme to override, so
+    additional-css is emitted exactly when the staged theme provides it.
+    """
+    lines = [
+        "[book]",
+        'title = "AnimSmith documentation"',
+        'authors = ["AnimSmith contributors"]',
+        'language = "en"',
+        'src = "src"',
+        "",
+        "[output.html]",
+        f'site-url = "{site_url}"',
+        f'git-repository-url = "{REPO_URL}"',
+        f'edit-url-template = "{REPO_URL}/edit/main/{{path}}"',
+        'default-theme = "light"',
+        'preferred-dark-theme = "navy"',
+        "no-section-label = true",
+    ]
+    if theme_css:
+        lines.append(f'additional-css = ["theme/{THEME_CSS}"]')
+    lines.extend(["", "[output.html.fold]", "enable = true", "level = 0"])
+    if redirects:
+        lines.extend(["", "[output.html.redirect]"])
+        lines.extend(f'"{route}" = "{target}"' for route, target in redirects.items())
+    return "\n".join(lines) + "\n"
 
 
 def stage(source: Path, destination: Path, site_url: str) -> None:
@@ -265,22 +460,41 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
     temporary = Path(tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent))
     try:
         staged_source = temporary / "src"
+        theme = temporary / "theme"
         for relative in tracked_files(source):
             original = source / relative
             if original.is_symlink():
                 raise ValueError(f"refusing symbolic link in Pages source: {relative}")
             if not original.is_file():
                 continue
-            target = staged_source / relative
+            # docs/site holds mdBook's theme override rather than publishable
+            # source, and its redirect map is configuration rather than an asset.
+            if relative == REDIRECTS:
+                continue
+            target = (
+                theme / relative.relative_to(SITE)
+                if relative.is_relative_to(SITE)
+                else staged_source / relative
+            )
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(original, target)
         rows = index_rows(source / INDEX)
         reports = (
             report_rows(source / REPORT_INDEX)
-            if any(destination == "reports/README.md" for _, _, destination in rows)
+            if any(row.destination == REPORT_INDEX_ROW for row in rows)
             else []
         )
-        write_book_files(temporary, rows, reports, site_url)
+        (staged_source / "SUMMARY.md").write_text(
+            summary_markdown(staged_source, navigation(rows), reports), encoding="utf-8"
+        )
+        (temporary / "book.toml").write_text(
+            book_toml(
+                site_url,
+                (theme / THEME_CSS).is_file(),
+                redirect_entries(source / REDIRECTS),
+            ),
+            encoding="utf-8",
+        )
         if destination.exists():
             shutil.rmtree(destination)
         os.replace(temporary, destination)
@@ -453,6 +667,8 @@ def build(
     required_mdbook(source, mdbook)
     subprocess.run([mdbook, "build", "-d", "book"], cwd=destination, check=True)
     publish_readme_aliases(destination / "src", destination / "book")
+    # mdBook renders each configured redirect as a page linking its target, so
+    # the rendered-link inventory also proves every redirect resolves.
     links = rendered_local_links(destination / "book", site_url)
     publish_source_redirects(destination / "src", destination / "book", links, source_ref)
     validate_artifact_paths(destination / "book")

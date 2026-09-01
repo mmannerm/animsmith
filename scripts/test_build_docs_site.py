@@ -639,5 +639,348 @@ class ExternalProxyContractTests(unittest.TestCase):
             BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
 
 
+
+def pinned_mdbook() -> bool:
+    """Report whether the pinned mdBook is on PATH for end-to-end build tests."""
+    expected = (ROOT / ".mdbook-version").read_text(encoding="utf-8").strip()
+    try:
+        version = subprocess.run(
+            ["mdbook", "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+    except OSError:
+        return False
+    return version.returncode == 0 and version.stdout.strip() == f"mdbook v{expected}"
+
+
+class NavigationContractTests(unittest.TestCase):
+    """Pin the published navigation through the staged book, not internals."""
+
+    INDEX_HEADER = "| Document | Use it to… | Category |\n|---|---|---|\n"
+    START_ROWS = [
+        ("[Install](../README.md)", "Install it.", "Start"),
+        ("[Overview](overview.md)", "Start here.", "Start"),
+    ]
+
+    def fixture(
+        self,
+        root: Path,
+        rows: list[tuple[str, str, str]],
+        reports: list[str] | None = None,
+        site: dict[str, str] | None = None,
+    ) -> None:
+        (root / "docs").mkdir(parents=True)
+        (root / ".mdbook-version").write_text("0.4.52\n", encoding="utf-8")
+        (root / "README.md").write_text("# Root\n", encoding="utf-8")
+        table = "".join(
+            f"| {document} | {description} | {category} |\n"
+            for document, description, category in rows
+        )
+        (root / "docs/README.md").write_text(
+            "# Documentation\n\n" + self.INDEX_HEADER + table, encoding="utf-8"
+        )
+        for document, _, _ in rows:
+            destination = document[1:-1].split("](", 1)[1].partition("#")[0]
+            if "://" in destination or destination.endswith("/"):
+                continue
+            page = root / "docs" / destination
+            page.parent.mkdir(parents=True, exist_ok=True)
+            if not page.exists():
+                page.write_text(f"# {page.stem}\n", encoding="utf-8")
+        for name in reports or []:
+            (root / "docs/reports").mkdir(parents=True, exist_ok=True)
+            (root / "docs/reports/README.md").write_text(
+                "# Reports\n\n"
+                "| Technical report | Evidence appendix | Scope | Evaluation status |\n"
+                "|---|---|---|---|\n"
+                + "".join(
+                    f"| [{report}]({report}.md) | [Evidence]({report}-evidence.md) "
+                    "| Fixture | Current |\n"
+                    for report in reports or []
+                ),
+                encoding="utf-8",
+            )
+            for suffix in ("", "-evidence"):
+                (root / f"docs/reports/{name}{suffix}.md").write_text(
+                    f"# {name}{suffix}\n", encoding="utf-8"
+                )
+        for name, content in (site or {}).items():
+            asset = root / "docs/site" / name
+            asset.parent.mkdir(parents=True, exist_ok=True)
+            asset.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+
+    def build_site(
+        self, root: Path, arguments: list[str] | None = None, **fixture: object
+    ) -> tuple[subprocess.CompletedProcess[str], Path]:
+        source = root / "source"
+        stage = root / "stage"
+        self.fixture(source, **fixture)  # type: ignore[arg-type]
+        stage.mkdir()
+        sentinel = stage / "previous-publication.txt"
+        sentinel.write_text("keep\n", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(BUILDER), "--source", str(source), "--stage", str(stage)]
+            + (arguments or []),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        return result, stage
+
+    def assert_staging_rejects(self, expected: str, **fixture: object) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result, stage = self.build_site(Path(temporary), **fixture)
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            self.assertIn(expected, result.stderr)
+            self.assertTrue((stage / "previous-publication.txt").is_file())
+            self.assertFalse((stage / "src").exists(), "rejection publishes no partial tree")
+
+    def stage_site(self, root: Path, **fixture: object) -> Path:
+        result, stage = self.build_site(root, **fixture)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return stage
+
+    def test_parts_groups_and_report_pairs_nest_in_canonical_table_order(self) -> None:
+        rows = [
+            ("[Install](../README.md)", "Install it.", "Start"),
+            ("[Overview](overview.md)", "Start here.", "Start"),
+            ("[Unity](engine-unity.md)", "Engine one.", "Workflows › Engine profiles"),
+            (
+                "[Bevy](engine-bevy.md)",
+                "Engine two, validated by [schemas](schemas/).",
+                "Workflows › Engine profiles",
+            ),
+            ("[Recipes](recipes.md)", "Do the work.", "Workflows"),
+            ("[Reports](reports/README.md)", "Read reports.", "More › Pack evaluations"),
+            (
+                "[API](https://docs.rs/animsmith-core)",
+                "Look up [animsmith-core](https://docs.rs/animsmith-core).",
+                "More › Pack evaluations",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = self.stage_site(Path(temporary), rows=rows, reports=["one"])
+            digest = hashlib.sha256(b"https://docs.rs/animsmith-core").hexdigest()
+            self.assertEqual(
+                (stage / "src/SUMMARY.md").read_text(encoding="utf-8"),
+                "# Summary\n"
+                "\n"
+                "- [Documentation](docs/README.md)\n"
+                "\n"
+                "# Start\n"
+                "- [Install](README.md)\n"
+                "- [Overview](docs/overview.md)\n"
+                "\n"
+                "# Workflows\n"
+                "- [Engine profiles](_generated/groups/engine-profiles.md)\n"
+                "  - [Unity](docs/engine-unity.md)\n"
+                "  - [Bevy](docs/engine-bevy.md)\n"
+                "- [Recipes](docs/recipes.md)\n"
+                "\n"
+                "# More\n"
+                "- [Pack evaluations](_generated/groups/pack-evaluations.md)\n"
+                "  - [Reports](docs/reports/README.md)\n"
+                "    - [one](docs/reports/one.md)\n"
+                "      - [one evidence](docs/reports/one-evidence.md)\n"
+                f"  - [API](_generated/external/{digest}.md)\n",
+                "parts, group chapters, members, and report pairs keep canonical order",
+            )
+            self.assertEqual(
+                (stage / "src/_generated/groups/engine-profiles.md").read_text(encoding="utf-8"),
+                "# Engine profiles\n"
+                "\n"
+                "- [Unity](../../docs/engine-unity.md) — Engine one.\n"
+                "- [Bevy](../../docs/engine-bevy.md) — Engine two, validated by "
+                "[schemas](../../docs/schemas/).\n",
+                "a group page relocates member and description destinations without changing them",
+            )
+            self.assertEqual(
+                (stage / "src/_generated/groups/pack-evaluations.md").read_text(encoding="utf-8"),
+                "# Pack evaluations\n"
+                "\n"
+                "- [Reports](../../docs/reports/README.md) — Read reports.\n"
+                f"- [API](../external/{digest}.md) — Look up "
+                "[animsmith-core](https://docs.rs/animsmith-core).\n",
+                "an external member routes through the proxy while prose keeps its exact URL",
+            )
+
+    def test_categories_that_cannot_produce_stable_navigation_are_refused(self) -> None:
+        cases = [
+            (
+                [
+                    ("[A](a.md)", "One.", "Start"),
+                    ("[B](b.md)", "Two.", "More"),
+                    ("[C](c.md)", "Three.", "Start"),
+                ],
+                "index part is not contiguous: Start",
+            ),
+            (
+                [
+                    ("[A](a.md)", "One.", "More › Reference"),
+                    ("[B](b.md)", "Two.", "More › Pack evaluations"),
+                    ("[C](c.md)", "Three.", "More › Reference"),
+                ],
+                "index group is not contiguous: Reference",
+            ),
+            (
+                [
+                    ("[A](a.md)", "One.", "Start › Reference"),
+                    ("[B](b.md)", "Two.", "More › Reference"),
+                ],
+                "index group appears in two parts: Reference",
+            ),
+            (
+                [
+                    ("[A](a.md)", "One.", "Start › Engine profiles"),
+                    ("[B](b.md)", "Two.", "More › Engine Profiles"),
+                ],
+                "index groups collide at engine-profiles.md",
+            ),
+            (
+                [("[A](a.md)", "One.", "Start › ✦✦✦")],
+                "index group has no slug characters",
+            ),
+            ([("[A](a.md)", "One.", "Start › ")], "index category must be"),
+            ([("[A](a.md)", "One.", "Start › More › Reference")], "index category must be"),
+            ([("[A](a.md)", "One.", " › Reference")], "index category must be"),
+        ]
+        for rows, expected in cases:
+            with self.subTest(expected=expected):
+                self.assert_staging_rejects(expected, rows=rows)
+
+    def test_generated_group_page_cannot_shadow_a_canonical_page(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            self.fixture(source, rows=[("[A](a.md)", "One.", "Start › Reference")])
+            reserved = source / "_generated/groups/reference.md"
+            reserved.parent.mkdir(parents=True)
+            reserved.write_text("reserved\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(BUILDER),
+                    "--source",
+                    str(source),
+                    "--stage",
+                    str(root / "stage"),
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            self.assertIn("generated group path is reserved", result.stderr)
+
+    def theme_site(self) -> dict[str, str]:
+        return {
+            "animsmith.css": ":root { --animsmith: 1; }\n",
+            "fonts/fonts.css": "@font-face { font-family: Fixture; }\n",
+            "redirects.toml": '"/docs/old.html" = "overview.html"\n',
+        }
+
+    def test_tracked_site_directory_is_staged_as_the_mdbook_theme(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = self.stage_site(
+                Path(temporary),
+                rows=self.START_ROWS,
+                site=self.theme_site(),
+            )
+            self.assertEqual(
+                (stage / "theme/animsmith.css").read_text(encoding="utf-8"),
+                ":root { --animsmith: 1; }\n",
+            )
+            self.assertTrue((stage / "theme/fonts/fonts.css").is_file())
+            self.assertFalse(
+                (stage / "src/docs/site").exists(), "theme assets are not publishable source"
+            )
+            for unpublished in ["theme/redirects.toml", "src/docs/site/redirects.toml"]:
+                self.assertFalse(
+                    (stage / unpublished).exists(), f"{unpublished} is configuration, not content"
+                )
+            self.assertEqual(
+                (stage / "book.toml").read_text(encoding="utf-8"),
+                '[book]\n'
+                'title = "AnimSmith documentation"\n'
+                'authors = ["AnimSmith contributors"]\n'
+                'language = "en"\n'
+                'src = "src"\n'
+                "\n"
+                "[output.html]\n"
+                'site-url = "/animsmith/"\n'
+                'git-repository-url = "https://github.com/mmannerm/animsmith"\n'
+                'edit-url-template = "https://github.com/mmannerm/animsmith/edit/main/{path}"\n'
+                'default-theme = "light"\n'
+                'preferred-dark-theme = "navy"\n'
+                "no-section-label = true\n"
+                'additional-css = ["theme/animsmith.css"]\n'
+                "\n"
+                "[output.html.fold]\n"
+                "enable = true\n"
+                "level = 0\n"
+                "\n"
+                "[output.html.redirect]\n"
+                '"/docs/old.html" = "overview.html"\n',
+            )
+
+    def test_a_checkout_without_site_assets_still_folds_and_themes_the_book(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = self.stage_site(
+                Path(temporary), rows=self.START_ROWS
+            )
+            book = (stage / "book.toml").read_text(encoding="utf-8")
+            self.assertFalse((stage / "theme").exists(), "no tracked theme is staged")
+            self.assertNotIn("additional-css", book, "no stylesheet is wired without one staged")
+            self.assertNotIn("[output.html.redirect]", book)
+            self.assertIn('default-theme = "light"', book)
+            self.assertIn('preferred-dark-theme = "navy"', book)
+            self.assertIn("[output.html.fold]\nenable = true\nlevel = 0\n", book)
+
+    def test_redirect_map_refuses_entries_that_are_not_site_routes(self) -> None:
+        cases = [
+            ('"docs/old.html" = "overview.html"', "redirect route must be a site-root path"),
+            ('"/docs/old" = "overview.html"', "redirect route must be a site-root path"),
+            ('"/docs/old.html" = ""', "redirect target must be a relative path"),
+            ('"/docs/old.html" = "/overview.html"', "redirect target must be a relative path"),
+            ('"/docs/old.html" = "https://example.test/x"', "is not a plain site path"),
+            ('"/docs/old.html" = "over view.html"', "is not a plain site path"),
+            ('"/docs/old.html" = 1', "redirect target must be a string"),
+            ("this is not toml", "is not a valid redirect map"),
+        ]
+        for entry, expected in cases:
+            with self.subTest(entry=entry):
+                self.assert_staging_rejects(
+                    expected,
+                    rows=self.START_ROWS,
+                    site={"animsmith.css": "/* fixture */\n", "redirects.toml": entry + "\n"},
+                )
+
+    @unittest.skipUnless(pinned_mdbook(), "the pinned mdBook is not installed")
+    def test_configured_redirects_are_published_and_broken_targets_fail_the_build(self) -> None:
+        rows = self.START_ROWS
+        arguments = ["--site-url", "/animsmith/", "--build"]
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = self.stage_site(
+                Path(temporary), arguments=arguments, rows=rows, site=self.theme_site()
+            )
+            redirect = (stage / "book/docs/old.html").read_text(encoding="utf-8")
+            self.assertIn('<a href="overview.html">', redirect)
+            self.assertTrue((stage / "book/docs/overview.html").is_file())
+            self.assertTrue((stage / "book/theme/animsmith.css").is_file())
+            self.assertTrue((stage / "book/fonts/fonts.css").is_file())
+            self.assertFalse((stage / "book/redirects.toml").exists())
+
+        with tempfile.TemporaryDirectory() as temporary:
+            site = self.theme_site() | {"redirects.toml": '"/docs/old.html" = "gone.html"\n'}
+            result, _ = self.build_site(
+                Path(temporary), arguments=arguments, rows=rows, site=site
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("rendered link has no published target", result.stderr)
+            self.assertIn("gone.html", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

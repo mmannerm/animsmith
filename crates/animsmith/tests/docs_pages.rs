@@ -7,6 +7,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Generated group chapters live outside the canonical tree, so navigation
+/// can distinguish them from the rows they collect.
+const GENERATED_GROUP_DIR: &str = "_generated/groups/";
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -24,15 +28,69 @@ fn links(markdown: &str) -> Vec<String> {
         .collect()
 }
 
-fn links_with_list_depth(markdown: &str) -> Vec<(String, usize)> {
+/// Every generated chapter as `(part title, label, destination, list depth)`.
+/// Parts are mdBook part headings; depth 1 is a top-level chapter, depth 2 a
+/// group member or a report nested under an ungrouped index, and so on.
+fn summary_chapters(markdown: &str) -> Vec<(String, String, String, usize)> {
+    let mut part = String::new();
+    let mut heading = None;
     let mut list_depth = 0usize;
-    let mut links = Vec::new();
+    let mut active: Option<(String, String)> = None;
+    let mut chapters = Vec::new();
     for event in Parser::new_ext(markdown, options()) {
         match event {
+            Event::Start(Tag::Heading { .. }) => heading = Some(String::new()),
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(text) = heading.take() {
+                    part = text;
+                }
+            }
             Event::Start(Tag::List(_)) => list_depth += 1,
             Event::End(TagEnd::List(_)) => list_depth -= 1,
             Event::Start(Tag::Link { dest_url, .. }) => {
-                links.push((dest_url.into_string(), list_depth));
+                active = Some((String::new(), dest_url.into_string()))
+            }
+            Event::Text(text) | Event::Code(text) => {
+                if let Some((label, _)) = active.as_mut() {
+                    label.push_str(&text);
+                } else if let Some(heading) = heading.as_mut() {
+                    heading.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some((label, destination)) = active.take() {
+                    chapters.push((part.clone(), label, destination, list_depth));
+                }
+            }
+            _ => {}
+        }
+    }
+    chapters
+}
+
+/// The first link of every top-level list item, which is how a generated group
+/// page presents one canonical member row before its description.
+fn first_item_links(markdown: &str) -> Vec<(String, String)> {
+    let mut open = false;
+    let mut active: Option<(String, String)> = None;
+    let mut links = Vec::new();
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Item) => open = true,
+            Event::End(TagEnd::Item) => open = false,
+            Event::Start(Tag::Link { dest_url, .. }) if open => {
+                active = Some((String::new(), dest_url.into_string()))
+            }
+            Event::Text(text) | Event::Code(text) => {
+                if let Some((label, _)) = active.as_mut() {
+                    label.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some(link) = active.take() {
+                    links.push(link);
+                    open = false;
+                }
             }
             _ => {}
         }
@@ -466,42 +524,39 @@ fn summary_destination(destination: &str) -> String {
             component => components.push(component),
         }
     }
-    let output = components.join("/");
+    let mut output = components.join("/");
+    if path.ends_with('/') {
+        output.push('/');
+    }
     fragment.map_or(output.clone(), |fragment| format!("{output}#{fragment}"))
 }
 
+/// Canonical index rows recovered from generated navigation, in order, each
+/// paired with the Category cell that produced it: a top-level chapter that is
+/// not a generated group page, or a member nested directly under one. Report
+/// pairs sit below their index chapter and are not canonical rows.
 fn summary_category_links(markdown: &str) -> Vec<(String, String)> {
-    let mut heading = None;
-    let mut active_category = None;
-    let mut list_depth = 0usize;
-    let mut links = Vec::new();
-    for event in Parser::new_ext(markdown, options()) {
-        match event {
-            Event::Start(Tag::Heading { .. }) => heading = Some(String::new()),
-            Event::Start(Tag::List(_)) => list_depth += 1,
-            Event::End(TagEnd::List(_)) => list_depth -= 1,
-            Event::Text(text) if heading.is_some() => {
-                heading
-                    .as_mut()
-                    .expect("heading is present")
-                    .push_str(&text);
+    let mut group: Option<String> = None;
+    let mut rows = Vec::new();
+    for (part, label, destination, depth) in summary_chapters(markdown) {
+        if part == "Summary" {
+            continue;
+        }
+        match depth {
+            1 if destination.starts_with(GENERATED_GROUP_DIR) => group = Some(label),
+            1 => {
+                group = None;
+                rows.push((part, destination));
             }
-            Event::End(TagEnd::Heading(_)) => active_category = heading.take(),
-            Event::Start(Tag::Link { dest_url, .. })
-                if list_depth == 1
-                    && active_category
-                        .as_deref()
-                        .is_some_and(|category| category != "Summary") =>
-            {
-                links.push((
-                    active_category.clone().expect("active category is present"),
-                    dest_url.into_string(),
-                ));
+            2 => {
+                if let Some(group) = group.as_deref() {
+                    rows.push((format!("{part} \u{203a} {group}"), destination));
+                }
             }
             _ => {}
         }
     }
-    links
+    rows
 }
 
 fn strict_lines(text: &str) -> Vec<&str> {
@@ -876,27 +931,31 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
         .map(|(index, destination)| {
             (
                 format!("docs/reports/{destination}"),
-                if index % 2 == 0 { 2 } else { 3 },
+                if index % 2 == 0 { 3 } else { 4 },
             )
         })
         .collect::<Vec<_>>();
-    let generated_links = links_with_list_depth(&first_summary);
+    let generated_links: Vec<(String, usize)> = summary_chapters(&first_summary)
+        .into_iter()
+        .map(|(_, _, destination, depth)| (destination, depth))
+        .collect();
     let reports_position = generated_links
         .iter()
-        .position(|(destination, depth)| destination == "docs/reports/README.md" && *depth == 1)
-        .expect("summary contains the reports index");
+        .position(|(destination, depth)| destination == "docs/reports/README.md" && *depth == 2)
+        .expect("summary nests the reports index inside its group");
     let report_links_end = reports_position + 1 + expected_report_links.len();
     assert_eq!(
         &generated_links[reports_position + 1..report_links_end],
         expected_report_links,
         "every report/evidence pair is nested in canonical table order so mdBook publishes it"
     );
-    assert_eq!(
-        generated_links
-            .get(report_links_end)
-            .map(|(destination, depth)| (destination.as_str(), *depth)),
-        Some(("examples/README.md", 1)),
-        "the next canonical root chapter follows immediately after the complete report pair sequence"
+    let (next_destination, next_depth) = generated_links
+        .get(report_links_end)
+        .expect("a chapter follows the complete report pair sequence");
+    assert!(
+        next_destination.starts_with(GENERATED_GROUP_DIR) && *next_depth == 1,
+        "the next top-level group chapter follows immediately after the complete report pair \
+         sequence, so no pair is orphaned: {next_destination} at depth {next_depth}"
     );
 
     let index =
@@ -969,15 +1028,166 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
             _ => None,
         })
         .collect();
-    for category in [
-        "Get started",
-        "Guides",
-        "Reference",
-        "Rust integration",
-        "Contributing",
-        "Project",
-        "Research archive",
-    ] {
-        assert!(headings.contains(category), "SUMMARY.md has {category}");
+    for part in ["Start", "Symptoms", "Workflows", "More"] {
+        assert!(headings.contains(part), "SUMMARY.md has the {part} part");
     }
+}
+
+/// A generated group chapter and the sidebar members nested under it.
+struct GroupChapter {
+    title: String,
+    page: String,
+    members: Vec<(String, String)>,
+}
+
+#[test]
+fn every_generated_group_chapter_publishes_exactly_its_canonical_members() {
+    let root = repo_root();
+    let temp = tempfile::tempdir().expect("creates staging destination");
+    assert!(
+        Command::new("python3")
+            .arg(root.join("scripts/build-docs-site.py"))
+            .args(["--source", root.to_str().unwrap(), "--stage"])
+            .arg(temp.path())
+            .status()
+            .expect("runs Pages staging script")
+            .success()
+    );
+    let staged = temp.path().join("src");
+    let summary =
+        std::fs::read_to_string(staged.join("SUMMARY.md")).expect("reads generated summary");
+
+    let mut groups: Vec<GroupChapter> = Vec::new();
+    let mut open = None;
+    for (_, label, destination, depth) in summary_chapters(&summary) {
+        match depth {
+            1 if destination.starts_with(GENERATED_GROUP_DIR) => {
+                open = Some(groups.len());
+                groups.push(GroupChapter {
+                    title: label,
+                    page: destination,
+                    members: Vec::new(),
+                });
+            }
+            1 => open = None,
+            2 => {
+                if let Some(index) = open {
+                    groups[index].members.push((label, destination));
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        !groups.is_empty(),
+        "the canonical index uses at least one Part \u{203a} Group category"
+    );
+
+    for GroupChapter {
+        title,
+        page,
+        members,
+    } in groups
+    {
+        assert!(!members.is_empty(), "the {title} group chapter has members");
+        let page = staged.join(&page);
+        let markdown = std::fs::read_to_string(&page).expect("reads generated group page");
+        assert_eq!(
+            rendered_headings(&markdown),
+            vec![title.clone()],
+            "a group page is titled by its canonical group name"
+        );
+        let published: Vec<(String, PathBuf)> = first_item_links(&markdown)
+            .into_iter()
+            .map(|(label, destination)| {
+                let local = destination.split('#').next().unwrap_or_default();
+                (
+                    label,
+                    staged_local_target(&staged, &page, local).expect("group link stays staged"),
+                )
+            })
+            .collect();
+        let expected: Vec<(String, PathBuf)> = members
+            .iter()
+            .map(|(label, destination)| (label.clone(), staged.join(destination)))
+            .collect();
+        assert_eq!(
+            published, expected,
+            "the {title} group page lists exactly its sidebar members, in order, \
+             pointing at the same staged pages"
+        );
+    }
+}
+
+/// The theme override directory is staged from tracked `docs/site` files and is
+/// never publishable source. A checkout without those assets — every release tag
+/// predating them — still builds, so the stylesheet is wired exactly when the
+/// checkout tracks it.
+#[test]
+fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
+    let root = repo_root();
+    let temp = tempfile::tempdir().expect("creates staging destination");
+    assert!(
+        Command::new("python3")
+            .arg(root.join("scripts/build-docs-site.py"))
+            .args(["--source", root.to_str().unwrap(), "--stage"])
+            .arg(temp.path())
+            .status()
+            .expect("runs Pages staging script")
+            .success()
+    );
+
+    let listed = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "-z", "--", "docs/site"])
+        .output()
+        .expect("lists tracked site assets");
+    assert!(listed.status.success(), "git ls-files succeeds");
+    let expected: BTreeSet<String> = String::from_utf8(listed.stdout)
+        .expect("tracked paths are UTF-8")
+        .split_terminator('\0')
+        .filter(|tracked| *tracked != "docs/site/redirects.toml")
+        .map(|tracked| format!("theme/{}", &tracked["docs/site/".len()..]))
+        .collect();
+
+    let theme = temp.path().join("theme");
+    let staged: BTreeSet<String> = if theme.is_dir() {
+        walkdir(&theme)
+            .into_iter()
+            .map(|path| {
+                format!(
+                    "theme/{}",
+                    path.strip_prefix(&theme)
+                        .expect("theme asset is staged")
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                )
+            })
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    assert_eq!(
+        staged, expected,
+        "the staged theme mirrors tracked docs/site without its redirect map"
+    );
+    assert!(
+        !temp.path().join("src/docs/site").exists(),
+        "theme assets are never published as book source"
+    );
+
+    let book = std::fs::read_to_string(temp.path().join("book.toml")).expect("reads book.toml");
+    for key in [
+        "[output.html.fold]\nenable = true\nlevel = 0\n",
+        "default-theme = \"light\"\n",
+        "preferred-dark-theme = \"navy\"\n",
+    ] {
+        assert!(book.contains(key), "book.toml carries {key:?}: {book}");
+    }
+    assert_eq!(
+        book.contains("additional-css = [\"theme/animsmith.css\"]"),
+        expected.contains("theme/animsmith.css"),
+        "the stylesheet is wired exactly when the checkout tracks it: {book}"
+    );
 }
