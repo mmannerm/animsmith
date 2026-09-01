@@ -39,8 +39,12 @@ from workflow_contract import (
 DISPATCH_COMMAND = "gh workflow run docs-pages.yml --ref main"
 DISPATCH_RUNS = (DISPATCH_COMMAND, f'{DISPATCH_COMMAND} --repo "${{GITHUB_REPOSITORY}}"')
 # release-plz reports whether the run actually published anything. The gate is
-# matched whole, so a negated or differently sourced condition cannot pass.
-PUBLICATION_GATE = "needs.release.outputs.releases_created == 'true'"
+# matched whole, so a negated or differently sourced condition cannot pass, and
+# the job that produces it is required by name: a gate whose producer is not
+# needed is never true, so the dispatch would simply never run.
+PUBLICATION_JOB = "release"
+PUBLICATION_OUTPUT = "releases_created"
+PUBLICATION_GATE = f"needs.{PUBLICATION_JOB}.outputs.{PUBLICATION_OUTPUT} == 'true'"
 # Only the repository token is allowed: the fix must not depend on a personal
 # access token that a maintainer has to mint and rotate.
 REPOSITORY_TOKENS = ("${{ github.token }}", "${{ secrets.GITHUB_TOKEN }}")
@@ -80,9 +84,10 @@ def steps_of(job: dict[str, Any], description: str) -> list[dict[str, Any]]:
 def check_release_workflow_text(text: str, source: str) -> None:
     """The release workflow must dispatch Pages after a real publication."""
     document = load_workflow(text, source)
+    jobs = jobs_of(document, source)
     dispatchers = [
         (job_id, job, step)
-        for job_id, job in jobs_of(document, source).items()
+        for job_id, job in jobs.items()
         for step in steps_of(
             require_mapping(job, f"{source}: {job_id} job"), f"{source}: {job_id} job"
         )
@@ -115,6 +120,32 @@ def check_release_workflow_text(text: str, source: str) -> None:
         raise WorkflowContractError(
             f"{source}: the {job_id} dispatch must be gated on exactly "
             f"{PUBLICATION_GATE!r}, not {sorted(conditions)}"
+        )
+
+    # A gate is only a post-publication trigger while the job it reads is
+    # actually waited for and actually publishes that output.
+    needs = job.get("needs")
+    if needs == PUBLICATION_JOB:
+        needs = [PUBLICATION_JOB]
+    if needs != [PUBLICATION_JOB]:
+        raise WorkflowContractError(
+            f"{source}: the {job_id} job must declare needs: [{PUBLICATION_JOB}], so "
+            f"it runs after publication and {PUBLICATION_GATE} has a producer, not "
+            f"{job.get('needs')!r}"
+        )
+    if PUBLICATION_JOB not in jobs:
+        raise WorkflowContractError(
+            f"{source}: jobs must contain the {PUBLICATION_JOB} job the dispatch "
+            "waits for"
+        )
+    producer = require_mapping(
+        jobs[PUBLICATION_JOB], f"{source}: {PUBLICATION_JOB} job"
+    )
+    outputs = producer.get("outputs")
+    if not isinstance(outputs, dict) or PUBLICATION_OUTPUT not in outputs:
+        raise WorkflowContractError(
+            f"{source}: the {PUBLICATION_JOB} job must publish the "
+            f"{PUBLICATION_OUTPUT} output the dispatch is gated on"
         )
 
     token = None
@@ -216,6 +247,11 @@ DISPATCH_STEP = """\
         run: gh workflow run docs-pages.yml --ref main --repo "${GITHUB_REPOSITORY}"
 """
 
+NEEDS_LINE = "    needs: [release]\n"
+RELEASE_OUTPUTS_BLOCK = (
+    "    outputs:\n"
+    "      releases_created: ${{ steps.release_plz.outputs.releases_created }}\n"
+)
 PUBLICATION_GATE_LINE = (
     "    if: ${{ needs.release.outputs.releases_created == 'true' }}\n"
 )
@@ -267,6 +303,11 @@ def self_test() -> None:
         VALID_RELEASE_WORKFLOW.replace(' --repo "${GITHUB_REPOSITORY}"', "", 1),
         "bare-dispatch fixture",
     )
+    # GitHub accepts a lone dependency as a scalar; so does the contract.
+    check_release_workflow_text(
+        VALID_RELEASE_WORKFLOW.replace("needs: [release]", "needs: release", 1),
+        "scalar-needs fixture",
+    )
 
     # The regression itself: publication leaves Pages to the suppressed
     # `release: published` event.
@@ -303,8 +344,12 @@ def self_test() -> None:
         VALID_RELEASE_WORKFLOW
         + DISPATCH_STEP.replace("      - ", "  extra:\n    steps:\n      - ", 1),
     )
-    released("missing-actions-permission fixture", PERMISSIONS_BLOCK, "    permissions: {}\n")
-    released("string-permissions fixture", PERMISSIONS_BLOCK, "    permissions: write-all\n")
+    released(
+        "missing-actions-permission fixture", PERMISSIONS_BLOCK, "    permissions: {}\n"
+    )
+    released(
+        "string-permissions fixture", PERMISSIONS_BLOCK, "    permissions: write-all\n"
+    )
     # `actions: write` is the whole grant, not a floor.
     released(
         "extra-permission fixture",
@@ -317,6 +362,13 @@ def self_test() -> None:
         PERMISSIONS_BLOCK + "    permissions:\n      contents: read\n",
     )
     released("ungated-dispatch fixture", PUBLICATION_GATE_LINE, "")
+    # Without the scheduling edge the gate has no producer and is never true.
+    released("unscheduled-dispatch fixture", NEEDS_LINE, "")
+    released("misdirected-needs fixture", NEEDS_LINE, "    needs: [checks]\n")
+    released(
+        "widened-needs fixture", NEEDS_LINE, "    needs: [release, release_binaries]\n"
+    )
+    released("unproduced-gate fixture", RELEASE_OUTPUTS_BLOCK, "")
     # A gate that passes when nothing was published is not a release trigger.
     released(
         "negated-gate fixture",
