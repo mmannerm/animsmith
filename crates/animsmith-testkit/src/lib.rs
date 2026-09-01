@@ -158,13 +158,15 @@ fn example_walk_dirty_doc() -> Document {
 //
 // One committed fixture per runtime symptom family, each the clean walk
 // above plus exactly the authored defect its checks measure. Every clip
-// carries its own name, so a contract config can arm one fixture's
-// checks while declaring nothing about the others — which makes
-// `walk.glb` under that same config the control: same rig, same
-// contract, no defect, no findings.
+// carries its own name, so one contract config can arm one fixture's
+// checks while declaring nothing about the others — and so each
+// fixture's findings can be pinned from both sides: the same file with
+// no config reports none of them, and the clean walk under the same
+// config reports none either.
 
-/// End time of [`example_walk_short_channel_doc`]'s rotation channel: a
-/// quarter cycle before the walk's translation channels stop.
+/// Key times of [`example_walk_short_channel_doc`]'s rotation channel.
+/// The last one lands a quarter cycle before the walk's translation
+/// channels stop, which is the end-time spread `duration-sanity` reports.
 const SHORT_CHANNEL_TIMES: [f32; 4] = [0.0, 0.25, 0.5, 0.75];
 
 /// The short channel's ankle angles, in radians. Literal, like every
@@ -219,10 +221,11 @@ fn example_walk_travel_doc() -> Document {
     doc
 }
 
-/// `libm::sin` a quarter cycle late: the same analytic gait entered at a
-/// different point in its cycle. Passing the shift as the sine keeps the
-/// ring's members literally one builder with one parameter changed.
-fn sin_quarter_cycle_late(theta: f64) -> f64 {
+/// `libm::sin` advanced a quarter cycle: the same analytic gait, entered
+/// a quarter of the way into its cycle, so its stride anchor lands at
+/// 0.50 rather than 0.75. Expressing the shift as the sine keeps the
+/// ring's members literally one builder with one argument changed.
+fn sin_advanced_a_quarter_cycle(theta: f64) -> f64 {
     libm::sin(theta + std::f64::consts::FRAC_PI_2)
 }
 
@@ -231,12 +234,12 @@ fn sin_quarter_cycle_late(theta: f64) -> f64 {
 type RingMember = (&'static str, fn(f64) -> f64);
 
 /// The directional ring's members. Three share the walk's sine, so their
-/// stride anchors agree at phase 0.75; `run_left` is a quarter cycle
-/// late, which is the spread `gait-group` measures.
+/// stride anchors agree at phase 0.75; `run_left` is a quarter cycle out
+/// of phase with them, which is the spread `gait-group` measures.
 const RUN_RING_MEMBERS: [RingMember; 4] = [
     ("run_forward", libm::sin),
     ("run_backward", libm::sin),
-    ("run_left", sin_quarter_cycle_late),
+    ("run_left", sin_advanced_a_quarter_cycle),
     ("run_right", libm::sin),
 ];
 

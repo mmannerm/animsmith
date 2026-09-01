@@ -1,6 +1,6 @@
 # Contract for the committed directional blend ring
 # `examples/assets/run-ring.glb`: four clips built from one analytic gait,
-# with `run_left` entered a quarter cycle late.
+# with `run_left` entered a quarter of the way into that gait.
 #
 #   animsmith lint --config examples/run-ring.animsmith.toml \
 #       examples/assets/run-ring.glb
