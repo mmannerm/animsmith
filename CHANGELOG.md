@@ -11,20 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- publish foot-cycle generations
+- publish declared foot-cycle generations ([#643](https://github.com/mmannerm/animsmith/pull/643))
+- add no-replace generation directories ([#640](https://github.com/mmannerm/animsmith/pull/640))
 - prove serialized foot-cycle candidates
 - bind foot-cycle proof policy ([#638](https://github.com/mmannerm/animsmith/pull/638))
 - prepare source-bound foot-cycle candidates ([#636](https://github.com/mmannerm/animsmith/pull/636))
-- prepare source-bound foot-cycle candidates
 - plan declared foot-cycle parameterization
 - compare declared skeleton compatibility
 - build foot-cycle clip candidates ([#634](https://github.com/mmannerm/animsmith/pull/634))
-- build foot-cycle clip candidates
 - implement strict contact transform contract
 - bound strict in-memory GLB candidates
 
 ### Fixed
 
+- share scene-root shape validation across transform producers ([#639](https://github.com/mmannerm/animsmith/pull/639))
 - transfer proved foot-cycle artifacts into publication
 - close foot-cycle reciprocal audit blockers
 - close foot-cycle producer audit gaps
