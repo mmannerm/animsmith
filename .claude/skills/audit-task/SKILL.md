@@ -25,10 +25,11 @@ This workflow is written to be followable by any agent (Claude, Codex,
 ## Freeze gate
 
 Before launching cold or external review passes, finish the author
-self-review, PR body, documentation-freshness sweep, and the exact-head
-verification from step 1; record the exact HEAD SHA. If HEAD changes, stop
-in-flight audits, obtain fresh exact-head evidence, and resume the same reviewer
-sessions against the delta. Do not keep an audit running against a stale head.
+self-review, PR body, documentation-freshness sweep, and the current-base and
+exact-head verification from step 1; record both the candidate HEAD and fetched
+base SHA. If either changes, stop in-flight audits, obtain fresh evidence, and
+resume the same reviewer sessions against the delta. Do not keep an audit
+running against a stale head or base.
 
 ## Required reciprocal cross-model audit
 
@@ -64,7 +65,8 @@ comment.
    from the body and fetch each: `gh issue view <NNN> --json
    title,body`. Their acceptance criteria are part of the intent
    contract and feed the claims ledger (step 2).
-3. **Diff under review.** `git diff origin/main...HEAD` (or `gh pr diff <N>`).
+3. **Diff under review.** `git diff <fetched-base>...HEAD` (normally
+   `origin/main`; or use `gh pr diff <N>`).
 4. **Build + test status.** Capture the author's pre-push local-gate result, the
    exact-head PR checks, and uncovered local evidence required by step 1. Build
    evidence is keyed by commit SHA, not by reviewer.
@@ -72,6 +74,15 @@ comment.
 ## Required workflow
 
 ### 1. Build, test, lint
+
+Freshly fetch `origin` and the PR base immediately before this final gate.
+Record the candidate HEAD and current `origin/main` SHA, then prove that
+`origin/main` is an ancestor of HEAD with `git merge-base --is-ancestor
+origin/main HEAD`. If the base has advanced, integrate it and repeat the final
+diff review, author gates, and CI. For a PR explicitly directed to stack on
+another branch, also record and use that fetched branch as the diff base while
+the parent remains open; after the parent merges, retarget to `main`, rebase onto
+current `origin/main`, and repeat this gate.
 
 Confirm that the author ran the pre-push `just gates` required by
 [DEVELOPMENT.md](../../../DEVELOPMENT.md#common-commands) and captured its
@@ -98,10 +109,12 @@ asset, and task-specific manifest validation when those claims matter. Any
 required PR-check or additional-check failure is a hard fail: report the exact
 error and BLOCK.
 
-Record the HEAD SHA, author gate, and PR-check URLs or retained local evidence.
-After a HEAD change, the author reruns the pre-push gate before pushing the
-amendment; audit reviewers wait for fresh PR checks, resume against the delta,
-and rerun only uncovered checks affected by it.
+Record the HEAD SHA, fetched base SHA, author gate, and PR-check URLs or retained
+local evidence. After a HEAD or recorded-base change, the author reruns the
+pre-push gate before pushing the amendment; audit reviewers wait for fresh PR
+checks, resume against the delta, and rerun only uncovered checks affected by
+it. Prior final-diff, gate, CI, and audit evidence is not readiness evidence for
+the new pair.
 
 ### 2. PR-description intent adherence — the audit-specific check
 
@@ -265,6 +278,7 @@ agent attribution line at the bottom of the comment.
 **Verdict:** [APPROVE] / [APPROVE WITH FOLLOW-UPS] / [BLOCK]
 
 ### Build / test / lint
+- current-base gate: ✓ / ✗ <exact HEAD and origin/main SHA; stack base if any>
 - author pre-push `just gates`: ✓ / ✗ <exact HEAD and retained result>
 - required PR checks: ✓ / ✗ <exact HEAD and links/details>
 - additional checks:  ✓ / ✗ / skipped (unavailable) / not applicable
