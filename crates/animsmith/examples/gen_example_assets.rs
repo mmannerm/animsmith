@@ -1,8 +1,10 @@
 //! Regenerates the committed example assets under `examples/assets/`:
 //! the mechanical-check clips (`clip.glb` clean, `clip-dirty.glb` with
-//! repairable `quat-norm`/`quat-flip` defects) and the semantic-check
+//! repairable `quat-norm`/`quat-flip` defects), the semantic-check
 //! walk rigs (`walk.glb` a clean loop, `walk-dirty.glb` a popped seam),
-//! plus the synchronized-report acceptance pair.
+//! the per-symptom mutations of that walk (`walk-short-channel.glb`,
+//! `walk-travel.glb`, `run-ring.glb`, `walk-frozen-arm.glb`,
+//! `walk-scaled.glb`), plus the synchronized-report acceptance pair.
 //!
 //! The filename↔document wiring lives in `animsmith-testkit`'s
 //! `write_example_assets`, which both this example and the guard test
