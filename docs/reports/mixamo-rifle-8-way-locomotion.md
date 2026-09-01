@@ -6,9 +6,9 @@
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-26**
+> Evaluation date: **2026-09-01**
 >
-> Current evaluator: **AnimSmith 0.7.0**
+> Current evaluator: **AnimSmith 0.10.0**
 >
 > Report format: **2**
 >
@@ -17,7 +17,7 @@
 ## Technical decision
 
 This constituent is one observed archive pair in the locally held collection.
-AnimSmith 0.7.0 mechanically inspected 83 extracted FBX files with no errors in the untouched baseline. The baseline retained 11 warnings and constant-track notes; these are not gameplay or engine acceptance. Variant-level in-place ownership was clean, while a blanket root-motion ownership declaration produced 16 stationary-root findings. No source bytes were changed. [The readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains the governing boundary.
+AnimSmith 0.10.0 mechanically inspected all 83 extracted FBX files with no errors in the untouched baseline. The baseline retained 11 `duration-sanity` warnings and 11,790 `constant-track` notes; these are not gameplay or engine acceptance. The archive-level in-place contract produced no errors, while the archive-level root-motion contract produced 16 stationary-root errors and 8 `duration-sanity` warnings. No source bytes were changed. [The readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains the governing boundary.
 
 ## Capability coverage
 
@@ -67,12 +67,12 @@ Cross-pack compatibility is unknown and must be tested against the exact intende
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.
+AnimSmith 0.10.0 refresh — all baseline and archive-variant contract runs were repeated with tag `v0.10.0`. The retained 0.7.0 result had the same 11 baseline warnings and 16 stationary-root contract findings; the current output records the full current contract result separately, including 8 `duration-sanity` warnings.
 
 ## Evidence status
 
-83 delivered FBX files and 81 manifest-declared motions were evaluated mechanically with AnimSmith 0.7.0 at revision `461ac8a`. The retained external manifests use scrubbed SHA-256 identities only. The companion appendix records the schema and open evidence gates.
+83 delivered FBX files and 81 retained manifest-declared motions were evaluated mechanically with AnimSmith 0.10.0 at revision `db91d8dda3326f97f581d4d62104d928caec383f`. The validated external manifests use scrubbed SHA-256 identities only. The companion appendix records the current schemas and open evidence gates.
 
 ## Sources
 
-- Delivered archive manifests and AnimSmith 0.7.0 output, retained externally as scrubbed evidence.
+- Delivered archive manifests and AnimSmith 0.10.0 output, retained externally as scrubbed evidence.

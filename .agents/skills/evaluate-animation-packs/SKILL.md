@@ -119,6 +119,36 @@ Before assessing assets:
    a command, repair, transform, check id, schema version, or format feature
    exists because another AnimSmith version had it.
 
+### Mandatory evaluator preflight for every batch
+
+Before any exhaustive inventory, baseline, or remediation batch, perform and
+record a bounded preflight of the exact evaluator that batch will use. Prefer
+an official artifact for the requested tag/release, or build into a dedicated
+feature-isolated target directory. Record the binary path, version, SHA-256,
+source tag or commit, dirty state, and expected feature surface (including the
+source formats and commands required by the batch). A version string and
+binary digest alone do not identify the evaluator's feature surface.
+
+Run the binary's top-level and required-command `--help` checks, then run
+capability checks and a bounded representative-input admission for every
+source format in scope (for example, an authorized synthetic or self-authored
+fixture when the format permits it). The admission must demonstrate that the
+selected evaluator can load the format and expose the operation the batch
+requires before exhaustive work begins. Preserve commands, inputs, exit codes,
+and stdout/stderr as preflight evidence. If any required capability or format
+admission is absent, stop or refuse the batch before exhaustive work; do not
+reinterpret the refusal as a defect in the animation pack. A tool-feature
+unavailability is an evaluator/operator limitation, not a pack defect, and
+must remain distinct from pack findings.
+
+Never select an evaluator from an ambiguous shared `target/release` after
+mixed-feature builds. If that directory may contain artifacts from different
+feature sets, treat its identity as unresolved, discard it from consideration,
+and rebuild or select an official tagged artifact or a dedicated
+feature-isolated target directory. Repeat this preflight for each batch when
+the binary, target directory, feature set, source format, or required command
+changes.
+
 When refreshing an earlier evaluation for a newer AnimSmith version, rerun the
 baseline, every selected contract, every adopted or recommended remediation,
 and any check that was previously unavailable because loader evidence was

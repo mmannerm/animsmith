@@ -4,9 +4,9 @@
 >
 > Evidence status: **partial** — source archives were evaluated externally; licensing, runtime, and visual evidence remain unavailable.
 >
-> Evaluation date: **2026-08-26**
+> Evaluation date: **2026-09-01**
 >
-> Current evaluator: **AnimSmith 0.7.0**
+> Current evaluator: **AnimSmith 0.10.0**
 >
 > Report format: **2**
 
@@ -35,8 +35,8 @@ The evaluation manifest schema is `urn:animsmith:skill:animation-pack-evaluation
 | Animation files | 27 | 27 | 6 baseline warnings | Semantic file-to-manifest mapping incomplete |
 | Rigs/export variants | 1 | 1 | Mixamo profile used | Retarget behavior unavailable |
 | AnimSmith baseline | 27 | 27 | 0 errors | — |
-| Declared contracts | 27 | 27 | 4 variant-contract findings | Per-clip intent unavailable |
-| Offline visual reports | 2 | 0 | 0 | Generated externally but not visually inspected |
+| Declared contracts | 27 | 27 | 4 errors; 5 warnings | Archive-level ownership only; per-clip intent unavailable |
+| Offline visual reports | 1 | 0 | 0 | One representative v0.10.0 HTML report generated externally but not visually inspected |
 | Engine import/playback | 4 | 0 | 0 | No engines/project supplied |
 | Blend/mask/retarget | 1 | 0 | 0 | No runtime contract supplied |
 
@@ -71,7 +71,7 @@ No runtime sets were identified.
 |---|---|---|
 | Acquire | `partially-evaluated` | Local archive identity recorded; license terms unavailable |
 | Preserve raw | `evaluated-clean` | Archives were not modified; extraction was external |
-| Inspect | `evaluated-clean` | AnimSmith 0.7.0 inspected every extracted FBX |
+| Inspect | `evaluated-clean` | AnimSmith 0.10.0 inspected every extracted FBX |
 | Segment | `not-evaluated` | Manifest-to-member clip linkage was not established |
 | Root motion | `partially-evaluated` | Variant-level XZ contracts ran; per-clip ownership remains open |
 | Conform | `not-evaluated` | No target contract authorized transforms |
@@ -118,7 +118,7 @@ The external inventory contains 27 FBX files and 25 manifest-declared motions. A
 
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
-| Variant-level ownership mismatch | FBX `fix --dry-run` representative | Safe refusal: fix accepts only glTF/GLB | Captured exit 2 and stderr | No conversion or transform was authorized |
+| Variant-level ownership mismatch | AnimSmith 0.10.0 FBX `fix --dry-run` representative | Safe refusal: fix accepts only glTF/GLB | Captured exit 2 and stderr | No conversion or transform was authorized |
 
 ## Engine procedures and evidence
 
@@ -141,11 +141,15 @@ The external inventory contains 27 FBX files and 25 manifest-declared motions. A
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.
+AnimSmith 0.10.0 refresh — all 27 baseline files and both archive-variant contracts were rerun. The retained 0.7.0 baseline had the same 6 warnings and 4 stationary-root findings; the current root-motion contract also records 5 `duration-sanity` warnings.
 
 ## Reproduction
 
-AnimSmith `0.7.0` (tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, measurements schema v16) was captured with external empty-baseline and variant contract configs. Source and extracted inventories, command outputs, exit codes, and SHA-256 digests remain outside the repository.
+AnimSmith `0.10.0` (tag `v0.10.0`, commit `db91d8dda3326f97f581d4d62104d928caec383f`, binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`, output schema v19, measurements schema v18) was captured with external empty-baseline and validated archive-variant contract configs. `empty.toml` SHA-256 `cf70223ed7398b5419e96394fa30b597f1bf496217715319e478266207270c05`; `in-place.toml` SHA-256 `acb638c0dd6397d98d1f674d8ef077d3d6deaea796514ebd9f5ea749ccc24dc0`; `root-motion.toml` SHA-256 `567dd18f479c79724e322cb0c3ef52485601f59caebd3a95eea77bb6ec6ae191`.
+
+The external run used `inspect --config empty.toml` per file, batch `measure --format json` and `lint --format json`/`markdown` against `empty.toml`, then archive-variant batch `lint --format json` against each contract; all baseline commands exited 0, the root-motion contract exited 1 for its findings, and FBX `fix --dry-run` exited 2 because `fix` accepts only glTF/GLB. Source and extracted inventories, command outputs, exit codes, HTML reports, and SHA-256 digests remain outside the repository.
+
+Before exhaustive execution, the external evidence captured top-level and required-command help plus a representative delivered FBX admission: `inspect`, `measure`, `lint`, and `report` each exited 0.
 
 ## Sources
 

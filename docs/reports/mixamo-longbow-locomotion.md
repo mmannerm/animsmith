@@ -6,9 +6,9 @@
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-26**
+> Evaluation date: **2026-09-01**
 >
-> Current evaluator: **AnimSmith 0.7.0**
+> Current evaluator: **AnimSmith 0.10.0**
 >
 > Report format: **2**
 >
@@ -17,17 +17,17 @@
 ## Technical decision
 
 This constituent is one observed archive pair in the locally held collection.
-AnimSmith 0.7.0 mechanically inspected 22 extracted FBX files with no errors in the untouched baseline. The baseline retained 3 warnings and constant-track notes; these are not gameplay or engine acceptance. Variant-level in-place ownership was clean, while a blanket root-motion ownership declaration produced 3 stationary-root findings. No source bytes were changed. [The readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains the governing boundary.
+AnimSmith 0.10.0 mechanically inspected, measured, and linted all 22 extracted FBX files. The untouched baseline has 0 errors, 3 warnings, and 3,126 non-gating constant-track notes; these are file-ready evidence only, not gameplay or engine acceptance. The declared in-place XZ contract has 0 errors and 1 duration warning; the declared root-motion contract has 3 stationary-root errors and 2 duration warnings. No source bytes were changed. [The readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains the governing boundary.
 
 ## Capability coverage
 
 ### Complete core
 
-- File inventory, parsing, inspection, measurement, and baseline mechanical lint were completed for the delivered files.
+- Fresh source inventory, parsing, inspection, measurement, and baseline mechanical lint were completed for all delivered files with the declared current evaluator.
 
 ### Partial supporting gameplay
 
-- Archive-level in-place and root-motion labels supported only a variant-level XZ contract; per-clip movement ownership is not established.
+- The in-place XZ declaration has 0 errors but 1 duration warning; 3 root-motion-labelled files have stationary roots and that declaration has 2 duration warnings. Per-clip movement ownership is still not established.
 
 ### Absent
 
@@ -49,7 +49,7 @@ No important runtime sets were identified.
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| MIX-OWN-001 | moderate | Archive-level root-motion labeling includes stationary-root files, so a package-wide animation-owned XZ policy can make characters run in place. Guidance: not applicable. | unknown | Declare ownership per clip after target-controller review. | Not a generic rewrite; it needs semantic/project intent. | observed-animsmith; partial |
+| MIX-OWN-001 | moderate | Three root-motion-labelled files have stationary roots under a package-wide animation-owned XZ declaration, so that policy can make characters run in place. Guidance: not applicable. | engine-config | Declare ownership per clip after target-controller review. | Not a generic rewrite; it needs semantic/project intent. | observed-animsmith; current contract result |
 
 ## Engine status
 
@@ -67,12 +67,12 @@ Cross-pack compatibility is unknown and must be tested against the exact intende
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.
+AnimSmith 0.10.0 — Fresh inventory, baseline, declared-contract, offline-report, and FBX `fix --dry-run` passes used the official `v0.10.0` artifact. The baseline remains error-free; the revalidated root-motion declaration finds 3 stationary-root errors. Output schema changed from v17 to v19 and measurements schema from v16 to v18. AnimSmith 0.7.0 evidence is retained historical evidence only.
 
 ## Evidence status
 
-22 delivered FBX files and 20 manifest-declared motions were evaluated mechanically with AnimSmith 0.7.0 at revision `461ac8a`. The retained external manifests use scrubbed SHA-256 identities only. The companion appendix records the schema and open evidence gates.
+22 delivered FBX files and 20 manifest-declared motions were evaluated mechanically with AnimSmith 0.10.0 at revision `db91d8dda3326f97f581d4d62104d928caec383f`. Fresh external inventories and scrubbed SHA-256 identities are retained outside the repository. The companion appendix records the schema and open evidence gates.
 
 ## Sources
 
-- Delivered archive manifests and AnimSmith 0.7.0 output, retained externally as scrubbed evidence.
+- Delivered archive manifests and AnimSmith 0.10.0 output, retained externally as scrubbed evidence.

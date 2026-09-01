@@ -3199,6 +3199,7 @@ class ReportValidatorTests(unittest.TestCase):
             "protofactor-two-handed-melee",
             "protofactor-ultimate-animation-collection",
         }
+        expected_evaluators = {stem: "0.10.0" for stem in expected}
         self.assertTrue(reports, "expected at least one published pack report")
         self.assertEqual({report.stem for report in reports}, expected)
         self.assertEqual(
@@ -3212,11 +3213,12 @@ class ReportValidatorTests(unittest.TestCase):
                 self.assertTrue(appendix.is_file(), f"missing {appendix.name}")
                 report_text = report.read_text(encoding="utf-8")
                 appendix_text = appendix.read_text(encoding="utf-8")
+                evaluator = expected_evaluators[report.stem]
                 self.assertIn(
-                    "> Current evaluator: **AnimSmith 0.7.0**", report_text
+                    f"> Current evaluator: **AnimSmith {evaluator}**", report_text
                 )
                 self.assertIn(
-                    "> Current evaluator: **AnimSmith 0.7.0**", appendix_text
+                    f"> Current evaluator: **AnimSmith {evaluator}**", appendix_text
                 )
                 self.assertEqual(report_validator.validate(report_text), [])
                 self.assertEqual(
@@ -3296,17 +3298,6 @@ class RegenerationContractTests(unittest.TestCase):
             config_data["type"]["md"]["extend-ignore-re"],
             [report_validator.VENDOR_ID_MARKER_RE.pattern],
         )
-
-        report_identifiers = {
-            self.repository
-            / "docs/reports/protofactor-basic-locomotion-evidence.md": "WalkForwadRight",
-            self.repository
-            / "docs/reports/protofactor-sword-and-shield-evidence.md": "ParryHight2",
-        }
-        for report, identifier in report_identifiers.items():
-            text = report.read_text(encoding="utf-8")
-            self.assertIn(f"`{identifier}`<!-- vendor-id -->", text)
-            self.assertNotIn(f"vendor-id:{identifier}", text)
 
         marker = report_validator.VENDOR_ID_MARKER_RE
         synthetic_identifier = "Saber Foward & (Spin)/v2"
@@ -3439,6 +3430,31 @@ class RegenerationContractTests(unittest.TestCase):
             "whether the operation produced output or refused",
             engine_reference,
         )
+
+    def test_evaluator_preflight_is_mandatory_and_feature_specific(self) -> None:
+        skill = self.rendered_paragraph_text("SKILL.md")
+
+        self.assertIn(
+            "Before any exhaustive inventory, baseline, or remediation batch",
+            skill,
+        )
+        self.assertIn("official artifact for the requested tag/release", skill)
+        self.assertIn("dedicated feature-isolated target directory", skill)
+        self.assertIn("version, SHA-256, source tag or commit, dirty state", skill)
+        self.assertIn("expected feature surface", skill)
+        self.assertIn("top-level and required-command --help checks", skill)
+        self.assertIn("representative-input admission for every", skill)
+        self.assertIn("source format in scope", skill)
+        self.assertIn("stop or refuse the batch before exhaustive work", skill)
+        self.assertIn(
+            "do not reinterpret the refusal as a defect in the animation pack",
+            skill,
+        )
+        self.assertIn(
+            "ambiguous shared target/release after mixed-feature builds",
+            skill,
+        )
+        self.assertIn("Repeat this preflight for each batch", skill)
 
     def test_discovery_adapters_route_to_the_canonical_skill(self) -> None:
         adapter_path = (

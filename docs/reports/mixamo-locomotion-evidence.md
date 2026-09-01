@@ -4,9 +4,9 @@
 >
 > Evidence status: **partial** — source archives were evaluated externally; licensing, runtime, and visual evidence remain unavailable.
 >
-> Evaluation date: **2026-08-26**
+> Evaluation date: **2026-09-01**
 >
-> Current evaluator: **AnimSmith 0.7.0**
+> Current evaluator: **AnimSmith 0.10.0**
 >
 > Report format: **2**
 
@@ -23,7 +23,7 @@ This appendix records scrubbed evidence only. The canonical [readiness ladder](.
 | Target engines | Not evaluated |
 | Target rigs/packs | One declared character identity; cross-pack use not evaluated |
 | Source manifest | Scrubbed SHA-256 retained externally |
-| Evaluation manifest | `mixamo-locomotion.manifest.json`; SHA-256 `b9478ef47ba6fbf158737c867a2e7e6a253c910c48b0b3c0a77f133950f005e9`; schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1` |
+| Evaluation manifest | `mixamo-locomotion.manifest.json`; SHA-256 `fd7c3927f33234a15ef65784cc08bccf248991c28153601ada44eb10619db0e3`; schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1` |
 | Acquisition/license provenance | No controlling license/readme/terms evidence was delivered; not legal advice |
 
 The evaluation manifest schema is `urn:animsmith:skill:animation-pack-evaluation-manifest:1`. The validated manifest models every delivered FBX as an opaque `other-unknown` unit because vendor records were not linked to archive members; 18 remains separate source metadata.
@@ -32,10 +32,10 @@ The evaluation manifest schema is `urn:animsmith:skill:animation-pack-evaluation
 
 | Surface | Offered/delivered | Evaluated | Findings | Not evaluated and why |
 |---|---:|---:|---:|---|
-| Animation files | 20 | 20 | 5 baseline warnings | Semantic file-to-manifest mapping incomplete |
+| Animation files | 20 | 20 | 0 errors; 5 baseline warnings | Semantic file-to-manifest mapping incomplete |
 | Rigs/export variants | 1 | 1 | Mixamo profile used | Retarget behavior unavailable |
-| AnimSmith baseline | 20 | 20 | 0 errors | — |
-| Declared contracts | 20 | 20 | 6 variant-contract findings | Per-clip intent unavailable |
+| AnimSmith baseline | 20 | 20 | 0 errors; 5 warnings; 2,852 notes | — |
+| Declared contracts | 20 | 20 | 6 root-motion stationary-root errors; 1 in-place and 4 root-motion duration warnings | Per-clip intent unavailable |
 | Offline visual reports | 2 | 0 | 0 | Generated externally but not visually inspected |
 | Engine import/playback | 4 | 0 | 0 | No engines/project supplied |
 | Blend/mask/retarget | 1 | 0 | 0 | No runtime contract supplied |
@@ -71,11 +71,11 @@ No runtime sets were identified.
 |---|---|---|
 | Acquire | `partially-evaluated` | Local archive identity recorded; license terms unavailable |
 | Preserve raw | `evaluated-clean` | Archives were not modified; extraction was external |
-| Inspect | `evaluated-clean` | AnimSmith 0.7.0 inspected every extracted FBX |
+| Inspect | `evaluated-clean` | AnimSmith 0.10.0 inspected every extracted FBX |
 | Segment | `not-evaluated` | Manifest-to-member clip linkage was not established |
-| Root motion | `partially-evaluated` | Variant-level XZ contracts ran; per-clip ownership remains open |
+| Root motion | `partially-evaluated` | In-place XZ contract has 0 errors and 1 duration warning; root-motion XZ contract has 6 stationary-root errors and 4 duration warnings; per-clip ownership remains open |
 | Conform | `not-evaluated` | No target contract authorized transforms |
-| Validate | `partially-evaluated` | Mechanical baseline and variant contracts ran; engine validation deferred |
+| Validate | `partially-evaluated` | Mechanical baseline and current variant contracts ran; engine validation deferred |
 | Optimize | `not-evaluated` | No optimization was authorized |
 | Export | `not-evaluated` | No engine-facing export was evaluated |
 | Gate/report | `partially-evaluated` | This scrubbed report retains the evidence boundary |
@@ -110,15 +110,15 @@ The external inventory contains 20 FBX files and 18 manifest-declared motions. A
 
 | Finding/check | Affected scope | Potential impact | Evidence |
 |---|---|---|---|
-| No mechanical errors | 20 files | File-ready mechanical health only | observed-animsmith |
-| `duration-sanity` warnings | 5 files | No-track assets/clips require semantic classification | observed-animsmith |
+| No mechanical errors | 20 files | File-ready mechanical health only | observed-animsmith, AnimSmith 0.10.0 |
+| `duration-sanity` warnings | 5 findings | Two no-track clips and three channel-end mismatches require semantic classification or review | observed-animsmith, AnimSmith 0.10.0 |
 | `constant-track` notes | Entire corpus | Hygiene evidence, not authorization to rewrite | observed-animsmith |
 
 ## AnimSmith remediation evidence
 
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
-| Variant-level ownership mismatch | FBX `fix --dry-run` representative | Safe refusal: fix accepts only glTF/GLB | Captured exit 2 and stderr | No conversion or transform was authorized |
+| Variant-level ownership mismatch | FBX `fix --dry-run` representative | Safe refusal: fix accepts only glTF/GLB | Captured exit 2 and stderr under AnimSmith 0.10.0 | No conversion or transform was authorized |
 
 ## Engine procedures and evidence
 
@@ -141,12 +141,12 @@ The external inventory contains 20 FBX files and 18 manifest-declared motions. A
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.7.0 — Initial evaluation; no earlier AnimSmith comparison.
+AnimSmith 0.10.0 — Official `v0.10.0` rerun revalidated output schema v19 and measurements schema v18: 20/20 FBX admitted, baseline 0 errors, and the root-motion declaration found 6 stationary-root errors. AnimSmith 0.7.0 (output schema v17; measurements schema v16) is retained historical evidence only.
 
 ## Reproduction
 
-AnimSmith `0.7.0` (tag `v0.7.0`, commit `461ac8a4f6bb368eb8637471a796f13eeb647140`, binary SHA-256 `01a501999c91d93abfb32b1f48241fccc70914fac27c9a650c31df44262578d8`, output schema v17, measurements schema v16) was captured with external empty-baseline and variant contract configs. Source and extracted inventories, command outputs, exit codes, and SHA-256 digests remain outside the repository.
+AnimSmith `0.10.0` (tag `v0.10.0`, commit `db91d8dda3326f97f581d4d62104d928caec383f`, binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`, output schema v19, measurements schema v18) was preflighted with top-level and required-command help plus a representative FBX admission, then captured with external empty-baseline and variant-contract configs. Source and extracted inventories, command outputs, exit codes, and SHA-256 digests remain outside the repository.
 
 ## Sources
 
-- Delivered metadata and external AnimSmith evidence; no licensed payloads are published.
+- Delivered metadata and external AnimSmith 0.10.0 evidence; no licensed payloads are published.

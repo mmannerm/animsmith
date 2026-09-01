@@ -1,14 +1,14 @@
 # Animation pack evaluation: Protofactor Ultimate Animation Collection (partial: eight packs)
 
-> Technical verdict: **Usable with conditions**
+> Technical verdict: **Insufficient technical evidence**
 >
-> Evaluation completeness: **partial** — Basic Locomotion, Sword & Shield, Campfire, Climbing, Injured, 1-Handed Melee, 2-Handed Melee, and Dual Swords are evaluated; eight-pack Unity co-install evidence passes, while visual acceptance and 15 currently listed constituents are absent.
+> Evaluation completeness: **partial** — eight constituent source baselines and declared contracts were rerun with AnimSmith 0.10.0; no current collection binding, semantic classification, runtime-set, cross-pack, engine, or visual acceptance run exists.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-26**
+> Evaluation date: **2026-09-01**
 >
-> Current evaluator: **AnimSmith 0.7.0**
+> Current evaluator: **AnimSmith 0.10.0**
 >
 > Report format: **2**
 >
@@ -16,103 +16,79 @@
 
 ## Technical decision
 
-Adopt the eight evaluated constituents as explicit full-body gameplay modes around [Basic Locomotion](protofactor-basic-locomotion.md): [Sword & Shield](protofactor-sword-and-shield.md), [1-Handed Melee](protofactor-one-handed-melee.md), [2-Handed Melee](protofactor-two-handed-melee.md), and [Dual Swords](protofactor-dual-swords.md) for distinct armed stances; [Injured](protofactor-injured.md) for seven injury styles; [Campfire](protofactor-campfire.md) for rest/interactions; and [Climbing](protofactor-climbing.md) for environment traversal. Use authored or reviewed state handoffs; do not merge same-role clips into one universal graph merely because their rigs retarget in one engine.
+The official AnimSmith 0.10.0 release reran [Basic Locomotion](protofactor-basic-locomotion.md), [Sword & Shield](protofactor-sword-and-shield.md), [Campfire](protofactor-campfire.md), [Climbing](protofactor-climbing.md), [Injured](protofactor-injured.md), [1-Handed Melee](protofactor-one-handed-melee.md), [2-Handed Melee](protofactor-two-handed-melee.md), and [Dual Swords](protofactor-dual-swords.md). They contain 918 source candidates, including 895 individual motion-labelled inputs. This is current mechanical intake evidence, not collection-level approval.
 
-Technical co-existence is strong. The rollup contains 582 logical motions and 895 individual files. Each of the 28 pack pairs has exactly 25 overlapping package paths, all byte-identical, with no conflicts. Most standard motions share the same 56-bone structure; the dominant 2-Handed family adds left/right forearm twists and uses capitalized bone identifiers. One Unity 6000.5.8f1 project imports all eight packs. The melee probe passes 33/33 required sampling, mixing, masking, and prop checks while four expected Generic-rig failures remain separate; the contextual probe passes 22/22 required checks.
+No current collection binding was rendered, so this rollup has no accepted canonical logical-motion inventory, semantic roles, runtime sets, cross-pack handoffs, or package-wide remediation result. The four melee constituents produced 103 external transform candidates, but none was promoted or accepted for an engine. A project must make its own clip-selection, root-authority, contact, controller, and target-character decisions.
 
-AnimSmith 0.7.0 accepts the collection's vertical `positive_y` root heading: all 134 selected in-place ring members across six gait-bearing packs anchor, while Campfire and Climbing correctly have no applicable ring. Root-motion members are not transformed. All 159 generated candidates remain external and unpromoted; no Humanoid-retarget or visual acceptance is implied.
-
-This does not make the collection acceptance-ready. Residual seam/phase issues remain, weapon contacts and action timing need gameplay validation, Climbing has measured vertical and yaw root facts but still needs environment and contact validation, Campfire needs prop/contact authoring, and six files are quarantined or excluded. The 15 unevaluated constituents prevent any collection-wide quality or value verdict.
+An earlier shared-path comparison is retained as a dated observation: its 28 pairings compared 25 paths each, with 700 byte-identical comparisons and no conflict. Dated Unity 6000.5.8f1 graph probes also remain recorded: 22/22 contextual and 33/33 melee required checks, with four expected Generic-rig failures isolated. Neither observation was rerun in this refresh and neither establishes current engine, visual, artistic, or gameplay readiness.
 
 ## Capability coverage
 
 ### Complete core
 
-- Broad unarmed locomotion, four armed melee styles, injured locomotion/postures, camp states/interactions, and wall/ladder/obstacle traversal are present.
-- Eight packs co-install without conflicting shared assets; accepted motion families use either the common 56-bone rig or the Unity-Humanoid-compatible 58-bone 2-Handed twist variant.
+- Current source-inventory, baseline, and declared-contract evidence exists for each of the eight named constituents.
+- The current report establishes the mechanical scope boundary: 918 source candidates and 895 individual motion-labelled inputs.
 
 ### Partial supporting gameplay
 
-- Full-body transitions between modes and selected upper-body masks execute headlessly, but none is visually accepted.
-- Props exist for all four weapon modes and part of Campfire; contacts, events, IK, displacement authority, and cancellation remain game-owned.
-- Current AnimSmith produces lower-spread gait candidates for the three melee packs' 72 selected IP ring members; residual runtime offsets and engine/visual acceptance remain required.
+- Four melee constituents have external AnimSmith transform candidates; their runtime selection, visual result, and gameplay suitability remain untested.
+- Retained dated shared-path and Unity graph observations can inform a new test plan, but are not current compatibility acceptance.
 
 ### Absent
 
-- Fifteen currently listed constituents remain unevaluated, including firearms, Fencing, Combat Bare Fists, crowd/hostage, creature, wizard, and zombie content.
-- No first-person, motion-matching database, network authority/rollback, target-character, or non-Unity engine acceptance.
+- No current canonical role classification, runtime-set inventory, cross-pack blend/mask/transition evidence, target rig, engine run, or visual acceptance.
+- Fifteen collection constituents are outside this partial evaluation: 2-Handed Gun, Assault Rifle, Bazooka, Bow & Arrow, Combat Bare Fists, Creature, Crowd, Double Guns, Fencing, Hostage, Minigun, Push & Pull Cube, Shotgun, Wizard, and Zombie.
 
 ## Runtime sets and authored motion
 
-These are collection-owned cross-pack candidates; constituent timing/directional sets remain in their linked reports.
-
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| Armed-state handoff | ordered | `basic:Humanoid@IdleUnarmed.FBX`; `sword:Humanoid@DrawWeapons1S&S.fbx`; `sword:Humanoid@IdleCombatS&S.fbx`; `sword:Humanoid@PutBackWeapons1S&S.fbx` | set_type=transition-chain | N/A | transition=at-end; state=unarmed-to-armed |
-| Walk + sword attack mask candidate | layered | `basic:Humanoid@WalkForwardUnarmed2.fbx`; `sword:Humanoid@SwordAttack1S&S.fbx` | set_type=mask-composition | N/A | mask=upper-body-candidate; movement=basic-base |
-| Run + heavy block mask candidate | layered | `basic:Humanoid@RunForward2Unarmed.fbx`; `sword:Humanoid@BlockHeavy1S&S.fbx` | set_type=mask-composition | N/A | mask=upper-body-candidate; movement=basic-base |
-| Basic-to-Campfire posture | ordered | `basic:Humanoid@IdleUnarmed.FBX`; `campfire:Humanoid@StandToKneelCampfire.fbx`; `campfire:Humanoid@IdleKneelCampfire.fbx` | set_type=transition-chain | N/A | transition=reviewed-crossfade; state=campfire |
-| Basic-to-Climbing entry | ordered | `basic:Humanoid@JumpToApexUnarmed.FBX`; `climbing:Humanoid@FallingToEnterWall.fbx`; `climbing:Humanoid@IdleWallClimb.fbx` | set_type=transition-chain | N/A | transition=contact-window; state=climbing |
-| Basic-to-Injured state | ordered | `basic:Humanoid@WalkForwardUnarmed2.fbx`; `injured:Humanoid@WalkInjuredA.fbx`; `injured:Humanoid@IdleInjuredA.fbx` | set_type=transition-chain | N/A | transition=reviewed-crossfade; state=injured |
-| Walk + injured torso mask candidate | layered | `basic:Humanoid@WalkForwardUnarmed2.fbx`; `injured:Humanoid@IdleInjuredA.fbx` | set_type=mask-composition | N/A | mask=upper-body-candidate; movement=basic-base |
-| Sword-to-Injured state | ordered | `sword:Humanoid@IdleCombatS&S.fbx`; `injured:Humanoid@IdleInjuredA.fbx` | set_type=transition-chain | N/A | transition=weapon-policy; state=injured |
-| Basic-to-1-Handed armed state | ordered | `basic:Humanoid@IdleUnarmed.FBX`; `one:Humanoid@DrawWeapon1hMelee.fbx`; `one:Humanoid@IdleCombat1hMelee.fbx`; `one:Humanoid@PutBackWeapon1hMelee.fbx` | set_type=transition-chain | N/A | transition=at-end; state=unarmed-to-one-handed |
-| Basic-to-2-Handed armed state | ordered | `basic:Humanoid@IdleUnarmed.FBX`; `two:Humanoid@Draw2HandMelee.fbx`; `two:Humanoid@IdleCombatA2HandMelee.fbx`; `two:Humanoid@PutBack2HandMelee.fbx` | set_type=transition-chain | N/A | transition=at-end; state=unarmed-to-two-handed |
-| Basic-to-Dual-Swords armed state | ordered | `basic:Humanoid@IdleUnarmed.FBX`; `dual:Humanoid@DrawDualSwords.fbx`; `dual:Humanoid@IdleCombatDualSwords.fbx`; `dual:Humanoid@PutBackDualSwords.fbx` | set_type=transition-chain | N/A | transition=at-end; state=unarmed-to-dual-swords |
-| Walk + 1-Handed attack mask candidate | layered | `basic:Humanoid@WalkForwardUnarmed2.fbx`; `one:Humanoid@AttackA1hMelee.fbx` | set_type=mask-composition | N/A | mask=upper-body-candidate; movement=basic-base |
-| Walk + 2-Handed attack mask candidate | layered | `basic:Humanoid@WalkForwardUnarmed2.fbx`; `two:Humanoid@AttackA2HandMelee.fbx` | set_type=mask-composition | N/A | mask=upper-body-candidate; movement=basic-base |
-| Walk + Dual-Swords attack mask candidate | layered | `basic:Humanoid@WalkForwardUnarmed2.fbx`; `dual:Humanoid@Attack1DualSwords.fbx` | set_type=mask-composition | N/A | mask=upper-body-candidate; movement=basic-base |
+No important runtime sets were identified.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=eight-full-body-modes`; preserve each constituent's sets, use Basic as the default movement hub, and quarantine all six documented outliers.
-2. **Timing/synchronization:** `sync=per-mode-contracts`; review and import the current IP gait candidates where applicable, apply runtime offsets for residual phase, preserve raw root-motion members, and crossfade only at reviewed equipment, posture, injury, or environment boundaries.
-3. **State ownership:** `owner=active-gameplay-mode`; one mode owns root/pelvis/movement at a time, with exclusive code or animation displacement per clip.
-4. **Composition constraints:** `composition=full-body-default`; promote masks clip-by-clip only after pelvis, support, weapon/prop contact, and target-character review.
-5. **Acceptance gate:** `gate=eight-mode-target-character-matrix`; test constituent graphs, every cross-pack set above, props, contacts, root authority, retargeting, cancellation, compression, and builds.
+1. **Members/topology:** `topology=not-evaluated`; preserve constituent boundaries and declare selected clips before creating collection graphs.
+2. **Timing/synchronization:** `sync=not-evaluated`; resolve declared-contract findings and measure only project-selected transition or blend candidates.
+3. **State ownership:** `owner=not-evaluated`; assign one root/displacement authority per selected clip and state.
+4. **Composition constraints:** `composition=full-body`; do not approve masks, additive use, or cross-pack handoffs from this rollup.
+5. **Acceptance gate:** `gate=current-cross-pack-engine-and-visual-review`; rerun selected compatibility, controller, contact, retarget, build, and visual tests.
 
 ## Technical issue register
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| UC-001 | major | Skeleton-compatible mode changes can still snap in pose, style, foot plant, or prop state; [identity guidance](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity). | engine-config | Crossfade only at reviewed full-body boundaries and author missing handoffs. | Cross-pack set diagnostics can help; style invention cannot. | Retained mixer checks execute; visuals open. |
-| UC-002 | major | Upper-body masks may remove injured posture or break pelvis balance, weapon contact, and support; [blend guidance](../game-ready-clips.md#feet-skate-when-clips-blend). | engine-config | Default to full-body and promote masks member by member. | Mask/contact diagnostics are future candidates; artistic intent remains required. | Seven mask graphs execute; no visual gate. |
-| UC-003 | major | Raw loop and gait-phase findings span all eight packs, so combining packs can compound skating or wrap pulses; [loop guidance](../game-ready-clips.md#the-loop-pops). | engine-config | Visually review and import the 134 IP gait candidates across the six gait-bearing packs, apply runtime offsets for residual phase, and retain raw RM. | Current anchoring supports vertical-forward-axis rigs; declared directional-speed policies are available, but this report has no current collection-policy binding. | 134/134 transforms succeed and every candidate re-reads cleanly; spreads improve materially, but Unity and visual acceptance stay open. |
-| UC-004 | major | Climbing has measured vertical and yaw displacement but no environment-contact proof, so traversal can still stall, double, or misalign against geometry. Guidance: not applicable. | engine-config | Keep root authority exclusive and validate every traversal family against real game geometry. | Per-clip root displacement and yaw are available; contact and alignment intent stay outside the tool. | Ladder +/-1.500 m, obstacle up to +2.000 m, wall -1.950..+2.000 m, and a -180 deg turn on `EnterWallTop_RM` are measured; headless samples/mixer pass only and no contact gate ran. |
-| UC-005 | blocker | Sword Crouch FR RM, Climbing `FallingUnarmed`, and four 1-/2-Handed block files are rig/import outliers, leaving those specific runtime paths unusable; [identity guidance](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity). | artist-author | Quarantine all six and use documented alternatives. | Detection can improve; missing, malformed, or Generic-authored content cannot be safely synthesized. | AnimSmith and Unity evidence agree; four Generic files fail expected Humanoid assertions. |
-| UC-006 | moderate | Fifteen current constituents remain unevaluated, so collection-wide compatibility, coverage, and value are unknown. Guidance: not applicable. | unknown | Keep this a partial rollup and add category waves with selective cross-pack tests. | AnimSmith cannot establish compatibility or value for constituents that were not evaluated. | Explicit scope boundary. |
+| UC-010 | blocker | No current collection binding, role taxonomy, or runtime-set inventory exists, so the corpus cannot safely define collection graphs. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder) applies. | unknown | Select clips and declare collection roles, sets, and ownership in the target project. | A current collection manifest could preserve declared grouping evidence. | `not-evaluated`; 895 motion-labelled inputs remain unclassified at collection level. |
+| UC-011 | major | Current declared-contract findings require clip-by-clip loop and continuity decisions before blend or transition use. Guidance: not applicable. | artist-author | Repair or re-export malformed source where required; otherwise document intended policy. | Declared mechanical diagnostics can support review, not infer intent. | `observed-animsmith`; constituent-specific results are linked above. |
+| UC-012 | major | Cross-pack co-installation and Unity graph behavior are dated observations, not current engine validation. Guidance: not applicable. | engine-config | Repeat only project-relevant compatibility and engine tests using selected clips. | Cross-pack diagnostics could make the comparison reproducible. | Retained dated observation; no current engine run. |
+| UC-013 | major | Fifteen constituents are excluded, so this partial rollup cannot support a collection-wide coverage, compatibility, or value conclusion. Guidance: not applicable. | unknown | Evaluate additional constituents in bounded waves with a defined game decision. | Tooling cannot establish evidence for excluded content. | `not-evaluated`; explicit scope boundary. |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | Eight-pack co-import + headless Playables/masks/props | **Conditional pass:** the melee wave passes 33/33 required checks and four expected Generic outliers fail separately; the contextual wave passes 22/22 required checks. Shared assets do not conflict. | Visual controllers, root motion, contacts, target retarget, compression, player build. |
-| Unreal Engine | Exact profile validation, documentation otherwise | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | Import eight packs, retarget, graphs, contacts, build. |
-| Godot | Exact profile validation, documentation otherwise | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | Conversion/import, retarget, graphs, contacts, export. |
-| Bevy | Addressability inventory on generated GLB candidates | **Not evaluated for runtime.** The exact `bevy` revision 3 / Bevy 0.19.0 profile inventories each generated candidate and predicts the canonical `Animation0` selector with no findings. That is selector and inventory evidence only - not asset loading, target identity, graph wiring, masking, or playback. | glTF conversion for delivered sources, target mapping, graphs, root motion, performance. |
+| Unity 6000.5.8f1 | retained dated engine observation | Earlier contextual and melee probes recorded 22/22 and 33/33 required graph checks; four expected Generic-rig failures were isolated. No current import or playback run occurred. | Current co-import, controller, visual, root-motion, contacts, retarget, compression, and build tests. |
+| Unreal Engine | not-evaluated | No current import or playback run. | Import, retarget, graph, contact, and build tests. |
+| Godot | not-evaluated | No current conversion, import, or playback run. | Conversion/import, graph, contact, and export tests. |
+| Bevy | not-evaluated | No current conversion, addressability, or runtime run. | Conversion, target mapping, runtime, and performance tests. |
 
 ## Fit and limitations
 
-Best fit: a third-person action RPG, survival game, or prototype with explicit unarmed, weapon-specific armed, injured, camp, and traversal states and capacity for controller/contact authoring.
+This report is suitable only as a mechanically scoped intake record for a project prepared to select clips and run its own current compatibility and engine tests. It does not support a blanket game-ready, engine-ready, retarget-ready, or artistic-ready conclusion.
 
-Poor fit without further packs/work: firearm-heavy, first-person, creature/zombie, crowd, motion-matching, fighting-game contact, or network-root-motion systems. Fencing-specific reach and stance behavior also remains unevaluated. A seamless universal locomotion/mask graph is not proven.
-
-The eight packs are technically compatible enough to justify a shared project and staged visual evaluation. The next collection work should remain category-based; compare a category to these eight only where a real gameplay handoff, mask, prop, or replacement decision exists.
+It is a poor basis for approving a universal locomotion graph, seamless cross-pack transitions, masks, contact actions, first-person, motion matching, networking, or the fifteen excluded constituents without new scoped evidence.
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.7.0 — Revalidated all eight evaluated constituents under output v17 / measurements v16. Its built-in humanoid profile resolves the 2-Handed pack's unique case-only role aliases without the explicit-role workaround. The 159 candidates emitted addressability V1 plus Bevy rich V2. Scope remains eight of 23; nothing here proves engine execution or artistic compatibility.
+AnimSmith 0.10.0 — official release evidence revalidated all eight constituent source baselines and declared contracts. The current rollup intentionally records only constituent-derived counts and findings; collection-level taxonomy, runtime sets, and compatibility were not regenerated.
 
-AnimSmith 0.4.0 — Added the transform and gait observations revalidated here. The dated Unity probes remain the current engine observations because no later engine execution was performed.
+AnimSmith 0.7.0 — historical collection output recorded 582 logical motions, 90 runtime-set records, 14 cross-pack candidates, and 159 external candidates. Those superseded collection-derived claims are retained as historical context only and are not current evidence.
 
-AnimSmith 0.3.x — Superseded collection evidence.
+AnimSmith 0.4.0 — retained dated Unity probes and shared-path comparison predate this refresh; they remain separately labeled observations.
 
 ## Evidence status
 
-The partial rollup manifest covers 582 logical motions, 895 individual files, and 90 runtime-set records: 76 constituent-owned plus 14 cross-pack. Current mechanical evidence uses exact AnimSmith 0.7.0 under output v17 / measurements v16 across all eight named constituents. The 28-pair shared-path comparison and dated Unity probes remain the current non-AnimSmith observations. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) define exact scope and reproduction evidence.
+Current evidence is the official 0.10.0 constituent rerun: 918 source candidates, 895 individual motion-labelled inputs, 3,672 baseline commands, and 103 external transform candidates from four melee constituents. Current canonical logical-motion and runtime-set totals are both zero because no collection classification or binding was accepted. Retained dated shared-path and Unity observations are not current evaluator, engine, or readiness claims. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) define the exact boundary.
 
 ## Sources
 
 - Constituent reports: [Basic Locomotion](protofactor-basic-locomotion.md), [Sword & Shield](protofactor-sword-and-shield.md), [Campfire](protofactor-campfire.md), [Climbing](protofactor-climbing.md), [Injured](protofactor-injured.md), [1-Handed Melee](protofactor-one-handed-melee.md), [2-Handed Melee](protofactor-two-handed-melee.md), and [Dual Swords](protofactor-dual-swords.md).
 - Protofactor, [Ultimate Animation Collection](https://protofactor.biz/product/ultimate-animation-collection/) and [End User License Agreement](https://protofactor.biz/end-user-license-agreement/).
-- Unity, [Avatar Mask](https://docs.unity3d.com/6000.0/Documentation/Manual/class-AvatarMask.html) and [Root Motion](https://docs.unity3d.com/6000.5/Documentation/Manual/RootMotion.html); Epic Games, [Layered Animations](https://dev.epicgames.com/documentation/unreal-engine/using-layered-animations-in-unreal-engine?lang=en-US); Godot, [AnimationTree](https://docs.godotengine.org/en/stable/tutorials/animation/animation_tree.html); Bevy, [Animation Masks](https://bevy.org/examples/animation/animation-masks/).
+- AnimSmith, [game-ready clips](../game-ready-clips.md) and [CLI reference](../cli.md).
