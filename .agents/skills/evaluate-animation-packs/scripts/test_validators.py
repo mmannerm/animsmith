@@ -3241,13 +3241,80 @@ class ReportValidatorTests(unittest.TestCase):
             "https://github.com/mmannerm/animsmith/releases/download/v0.10.0/"
             "animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz"
         )
-        required = (
-            "8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662",
-            "animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith",
-            "2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387",
-            "db91d8dda3326f97f581d4d62104d928caec383f",
-            "representative FBX admission",
+        archive_hash = (
+            "8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662"
         )
+        member = "animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith"
+        binary_hash = (
+            "2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387"
+        )
+        peeled_commit = "db91d8dda3326f97f581d4d62104d928caec383f"
+
+        def preflight_errors(text: str, links: set[str]) -> list[str]:
+            checks = {
+                "artifact URL": artifact_url in text or artifact_url in links,
+                "archive SHA-256 label": re.search(
+                    rf"(?is)archive(?:(?!member).){{0,500}}?SHA-256 {archive_hash}",
+                    text,
+                )
+                is not None,
+                "exact member path": re.search(
+                    rf"(?is)member[^.\n]{{0,100}}{re.escape(member)}", text
+                )
+                is not None,
+                "binary SHA-256 label": re.search(
+                    rf"(?is)(?:binary SHA-256|member.{{0,250}}?SHA-256) "
+                    rf"{binary_hash}",
+                    text,
+                )
+                is not None,
+                "source tag": re.search(r"(?is)tag(?: is)? v0\.10\.0", text)
+                is not None,
+                "peeled commit": re.search(
+                    rf"(?is)peeled (?:source )?commit {peeled_commit}", text
+                )
+                is not None,
+                "working-tree state": re.search(
+                    r"(?i)working[- ]tree(?: state)?(?: is|:)? N/A", text
+                )
+                is not None,
+                "feature surface": (
+                    re.search(
+                        r"(?is)(?:compiled features|feature surface)[^.\n]{0,120}"
+                        r"fbx[^.\n]{0,80}report",
+                        text,
+                    )
+                    is not None
+                    or re.search(
+                        r"(?is)fbx[^.\n]{0,80}report[^.\n]{0,80}feature surface",
+                        text,
+                    )
+                    is not None
+                ),
+                "successful help and admission": (
+                    re.search(
+                        r"(?is)help.{0,300}?(?:succeeded|passed).{0,120}?"
+                        r"representative FBX admission",
+                        text,
+                    )
+                    is not None
+                    or re.search(
+                        r"(?is)help.{0,300}?representative FBX admission"
+                        r".{0,120}?(?:succeeded|passed)",
+                        text,
+                    )
+                    is not None
+                ),
+                "preflight locator and digest": re.search(
+                    r"(?is)(?:external:[^\s`)]*|preflight-status-v1)"
+                    r"[^.\n]{0,240}(?:SHA-256 )?[0-9a-f]{64}",
+                    text,
+                )
+                is not None,
+            }
+            return [name for name, passed in checks.items() if not passed]
+
+        mutation_checked = False
         for appendix in appendices:
             document = report_validator.parse_markdown(
                 appendix.read_text(encoding="utf-8")
@@ -3264,25 +3331,53 @@ class ReportValidatorTests(unittest.TestCase):
                 for link in paragraph["links"]
             }
             with self.subTest(appendix=appendix.name):
-                self.assertTrue(
-                    artifact_url in reproduction or artifact_url in reproduction_links
+                self.assertEqual(
+                    preflight_errors(reproduction, reproduction_links), []
                 )
-                for field in required:
-                    self.assertIn(field, reproduction)
-                self.assertRegex(
-                    reproduction,
-                    r"(?i)working[- ]tree(?: state)?(?: is|:)? N/A",
-                )
-                self.assertIn("fbx", reproduction)
-                self.assertIn("report", reproduction)
-                self.assertIn("preflight", reproduction)
-                self.assertRegex(reproduction, r"[0-9a-f]{64}")
                 if appendix.name.startswith("mixamo-"):
                     self.assertIn("preflight-status-v1", reproduction)
                     self.assertIn(
                         "739930cd9c04189be3ffe1d3f7381800898d8d4b35c75c9a519e57f6cfad1fad",
                         reproduction,
                     )
+                if not mutation_checked:
+                    mutated = reproduction.replace(archive_hash, "SWAPPED", 1)
+                    mutated = mutated.replace(binary_hash, archive_hash, 1)
+                    mutated = mutated.replace("SWAPPED", binary_hash, 1)
+                    self.assertIn(
+                        "archive SHA-256 label",
+                        preflight_errors(mutated, reproduction_links),
+                    )
+                    self.assertIn(
+                        "binary SHA-256 label",
+                        preflight_errors(mutated, reproduction_links),
+                    )
+                    mutation_checked = True
+
+    def test_reports_index_tracks_current_protofactor_engine_boundary(self) -> None:
+        repository = Path(__file__).resolve().parents[4]
+        document = report_validator.parse_markdown(
+            (repository / "docs" / "reports" / "README.md").read_text(
+                encoding="utf-8"
+            )
+        )
+        tables = [
+            table
+            for table in document["tables"]
+            if table["section"] == "Current reports"
+            and [cell["text"] for cell in table["header"]]
+            == ["Technical report", "Evidence appendix", "Scope", "Evaluation status"]
+        ]
+        self.assertEqual(len(tables), 1)
+        protofactor_rows = [
+            row for row in tables[0]["rows"] if row[0]["text"].startswith("Protofactor")
+        ]
+        self.assertEqual(len(protofactor_rows), 9)
+        for row in protofactor_rows:
+            status = row[3]["text"]
+            self.assertIn("current AnimSmith 0.10.0", status)
+            self.assertIn("no current", status)
+            self.assertNotRegex(status, r"Unity \d")
 
     def test_published_history_boundary_rejects_a_body_regression(self) -> None:
         repository = Path(__file__).resolve().parents[4]
@@ -3332,6 +3427,20 @@ class ReportValidatorTests(unittest.TestCase):
             "Rifle 8-Way": "mixamo-rifle-8-way-locomotion-evidence.md",
         }
         self.assertEqual(set(rows), set(constituents))
+        current_report_links = {
+            link["destination"]
+            for paragraph in collection["paragraphs"]
+            if paragraph["section"] == "Evaluation scope and provenance"
+            and paragraph["text"].startswith("Included current reports:")
+            for link in paragraph["links"]
+        }
+        self.assertEqual(
+            current_report_links,
+            {
+                filename.removesuffix("-evidence.md") + ".md"
+                for filename in constituents.values()
+            },
+        )
         for name, filename in constituents.items():
             document = report_validator.parse_markdown(
                 (reports / filename).read_text(encoding="utf-8")
@@ -3369,6 +3478,30 @@ class ReportValidatorTests(unittest.TestCase):
                 for index in range(2)
             ),
         )
+        scope_tables = [
+            table
+            for table in collection["tables"]
+            if table["section"] == "Evaluation scope and provenance"
+            and [cell["text"] for cell in table["header"]] == ["Field", "Value"]
+        ]
+        self.assertEqual(len(scope_tables), 1)
+        scope = {
+            row[0]["text"]: row[1]["text"] for row in scope_tables[0]["rows"]
+        }
+        self.assertEqual(
+            scope["Delivered scope"],
+            f"{total[0]} extracted FBX files from nine constituent archive pairs; "
+            f"{total[1]} manifest-declared motions retained as separate source metadata",
+        )
+        inventory_prose = "\n".join(
+            paragraph["text"]
+            for paragraph in collection["paragraphs"]
+            if paragraph["section"] == "Pack inventory and content evidence"
+        )
+        self.assertIn(
+            f"reconcile to {total[0]} FBX files and {total[1]} manifest-declared motions",
+            inventory_prose,
+        )
 
 
 class RegenerationContractTests(unittest.TestCase):
@@ -3393,6 +3526,13 @@ class RegenerationContractTests(unittest.TestCase):
         self.assertIn("collection version does not identify", skill)
         self.assertIn("distinguish collection listing", report_template)
         self.assertIn("collection-level and constituent-level", appendix_template)
+        self.assertIn("artifact locator, archive SHA-256", appendix_template)
+        self.assertIn("exact binary member path", appendix_template)
+        self.assertIn("binary version and SHA-256", appendix_template)
+        self.assertIn("working-tree state", appendix_template)
+        self.assertIn("required feature surface", appendix_template)
+        self.assertIn("representative-format admission", appendix_template)
+        self.assertIn("logical preflight-evidence locator", appendix_template)
 
     def test_templates_preserve_primary_evidence_without_duplication(self) -> None:
         skill = self.rendered_paragraph_text("SKILL.md")
