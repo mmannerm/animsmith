@@ -388,5 +388,6 @@ function applyFragment() {
 
 window.addEventListener("resize", draw);
 window.addEventListener("hashchange", applyFragment);
+animsmithOnSchemeChange(() => { palette = animsmithPalette(); draw(); });
 if (clip) { selectClip(clip.name); setFrame(0); }
 applyFragment();

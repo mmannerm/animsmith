@@ -421,6 +421,7 @@ pub fn render_comparison(
         preflight,
         before_report,
         after_report,
+        options,
     )?;
     let before_clip = &before_doc.clips[preflight.before_clip_index];
     let after_clip = &after_doc.clips[preflight.after_clip_index];
@@ -838,21 +839,29 @@ fn preflight_report_allocation(
     preflight: ComparisonPreflight,
     before_report: SideReportPreflight,
     after_report: SideReportPreflight,
+    options: ReportOptions,
 ) -> Result<(), ComparisonError> {
-    let before_pose = comparison_pose_bytes(
-        preflight.before_frames,
-        before.skeleton.bones.len(),
-        "before",
-    )?;
-    let after_pose =
-        comparison_pose_bytes(preflight.after_frames, after.skeleton.bones.len(), "after")?;
-    let base64_bytes = [before_pose, after_pose]
-        .into_iter()
-        .try_fold(0u128, |total, bytes| {
-            let encoded = bytes.checked_add(2)?.checked_div(3)?.checked_mul(4)?;
-            total.checked_add(encoded)
-        })
-        .unwrap_or(u128::MAX);
+    // The pose budget and the base64 it would occupy in the JSON both bound
+    // an embedded grid. An evidence-only document embeds none, so neither
+    // applies to it; every other allowance below still does.
+    let base64_bytes = if options.evidence_only {
+        0
+    } else {
+        let before_pose = comparison_pose_bytes(
+            preflight.before_frames,
+            before.skeleton.bones.len(),
+            "before",
+        )?;
+        let after_pose =
+            comparison_pose_bytes(preflight.after_frames, after.skeleton.bones.len(), "after")?;
+        [before_pose, after_pose]
+            .into_iter()
+            .try_fold(0u128, |total, bytes| {
+                let encoded = bytes.checked_add(2)?.checked_div(3)?.checked_mul(4)?;
+                total.checked_add(encoded)
+            })
+            .unwrap_or(u128::MAX)
+    };
     // JSON f64 spellings are at most 24 bytes for finite values in serde's
     // shortest-roundtrip representation. Six bytes per source-name byte is
     // the worst JSON Unicode/control escape expansion. The fixed allowance

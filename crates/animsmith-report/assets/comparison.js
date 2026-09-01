@@ -337,5 +337,6 @@ function applyFragment() {
 }
 q("scrub").addEventListener("input", () => { selectedFrames = null; selectedContext = null; update(); });
 window.addEventListener("resize", update);
+animsmithOnSchemeChange(() => { documentPalette = animsmithPalette(); update(); });
 window.addEventListener("hashchange", () => { applyFragment(); selectHash(); update(); });
 applyFragment(); selectHash(); update();

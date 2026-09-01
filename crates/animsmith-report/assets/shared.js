@@ -81,6 +81,15 @@ function animsmithIndex(value) {
   return /^[0-9]+$/.test(value) ? Number(value) : null;
 }
 
+// Repaint hook for a reader who switches their system theme with the report
+// open: the CSS follows on its own, the canvas views need the new palette.
+function animsmithOnSchemeChange(repaint) {
+  if (typeof matchMedia !== "function") return;
+  const scheme = matchMedia("(prefers-color-scheme: light)");
+  if (!scheme || typeof scheme.addEventListener !== "function") return;
+  scheme.addEventListener("change", repaint);
+}
+
 // The two document-wide switches, applied to the root element so every visual
 // consequence stays in the stylesheets. A fragment that does not mention a
 // switch leaves it as it is — following a `#finding-…` anchor inside an
