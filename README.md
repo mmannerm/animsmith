@@ -131,9 +131,9 @@ It plays back the exact pose-grid frames judged by the checks, with
 foot/root trails, metric charts, and a clickable findings list. It follows
 the reader's light or dark system theme, and a URL fragment can pin the
 theme, embed it in a page, or deep-link a clip, frame, or finding.
-`animsmith report --evidence-only` leaves the sampled poses out: the
-findings, coverage gaps, engine predictions, charts, and input identities
-remain, so the report can be shared where the source motion cannot.
+`animsmith report --evidence-only` leaves the sampled poses out so the report
+can be shared where the source motion cannot — see the
+[CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#commands).
 
 ## CLI Or Library?
 

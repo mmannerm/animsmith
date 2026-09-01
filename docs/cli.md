@@ -169,13 +169,21 @@ run changes: the same checks evaluate the same frames.
 
 Both report forms follow the reader's `prefers-color-scheme` and read a URL
 fragment of `&`-separated `key=value` options, so one generated file can be
-deep-linked or embedded without regenerating it. `theme=light` or `theme=dark`
-pins the palette, `embed=1` drops the page chrome so the document fits an
-`<iframe>`, and `frame=N` scrubs to a judged frame. The single-clip report also
-accepts `clip=NAME` and `finding=INDEX`, which select exactly what clicking that
-finding would; the comparison keeps its existing `#finding-<side>-<anchor>`
-links. Unknown keys, malformed pairs, and out-of-range values are ignored, and
-no option changes what the report measured.
+deep-linked or embedded without regenerating it. Both honour `theme=light` and
+`theme=dark`, which pin the palette; `embed=1`, which drops the running title
+and the interaction hint so the document fits an `<iframe>` while every
+finding, chart, identity, and evidence disclosure stays; and `frame=N`, which
+scrubs to a judged frame. `clip=NAME` and `finding=INDEX` are single-clip
+options — they select exactly what clicking that clip or finding would — while
+the comparison addresses a finding through the `#finding-<side>-<anchor>` link
+its own panels carry, because its clip correspondence is declared by the two
+inputs rather than chosen in the viewer.
+
+A key that is absent leaves that state as it is, so following one of those
+anchors inside an embedded, theme-pinned report does not un-pin it; a key
+present with a value the report cannot honour returns that state to its
+default. Unknown keys, malformed pairs, and out-of-range values are ignored,
+and no option changes what the report measured.
 
 The checked-in [synthetic comparison walkthrough](../examples/README.md#5-converting-exports-and-generating-reports-default-features-only)
 demonstrates seam endpoints, sampled stance and foot trajectories, shared-scale

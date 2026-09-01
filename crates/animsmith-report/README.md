@@ -16,27 +16,22 @@ plays back exactly those frames in a small hand-written WebGL viewer.
 There is no CDN, no three.js dependency, and no JavaScript resampling;
 when a finding names a frame, the viewer scrubs to that judged frame.
 
-`ReportOptions::evidence_only` omits the sampled pose grid from either
-report form and marks the embedded data `evidence_only`. The grid is the
-motion, so a full report of a licensed clip carries that clip; the
-evidence-only document keeps findings, coverage gaps, engine predictions,
-charts, and identities, and can be shared where the source asset cannot.
+`ReportOptions::evidence_only` omits the sampled pose grid from either report
+form, for sharing evidence where the motion itself cannot travel; the
+[CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#commands)
+describes exactly what it keeps and drops.
 
 Every colour in a generated document resolves through one set of design
 tokens: dark by default, light under `prefers-color-scheme`, and either one
-pinned by a `#theme=light|dark` URL fragment. The same fragment carries
-`embed=1` for an `<iframe>` and `clip`, `frame`, and `finding` deep links,
-all parsed by one bounded, total parser that ignores anything it does not
-recognize.
-
-Each chart is a self-describing `<figure>`: the `<svg>` carries `viewBox`,
-`role="img"`, an `aria-label` naming the plotted series with their units, an
-in-chart legend, and axis labels, while the paint comes from stable series
-classes (`series-left`, `series-right`, `series-diff`, `root-path`) rather
-than per-element attributes. A figure lifted out of the report therefore keeps
-its meaning under an injected copy of those rules, and the `data-clip`,
-`data-kind`, `data-pad`, and `data-plotw` hooks the playhead uses stay part of
-the contract.
+pinned by a `#theme=light|dark` URL fragment, which one bounded parser reads
+along with the `embed`, `clip`, `frame`, and `finding` options. Each chart is
+a self-describing `<figure>` — `viewBox`, `role="img"`, an `aria-label` naming
+the plotted series and their units, an in-chart legend, and axis labels —
+whose paint comes from stable series classes (`series-left`, `series-right`,
+`series-diff`, `root-path`) rather than per-element attributes, so a figure
+lifted out of the report keeps its meaning. The `data-clip`, `data-kind`,
+`data-pad`, and `data-plotw` hooks the playhead uses are part of that
+contract.
 
 `render_comparison` is the deliberately narrow before/after companion. Call
 `preflight_comparison_sources` on the two exact `LoadedSource` authorities
