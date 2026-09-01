@@ -168,5 +168,18 @@ jobs:
       - name: Check publishable crate package readiness
         run: bash scripts/check-package-inventory.sh
 
+      - name: Install pinned release-plz history probe
+        shell: bash
+        run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/release-plz/release-plz/releases/download/release-plz-v0.3.160/release-plz-x86_64-unknown-linux-gnu.tar.gz \
+            --output "${RUNNER_TEMP}/release-plz.tar.gz"
+          echo "2263c4f95eac1513da96a114a77fde20ea038742a8c8050f7514b8f93b828646  ${RUNNER_TEMP}/release-plz.tar.gz" \
+            | sha256sum --check
+          tar -xzf "${RUNNER_TEMP}/release-plz.tar.gz" -C "${RUNNER_TEMP}"
+          "${RUNNER_TEMP}/release-plz" --version
+
       - name: Release binary packaging contract
+        env:
+          RELEASE_PLZ_BIN: ${{ runner.temp }}/release-plz
         run: bash scripts/check-release-packaging.sh

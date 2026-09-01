@@ -53,6 +53,12 @@ shipping is riskier than changing.
    since the last release — one shared version across the publishable crates
    (`version_group`), so the whole workspace moves together — and writes the
    changelog. Ordinary pushes to `main` never create or update this PR.
+   The release-PR job temporarily installs three exact, commit-scoped Git
+   replacements so release-plz can inspect a short historical branch whose
+   manifests did not parse. The preparation refuses any object-identity drift
+   or pre-existing replacement, preserves commit identities and messages, and
+   is removed even when release-plz fails. It is local to that job: the
+   push-triggered publication path always reads canonical repository history.
    If another change merges to `main` while the release PR is open, dispatch
    the workflow again before merging so the version and changelog include it.
 4. Review that PR. The glTF writer records the package version in

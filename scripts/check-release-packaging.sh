@@ -35,47 +35,78 @@ fail() {
   exit 1
 }
 
+extract_workflow_job() {
+  local job="$1"
+  awk -v header="  ${job}:" '
+    $0 == header { capture = 1 }
+    capture && $0 != header && $0 ~ /^  [[:alnum:]_-]+:$/ { exit }
+    capture { print }
+  ' .github/workflows/release-plz.yml
+}
+
+release_pr_job="$work/release-pr-job.yml"
+release_job="$work/release-job.yml"
+extract_workflow_job release-pr >"$release_pr_job"
+extract_workflow_job release >"$release_job"
+[[ -s "$release_pr_job" ]] || fail "release-pr workflow job is missing"
+[[ -s "$release_job" ]] || fail "release publication workflow job is missing"
+
 grep -Fq \
   "if: \${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.RELEASE_PLZ_ARMED == 'true' }}" \
-  .github/workflows/release-plz.yml \
+  "$release_pr_job" \
   || fail "release-pr dispatch must be restricted to refs/heads/main"
 echo "ok: release-pr dispatch is restricted to main"
 
-grep -Fq 'id: release_plz' .github/workflows/release-plz.yml \
+grep -Fq 'id: release_plz' "$release_pr_job" \
   || fail "release-pr action must expose its generated-PR outputs"
 grep -Fq 'ref: ${{ fromJSON(steps.release_plz.outputs.pr).head_branch }}' \
-  .github/workflows/release-plz.yml \
+  "$release_pr_job" \
   || fail "release-pr job must check out the exact generated branch"
-grep -Fq 'ANIMSMITH_RELEASE_PR: "true"' .github/workflows/release-plz.yml \
+grep -Fq 'ANIMSMITH_RELEASE_PR: "true"' "$release_pr_job" \
   || fail "generated release branch must enable strict version-doc validation"
-grep -Fq 'run: cargo test -p animsmith --test release_version_docs' \
-  .github/workflows/release-plz.yml \
+grep -Fq 'run: cargo test -p animsmith --test release_version_docs' "$release_pr_job" \
   || fail "release-pr job must run the version-doc gate after generation"
 echo "ok: generated release branch runs strict version-doc validation"
 
 history_step='        run: bash scripts/prepare-release-plz-history.sh'
-[[ "$(grep -Fxc "$history_step" .github/workflows/release-plz.yml)" == "1" ]] \
+[[ "$(grep -Fxc "$history_step" "$release_pr_job")" == "1" ]] \
   || fail "release-pr must prepare the pinned historical tree exactly once"
-history_line="$(grep -Fxn "$history_step" .github/workflows/release-plz.yml | cut -d: -f1)"
-release_plz_line="$(grep -Fn 'id: release_plz' .github/workflows/release-plz.yml \
-  | tail -n 1 | cut -d: -f1)"
+history_line="$(grep -Fxn "$history_step" "$release_pr_job" | cut -d: -f1)"
+release_plz_line="$(grep -Fn 'id: release_plz' "$release_pr_job" | cut -d: -f1)"
 [[ "$history_line" -lt "$release_plz_line" ]] \
   || fail "historical preparation must run before release-plz"
 cleanup_step='        run: bash scripts/prepare-release-plz-history.sh --remove'
-[[ "$(grep -Fxc "$cleanup_step" .github/workflows/release-plz.yml)" == "1" ]] \
+[[ "$(grep -Fxc "$cleanup_step" "$release_pr_job")" == "1" ]] \
   || fail "release-pr must remove its local history preparation exactly once"
-cleanup_line="$(grep -Fxn "$cleanup_step" .github/workflows/release-plz.yml | cut -d: -f1)"
+cleanup_line="$(grep -Fxn "$cleanup_step" "$release_pr_job" | cut -d: -f1)"
 [[ "$cleanup_line" -gt "$release_plz_line" ]] \
   || fail "historical preparation cleanup must run after release-plz"
 grep -Fq "if: \${{ always() && steps.history_prepare.outcome == 'success' }}" \
-  .github/workflows/release-plz.yml \
+  "$release_pr_job" \
   || fail "historical preparation cleanup must run after release-plz failures"
 grep -Fq \
   'uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131' \
-  .github/workflows/release-plz.yml \
+  "$release_pr_job" \
   || fail "release-pr must pin the reviewed release-plz action commit"
-[[ "$(grep -Fc '          version: 0.3.160' .github/workflows/release-plz.yml)" == "1" ]] \
+[[ "$(grep -Fxc '          version: 0.3.160' "$release_pr_job")" == "1" ]] \
   || fail "release-pr must pin the release-plz binary whose history-copy behavior was proved"
+[[ "$(grep -Fxc \
+  '      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable' \
+  "$release_pr_job")" == "1" ]] \
+  || fail "release-pr must pin the reviewed Rust toolchain action commit"
+if grep -Fq 'prepare-release-plz-history.sh' "$release_job"; then
+  fail "release publication must never use the local history preparation"
+fi
+grep -Fq \
+  'https://github.com/release-plz/release-plz/releases/download/release-plz-v0.3.160/release-plz-x86_64-unknown-linux-gnu.tar.gz' \
+  .github/workflows/checks.yml \
+  || fail "hosted history traversal must download the pinned release-plz 0.3.160 asset"
+grep -Fq '2263c4f95eac1513da96a114a77fde20ea038742a8c8050f7514b8f93b828646' \
+  .github/workflows/checks.yml \
+  || fail "hosted history traversal must verify the pinned release-plz archive digest"
+grep -Fq 'RELEASE_PLZ_BIN: ${{ runner.temp }}/release-plz' \
+  .github/workflows/checks.yml \
+  || fail "hosted release packaging contract must execute the pinned release-plz binary"
 
 history_repo="$work/history-repo"
 git clone --quiet --no-hardlinks . "$history_repo"
@@ -83,50 +114,151 @@ cp scripts/prepare-release-plz-history.sh \
   "$history_repo/scripts/prepare-release-plz-history.sh"
 before_commits="$(git -C "$history_repo" rev-list --count v0.9.0..HEAD)"
 before_log="$(git -C "$history_repo" log --format='%H %P %s' v0.9.0..HEAD)"
+before_status="$(git -C "$history_repo" status --porcelain=v1 --untracked-files=no)"
 (
   cd "$history_repo"
   bash scripts/prepare-release-plz-history.sh
 ) >"$work/history-preparation.out"
-[[ "$(git -C "$history_repo" replace -l)" == \
-  "ddc60e13f87db14e506649745885beed2cf248f7" ]] \
-  || fail "history preparation did not install only the pinned replacement"
-[[ "$(git -C "$history_repo" rev-parse \
-  refs/replace/ddc60e13f87db14e506649745885beed2cf248f7)" == \
-  "c5d334ef32c8a4a5d43141adb6f5588bdc52f7b6" ]] \
-  || fail "history preparation did not install the pinned blob-to-blob replacement"
-[[ "$(git -C "$history_repo" show \
-  '977abd11b4f533cac7b5e15b8fead935326a06ac:crates/animsmith/Cargo.toml' \
-  | git -C "$history_repo" hash-object --stdin)" == \
-  "c5d334ef32c8a4a5d43141adb6f5588bdc52f7b6" ]] \
-  || fail "history preparation did not expose the pinned repaired manifest"
-[[ "$(GIT_NO_REPLACE_OBJECTS=1 git -C "$history_repo" show \
-  '977abd11b4f533cac7b5e15b8fead935326a06ac:crates/animsmith/Cargo.toml' \
-  | git -C "$history_repo" hash-object --stdin)" == \
-  "ddc60e13f87db14e506649745885beed2cf248f7" ]] \
-  || fail "history preparation changed the underlying historical object"
+expected_replacements="$(printf '%s\n' \
+  64e1be84626b6180e332b212c2b9388f5dab6fcf \
+  977abd11b4f533cac7b5e15b8fead935326a06ac \
+  e518b2bdbed64c85e8dc91e09cefec4dff9d77cc | sort)"
+[[ "$(git -C "$history_repo" replace -l | sort)" == "$expected_replacements" ]] \
+  || fail "history preparation did not install exactly the pinned commit replacements"
+while IFS='|' read -r original replacement; do
+  [[ "$(git -C "$history_repo" rev-parse "refs/replace/$original")" == "$replacement" ]] \
+    || fail "history preparation installed an unexpected replacement for $original"
+  [[ "$(git -C "$history_repo" show \
+    "$original:crates/animsmith/Cargo.toml" | git -C "$history_repo" hash-object --stdin)" == \
+    "c5d334ef32c8a4a5d43141adb6f5588bdc52f7b6" ]] \
+    || fail "history preparation did not expose the repaired manifest for $original"
+  [[ "$(GIT_NO_REPLACE_OBJECTS=1 git -C "$history_repo" show \
+    "$original:crates/animsmith/Cargo.toml" | git -C "$history_repo" hash-object --stdin)" == \
+    "ddc60e13f87db14e506649745885beed2cf248f7" ]] \
+    || fail "history preparation changed the underlying manifest for $original"
+done <<'REPLACEMENTS'
+e518b2bdbed64c85e8dc91e09cefec4dff9d77cc|0e79fb9e974dd05c4d651e016b611c6966c607fd
+977abd11b4f533cac7b5e15b8fead935326a06ac|f553d3d8415efda55985199fec97fd0f9821e868
+64e1be84626b6180e332b212c2b9388f5dab6fcf|957a16ea0be754672b06b22dbdd75e5105e812a7
+REPLACEMENTS
 after_commits="$(git -C "$history_repo" rev-list --count v0.9.0..HEAD)"
 [[ "$after_commits" == "$before_commits" ]] \
   || fail "history preparation changed the release commit range"
 after_log="$(git -C "$history_repo" log --format='%H %P %s' v0.9.0..HEAD)"
 [[ "$after_log" == "$before_log" ]] \
   || fail "history preparation changed release commit identities or messages"
+[[ "$(git -C "$history_repo" status --porcelain=v1 --untracked-files=no)" == \
+  "$before_status" ]] \
+  || fail "history preparation changed checkout status"
 
-history_checkout="$work/history-checkout"
-git -C "$history_repo" worktree add --quiet --detach \
-  "$history_checkout" 977abd11b4f533cac7b5e15b8fead935326a06ac
-cargo metadata --manifest-path "$history_checkout/Cargo.toml" --no-deps \
-  --format-version 1 >/dev/null
+original_head="$(git -C "$history_repo" rev-parse HEAD)"
+for historical_commit in \
+  e518b2bdbed64c85e8dc91e09cefec4dff9d77cc \
+  977abd11b4f533cac7b5e15b8fead935326a06ac \
+  64e1be84626b6180e332b212c2b9388f5dab6fcf; do
+  git -C "$history_repo" checkout --quiet --detach "$historical_commit"
+  cargo metadata --manifest-path "$history_repo/Cargo.toml" --no-deps \
+    --format-version 1 >/dev/null
+done
+git -C "$history_repo" checkout --quiet --detach "$original_head"
+[[ -z "$(git -C "$history_repo" status --porcelain=v1 --untracked-files=no)" ]] \
+  || fail "historical checkout traversal did not restore a clean HEAD"
 (
   cd "$history_repo"
   bash scripts/prepare-release-plz-history.sh --remove
 ) >"$work/history-removal.out"
 [[ -z "$(git -C "$history_repo" replace -l)" ]] \
   || fail "history preparation cleanup left a replacement ref"
+
+for mutation in tree parents manifest; do
+  mutant="$work/prepare-release-plz-history-$mutation.sh"
+  cp scripts/prepare-release-plz-history.sh "$mutant"
+  case "$mutation" in
+    tree)
+      old='4acff6acd7012804e6519017da52796ec7918405'
+      ;;
+    parents)
+      old='48bd80f294f9ca1a54ae312e1cc0ab1f5175f4d8 a45f630b1c62626635ac2be41290a76b6b033afc'
+      ;;
+    manifest)
+      old='ddc60e13f87db14e506649745885beed2cf248f7'
+      ;;
+  esac
+  MUTANT="$mutant" OLD="$old" "$python" - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ["MUTANT"])
+text = path.read_text(encoding="utf-8")
+old = os.environ["OLD"]
+if old not in text:
+    raise SystemExit(f"mutation target is missing: {old}")
+path.write_text(text.replace(old, "0" * 40, 1), encoding="utf-8")
+PY
+  if (cd "$history_repo" && bash "$mutant") >"$work/$mutation.out" 2>"$work/$mutation.err"; then
+    fail "history preparation accepted a drifted $mutation identity"
+  fi
+done
+
+original_head="$(git -C "$history_repo" rev-parse HEAD)"
+git -C "$history_repo" checkout --quiet --detach v0.9.0
+if (cd "$history_repo" && bash scripts/prepare-release-plz-history.sh) \
+  >"$work/non-ancestor.out" 2>"$work/non-ancestor.err"; then
+  fail "history preparation accepted a HEAD that does not descend from the pinned commit"
+fi
+git -C "$history_repo" checkout --quiet --detach "$original_head"
+
+git -C "$history_repo" replace \
+  c5d334ef32c8a4a5d43141adb6f5588bdc52f7b6 \
+  ddc60e13f87db14e506649745885beed2cf248f7
+if (cd "$history_repo" && bash scripts/prepare-release-plz-history.sh) \
+  >"$work/unexpected-replace.out" 2>"$work/unexpected-replace.err"; then
+  fail "history preparation accepted an unrelated replacement ref"
+fi
+git -C "$history_repo" replace -d c5d334ef32c8a4a5d43141adb6f5588bdc52f7b6 >/dev/null
+
+if (
+  cd "$history_repo"
+  trap 'bash scripts/prepare-release-plz-history.sh --remove >/dev/null' EXIT
+  bash scripts/prepare-release-plz-history.sh >/dev/null
+  false
+); then
+  fail "simulated release-plz failure unexpectedly succeeded"
+fi
+[[ -z "$(git -C "$history_repo" replace -l)" ]] \
+  || fail "failure-path cleanup left a replacement ref"
 echo "ok: release-pr preserves full history and parses the pinned transient merge tree"
+
+if [[ -n "${RELEASE_PLZ_BIN:-}" ]]; then
+  [[ -x "$RELEASE_PLZ_BIN" ]] || fail "RELEASE_PLZ_BIN is not executable"
+  "$RELEASE_PLZ_BIN" --version | grep -Fq 'release-plz 0.3.160' \
+    || fail "release-plz traversal probe must use version 0.3.160"
+  release_plz_repo="$work/release-plz-repo"
+  git clone --quiet --no-hardlinks . "$release_plz_repo"
+  cp scripts/prepare-release-plz-history.sh \
+    "$release_plz_repo/scripts/prepare-release-plz-history.sh"
+  (
+    cd "$release_plz_repo"
+    bash scripts/prepare-release-plz-history.sh
+    "$RELEASE_PLZ_BIN" update --config release-plz.toml
+    bash scripts/prepare-release-plz-history.sh --remove >/dev/null
+  ) >"$work/release-plz-update.out"
+  for package in \
+    animsmith-core animsmith-engine animsmith-gltf animsmith-fbx \
+    animsmith-report animsmith; do
+    grep -Fq "\`$package\`: 0.9.0 -> 0.10.0" "$work/release-plz-update.out" \
+      || fail "release-plz traversal did not compute 0.10.0 for $package"
+  done
+  [[ -z "$(git -C "$release_plz_repo" replace -l)" ]] \
+    || fail "release-plz traversal probe cleanup left a replacement ref"
+  echo "ok: pinned release-plz 0.3.160 traverses the repaired history and computes 0.10.0"
+else
+  echo "skip: set RELEASE_PLZ_BIN to exercise the pinned release-plz traversal"
+fi
 
 grep -Fq \
   "if: \${{ github.event_name == 'push' && vars.RELEASE_PLZ_ARMED == 'true' }}" \
-  .github/workflows/release-plz.yml \
+  "$release_job" \
   || fail "release publishing must remain restricted to push events"
 echo "ok: release publishing is restricted to push events"
 
