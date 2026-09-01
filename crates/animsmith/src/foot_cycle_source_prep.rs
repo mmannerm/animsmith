@@ -22,9 +22,9 @@ use animsmith_core::{
     ContactTransformOperationV1, ContactTransformResultV1, DependencyClosureIdentityV1,
     DependencyClosureV1, Document, FOOT_CYCLE_CLIP_V1_MAX_GENERATED_KEYS,
     FOOT_CYCLE_CLIP_V1_MAX_INPUT_VALUES, FOOT_CYCLE_CLIP_V1_MAX_WORK, FootCycleClipPreflightV1,
-    FootCycleMemberEvidenceV1, FootCycleMemberPlanV1, FootCyclePlanV1,
-    FootCycleRootMotionBindingV1, FootCycleRootMotionEvidenceV1, InputIdentity, MetricGrids,
-    PoseGrid, ResolutionOutcome, Role, plan_foot_cycle_parameterization_v1,
+    FootCycleMemberEvidenceV1, FootCycleMemberPlanV1, FootCycleParameterizationError,
+    FootCyclePlanV1, FootCycleRootMotionBindingV1, FootCycleRootMotionEvidenceV1, InputIdentity,
+    MetricGrids, PoseGrid, ResolutionOutcome, Role, plan_foot_cycle_parameterization_v1,
     preflight_time_warp_clip_v1, resolve_configured_roles, time_warp_clip_v1,
     transform_contact_fragment_v1, transform_contact_support_detector_extension_time_warp_v1,
     validate_document_shape, validate_foot_cycle_manifest_binding_v1,
@@ -45,6 +45,7 @@ use super::contact_producer::{
     resolve_collection_take_witness,
 };
 use super::foot_cycle_parameterization::load_foot_cycle_parameterization_with_identity;
+use super::producer;
 use super::{LoadedConfig, LoadedInput, load_with_config_for_producer_bounded};
 
 /// Exact retained semantic payload budget for one normalized source. This is
@@ -116,7 +117,7 @@ impl FootCyclePreparationRuntime for ProductionFootCyclePreparationRuntime {
         document: &Document,
     ) -> Result<(), FootCycleSourcePrepError> {
         validate_document_shape(document)
-            .map_err(|_| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::SourceLoad))
+            .map_err(|_| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::SourceLoadRefused))
     }
 
     fn metric_grid_work(
@@ -169,7 +170,8 @@ pub(crate) enum FootCycleSourcePrepKind {
     UnsafePathSet,
     SourceUnavailable,
     SourceBudget,
-    SourceLoad,
+    SourceLoadOperator,
+    SourceLoadRefused,
     SourceDigestMismatch,
     IncompleteClosure,
     TakeMismatch,
@@ -210,7 +212,8 @@ impl FootCycleSourcePrepKind {
             Self::UnsafePathSet => "unsafe-path-set",
             Self::SourceUnavailable => "source-unavailable",
             Self::SourceBudget => "source-budget",
-            Self::SourceLoad => "source-load",
+            Self::SourceLoadOperator => "source-load-operator",
+            Self::SourceLoadRefused => "source-load-refused",
             Self::SourceDigestMismatch => "source-digest-mismatch",
             Self::IncompleteClosure => "incomplete-closure",
             Self::TakeMismatch => "take-mismatch",
@@ -233,9 +236,29 @@ impl FootCycleSourcePrepError {
         Self { kind }
     }
 
-    #[cfg(test)]
-    const fn kind(self) -> FootCycleSourcePrepKind {
+    pub(crate) const fn kind(self) -> FootCycleSourcePrepKind {
         self.kind
+    }
+
+    fn from_source_load(error: producer::Failure) -> Self {
+        match error {
+            producer::Failure::Operator(_) => {
+                Self::new(FootCycleSourcePrepKind::SourceLoadOperator)
+            }
+            producer::Failure::Refusal(_) => Self::new(FootCycleSourcePrepKind::SourceLoadRefused),
+        }
+    }
+}
+
+fn classify_plan_error(error: FootCycleParameterizationError) -> FootCycleSourcePrepError {
+    match error {
+        FootCycleParameterizationError::NonCanonicalFragment => {
+            FootCycleSourcePrepError::new(FootCycleSourcePrepKind::ContactInvalid)
+        }
+        FootCycleParameterizationError::FragmentClipMismatch => {
+            FootCycleSourcePrepError::new(FootCycleSourcePrepKind::PlanBindingMismatch)
+        }
+        _ => FootCycleSourcePrepError::new(FootCycleSourcePrepKind::PlanRefused),
     }
 }
 
@@ -284,6 +307,7 @@ pub(crate) struct PreparedContactTransformV1 {
 }
 
 impl PreparedContactTransformV1 {
+    #[cfg(test)]
     pub(crate) const fn operation(&self) -> &ContactTransformOperationV1 {
         &self.operation
     }
@@ -434,15 +458,13 @@ struct SeenPath {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum ExistingFileIdentity {
     #[cfg(unix)]
-    Unix {
-        device: u64,
-        inode: u64,
-    },
+    Unix { device: u64, inode: u64 },
     #[cfg(windows)]
     Windows {
         volume_serial_number: u32,
         file_index: u64,
     },
+    #[cfg(not(any(unix, windows)))]
     Canonical(PathBuf),
 }
 
@@ -474,7 +496,7 @@ fn prepare_foot_cycle_parameterization_v1_with_runtime(
     // Pure declaration validation must precede every member-reachable path.
     // The planner repeats this check after exact evidence is available.
     validate_foot_cycle_manifest_binding_v1(&parameterization, &manifest, &loaded_manifest.input)
-        .map_err(|_| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::PlanRefused))?;
+        .map_err(|_| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::Control))?;
 
     let mut reachable_source_keys = std::collections::BTreeSet::new();
     for member in parameterization.members() {
@@ -483,7 +505,7 @@ fn prepare_foot_cycle_parameterization_v1_with_runtime(
             .binary_search_by(|clip| clip.id().cmp(member.id()))
             .ok()
             .and_then(|index| manifest.clips().get(index))
-            .ok_or_else(|| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::PlanRefused))?;
+            .ok_or_else(|| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::Control))?;
         reachable_source_keys.insert(clip.source().as_str());
     }
     let reachable_sources = manifest
@@ -591,7 +613,7 @@ fn prepare_foot_cycle_parameterization_v1_with_runtime(
             &config.loaded,
             COLLECTION_OUTPUT_MAX_SOURCE_BYTES,
         )
-        .map_err(|_| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::SourceLoad))?;
+        .map_err(FootCycleSourcePrepError::from_source_load)?;
         runtime.validate_source_document(loaded.document())?;
         if source
             .expected_sha256()
@@ -732,7 +754,7 @@ fn prepare_foot_cycle_parameterization_v1_with_runtime(
         loaded_manifest.input.clone(),
         &evidence,
     )
-    .map_err(|_| FootCycleSourcePrepError::new(FootCycleSourcePrepKind::PlanRefused))?;
+    .map_err(classify_plan_error)?;
 
     let mut candidate_preflights = Vec::with_capacity(selected.len());
     for (member, member_plan) in selected.iter().zip(plan.members()) {
@@ -1485,14 +1507,14 @@ pub(crate) mod tests {
     }
 
     #[derive(Clone, Copy)]
-    struct FixtureOptions {
+    pub(crate) struct FixtureOptions {
         end_x_a: f32,
         end_x_b: f32,
         end_z_b: f32,
         yaw_deg_b: f32,
         nonfinite_b: bool,
         duplicate_take_name_b: bool,
-        nonconstant_cubic_b: bool,
+        pub(crate) nonconstant_cubic_b: bool,
         config: ConfigMode,
         take_index_b: u32,
         take_name_b: &'static str,
@@ -1517,15 +1539,24 @@ pub(crate) mod tests {
         }
     }
 
-    struct Fixture {
+    impl FixtureOptions {
+        pub(crate) fn with_nonconstant_cubic_b() -> Self {
+            Self {
+                nonconstant_cubic_b: true,
+                ..Self::default()
+            }
+        }
+    }
+
+    pub(crate) struct Fixture {
         _directory: TempDir,
-        root: PathBuf,
-        manifest: PathBuf,
-        parameterization: PathBuf,
+        pub(crate) root: PathBuf,
+        pub(crate) manifest: PathBuf,
+        pub(crate) parameterization: PathBuf,
     }
 
     impl Fixture {
-        fn create(options: FixtureOptions) -> Self {
+        pub(crate) fn create(options: FixtureOptions) -> Self {
             let directory = tempfile::tempdir().unwrap();
             let root = directory.path().to_path_buf();
             fs::create_dir(root.join("assets")).unwrap();
@@ -1690,6 +1721,10 @@ contact_fragment = "contacts/b.json"
             prepare_foot_cycle_parameterization_v1(&self.manifest, &self.parameterization)
         }
 
+        pub(crate) fn prepare_proof_ready(&self) -> PreparedFootCycleCollectionV1 {
+            make_proof_ready(self.prepare().expect("proof test fixture must prepare"))
+        }
+
         fn prepare_with_runtime(
             &self,
             runtime: &mut impl FootCyclePreparationRuntime,
@@ -1744,7 +1779,12 @@ contact_fragment = "contacts/b.json"
     }
 
     pub(crate) fn proof_ready_fixture() -> PreparedFootCycleCollectionV1 {
-        let mut prepared = prepared_fixture_for_proof_tests();
+        make_proof_ready(prepared_fixture_for_proof_tests())
+    }
+
+    fn make_proof_ready(
+        mut prepared: PreparedFootCycleCollectionV1,
+    ) -> PreparedFootCycleCollectionV1 {
         for (source_index, source) in prepared.sources.iter_mut().enumerate() {
             let clip = &mut source.document.clips[0];
             let template = clip.tracks[0].clone();
@@ -2291,7 +2331,7 @@ contact_fragment = "contacts/b.json"
             ),
         )
         .unwrap();
-        assert_eq!(fixture.error_kind(), FootCycleSourcePrepKind::PlanRefused);
+        assert_eq!(fixture.error_kind(), FootCycleSourcePrepKind::Control);
 
         for options in [
             FixtureOptions {
@@ -2398,11 +2438,11 @@ expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000
                     "members = [\"com.example/a\", \"com.example/z-unused\"]",
                 )
         });
-        assert_eq!(fixture.error_kind(), FootCycleSourcePrepKind::PlanRefused);
+        assert_eq!(fixture.error_kind(), FootCycleSourcePrepKind::Control);
     }
 
     #[test]
-    fn stale_source_pin_and_noncanonical_fragment_identity_refuse() {
+    fn stale_source_pin_and_noncanonical_fragment_identity_keep_typed_control_provenance() {
         let fixture = Fixture::create(FixtureOptions::default());
         let mut source = fs::read(fixture.root.join("assets/b.gltf")).unwrap();
         source.push(b'\n');
@@ -2416,7 +2456,10 @@ expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000
         let mut fragment = fs::read(fixture.root.join("contacts/b.json")).unwrap();
         fragment.push(b'\n');
         fs::write(fixture.root.join("contacts/b.json"), fragment).unwrap();
-        assert_eq!(fixture.error_kind(), FootCycleSourcePrepKind::PlanRefused);
+        assert_eq!(
+            fixture.error_kind(),
+            FootCycleSourcePrepKind::ContactInvalid
+        );
 
         let fixture = Fixture::create(FixtureOptions::default());
         fixture.rewrite_manifest(|manifest| {
@@ -2427,6 +2470,20 @@ expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000
                 .join("\n")
         });
         assert!(fixture.prepare().is_ok());
+    }
+
+    #[test]
+    fn source_loader_operator_and_refusal_provenance_remain_distinct() {
+        let operator = FootCycleSourcePrepError::from_source_load(producer::Failure::operator(
+            "post-preflight read failed",
+        ));
+        assert_eq!(operator.kind(), FootCycleSourcePrepKind::SourceLoadOperator);
+        let refusal = FootCycleSourcePrepError::from_source_load(producer::Failure::refusal(
+            producer::Stage::Load,
+            producer::Kind::InvalidAssetStructure,
+            "decoded bytes have invalid structure",
+        ));
+        assert_eq!(refusal.kind(), FootCycleSourcePrepKind::SourceLoadRefused);
     }
 
     #[test]
@@ -2530,7 +2587,7 @@ expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000
                     nonfinite_b: true,
                     ..FixtureOptions::default()
                 },
-                FootCycleSourcePrepKind::SourceLoad,
+                FootCycleSourcePrepKind::SourceLoadRefused,
             ),
         ];
         for (options, expected) in cases {
@@ -3132,7 +3189,7 @@ expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000
                 Ok(_) => panic!("malformed document shape must be refused"),
                 Err(error) => error,
             };
-            assert_eq!(error.kind(), FootCycleSourcePrepKind::SourceLoad);
+            assert_eq!(error.kind(), FootCycleSourcePrepKind::SourceLoadRefused);
             assert_eq!(runtime.grids_built, 0);
             assert_eq!(runtime.candidates_built, 0);
             assert_eq!(snapshot(&fixture.root), before);

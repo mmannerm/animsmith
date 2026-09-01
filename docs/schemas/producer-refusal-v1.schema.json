@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:animsmith:schema:producer-refusal:1",
   "title": "animsmith producer refusal v1",
-  "description": "Machine-readable asset-property refusal emitted by convert or assemble with --format json.",
+  "description": "Machine-readable asset-property refusal emitted by an artifact producer with --format json.",
   "type": "object",
   "required": ["schema_version", "schema", "tool", "command", "outcome", "result", "rejection"],
   "properties": {
     "schema_version": { "const": 1 },
     "schema": { "const": "urn:animsmith:schema:producer-refusal:1" },
     "tool": { "$ref": "#/$defs/tool" },
-    "command": { "enum": ["convert", "assemble"] },
+    "command": { "enum": ["convert", "assemble", "contact-fragment", "collection-transform-foot-cycle"] },
     "outcome": { "const": "rejected" },
     "result": { "type": "null" },
     "rejection": { "$ref": "#/$defs/rejection" }
@@ -38,8 +38,8 @@
       "type": "object",
       "required": ["stage", "kind", "detail"],
       "properties": {
-        "stage": { "enum": ["load", "selection", "transform", "proof", "encode"] },
-        "kind": { "enum": ["unreadable-source", "unsupported-source-domain", "invalid-asset-structure", "asset-recipe-mismatch", "transform-refused", "proof-failed", "unrepresentable-artifact"] },
+        "stage": { "enum": ["load", "selection", "analysis", "transform", "proof", "encode"] },
+        "kind": { "enum": ["unreadable-source", "unsupported-source-domain", "invalid-asset-structure", "asset-recipe-mismatch", "transform-refused", "proof-failed", "unrepresentable-artifact", "incomplete-evidence", "selection-mismatch"] },
         "detail": { "type": "string" }
       },
       "additionalProperties": false

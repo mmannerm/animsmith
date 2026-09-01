@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:animsmith:schema:foot-cycle-aggregate-evidence:1",
+  "title": "AnimSmith foot-cycle aggregate evidence V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "tool", "command", "outcome", "manifest_input", "parameterization_input", "runtime_set_id", "reference_member", "proof_policy", "gait_phase_spread", "members", "resources"],
+  "properties": {
+    "schema": {"const": "urn:animsmith:schema:foot-cycle-aggregate-evidence:1"},
+    "schema_version": {"const": 1},
+    "tool": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/tool"},
+    "command": {"const": "collection-transform-foot-cycle"},
+    "outcome": {"const": "published"},
+    "manifest_input": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/identity"},
+    "parameterization_input": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/identity"},
+    "runtime_set_id": {"type": "string", "minLength": 1, "maxLength": 255},
+    "reference_member": {"type": "string", "minLength": 1, "maxLength": 255},
+    "proof_policy": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/policy"},
+    "gait_phase_spread": {"type": "number", "minimum": 0, "maximum": 0.5},
+    "members": {"type": "array", "minItems": 2, "maxItems": 4096, "items": {"$ref": "#/$defs/member"}},
+    "resources": {"$ref": "#/$defs/resources"}
+  },
+  "$defs": {
+    "member": {"type": "object", "additionalProperties": false, "required": ["member_index", "member_id", "artifact_path", "contact_fragment_path", "evidence_path", "source_artifact", "source_dependency_closure_identity", "output_artifact", "output_dependency_closure_identity", "output_contact_fragment", "independently_detected_contact_fragment", "evidence"], "properties": {"member_index": {"type": "integer", "minimum": 0, "maximum": 4095}, "member_id": {"type": "string", "minLength": 1, "maxLength": 255}, "artifact_path": {"type": "string", "pattern": "^members/[0-9]{6}/artifact\\.glb$"}, "contact_fragment_path": {"type": "string", "pattern": "^members/[0-9]{6}/contact-fragment\\.json$"}, "evidence_path": {"type": "string", "pattern": "^members/[0-9]{6}/evidence\\.json$"}, "source_artifact": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/identity"}, "source_dependency_closure_identity": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/identity"}, "output_artifact": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/identity"}, "output_dependency_closure_identity": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/identity"}, "output_contact_fragment": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/identity"}, "independently_detected_contact_fragment": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/identity"}, "evidence": {"$ref": "urn:animsmith:schema:foot-cycle-member-evidence:1#/$defs/identity"}}},
+    "resources": {"type": "object", "additionalProperties": false, "required": ["members", "files", "artifact_bytes", "contact_fragment_bytes", "member_evidence_bytes", "aggregate_evidence_bytes", "total_bytes", "retained_candidate_bytes", "source_metric_pose_cells", "source_metric_sample_evaluations", "output_metric_pose_cells", "output_metric_sample_evaluations", "metric_pose_cells", "metric_sample_evaluations"], "properties": {"members": {"type": "integer", "minimum": 2, "maximum": 4096}, "files": {"type": "integer", "minimum": 7, "maximum": 12289}, "artifact_bytes": {"type": "integer", "minimum": 1, "maximum": 268435456}, "contact_fragment_bytes": {"type": "integer", "minimum": 1, "maximum": 268435456}, "member_evidence_bytes": {"type": "integer", "minimum": 1, "maximum": 268435456}, "aggregate_evidence_bytes": {"type": "integer", "minimum": 1, "maximum": 16777216}, "total_bytes": {"type": "integer", "minimum": 1, "maximum": 268435456}, "retained_candidate_bytes": {"type": "integer", "minimum": 1, "maximum": 268435456}, "source_metric_pose_cells": {"type": "integer", "minimum": 0}, "source_metric_sample_evaluations": {"type": "integer", "minimum": 0}, "output_metric_pose_cells": {"type": "integer", "minimum": 0}, "output_metric_sample_evaluations": {"type": "integer", "minimum": 0}, "metric_pose_cells": {"type": "integer", "minimum": 0}, "metric_sample_evaluations": {"type": "integer", "minimum": 0}}}
+  }
+}

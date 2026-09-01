@@ -489,11 +489,15 @@ findings: near-idle or noisy motion does not carry enough phase evidence to
 classify.
 
 This warning belongs to the declared same-time/absolute-sync contract, not to
-either animation in isolation. Typical resolutions are to re-author or
-re-export the pair with aligned contacts, add contact/phase markers, or use an
-explicit phase-remap strategy in the runtime. animsmith does not reverse or
-retime the clips, choose the runtime strategy, or claim that full-body motion
-is identical under time reflection.
+either animation in isolation. For a declared in-place ring that satisfies the
+V1 contact-topology, root-trajectory, track, and proof constraints,
+[`collection transform-foot-cycle`](collection-contracts.md#foot-cycle-generation-v1-18)
+can retime every member to one explicit reference member's contact phases and
+publish the independently proved generation. Unsupported rings remain
+unchanged and need aligned contacts from the DCC, explicit contact/phase
+markers, or a phase-remap strategy in the runtime. animsmith does not reverse
+clips, choose the runtime strategy, rewrite root motion, or claim that
+full-body motion is identical under time reflection.
 
 ## Directional blend members travel at different speeds
 
@@ -789,7 +793,7 @@ order; they are not general animation cleanup.
 | Feet skate across blends | `gait-group` | `transform --gait-anchor` for explicitly in-place cycles; runtime phase offsets for root motion | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Directional travel speed or foot slide changes by direction | per-member AnimSmith measurement and `root-motion-speed`; no cross-member check yet ([#411](https://github.com/mmannerm/animsmith/issues/411)) | preserve per-direction velocities, tune runtime/playback, or re-time in DCC | per-clip `speed_mps`; declared-set policy is future work | [Directional blend speeds](#directional-blend-members-travel-at-different-speeds) |
 | Same-time blend members drift or pop | `sync-group` | re-slice or re-time at source | `[sync_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Same-time pair looks mirrored or swaps footfall timing | `time-complement` | align contacts in DCC, add markers, or phase-remap in the runtime | `[sync_groups.<name>.time_complement]` | [A blend pair is time-complementary](#a-blend-pair-is-time-complementary) |
+| Same-time pair looks mirrored or swaps footfall timing | `time-complement` | `collection transform-foot-cycle` for a declared supported in-place ring; otherwise align contacts in DCC, add markers, or phase-remap in the runtime | `[sync_groups.<name>.time_complement]`; strict collection manifest and foot-cycle parameterization for the transform | [A blend pair is time-complementary](#a-blend-pair-is-time-complementary) |
 | Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
 | Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
 | Attachment, socket, or helper imports at the wrong size | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[runtime_nodes] selectors`; `[checks.rest-world-scale] expected_uniform_scale`, `uniform_scale_tolerance` | [Attachment nodes and inherited rest-world scale](#attachment-nodes-and-inherited-rest-world-scale) |

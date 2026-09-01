@@ -539,7 +539,8 @@ schema is
 This lets producers pin conversion provenance independently of measurement
 and lint evidence.
 
-An asset-property refusal from `convert` or `assemble` is not success
+An asset-property refusal from `convert`, `assemble`, `generate
+contact-fragment`, or `collection transform-foot-cycle` is not success
 evidence. Under `--format json` it uses the separate immutable
 `urn:animsmith:schema:producer-refusal:1` contract, whose retrievable schema is
 [`producer-refusal-v1.schema.json`](schemas/producer-refusal-v1.schema.json).
@@ -634,6 +635,35 @@ an operation-specific handler; opaque payloads are never automatically copied,
 and unsupported extensions refuse the whole operation. This library contract
 does not mutate an animation asset or publish a collection generation
 directory.
+
+## Foot-cycle generation evidence
+
+`collection transform-foot-cycle` publishes two strict success-evidence
+contracts outside the ordinary output envelope:
+
+- each `members/NNNNNN/evidence.json` is
+  `urn:animsmith:schema:foot-cycle-member-evidence:1`;
+- `aggregate-evidence.json` is
+  `urn:animsmith:schema:foot-cycle-aggregate-evidence:1`.
+
+The aggregate is serialized once, staged as the generation member, and those
+same exact bytes are written to stdout after the no-replace directory publish.
+Its resource record includes itself: bounded serialization iterates the byte
+count to a stable exact value before publication, then verifies that the four
+component totals equal `total_bytes` and do not exceed 256 MiB. Member evidence
+binds the exact source/output/closure/contact identities and independent proof
+facts; the aggregate binds every deterministic relative path and member
+evidence identity in declared order. The retrievable schemas are
+[`foot-cycle-member-evidence-v1.schema.json`](schemas/foot-cycle-member-evidence-v1.schema.json)
+and
+[`foot-cycle-aggregate-evidence-v1.schema.json`](schemas/foot-cycle-aggregate-evidence-v1.schema.json).
+
+A valid asset or capability refusal uses
+[`producer-refusal-v1.schema.json`](schemas/producer-refusal-v1.schema.json)
+with command `collection-transform-foot-cycle` and exits 1. An operator failure
+emits no JSON and exits 2. The transformed contact fragments themselves remain
+the existing canonical `contact-fragment:1` contract; the contact transform
+result is proof input and is not an extra generation file.
 
 ## Common envelope
 

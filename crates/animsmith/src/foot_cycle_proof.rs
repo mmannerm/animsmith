@@ -148,8 +148,12 @@ impl ProvedFootCycleMemberV1 {
     pub(crate) fn id(&self) -> &CollectionLogicalIdV1 {
         &self.id
     }
+    #[cfg(test)]
     pub(crate) fn artifact_bytes(&self) -> &[u8] {
         &self.artifact_bytes
+    }
+    pub(crate) fn into_artifact_bytes(self) -> Vec<u8> {
+        self.artifact_bytes
     }
     pub(crate) const fn artifact(&self) -> &InputIdentity {
         &self.artifact
@@ -183,6 +187,9 @@ pub(crate) struct ProvedFootCycleCollectionV1 {
 impl ProvedFootCycleCollectionV1 {
     pub(crate) fn members(&self) -> &[ProvedFootCycleMemberV1] {
         &self.members
+    }
+    pub(crate) fn into_members(self) -> Vec<ProvedFootCycleMemberV1> {
+        self.members
     }
     pub(crate) const fn retained_candidate_bytes(&self) -> usize {
         self.retained_candidate_bytes
@@ -869,6 +876,7 @@ fn tracks_equal_bits(left: &Track, right: &Track) -> bool {
         }
 }
 
+#[cfg(test)]
 fn clips_equal_bits(left: &animsmith_core::Clip, right: &animsmith_core::Clip) -> bool {
     left.name == right.name
         && left.duration_s.to_bits() == right.duration_s.to_bits()

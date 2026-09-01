@@ -234,8 +234,8 @@ Rust 1.88.
 `write::preflight_glb_bytes` and `write::write_glb_bytes` provide the
 two-step GLB boundary for a caller that must account for a candidate before it
 retains output bytes. The caller selects an explicit
-`GlbProjectionPolicyV1` and `GlbWriteLimits`; a future foot-cycle publisher
-will use
+`GlbProjectionPolicyV1` and `GlbWriteLimits`; the collection foot-cycle producer
+uses
 `StrictFootCycleV1` with `GlbWriteLimits::FOOT_CYCLE_V1`. Preflight counts the
 same projection that writing uses, including padded JSON, BIN, and GLB
 framing. The receipt binds emitted JSON and BIN content as well as counts, so

@@ -156,6 +156,9 @@ jobs:
       - name: CLI contract tests without default features
         run: cargo test -p animsmith --test cli_contract --no-default-features
 
+      - name: Foot-cycle producer CLI tests without default features
+        run: cargo test -p animsmith --test foot_cycle_cli --no-default-features
+
       - name: Mesh measurement tests without default features
         run: cargo test -p animsmith --test measure_mesh --no-default-features
 
