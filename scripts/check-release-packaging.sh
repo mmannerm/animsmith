@@ -275,6 +275,9 @@ if [[ -n "${RELEASE_PLZ_BIN:-}" ]]; then
     "$release_plz_repo/scripts/prepare-release-plz-history.sh"
   (
     cd "$release_plz_repo"
+    git switch --quiet -c release-plz-history-probe
+    git update-ref refs/remotes/origin/release-plz-history-probe HEAD
+    git branch --quiet --set-upstream-to=origin/release-plz-history-probe
     bash scripts/prepare-release-plz-history.sh
     "$RELEASE_PLZ_BIN" update --config release-plz.toml
     bash scripts/prepare-release-plz-history.sh --remove >/dev/null
