@@ -94,6 +94,10 @@ grep -Fq \
   '      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable' \
   "$release_pr_job")" == "1" ]] \
   || fail "release-pr must pin the reviewed Rust toolchain action commit"
+[[ "$(grep -Fc \
+  'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0' \
+  "$release_pr_job")" == "2" ]] \
+  || fail "both release-pr checkouts must pin the reviewed checkout action commit"
 if grep -Fq 'prepare-release-plz-history.sh' "$release_job"; then
   fail "release publication must never use the local history preparation"
 fi

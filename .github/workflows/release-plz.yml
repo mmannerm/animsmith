@@ -124,7 +124,7 @@ jobs:
       contents: write # push the release branch
       pull-requests: write # open/update the release PR
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -155,7 +155,7 @@ jobs:
       # release version can never hide behind that GitHub recursion guard.
       - name: Checkout generated release branch
         if: ${{ steps.release_plz.outputs.prs_created == 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ fromJSON(steps.release_plz.outputs.pr).head_branch }}
           fetch-depth: 0
