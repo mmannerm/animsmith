@@ -145,14 +145,17 @@ animation-pack-skill:
 report-browser:
     #!/usr/bin/env bash
     set -euo pipefail
+    comparison_path="$(mktemp)"
     report_path="$(mktemp)"
-    trap 'rm -f "${report_path}"' EXIT
+    trap 'rm -f "${comparison_path}" "${report_path}"' EXIT
     cargo run -q -p animsmith -- --config examples/report-comparison.animsmith.toml report \
       examples/assets/report-comparison-before.glb \
       --compare-after examples/assets/report-comparison-after.glb \
       --before-clip acceptance-matrix --after-clip acceptance-matrix \
-      --output "${report_path}"
-    node scripts/test-comparison-viewer.js "${report_path}"
+      --output "${comparison_path}"
+    cargo run -q -p animsmith -- --config examples/walk.animsmith.toml report \
+      examples/assets/walk-dirty.glb --output "${report_path}"
+    node scripts/test-report-viewers.js "${comparison_path}" "${report_path}"
 
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package

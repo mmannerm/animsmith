@@ -156,6 +156,16 @@ scrubs the linked time and highlights its uniquely mapped bone. The
 report is evidence for troubleshooting, not an artistic, gameplay, engine, or
 retargeting acceptance verdict.
 
+Both report forms follow the reader's `prefers-color-scheme` and read a URL
+fragment of `&`-separated `key=value` options, so one generated file can be
+deep-linked or embedded without regenerating it. `theme=light` or `theme=dark`
+pins the palette, `embed=1` drops the page chrome so the document fits an
+`<iframe>`, and `frame=N` scrubs to a judged frame. The single-clip report also
+accepts `clip=NAME` and `finding=INDEX`, which select exactly what clicking that
+finding would; the comparison keeps its existing `#finding-<side>-<anchor>`
+links. Unknown keys, malformed pairs, and out-of-range values are ignored, and
+no option changes what the report measured.
+
 The checked-in [synthetic comparison walkthrough](../examples/README.md#5-converting-exports-and-generating-reports-default-features-only)
 demonstrates seam endpoints, sampled stance and foot trajectories, shared-scale
 root paths, and visually unchanged structural-track remediation. Its generated

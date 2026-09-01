@@ -32,3 +32,60 @@ function animsmithRgb(hex) {
   if (!/^#[0-9a-f]{6}$/i.test(String(hex))) return [0.5, 0.5, 0.5];
   return [1, 3, 5].map((offset) => parseInt(String(hex).slice(offset, offset + 2), 16) / 255);
 }
+
+// Bounded, total parser for a report's URL fragment: `&`-separated
+// `key=value` pairs. `embed` strips the page chrome for an iframe, `theme`
+// pins light or dark, and `clip`, `frame`, and `finding` are the deep-link
+// selectors. Unknown keys, pairs without a key, malformed percent escapes,
+// and out-of-range values are ignored rather than thrown, and the fragment
+// is read but never written, so no input here can raise an exception or
+// drive a loop. Whether a clip exists, how many frames it has, and how many
+// findings there are is knowledge the caller holds, so the caller does that
+// last bound check against its own embedded data.
+const ANIMSMITH_MAX_FRAGMENT_CHARS = 4096;
+const ANIMSMITH_MAX_FRAGMENT_PAIRS = 32;
+
+function animsmithFragmentOptions(hash) {
+  const options = { embed: false, theme: null, clip: null, frame: null, finding: null };
+  if (typeof hash !== "string" || hash.length > ANIMSMITH_MAX_FRAGMENT_CHARS) return options;
+  const body = hash.charAt(0) === "#" ? hash.slice(1) : hash;
+  for (const pair of body.split("&", ANIMSMITH_MAX_FRAGMENT_PAIRS)) {
+    const split = pair.indexOf("=");
+    if (split < 1) continue;
+    const value = pair.slice(split + 1);
+    switch (pair.slice(0, split)) {
+      case "embed": if (value === "1" || value === "true") options.embed = true; break;
+      case "theme": if (value === "light" || value === "dark") options.theme = value; break;
+      case "clip": options.clip = animsmithDecoded(value); break;
+      case "frame": options.frame = animsmithIndex(value); break;
+      case "finding": options.finding = animsmithIndex(value); break;
+      default: break;
+    }
+  }
+  return options;
+}
+
+// A malformed percent escape is a discarded value, never a thrown URIError.
+function animsmithDecoded(value) {
+  try { return decodeURIComponent(value); } catch (error) { return null; }
+}
+
+// A non-negative decimal index of at most nine digits: every frame or
+// finding a report can address, and small enough that a caller clamping
+// against its own data stays in bounds.
+function animsmithIndex(value) {
+  return /^[0-9]{1,9}$/.test(value) ? Number(value) : null;
+}
+
+// The two document-wide switches, applied to the root element so every
+// visual consequence stays in the stylesheets. Re-applying a fragment
+// without them restores the document default.
+function animsmithApplyDocument(options) {
+  const root = typeof document === "undefined" ? null : document.documentElement;
+  if (!root || typeof root.setAttribute !== "function") return options;
+  if (options.theme) root.setAttribute("data-theme", options.theme);
+  else root.removeAttribute("data-theme");
+  if (options.embed) root.setAttribute("data-embed", "1");
+  else root.removeAttribute("data-embed");
+  return options;
+}

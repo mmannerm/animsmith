@@ -4,6 +4,9 @@
 "use strict";
 
 const data = JSON.parse(document.getElementById("report-data").textContent);
+// Theme and embed switches are applied before anything is measured or
+// painted, so the 3D view samples the palette the document will show.
+animsmithApplyDocument(animsmithFragmentOptions(location.hash));
 document.getElementById("file").textContent =
   (data.file || "") + "  ·  rig profile: " + (data.profile || "none");
 
@@ -273,7 +276,21 @@ if (!data.findings.length) {
   li.textContent = "clean — no findings";
   list.appendChild(li);
 }
-for (const f of data.findings) {
+const findingItems = [];
+// One selection path for a click and for a `#finding=` deep link: scrub to
+// the judged frame and mark the row.
+function selectFinding(index) {
+  const f = data.findings[index], item = findingItems[index];
+  if (!f || !item) return;
+  for (const other of findingItems) other.classList.remove("selected");
+  item.classList.add("selected");
+  if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
+  if (!f.clip) return;
+  selectClip(f.clip);
+  if (f.time != null && clip && clip.duration > 0)
+    setFrame((f.time / clip.duration) * (clip.frames - 1));
+}
+data.findings.forEach((f, index) => {
   // Built with textContent throughout: clip/bone/node names and messages
   // come from the linted asset, i.e. untrusted input.
   const li = document.createElement("li");
@@ -292,15 +309,10 @@ for (const f of data.findings) {
   if (f.time != null) li.appendChild(document.createTextNode(` @${f.time.toFixed(3)}s`));
   li.appendChild(document.createElement("br"));
   li.appendChild(document.createTextNode(f.message));
-  if (f.clip) {
-    li.addEventListener("click", () => {
-      selectClip(f.clip);
-      if (f.time != null && clip && clip.duration > 0)
-        setFrame((f.time / clip.duration) * (clip.frames - 1));
-    });
-  }
+  li.addEventListener("click", () => selectFinding(index));
+  findingItems.push(li);
   list.appendChild(li);
-}
+});
 
 const gapList = document.getElementById("gaps");
 if (!data.gaps.length) {
@@ -342,5 +354,23 @@ for (const row of data.predictions) {
   }
 }
 
+// Fragment selection runs once the clip list, charts, and findings exist,
+// so a deep link lands exactly where the equivalent click would. Every
+// value is bounded by this document's own data: an unknown clip name is
+// ignored, a finding index must address an emitted row, and setFrame
+// clamps to the judged frame grid.
+function applyFragment() {
+  const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
+  if (options.clip != null && data.clips.some((c) => c.name === options.clip))
+    selectClip(options.clip);
+  if (options.finding != null && options.finding < data.findings.length)
+    selectFinding(options.finding);
+  else if (options.frame != null)
+    setFrame(options.frame);
+  draw();
+}
+
 window.addEventListener("resize", draw);
+window.addEventListener("hashchange", applyFragment);
 if (clip) { selectClip(clip.name); setFrame(0); }
+applyFragment();

@@ -298,5 +298,17 @@ function selectHash() {
   const index = data[match[1]].findings.findIndex((row) => row.anchor === `finding-${match[2]}`);
   if (index >= 0) selectFinding(match[1], index);
 }
+// Fragment options this document can honour: embed and theme are document
+// switches, and frame is the shared phase. Clip correspondence is declared
+// by the two inputs, and a finding is addressed by its stable side anchor
+// through selectHash, so neither is read from a key=value pair here.
+function applyFragment() {
+  const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
+  if (options.frame == null) return;
+  selectedFrames = null; selectedContext = null;
+  q("scrub").value = Math.min(options.frame, sharedFrameMax);
+}
 q("scrub").addEventListener("input", () => { selectedFrames = null; selectedContext = null; update(); });
-window.addEventListener("resize", update); window.addEventListener("hashchange", selectHash); selectHash(); update();
+window.addEventListener("resize", update);
+window.addEventListener("hashchange", () => { applyFragment(); selectHash(); update(); });
+applyFragment(); selectHash(); update();

@@ -1570,3 +1570,28 @@ fn both_reports_default_to_dark_and_offer_light_by_scheme_or_data_theme() {
         }
     }
 }
+
+#[test]
+fn both_reports_embed_one_shared_fragment_runtime_and_its_embed_rules() {
+    for (kind, html) in themed_documents() {
+        let code = document_code(&html);
+        assert_eq!(
+            code.matches("function animsmithFragmentOptions(").count(),
+            1,
+            "{kind}: exactly one fragment parser is embedded"
+        );
+        assert_eq!(
+            code.matches("// animsmith report shared runtime").count(),
+            1,
+            "{kind}: the shared runtime is embedded once"
+        );
+        assert!(
+            code.contains("animsmithApplyDocument(animsmithFragmentOptions(location.hash))"),
+            "{kind}: the viewer applies the fragment's document switches"
+        );
+        assert!(
+            code.contains(":root[data-embed]"),
+            "{kind}: `#embed=1` has stylesheet consequences"
+        );
+    }
+}

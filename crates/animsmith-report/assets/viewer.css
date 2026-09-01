@@ -40,3 +40,8 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 .chart .axis, .chart .legend { fill: currentColor; font-size: 8px; }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
+/* `#embed=1`: drop the page chrome so the document sits inside an iframe
+   without a second title bar or an outer margin. */
+:root[data-embed] header, :root[data-embed] .hint { display: none; }
+:root[data-embed] main { padding: 0; }
+.finding.selected { outline: 2px solid var(--accent); }
