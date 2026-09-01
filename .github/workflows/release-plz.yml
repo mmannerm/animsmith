@@ -128,14 +128,28 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+      # release-plz packages each package-changing historical tree while it
+      # searches for the registry baseline. Keep the full commit/changelog
+      # range while making one known transient merge tree parseable locally.
+      # The exact-object guard refuses any drift, and refs/replace is never
+      # pushed or used by the publication jobs.
+      - name: Prepare parseable release-plz history
+        id: history_prepare
+        run: bash scripts/prepare-release-plz-history.sh
       - name: Run release-plz
         id: release_plz
-        uses: release-plz/action@v0.5.131
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release-pr
+          version: 0.3.160
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Remove local release-plz history preparation
+        if: ${{ always() && steps.history_prepare.outcome == 'success' }}
+        run: bash scripts/prepare-release-plz-history.sh --remove
       # The default GITHUB_TOKEN does not trigger pull_request workflows for
       # the bot-created PR. Check the generated branch here so a mismatched
       # release version can never hide behind that GitHub recursion guard.

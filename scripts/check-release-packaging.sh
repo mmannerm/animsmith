@@ -53,6 +53,77 @@ grep -Fq 'run: cargo test -p animsmith --test release_version_docs' \
   || fail "release-pr job must run the version-doc gate after generation"
 echo "ok: generated release branch runs strict version-doc validation"
 
+history_step='        run: bash scripts/prepare-release-plz-history.sh'
+[[ "$(grep -Fxc "$history_step" .github/workflows/release-plz.yml)" == "1" ]] \
+  || fail "release-pr must prepare the pinned historical tree exactly once"
+history_line="$(grep -Fxn "$history_step" .github/workflows/release-plz.yml | cut -d: -f1)"
+release_plz_line="$(grep -Fn 'id: release_plz' .github/workflows/release-plz.yml \
+  | tail -n 1 | cut -d: -f1)"
+[[ "$history_line" -lt "$release_plz_line" ]] \
+  || fail "historical preparation must run before release-plz"
+cleanup_step='        run: bash scripts/prepare-release-plz-history.sh --remove'
+[[ "$(grep -Fxc "$cleanup_step" .github/workflows/release-plz.yml)" == "1" ]] \
+  || fail "release-pr must remove its local history preparation exactly once"
+cleanup_line="$(grep -Fxn "$cleanup_step" .github/workflows/release-plz.yml | cut -d: -f1)"
+[[ "$cleanup_line" -gt "$release_plz_line" ]] \
+  || fail "historical preparation cleanup must run after release-plz"
+grep -Fq "if: \${{ always() && steps.history_prepare.outcome == 'success' }}" \
+  .github/workflows/release-plz.yml \
+  || fail "historical preparation cleanup must run after release-plz failures"
+grep -Fq \
+  'uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131' \
+  .github/workflows/release-plz.yml \
+  || fail "release-pr must pin the reviewed release-plz action commit"
+[[ "$(grep -Fc '          version: 0.3.160' .github/workflows/release-plz.yml)" == "1" ]] \
+  || fail "release-pr must pin the release-plz binary whose history-copy behavior was proved"
+
+history_repo="$work/history-repo"
+git clone --quiet --no-hardlinks . "$history_repo"
+cp scripts/prepare-release-plz-history.sh \
+  "$history_repo/scripts/prepare-release-plz-history.sh"
+before_commits="$(git -C "$history_repo" rev-list --count v0.9.0..HEAD)"
+before_log="$(git -C "$history_repo" log --format='%H %P %s' v0.9.0..HEAD)"
+(
+  cd "$history_repo"
+  bash scripts/prepare-release-plz-history.sh
+) >"$work/history-preparation.out"
+[[ "$(git -C "$history_repo" replace -l)" == \
+  "ddc60e13f87db14e506649745885beed2cf248f7" ]] \
+  || fail "history preparation did not install only the pinned replacement"
+[[ "$(git -C "$history_repo" rev-parse \
+  refs/replace/ddc60e13f87db14e506649745885beed2cf248f7)" == \
+  "c5d334ef32c8a4a5d43141adb6f5588bdc52f7b6" ]] \
+  || fail "history preparation did not install the pinned blob-to-blob replacement"
+[[ "$(git -C "$history_repo" show \
+  '977abd11b4f533cac7b5e15b8fead935326a06ac:crates/animsmith/Cargo.toml' \
+  | git -C "$history_repo" hash-object --stdin)" == \
+  "c5d334ef32c8a4a5d43141adb6f5588bdc52f7b6" ]] \
+  || fail "history preparation did not expose the pinned repaired manifest"
+[[ "$(GIT_NO_REPLACE_OBJECTS=1 git -C "$history_repo" show \
+  '977abd11b4f533cac7b5e15b8fead935326a06ac:crates/animsmith/Cargo.toml' \
+  | git -C "$history_repo" hash-object --stdin)" == \
+  "ddc60e13f87db14e506649745885beed2cf248f7" ]] \
+  || fail "history preparation changed the underlying historical object"
+after_commits="$(git -C "$history_repo" rev-list --count v0.9.0..HEAD)"
+[[ "$after_commits" == "$before_commits" ]] \
+  || fail "history preparation changed the release commit range"
+after_log="$(git -C "$history_repo" log --format='%H %P %s' v0.9.0..HEAD)"
+[[ "$after_log" == "$before_log" ]] \
+  || fail "history preparation changed release commit identities or messages"
+
+history_checkout="$work/history-checkout"
+git -C "$history_repo" worktree add --quiet --detach \
+  "$history_checkout" 977abd11b4f533cac7b5e15b8fead935326a06ac
+cargo metadata --manifest-path "$history_checkout/Cargo.toml" --no-deps \
+  --format-version 1 >/dev/null
+(
+  cd "$history_repo"
+  bash scripts/prepare-release-plz-history.sh --remove
+) >"$work/history-removal.out"
+[[ -z "$(git -C "$history_repo" replace -l)" ]] \
+  || fail "history preparation cleanup left a replacement ref"
+echo "ok: release-pr preserves full history and parses the pinned transient merge tree"
+
 grep -Fq \
   "if: \${{ github.event_name == 'push' && vars.RELEASE_PLZ_ARMED == 'true' }}" \
   .github/workflows/release-plz.yml \
