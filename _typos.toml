@@ -19,6 +19,13 @@ metalness = "metalness"
 # Level-of-detail abbreviation surfaced by the ufbx API (`lod_groups`).
 lod = "lod"
 
+[type.css]
+# mdBook spells its own sidebar variable `--sidebar-non-existant`; the Pages
+# theme has to use that exact name to override it (docs/site/animsmith.css).
+extend-ignore-re = [
+    "sidebar-non-existant",
+]
+
 [type.md]
 # Keep exact vendor spellings in a complete single-backtick code span preceded
 # only by a non-word, non-escape boundary (or start of input) and followed by the hidden

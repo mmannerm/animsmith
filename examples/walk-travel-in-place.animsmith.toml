@@ -1,0 +1,24 @@
+# The in-place reading of the committed root-motion clip
+# `examples/assets/walk-travel.glb`: gameplay owns horizontal travel, so
+# any baked XZ motion is a glide at runtime.
+#
+#   animsmith lint --config examples/walk-travel-in-place.animsmith.toml \
+#       examples/assets/walk-travel.glb
+#
+# The declaration below is keyed to this fixture's clip name. The clean
+# cycle it mutates, examples/assets/walk.glb, names its clip `walk`;
+# declare that name here as well if you want one contract to judge both.
+
+[rig]
+# pelvis / foot_l / foot_r resolve the built-in ue-mannequin profile, so
+# `in-place` measures the Hips-fallback trajectory with no inline role map.
+profile = "auto"
+
+[clips.walk_travel]
+# Gameplay owns XZ: the clip is expected to stay under the character.
+movement_owner_xz = "gameplay"
+
+# `loop` is deliberately left undeclared. This clip's endpoints are 1.2 m
+# apart by construction, so declaring the loop would bury the glide symptom
+# under loop-closure and loop-seam errors. The popped-loop family has its
+# own fixture: walk-dirty.glb under walk.animsmith.toml.

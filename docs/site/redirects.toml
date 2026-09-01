@@ -1,0 +1,10 @@
+# Site-root redirects published with the AnimSmith Pages book.
+#
+# Add one entry per retired route so an existing external link keeps working:
+#
+#   "/docs/old-page.html" = "../new-page.html"
+#
+# Routes are site-root paths ending in `.html`; targets are relative paths
+# resolved from the route's directory.  `just docs-check` fails when a target
+# is missing from the built artifact, so retire a route and add its redirect
+# in the same change.  This file is configuration, not a published page.
