@@ -1,130 +1,80 @@
-# Animation pack evaluation: Protofactor Sword & Shield Animset
+# Animation pack evaluation: Protofactor Sword and Shield Animset
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — complete AnimSmith 0.7.0 baseline, contracts, remediation, addressability, and bounded advice on unchanged source plus dated Unity probes; no visual controller, target character, or current engine pass.
+> Evaluation completeness: **partial** — current mechanical and declared-contract evidence completed; engine, visual, contact, and artistic acceptance were not rerun.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-08-26**
+> Evaluation date: **2026-09-01**
 >
-> Current evaluator: **AnimSmith 0.7.0**
+> Current evaluator: **AnimSmith 0.10.0**
 >
 > Report format: **2**
 >
-> Detailed evidence: [Protofactor Sword & Shield evidence appendix](protofactor-sword-and-shield-evidence.md)
+> Detailed evidence: [Protofactor Sword and Shield Animset evidence appendix](protofactor-sword-and-shield-evidence.md)
 
 ## Technical decision
 
-Use the individual FBXs as a **third-person sword-and-shield combat pack**, after quarantining `Humanoid@CrouchForwardRightS&S_RM.fbx` and replacing the delivered loop policy. Unity imports 131/132 humanoid clips; the quarantined two-node file yields no AnimationClip.
-
-The 28 locomotion motions supply IP/RM variants. AnimSmith 0.7.0 measures a vertical (`positive_y`) heading and anchors all 24 selected IP clips, cutting spread from 0.723/0.661/0.697 to 0.060/0.137/0.052. Candidates are unpromoted pending Humanoid-retarget and visual import. Duplicate-endpoint removal fixes only WalkForward closure, not seam derivatives.
-
-Unity metadata marks 118/132 files as loops, including 52 attack, defense, reaction, and taunt files that should start as one-shots. AnimSmith reports the consequences and can prune experimentally, but cannot reconstruct hierarchy, contacts, or every RM action's translation/yaw intent. Both props attach at plausible hand-local scale; grip, contacts, deformation, and quality remain unproved.
+The current baseline is mechanically readable with AnimSmith 0.10.0, but this pack is not a blanket game-ready asset. 544 baseline commands completed successfully; strict contracts require loop and blend review. The 28 bounded remediation candidates comprise 24 gait-anchor, 3 prune-constant-tracks, and 1 duplicate-loop-endpoint removal transform; all exited 0 with post-output checks recorded in the external evidence projection. They remain external, unpromoted candidates pending engine, contact, and visual review.
 
 ## Capability coverage
 
 ### Complete core
 
-- Eight-direction walk/run/crouch combat locomotion in IP/RM variants, except quarantined Crouch FR RM.
-- Melee, defense, reaction/death, equipment, idle, and taunt families.
-- Props and a Unity Humanoid actor share one 56-bone signature.
+- Source inventory and serial AnimSmith baseline completed without publishing licensed inputs or derivatives.
+- 136 delivered FBX candidates were inspected, measured, and linted in both output formats.
+- Declared contracts and bounded remediation trials were rerun with the current evaluator.
 
 ### Partial supporting gameplay
 
-- Equipment and death/recovery chains without events, interruption, or crossfade acceptance.
-- Three Unity mask graphs evaluated; pelvis, kicks, contacts, IK, and prop alignment remain unaccepted.
-- RM action displacement is measured; low-displacement/yaw semantics remain unresolved.
+- 132 declared-contract inputs: 34 clean and 230 non-clean command results.
+- Candidate transforms are mechanical evidence, not engine or artistic acceptance.
 
 ### Absent
 
-- General starts/stops/turns, jumps, traversal, climbing, firearm/first-person content, paired-character interactions, additive aim offsets, and authored motion-matching metadata.
+- Current target-engine import/playback, blending, masking, retargeting, contact, performance, and artistic review.
 
 ## Runtime sets and authored motion
 
-Coordinates are `(right,forward)`; speeds are measured RM magnitudes. Crouch FR RM is catalogued but quarantined.
-
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| Walk combat 8-way | F `(0,1)` | IP `Humanoid@WalkForwardS&S.fbx`; RM `Humanoid@WalkForwardS&S_RM.fbx` | variant=paired-ip-rm | duration=1.333 s; rm_speed=0.807 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Walk combat 8-way | FL `(-0.707,0.707)` | IP `Humanoid@WalkForwardLeftS&S.fbx`; RM `Humanoid@WalkForwardLeftS&S_RM.fbx` | variant=paired-ip-rm | duration=1.333 s; rm_speed=0.902 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Walk combat 8-way | L `(-1,0)` | IP `Humanoid@WalkLeftS&S.fbx`; RM `Humanoid@WalkLeftS&S_RM.fbx` | variant=paired-ip-rm | duration=1.333 s; rm_speed=0.899 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Walk combat 8-way | BL `(-0.707,-0.707)` | IP `Humanoid@WalkBackwardsLeftS&S.fbx`; RM `Humanoid@WalkBackwardsLeftS&S_RM.fbx` | variant=paired-ip-rm | duration=1.333 s; rm_speed=0.750 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Walk combat 8-way | B `(0,-1)` | IP `Humanoid@WalkBackwardsS&S.fbx`; RM `Humanoid@WalkBackwardsS&S_RM.fbx` | variant=paired-ip-rm | duration=1.333 s; rm_speed=0.835 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Walk combat 8-way | BR `(0.707,-0.707)` | IP `Humanoid@WalkBackwardsRightS&S.fbx`; RM `Humanoid@WalkBackwardsRightS&S_RM.fbx` | variant=paired-ip-rm | duration=1.333 s; rm_speed=0.974 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Walk combat 8-way | R `(1,0)` | IP `Humanoid@WalkRightS&S.fbx`; RM `Humanoid@WalkRightS&S_RM.fbx` | variant=paired-ip-rm | duration=1.333 s; rm_speed=0.926 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Walk combat 8-way | FR `(0.707,0.707)` | IP `Humanoid@WalkForwardRightS&S.fbx`; RM `Humanoid@WalkForwardRightS&S_RM.fbx` | variant=paired-ip-rm | duration=1.333 s; rm_speed=1.107 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Run combat 8-way | F `(0,1)` | IP `Humanoid@RunForwardS&S.fbx`; RM `Humanoid@RunForwardS&S_RM.fbx` | variant=paired-ip-rm | duration=0.600 s; rm_speed=2.851 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Run combat 8-way | FL `(-0.707,0.707)` | IP `Humanoid@RunForwardLeftS&S.fbx`; RM `Humanoid@RunForwardLeftS&S_RM.fbx` | variant=paired-ip-rm | duration=0.600 s; rm_speed=3.063 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Run combat 8-way | L `(-1,0)` | IP `Humanoid@RunLeftS&S.fbx`; RM `Humanoid@RunLeftS&S_RM.fbx` | variant=paired-ip-rm | duration=0.600 s; rm_speed=3.189 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Run combat 8-way | BL `(-0.707,-0.707)` | IP `Humanoid@RunBackwardsLeftS&S.fbx`; RM `Humanoid@RunBackwardsLeftS&S_RM.fbx` | variant=paired-ip-rm | duration=0.600 s; rm_speed=2.944 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Run combat 8-way | B `(0,-1)` | IP `Humanoid@RunBackwardsS&S.fbx`; RM `Humanoid@RunBackwardsS&S_RM.fbx` | variant=paired-ip-rm | duration=0.600 s; rm_speed=2.904 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Run combat 8-way | BR `(0.707,-0.707)` | IP `Humanoid@RunBackwardsRightS&S.fbx`; RM `Humanoid@RunBackwardsRightS&S_RM.fbx` | variant=paired-ip-rm | duration=0.600 s; rm_speed=2.793 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Run combat 8-way | R `(1,0)` | IP `Humanoid@RunRightS&S.fbx`; RM `Humanoid@RunRightS&S_RM.fbx` | variant=paired-ip-rm | duration=0.600 s; rm_speed=2.955 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Run combat 8-way | FR `(0.707,0.707)` | IP `Humanoid@RunForwardRightS&S.fbx`; RM `Humanoid@RunForwardRightS&S_RM.fbx` | variant=paired-ip-rm | duration=0.600 s; rm_speed=3.021 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Crouch combat 8-way | F `(0,1)` | IP `Humanoid@CrouchForwardS&S.fbx`; RM `Humanoid@CrouchForwardS&S_RM.fbx` | variant=paired-ip-rm | duration=1.667 s; rm_speed=0.789 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Crouch combat 8-way | FL `(-0.707,0.707)` | IP `Humanoid@CrouchForwardLeftS&S.fbx`; RM `Humanoid@CrouchForwardLeftS&S_RM.fbx` | variant=paired-ip-rm | duration=1.667 s; rm_speed=0.750 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Crouch combat 8-way | L `(-1,0)` | IP `Humanoid@CrouchLeftS&S.fbx`; RM `Humanoid@CrouchLeftS&S_RM.fbx` | variant=paired-ip-rm | duration=1.667 s; rm_speed=0.731 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Crouch combat 8-way | BL `(-0.707,-0.707)` | IP `Humanoid@CrouchBackwardsLeftS&S.fbx`; RM `Humanoid@CrouchBackwardsLeftS&S_RM.fbx` | variant=paired-ip-rm | duration=1.667 s; rm_speed=0.701 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Crouch combat 8-way | B `(0,-1)` | IP `Humanoid@CrouchBackwardsS&S.fbx`; RM `Humanoid@CrouchBackwardsS&S_RM.fbx` | variant=paired-ip-rm | duration=1.667 s; rm_speed=0.775 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Crouch combat 8-way | BR `(0.707,-0.707)` | IP `Humanoid@CrouchBackwardsRightS&S.fbx`; RM `Humanoid@CrouchBackwardsRightS&S_RM.fbx` | variant=paired-ip-rm | duration=1.667 s; rm_speed=0.767 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Crouch combat 8-way | R `(1,0)` | IP `Humanoid@CrouchRightS&S.fbx`; RM `Humanoid@CrouchRightS&S_RM.fbx` | variant=paired-ip-rm | duration=1.667 s; rm_speed=0.744 m/s | loop_ip=true; loop_rm=true; sync=gait-phase |
-| Crouch combat 8-way | FR IP `(0.707,0.707)` | `Humanoid@CrouchForwardRightS&S.fbx` | variant=in-place | duration=1.667 s | loop=true; sync=gait-phase |
-| Crouch combat 8-way | FR RM quarantine | `Humanoid@CrouchForwardRightS&S_RM.fbx` | set_type=other | N/A | state=quarantined; movement=unavailable |
-| Draw/combat/put-away 1 | ordered | `Humanoid@DrawWeapons1S&S.fbx`; `Humanoid@IdleCombatS&S.fbx`; `Humanoid@PutBackWeapons1S&S.fbx` | set_type=transition-chain | N/A | transition=at-end; state=armed-combat |
-| Draw/combat/put-away 2 | ordered | `Humanoid@DrawWeapons2S&S.fbx`; `Humanoid@IdleCombatS&S.fbx`; `Humanoid@PutBackWeapons2S&S.fbx` | set_type=transition-chain | N/A | transition=at-end; state=armed-combat |
-
-Speed ratios are 1.48× walk, 1.14× run, and 1.13× across seven valid crouch RM members; preserve velocity or tune playback. Circular spreads fall 0.723/0.661/0.697 → 0.060/0.137/0.052 (walk/run/crouch) under 0.7.0's unpromoted anchor trial; use offsets or review until gated.
+No important runtime sets were identified.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=separate-2d-blends`; build separate IP/RM graphs at the table coordinates, omit quarantined Crouch FR RM, and use the two equipment chains.
-2. **Timing/synchronization:** `sync=runtime-phase-offsets`; loop reviewed locomotion/idle/dead-hold members only; treat attacks, blocks, parries, reactions, taunts, equipment, and death/recovery as one-shots until confirmed.
-3. **State ownership:** `owner=validate-per-axis`; controller owns IP translation; validate RM ownership per axis, since sampled RM clips bake root rotation.
-4. **Composition constraints:** `composition=full-body-combat-default`; attach sword right-hand and shield left-hand, keep kicks/displacement attacks full-body, and promote masks only after pelvis/contact/IK/grip review.
-5. **Acceptance gate:** `gate=target-character-visual-review`; exercise complete rings, wraps, transitions, actions, contacts, root extraction, deformation, and crossfades.
+1. **Members/topology:** `topology=pack-local`; construct project state graphs only from reviewed imported clips.
+2. **Timing/synchronization:** `sync=contract-gated`; use loop and seam findings to gate transitions.
+3. **State ownership:** `owner=project-controller`; assign root-motion ownership per state.
+4. **Composition constraints:** `composition=full-body-review`; validate masks, props, IK, and attachments.
+5. **Acceptance gate:** `gate=engine-visual-contact`; require import, playback, contact, and visual sign-off.
 
 ## Technical issue register
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| SS-001 | blocker | [Malformed hierarchy](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) leaves Crouch FR RM without a clip. | artist-author | Quarantine it; use IP/controller motion or another direction. | Safe hierarchy invention is not possible without author evidence. | Two-node hierarchy; Unity no AnimationClip. |
-| SS-002 | major | [Incorrect loop declarations](../game-ready-clips.md#the-loop-pops) can replay attacks/reactions and expose hard wraps. | engine-config | Override the 52 obvious one-shot flags; review every remaining loop. | Metadata-aware audits are feasible; intent isn't universally inferable. | 118 delivered loop flags; 113 strict seam failures. |
-| SS-003 | major | [Gait-phase disagreement](../game-ready-clips.md#feet-skate-when-clips-blend) risks foot skating across all rings. | animsmith-current-declared | Engine-test the 24 anchored IP candidates before adoption; keep offsets meanwhile. | Current IP anchoring produces candidates; RM anchoring remains unavailable. | Spreads 0.723/0.661/0.697 to 0.060/0.137/0.052 (walk/run/crouch); 24/24 anchor; unpromoted. |
-| SS-004 | major | [Loop seam derivatives](../game-ready-clips.md#the-loop-pops) remain after the WalkForward duplicate endpoint is dropped. | artist-author | Repair tangents/endpoints or accept a reviewed blend. | Duplicate removal is current; tangent invention is unsafe. | Closure fixed; linear/angular seam failures remain. |
-| SS-005 | moderate | [Copied-avatar metadata](../game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity) records a stale pelvis warning in 131 files. | engine-config | Keep the supplied Avatar; verify target-version reimport. | Better diagnostics are feasible; vendor should repair metadata. | Unity imports 131; malformed file fails. |
-| SS-006 | moderate | [Low-displacement RM actions](../game-ready-clips.md#the-character-glides-or-runs-in-place) may use root yaw or short lunges, so a speed-only rule can misassign movement owner. | engine-config | Inspect displacement and yaw per action before enabling root motion. | Per-clip displacement and yaw evidence are available; ownership still requires project intent. | Fourteen declared RM actions below the provisional threshold. |
-| SS-007 | moderate | [Constant tracks](../game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) are dense; unproved pruning can change sparse-track behavior. | animsmith-current-declared | Retain source tracks until runtime/equivalence gates pass. | Per-bone channel evidence is available; [#401](https://github.com/mmannerm/animsmith/issues/401) limits broad pruning adoption. | 16,808 notes; three sample prunes only. |
-| SS-008 | moderate | The combined FBX has [extra hierarchy and scale animation](../game-ready-clips.md#why-scale-animation-deserves-its-own-review), weakening atomic use. | artist-author | Use individual FBXs. | Boundaries/scale intent need author evidence. | 60 bones; one scale-key warning. |
+| PF-010 | major | Declared loop and seam contracts do not pass for the full selected corpus; clip-level admission is required. [Guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Keep non-clean clips out of production runtime sets. | Generic validation and conforming assistance may help. | `observed-animsmith`; current contract evidence. |
+| PF-011 | minor | Generated candidates are mechanical signals, not visual acceptance. [Guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Review deltas and playback. | Generic track cleanup is applicable. | `observed-animsmith`; 28/28 transforms exit 0. |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | Dated co-import probes (2026-08-17); 0.7.0 `import-advice` (6000.3) | **Conditional pass:** 131/132 humanoid clips; 8/9 samples, 3/3 blends, 3/3 masks, both props. 0.7.0 advice (exit 0) matches **observed** locks: IP bakes; RM mostly extracts XZ (31/36). | Visual controller, contacts, root motion, retargeting, compression, build. |
-| Unreal Engine | Documentation; 0.7.0 `import-advice` | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | FBX import, retarget, complete graphs, contacts, build. |
-| Godot | Documentation; 0.7.0 `import-advice` | **Not evaluated in-engine.** Current revision-2 settings projection is available; no engine process ran. | Import/conversion, retarget, graph, contacts, build. |
-| Bevy | 0.7.0 `addressability`, generated GLB | **Advisory pass:** exit 0; selector `Animation0`, 0 findings; inventory only. | glTF loading, targets, graph wiring, playback, root motion, performance. |
+| Unity | not-evaluated | No current import or playback was run. | Disposable-project import and visual controller tests. |
+| Unreal Engine | not-evaluated | No current import or playback was run. | Import, retarget, and blend tests. |
+| Godot | not-evaluated | No current import or playback was run. | Conversion/import route and runtime tests. |
+| Bevy | not-evaluated | No current import or playback was run. | Conversion, loading, graph, and performance tests. |
 
 ## Fit and limitations
 
-Best fit: third-person melee games with a compatible humanoid rig.
-
-Poor fit: first-person, traversal-heavy, or contact-critical games without authoring. Networking and IK remain unevaluated.
-
-Combine with Basic Locomotion as a full-body armed/unarmed state switch; the partial [Ultimate Animation Collection rollup](protofactor-ultimate-animation-collection.md) owns that cross-pack conclusion.
+This is current mechanical evidence, not a guarantee of engine readiness, gameplay suitability, or artistic quality. Licensed source, candidate outputs, and local evidence remain private.
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.7.0 reproduced 136 FBXs, 132 contracts (17/115 pass/fail), and 28 candidates. Projections are not engine or artistic acceptance.
+AnimSmith 0.10.0 — revalidated current inventory, baseline, declared contracts, and bounded remediation using the official FBX-capable release binary. AnimSmith 0.7.0 — retained historical evidence is superseded for current-state conclusions.
 
 ## Evidence status
 
-The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-sword-and-shield-evidence.md) retain exact current evidence and dated Unity observations.
+See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-sword-and-shield-evidence.md). Mechanical completion is separate from engine and visual acceptance.
 
 ## Sources
 
-- Protofactor, [Sword & Shield product page](https://protofactor.biz/product/animset-sword-shield/), [Ultimate Animation Collection](https://protofactor.biz/product/ultimate-animation-collection/), and [End User License Agreement](https://protofactor.biz/end-user-license-agreement/).
-- Unity, [Avatar Mask](https://docs.unity3d.com/es/current/Manual/class-AvatarMask.html), [imported clip masks](https://docs.unity3d.com/es/current/Manual/AnimationMaskOnImportedClips.html), and [loop optimization](https://docs.unity3d.com/es/current/Manual/LoopingAnimationClips.html).
-- Epic Games, [Root Motion](https://dev.epicgames.com/documentation/unreal-engine/root-motion-in-unreal-engine?application_version=5.7) and [Layered Animations](https://dev.epicgames.com/documentation/unreal-engine/using-layered-animations-in-unreal-engine?lang=en-US).
-- Godot, [Using AnimationTree](https://docs.godotengine.org/en/stable/tutorials/animation/animation_tree.html); Bevy, [Animation Masks](https://bevy.org/examples/animation/animation-masks/).
+- Protofactor product listing and [End User License Agreement](https://protofactor.biz/end-user-license-agreement/) — vendor context only, not local-revision proof.

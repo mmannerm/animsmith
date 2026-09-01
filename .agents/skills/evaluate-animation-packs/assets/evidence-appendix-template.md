@@ -193,8 +193,20 @@ earlier AnimSmith comparison.`
 
 ## Reproduction
 
-Record source identity/digest, evaluator identity, config/manifest digests,
-commands, exit codes, retained evidence labels, and all engine procedures.
+Record source identity/digest, config/manifest digests, retained evidence
+labels, and all engine procedures. For every evaluator batch, also record:
+
+- artifact locator, archive SHA-256, and exact binary member path;
+- binary version and SHA-256, source tag or commit, and working-tree state
+  (`N/A` for an official artifact);
+- required feature surface, including source formats and commands;
+- top-level and required-command help checks, representative-format admission,
+  commands, inputs, exit codes, and whether each check succeeded;
+- a scrubbed logical preflight-evidence locator and its SHA-256 digest.
+
+Keep machine-local paths and licensed inputs outside the report. Do not start
+the exhaustive batch until the preflight proves the required feature and
+format admission.
 
 ## Sources
 
