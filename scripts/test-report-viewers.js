@@ -206,7 +206,7 @@ function singleReportParts(source) {
 }
 const single = singleReportParts(singleHtml);
 const singleIds = ["report-data","file","clip-select","play","scrub","time","gl","findings","gaps","predictions"];
-function runSingle(payload, hash) {
+function runSingle(payload, hash, styles) {
   const testNodes = Object.fromEntries(singleIds.map(id=>[id,new Node(id)]));
   testNodes["report-data"].textContent = JSON.stringify(payload);
   const chart = new Node("chart"); chart.dataset = {clip: payload.clips[0].name, kind: "gait", pad: "34", plotw: "318"};
@@ -215,7 +215,7 @@ function runSingle(payload, hash) {
   const testContext = {
     document: {documentElement: root, getElementById: id=>testNodes[id], createElement: ()=>new Node(), createTextNode: text=>{const n=new Node(); n.textContent=text; return n}, querySelectorAll: ()=>[chart]},
     window: {addEventListener(k,f){listeners[k]=f}, devicePixelRatio: 1},
-    location: {hash: hash || ""}, getComputedStyle: ()=>noStyles,
+    location: {hash: hash || ""}, getComputedStyle: ()=>styles || noStyles,
     performance: {now: ()=>0}, requestAnimationFrame: ()=>0,
     atob: value=>Buffer.from(value, "base64").toString("binary"),
     Uint8Array, Float32Array, Math, Map, Set, Array, Number, Object, Infinity, JSON, console,
@@ -244,6 +244,14 @@ if (!plain.nodes.gl.gl.clears.length) throw new Error("the WebGL view never clea
 const cleared = plain.nodes.gl.gl.clears[0];
 if (Math.abs(cleared[0] - 0x17/255) > 1e-6 || Math.abs(cleared[2] - 0x1f/255) > 1e-6) throw new Error("the WebGL clear colour is not the ground token");
 if ("data-theme" in plain.root.attrs || "data-embed" in plain.root.attrs) throw new Error("an empty fragment must leave the document defaults alone");
+
+// The palette is read from the live tokens rather than baked into the
+// viewer, so a themed document paints its 3D view to match.
+const lightGround = {getPropertyValue: name => name === "--ground" ? " #F4F5F9 " : ""};
+const themed = runSingle(singlePayload, "#theme=light", lightGround);
+if (themed.root.attrs["data-theme"] !== "light") throw new Error("the pinned theme never reached the root element");
+const themedClear = themed.nodes.gl.gl.clears[0];
+if (Math.abs(themedClear[0] - 0xf4/255) > 1e-6 || Math.abs(themedClear[2] - 0xf9/255) > 1e-6) throw new Error("the WebGL view did not clear with the themed ground token");
 
 const deep = runSingle(singlePayload, `#embed=1&theme=light&clip=${encodeURIComponent(singleClip.name)}&frame=${Math.min(2, lastFrame)}`);
 if (deep.root.attrs["data-theme"] !== "light" || deep.root.attrs["data-embed"] !== "1") throw new Error("the single-clip viewer ignored embed/theme");
