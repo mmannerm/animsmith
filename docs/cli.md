@@ -57,8 +57,8 @@ animsmith collection dashboard --collection <collection-output.json> -o <dashboa
 animsmith collection generate-contact-fragment <manifest.toml> --clip <logical-id> -o <out.json> [--format text|json]
 animsmith collection evaluate-directional-speed --policy <policy.toml> --evidence <collection-output.json> [--format json]
 animsmith collection evaluate-transition-poses <collection.toml> --families <transition-families.toml> --format json
-animsmith report <file> -o <report.html> [--clip name]
-animsmith report <before> -o <comparison.html> --compare-after <after> --before-clip <before-name> --after-clip <after-name>
+animsmith report <file> -o <report.html> [--clip name] [--evidence-only]
+animsmith report <before> -o <comparison.html> --compare-after <after> --before-clip <before-name> --after-clip <after-name> [--evidence-only]
 animsmith transform <file> -o <out.glb> [--clip name] [--slice START:END] [--hold-extend SECONDS] [--gait-anchor] [--drop-duplicate-loop-endpoint] [--prune-constant-tracks] [--fps N]
 animsmith fix <file> (-o <out.glb>|--in-place|--dry-run) [--repair id[,id]]
 animsmith convert <in.fbx|in.glb|in.gltf> -o <out.glb|out.gltf> [--material-texture-recipe recipe.toml] [--animation-only|--bake-static-mesh-transforms] [--format text|json]
@@ -155,6 +155,35 @@ provenance, and identities remain separate per side. Selecting a finding
 scrubs the linked time and highlights its uniquely mapped bone. The
 report is evidence for troubleshooting, not an artistic, gameplay, engine, or
 retargeting acceptance verdict.
+
+`--evidence-only` omits the sampled pose grid from either report form and
+sets `"evidence_only": true` in the embedded data. The grid is the motion —
+every bone's model-space position on every judged frame — so a full report of a
+licensed clip carries that clip. The evidence-only document keeps the findings,
+coverage gaps, engine predictions, metric charts, and input identities, shows a
+notice where the pose view would be, and disables playback, so it can be
+attached to an issue, published, or sent to a vendor where the source asset
+itself may not go (see the
+[licensed-asset policy](../DEVELOPMENT.md#golden-tests)). Nothing else about the
+run changes: the same checks evaluate the same frames.
+
+Both report forms follow the reader's `prefers-color-scheme` and read a URL
+fragment of `&`-separated `key=value` options, so one generated file can be
+deep-linked or embedded without regenerating it. Both honour `theme=light` and
+`theme=dark`, which pin the palette; `embed=1`, which drops the running title
+and the interaction hint so the document fits an `<iframe>` while every
+finding, chart, identity, and evidence disclosure stays; and `frame=N`, which
+scrubs to a judged frame. `clip=NAME` and `finding=INDEX` are single-clip
+options — they select exactly what clicking that clip or finding would — while
+the comparison addresses a finding through the `#finding-<side>-<anchor>` link
+its own panels carry, because its clip correspondence is declared by the two
+inputs rather than chosen in the viewer.
+
+A key that is absent leaves that state as it is, so following one of those
+anchors inside an embedded, theme-pinned report does not un-pin it; a key
+present with a value the report cannot honour returns that state to its
+default. Unknown keys, malformed pairs, and out-of-range values are ignored,
+and no option changes what the report measured.
 
 The checked-in [synthetic comparison walkthrough](../examples/README.md#5-converting-exports-and-generating-reports-default-features-only)
 demonstrates seam endpoints, sampled stance and foot trajectories, shared-scale

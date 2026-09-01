@@ -4,6 +4,11 @@
 "use strict";
 
 const data = JSON.parse(document.getElementById("report-data").textContent);
+// Theme and embed switches are applied before anything is measured or
+// painted, and the palette is resolved once per theme change rather than per
+// frame, so the 3D view always paints what the document shows.
+animsmithApplyDocument(animsmithFragmentOptions(location.hash));
+let palette = animsmithPalette();
 document.getElementById("file").textContent =
   (data.file || "") + "  ·  rig profile: " + (data.profile || "none");
 
@@ -14,7 +19,12 @@ function decodePositions(b64) {
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   return new Float32Array(bytes.buffer);
 }
-for (const clip of data.clips) clip.pos = decodePositions(clip.positions);
+// The document itself says whether poses are available: an evidence-only
+// report renders a notice in place of the canvas, so an absent canvas means
+// there is nothing to decode, play back, or draw. Findings, coverage gaps,
+// charts, and identities are unchanged either way.
+const canvas = document.getElementById("gl");
+for (const clip of data.clips) clip.pos = canvas ? decodePositions(clip.positions) : null;
 
 const boneCount = data.bones.length;
 const parents = data.bones.map((b) => b.parent);
@@ -45,8 +55,6 @@ const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], 
 function norm3(v) { const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
 
 // ---- WebGL setup ------------------------------------------------------
-const canvas = document.getElementById("gl");
-const gl = canvas.getContext("webgl2", { antialias: true });
 const VS = `#version 300 es
 layout(location=0) in vec3 pos;
 layout(location=1) in vec3 color;
@@ -59,6 +67,7 @@ precision mediump float;
 in vec3 vColor;
 out vec4 frag;
 void main() { frag = vec4(vColor, 1.0); }`;
+let gl = null, uMvp = null, uPointSize = null, vbo = null;
 function shader(type, src) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src);
@@ -66,20 +75,23 @@ function shader(type, src) {
   if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
   return s;
 }
-const prog = gl.createProgram();
-gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
-gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
-gl.linkProgram(prog);
-gl.useProgram(prog);
-const uMvp = gl.getUniformLocation(prog, "mvp");
-const uPointSize = gl.getUniformLocation(prog, "pointSize");
-const vbo = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-gl.enableVertexAttribArray(0);
-gl.enableVertexAttribArray(1);
-gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
-gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
-gl.enable(gl.DEPTH_TEST);
+if (canvas) {
+  gl = canvas.getContext("webgl2", { antialias: true });
+  const prog = gl.createProgram();
+  gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+  uMvp = gl.getUniformLocation(prog, "mvp");
+  uPointSize = gl.getUniformLocation(prog, "pointSize");
+  vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.enableVertexAttribArray(0);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+  gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+  gl.enable(gl.DEPTH_TEST);
+}
 
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
@@ -89,7 +101,7 @@ let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
 function fitCamera() {
-  if (!clip) return;
+  if (!clip || !clip.pos) return;
   let min = [1e9, 1e9, 1e9], max = [-1e9, -1e9, -1e9];
   for (let i = 0; i < clip.pos.length; i += 3)
     for (let c = 0; c < 3; c++) {
@@ -100,10 +112,13 @@ function fitCamera() {
   dist = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 0.5) * 1.8;
 }
 
-const TRAIL_COLORS = { root: [0.61, 0.81, 0.42], hips: [0.48, 0.64, 0.97],
-                       left_foot: [0.88, 0.69, 0.41], right_foot: [0.96, 0.46, 0.56] };
+// Trail, bone, joint, and clear colours are the shared design tokens, so the
+// 3D view follows the light/dark theme with the rest of the document.
+const TRAIL_TOKENS = { root: "pass", hips: "accent", left_foot: "warning", right_foot: "error" };
 
-function buildVertices() {
+function buildVertices(palette) {
+  const boneColor = animsmithRgb(palette.muted);
+  const jointColor = animsmithRgb(palette.ink);
   // interleaved pos+color: bone lines, joint points appended after.
   const verts = [];
   const f = Math.round(frame);
@@ -111,16 +126,16 @@ function buildVertices() {
   const p = (b) => [clip.pos[base + b * 3], clip.pos[base + b * 3 + 1], clip.pos[base + b * 3 + 2]];
   for (let b = 0; b < boneCount; b++) {
     if (parents[b] < 0) continue;
-    verts.push(...p(parents[b]), 0.55, 0.6, 0.75, ...p(b), 0.55, 0.6, 0.75);
+    verts.push(...p(parents[b]), ...boneColor, ...p(b), ...boneColor);
   }
   const lineVerts = verts.length / 6;
-  for (let b = 0; b < boneCount; b++) verts.push(...p(b), 0.85, 0.87, 0.95);
+  for (let b = 0; b < boneCount; b++) verts.push(...p(b), ...jointColor);
   const pointVerts = boneCount;
   // trails: full path of tracked bones up to the current frame.
   let trailStart = lineVerts + pointVerts;
   const trailRanges = [];
   for (const [name, bone] of Object.entries(clip.trails || {})) {
-    const color = TRAIL_COLORS[name] || [0.6, 0.6, 0.6];
+    const color = animsmithRgb(palette[TRAIL_TOKENS[name]] || palette.muted);
     const start = verts.length / 6;
     for (let tf = 0; tf <= f; tf++) {
       const tb = tf * boneCount * 3 + bone * 3;
@@ -138,12 +153,13 @@ function buildVertices() {
 }
 
 function draw() {
-  if (!clip) return;
+  if (!clip || !gl) return;
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   gl.viewport(0, 0, w, h);
-  gl.clearColor(0.09, 0.09, 0.13, 1);
+  const ground = animsmithRgb(palette.ground);
+  gl.clearColor(ground[0], ground[1], ground[2], 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   const eye = [
@@ -154,7 +170,7 @@ function draw() {
   const mvp = mul4(perspective(0.9, w / h, 0.01, 100), lookAt(eye, center, [0, 1, 0]));
   gl.uniformMatrix4fv(uMvp, false, new Float32Array(mvp));
 
-  const { verts, lineVerts, pointVerts, trailRanges } = buildVertices();
+  const { verts, lineVerts, pointVerts, trailRanges } = buildVertices(palette);
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
   gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
   gl.uniform1f(uPointSize, 5 * dpr);
@@ -227,6 +243,7 @@ function updateCharts() {
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
 scrub.addEventListener("input", () => { playing = false; playBtn.textContent = "▶"; setFrame(+scrub.value); });
 playBtn.addEventListener("click", () => {
+  if (!canvas) return;
   playing = !playing;
   playBtn.textContent = playing ? "⏸" : "▶";
   if (playing) { last = performance.now(); requestAnimationFrame(tick); }
@@ -246,20 +263,22 @@ function tick(now) {
 
 // orbit controls
 let dragging = false, lastX = 0, lastY = 0;
-canvas.addEventListener("mousedown", (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
-window.addEventListener("mouseup", () => (dragging = false));
-window.addEventListener("mousemove", (e) => {
-  if (!dragging) return;
-  yaw -= (e.clientX - lastX) * 0.01;
-  pitch = Math.max(-1.4, Math.min(1.4, pitch + (e.clientY - lastY) * 0.01));
-  lastX = e.clientX; lastY = e.clientY;
-  draw();
-});
-canvas.addEventListener("wheel", (e) => {
-  e.preventDefault();
-  dist *= Math.exp(e.deltaY * 0.001);
-  draw();
-}, { passive: false });
+if (canvas) {
+  canvas.addEventListener("mousedown", (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+  window.addEventListener("mouseup", () => (dragging = false));
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    yaw -= (e.clientX - lastX) * 0.01;
+    pitch = Math.max(-1.4, Math.min(1.4, pitch + (e.clientY - lastY) * 0.01));
+    lastX = e.clientX; lastY = e.clientY;
+    draw();
+  });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    dist *= Math.exp(e.deltaY * 0.001);
+    draw();
+  }, { passive: false });
+}
 
 // findings panel
 const list = document.getElementById("findings");
@@ -268,7 +287,21 @@ if (!data.findings.length) {
   li.textContent = "clean — no findings";
   list.appendChild(li);
 }
-for (const f of data.findings) {
+const findingItems = [];
+// One selection path for a click and for a `#finding=` deep link: scrub to
+// the judged frame and mark the row.
+function selectFinding(index) {
+  const f = data.findings[index], item = findingItems[index];
+  if (!f || !item) return;
+  for (const other of findingItems) other.classList.remove("selected");
+  item.classList.add("selected");
+  if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
+  if (!f.clip) return;
+  selectClip(f.clip);
+  if (f.time != null && clip && clip.duration > 0)
+    setFrame((f.time / clip.duration) * (clip.frames - 1));
+}
+data.findings.forEach((f, index) => {
   // Built with textContent throughout: clip/bone/node names and messages
   // come from the linted asset, i.e. untrusted input.
   const li = document.createElement("li");
@@ -287,15 +320,10 @@ for (const f of data.findings) {
   if (f.time != null) li.appendChild(document.createTextNode(` @${f.time.toFixed(3)}s`));
   li.appendChild(document.createElement("br"));
   li.appendChild(document.createTextNode(f.message));
-  if (f.clip) {
-    li.addEventListener("click", () => {
-      selectClip(f.clip);
-      if (f.time != null && clip && clip.duration > 0)
-        setFrame((f.time / clip.duration) * (clip.frames - 1));
-    });
-  }
+  li.addEventListener("click", () => selectFinding(index));
+  findingItems.push(li);
   list.appendChild(li);
-}
+});
 
 const gapList = document.getElementById("gaps");
 if (!data.gaps.length) {
@@ -337,5 +365,24 @@ for (const row of data.predictions) {
   }
 }
 
+// Fragment selection runs once the clip list, charts, and findings exist,
+// so a deep link lands exactly where the equivalent click would. Every
+// value is bounded by this document's own data: an unknown clip name is
+// ignored, a finding index must address an emitted row, and setFrame
+// clamps to the judged frame grid.
+function applyFragment() {
+  const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
+  palette = animsmithPalette();
+  if (options.clip != null && data.clips.some((c) => c.name === options.clip))
+    selectClip(options.clip);
+  if (options.finding != null && options.finding < data.findings.length)
+    selectFinding(options.finding);
+  else if (options.frame != null)
+    setFrame(options.frame);
+  draw();
+}
+
 window.addEventListener("resize", draw);
+window.addEventListener("hashchange", applyFragment);
 if (clip) { selectClip(clip.name); setFrame(0); }
+applyFragment();

@@ -64,7 +64,7 @@ jobs:
         run: ANIMSMITH_TEST_BINARY=target/debug/animsmith PYTHONDONTWRITEBYTECODE=1 python .agents/skills/evaluate-animation-packs/scripts/test_validators.py
 
   report-browser:
-    name: generated comparison browser contract
+    name: generated report browser contract
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -81,7 +81,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Execute Rust-generated comparison in Node browser harness
+      - name: Execute both Rust-generated report viewers in the Node browser harness
         run: just report-browser
 
   msrv:
