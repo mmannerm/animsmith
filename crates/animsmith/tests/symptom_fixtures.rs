@@ -320,6 +320,9 @@ fn run_ring_reports_the_phase_shifted_member() {
     let (code, json) = lint(&["--config", &coherent, &ring]);
     assert_eq!(code, Some(0), "the unshifted members agree");
     assert!(findings(&json).is_empty());
+    // Silence alone would also describe a group the check declined to
+    // judge, so require that it compared these three and accepted them.
+    judged_and_passed(&json, "gait-group");
 
     // `walk.glb` is not a ring document, so the committed contract reports
     // its members as absent rather than as spread — the group's presence
