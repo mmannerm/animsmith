@@ -627,3 +627,9 @@ When changing the skill or publishing repository reports, run
 `just animation-pack-skill`. It exercises the helper executables and validates
 every report/appendix pair under `docs/reports/`. The same check is part of
 `just gates`.
+
+Publishing a pair in this repository also means indexing it in
+`docs/reports/README.md`: one current-reports row, and one scorecard row that
+copies that pair's header-block verdict, completeness, confidence, evaluation
+date, and current evaluator. A separate repository gate compares both rows
+against the published pair, so a missing or stale row fails `just gates`.
