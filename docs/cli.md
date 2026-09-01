@@ -159,13 +159,22 @@ retargeting acceptance verdict.
 `--evidence-only` omits the sampled pose grid from either report form and
 sets `"evidence_only": true` in the embedded data. The grid is the motion —
 every bone's model-space position on every judged frame — so a full report of a
-licensed clip carries that clip. The evidence-only document keeps the findings,
-coverage gaps, engine predictions, metric charts, and input identities, shows a
-notice where the pose view would be, and disables playback, so it can be
-attached to an issue, published, or sent to a vendor where the source asset
-itself may not go (see the
+licensed clip carries that clip. Both forms keep their findings, coverage gaps,
+engine predictions, and input identities, show a notice where each pose view
+would be, and disable playback, so the document can be attached to an issue,
+published, or sent to a vendor where the source asset itself may not go (see the
 [licensed-asset policy](../DEVELOPMENT.md#golden-tests)). Nothing else about the
 run changes: the same checks evaluate the same frames.
+
+What is left to look at differs by form, because only one of them draws its
+charts on the Rust side. The single-clip report keeps its charts, and they
+retain exactly the root's X/Z path and the two foot-height series relative to
+the hips plus their difference — nothing per bone. Every comparison panel is a
+viewer drawing made from the pose grid — both role-trajectory panels, both gait
+panels, and the shared root chart — so an evidence-only comparison replaces all
+of them with the same notice and retains only its findings, coverage gaps,
+prediction provenance, and identities. Rendering those panels on the Rust side
+is tracked as follow-up work and would restore them.
 
 Both report forms follow the reader's `prefers-color-scheme` and read a URL
 fragment of `&`-separated `key=value` options, so one generated file can be
