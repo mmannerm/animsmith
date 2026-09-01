@@ -126,11 +126,13 @@ history_before="$(git log --format='%H %P %s' v0.9.0..HEAD | git hash-object --s
 status_before="$(git status --porcelain=v1)"
 installed=()
 rollback() {
+  local status="$?"
   if ((${#installed[@]})); then
     git replace -d "${installed[@]}" >/dev/null 2>&1 || true
   fi
+  return "$status"
 }
-trap rollback ERR
+trap rollback EXIT
 for index in "${!target_commits[@]}"; do
   git replace "${target_commits[$index]}" "${fixed_commits[$index]}"
   installed+=("${target_commits[$index]}")
@@ -155,6 +157,6 @@ done
 history_after="$(git log --format='%H %P %s' v0.9.0..HEAD | git hash-object --stdin)"
 [[ "$history_after" == "$history_before" ]] \
   || fail "history preparation changed release commit identities or messages"
-trap - ERR
+trap - EXIT
 
 echo "prepared local release-plz history for ${#target_commits[@]} commits"

@@ -227,6 +227,8 @@ fi
 grep -Fq 'history preparation changed the checkout status' \
   "$work/untracked-drift.err" \
   || fail "untracked checkout drift did not reach the status invariant"
+[[ -z "$(git -C "$untracked_repo" replace -l)" ]] \
+  || fail "untracked checkout drift left replacement refs behind"
 
 original_head="$(git -C "$history_repo" rev-parse HEAD)"
 git -C "$history_repo" checkout --quiet --detach v0.9.0
