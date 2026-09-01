@@ -110,15 +110,12 @@ jobs:
     with:
       tag: ${{ needs.release.outputs.release_tag }}
 
-  # GitHub creates no workflow run for an event produced with the repository
-  # GITHUB_TOKEN, so the `release: published` trigger in docs-pages.yml never
-  # fires for the release published above, leaving the Pages root on the
-  # previous tag (#652). workflow_dispatch is one of the two documented
-  # exceptions to that recursion guard, so the publication dispatches Pages
-  # itself with the same token — no personal access token is involved.
-  # The push that merged the release PR already started a Pages run against the
-  # previous tag; docs-pages.yml's `pages-<ref>` concurrency group cancels that
-  # older run, so this post-publication composition is the one that deploys.
+  # Move the Pages root to the tag just published. GitHub creates no workflow
+  # run for an event produced with the repository GITHUB_TOKEN, so this
+  # dispatch — not docs-pages.yml's own `release: published` trigger — is what
+  # composes the release root (#652). `--repo` is needed because the job checks
+  # nothing out. RELEASING.md, "GitHub Pages documentation", holds the full
+  # rationale, the run ordering, and the manual recovery command.
   release_pages:
     name: dispatch Pages documentation
     needs: [release]

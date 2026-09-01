@@ -31,18 +31,38 @@ from workflow_contract import (
 )
 
 
-# The exact command RELEASING.md documents as the manual recovery dispatch, so
-# the automatic and manual paths cannot drift apart.
+# The dispatch RELEASING.md documents as the manual recovery command. The job
+# runs it with `--repo` because it checks nothing out and `gh` cannot infer the
+# repository; from a clone that flag is unnecessary. Both forms are accepted,
+# and nothing else may share the step: a `run` that only mentions the command
+# (`echo '<command>'`, `false && <command>`) never dispatches anything.
 DISPATCH_COMMAND = "gh workflow run docs-pages.yml --ref main"
-# release-plz reports whether the run actually published anything; an
-# ungated dispatch would not prove a post-publication trigger.
-PUBLICATION_OUTPUT = "releases_created"
+DISPATCH_RUNS = (DISPATCH_COMMAND, f'{DISPATCH_COMMAND} --repo "${{GITHUB_REPOSITORY}}"')
+# release-plz reports whether the run actually published anything. The gate is
+# matched whole, so a negated or differently sourced condition cannot pass.
+PUBLICATION_GATE = "needs.release.outputs.releases_created == 'true'"
 # Only the repository token is allowed: the fix must not depend on a personal
 # access token that a maintainer has to mint and rotate.
 REPOSITORY_TOKENS = ("${{ github.token }}", "${{ secrets.GITHUB_TOKEN }}")
 DEPLOY_ACTION = "actions/deploy-pages@"
-# Pages deploys only when an eligible published release was found.
-DEPLOY_GATE = "release_available == 'true'"
+# Pages deploys only when an eligible published release was found. Matched
+# whole as well, so `... || true` cannot widen it.
+DEPLOY_CONDITION = (
+    "github.event_name != 'pull_request' "
+    "&& needs.prepare-release-site.outputs.release_available == 'true'"
+)
+
+
+def condition(value: object) -> str:
+    """Return an `if:` expression normalized for whole-value comparison.
+
+    GitHub accepts the same condition with or without the `${{ }}` wrapper, so
+    the wrapper is stripped; everything else must match the contract exactly.
+    """
+    text = normalized_text(value)
+    if text.startswith("${{") and text.endswith("}}"):
+        text = " ".join(text[3:-2].split())
+    return text
 
 
 def jobs_of(document: dict[str, Any], source: str) -> dict[str, Any]:
@@ -66,30 +86,35 @@ def check_release_workflow_text(text: str, source: str) -> None:
         for step in steps_of(
             require_mapping(job, f"{source}: {job_id} job"), f"{source}: {job_id} job"
         )
-        if DISPATCH_COMMAND in normalized_text(step.get("run", ""))
+        if normalized_text(step.get("run", "")) in DISPATCH_RUNS
     ]
     if len(dispatchers) != 1:
         raise WorkflowContractError(
-            f"{source}: exactly one step must run {DISPATCH_COMMAND!r}; a release "
-            "published with the repository GITHUB_TOKEN never triggers the "
-            f"`release: published` event, and {len(dispatchers)} steps do"
+            f"{source}: exactly one step must run {DISPATCH_COMMAND!r} as its whole "
+            "command; a release published with the repository GITHUB_TOKEN never "
+            "triggers the `release: published` event, and "
+            f"{len(dispatchers)} steps do"
         )
     job_id, job, step = dispatchers[0]
 
     permissions = require_mapping(
         job.get("permissions"), f"{source}: {job_id} permissions"
     )
-    if permissions.get("actions") != "write":
+    if permissions != {"actions": "write"}:
         raise WorkflowContractError(
-            f"{source}: the {job_id} job must hold `actions: write` to dispatch "
-            "a workflow"
+            f"{source}: the {job_id} job must hold `actions: write` and nothing "
+            f"else, not {permissions}"
         )
 
-    gate = f"{normalized_text(job.get('if', ''))} {normalized_text(step.get('if', ''))}"
-    if PUBLICATION_OUTPUT not in gate:
+    conditions = {
+        gate
+        for gate in (condition(job.get("if", "")), condition(step.get("if", "")))
+        if gate
+    }
+    if conditions != {PUBLICATION_GATE}:
         raise WorkflowContractError(
-            f"{source}: the {job_id} dispatch must be gated on the release "
-            f"{PUBLICATION_OUTPUT} output"
+            f"{source}: the {job_id} dispatch must be gated on exactly "
+            f"{PUBLICATION_GATE!r}, not {sorted(conditions)}"
         )
 
     token = None
@@ -134,34 +159,36 @@ def check_pages_workflow_text(text: str, source: str) -> None:
             f"{len(deployers)}"
         )
     job_id, job = deployers[0]
-    if DEPLOY_GATE not in normalized_text(job.get("if", "")):
+    deploy_gate = condition(job.get("if", ""))
+    if deploy_gate != DEPLOY_CONDITION:
         raise WorkflowContractError(
-            f"{source}: the {job_id} job must stay gated on {DEPLOY_GATE} so no "
-            "eligible published release means no deployment"
+            f"{source}: the {job_id} job must stay gated on exactly "
+            f"{DEPLOY_CONDITION!r} so no eligible published release means no "
+            f"deployment, not {deploy_gate!r}"
         )
 
 
-VALID_RELEASE_WORKFLOW = f"""\
+VALID_RELEASE_WORKFLOW = """\
 jobs:
   release:
     outputs:
-      {PUBLICATION_OUTPUT}: ${{{{ steps.release_plz.outputs.{PUBLICATION_OUTPUT} }}}}
+      releases_created: ${{ steps.release_plz.outputs.releases_created }}
     steps:
       - id: release_plz
         run: release-plz release
   release_pages:
     needs: [release]
-    if: ${{{{ needs.release.outputs.{PUBLICATION_OUTPUT} == 'true' }}}}
+    if: ${{ needs.release.outputs.releases_created == 'true' }}
     permissions:
       actions: write
     steps:
       - name: Dispatch the Pages documentation workflow on main
         env:
-          GH_TOKEN: ${{{{ github.token }}}}
-        run: {DISPATCH_COMMAND} --repo "${{GITHUB_REPOSITORY}}"
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs-pages.yml --ref main --repo "${GITHUB_REPOSITORY}"
 """
 
-VALID_PAGES_WORKFLOW = f"""\
+VALID_PAGES_WORKFLOW = """\
 on:
   pull_request:
   push:
@@ -177,10 +204,29 @@ jobs:
     needs: prepare-release-site
     if: >-
       github.event_name != 'pull_request' &&
-      needs.prepare-release-site.outputs.{DEPLOY_GATE}
+      needs.prepare-release-site.outputs.release_available == 'true'
     steps:
-      - uses: {DEPLOY_ACTION}v4
+      - uses: actions/deploy-pages@v4
 """
+
+DISPATCH_STEP = """\
+      - name: Dispatch the Pages documentation workflow on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs-pages.yml --ref main --repo "${GITHUB_REPOSITORY}"
+"""
+
+PUBLICATION_GATE_LINE = (
+    "    if: ${{ needs.release.outputs.releases_created == 'true' }}\n"
+)
+PERMISSIONS_BLOCK = "    permissions:\n      actions: write\n"
+DISPATCH_RUN_LINE = (
+    "        run: gh workflow run docs-pages.yml --ref main"
+    ' --repo "${GITHUB_REPOSITORY}"\n'
+)
+DEPLOY_GATE_LINE = (
+    "      needs.prepare-release-site.outputs.release_available == 'true'\n"
+)
 
 
 def expect_rejected(
@@ -193,108 +239,135 @@ def expect_rejected(
     raise AssertionError(f"{label}: invalid fixture was accepted")
 
 
+def released(label: str, original: str, replacement: str) -> None:
+    """Reject one mutation of the valid release-workflow fixture."""
+    assert original in VALID_RELEASE_WORKFLOW, f"{label}: stale mutation target"
+    expect_rejected(
+        label,
+        check_release_workflow_text,
+        VALID_RELEASE_WORKFLOW.replace(original, replacement, 1),
+    )
+
+
+def paged(label: str, original: str, replacement: str) -> None:
+    """Reject one mutation of the valid Pages-workflow fixture."""
+    assert original in VALID_PAGES_WORKFLOW, f"{label}: stale mutation target"
+    expect_rejected(
+        label,
+        check_pages_workflow_text,
+        VALID_PAGES_WORKFLOW.replace(original, replacement, 1),
+    )
+
+
 def self_test() -> None:
     check_release_workflow_text(VALID_RELEASE_WORKFLOW, "valid release fixture")
     check_pages_workflow_text(VALID_PAGES_WORKFLOW, "valid pages fixture")
+    # The `--repo` flag is the job's, not the documented recovery command's.
+    check_release_workflow_text(
+        VALID_RELEASE_WORKFLOW.replace(' --repo "${GITHUB_REPOSITORY}"', "", 1),
+        "bare-dispatch fixture",
+    )
 
-    dispatch_step = (
-        "      - name: Dispatch the Pages documentation workflow on main\n"
-        "        env:\n"
-        "          GH_TOKEN: ${{ github.token }}\n"
-        f'        run: {DISPATCH_COMMAND} --repo "${{GITHUB_REPOSITORY}}"\n'
-    )
-    expect_rejected(
-        # The regression itself: publication leaves Pages to the suppressed
-        # `release: published` event.
-        "release-event-only fixture",
-        check_release_workflow_text,
-        VALID_RELEASE_WORKFLOW.replace(dispatch_step, "      - run: true\n"),
-    )
-    expect_rejected(
+    # The regression itself: publication leaves Pages to the suppressed
+    # `release: published` event.
+    released("release-event-only fixture", DISPATCH_STEP, "      - run: true\n")
+    released(
         "wrong-ref fixture",
-        check_release_workflow_text,
-        VALID_RELEASE_WORKFLOW.replace(
-            "--ref main", "--ref ${{ github.event.release.tag_name }}"
-        ),
+        "--ref main",
+        "--ref ${{ github.event.release.tag_name }}",
+    )
+    released(
+        "commented-dispatch fixture",
+        "        run: gh workflow run",
+        "        # run: gh workflow run",
+    )
+    # A step that only mentions the command dispatches nothing.
+    released(
+        "echoed-dispatch fixture",
+        DISPATCH_RUN_LINE,
+        "        run: echo 'gh workflow run docs-pages.yml --ref main'\n",
+    )
+    released(
+        "short-circuit-dispatch fixture",
+        "        run: gh workflow run",
+        "        run: false && gh workflow run",
+    )
+    released(
+        "trailing-command fixture",
+        DISPATCH_RUN_LINE,
+        DISPATCH_RUN_LINE.rstrip("\n") + " && git push --force\n",
     )
     expect_rejected(
         "duplicated-dispatch fixture",
         check_release_workflow_text,
         VALID_RELEASE_WORKFLOW
-        + dispatch_step.replace("      - ", "  extra:\n    steps:\n      - ", 1),
+        + DISPATCH_STEP.replace("      - ", "  extra:\n    steps:\n      - ", 1),
     )
-    expect_rejected(
-        "missing-actions-permission fixture",
-        check_release_workflow_text,
-        VALID_RELEASE_WORKFLOW.replace(
-            "    permissions:\n      actions: write\n", "    permissions: {}\n"
-        ),
+    released("missing-actions-permission fixture", PERMISSIONS_BLOCK, "    permissions: {}\n")
+    released("string-permissions fixture", PERMISSIONS_BLOCK, "    permissions: write-all\n")
+    # `actions: write` is the whole grant, not a floor.
+    released(
+        "extra-permission fixture",
+        PERMISSIONS_BLOCK,
+        PERMISSIONS_BLOCK + "      contents: write\n",
     )
-    expect_rejected(
-        "string-permissions fixture",
-        check_release_workflow_text,
-        VALID_RELEASE_WORKFLOW.replace(
-            "    permissions:\n      actions: write\n", "    permissions: write-all\n"
-        ),
-    )
-    expect_rejected(
-        "ungated-dispatch fixture",
-        check_release_workflow_text,
-        VALID_RELEASE_WORKFLOW.replace(
-            f"    if: ${{{{ needs.release.outputs.{PUBLICATION_OUTPUT} == 'true' }}}}\n",
-            "",
-        ),
-    )
-    expect_rejected(
-        "missing-token fixture",
-        check_release_workflow_text,
-        VALID_RELEASE_WORKFLOW.replace(
-            "        env:\n          GH_TOKEN: ${{ github.token }}\n", ""
-        ),
-    )
-    expect_rejected(
-        "personal-token fixture",
-        check_release_workflow_text,
-        VALID_RELEASE_WORKFLOW.replace(
-            "GH_TOKEN: ${{ github.token }}",
-            "GH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}",
-        ),
-    )
-    expect_rejected(
-        "commented-dispatch fixture",
-        check_release_workflow_text,
-        VALID_RELEASE_WORKFLOW.replace(
-            f"        run: {DISPATCH_COMMAND}", f"        # run: {DISPATCH_COMMAND}"
-        ),
-    )
-    expect_rejected(
+    released(
         "duplicate-permissions fixture",
-        check_release_workflow_text,
-        VALID_RELEASE_WORKFLOW.replace(
-            "    permissions:\n      actions: write\n",
-            "    permissions:\n      actions: write\n"
-            "    permissions:\n      contents: read\n",
-        ),
+        PERMISSIONS_BLOCK,
+        PERMISSIONS_BLOCK + "    permissions:\n      contents: read\n",
+    )
+    released("ungated-dispatch fixture", PUBLICATION_GATE_LINE, "")
+    # A gate that passes when nothing was published is not a release trigger.
+    released(
+        "negated-gate fixture",
+        "releases_created == 'true'",
+        "releases_created != 'true'",
+    )
+    released(
+        "dispatch-input-gate fixture",
+        "needs.release.outputs.releases_created",
+        "github.event.inputs.releases_created",
+    )
+    released(
+        "widened-gate fixture",
+        PUBLICATION_GATE_LINE,
+        PUBLICATION_GATE_LINE.rstrip("\n").rstrip("}") + " || true }}\n",
+    )
+    released(
+        "disabled-step fixture",
+        "      - name: Dispatch",
+        "      - if: false\n        name: Dispatch",
+    )
+    released(
+        "missing-token fixture",
+        "        env:\n          GH_TOKEN: ${{ github.token }}\n",
+        "",
+    )
+    released(
+        "personal-token fixture",
+        "GH_TOKEN: ${{ github.token }}",
+        "GH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}",
     )
 
-    expect_rejected(
-        "undispatchable-pages fixture",
-        check_pages_workflow_text,
-        VALID_PAGES_WORKFLOW.replace("  workflow_dispatch:\n", ""),
-    )
+    paged("undispatchable-pages fixture", "  workflow_dispatch:\n", "")
     expect_rejected(
         "quoted-on fixture",
         check_pages_workflow_text,
-        VALID_PAGES_WORKFLOW.replace("on:", '"on":').replace(
-            "  workflow_dispatch:\n", ""
+        VALID_PAGES_WORKFLOW.replace("on:", '"on":', 1).replace(
+            "  workflow_dispatch:\n", "", 1
         ),
     )
-    expect_rejected(
-        "open-deployment fixture",
-        check_pages_workflow_text,
-        VALID_PAGES_WORKFLOW.replace(
-            f"      needs.prepare-release-site.outputs.{DEPLOY_GATE}\n", "      true\n"
-        ),
+    paged("open-deployment fixture", DEPLOY_GATE_LINE, "      true\n")
+    # An `|| true` disjunct deploys a site with no eligible release.
+    paged(
+        "weakened-deploy-gate fixture",
+        DEPLOY_GATE_LINE,
+        DEPLOY_GATE_LINE.rstrip("\n") + " || true\n",
+    )
+    paged(
+        "preview-deployment fixture",
+        "      github.event_name != 'pull_request' &&\n",
+        "",
     )
     expect_rejected(
         "triggerless fixture",

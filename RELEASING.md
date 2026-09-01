@@ -215,9 +215,12 @@ first, then dispatch the workflow as shown below.
 
 A successful release publication dispatches that workflow itself: the
 `release_pages` job in `.github/workflows/release-plz.yml` runs
-`gh workflow run docs-pages.yml --ref main` with the repository `GITHUB_TOKEN`
-as soon as release-plz reports a published release. The dispatch is required,
-not decorative. GitHub creates no workflow run for an event produced with the
+`gh workflow run docs-pages.yml --ref main --repo "${GITHUB_REPOSITORY}"` with
+the repository `GITHUB_TOKEN` as soon as release-plz reports a published
+release. That job checks nothing out, so `gh` cannot infer the repository and
+the flag is explicit; the recovery command below is the same dispatch run from
+a clone, where `--repo` is unnecessary. The dispatch is required, not
+decorative. GitHub creates no workflow run for an event produced with the
 repository `GITHUB_TOKEN`, so the workflow's own `release: published` trigger
 stays silent for an automated release — it still covers a release published by
 hand — while `workflow_dispatch` is one of the two documented exceptions to
