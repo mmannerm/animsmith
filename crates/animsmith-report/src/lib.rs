@@ -29,16 +29,20 @@
 //! report forms. The grid *is* the motion: it is the model-space joint
 //! position of every bone on every judged frame, so a full report of a
 //! licensed clip carries that clip. An evidence-only report keeps the
-//! findings, coverage gaps, engine predictions, metric charts, and input
-//! identities and can therefore be attached to an issue, published, or sent
-//! to a vendor where the source asset itself may not go (see the
-//! [licensed-asset policy]).
+//! findings, coverage gaps, engine predictions, and input identities and can
+//! therefore be attached to an issue, published, or sent to a vendor where the
+//! source asset itself may not go (see the [licensed-asset policy]).
 //!
-//! The boundary is the pose grid, and it is worth stating exactly: the
-//! retained charts still plot the root's X/Z path and the feet's heights
-//! relative to the hips, because those curves are the evidence a reader is
-//! being shown. What an evidence-only report drops is every other bone, every
-//! other axis, and the per-frame grid a viewer could re-export as animation.
+//! The boundary is the pose grid, and it is worth stating exactly. [`render`]
+//! draws its charts here, on the Rust side, so an evidence-only single-clip
+//! report keeps them: they retain the root's X/Z path and the two foot-height
+//! series relative to the hips plus their difference, and nothing else per
+//! bone. [`render_comparison`]'s panels are viewer drawings made from the pose
+//! grid, so an evidence-only comparison replaces every one of them — both
+//! trajectory panels, both gait panels, and the shared root chart — with the
+//! omission notice, and retains findings, gaps, predictions, and identities
+//! alone. What neither form carries is the per-frame grid a viewer could
+//! re-export as animation.
 //!
 //! [licensed-asset policy]: https://github.com/mmannerm/animsmith/blob/main/DEVELOPMENT.md#golden-tests
 //!
@@ -77,8 +81,12 @@ const TOKENS_CSS: &str = include_str!("../assets/tokens.css");
 /// Surfaces both documents share: the page ground, evidence rows, the
 /// omission notice, and the `#embed=1` chrome rules.
 const BASE_CSS: &str = include_str!("../assets/report-base.css");
-/// Pure helpers shared by both viewers (design-token palette).
+/// Pure helpers shared by both viewers. The runtime's fallback palette is a
+/// placeholder here and is filled in from [`TOKENS_CSS`] at render time, so
+/// the stylesheet stays the only place a token value is written.
 const SHARED_JS: &str = include_str!("../assets/shared.js");
+/// Replaced by the dark token object before the runtime is emitted.
+const DARK_TOKEN_PLACEHOLDER: &str = "\"__ANIMSMITH_DARK_TOKENS__\"";
 const VIEWER_JS: &str = include_str!("../assets/viewer.js");
 const VIEWER_CSS: &str = include_str!("../assets/viewer.css");
 const COMPARISON_VIEWER_JS: &str = include_str!("../assets/comparison.js");
@@ -134,14 +142,16 @@ pub struct ReportOptions {
     /// judged frame — so a full report of a licensed clip carries that clip.
     /// With this set the document renders a notice where each pose view would
     /// be and playback is disabled, while findings, coverage gaps, engine
-    /// predictions, charts, and input identities are unchanged, so the
-    /// evidence can be shared where the source asset cannot.
+    /// predictions, and input identities are unchanged, so the evidence can be
+    /// shared where the source asset cannot.
     ///
-    /// The retained charts still plot root X/Z and foot heights relative to
-    /// the hips; the omission is the pose grid itself, not every number
-    /// derived from it. A comparison rendered this way also stops being
-    /// bounded by [`MAX_COMPARISON_POSE_BYTES`], which limits what a document
-    /// embeds rather than what it may describe.
+    /// [`render`]'s charts are drawn here and survive, retaining root X/Z and
+    /// foot heights relative to the hips: the omission is the pose grid
+    /// itself, not every number derived from it. [`render_comparison`]'s
+    /// panels are viewer drawings from that grid, so they are replaced by the
+    /// notice instead. A comparison rendered this way also stops being bounded
+    /// by [`MAX_COMPARISON_POSE_BYTES`], which limits what a document embeds
+    /// rather than what it may describe.
     pub evidence_only: bool,
 }
 
@@ -467,11 +477,12 @@ pub fn render_comparison(
     let after_clip_anchor = semantic_anchor("clip", after.clip);
     let before_pose = pose_surface("before-gl", options.evidence_only);
     let after_pose = pose_surface("after-gl", options.evidence_only);
-    let shared_pose = if options.evidence_only {
-        pose_surface("comparison-root-path", true)
-    } else {
-        "<svg id=\"comparison-root-path\" viewBox=\"0 0 720 220\"></svg>".to_owned()
-    };
+    let shared_pose = pose_panel("comparison-root-path", "0 0 720 220", options.evidence_only);
+    let before_trails = pose_panel("before-path", "0 0 360 180", options.evidence_only);
+    let after_trails = pose_panel("after-path", "0 0 360 180", options.evidence_only);
+    let before_gait = pose_panel("before-gait", "0 0 360 180", options.evidence_only);
+    let after_gait = pose_panel("after-gait", "0 0 360 180", options.evidence_only);
+    let shared_js = shared_runtime();
     // Every comparison panel is drawn from the pose grid, so an
     // evidence-only document has no shared phase left to scrub.
     let scrub_state = if options.evidence_only {
@@ -488,9 +499,9 @@ pub fn render_comparison(
          <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>\n\
          <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
          <section class=\"shared-chart\"><h2>Before/after root trajectory</h2>{shared_pose}</section>\n\
-         <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"before-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"before-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
-         <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"after-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"after-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
-         <script>{SHARED_JS}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
+         <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
+         <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
+         <script>{shared_js}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
     ))
 }
 
@@ -1431,6 +1442,36 @@ fn esc(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// The shared runtime with its fallback palette resolved from the
+/// stylesheet's own dark values.
+fn shared_runtime() -> String {
+    SHARED_JS.replace(DARK_TOKEN_PLACEHOLDER, &dark_token_object())
+}
+
+/// The `--name: value` declarations of the bare `:root` block of
+/// [`TOKENS_CSS`], as a JS object. Parsing our own asset keeps one authority
+/// for the palette; a malformed block yields an empty object rather than a
+/// panic, and the emitted document is asserted against the stylesheet.
+fn dark_token_object() -> String {
+    let mut tokens = serde_json::Map::new();
+    if let Some(block) = TOKENS_CSS
+        .split_once(":root {")
+        .and_then(|(_, rest)| rest.split_once('}'))
+        .map(|(block, _)| block)
+    {
+        for declaration in block.split(';') {
+            let Some((name, value)) = declaration.split_once(':') else {
+                continue;
+            };
+            let (name, value) = (name.trim(), value.trim());
+            if let Some(token) = name.strip_prefix("--") {
+                tokens.insert(token.to_owned(), Value::String(value.to_owned()));
+            }
+        }
+    }
+    Value::Object(tokens).to_string()
+}
+
 /// Shown where a pose view would be when the sampled grid was deliberately
 /// left out of the document.
 const POSE_OMITTED_NOTICE: &str = "Pose playback omitted: evidence-only report";
@@ -1443,6 +1484,18 @@ fn pose_surface(id: &str, evidence_only: bool) -> String {
         format!("<p class=\"notice\" id=\"{id}-notice\">{POSE_OMITTED_NOTICE}</p>")
     } else {
         format!("<canvas id=\"{id}\"></canvas>")
+    }
+}
+
+/// A comparison panel drawn from the sampled poses: its `<svg>`, or the same
+/// notice when the document carries no grid to draw from. Unlike the
+/// single-clip charts, which the Rust side renders once and an evidence-only
+/// report keeps, these panels exist only as viewer drawings.
+fn pose_panel(id: &str, view_box: &str, evidence_only: bool) -> String {
+    if evidence_only {
+        pose_surface(id, true)
+    } else {
+        format!("<svg id=\"{id}\" viewBox=\"{view_box}\"></svg>")
     }
 }
 
@@ -1574,6 +1627,7 @@ pub fn render(
     });
 
     let pose = pose_surface("gl", options.evidence_only);
+    let shared_js = shared_runtime();
     // The scrub still moves the chart playhead without a pose grid, so only
     // playback itself is disabled.
     let play_state = if options.evidence_only {
@@ -1620,7 +1674,7 @@ pub fn render(
            <h2>Charts</h2>\n<div id=\"charts\">{charts_html}</div>\n\
          </section>\n\
          </main>\n\
-         <script>{SHARED_JS}</script>\n\
+         <script>{shared_js}</script>\n\
          <script type=\"application/json\" id=\"report-data\">{data}</script>\n\
          <script>{VIEWER_JS}</script>\n</body>\n</html>\n"
     )

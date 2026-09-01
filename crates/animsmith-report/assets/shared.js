@@ -3,13 +3,11 @@
 // drift apart on theming or on how a URL fragment is read.
 "use strict";
 
-// The design tokens of tokens.css. These dark values are also the fallback
-// whenever a token cannot be resolved.
-const ANIMSMITH_DEFAULT_PALETTE = {
-  ground: "#17171f", surface: "#1e1e2a", raised: "#232331", ink: "#d5d9e5",
-  muted: "#9099b2", line: "#3a3a4e", accent: "#7aa2f7", error: "#f7768e",
-  warning: "#e0af68", pass: "#9ece6a", note: "#bb9af7",
-};
+// The fallback palette used whenever a token cannot be resolved from the
+// document. The report crate substitutes the dark values of tokens.css for
+// this placeholder as it emits the runtime, so a token value is written in
+// exactly one place; this asset is a template rather than standalone JS.
+const ANIMSMITH_DEFAULT_PALETTE = "__ANIMSMITH_DARK_TOKENS__";
 
 // Live token values from the root element, so the WebGL and canvas pose views
 // paint with the same palette as the CSS. Anything that is not an exact
