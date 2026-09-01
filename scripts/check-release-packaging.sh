@@ -37,19 +37,23 @@ fail() {
 
 extract_workflow_job() {
   local job="$1"
+  local workflow="${2:-.github/workflows/release-plz.yml}"
   awk -v header="  ${job}:" '
     $0 == header { capture = 1 }
     capture && $0 != header && $0 ~ /^  [[:alnum:]_-]+:$/ { exit }
     capture { print }
-  ' .github/workflows/release-plz.yml
+  ' "$workflow"
 }
 
 release_pr_job="$work/release-pr-job.yml"
 release_job="$work/release-job.yml"
+docs_package_job="$work/docs-package-job.yml"
 extract_workflow_job release-pr >"$release_pr_job"
 extract_workflow_job release >"$release_job"
+extract_workflow_job docs-package .github/workflows/checks.yml >"$docs_package_job"
 [[ -s "$release_pr_job" ]] || fail "release-pr workflow job is missing"
 [[ -s "$release_job" ]] || fail "release publication workflow job is missing"
+[[ -s "$docs_package_job" ]] || fail "docs-package workflow job is missing"
 
 grep -Fq \
   "if: \${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.RELEASE_PLZ_ARMED == 'true' }}" \
@@ -111,6 +115,8 @@ grep -Fq '2263c4f95eac1513da96a114a77fde20ea038742a8c8050f7514b8f93b828646' \
 grep -Fq 'RELEASE_PLZ_BIN: ${{ runner.temp }}/release-plz' \
   .github/workflows/checks.yml \
   || fail "hosted release packaging contract must execute the pinned release-plz binary"
+[[ "$(grep -Fxc '          fetch-depth: 0' "$docs_package_job")" == "1" ]] \
+  || fail "hosted release packaging contract requires complete Git history"
 
 history_repo="$work/history-repo"
 git clone --quiet --no-hardlinks . "$history_repo"
