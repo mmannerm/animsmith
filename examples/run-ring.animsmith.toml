@@ -1,0 +1,23 @@
+# Contract for the committed directional blend ring
+# `examples/assets/run-ring.glb`: four clips built from one analytic gait,
+# with `run_left` entered a quarter cycle late.
+#
+#   animsmith lint --config examples/run-ring.animsmith.toml \
+#       examples/assets/run-ring.glb
+#
+# Declaring the ring is what arms `gait-group`; the same file linted with no
+# config reports nothing, because a blend ring is a runtime intent animsmith
+# cannot infer from the clips.
+
+[rig]
+# The stride anchor is measured from the left-minus-right foot height
+# relative to the hips, so the group needs hips plus both foot roles.
+profile = "auto"
+
+[gait_groups.run-ring]
+clips = ["run_forward", "run_backward", "run_left", "run_right"]
+# Cycle fraction: members whose stride anchors spread wider than this skate
+# or pop when the runtime crossfades between them.
+max_gait_phase_spread = 0.15
+# Members with less left/right alternation than this are excluded as noise.
+min_lr_amplitude_m = 0.03

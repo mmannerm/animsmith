@@ -1,0 +1,13 @@
+# Contract for the committed `examples/assets/walk-frozen-arm.glb`: the clip
+# is declared to animate both arms. `arm_l` is keyed but never rotates, and
+# `arm_r` never reached the file at all.
+#
+#   animsmith lint --config examples/walk-frozen-arm.animsmith.toml \
+#       examples/assets/walk-frozen-arm.glb
+#
+# `animates_bones` needs no rig profile: both checks match bone names, not
+# roles. Use [rig] required_bones instead for a socket or mask bone that
+# must exist without carrying keys.
+
+[clips.walk_frozen_arm]
+animates_bones = ["arm_l", "arm_r"]
