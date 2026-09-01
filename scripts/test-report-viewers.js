@@ -76,18 +76,49 @@ function webgl() {
   return gl;
 }
 
+// Every id the emitted markup carries. The synthetic DOM is built from this
+// rather than from a list the harness keeps, so a document that stops
+// rendering a surface cannot be executed against a manufactured node.
+function documentIds(html) {
+  return new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]));
+}
+
+// The charts the single-clip viewer syncs, built from the document's own
+// <figure> blocks: real data-* hooks, and the child elements the playhead and
+// path dot are moved through.
+function documentCharts(html) {
+  return [...html.matchAll(/<figure class="chart"[\s\S]*?<\/figure>/g)].map(([figure]) => {
+    const node = new Node("chart");
+    for (const [, name, value] of figure.matchAll(/data-([a-z]+)="([^"]*)"/g)) node.dataset[name] = value;
+    for (const name of ["playhead", "pathdot", "pathpoints"]) {
+      if (!figure.includes(`class="${name}"`)) continue;
+      const child = new Node(name);
+      if (name === "pathpoints") child.innerHTML = figure.split(`class="pathpoints">`)[1].split("<")[0];
+      node.query[`.${name}`] = child;
+    }
+    return node;
+  });
+}
+
 // One runner for every viewer execution: a fresh document whose elements are
-// exactly the ids the generated markup carries, so an absent pose surface is
-// absent here too.
-function run(parts, dataId, ids, payload, options) {
+// exactly the ones the generated markup carries, so an absent pose surface is
+// absent here too. A query for an id this document deliberately omits — named
+// by `omitted`, which is how an evidence-only document drops its pose
+// surfaces — returns null, the way a browser does. Any other absent id fails
+// the run, so a document that stops rendering a surface cannot be executed
+// against a node the harness manufactured for it.
+function run(parts, dataId, html, payload, options) {
   const settings = options || {};
-  const nodes = Object.fromEntries(ids.map(id => [id, new Node(id)]));
-  nodes[dataId] = new Node(dataId);
+  const present = documentIds(html);
+  const omitted = new Set(settings.omitted || []);
+  const nodes = {};
+  for (const id of present) nodes[id] = new Node(id);
+  if (!nodes[dataId]) throw new Error(`the generated document carries no #${dataId} payload`);
   nodes[dataId].textContent = JSON.stringify(payload);
   const listeners = {};
   const media = {};
   const root = new Node("documentElement");
-  const charts = settings.charts || [];
+  const charts = documentCharts(html);
   // The fragment is read, never written: every assignment to location.hash
   // is counted so a viewer that rewrites the URL cannot pass unnoticed.
   const hash = { value: settings.hash || "", writes: 0 };
@@ -98,11 +129,18 @@ function run(parts, dataId, ids, payload, options) {
   const context = {
     document: {
       documentElement: root,
-      getElementById: id => nodes[id] || null,
+      getElementById: (id) => {
+        if (nodes[id]) return nodes[id];
+        if (omitted.has(id)) return null;
+        throw new Error(`the viewer queried #${id}, which this generated document does not define`);
+      },
       createElement: () => new Node(),
       createTextNode: text => { const node = new Node(); node.textContent = text; return node; },
       createElementNS: (_ns, tag) => { const node = new Node(); node.tag = tag; return node; },
-      querySelectorAll: () => charts,
+      querySelectorAll: (selector) => {
+        if (selector !== ".chart") throw new Error(`the viewer queried an unexpected selector ${selector}`);
+        return charts;
+      },
     },
     window: { addEventListener(kind, handler) { listeners[kind] = handler; }, devicePixelRatio: 1 },
     location,
@@ -126,7 +164,6 @@ function assertNoBareSvgText(nodes, svgIds, why) {
   }
 }
 
-const comparisonIds = ["mapping","scrub","times","comparison-root-path","clip-before","clip-after","before-gl","after-gl","before-pose-context","after-pose-context","before-path","after-path","before-gait","after-gait","before-contexts","after-contexts","before-identity","after-identity","before-findings","after-findings","before-gaps","after-gaps","before-predictions","after-predictions"];
 const comparisonSvgs = ["comparison-root-path","before-path","after-path","before-gait","after-gait"];
 
 for (const side of [data.before, data.after]) {
@@ -154,7 +191,7 @@ if (!afterFinding) {
 }
 afterFinding.time = 1.234;
 
-const main = run(generated, "comparison-report-data", comparisonIds, data);
+const main = run(generated, "comparison-report-data", html, data);
 const nodes = main.nodes, windowListeners = main.listeners, documentElement = main.root, context = main.context;
 const palette = context.animsmithPalette();
 if(nodes.scrub.max !== 2001 || !nodes["before-findings"].children.some(child=>child.textContent.includes("<img>"))) throw new Error("viewer did not retain exact frames or safe finding text");
@@ -202,7 +239,7 @@ assertNoHashWrites(main, "the comparison viewer");
 // A non-finite sampled range must degrade the drawing, not abort navigation
 // or hide the already-rendered findings and coverage lists.
 const cleanBefore = data.before.clip.positions, cleanAfter = data.after.clip.positions;
-const execute = payload => run(generated, "comparison-report-data", comparisonIds, payload).nodes;
+const execute = payload => run(generated, "comparison-report-data", html, payload).nodes;
 const svgText = (node) => node.children.map(child => child.textContent).join(" ");
 const invalid = Buffer.from(data.before.clip.positions, "base64");
 for (let offset = 0; offset < invalid.length; offset += 4) invalid.writeFloatLE(Number.NaN, offset);
@@ -256,8 +293,9 @@ for (const surface of poseSurfaces) {
 if (/<svg\s+id=/.test(comparisonEvidenceHtml)) throw new Error("an evidence-only comparison still carries a chart surface it cannot draw");
 if (!/<figure class="chart"/.test(singleEvidenceHtml)) throw new Error("an evidence-only single-clip report lost its Rust-rendered charts");
 if (!/<path class="root-path"/.test(singleEvidenceHtml)) throw new Error("an evidence-only single-clip report lost its plotted root path");
-const evidenceIds = comparisonIds.filter(id => !poseSurfaces.includes(id));
-const evidenceRun = run(comparisonEvidence, "comparison-report-data", evidenceIds, evidencePayload);
+// The seven surfaces this form drops when it carries no poses, and nothing
+// else, may be missing from the document the viewer runs against.
+const evidenceRun = run(comparisonEvidence, "comparison-report-data", comparisonEvidenceHtml, evidencePayload, {omitted: poseSurfaces});
 const evidenceNodes = evidenceRun.nodes;
 if (!evidenceNodes.scrub.disabled) throw new Error("the shared phase stayed scrubbable with no pose grid behind it");
 if (evidenceNodes["before-findings"].children.length !== evidencePayload.before.findings.length || !evidenceNodes["before-identity"].textContent.includes(evidencePayload.before.dependency_closure_identity.sha256)) throw new Error("an evidence-only comparison dropped findings or identities");
@@ -334,22 +372,17 @@ const singleClip = singlePayload.clips[0], lastFrame = singleClip.frames - 1;
 singlePayload.findings.push({check:"harness-check", severity:"warning", clip:singleClip.name, bone:"hips", node:null, time:singleClip.duration/2, message:"<img src=x>"});
 const findingIndex = singlePayload.findings.length - 1;
 
-// The chart the viewer syncs is described by the document itself, so the
-// harness reads its hooks rather than restating them.
-const figure = singleHtml.match(/<figure class="chart"[^>]*data-kind="gait"[^>]*>/);
-if (!figure) throw new Error("the single-clip document carries no gait chart to sync");
-const chartAttrs = Object.fromEntries([...figure[0].matchAll(/([a-z-]+)="([^"]*)"/g)].map(m => [m[1], m[2]]));
-const chartPad = Number(chartAttrs["data-pad"]), chartPlotW = Number(chartAttrs["data-plotw"]);
-if (!(chartPad > 0) || !(chartPlotW > 0)) throw new Error("the gait chart does not publish its plot rectangle");
-const singleIds = ["file","clip-select","play","scrub","time","gl","findings","gaps","predictions"];
-function runSingle(parts, payload, ids, settings) {
-  const chart = new Node("chart");
-  chart.dataset = {clip: payload.clips[0].name, kind: "gait", pad: String(chartPad), plotw: String(chartPlotW)};
-  chart.query[".playhead"] = new Node("playhead");
-  return run(parts, "report-data", ids, payload, Object.assign({charts: [chart]}, settings || {}));
+function runSingle(parts, html, payload, settings) {
+  return run(parts, "report-data", html, payload, settings);
 }
+// The chart the viewer syncs comes from the document, so its plot rectangle
+// is read off the figure the report actually rendered.
+const gaitChart = documentCharts(singleHtml).find((chart) => chart.dataset.kind === "gait");
+if (!gaitChart) throw new Error("the single-clip document carries no gait chart to sync");
+const chartPad = Number(gaitChart.dataset.pad), chartPlotW = Number(gaitChart.dataset.plotw);
+if (!(chartPad > 0) || !(chartPlotW > 0)) throw new Error("the gait chart does not publish its plot rectangle");
 
-const plain = runSingle(single, singlePayload, singleIds);
+const plain = runSingle(single, singleHtml, singlePayload);
 if (!plain.nodes.file.textContent.includes(singlePayload.file || "")) throw new Error("the viewer did not disclose its source file");
 if (plain.nodes.findings.children.length !== singlePayload.findings.length) throw new Error("the findings panel dropped rows");
 if (!plain.nodes.findings.children.map(row => row.children.map(part => part.textContent).join("|")).some(text => text.includes("<img src=x>"))) throw new Error("untrusted finding text was not carried as text");
@@ -360,7 +393,7 @@ if ("data-theme" in plain.root.attrs || "data-embed" in plain.root.attrs) throw 
 // clear colour all come from the palette the document resolves.
 const themedTokens = {ground:"#F4F5F9", muted:"#112233", ink:"#445566", pass:"#010203", accent:"#0A0B0C", warning:"#101112", error:"#202122", raised:"#eef0f6", surface:"#ffffff", line:"#d9deea", note:"#6b7390"};
 const rgb = hex => [1,3,5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255);
-const themed = runSingle(single, singlePayload, singleIds, {hash:"#theme=light", styles: tokenStyles(themedTokens)});
+const themed = runSingle(single, singleHtml, singlePayload, {hash:"#theme=light", styles: tokenStyles(themedTokens)});
 if (themed.root.attrs["data-theme"] !== "light") throw new Error("the pinned theme never reached the root element");
 const cleared = themed.nodes.gl.gl.clears[0], groundRgb = rgb(themedTokens.ground);
 if (cleared.slice(0, 3).some((channel, index) => Math.abs(channel - groundRgb[index]) > 1e-6)) throw new Error("the WebGL view did not clear with the themed ground token");
@@ -377,8 +410,8 @@ for (const required of ["muted", "ink"]) {
 }
 
 // A deep link selects exactly what the equivalent click selects.
-const deep = runSingle(single, singlePayload, singleIds, {hash:`#finding=${findingIndex}`});
-const clicked = runSingle(single, singlePayload, singleIds);
+const deep = runSingle(single, singleHtml, singlePayload, {hash:`#finding=${findingIndex}`});
+const clicked = runSingle(single, singleHtml, singlePayload);
 clicked.nodes.findings.children[findingIndex].listeners.click();
 const observable = run => ({
   frame: String(run.nodes.scrub.value),
@@ -395,14 +428,23 @@ assertNoHashWrites(clicked, "clicking a finding");
 assertNoHashWrites(deep, "a deep-linked finding");
 
 // The playhead spans exactly the rectangle the chart publishes.
-const atStart = runSingle(single, singlePayload, singleIds, {hash:"#frame=0"});
+const atStart = runSingle(single, singleHtml, singlePayload, {hash:"#frame=0"});
 if (Number(atStart.charts[0].query[".playhead"].attrs.x1) !== chartPad) throw new Error("frame 0 does not place the playhead at the plot origin");
-const atEnd = runSingle(single, singlePayload, singleIds, {hash:`#frame=${lastFrame}`});
+const atEnd = runSingle(single, singleHtml, singlePayload, {hash:`#frame=${lastFrame}`});
 if (Math.abs(Number(atEnd.charts[0].query[".playhead"].attrs.x1) - (chartPad + chartPlotW)) > 1e-6) throw new Error("the last judged frame does not place the playhead at the plot's right edge");
+
+// The three ways a frame arrives: honoured, past the end (clamped to the last
+// judged frame, because a reader asking for a position wants the nearest one
+// the document can show), and unreadable (frame 0).
+if (Number(runSingle(single, singleHtml, singlePayload, {hash:`#frame=${Math.min(2, lastFrame)}`}).nodes.scrub.value) !== Math.min(2, lastFrame)) throw new Error("a frame inside the clip was not honoured");
+const clampedFrame = runSingle(single, singleHtml, singlePayload, {hash:"#frame=999999999"});
+if (Number(clampedFrame.nodes.scrub.value) !== lastFrame) throw new Error("a frame past the end of the clip was not clamped to its last judged frame");
+if (Math.abs(Number(clampedFrame.charts[0].query[".playhead"].attrs.x1) - (chartPad + chartPlotW)) > 1e-6) throw new Error("a clamped frame did not move the chart playhead to the plot's right edge");
+if (Number(runSingle(single, singleHtml, singlePayload, {hash:"#frame=1.5"}).nodes.scrub.value) !== 0) throw new Error("an unreadable frame did not restore frame 0");
 
 // Embed and theme reach the document; an unknown clip, an out-of-range
 // frame, and a hostile fragment leave a usable report behind.
-const embedded = runSingle(single, singlePayload, singleIds, {hash:`#embed=1&theme=light&clip=${encodeURIComponent(singleClip.name)}&frame=${Math.min(2, lastFrame)}`});
+const embedded = runSingle(single, singleHtml, singlePayload, {hash:`#embed=1&theme=light&clip=${encodeURIComponent(singleClip.name)}&frame=${Math.min(2, lastFrame)}`});
 if (embedded.root.attrs["data-theme"] !== "light" || embedded.root.attrs["data-embed"] !== "1") throw new Error("the single-clip viewer ignored embed/theme");
 if (Number(embedded.nodes.scrub.value) !== Math.min(2, lastFrame)) throw new Error("a deep-linked frame did not scrub the viewer");
 if (embedded.nodes["clip-select"].value !== singleClip.name) throw new Error("a deep-linked clip was not selected");
@@ -412,7 +454,7 @@ for (const hostile of [
   "#finding-before-abcdef0123456789", "#" + "k=v&".repeat(3000),
 ]) {
   let hostileRun;
-  try { hostileRun = runSingle(single, singlePayload, singleIds, {hash: hostile}); }
+  try { hostileRun = runSingle(single, singleHtml, singlePayload, {hash: hostile}); }
   catch (error) { throw new Error(`fragment ${JSON.stringify(hostile.slice(0,24))} threw in the viewer: ${error}`); }
   const frame = Number(hostileRun.nodes.scrub.value);
   if (!Number.isInteger(frame) || frame < 0 || frame > lastFrame) throw new Error(`fragment ${JSON.stringify(hostile.slice(0,24))} left frame ${frame} outside the judged grid`);
@@ -428,8 +470,7 @@ if (singleEvidenceHtml.includes('id="gl"')) throw new Error("the evidence-only r
 if (!/<button id="play"[^>]*\sdisabled/.test(singleEvidenceHtml)) throw new Error("the evidence-only report leaves playback enabled");
 if (!singleEvidenceHtml.includes('id="gl-notice"')) throw new Error("the evidence-only report drops its omission notice");
 evidenceSinglePayload.findings.push({check:"harness-check", severity:"warning", clip:evidenceSinglePayload.clips[0].name, bone:"hips", node:null, time:evidenceSinglePayload.clips[0].duration/2, message:"<img src=x>"});
-const evidenceSingleIds = singleIds.filter(id => id !== "gl");
-const evidenceSingle = runSingle(singleEvidence, evidenceSinglePayload, evidenceSingleIds);
+const evidenceSingle = runSingle(singleEvidence, singleEvidenceHtml, evidenceSinglePayload, {omitted: ["gl"]});
 if (evidenceSingle.nodes.findings.children.length !== evidenceSinglePayload.findings.length) throw new Error("an evidence-only report dropped findings");
 // The charts survive, so the scrub still moves their playhead.
 const evidenceLast = evidenceSinglePayload.clips[0].frames - 1;
@@ -438,7 +479,7 @@ evidenceSingle.nodes.scrub.listeners.input();
 const evidencePlayhead = Number(evidenceSingle.charts[0].query[".playhead"].attrs.x1);
 if (Math.abs(evidencePlayhead - (chartPad + chartPlotW)) > 1e-6) throw new Error("scrubbing an evidence-only report does not move the chart playhead");
 if (!evidenceSingle.nodes.time.textContent.includes("frame")) throw new Error("an evidence-only report stopped reporting the selected frame");
-const evidenceDeep = runSingle(singleEvidence, evidenceSinglePayload, evidenceSingleIds, {hash: `#finding=${evidenceSinglePayload.findings.length - 1}&theme=light`});
+const evidenceDeep = runSingle(singleEvidence, singleEvidenceHtml, evidenceSinglePayload, {omitted: ["gl"], hash: `#finding=${evidenceSinglePayload.findings.length - 1}&theme=light`});
 if (evidenceDeep.root.attrs["data-theme"] !== "light" || !evidenceDeep.nodes.findings.children[evidenceSinglePayload.findings.length - 1].classes.has("selected")) throw new Error("an evidence-only report stopped honouring deep links");
 
 // ---- navigating the single-clip viewer ---------------------------------
@@ -451,7 +492,7 @@ function navigate(state, next) { state.hash.value = next; state.listeners.hashch
 function assertNoHashWrites(state, why) {
   if (state.hash.writes !== 0) throw new Error(`${why}: the viewer wrote location.hash ${state.hash.writes} time(s)`);
 }
-const selectionNav = runSingle(single, singlePayload, singleIds);
+const selectionNav = runSingle(single, singleHtml, singlePayload);
 navigate(selectionNav, `#finding=${findingIndex}`);
 if (!selectionNav.nodes.findings.children[findingIndex].classes.has("selected")) throw new Error("navigating to a finding did not select it");
 navigate(selectionNav, "#finding=999999999");
@@ -461,8 +502,10 @@ navigate(selectionNav, "#theme=dark");
 if (!selectionNav.nodes.findings.children[findingIndex].classes.has("selected")) throw new Error("a fragment without a finding cleared the selection");
 navigate(selectionNav, "#frame=2");
 if (Number(selectionNav.nodes.scrub.value) !== 2) throw new Error("navigating to a frame did not scrub");
+navigate(selectionNav, "#frame=999999999");
+if (Number(selectionNav.nodes.scrub.value) !== lastFrame) throw new Error("navigating past the end of the clip did not clamp to its last judged frame");
 navigate(selectionNav, "#frame=1.5");
-if (Number(selectionNav.nodes.scrub.value) !== 0) throw new Error("an unusable frame did not restore frame 0");
+if (Number(selectionNav.nodes.scrub.value) !== 0) throw new Error("an unreadable frame did not restore frame 0");
 navigate(selectionNav, "#frame=2");
 navigate(selectionNav, "#embed=1");
 if (Number(selectionNav.nodes.scrub.value) !== 2) throw new Error("a fragment without a frame moved the playhead");
@@ -474,7 +517,7 @@ const multiPayload = JSON.parse(multi.payload);
 if (multiPayload.clips.length < 2) throw new Error("the multi-clip fixture must embed at least two clips");
 const [firstClip, secondClip] = multiPayload.clips;
 if (firstClip.name === secondClip.name) throw new Error("the multi-clip fixture must embed two distinguishable clips");
-const runMulti = (hash) => runSingle(multi, multiPayload, singleIds, hash === undefined ? undefined : {hash});
+const runMulti = (hash) => runSingle(multi, multiHtml, multiPayload, hash === undefined ? undefined : {hash});
 if (runMulti().nodes["clip-select"].value !== firstClip.name) throw new Error("a report opens on its first clip");
 if (runMulti(`#clip=${encodeURIComponent(secondClip.name)}`).nodes["clip-select"].value !== secondClip.name) throw new Error("clip= did not select the named clip");
 if (runMulti("#clip=no-such-clip").nodes["clip-select"].value !== firstClip.name) throw new Error("an unknown clip did not restore the first clip");
@@ -496,7 +539,7 @@ assertNoHashWrites(evidenceRun, "an evidence-only comparison");
 // ---- system theme changes ----------------------------------------------
 // The CSS follows prefers-color-scheme on its own; the canvas views have to
 // be repainted, so the viewers listen for the change and re-resolve.
-const schemeRun = runSingle(single, singlePayload, singleIds, {styles: tokenStyles(Object.assign({}, themedTokens, {ground: "#101010"}))});
+const schemeRun = runSingle(single, singleHtml, singlePayload, {styles: tokenStyles(Object.assign({}, themedTokens, {ground: "#101010"}))});
 const firstClear = schemeRun.nodes.gl.gl.clears[schemeRun.nodes.gl.gl.clears.length - 1];
 if (Math.abs(firstClear[0] - 0x10 / 255) > 1e-6) throw new Error("the viewer did not paint the first scheme's ground token");
 if (typeof schemeRun.media.change !== "function") throw new Error("the viewer does not listen for a system theme change");
