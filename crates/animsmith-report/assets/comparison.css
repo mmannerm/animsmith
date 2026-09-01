@@ -28,3 +28,4 @@ pre { white-space: pre-wrap; word-break: break-word; color: var(--muted) }
 :root[data-embed] header, :root[data-embed] .sync, :root[data-embed] .shared-chart { padding: .4rem }
 :root[data-embed] .shared-chart { margin: 0 .4rem }
 :root[data-embed] main { padding: .4rem }
+.notice { background: var(--ground); border: 1px dashed var(--line); border-radius: 5px; color: var(--muted); padding: 2rem 1rem; text-align: center }

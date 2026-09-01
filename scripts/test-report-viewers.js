@@ -159,6 +159,18 @@ data.before.clip.positions = mixed.toString("base64"); data.after.clip.positions
 const structuralNodes = execute(data);
 structuralNodes["before-findings"].children[structuralIndex].listeners.click();
 if (!structuralNodes["before-pose-context"].textContent.includes("structural evidence") || !structuralNodes["before-pose-context"].textContent.includes("selected frame contains non-finite")) throw new Error("structural selection hid non-finite selected-frame availability");
+// An evidence-only comparison carries no pose grid at all. Every panel here
+// is drawn from that grid, so each must disclose the omission instead of
+// throwing or silently drawing nothing, while the evidence lists remain.
+data.evidence_only = true;
+delete data.before.clip.positions;
+delete data.after.clip.positions;
+const evidenceNodes = execute(data);
+for (const id of ["before-pose-context","after-pose-context","before-path","after-path","before-gait","after-gait","comparison-root-path"])
+  if (!evidenceNodes[id].textContent.includes("evidence-only report")) throw new Error(`${id} did not disclose the omitted pose grid`);
+if (!evidenceNodes.scrub.disabled) throw new Error("the shared phase stayed scrubbable with no pose grid behind it");
+if (evidenceNodes["before-findings"].children.length !== data.before.findings.length || !evidenceNodes["before-identity"].textContent.includes(data.before.dependency_closure_identity.sha256)) throw new Error("an evidence-only comparison dropped findings or identities");
+
 // ---- fragment parser ---------------------------------------------------
 // One parser serves both documents, so it is exercised once, directly, with
 // valid, invalid, and hostile fragments. Nothing here may throw.

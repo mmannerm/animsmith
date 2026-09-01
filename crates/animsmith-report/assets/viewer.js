@@ -17,7 +17,11 @@ function decodePositions(b64) {
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   return new Float32Array(bytes.buffer);
 }
-for (const clip of data.clips) clip.pos = decodePositions(clip.positions);
+// An evidence-only report ships no pose grid: there is nothing to decode,
+// nothing to play back, and the document already carries a notice where the
+// canvas would be. Findings, coverage, charts, and identities are unchanged.
+const evidenceOnly = data.evidence_only === true;
+for (const clip of data.clips) clip.pos = evidenceOnly ? null : decodePositions(clip.positions);
 
 const boneCount = data.bones.length;
 const parents = data.bones.map((b) => b.parent);
@@ -49,7 +53,6 @@ function norm3(v) { const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l,
 
 // ---- WebGL setup ------------------------------------------------------
 const canvas = document.getElementById("gl");
-const gl = canvas.getContext("webgl2", { antialias: true });
 const VS = `#version 300 es
 layout(location=0) in vec3 pos;
 layout(location=1) in vec3 color;
@@ -62,6 +65,7 @@ precision mediump float;
 in vec3 vColor;
 out vec4 frag;
 void main() { frag = vec4(vColor, 1.0); }`;
+let gl = null, uMvp = null, uPointSize = null, vbo = null;
 function shader(type, src) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src);
@@ -69,20 +73,23 @@ function shader(type, src) {
   if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
   return s;
 }
-const prog = gl.createProgram();
-gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
-gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
-gl.linkProgram(prog);
-gl.useProgram(prog);
-const uMvp = gl.getUniformLocation(prog, "mvp");
-const uPointSize = gl.getUniformLocation(prog, "pointSize");
-const vbo = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-gl.enableVertexAttribArray(0);
-gl.enableVertexAttribArray(1);
-gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
-gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
-gl.enable(gl.DEPTH_TEST);
+if (canvas && !evidenceOnly) {
+  gl = canvas.getContext("webgl2", { antialias: true });
+  const prog = gl.createProgram();
+  gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+  uMvp = gl.getUniformLocation(prog, "mvp");
+  uPointSize = gl.getUniformLocation(prog, "pointSize");
+  vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.enableVertexAttribArray(0);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+  gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+  gl.enable(gl.DEPTH_TEST);
+}
 
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
@@ -92,7 +99,7 @@ let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
 function fitCamera() {
-  if (!clip) return;
+  if (!clip || !clip.pos) return;
   let min = [1e9, 1e9, 1e9], max = [-1e9, -1e9, -1e9];
   for (let i = 0; i < clip.pos.length; i += 3)
     for (let c = 0; c < 3; c++) {
@@ -144,7 +151,7 @@ function buildVertices(palette) {
 }
 
 function draw() {
-  if (!clip) return;
+  if (!clip || !gl) return;
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
@@ -235,6 +242,7 @@ function updateCharts() {
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
 scrub.addEventListener("input", () => { playing = false; playBtn.textContent = "▶"; setFrame(+scrub.value); });
 playBtn.addEventListener("click", () => {
+  if (evidenceOnly) return;
   playing = !playing;
   playBtn.textContent = playing ? "⏸" : "▶";
   if (playing) { last = performance.now(); requestAnimationFrame(tick); }
@@ -254,20 +262,22 @@ function tick(now) {
 
 // orbit controls
 let dragging = false, lastX = 0, lastY = 0;
-canvas.addEventListener("mousedown", (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
-window.addEventListener("mouseup", () => (dragging = false));
-window.addEventListener("mousemove", (e) => {
-  if (!dragging) return;
-  yaw -= (e.clientX - lastX) * 0.01;
-  pitch = Math.max(-1.4, Math.min(1.4, pitch + (e.clientY - lastY) * 0.01));
-  lastX = e.clientX; lastY = e.clientY;
-  draw();
-});
-canvas.addEventListener("wheel", (e) => {
-  e.preventDefault();
-  dist *= Math.exp(e.deltaY * 0.001);
-  draw();
-}, { passive: false });
+if (canvas) {
+  canvas.addEventListener("mousedown", (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+  window.addEventListener("mouseup", () => (dragging = false));
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    yaw -= (e.clientX - lastX) * 0.01;
+    pitch = Math.max(-1.4, Math.min(1.4, pitch + (e.clientY - lastY) * 0.01));
+    lastX = e.clientX; lastY = e.clientY;
+    draw();
+  });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    dist *= Math.exp(e.deltaY * 0.001);
+    draw();
+  }, { passive: false });
+}
 
 // findings panel
 const list = document.getElementById("findings");

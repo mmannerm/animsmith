@@ -9,11 +9,17 @@ const decode = (encoded) => {
   for (let index = 0; index < raw.length; index++) bytes[index] = raw.charCodeAt(index);
   return new Float32Array(bytes.buffer);
 };
-for (const side of [data.before, data.after]) side.clip.pos = decode(side.clip.positions);
+// An evidence-only comparison ships no pose grids. Every panel drawing here
+// is derived from them, so each one says so and the shared phase has nothing
+// left to scrub; findings, coverage, contexts, and identities are unchanged.
+const evidenceOnly = data.evidence_only === true;
+const POSE_OMITTED = "Pose playback omitted: evidence-only report";
+for (const side of [data.before, data.after]) side.clip.pos = evidenceOnly ? new Float32Array(0) : decode(side.clip.positions);
 q("mapping").textContent = data.correspondence.disclosure;
 const parents = data.bones.map((bone) => bone.parent);
 const sharedFrameMax = Math.max(data.before.clip.frames, data.after.clip.frames) - 1;
 q("scrub").max = sharedFrameMax;
+if (evidenceOnly) q("scrub").disabled = true;
 let selectedFrames = null;
 let selectedContext = null;
 // Canvas and SVG paint comes from the shared design tokens, so both panels
@@ -90,11 +96,13 @@ function pathData(points, map) {
 }
 
 function drawSide(name, phase, highlighted) {
-  const side = data[name], canvas = q(`${name}-gl`), context = canvas.getContext("2d");
+  const side = data[name];
+  const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
+  if (evidenceOnly) { q(`${name}-pose-context`).textContent = POSE_OMITTED; return frame; }
+  const canvas = q(`${name}-gl`), context = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1, width = canvas.clientWidth * dpr, height = canvas.clientHeight * dpr;
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-  const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
   const structural = selectedContext && selectedContext.name === name && selectedContext.kind === "structural" ? selectedContext.value : null;
   const bounds = sidePoseBounds[name];
   if (!bounds) {
@@ -142,6 +150,7 @@ function drawSide(name, phase, highlighted) {
 
 function drawRootComparison(phase) {
   const svg = q("comparison-root-path"); svg.replaceChildren();
+  if (evidenceOnly) { svg.textContent = POSE_OMITTED; return; }
   if (!sharedRootBounds) { svg.textContent = "root trajectories unavailable: no input has finite resolved Root samples"; return; }
   const map = topDownMap(sharedRootBounds, 720, 220, 28);
   const styles = { before: palette.accent, after: palette.warning };
@@ -175,6 +184,7 @@ const TRAIL_TOKENS = {
 };
 function drawTrails(name, phase) {
   const side = data[name], svg = q(`${name}-path`); svg.replaceChildren();
+  if (evidenceOnly) { svg.textContent = POSE_OMITTED; return; }
   if (!sharedTrailBounds) { svg.textContent = "role trajectories unavailable"; return; }
   const map = topDownMap(sharedTrailBounds, 360, 180, 24);
   let legendX = 8, unavailable = [], incomplete = [];
@@ -200,6 +210,7 @@ function drawTrails(name, phase) {
 
 function drawGait(name, phase) {
   const side = data[name], svg = q(`${name}-gait`), gait = side.contexts.gait; svg.replaceChildren();
+  if (evidenceOnly) { svg.textContent = POSE_OMITTED; return; }
   if (!gait) { svg.textContent = "gait unavailable: hips and bilateral foot/toe roles did not all resolve"; return; }
   const series = { left: [], right: [] };
   for (let frame = 0; frame < side.clip.frames; frame++) {

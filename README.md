@@ -128,7 +128,12 @@ required-unavailable facet.
 
 The HTML report is a single self-contained file with no CDN dependency.
 It plays back the exact pose-grid frames judged by the checks, with
-foot/root trails, metric charts, and a clickable findings list.
+foot/root trails, metric charts, and a clickable findings list. It follows
+the reader's light or dark system theme, and a URL fragment can pin the
+theme, embed it in a page, or deep-link a clip, frame, or finding.
+`animsmith report --evidence-only` leaves the sampled poses out: the
+findings, coverage gaps, engine predictions, charts, and input identities
+remain, so the report can be shared where the source motion cannot.
 
 ## CLI Or Library?
 

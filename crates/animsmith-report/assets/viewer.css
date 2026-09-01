@@ -46,3 +46,4 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 :root[data-embed] header, :root[data-embed] .hint { display: none; }
 :root[data-embed] main { padding: 0; }
 .finding.selected { outline: 2px solid var(--accent); }
+.notice { background: var(--ground); border: 1px dashed var(--line); border-radius: 6px; color: var(--muted); padding: 2rem 1rem; text-align: center; }

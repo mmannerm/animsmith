@@ -16,6 +16,12 @@ plays back exactly those frames in a small hand-written WebGL viewer.
 There is no CDN, no three.js dependency, and no JavaScript resampling;
 when a finding names a frame, the viewer scrubs to that judged frame.
 
+`ReportOptions::evidence_only` omits the sampled pose grid from either
+report form and marks the embedded data `evidence_only`. The grid is the
+motion, so a full report of a licensed clip carries that clip; the
+evidence-only document keeps findings, coverage gaps, engine predictions,
+charts, and identities, and can be shared where the source asset cannot.
+
 Every colour in a generated document resolves through one set of design
 tokens: dark by default, light under `prefers-color-scheme`, and either one
 pinned by a `#theme=light|dark` URL fragment. The same fragment carries

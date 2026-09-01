@@ -23,6 +23,18 @@ fn comparison_fixture(name: &str) -> PathBuf {
         .join(format!("report-comparison-{name}.glb"))
 }
 
+/// A full report: sampled poses embedded, the historical default.
+fn full() -> animsmith_report::ReportOptions {
+    animsmith_report::ReportOptions::default()
+}
+
+/// A report that keeps the evidence and leaves the motion out.
+fn evidence_only() -> animsmith_report::ReportOptions {
+    animsmith_report::ReportOptions {
+        evidence_only: true,
+    }
+}
+
 fn report_data(html: &str) -> Value {
     embedded_json(html, "report-data")
 }
@@ -122,8 +134,9 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
         &config,
         "acceptance-matrix",
     );
-    let first = animsmith_report::render_comparison(before, after).expect("comparison renders");
-    let second = animsmith_report::render_comparison(before, after)
+    let first =
+        animsmith_report::render_comparison(before, after, full()).expect("comparison renders");
+    let second = animsmith_report::render_comparison(before, after, full())
         .expect("comparison renders deterministically");
 
     assert_eq!(first, second);
@@ -398,6 +411,7 @@ fn comparison_binds_equal_primary_bytes_to_changed_sidecar_closures() {
     let html = animsmith_report::render_comparison(
         comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
         comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        full(),
     )
     .unwrap();
     let data = embedded_json(&html, "comparison-report-data");
@@ -450,6 +464,7 @@ fn comparison_projects_node_only_finding_subjects_from_exact_source_authority() 
             "walk",
         ),
         comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        full(),
     )
     .unwrap();
     let data = embedded_json(&html, "comparison-report-data");
@@ -489,6 +504,7 @@ fn identical_findings_get_side_and_occurrence_unique_navigation_anchors() {
             &config,
             "acceptance-matrix",
         ),
+        full(),
     )
     .unwrap();
     let data = embedded_json(&html, "comparison-report-data");
@@ -531,6 +547,7 @@ fn comparison_public_boundary_admits_finding_max_and_refuses_n_plus_one() {
                 &config,
                 "acceptance-matrix",
             ),
+            full(),
         )
     };
     render(LIMIT).expect("the exact finding limit renders");
@@ -574,6 +591,7 @@ fn comparison_public_report_text_boundary_counts_repeated_arbitrary_check_ids() 
                 clip,
             ),
             comparison_side(&after_source, &after_grids, &roles, &[], &config, clip),
+            full(),
         )
     };
     render(exact_id_bytes).expect("exact aggregate report-text limit is admitted");
@@ -625,6 +643,7 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
                 &config,
                 "acceptance-matrix",
             ),
+            full(),
         )
     };
     assert_eq!(
@@ -725,6 +744,7 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
                 &config,
                 "walk",
             ),
+            full(),
         );
         if frames == CONTEXT_LIMIT - 2 {
             result.expect("the exact diagnostic-context work limit renders");
@@ -824,6 +844,7 @@ fn comparison_matrix_projects_typed_visual_acceptance_context() {
             &config,
             "acceptance-matrix",
         ),
+        full(),
     )
     .expect("matrix comparison renders");
     let data = embedded_json(&html, "comparison-report-data");
@@ -1093,6 +1114,7 @@ fn comparison_binds_prediction_provenance_to_each_exact_side() {
                 after_provenance,
                 "acceptance-matrix",
             ),
+            full(),
         )
     };
     render(
@@ -1238,6 +1260,7 @@ fn comparison_filters_scoped_gaps_and_prediction_facets_to_selected_clip() {
             &config,
             "acceptance-matrix",
         ),
+        full(),
     )
     .unwrap();
     let data = embedded_json(&html, "comparison-report-data");
@@ -1266,7 +1289,7 @@ fn render_embeds_pose_grid_and_uses_no_external_urls() {
     let roles = ResolvedRoles::default();
     let checks = Vec::new();
 
-    let html = animsmith_report::render(&grids, &roles, &checks, None, None);
+    let html = animsmith_report::render(&grids, &roles, &checks, None, None, full());
     assert_self_contained(&html);
     let data = report_data(&html);
     let clips = data["clips"].as_array().expect("clips array");
@@ -1312,7 +1335,7 @@ fn render_self_contained_with_roles_findings_and_charts() {
             .time(0.5),
     ]);
 
-    let html = animsmith_report::render(&grids, &roles, &checks, None, None);
+    let html = animsmith_report::render(&grids, &roles, &checks, None, None, full());
     assert_self_contained(&html);
     assert!(
         html.contains(r#"data-kind="gait""#),
@@ -1352,7 +1375,7 @@ fn render_respects_clip_filter() {
     let roles = ResolvedRoles::default();
     let checks = Vec::new();
 
-    let html = animsmith_report::render(&grids, &roles, &checks, None, Some("missing"));
+    let html = animsmith_report::render(&grids, &roles, &checks, None, Some("missing"), full());
     assert_self_contained(&html);
     let data = report_data(&html);
     assert_eq!(
@@ -1362,7 +1385,7 @@ fn render_respects_clip_filter() {
     );
 
     for name in ["walk", "idle"] {
-        let html = animsmith_report::render(&grids, &roles, &checks, None, Some(name));
+        let html = animsmith_report::render(&grids, &roles, &checks, None, Some(name), full());
         let data = report_data(&html);
         let clips = data["clips"].as_array().expect("clips array");
         assert_eq!(clips.len(), 1);
@@ -1407,7 +1430,8 @@ fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
             prediction_check(&provenance, available, unavailable),
             gap_check,
         ];
-        let html = animsmith_report::render(&grids, &roles, &checks, Some(&provenance), None);
+        let html =
+            animsmith_report::render(&grids, &roles, &checks, Some(&provenance), None, full());
         let data = report_data(&html);
         let states = data["predictions"][0]["prediction"]["facets"]
             .as_array()
@@ -1476,7 +1500,7 @@ fn themed_documents() -> Vec<(&'static str, String)> {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
-    let single = animsmith_report::render(&grids, &roles, &[], None, None);
+    let single = animsmith_report::render(&grids, &roles, &[], None, None, full());
 
     let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
     let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
@@ -1501,6 +1525,7 @@ fn themed_documents() -> Vec<(&'static str, String)> {
             &config,
             "acceptance-matrix",
         ),
+        full(),
     )
     .expect("comparison renders");
     vec![("single-clip", single), ("comparison", comparison)]
@@ -1627,7 +1652,7 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
     doc.skeleton.bones.push(right_foot);
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
-    let html = animsmith_report::render(&grids, &roles, &[], None, Some("walk"));
+    let html = animsmith_report::render(&grids, &roles, &[], None, Some("walk"), full());
     assert_self_contained(&html);
 
     let figures = chart_figures(&html);
@@ -1714,7 +1739,7 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
     };
     let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
-    let html = animsmith_report::render(&grids, &roles, &[], None, None);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
 
     let figure = chart_figures(&html)
         .into_iter()
@@ -1745,4 +1770,151 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
         (width - height).abs() <= 0.2,
         "one metre of X and one metre of Z must be the same length: {width} vs {height}"
     );
+}
+
+#[test]
+fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
+    let mut doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let mut right_foot = doc.skeleton.bones[2].clone();
+    right_foot.name = "right_foot".into();
+    doc.skeleton.bones.push(right_foot);
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let checks = evaluations(vec![
+        Finding::new("fixture-check", Severity::Warning, "fixture finding")
+            .clip("walk")
+            .bone("hips")
+            .time(0.5),
+    ]);
+
+    let full_html = animsmith_report::render(&grids, &roles, &checks, None, None, full());
+    let html = animsmith_report::render(&grids, &roles, &checks, None, None, evidence_only());
+    assert_self_contained(&html);
+
+    let full_data = report_data(&full_html);
+    let data = report_data(&html);
+    assert_eq!(full_data["evidence_only"], false);
+    assert_eq!(data["evidence_only"], true);
+    for clip in data["clips"].as_array().expect("clips array") {
+        assert!(
+            clip.get("positions").is_none(),
+            "an evidence-only report embeds no sampled motion"
+        );
+        assert!(clip["frames"].as_u64().expect("frame count") > 0);
+    }
+    assert!(
+        full_data["clips"][0]["positions"].is_string(),
+        "a full report still carries its pose grid"
+    );
+    for key in [
+        "file",
+        "profile",
+        "bones",
+        "findings",
+        "gaps",
+        "predictions",
+        "prediction_provenance",
+    ] {
+        assert_eq!(data[key], full_data[key], "{key} is unchanged");
+    }
+    assert_eq!(
+        chart_figures(&html),
+        chart_figures(&full_html),
+        "the metric charts are the same evidence"
+    );
+    assert!(html.contains(
+        "<p class=\"notice\" id=\"gl-notice\">Pose playback omitted: evidence-only report</p>"
+    ));
+    assert!(
+        !html.contains("<canvas id=\"gl\">") && html.contains("<button id=\"play\" disabled>"),
+        "the pose view is replaced and playback is disabled"
+    );
+    assert!(
+        full_html.contains("<canvas id=\"gl\">") && !full_html.contains("Pose playback omitted"),
+        "a full report is unchanged"
+    );
+    assert!(
+        html.len() < full_html.len(),
+        "omitting the pose grid must shrink the document"
+    );
+}
+
+#[test]
+fn an_evidence_only_comparison_drops_both_pose_grids() {
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let sides = || {
+        (
+            comparison_side(
+                &before_source,
+                &before_grids,
+                &roles,
+                &[],
+                &config,
+                "acceptance-matrix",
+            ),
+            comparison_side(
+                &after_source,
+                &after_grids,
+                &roles,
+                &[],
+                &config,
+                "acceptance-matrix",
+            ),
+        )
+    };
+    let (before, after) = sides();
+    let full_html = animsmith_report::render_comparison(before, after, full()).unwrap();
+    let (before, after) = sides();
+    let html = animsmith_report::render_comparison(before, after, evidence_only()).unwrap();
+    assert_self_contained(&html);
+
+    let full_data = embedded_json(&full_html, "comparison-report-data");
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(full_data["evidence_only"], false);
+    assert_eq!(data["evidence_only"], true);
+    for side in ["before", "after"] {
+        assert!(
+            data[side]["clip"].get("positions").is_none(),
+            "{side}: no sampled motion is embedded"
+        );
+        assert!(full_data[side]["clip"]["positions"].is_string(), "{side}");
+        assert!(
+            data[side]["clip"]["times"].is_array(),
+            "{side}: judged frame times remain"
+        );
+        for key in [
+            "identity",
+            "dependency_closure_identity",
+            "findings",
+            "gaps",
+            "contexts",
+            "predictions",
+            "prediction_provenance",
+        ] {
+            assert_eq!(data[side][key], full_data[side][key], "{side} {key}");
+        }
+    }
+    assert_eq!(data["correspondence"], full_data["correspondence"]);
+    for side in ["before", "after"] {
+        assert!(
+            html.contains(&format!(
+                "<p class=\"notice\" id=\"{side}-gl-notice\">Pose playback omitted: evidence-only report</p>"
+            )),
+            "{side}: the panel says where its pose view went"
+        );
+    }
+    assert!(
+        !html.contains("<canvas")
+            && html.contains(
+                "id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\" disabled>"
+            ),
+        "no canvas remains and the shared phase is disabled"
+    );
+    assert!(full_html.contains("<canvas id=\"before-gl\">"));
+    assert!(html.len() < full_html.len());
 }

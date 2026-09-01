@@ -1,4 +1,5 @@
-//! CLI contract for the explicit offline visual before/after report.
+//! CLI contract for the offline HTML `report` command: the explicit visual
+//! before/after form, and the evidence-only form of both.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -241,4 +242,104 @@ fn report_comparison_guards_sidecar_and_configuration_inputs_atomically() {
     assert_eq!(config_alias.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&config_alias.stderr).contains("configuration input"));
     assert_eq!(std::fs::read(&config).unwrap(), config_bytes);
+}
+
+/// The embedded report payload, which is the machine-readable half of a
+/// generated document.
+fn embedded_data(html: &str, id: &str) -> serde_json::Value {
+    let marker = format!("<script type=\"application/json\" id=\"{id}\">");
+    let (_, tail) = html.split_once(&marker).expect("report data marker");
+    let (raw, _) = tail.split_once("</script>").expect("report data close");
+    serde_json::from_str(raw).expect("report data is JSON")
+}
+
+#[test]
+fn evidence_only_publishes_both_report_forms_without_their_sampled_motion() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let rig = rig_fixture();
+    let before = fixture();
+    let after = comparison_fixture("after");
+
+    let render = |name: &str, evidence_only: bool, comparison: bool| {
+        let output = directory.path().join(name);
+        let mut command = animsmith();
+        command.arg("report");
+        if comparison {
+            command
+                .arg(&before)
+                .args(["--compare-after"])
+                .arg(&after)
+                .args(["--before-clip", "acceptance-matrix"])
+                .args(["--after-clip", "acceptance-matrix"]);
+        } else {
+            command.arg(&rig);
+        }
+        command.arg("--output").arg(&output);
+        if evidence_only {
+            command.arg("--evidence-only");
+        }
+        let result = command.output().expect("runs report");
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let html = std::fs::read_to_string(&output).expect("report is written");
+        let bytes = std::fs::metadata(&output).expect("report metadata").len();
+        (html, bytes)
+    };
+
+    for (comparison, id, prefix) in [
+        (false, "report-data", None),
+        (true, "comparison-report-data", Some(["before", "after"])),
+    ] {
+        let form = if comparison {
+            "comparison"
+        } else {
+            "single-clip"
+        };
+        let (full_html, full_bytes) = render(&format!("{form}-full.html"), false, comparison);
+        let (html, bytes) = render(&format!("{form}-evidence.html"), true, comparison);
+        let full_data = embedded_data(&full_html, id);
+        let data = embedded_data(&html, id);
+
+        assert_eq!(full_data["evidence_only"], false, "{form}");
+        assert_eq!(data["evidence_only"], true, "{form}");
+        assert!(
+            !html.contains("\"positions\""),
+            "{form}: no sampled pose grid is embedded anywhere in the document"
+        );
+        assert!(
+            full_html.contains("\"positions\""),
+            "{form}: a full report still carries its pose grid"
+        );
+        match prefix {
+            None => {
+                assert_eq!(data["findings"], full_data["findings"], "{form}");
+                assert!(data["clips"][0].get("positions").is_none(), "{form}");
+            }
+            Some(sides) => {
+                for side in sides {
+                    assert_eq!(
+                        data[side]["findings"], full_data[side]["findings"],
+                        "{form}"
+                    );
+                    assert_eq!(
+                        data[side]["identity"], full_data[side]["identity"],
+                        "{form}"
+                    );
+                    assert!(data[side]["clip"].get("positions").is_none(), "{form}");
+                }
+            }
+        }
+        assert!(
+            html.contains("Pose playback omitted: evidence-only report"),
+            "{form}: the document says where its pose view went"
+        );
+        assert!(
+            bytes < full_bytes,
+            "{form}: {bytes} bytes must be smaller than the full {full_bytes}"
+        );
+    }
 }
