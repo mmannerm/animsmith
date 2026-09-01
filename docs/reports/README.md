@@ -114,7 +114,8 @@ motion-bearing derivatives, and generated engine projects are not committed.
 They may be used only in an authorized external workspace for one-time local
 validation. Reports retain scrubbed artifact labels, non-recoverable digests,
 evaluator identity, coverage gaps, and procedures needed to repeat the work
-with authorized inputs.
+with authorized inputs. Published tool output about a licensed clip is bounded
+the same way, by the [licensed-derivative rule](../../DEVELOPMENT.md#golden-tests).
 
 Repository and CI validation uses only synthetic/self-authored fixtures or
 assets whose licenses explicitly permit repository inclusion and CI
