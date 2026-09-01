@@ -1,5 +1,26 @@
 # Documentation
 
+## Start here
+
+Two doors into AnimSmith, and one command behind both:
+
+```console
+$ animsmith lint walk.glb
+```
+
+- **Artists and animators** — catch a bad export while the DCC is still open.
+  [Install](install.md), then [first lint in 60 seconds](first-lint.md), then
+  the [animation-author workflow](animation-author-workflow.md).
+- **Game developers** — know what a pack really contains and gate every
+  re-export. [Install](install.md), then
+  [your first report](first-report.md), then the
+  [game-developer intake workflow](game-developer-intake-workflow.md).
+
+Something specific already looks wrong in the engine? Start from the
+[symptoms](symptoms/README.md).
+
+## Every page
+
 Find what you need by task — each page below owns one job. The Category
 column names the documentation site's part and optional `Part › Group`, so
 this table and the site sidebar carry the same structure in the same order.
@@ -7,8 +28,13 @@ this table and the site sidebar carry the same structure in the same order.
 | Document | Use it to… | Category |
 |---|---|---|
 | [Why animsmith](why-animsmith.md) | Decide whether animsmith fits your team — what it is, why it exists, and what it is worth by role. The canonical home of the positioning case. | Start |
-| [Install and quickstart](../README.md) | Install and quickstart, plus the check and configuration reference. | Start |
+| [Install](install.md) | Get the binary — prebuilt archive, `cargo install`, or the pure-Rust glTF-only build — and confirm it runs. | Start |
+| [First lint in 60 seconds](first-lint.md) | See a finding, repair what is mechanically safe, and watch a declared contract catch a popped loop, on two committed sample clips. | Start |
+| [Your first report](first-report.md) | Turn findings into skeleton playback, charts and one shareable HTML file, including the before/after comparison and the evidence-only form. | Start |
 | [Mixamo tutorial](mixamo-tutorial.md) | Take a real Mixamo download end-to-end — download, convert, inspect, lint, fix, and grow a contract config with the built-in `mixamo` rig profile. | Start |
+| [Symptom index](symptoms/README.md) | Start from what you see in the engine and route it to the page, check, repair and config that address it. | Symptoms |
+| [The loop pops](symptoms/loop-pops.md) | Fix a looping clip that jumps or hitches at the wrap: what the seam checks measure, the before/after evidence, and the loop contract. | Symptoms |
+| [Feet slide within a clip](symptoms/feet-slide.md) | Fix a planted foot that skates during stance: the sampled stance intervals, the declared speed, and who owns the repair. | Symptoms |
 | [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder) and what animsmith validates at each level — and why a check fires: every runtime failure mode, mapped to the checks, repairs, and config that address it. | Symptoms |
 | [Animation troubleshooting](animation-troubleshooting.md) | Triage visible runtime symptoms to the right check, report evidence, and owner without duplicating the config or check contracts. | Symptoms |
 | [Animation-author workflow](animation-author-workflow.md) | Take an authored export from immutable source through evidence-backed candidate handoff, without treating a safe mechanical edit as artistic approval. | Workflows |

@@ -391,7 +391,7 @@ walking.glb:
 
 And this is what a violation looks like — the same contract against a
 copy whose cycle was cut short, the classic
-[popped loop](game-ready-clips.md#the-loop-pops):
+[popped loop](symptoms/loop-pops.md):
 
 ```console
 $ animsmith lint walking-popped.glb
@@ -450,7 +450,7 @@ walking.glb:
 Whether that stance drift is acceptable for your game is exactly the
 kind of decision the contract records — tighten the cap, accept it
 with `--allow`, or send the clip back for cleanup (see
-[feet slide within one clip](game-ready-clips.md#feet-slide-within-one-clip)).
+[feet slide within one clip](symptoms/feet-slide.md)).
 
 From here the contract grows with your project: rename clips as you
 import more animations, add `[clips."run_*"]` globs, speed pins, and

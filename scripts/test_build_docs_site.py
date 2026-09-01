@@ -474,7 +474,6 @@ class ExternalProxyContractTests(unittest.TestCase):
 
             book = stage / "book"
             aliases = {
-                "README.html": "index.html",
                 "docs/README.html": "docs/index.html",
                 "docs/reports/README.html": "docs/reports/index.html",
             }
@@ -484,6 +483,12 @@ class ExternalProxyContractTests(unittest.TestCase):
                     (book / canonical).read_bytes(),
                     f"build publishes {alias} as an exact compatibility copy",
                 )
+            # The fixture's root README is not an index row, so the artifact
+            # root is not its render and must not become its alias.
+            self.assertFalse(
+                (book / "README.html").exists(),
+                "a README outside the navigation aliases nothing",
+            )
             redirects = {
                 "CONTRIBUTING.html": (
                     "https://github.com/mmannerm/animsmith/blob/vfixture/CONTRIBUTING.md"
@@ -506,7 +511,6 @@ class ExternalProxyContractTests(unittest.TestCase):
                 },
                 {
                     "index.html",
-                    "README.html",
                     "docs/index.html",
                     "docs/README.html",
                     "docs/reports/index.html",
@@ -590,10 +594,16 @@ class ExternalProxyContractTests(unittest.TestCase):
             (staged / "README.md").write_text("# Root\n", encoding="utf-8")
             (staged / "docs/README.md").write_text("# Docs\n", encoding="utf-8")
             (staged / "unpublished/README.md").write_text("# Hidden\n", encoding="utf-8")
+            (staged / "SUMMARY.md").write_text(
+                "# Summary\n\n- [Root](README.md)\n- [Docs](docs/README.md)\n",
+                encoding="utf-8",
+            )
             (book / "index.html").write_text("root output\n", encoding="utf-8")
             (book / "docs/index.html").write_text("docs output\n", encoding="utf-8")
 
-            BUILD_DOCS_SITE.publish_readme_aliases(staged, book)
+            chapters = BUILD_DOCS_SITE.summary_chapters(staged)
+            self.assertEqual(chapters, {"README.md", "docs/README.md"})
+            BUILD_DOCS_SITE.publish_readme_aliases(staged, book, chapters)
 
             self.assertEqual((book / "README.html").read_text(encoding="utf-8"), "root output\n")
             self.assertEqual(
@@ -602,6 +612,31 @@ class ExternalProxyContractTests(unittest.TestCase):
             self.assertFalse(
                 (book / "unpublished/README.html").exists(),
                 "an unbuilt source page does not become a misleading alias",
+            )
+
+    def test_a_readme_outside_the_navigation_never_aliases_the_page_at_its_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staged = root / "src"
+            book = root / "book"
+            staged.mkdir()
+            book.mkdir()
+            (staged / "README.md").write_text("# Root\n", encoding="utf-8")
+            (staged / "SUMMARY.md").write_text(
+                "# Summary\n\n- [Docs](docs/README.md)\n", encoding="utf-8"
+            )
+            # mdBook publishes the book's first chapter a second time at the
+            # artifact root, so an index.html is not proof that the README
+            # beside it produced it.
+            (book / "index.html").write_text("first chapter copy\n", encoding="utf-8")
+
+            BUILD_DOCS_SITE.publish_readme_aliases(
+                staged, book, BUILD_DOCS_SITE.summary_chapters(staged)
+            )
+
+            self.assertFalse(
+                (book / "README.html").exists(),
+                "a README the navigation does not carry aliases nothing",
             )
 
     def test_non_site_source_references_redirect_but_missing_docs_still_fail(self) -> None:
@@ -654,6 +689,53 @@ class ExternalProxyContractTests(unittest.TestCase):
             self.assertIn("/another-site/outside.html", str(failure.exception))
             self.assertIn("root-relative link escapes site URL", str(failure.exception))
 
+    def test_rendered_reference_validation_covers_images_and_embedded_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            book = Path(temporary) / "book"
+            (book / "docs/symptoms").mkdir(parents=True)
+            (book / "docs/visuals").mkdir(parents=True)
+            page = book / "docs/symptoms/loop-pops.html"
+            page.write_text(
+                '<img src="../visuals/chart.svg" alt="chart">\n'
+                '<iframe src="../visuals/report.html#embed=1&amp;finding=0"></iframe>\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "no published target") as failure:
+                BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
+            self.assertIn("../visuals/chart.svg", str(failure.exception))
+            self.assertIn("../visuals/report.html", str(failure.exception))
+
+            (book / "docs/visuals/chart.svg").write_text("<svg/>\n", encoding="utf-8")
+            (book / "docs/visuals/report.html").write_text("<p>report</p>\n", encoding="utf-8")
+            # A report deep link keeps its fragment; only the document has to
+            # exist, exactly as for a link.
+            BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
+
+    def test_print_aggregation_resolves_links_but_not_re_hosted_media(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            book = Path(temporary) / "book"
+            book.mkdir()
+            # mdBook rewrites the Markdown links it parsed into the print
+            # aggregation, but passes a chapter's raw-HTML `src` through as
+            # written, where it no longer resolves from the book root.
+            (book / "print.html").write_text(
+                '<a href="docs/symptoms/loop-pops.html">chapter link</a>\n'
+                '<img src="../visuals/chart.svg" alt="re-hosted chart">\n'
+                '<iframe src="visuals/report.html#embed=1"></iframe>\n',
+                encoding="utf-8",
+            )
+            (book / "docs/symptoms").mkdir(parents=True)
+            (book / "docs/symptoms/loop-pops.html").write_text("<p>page</p>\n", encoding="utf-8")
+
+            BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
+
+            (book / "print.html").write_text(
+                '<a href="docs/symptoms/missing.html">chapter link</a>\n', encoding="utf-8"
+            )
+            with self.assertRaisesRegex(RuntimeError, "no published target"):
+                BUILD_DOCS_SITE.validate_rendered_local_links(book, "/animsmith/")
+
     def test_rendered_link_resolution_accepts_encoded_file_and_directory_index(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             book = Path(temporary) / "book"
@@ -691,6 +773,9 @@ class NavigationContractTests(unittest.TestCase):
         ("[Install](../README.md)", "Install it.", "Start"),
         ("[Overview](overview.md)", "Start here.", "Start"),
     ]
+    # A checkout whose front door is the landing page does not also row the
+    # root README: both would claim the artifact's index.html.
+    FRONT_DOOR_ROWS = [("[Overview](overview.md)", "Start here.", "Start")]
 
     def fixture(
         self,
@@ -931,12 +1016,24 @@ class NavigationContractTests(unittest.TestCase):
             "redirects.toml": '"/docs/old.html" = "overview.html"\n',
         }
 
+    def front_door_site(self, landing: str | None = None) -> dict[str, str]:
+        """The theme plus the tracked landing page the build publishes."""
+        return self.theme_site() | {
+            "landing.html": landing
+            or (
+                "<!doctype html>\n<title>Front door</title>\n"
+                '<link rel="stylesheet" href="theme/animsmith.css">\n'
+                '<a href="docs/overview.html">Start</a>\n'
+                '<img src="favicon.svg" alt="mark">\n'
+            ),
+        }
+
     def test_tracked_site_directory_is_staged_as_the_mdbook_theme(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             stage = self.stage_site(
                 Path(temporary),
                 rows=self.START_ROWS,
-                site=self.theme_site(),
+                site=self.front_door_site(),
             )
             self.assertEqual(
                 (stage / "theme/animsmith.css").read_text(encoding="utf-8"),
@@ -946,9 +1043,15 @@ class NavigationContractTests(unittest.TestCase):
             self.assertFalse(
                 (stage / "src/docs/site").exists(), "theme assets are not publishable source"
             )
-            for unpublished in ["theme/redirects.toml", "src/docs/site/redirects.toml"]:
+            for unpublished in [
+                "theme/redirects.toml",
+                "src/docs/site/redirects.toml",
+                "theme/landing.html",
+                "src/docs/site/landing.html",
+            ]:
                 self.assertFalse(
-                    (stage / unpublished).exists(), f"{unpublished} is configuration, not content"
+                    (stage / unpublished).exists(),
+                    f"{unpublished} is configuration or a published artifact, not content",
                 )
             html = tomllib.loads((stage / "book.toml").read_text(encoding="utf-8"))[
                 "output"
@@ -994,6 +1097,70 @@ class NavigationContractTests(unittest.TestCase):
                     rows=self.START_ROWS,
                     site={"animsmith.css": "/* fixture */\n", "redirects.toml": entry + "\n"},
                 )
+
+    @unittest.skipUnless(pinned_mdbook(), "the pinned mdBook is not installed")
+    def test_the_landing_page_takes_the_root_index_and_is_validated_like_a_page(self) -> None:
+        arguments = ["--site-url", "/animsmith/", "--build"]
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = self.stage_site(
+                Path(temporary),
+                arguments=arguments,
+                rows=self.FRONT_DOOR_ROWS,
+                site=self.front_door_site(),
+            )
+            book = stage / "book"
+            self.assertIn(
+                "<title>Front door</title>",
+                (book / "index.html").read_text(encoding="utf-8"),
+                "the artifact root is the tracked landing page",
+            )
+            self.assertIn(
+                "Documentation",
+                (book / "docs/index.html").read_text(encoding="utf-8"),
+                "the book keeps its own home",
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            result, _ = self.build_site(
+                Path(temporary),
+                arguments=arguments,
+                rows=self.FRONT_DOOR_ROWS,
+                site=self.front_door_site('<a href="docs/gone.html">missing</a>\n'),
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("index.html: rendered link has no published target", result.stderr)
+            self.assertIn("docs/gone.html", result.stderr)
+
+        # A root README chapter is rendered only to that same root, so the
+        # two cannot both be published there.
+        with tempfile.TemporaryDirectory() as temporary:
+            result, _ = self.build_site(
+                Path(temporary),
+                arguments=arguments,
+                rows=self.START_ROWS,
+                site=self.front_door_site(),
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("both claim book/index.html", result.stderr)
+
+    @unittest.skipUnless(pinned_mdbook(), "the pinned mdBook is not installed")
+    def test_a_checkout_without_a_landing_page_keeps_the_chapter_root_index(self) -> None:
+        # Every release tag predating the landing page rows its root README,
+        # so the artifact root stays that chapter's rendered page.
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = self.stage_site(
+                Path(temporary),
+                arguments=["--site-url", "/animsmith/", "--build"],
+                rows=self.START_ROWS,
+                site=self.theme_site(),
+            )
+            index = (stage / "book/index.html").read_text(encoding="utf-8")
+            self.assertNotIn("<title>Front door</title>", index)
+            self.assertIn(
+                "<title>Install - AnimSmith documentation</title>",
+                index,
+                "an untracked landing publishes no front door",
+            )
 
     @unittest.skipUnless(pinned_mdbook(), "the pinned mdBook is not installed")
     def test_configured_redirects_are_published_and_broken_targets_fail_the_build(self) -> None:

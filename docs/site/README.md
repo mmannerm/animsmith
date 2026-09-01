@@ -1,7 +1,9 @@
-# Pages site theme
+# Pages site theme and front door
 
 This directory is the visual theme for the GitHub Pages documentation
-site. It is not published as documentation itself.
+site, plus the two files the site build owns rather than renders: the
+front door and the redirect map. None of it is published as
+documentation itself.
 
 `scripts/build-docs-site.py` stages the tracked files here as mdBook's
 theme-override directory (`<stage>/theme/`) and registers
@@ -22,6 +24,26 @@ commands live in
 | [`favicon.svg`](favicon.svg) | Mark on a light chip, so it reads in light and dark tab bars |
 | [`favicon.png`](favicon.png) | 32x32 raster fallback of the same artwork |
 | [`redirects.toml`](redirects.toml) | Compatibility routes (owned by the site build, not the theme) |
+| [`landing.html`](landing.html) | The site's front door, published as the artifact root (owned by the site build, not the theme) |
+
+## The front door
+
+`landing.html` is a hand-authored page, not a chapter. After the mdBook
+build, `scripts/build-docs-site.py` copies it over `book/index.html` —
+the extra copy mdBook publishes of the book's first chapter — so the
+release root and `/dev/` each get their own front door and the book's
+own home stays `docs/index.html`. Nothing in the page is rewritten: its
+links, images and frames are resolved against the built artifact by the
+same validation every rendered page goes through, so paths are written
+from the artifact root (`docs/first-lint.html`, `theme/animsmith.css`).
+Because a root `README.md` chapter is rendered to that same
+`book/index.html`, the canonical index must not row it; the build
+refuses the pair rather than silently replacing one with the other.
+
+The page reads the `--as-*` tokens below through `theme/animsmith.css`
+and follows the book's stored theme choice, so the two surfaces match.
+It sets mdBook's own `62.5%` root font size and `js` class itself, since
+it loads the theme without mdBook's stylesheets or scripts.
 
 The mark is the letter A drawn the way the report viewer draws a rig:
 two bone strokes from the apex to the base, an accent crossbar, hollow

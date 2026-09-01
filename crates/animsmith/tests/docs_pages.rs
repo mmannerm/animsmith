@@ -1220,6 +1220,124 @@ fn every_generated_group_chapter_publishes_exactly_its_canonical_members() {
     }
 }
 
+/// Every `(tag, attribute value)` reference in a page's raw HTML, for the
+/// attributes a browser follows or fetches.
+fn html_references(html: &str) -> Vec<(String, String)> {
+    let mut references = Vec::new();
+    for (tag, attribute) in [
+        ("<a", "href"),
+        ("<link", "href"),
+        ("<img", "src"),
+        ("<iframe", "src"),
+        ("<script", "src"),
+    ] {
+        let mut rest = html;
+        while let Some(start) = rest.find(tag) {
+            let after = &rest[start + tag.len()..];
+            let end = after.find('>').unwrap_or(after.len());
+            if after.starts_with([' ', '\t', '\n', '\r', '/', '>'])
+                && let Some(value) = quoted_attribute(&after[..end], attribute)
+            {
+                references.push((tag[1..].to_owned(), value));
+            }
+            rest = &after[end..];
+        }
+    }
+    references
+}
+
+/// One double-quoted attribute value from a start tag's body.
+fn quoted_attribute(tag_body: &str, name: &str) -> Option<String> {
+    let needle = format!("{name}=\"");
+    let at = tag_body.find(&needle)?;
+    let boundary = at == 0
+        || tag_body[..at]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace);
+    boundary.then(|| {
+        tag_body[at + needle.len()..]
+            .split('"')
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    })
+}
+
+/// The tracked repository file a landing-page reference resolves to, given
+/// that the page is published as the artifact root: `docs/<page>.html` is a
+/// rendered chapter, `docs/<dir>/index.html` is that directory's index
+/// chapter, and everything else is a file mdBook copies verbatim from the
+/// staged source or from the theme.
+fn landing_reference_source(destination: &str) -> Option<String> {
+    let path = destination.split(['#', '?']).next().unwrap_or_default();
+    Some(match path.strip_suffix(".html") {
+        Some(page) if path.starts_with("docs/") && !path.starts_with("docs/visuals/") => {
+            match page.strip_suffix("/index") {
+                Some(directory) => format!("{directory}/README.md"),
+                None => format!("{page}.md"),
+            }
+        }
+        _ => match path {
+            "favicon.svg" | "favicon.png" => format!("docs/site/{path}"),
+            _ => match path.strip_prefix("theme/") {
+                Some(asset) => format!("docs/site/{asset}"),
+                None => match path.strip_prefix("fonts/") {
+                    Some(asset) => format!("docs/site/fonts/{asset}"),
+                    None => path.to_owned(),
+                },
+            },
+        },
+    })
+}
+
+/// The site's front door replaces the artifact's root index, so the canonical
+/// index must leave that route free and every reference the page makes must
+/// name something the build publishes. mdBook rewrites nothing in this page:
+/// it is copied verbatim, so a stale path here is a 404 for the first page a
+/// reader ever sees.
+#[test]
+fn the_tracked_landing_page_takes_the_root_index_and_every_reference_resolves() {
+    let root = repo_root();
+    let index = std::fs::read_to_string(root.join("docs/README.md")).expect("reads docs index");
+    assert!(
+        !canonical_index_rows(&index)
+            .iter()
+            .any(|(_, _, destination)| destination == "../README.md"),
+        "the canonical index must not row the root README: mdBook renders it to the same \
+         book/index.html the landing page is published at"
+    );
+
+    let landing =
+        std::fs::read_to_string(root.join("docs/site/landing.html")).expect("reads landing page");
+    let references = html_references(&landing);
+    assert!(
+        references.len() >= 15,
+        "the landing page routes the site: {references:#?}"
+    );
+
+    let mut missing = Vec::new();
+    let mut external = Vec::new();
+    for (tag, destination) in references {
+        if destination.starts_with("https://") || destination.starts_with("http://") {
+            external.push((tag, destination));
+            continue;
+        }
+        let source = landing_reference_source(&destination).expect("a local reference has a path");
+        if !root.join(&source).exists() {
+            missing.push(format!("{tag} {destination} -> {source}"));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "every landing-page reference resolves to a tracked source: {missing:#?}"
+    );
+    assert!(
+        external.iter().all(|(tag, _)| tag == "a"),
+        "the published page fetches nothing from a third party: {external:#?}"
+    );
+}
+
 /// Extract every `url(...)` target from a stylesheet without adding a dependency.
 fn css_urls(css: &str) -> Vec<String> {
     let mut targets = Vec::new();
@@ -1311,7 +1429,14 @@ fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
     let expected: BTreeSet<String> = String::from_utf8(listed.stdout)
         .expect("tracked paths are UTF-8")
         .split_terminator('\0')
-        .filter(|tracked| *tracked != "docs/site/redirects.toml")
+        .filter(|tracked| {
+            // The redirect map is build configuration and the landing page is
+            // published as the artifact root; neither is a theme asset.
+            !matches!(
+                *tracked,
+                "docs/site/redirects.toml" | "docs/site/landing.html"
+            )
+        })
         .map(|tracked| format!("theme/{}", &tracked["docs/site/".len()..]))
         .collect();
 
@@ -1334,7 +1459,7 @@ fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
     };
     assert_eq!(
         staged, expected,
-        "the staged theme mirrors tracked docs/site without its redirect map"
+        "the staged theme mirrors tracked docs/site without its redirect map or landing page"
     );
     assert!(
         !temp.path().join("src/docs/site").exists(),

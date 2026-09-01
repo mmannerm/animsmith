@@ -216,7 +216,7 @@ Use editing when the animation content is right but the pipeline cut is
 wrong: a capture has junk at the head, a one-shot needs a final hold, or
 a loop's stride anchor lands in the wrong place. Those are the cases in
 [the clip is the wrong length or freezes at the end](../docs/game-ready-clips.md#the-clip-is-the-wrong-length-or-freezes-at-the-end)
-and [the loop pops](../docs/game-ready-clips.md#the-loop-pops), where a
+and [the loop pops](../docs/symptoms/loop-pops.md), where a
 mechanical transform can make the clip conform without touching
 geometry.
 
@@ -300,7 +300,7 @@ not on file validity alone. [The character glides or runs in
 place](../docs/game-ready-clips.md#the-character-glides-or-runs-in-place),
 [feet skate when clips blend](../docs/game-ready-clips.md#feet-skate-when-clips-blend),
 and [feet slide within one
-clip](../docs/game-ready-clips.md#feet-slide-within-one-clip) all need
+clip](../docs/symptoms/feet-slide.md) all need
 declared locomotion or blend assumptions before animsmith can judge
 them.
 

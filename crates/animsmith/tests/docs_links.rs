@@ -1,6 +1,10 @@
 //! Drift gate for rendered Markdown links across tracked project docs:
 //! every tracked `.md` file outside the explicit agent/research
 //! exclusions is gated, and every rendered link and image must resolve.
+//! Raw-HTML `<img src>` and `<iframe src>` are gated the same way: the
+//! customer pages embed generated charts and reports that Markdown's own
+//! image syntax cannot express, and a silently broken `src` is exactly
+//! the drift this gate exists to catch.
 //! Relative targets must exist in the repo, `#fragment`s — intra-file
 //! and cross-file — must match a GitHub-slugged heading in the target,
 //! repo `blob/main`/`tree/main` URLs must point at real paths, and
@@ -160,6 +164,70 @@ fn rendered_link_or_image_destinations(markdown: &str) -> Vec<String> {
     rendered_destinations(markdown, true)
 }
 
+/// Raw-HTML start tags whose `src` is a local reference to validate.
+/// `<img>` carries the generated charts and `<iframe>` the embedded
+/// reports; both are raw HTML because Markdown can express neither.
+const RAW_HTML_MEDIA_TAGS: [&str; 2] = ["<img", "<iframe"];
+
+/// `src` destinations of every `<img>` and `<iframe>` in the raw HTML
+/// blocks and spans a Markdown page contains. HTML inside fenced or
+/// indented code is `Event::Text`, not `Event::Html`, so a code-shaped
+/// decoy stays invisible here exactly as it does for Markdown links.
+fn raw_html_media_destinations(markdown: &str) -> Vec<String> {
+    let mut destinations = Vec::new();
+    for event in Parser::new_ext(markdown, gfm_options()) {
+        if let Event::Html(html) | Event::InlineHtml(html) = event {
+            collect_media_sources(&html, &mut destinations);
+        }
+    }
+    destinations
+}
+
+/// Append the `src` of every [`RAW_HTML_MEDIA_TAGS`] start tag in one
+/// raw-HTML fragment. Attribute values are taken literally: a character
+/// reference in a local path would be a bug in the page, not a target
+/// this gate should resolve.
+fn collect_media_sources(html: &str, destinations: &mut Vec<String>) {
+    for tag in RAW_HTML_MEDIA_TAGS {
+        let mut rest = html;
+        while let Some(start) = rest.find(tag) {
+            let after = &rest[start + tag.len()..];
+            let end = after.find('>').unwrap_or(after.len());
+            // `<img` must not also match `<image`: a start tag's name
+            // ends at whitespace or at the tag itself.
+            if after.starts_with([' ', '\t', '\n', '\r', '/', '>'])
+                && let Some(source) = attribute_value(&after[..end], "src")
+            {
+                destinations.push(source);
+            }
+            rest = &after[end..];
+        }
+    }
+}
+
+/// One double- or single-quoted attribute value from a start tag's body.
+fn attribute_value(tag_body: &str, name: &str) -> Option<String> {
+    let mut rest = tag_body;
+    loop {
+        let at = rest.find(name)?;
+        let before_is_boundary = at == 0
+            || rest[..at]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace);
+        let after = rest[at + name.len()..].trim_start();
+        if before_is_boundary && let Some(value) = after.strip_prefix('=') {
+            let value = value.trim_start();
+            let quote = value.chars().next()?;
+            if quote == '"' || quote == '\'' {
+                return value[1..].split(quote).next().map(str::to_owned);
+            }
+            return None;
+        }
+        rest = &rest[at + name.len()..];
+    }
+}
+
 /// GitHub's heading-anchor slug: lowercase, drop everything but
 /// letters, digits, `_`, and `-`, and turn spaces into hyphens.
 fn github_slug(text: &str) -> String {
@@ -309,7 +377,10 @@ fn validate_file(
         }
     };
 
-    for url in rendered_link_or_image_destinations(&content) {
+    for url in rendered_link_or_image_destinations(&content)
+        .into_iter()
+        .chain(raw_html_media_destinations(&content))
+    {
         if url.is_empty() {
             errors.push(format!("{rel}: rendered link has an empty destination"));
             continue;
@@ -488,6 +559,39 @@ fn oracle_sees_all_rendered_link_forms_and_only_those() {
     );
 }
 
+/// The raw-HTML half of the same oracle: every `<img>`/`<iframe>`
+/// source the customer pages use is seen, and nothing else is — not a
+/// code-shaped decoy, not a same-prefix element, not another element's
+/// `src`, and not an attribute that merely ends in `src`.
+#[test]
+fn oracle_sees_raw_html_media_sources_and_only_those() {
+    let fixture = "Prose, then a block image:\n\n\
+        <img src=\"chart.svg\" alt=\"a chart\" width=\"160\" align=\"right\">\n\n\
+        <iframe src=\"report.html#embed=1&finding=0\" loading=\"lazy\"></iframe>\n\n\
+        <img src='single.svg'>\n\n\
+        An inline <img src=\"inline.svg\"> source.\n\n\
+        <image src=\"not-an-img.svg\"/>\n\n\
+        <script src=\"script.js\"></script>\n\n\
+        <img data-src=\"lazy.svg\" src=\"real.svg\">\n\n\
+        ```html\n\
+        <img src=\"fenced.svg\">\n\
+        <iframe src=\"fenced.html\"></iframe>\n\
+        ```\n\n\
+        And an inline `<img src=\"span.svg\">` code span.\n";
+
+    assert_eq!(
+        raw_html_media_destinations(fixture),
+        [
+            "chart.svg",
+            "report.html#embed=1&finding=0",
+            "single.svg",
+            "inline.svg",
+            "real.svg",
+        ],
+        "every real source is seen and every decoy is invisible"
+    );
+}
+
 /// README routing requirements belong to the rendered-link gate, not
 /// the shell grep gate. Each route must be a real Markdown link; text
 /// that only resembles one inside a code span or fenced block cannot
@@ -627,6 +731,7 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     )
     .expect("writes guide");
     std::fs::write(root.join("src.rs"), "// a non-markdown link target\n").expect("writes src.rs");
+    std::fs::write(root.join("report.html"), "<p>a generated report</p>\n").expect("writes report");
     std::fs::write(
         root.join("good.md"),
         format!(
@@ -638,9 +743,14 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
              [external](https://example.com/unchecked#whatever).\n\n\
              Fragments on non-markdown targets are GitHub-UI anchors,\n\
              skipped: [line](src.rs#L1) and [blob-line]({REPO_BLOB_URL}src.rs#L1).\n\n\
+             Raw-HTML media resolves like a rendered link, and an\n\
+             iframe deep link keeps its report fragment:\n\n\
+             <img src=\"src.rs\" alt=\"a local reference\" width=\"10\">\n\n\
+             <iframe src=\"report.html#embed=1&finding=0\"></iframe>\n\n\
              Code-shaped decoys around broken targets stay invisible:\n\n\
              ```text\n\
              [fenced decoy](never-a-file.md)\n\
+             <img src=\"never-an-image.png\">\n\
              ```\n\n\
              and an inline `[span decoy](also-never.md)` link.\n"
         ),
@@ -651,7 +761,8 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
         format!(
             "# Published\n\n\
              [ok](#published) and [ok]({REPO_BLOB_URL}docs/guide.md), but\n\
-             [relative](docs/guide.md) breaks the published-file policy.\n"
+             [relative](docs/guide.md) breaks the published-file policy.\n\n\
+             <img src=\"src.rs\" alt=\"so does a relative raw-HTML source\">\n"
         ),
     )
     .expect("writes published");
@@ -677,6 +788,8 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
              | [table](missing-table.md) |\n\n\
              - [list](missing-list.md)\n\n\
              > [quote](missing-quote.md)\n\n\
+             <img src=\"missing-raw.svg\" alt=\"broken chart\">\n\n\
+             <iframe src=\"missing-frame.html#embed=1\"></iframe>\n\n\
              [gone]: docs/nope.md\n"
         ),
     )
@@ -699,9 +812,10 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     assert_eq!(
         errors,
         vec![
-            "published.md: published file must use absolute links, found docs/guide.md".to_owned()
+            "published.md: published file must use absolute links, found docs/guide.md".to_owned(),
+            "published.md: published file must use absolute links, found src.rs".to_owned(),
         ],
-        "only the relative link violates the absolute-only policy"
+        "the absolute-only policy covers rendered links and raw-HTML sources alike"
     );
 
     let mut errors = Vec::new();
@@ -720,6 +834,8 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
         "links to missing local target missing-table.md",
         "links to missing local target missing-list.md",
         "links to missing local target missing-quote.md",
+        "links to missing local target missing-raw.svg",
+        "links to missing local target missing-frame.html",
         "anchor in #nowhere matches no heading in bad.md",
         &format!("anchor in {REPO_BLOB_URL}docs/guide.md#missing-heading matches no heading"),
         &format!("links to missing repository file {REPO_BLOB_URL}docs/nope.md"),
