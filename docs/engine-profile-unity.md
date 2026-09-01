@@ -35,7 +35,7 @@ that Unity ultimately creates.
 
 ## AnimSmith checks and thresholds
 
-The ordinary [mechanical and contract-aware catalog](../README.md#checks) runs
+The ordinary [mechanical and contract-aware catalog](built-in-checks.md) runs
 unchanged under either Unity profile. The most importer-sensitive rows are:
 
 | Check id | Exact default boundary | Why it matters in Unity |

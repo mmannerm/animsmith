@@ -378,7 +378,7 @@ the clip a loop (arming the loop checks) and gives XZ movement to gameplay
 (arming `in-place`,
 judged on the Hips track per the callout above). Every key, glob
 pattern, and severity override is documented in the
-[configuration reference](../README.md#configuration).
+[configuration reference](configuration-reference.md).
 
 Lint against the contract:
 

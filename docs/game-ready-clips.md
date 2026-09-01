@@ -685,7 +685,7 @@ root. `loop-closure`, `loop-seam-vel`, and `loop-seam-rot` do not. Built-in prof
 `mixamo`, `ue-mannequin`, and `humanoid`
 rigs; `[rig] profile = "auto"` scores them against your skeleton, and
 `[rig.roles]` binds bone names explicitly for everything else. See the
-[configuration reference](../README.md#configuration) for every key.
+[configuration reference](configuration-reference.md) for every key.
 
 ## Why animsmith exists
 
