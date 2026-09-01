@@ -137,6 +137,18 @@ changes: new checks, subcommands, measurement semantics, output
 contracts, dependency additions, write/fix path changes, or broad docs
 restructures.
 
+### Current-base gate
+
+Immediately before final audit and readiness, fetch and record the review base:
+`origin/main` for a normal PR, or the declared parent branch for an explicitly
+approved stack while its parent is open. Record the candidate HEAD and fetched
+review-base SHA, then prove that base is an ancestor of HEAD. If the base has
+advanced, rebase onto it or otherwise integrate it, then repeat the final diff
+review, local gates, exact-head CI, and audits. Any change to HEAD or the
+recorded review-base SHA invalidates that readiness evidence. After a stacked
+parent merges, retarget the PR to `main`, rebase onto current `origin/main`, and
+repeat this gate.
+
 Substantial agent-authored changes also require one reciprocal cross-model CLI
 audit: Codex invokes Claude, and Claude invokes Codex. The versioned
 [audit workflow](.claude/skills/audit-task/SKILL.md) owns reviewer selection,
