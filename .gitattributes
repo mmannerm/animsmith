@@ -2,3 +2,5 @@ crates/animsmith/testdata/collection-spike/*.md text eol=lf
 crates/animsmith/testdata/collection-spike/*.toml text eol=lf
 crates/animsmith/testdata/collection-spike/source/*.gltf text eol=lf
 .agents/skills/evaluate-animation-packs/fixtures/*.json text eol=lf
+docs/site/fonts/*.woff2 binary
+docs/site/*.png binary

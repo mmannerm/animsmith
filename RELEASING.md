@@ -192,22 +192,36 @@ to unreleased work without relabeling it as released documentation.
 The workflow source is the default branch; pull requests only retain a rendered
 preview artifact and never deploy. The release root is selected from GitHub's
 latest published release, rather than from an assumed version prefix. Its
-mdBook executable is installed from that selected tag's `.mdbook-version`;
-the `/dev/` subtree separately uses the default branch pin. If no published
-release exists, do not enable Pages deployment: publish the first release
-first, then run the default-branch workflow.
+mdBook executable and its `scripts/build-docs-site.py` both come from that
+selected tag, so a new site shape on the default branch never rewrites — or
+breaks — an already released documentation tree; the `/dev/` subtree separately
+uses the default branch's own pin and build script. If no published release
+exists, do not enable Pages deployment: publish the first release first, then
+run the default-branch workflow.
 
-`docs/README.md` is the canonical task index. Its category column generates
-the mdBook navigation during clean staging; do not add a hand-maintained
-`SUMMARY.md`, generated HTML, or symlink-based publication tree. `docs.rs`
-remains the Rust API reference and must remain prominent in the Pages index and
-README. Use `just docs-check` before changing the Pages source; it verifies the
-pinned mdBook build, parser-validates the staged Markdown tree, and rejects
-rendered local links without targets in the built artifact. Animation-pack
-reports are nested from the canonical table in `docs/reports/README.md`, and
-built `README.md` chapters receive compatibility routes for mdBook's
-`README.html` rewrites. Generated source-reference routes are pinned to the
-selected release tag at the release root and to `main` below `/dev/`.
+`docs/README.md` is the canonical task index and the site's only routing
+authority. Its Category column — `Part` or `Part › Group` — generates the
+mdBook parts, group chapters, and their order during clean staging; do not add
+a hand-maintained `SUMMARY.md`, generated HTML, or symlink-based publication
+tree. `docs.rs` remains the Rust API reference and must remain prominent in the
+Pages index and README. Animation-pack reports are nested from the canonical
+table in `docs/reports/README.md`, and built `README.md` chapters receive
+compatibility routes for mdBook's `README.html` rewrites. Generated
+source-reference routes are pinned to the selected release tag at the release
+root and to `main` below `/dev/`.
+
+The site's presentation is tracked rather than configured at deploy time.
+`docs/site/` holds the theme override mdBook applies — stylesheet, fonts, and
+favicons — staged outside the published source so nothing in it becomes a page,
+and the current build script refuses a checkout that does not track its
+stylesheet. Because each release root is built by its own tag's script, release
+tags predating `docs/site/` still publish with mdBook's default theme and their
+own navigation; do not patch a tag to add either. Retiring or renaming a
+published route requires its `docs/site/redirects.toml` entry in the same
+change, so an existing external link keeps resolving, and a redirect whose
+target is missing fails the build instead of shipping a dead route. Run
+`just docs-check` before changing any Pages source; DEVELOPMENT.md,
+"GitHub Pages preview", owns the local commands and what they verify.
 
 If a future release needs version-pinned README links, update the
 READMEs, this section, and `scripts/check-package-inventory.sh` in the

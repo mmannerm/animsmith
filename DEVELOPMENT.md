@@ -177,15 +177,34 @@ $ cargo install mdbook --version "$(tr -d '[:space:]' < .mdbook-version)" --lock
 
 `just docs-check` stages tracked repository files outside the checkout (in a
 deterministic sibling directory named after the checkout by default), generates
-mdBook navigation from the category column in `docs/README.md` and the report
-pairs in `docs/reports/README.md`, builds it, parser-validates the staged
-Markdown destinations, and rejects rendered local links without targets in the
-built artifact. Built `README.md` chapters receive compatibility routes because
-mdBook renders them as `index.html`. Generated links to repository source are
-pinned to the selected release tag at the release root and to `main` below
-`/dev/`. `just docs-serve` stages the same source and serves it locally. Set
+the book, builds it, parser-validates the staged Markdown destinations, and
+rejects rendered local links without targets in the built artifact.
+`just docs-serve` stages the same source and serves it locally. Set
 `ANIMSMITH_DOCS_STAGE` to choose another external staging directory; it must not
 overlap the checkout and must not be committed.
+
+Navigation comes from the Category column of `docs/README.md`. A cell is either
+`Part` or `Part › Group`: parts become mdBook part titles in first-appearance
+order, and a group becomes a generated chapter at `_generated/groups/<slug>.md`
+listing its member rows with their `Use it to…` text. Staging fails when a part
+or a group is split by another one, when the same group name appears under two
+parts, when two group names collapse to one slug, or when a group name has no
+slug characters, so the sidebar always follows the table's order. The row
+pointing at `docs/reports/README.md` nests the report and evidence pairs from
+that table below itself. Chapters with children start collapsed
+(`[output.html.fold]` at level 0).
+
+Tracked `docs/site` files stage as mdBook's `theme/` override directory instead
+of as book source, so the stylesheet, fonts, and favicons style the site without
+becoming pages. `docs/site/animsmith.css` is required and wired as
+`additional-css`; staging refuses a checkout that does not track it rather than
+publishing an unstyled book. `docs/site/redirects.toml` is configuration rather
+than a page: each `"/route.html" = "relative/target.html"` entry becomes an
+`[output.html.redirect]` route, and the build fails when a redirect target is
+missing from the artifact. Built `README.md` chapters receive compatibility
+routes because mdBook renders them as `index.html`. Generated links to
+repository source are pinned to the selected release tag at the release root and
+to `main` below `/dev/`.
 
 ## Spell Checking
 
