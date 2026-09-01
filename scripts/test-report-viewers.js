@@ -85,8 +85,16 @@ function run(parts, dataId, ids, payload, options) {
   nodes[dataId] = new Node(dataId);
   nodes[dataId].textContent = JSON.stringify(payload);
   const listeners = {};
+  const media = {};
   const root = new Node("documentElement");
   const charts = settings.charts || [];
+  // The fragment is read, never written: every assignment to location.hash
+  // is counted so a viewer that rewrites the URL cannot pass unnoticed.
+  const hash = { value: settings.hash || "", writes: 0 };
+  const location = {
+    get hash() { return hash.value; },
+    set hash(next) { hash.writes++; hash.value = next; },
+  };
   const context = {
     document: {
       documentElement: root,
@@ -97,15 +105,16 @@ function run(parts, dataId, ids, payload, options) {
       querySelectorAll: () => charts,
     },
     window: { addEventListener(kind, handler) { listeners[kind] = handler; }, devicePixelRatio: 1 },
-    location: { hash: settings.hash || "" },
+    location,
     getComputedStyle: () => settings.styles || noStyles,
+    matchMedia: () => ({ matches: false, addEventListener(kind, handler) { media[kind] = handler; }, removeEventListener() {} }),
     performance: { now: () => 0 }, requestAnimationFrame: () => 0,
     atob: value => Buffer.from(value, "base64").toString("binary"),
     Uint8Array, Float32Array, Buffer, Math, Map, Set, Array, Number, Object, Infinity, JSON, console,
   };
   vm.createContext(context);
   vm.runInContext(`${parts.shared}\n${parts.viewer}`, context);
-  return { nodes, root, listeners, context, charts };
+  return { nodes, root, listeners, context, charts, hash, media, settings };
 }
 
 // SVG shows no text unless an element carries it, so no panel may explain
@@ -162,32 +171,33 @@ if(!nodes["before-gl"].context.arcs.some(row=>row.args[2]===6 && row.fillStyle==
 nodes["before-findings"].children[structuralIndex].listeners.click();
 if(!nodes["before-pose-context"].textContent.includes("structural evidence") || !nodes["before-contexts"].children.some(child=>child.className.includes("structural"))) throw new Error("structural finding was not distinguished from visible pose evidence");
 nodes["after-findings"].children[afterIndex].listeners.click(); if(nodes.scrub.value != 1234) throw new Error("after finding did not select exact frame");
-context.location.hash=`#time-before-${seamFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
+main.hash.value=`#time-before-${seamFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
 if(nodes.scrub.value != 1501) throw new Error("semantic time anchor did not select its finding");
-context.location.hash=`#finding-after-${afterFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
+main.hash.value=`#finding-after-${afterFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
 if(nodes.scrub.value != 1234) throw new Error("cross-side semantic finding anchor did not select its finding");
 
 // Fragment options an embedded comparison honours, their persistence across
 // the document's own anchor links, and their removal.
-context.location.hash="#embed=1&theme=light&frame=1200&clip=ignored&finding=3"; windowListeners.hashchange();
+main.hash.value="#embed=1&theme=light&frame=1200&clip=ignored&finding=3"; windowListeners.hashchange();
 if(documentElement.attrs["data-embed"] !== "1" || documentElement.attrs["data-theme"] !== "light" || nodes.scrub.value != 1200) throw new Error("comparison viewer ignored embed/theme/frame fragment options");
-context.location.hash=`#finding-after-${afterFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
+main.hash.value=`#finding-after-${afterFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
 if(documentElement.attrs["data-embed"] !== "1" || documentElement.attrs["data-theme"] !== "light") throw new Error("following the document's own finding anchor un-pinned the embedded theme");
 if(nodes.scrub.value != 1234) throw new Error("the anchor link stopped selecting its finding once a theme was pinned");
-context.location.hash="#frame=999999999"; windowListeners.hashchange();
+main.hash.value="#frame=999999999"; windowListeners.hashchange();
 if(nodes.scrub.value != 2001) throw new Error("an out-of-range frame was not clamped to the shared phase");
 if(documentElement.attrs["data-theme"] !== "light") throw new Error("a fragment that never mentions the theme must leave it pinned");
-context.location.hash="#theme=neon&embed=0"; windowListeners.hashchange();
+main.hash.value="#theme=neon&embed=0"; windowListeners.hashchange();
 if("data-embed" in documentElement.attrs || "data-theme" in documentElement.attrs) throw new Error("an explicitly unusable value must restore the document default");
 // The same three states for the shared phase: honoured, unusable (default
 // restored), absent (left alone).
-context.location.hash="#frame=800"; windowListeners.hashchange();
+main.hash.value="#frame=800"; windowListeners.hashchange();
 if(nodes.scrub.value != 800) throw new Error("a valid frame did not move the shared phase");
-context.location.hash="#frame=-1"; windowListeners.hashchange();
+main.hash.value="#frame=-1"; windowListeners.hashchange();
 if(nodes.scrub.value != 0) throw new Error("an unusable frame did not restore the default shared phase");
-context.location.hash="#frame=800"; windowListeners.hashchange();
-context.location.hash="#theme=dark"; windowListeners.hashchange();
+main.hash.value="#frame=800"; windowListeners.hashchange();
+main.hash.value="#theme=dark"; windowListeners.hashchange();
 if(nodes.scrub.value != 800) throw new Error("a fragment without a frame moved the shared phase");
+assertNoHashWrites(main, "the comparison viewer");
 
 // A non-finite sampled range must degrade the drawing, not abort navigation
 // or hide the already-rendered findings and coverage lists.
@@ -255,7 +265,7 @@ if (!evidenceNodes.times.textContent.includes("not a time warp") || !evidenceNod
 
 // Navigating an evidence-only comparison stays inert: the theme still
 // applies, and no panel starts drawing from a grid the document lacks.
-evidenceRun.context.location.hash = "#frame=5&theme=light";
+evidenceRun.hash.value = "#frame=5&theme=light";
 evidenceRun.listeners.hashchange();
 if (evidenceRun.root.attrs["data-theme"] !== "light") throw new Error("an evidence-only comparison stopped honouring the theme option");
 
@@ -295,6 +305,9 @@ if (parse("#frame=" + "9".repeat(400)).frame !== Infinity) throw new Error("an u
 for (const wrongType of [null, undefined, 0, {}, [], () => {}]) expectOptions(wrongType, {}, "a non-string fragment");
 // Every pair inside the length bound is read, however many there are.
 expectOptions("#" + "pad=1&".repeat(400) + "theme=dark", {theme:"dark"}, "a fragment with hundreds of pairs");
+const manyPairs = "#" + "p=&".repeat(1300) + "theme=dark";
+if (manyPairs.length > 4096) throw new Error("the many-pair fragment must stay inside the length bound");
+expectOptions(manyPairs, {theme:"dark"}, "a fragment with more than a thousand pairs");
 // The length bound itself: the last accepted character and the first
 // rejected one.
 const tail = "&theme=light";
@@ -378,6 +391,8 @@ for (const key of Object.keys(viaFragment)) {
   if (viaFragment[key] !== viaClick[key]) throw new Error(`#finding=${findingIndex} and clicking row ${findingIndex} disagree on ${key}: ${viaFragment[key]} vs ${viaClick[key]}`);
 }
 if (!viaClick.selected) throw new Error("selecting a finding does not mark its row");
+assertNoHashWrites(clicked, "clicking a finding");
+assertNoHashWrites(deep, "a deep-linked finding");
 
 // The playhead spans exactly the rectangle the chart publishes.
 const atStart = runSingle(single, singlePayload, singleIds, {hash:"#frame=0"});
@@ -430,7 +445,12 @@ if (evidenceDeep.root.attrs["data-theme"] !== "light" || !evidenceDeep.nodes.fin
 // Each option has the same three states on a hash transition as it has on
 // load: honoured, present but unusable (default restored), absent (left
 // alone).
-function navigate(state, hash) { state.context.location.hash = hash; state.listeners.hashchange(); }
+// Navigation writes the fragment the way a browser does — outside the
+// document — so the viewer's own write counter stays meaningful.
+function navigate(state, next) { state.hash.value = next; state.listeners.hashchange(); }
+function assertNoHashWrites(state, why) {
+  if (state.hash.writes !== 0) throw new Error(`${why}: the viewer wrote location.hash ${state.hash.writes} time(s)`);
+}
 const selectionNav = runSingle(single, singlePayload, singleIds);
 navigate(selectionNav, `#finding=${findingIndex}`);
 if (!selectionNav.nodes.findings.children[findingIndex].classes.has("selected")) throw new Error("navigating to a finding did not select it");
@@ -467,5 +487,24 @@ if (clipNav.nodes["clip-select"].value !== firstClip.name) throw new Error("an u
 navigate(clipNav, `#clip=${encodeURIComponent(secondClip.name)}`);
 navigate(clipNav, "#theme=light");
 if (clipNav.nodes["clip-select"].value !== secondClip.name) throw new Error("a fragment without a clip changed the selected clip");
+
+assertNoHashWrites(selectionNav, "navigating the single-clip viewer");
+assertNoHashWrites(clipNav, "navigating clips");
+assertNoHashWrites(evidenceSingle, "scrubbing an evidence-only report");
+assertNoHashWrites(evidenceRun, "an evidence-only comparison");
+
+// ---- system theme changes ----------------------------------------------
+// The CSS follows prefers-color-scheme on its own; the canvas views have to
+// be repainted, so the viewers listen for the change and re-resolve.
+const schemeRun = runSingle(single, singlePayload, singleIds, {styles: tokenStyles(Object.assign({}, themedTokens, {ground: "#101010"}))});
+const firstClear = schemeRun.nodes.gl.gl.clears[schemeRun.nodes.gl.gl.clears.length - 1];
+if (Math.abs(firstClear[0] - 0x10 / 255) > 1e-6) throw new Error("the viewer did not paint the first scheme's ground token");
+if (typeof schemeRun.media.change !== "function") throw new Error("the viewer does not listen for a system theme change");
+// The document's own resolved styles change first; the repaint follows.
+schemeRun.settings.styles = tokenStyles(Object.assign({}, themedTokens, {ground: "#fdfdfd"}));
+schemeRun.media.change();
+const repainted = schemeRun.nodes.gl.gl.clears[schemeRun.nodes.gl.gl.clears.length - 1];
+if (Math.abs(repainted[0] - 0xfd / 255) > 1e-6) throw new Error("a system theme change did not repaint the 3D view with the new ground token");
+assertNoHashWrites(schemeRun, "a system theme change");
 
 console.log("report viewer harness passed");

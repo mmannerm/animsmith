@@ -1762,7 +1762,62 @@ fn embed_hides_the_same_chrome_in_both_documents_and_hides_no_evidence() {
             vec![".hint".to_owned(), "header".to_owned()],
             "{kind}: `#embed=1` hides the running title and the hint, and nothing else"
         );
+
+        // The rule only means something if the documents are shaped for it.
+        let header_start = html
+            .find("<header>")
+            .unwrap_or_else(|| panic!("{kind}: the document has a header to hide"));
+        let header_end = html[header_start..]
+            .find("</header>")
+            .expect("header closes")
+            + header_start;
+        for evidence in ["<main", "id=\"findings\"", "class=\"disclosure\""] {
+            if let Some(at) = html.find(evidence) {
+                assert!(
+                    at > header_end,
+                    "{kind}: {evidence} must sit outside the header the embed rule hides"
+                );
+            }
+        }
     }
+
+    // The hint is single-clip chrome: the comparison has no interaction hint
+    // to hide, and its phase mapping and evidence caveats live in the
+    // disclosure section instead, which the embed rule leaves alone.
+    let documents = themed_documents();
+    assert!(
+        documents[0].1.contains("class=\"hint\""),
+        "the single-clip report has a hint"
+    );
+    assert!(
+        !documents[1].1.contains("class=\"hint\""),
+        "the comparison has none"
+    );
+    assert!(
+        documents[1].1.contains("<section class=\"disclosure\">"),
+        "the comparison keeps its disclosures outside the header"
+    );
+}
+
+#[test]
+fn evidence_rows_and_controls_sit_on_the_raised_token() {
+    // A row or control on --ground reads as a hole cut through its panel;
+    // these two use sites are why the token exists.
+    for (kind, html) in themed_documents() {
+        let code = without_block_comments(&document_code(&html));
+        let (start, end) = rule_block(&code, ".finding {");
+        assert!(
+            code[start..end].contains("background: var(--raised)"),
+            "{kind}: evidence rows sit on --raised"
+        );
+    }
+    let single = &themed_documents()[0].1;
+    let code = without_block_comments(&document_code(single));
+    let (start, end) = rule_block(&code, "#controls select, #controls button");
+    assert!(
+        code[start..end].contains("background: var(--raised)"),
+        "single-clip: controls sit on --raised"
+    );
 }
 
 #[test]
@@ -1817,6 +1872,20 @@ fn attribute_values(source: &str, name: &str) -> Vec<String> {
         rest = &rest[end..];
     }
     values
+}
+
+/// The text content of every element carrying `class`.
+fn class_texts(source: &str, class: &str) -> Vec<String> {
+    let key = format!("class=\"{class}\"");
+    let mut texts = Vec::new();
+    let mut rest = source;
+    while let Some(at) = rest.find(&key) {
+        let open = rest[at..].find('>').expect("tag closes") + at + 1;
+        let close = rest[open..].find('<').unwrap_or(0) + open;
+        texts.push(rest[open..close].to_owned());
+        rest = &rest[close..];
+    }
+    texts
 }
 
 /// Every `<tag …>` in a fragment, so a test can ask about one element
@@ -1886,7 +1955,16 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
             "{kind}: the label names the clip and states its unit: {described}"
         );
         assert!(figure.contains("<title>walk — "), "{kind}: titled");
-        assert!(figure.contains("class=\"axis\""), "{kind}: has axis labels");
+        let axis = class_texts(figure, "axis");
+        assert!(
+            axis.iter().all(|label| !label.trim().is_empty()),
+            "{kind}: every axis label says something"
+        );
+        assert!(
+            axis.iter().filter(|label| label.ends_with(" m")).count() >= 2,
+            "{kind}: the unit is in the label a reader sees, not only in the \
+             aria description: {axis:?}"
+        );
 
         // Colour comes from the classes alone, so an extracted figure keeps
         // its meaning under an injected style block.
@@ -2139,8 +2217,8 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
     };
 
     // A bone that is neither the root nor a foot never reaches a chart, so
-    // this coordinate exists only inside the sampled pose grid.
-    const WITNESS: f32 = 123.456;
+    // this whole coordinate triple exists only inside the sampled pose grid.
+    const WITNESS: [f32; 3] = [123.456, 234.567, 345.678];
     let doc = Document {
         skeleton: Skeleton {
             bones: vec![
@@ -2166,11 +2244,7 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
                 property: Property::Translation,
                 interpolation: Interpolation::Linear,
                 times: vec![0.0, 0.5, 1.0],
-                values: TrackValues::Vec3s(vec![
-                    Vec3::new(WITNESS, 0.0, 0.0),
-                    Vec3::new(WITNESS, 0.0, 0.0),
-                    Vec3::new(WITNESS, 0.0, 0.0),
-                ]),
+                values: TrackValues::Vec3s(vec![Vec3::from_array(WITNESS); 3]),
             }],
         }],
         ..Document::default()
@@ -2180,20 +2254,35 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
     let full_html = animsmith_report::render(&grids, &roles, &[], None, None, full());
     let html = animsmith_report::render(&grids, &roles, &[], None, None, evidence_only());
 
-    let witness = WITNESS.to_le_bytes();
-    let carries = |bytes: &[u8]| bytes.windows(witness.len()).any(|slice| slice == witness);
+    // Three ways the same sample could survive: as the raw bytes of a pose
+    // grid, as the decimals a caller wrote, or as the two-decimal spelling
+    // the charts use.
+    let sampled = |html: &str| {
+        let bytes = embedded_pose_bytes(html, "report-data");
+        WITNESS.iter().all(|channel| {
+            let needle = channel.to_le_bytes();
+            bytes.windows(needle.len()).any(|slice| slice == needle)
+        })
+    };
+    let spelled: Vec<String> = WITNESS
+        .iter()
+        .flat_map(|channel| [format!("{channel}"), format!("{channel:.2}")])
+        .collect();
+
     assert!(
-        carries(&embedded_pose_bytes(&full_html, "report-data")),
+        sampled(&full_html),
         "the fixture must really be a witness in a full report"
     );
     assert!(
-        !carries(&embedded_pose_bytes(&html, "report-data")),
+        !sampled(&html),
         "no sampled coordinate survives in an evidence-only report"
     );
-    assert!(
-        !html.contains("123.456"),
-        "and none survives in the document's own text"
-    );
+    for spelling in &spelled {
+        assert!(
+            !html.contains(spelling.as_str()),
+            "the evidence-only document still spells {spelling}"
+        );
+    }
 }
 
 #[test]
@@ -2323,4 +2412,108 @@ fn an_evidence_only_comparison_is_not_bound_by_the_embedded_pose_budget() {
     );
     animsmith_report::preflight_comparison(&doc, "walk", &doc, "walk", evidence_only())
         .expect("an evidence-only comparison embeds no grid, so the budget does not apply");
+}
+
+/// A before/after pair whose *declared* pose grid is larger than the embedded
+/// budget: `bones` nodes and `frames` judged keys on each side, with distinct
+/// authorities. Only the key count and the node count matter here; the
+/// sampled values are zero.
+fn oversized_pair(directory: &std::path::Path, bones: usize, frames: usize) -> Vec<PathBuf> {
+    let mut json: Value = serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    let mut bytes = Vec::with_capacity(frames * 16);
+    for frame in 0..frames {
+        bytes.extend_from_slice(&(frame as f32).to_le_bytes());
+    }
+    let output_offset = bytes.len();
+    bytes.resize(output_offset + frames * 12, 0);
+    json["buffers"][0]["uri"] = format!(
+        "data:application/octet-stream;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    )
+    .into();
+    json["buffers"][0]["byteLength"] = bytes.len().into();
+    json["bufferViews"] = serde_json::json!([
+        {"buffer":0,"byteOffset":0,"byteLength":output_offset},
+        {"buffer":0,"byteOffset":output_offset,"byteLength":frames * 12}
+    ]);
+    json["accessors"] = serde_json::json!([
+        {"bufferView":0,"componentType":5126,"count":frames,"type":"SCALAR","min":[0.0],"max":[(frames - 1) as f32]},
+        {"bufferView":1,"componentType":5126,"count":frames,"type":"VEC3"}
+    ]);
+    json["animations"] = serde_json::json!([{
+        "name":"walk",
+        "samplers":[{"input":0,"output":1,"interpolation":"LINEAR"}],
+        "channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}]
+    }]);
+    let nodes = json["nodes"].as_array_mut().expect("fixture nodes");
+    let scene_roots: Vec<Value> = (nodes.len()..bones).map(Value::from).collect();
+    for index in nodes.len()..bones {
+        nodes.push(serde_json::json!({"name": format!("bone{index}")}));
+    }
+    let roots = json["scenes"][0]["nodes"]
+        .as_array_mut()
+        .expect("fixture scene");
+    roots.extend(scene_roots);
+
+    let mut paths = Vec::new();
+    for marker in ["before", "after"] {
+        json["asset"]["extras"] = serde_json::json!({"authority": marker});
+        let path = directory.join(format!("{marker}.gltf"));
+        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        paths.push(path);
+    }
+    paths
+}
+
+#[test]
+fn an_evidence_only_comparison_renders_past_the_embedded_pose_budget() {
+    // The budget bounds what a document embeds. A full report of this pair
+    // would have to carry the grid and is refused; the evidence-only report
+    // carries none of it and must render — through `render_comparison`, not
+    // only through the preflight it also calls.
+    const BONES: usize = 400;
+    const FRAMES: usize = 7_200;
+    const {
+        assert!(
+            BONES * FRAMES * 12 > animsmith_report::MAX_COMPARISON_POSE_BYTES,
+            "the fixture must exceed the budget it is testing"
+        )
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let paths = oversized_pair(directory.path(), BONES, FRAMES);
+    let before_source = animsmith_gltf::load_source(&paths[0]).unwrap();
+    let after_source = animsmith_gltf::load_source(&paths[1]).unwrap();
+    assert_eq!(before_source.document().skeleton.bones.len(), BONES);
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let sides = || {
+        (
+            comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
+            comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        )
+    };
+
+    let (before, after) = sides();
+    let refused = animsmith_report::render_comparison(before, after, full())
+        .expect_err("a full comparison would have to embed the grid");
+    assert!(
+        matches!(
+            refused,
+            animsmith_report::ComparisonError::PoseWorkExceeded { .. }
+        ),
+        "{refused:?}"
+    );
+
+    let (before, after) = sides();
+    let html = animsmith_report::render_comparison(before, after, evidence_only())
+        .expect("an evidence-only comparison embeds no grid, so the budget does not apply");
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(data["evidence_only"], true);
+    assert_eq!(data["before"]["clip"]["frames"], FRAMES);
+    assert!(
+        embedded_pose_bytes(&html, "comparison-report-data").is_empty(),
+        "and it really embeds none of it"
+    );
 }
