@@ -15,8 +15,10 @@
 //! channel-end spread, 1.2 m of hip travel, a quarter-cycle phase shift —
 //! not numbers read back out of the tool.
 
+use animsmith_core::glam::Vec3;
+use animsmith_core::model::{Document, Property, Track, TrackValues};
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// A path inside the repository, as the CLI receives it.
@@ -90,6 +92,44 @@ fn messages(json: &Value) -> Vec<&str> {
         .collect()
 }
 
+/// Assert that `check_id` judged this run and found nothing.
+///
+/// The absence of a finding on its own is not a positive control: a check
+/// that never applied is equally silent. This reads the envelope's own
+/// per-check applicability and evaluation state, so it can only pass when
+/// the contract really reached the file.
+fn judged_and_passed(json: &Value, check_id: &str) {
+    let check = json["files"][0]["checks"]
+        .as_array()
+        .expect("checks array")
+        .iter()
+        .find(|check| check["check_id"] == check_id)
+        .unwrap_or_else(|| panic!("{check_id} is in the catalog"));
+    assert_eq!(
+        check["applicability"], "applicable",
+        "{check_id} should have been armed by the contract: {check}"
+    );
+    assert_eq!(
+        check["evaluation"], "complete",
+        "{check_id} should have evaluated, not gapped: {check}"
+    );
+    assert_eq!(
+        check["findings"].as_array().map(Vec::len),
+        Some(0),
+        "{check_id} judged the input and accepted it: {check}"
+    );
+}
+
+/// A throwaway contract file. The returned directory owns it, so callers
+/// bind it for as long as they run the CLI against the path.
+fn temp_config(name: &str, toml: &str) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(format!("{name}.toml"));
+    std::fs::write(&path, toml).expect("writes contract");
+    let path = path.to_str().expect("utf-8 path").to_owned();
+    (dir, path)
+}
+
 fn finding_rows(json: &Value) -> impl Iterator<Item = &Value> {
     json["files"][0]["checks"]
         .as_array()
@@ -153,6 +193,18 @@ fn travel_fails_a_gameplay_owned_horizontal_contract() {
     let (code, json) = lint(&["--config", &contract, &walk]);
     assert_eq!(code, Some(0), "nothing declared about the clean walk");
     assert!(findings(&json).is_empty());
+
+    // That control only shows the config reaches nothing. This one shows
+    // the check accepts a clip that honours it: the same declaration over
+    // the clean walk's own clip name is judged, and its stationary root
+    // passes.
+    let (_dir, honoured) = temp_config(
+        "walk-in-place",
+        "[rig]\nprofile = \"auto\"\n\n[clips.walk]\nmovement_owner_xz = \"gameplay\"\n",
+    );
+    let (code, json) = lint(&["--config", &honoured, &walk]);
+    assert_eq!(code, Some(0), "the clean walk honours an in-place contract");
+    judged_and_passed(&json, "in-place");
 }
 
 #[test]
@@ -184,6 +236,19 @@ fn travel_fails_a_stale_root_motion_speed_pin() {
     let (code, json) = lint(&["--config", &contract, &walk]);
     assert_eq!(code, Some(0));
     assert!(findings(&json).is_empty());
+
+    // The check accepts this very clip once the pin matches the travel it
+    // carries, so the finding above is the stale 1.0 m/s value and not
+    // root-motion-speed rejecting every travelling clip.
+    let (_dir, accurate) = temp_config(
+        "walk-travel-true-speed",
+        "[rig]\nprofile = \"auto\"\n\n[clips.walk_travel]\n\
+         movement_owner_xz = \"animation\"\n\
+         speed_mps = { value = 1.2, tolerance = 0.1 }\n",
+    );
+    let (code, json) = lint(&["--config", &accurate, &walk_travel]);
+    assert_eq!(code, Some(0), "an accurate pin leaves no failing finding");
+    judged_and_passed(&json, "root-motion-speed");
 }
 
 // --- Directional blend members travel at different speeds -------------
@@ -245,17 +310,14 @@ fn run_ring_reports_the_phase_shifted_member() {
 
     // The shift is what fails it: the same document, the same cap, the
     // three members that were not shifted.
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let coherent = tmp.path().join("coherent-ring.toml");
-    std::fs::write(
-        &coherent,
+    let (_dir, coherent) = temp_config(
+        "coherent-ring",
         "[gait_groups.run-ring]\n\
          clips = [\"run_forward\", \"run_backward\", \"run_right\"]\n\
          max_gait_phase_spread = 0.15\n\
          min_lr_amplitude_m = 0.03\n",
-    )
-    .expect("writes control contract");
-    let (code, json) = lint(&["--config", coherent.to_str().unwrap(), &ring]);
+    );
+    let (code, json) = lint(&["--config", &coherent, &ring]);
     assert_eq!(code, Some(0), "the unshifted members agree");
     assert!(findings(&json).is_empty());
 
@@ -322,6 +384,20 @@ fn frozen_arm_reports_the_static_arm_and_the_missing_one() {
     let (code, json) = lint(&["--config", &contract, &asset("walk.glb")]);
     assert_eq!(code, Some(0));
     assert!(findings(&json).is_empty());
+
+    // And the pair accepts a bone that exists and really rotates. The
+    // clean walk cannot serve as that control — it carries no rotation
+    // channel at all, so every bone in it is frozen by construction — so
+    // this uses the short-channel fixture's foot_l, which sweeps 17°
+    // before its channel ends early.
+    let (_dir, honoured) = temp_config(
+        "rotating-bone",
+        "[clips.walk_short_channel]\nanimates_bones = [\"foot_l\"]\n",
+    );
+    let (code, json) = lint(&["--config", &honoured, &asset("walk-short-channel.glb")]);
+    assert_eq!(code, Some(0), "a bone that moves honours the contract");
+    judged_and_passed(&json, "frozen-bone");
+    judged_and_passed(&json, "missing-bones");
 }
 
 // --- The file is bloated, or the retargeter chokes --------------------
@@ -370,14 +446,28 @@ fn pruning_removes_the_constant_socket_channel_and_keeps_the_scale() {
         .output()
         .expect("runs animsmith transform");
     assert_eq!(output.status.code(), Some(0), "the prune succeeds");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    // The documented facts are which channel went and that only that one
+    // did — not the source track index, the interpolation label, or the
+    // written-scene counts, which are incidental to this claim.
+    let removals: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.contains("constant-track removed"))
+        .collect();
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        format!(
-            "  constant-track removed 'walk_scaled': track index 3 bone \
-             'weapon_socket' translation Linear 5 key(s)\nwrote {compact} \
-             (4 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))\n"
-        ),
-        "the transform names the track it removed"
+        removals.len(),
+        1,
+        "exactly one channel is removed: {stdout}"
+    );
+    for named in ["'walk_scaled'", "bone 'weapon_socket'", "translation"] {
+        assert!(
+            removals[0].contains(named),
+            "the transform names the track it removed ({named}): {stdout}"
+        );
+    }
+    assert!(
+        stdout.contains(&format!("wrote {compact}")),
+        "and reports the artifact it wrote: {stdout}"
     );
 
     // The removal is exactly the note's subject: the two scale warnings
@@ -390,5 +480,191 @@ fn pruning_removes_the_constant_socket_channel_and_keeps_the_scale() {
             ("scale-keys", "warning", "walk_scaled", "pelvis"),
             ("non-uniform-scale", "warning", "walk_scaled", "pelvis"),
         ],
+    );
+}
+
+// --- The committed bytes carry the authored mutation ------------------
+//
+// `example_assets_match_generator_output` proves the committed files are
+// exactly what the generator writes, and the tests above prove what the
+// CLI reports about them. Neither states what is *in* a file, so a
+// builder that drifted into authoring some other defect would keep both
+// green as long as the same check families still fired. These read each
+// fixture back — through the glTF frontend, and through `measure` for the
+// derived quantities — and check it against the literals the asset
+// README quotes, not against the builder's own constants.
+
+/// A committed fixture, read back through the glTF frontend.
+fn document(name: &str) -> Document {
+    animsmith_gltf::load(Path::new(&asset(name))).expect("loads committed fixture")
+}
+
+/// The `property` channel on `bone` in the clip named `clip`.
+fn channel<'a>(doc: &'a Document, clip: &str, bone: &str, property: Property) -> &'a Track {
+    let bone_id = doc
+        .skeleton
+        .bones
+        .iter()
+        .position(|candidate| candidate.name == bone)
+        .unwrap_or_else(|| panic!("the fixture has a bone named {bone}"));
+    doc.clips
+        .iter()
+        .find(|candidate| candidate.name == clip)
+        .unwrap_or_else(|| panic!("the fixture has a clip named {clip}"))
+        .tracks
+        .iter()
+        .find(|track| track.bone == bone_id && track.property == property)
+        .unwrap_or_else(|| panic!("clip {clip} has a {} channel on {bone}", property.as_str()))
+}
+
+/// A Vec3 channel's keyed values.
+fn vec3_keys(track: &Track) -> Vec<Vec3> {
+    match &track.values {
+        TrackValues::Vec3s(values) => values.clone(),
+        TrackValues::Quats(_) => panic!("expected a Vec3 channel"),
+    }
+}
+
+/// Run `measure --format json` over `args` and return the envelope.
+fn measure(args: &[&str]) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+        .args(["measure", "--format", "json"])
+        .args(args)
+        .output()
+        .expect("runs animsmith measure");
+    assert_eq!(output.status.code(), Some(0), "measure exits 0");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("measure --format json is valid JSON ({e}): {stdout}"))
+}
+
+#[test]
+fn short_channel_bytes_stop_one_rotation_channel_early() {
+    let doc = document("walk-short-channel.glb");
+
+    let rotation = channel(&doc, "walk_short_channel", "foot_l", Property::Rotation);
+    assert_eq!(
+        rotation.times,
+        vec![0.0, 0.25, 0.5, 0.75],
+        "the left ankle's channel stops a quarter cycle early"
+    );
+    for foot in ["foot_l", "foot_r"] {
+        let translation = channel(&doc, "walk_short_channel", foot, Property::Translation);
+        assert_eq!(
+            translation.times.last().copied(),
+            Some(1.0),
+            "{foot}'s translation channel runs the whole cycle"
+        );
+    }
+
+    // Real motion that stops, not a held pose: the authored sweep is
+    // 0.3 rad, so `constant-track` has nothing to say about it and the
+    // finding is about the end time alone.
+    let TrackValues::Quats(keys) = &rotation.values else {
+        panic!("a rotation channel carries quaternions");
+    };
+    assert_eq!(keys.len(), 4);
+    assert!(
+        keys[0].angle_between(keys[3]).to_degrees() > 15.0,
+        "the short channel still sweeps: {keys:?}"
+    );
+}
+
+#[test]
+fn travel_bytes_carry_the_authored_hip_translation() {
+    let doc = document("walk-travel.glb");
+
+    let hips = channel(&doc, "walk_travel", "pelvis", Property::Translation);
+    assert_eq!(hips.times, vec![0.0, 1.0]);
+    let keys = vec3_keys(hips);
+    assert_eq!(
+        keys[1] - keys[0],
+        Vec3::new(0.0, 0.0, 1.2),
+        "1.2 m straight forward over the one-second cycle"
+    );
+
+    // And that authored displacement is what the CLI measures as the
+    // travel its root-motion checks judge.
+    let json = measure(&[&asset("walk-travel.glb")]);
+    let clip = &json["files"][0]["measurements"]["clips"]["walk_travel"];
+    let travel = clip["root_trajectory"]["translation"]["horizontal_travel_m"]
+        .as_f64()
+        .expect("measured horizontal travel");
+    assert!((travel - 1.2).abs() < 1e-6, "measured travel: {travel}");
+    let speed = clip["speed_mps"].as_f64().expect("measured speed");
+    assert!(
+        (speed - 1.2).abs() < 1e-6,
+        "over 1 s that is 1.2 m/s: {speed}"
+    );
+}
+
+#[test]
+fn run_ring_bytes_carry_four_clips_a_quarter_cycle_apart() {
+    let doc = document("run-ring.glb");
+    assert_eq!(
+        doc.clips
+            .iter()
+            .map(|clip| clip.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_forward", "run_backward", "run_left", "run_right"],
+        "one document, the ring's four members"
+    );
+
+    // The CLI's own gait evidence, which is what `gait-group` compares.
+    let json = measure(&[&asset("run-ring.glb")]);
+    let phase = |clip: &str| {
+        json["files"][0]["measurements"]["clips"][clip]["gait"]["phase"]
+            .as_f64()
+            .unwrap_or_else(|| panic!("{clip} has a measured gait phase"))
+    };
+    for coherent in ["run_forward", "run_backward", "run_right"] {
+        assert_eq!(phase(coherent), 0.75, "{coherent} keeps the walk's anchor");
+    }
+    assert_eq!(
+        phase("run_left"),
+        0.5,
+        "run_left is entered a quarter cycle in"
+    );
+}
+
+#[test]
+fn frozen_arm_bytes_carry_five_identical_keys_and_no_right_arm() {
+    let doc = document("walk-frozen-arm.glb");
+
+    let named = |name: &str| doc.skeleton.bones.iter().any(|bone| bone.name == name);
+    assert!(named("arm_l"), "the left arm is in the skeleton");
+    assert!(!named("arm_r"), "the right arm never reached the file");
+
+    let arm = channel(&doc, "walk_frozen_arm", "arm_l", Property::Rotation);
+    assert_eq!(arm.times, vec![0.0, 0.25, 0.5, 0.75, 1.0]);
+    let TrackValues::Quats(keys) = &arm.values else {
+        panic!("a rotation channel carries quaternions");
+    };
+    assert_eq!(keys.len(), 5, "five keys, so it is keyed, not absent");
+    assert!(
+        keys.iter().all(|key| *key == keys[0]),
+        "and every one of them identical: {keys:?}"
+    );
+}
+
+#[test]
+fn scaled_bytes_carry_the_pelvis_stretch_and_the_held_socket() {
+    let doc = document("walk-scaled.glb");
+
+    let scale = channel(&doc, "walk_scaled", "pelvis", Property::Scale);
+    assert_eq!(scale.times, vec![0.0, 0.5, 1.0]);
+    assert_eq!(
+        vec3_keys(scale),
+        vec![Vec3::ONE, Vec3::new(1.0, 1.2, 1.0), Vec3::ONE],
+        "Y stretches to 1.2 and comes back — animated, and never uniform"
+    );
+
+    let socket = channel(&doc, "walk_scaled", "weapon_socket", Property::Translation);
+    assert_eq!(socket.times, vec![0.0, 0.25, 0.5, 0.75, 1.0]);
+    let keys = vec3_keys(socket);
+    assert_eq!(keys.len(), 5, "five keys, so it is bloat rather than a pin");
+    assert!(
+        keys.iter().all(|key| *key == keys[0]),
+        "that never move: {keys:?}"
     );
 }
