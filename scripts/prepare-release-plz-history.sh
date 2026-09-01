@@ -123,7 +123,7 @@ fi
 
 head_before="$(git rev-parse HEAD)"
 history_before="$(git log --format='%H %P %s' v0.9.0..HEAD | git hash-object --stdin)"
-status_before="$(git status --porcelain=v1 --untracked-files=no)"
+status_before="$(git status --porcelain=v1)"
 installed=()
 rollback() {
   if ((${#installed[@]})); then
@@ -150,7 +150,7 @@ for index in "${!target_commits[@]}"; do
 done
 [[ "$(git rev-parse HEAD)" == "$head_before" ]] \
   || fail "history preparation changed HEAD"
-[[ "$(git status --porcelain=v1 --untracked-files=no)" == "$status_before" ]] \
+[[ "$(git status --porcelain=v1)" == "$status_before" ]] \
   || fail "history preparation changed the checkout status"
 history_after="$(git log --format='%H %P %s' v0.9.0..HEAD | git hash-object --stdin)"
 [[ "$history_after" == "$history_before" ]] \

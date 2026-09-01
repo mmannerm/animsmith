@@ -118,7 +118,7 @@ cp scripts/prepare-release-plz-history.sh \
   "$history_repo/scripts/prepare-release-plz-history.sh"
 before_commits="$(git -C "$history_repo" rev-list --count v0.9.0..HEAD)"
 before_log="$(git -C "$history_repo" log --format='%H %P %s' v0.9.0..HEAD)"
-before_status="$(git -C "$history_repo" status --porcelain=v1 --untracked-files=no)"
+before_status="$(git -C "$history_repo" status --porcelain=v1)"
 (
   cd "$history_repo"
   bash scripts/prepare-release-plz-history.sh
@@ -151,7 +151,7 @@ after_commits="$(git -C "$history_repo" rev-list --count v0.9.0..HEAD)"
 after_log="$(git -C "$history_repo" log --format='%H %P %s' v0.9.0..HEAD)"
 [[ "$after_log" == "$before_log" ]] \
   || fail "history preparation changed release commit identities or messages"
-[[ "$(git -C "$history_repo" status --porcelain=v1 --untracked-files=no)" == \
+[[ "$(git -C "$history_repo" status --porcelain=v1)" == \
   "$before_status" ]] \
   || fail "history preparation changed checkout status"
 
@@ -165,7 +165,7 @@ for historical_commit in \
     --format-version 1 >/dev/null
 done
 git -C "$history_repo" checkout --quiet --detach "$original_head"
-[[ -z "$(git -C "$history_repo" status --porcelain=v1 --untracked-files=no)" ]] \
+[[ -z "$(git -C "$history_repo" status --porcelain=v1)" ]] \
   || fail "historical checkout traversal did not restore a clean HEAD"
 (
   cd "$history_repo"
@@ -203,6 +203,30 @@ PY
     fail "history preparation accepted a drifted $mutation identity"
   fi
 done
+
+untracked_mutant="$work/prepare-release-plz-history-untracked.sh"
+cp scripts/prepare-release-plz-history.sh "$untracked_mutant"
+MUTANT="$untracked_mutant" "$python" - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ["MUTANT"])
+text = path.read_text(encoding="utf-8")
+needle = 'status_before="$(git status --porcelain=v1)"'
+replacement = needle + '\n: > .release-plz-history-untracked-drift'
+if needle not in text:
+    raise SystemExit("status snapshot insertion point is missing")
+path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+PY
+untracked_repo="$work/untracked-drift-repo"
+git clone --quiet --no-hardlinks . "$untracked_repo"
+if (cd "$untracked_repo" && bash "$untracked_mutant") \
+  >"$work/untracked-drift.out" 2>"$work/untracked-drift.err"; then
+  fail "history preparation accepted untracked checkout drift"
+fi
+grep -Fq 'history preparation changed the checkout status' \
+  "$work/untracked-drift.err" \
+  || fail "untracked checkout drift did not reach the status invariant"
 
 original_head="$(git -C "$history_repo" rev-parse HEAD)"
 git -C "$history_repo" checkout --quiet --detach v0.9.0
