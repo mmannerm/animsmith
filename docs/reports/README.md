@@ -5,6 +5,37 @@ to delivered game-animation assets. Each report is a dated technical snapshot,
 not a vendor guarantee, license opinion, or substitute for testing in the
 target game.
 
+## Scorecard
+
+Every cell after the pack name is copied from that report's header block, so
+the scorecard reaches no conclusion of its own and carries no numeric score. It
+is the fastest way to pick a pair; read the pair itself for the reasoning. The
+completeness column carries only the word — each report states the evidence
+boundary behind it — and [Current reports](#current-reports) carries the scope
+and evaluation status of every pair.
+
+| Pack | Technical verdict | Evaluation completeness | Confidence | Evaluation date | Current evaluator |
+|---|---|---|---|---|---|
+| [Protofactor Basic Locomotion](protofactor-basic-locomotion.md) | Usable with conditions | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Protofactor Sword & Shield](protofactor-sword-and-shield.md) | Usable with conditions | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Protofactor Campfire](protofactor-campfire.md) | Usable with conditions | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Protofactor Climbing](protofactor-climbing.md) | Usable with conditions | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Protofactor Injured](protofactor-injured.md) | Usable with conditions | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Protofactor 1-Handed Melee](protofactor-one-handed-melee.md) | Usable with conditions | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Protofactor 2-Handed Melee](protofactor-two-handed-melee.md) | Usable with conditions | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Protofactor Dual Swords](protofactor-dual-swords.md) | Usable with conditions | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Protofactor Ultimate Animation Collection](protofactor-ultimate-animation-collection.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Basic Locomotion](mixamo-basic-locomotion.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Female Basic Locomotion](mixamo-female-basic-locomotion.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Female Locomotion](mixamo-female-locomotion.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Locomotion](mixamo-locomotion.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Longbow Locomotion](mixamo-longbow-locomotion.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Magic Locomotion](mixamo-magic-locomotion.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Male Locomotion](mixamo-male-locomotion.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Pistol-Handgun Locomotion](mixamo-pistol-handgun-locomotion.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Rifle 8-Way Locomotion](mixamo-rifle-8-way-locomotion.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+| [Mixamo Locomotion Collection](mixamo-locomotion-collection.md) | Insufficient technical evidence | partial | medium | 2026-09-01 | AnimSmith 0.10.0 |
+
 ## Report organization
 
 Keep one linked report pair per constituent animation pack:
