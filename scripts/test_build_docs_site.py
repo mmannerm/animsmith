@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Hermetic contract tests for generated Pages external-reference proxies."""
+"""Hermetic contract tests for the generated Pages book."""
 
 from __future__ import annotations
 
 import hashlib
 import importlib.util
 import os
+import posixpath
+import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 
@@ -22,6 +26,31 @@ assert SPEC and SPEC.loader
 BUILD_DOCS_SITE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = BUILD_DOCS_SITE
 SPEC.loader.exec_module(BUILD_DOCS_SITE)
+CSS_URL = re.compile(r"""url\(\s*['"]?(?P<target>[^'")]+)['"]?\s*\)""")
+THEME_STYLESHEET = "/* fixture */\n"
+
+
+def write_theme(root: Path, assets: dict[str, str]) -> None:
+    """Write a tracked docs/site theme; every checkout needs its stylesheet."""
+    for name, content in assets.items():
+        asset = root / "docs/site" / name
+        asset.parent.mkdir(parents=True, exist_ok=True)
+        asset.write_text(content, encoding="utf-8")
+
+
+class StylesheetParser(HTMLParser):
+    """Collect every `<link href>` a rendered page asks the browser to fetch."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.destinations: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "link":
+            return
+        for name, value in attrs:
+            if name == "href" and value is not None:
+                self.destinations.append(value)
 
 
 class ExternalProxyContractTests(unittest.TestCase):
@@ -38,6 +67,7 @@ class ExternalProxyContractTests(unittest.TestCase):
             f"| [{label}]({destination}) | External fixture. | {category} |\n",
             encoding="utf-8",
         )
+        write_theme(root, {"animsmith.css": THEME_STYLESHEET})
         if reserve_proxy:
             digest = hashlib.sha256(destination.encode("utf-8")).hexdigest()
             reserved = root / "_generated/external" / f"{digest}.md"
@@ -104,6 +134,7 @@ class ExternalProxyContractTests(unittest.TestCase):
         (source / "docs/reports/one-evidence.md").write_text(
             "# One evidence\n", encoding="utf-8"
         )
+        write_theme(source, {"animsmith.css": THEME_STYLESHEET})
         subprocess.run(["git", "init", "--quiet", str(source)], check=True)
         subprocess.run(["git", "-C", str(source), "add", "."], check=True)
         return source
@@ -363,7 +394,7 @@ class ExternalProxyContractTests(unittest.TestCase):
                         [
                             sys.executable,
                             str(COMPOSER),
-                            "--builder",
+                            "--development-builder",
                             str(builder),
                             "--release-source",
                             str(release),
@@ -703,10 +734,7 @@ class NavigationContractTests(unittest.TestCase):
                 (root / f"docs/reports/{name}{suffix}.md").write_text(
                     f"# {name}{suffix}\n", encoding="utf-8"
                 )
-        for name, content in (site or {}).items():
-            asset = root / "docs/site" / name
-            asset.parent.mkdir(parents=True, exist_ok=True)
-            asset.write_text(content, encoding="utf-8")
+        write_theme(root, {"animsmith.css": THEME_STYLESHEET} if site is None else site)
         subprocess.run(["git", "init", "--quiet", str(root)], check=True)
         subprocess.run(["git", "-C", str(root), "add", "."], check=True)
 
@@ -748,7 +776,7 @@ class NavigationContractTests(unittest.TestCase):
             ("[Unity](engine-unity.md)", "Engine one.", "Workflows › Engine profiles"),
             (
                 "[Bevy](engine-bevy.md)",
-                "Engine two, validated by [schemas](schemas/).",
+                "Engine two, validated by [schemas](schemas/); [see below](#engine-notes).",
                 "Workflows › Engine profiles",
             ),
             ("[Recipes](recipes.md)", "Do the work.", "Workflows"),
@@ -792,8 +820,9 @@ class NavigationContractTests(unittest.TestCase):
                 "\n"
                 "- [Unity](../../docs/engine-unity.md) — Engine one.\n"
                 "- [Bevy](../../docs/engine-bevy.md) — Engine two, validated by "
-                "[schemas](../../docs/schemas/).\n",
-                "a group page relocates member and description destinations without changing them",
+                "[schemas](../../docs/schemas/); [see below](../../docs/README.md#engine-notes).\n",
+                "a group page relocates local description destinations and leaves "
+                "same-page fragments and exact external URLs alone",
             )
             self.assertEqual(
                 (stage / "src/_generated/groups/pack-evaluations.md").read_text(encoding="utf-8"),
@@ -849,6 +878,21 @@ class NavigationContractTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 self.assert_staging_rejects(expected, rows=rows)
 
+    def test_index_cells_that_cannot_become_a_chapter_are_refused(self) -> None:
+        cases = [
+            (
+                [("[Anchor](#somewhere)", "Jump.", "Start")],
+                "destination must be a page, not a bare fragment",
+            ),
+            (
+                [("[A](a.md)", "Bad\tdescription.", "Start")],
+                "index description contains control or non-printable characters",
+            ),
+        ]
+        for rows, expected in cases:
+            with self.subTest(expected=expected):
+                self.assert_staging_rejects(expected, rows=rows)
+
     def test_generated_group_page_cannot_shadow_a_canonical_page(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -877,7 +921,13 @@ class NavigationContractTests(unittest.TestCase):
     def theme_site(self) -> dict[str, str]:
         return {
             "animsmith.css": ":root { --animsmith: 1; }\n",
-            "fonts/fonts.css": "@font-face { font-family: Fixture; }\n",
+            "fonts/fonts.css": (
+                "@font-face { font-family: Fixture; "
+                'src: url("fixture.woff2") format("woff2"); }\n'
+            ),
+            "fonts/fixture.woff2": "not a real font\n",
+            "favicon.svg": '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n',
+            "favicon.png": "not a real image\n",
             "redirects.toml": '"/docs/old.html" = "overview.html"\n',
         }
 
@@ -900,43 +950,31 @@ class NavigationContractTests(unittest.TestCase):
                 self.assertFalse(
                     (stage / unpublished).exists(), f"{unpublished} is configuration, not content"
                 )
-            self.assertEqual(
-                (stage / "book.toml").read_text(encoding="utf-8"),
-                '[book]\n'
-                'title = "AnimSmith documentation"\n'
-                'authors = ["AnimSmith contributors"]\n'
-                'language = "en"\n'
-                'src = "src"\n'
-                "\n"
-                "[output.html]\n"
-                'site-url = "/animsmith/"\n'
-                'git-repository-url = "https://github.com/mmannerm/animsmith"\n'
-                'edit-url-template = "https://github.com/mmannerm/animsmith/edit/main/{path}"\n'
-                'default-theme = "light"\n'
-                'preferred-dark-theme = "navy"\n'
-                "no-section-label = true\n"
-                'additional-css = ["theme/animsmith.css"]\n'
-                "\n"
-                "[output.html.fold]\n"
-                "enable = true\n"
-                "level = 0\n"
-                "\n"
-                "[output.html.redirect]\n"
-                '"/docs/old.html" = "overview.html"\n',
-            )
+            html = tomllib.loads((stage / "book.toml").read_text(encoding="utf-8"))[
+                "output"
+            ]["html"]
+            self.assertEqual(html["default-theme"], "light")
+            self.assertEqual(html["preferred-dark-theme"], "navy")
+            self.assertIs(html["no-section-label"], True)
+            self.assertEqual(html["additional-css"], ["theme/animsmith.css"])
+            self.assertEqual(html["fold"], {"enable": True, "level": 0})
+            self.assertEqual(html["redirect"], {"/docs/old.html": "overview.html"})
 
-    def test_a_checkout_without_site_assets_still_folds_and_themes_the_book(self) -> None:
+    def test_a_checkout_without_the_stylesheet_is_refused_rather_than_published(self) -> None:
+        self.assert_staging_rejects(
+            "docs/site/animsmith.css must be tracked to style the book",
+            rows=self.START_ROWS,
+            site={"fonts/fonts.css": "@font-face { font-family: Fixture; }\n"},
+        )
+
+    def test_a_checkout_without_a_redirect_map_publishes_no_redirect_section(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            stage = self.stage_site(
-                Path(temporary), rows=self.START_ROWS
-            )
-            book = (stage / "book.toml").read_text(encoding="utf-8")
-            self.assertFalse((stage / "theme").exists(), "no tracked theme is staged")
-            self.assertNotIn("additional-css", book, "no stylesheet is wired without one staged")
-            self.assertNotIn("[output.html.redirect]", book)
-            self.assertIn('default-theme = "light"', book)
-            self.assertIn('preferred-dark-theme = "navy"', book)
-            self.assertIn("[output.html.fold]\nenable = true\nlevel = 0\n", book)
+            stage = self.stage_site(Path(temporary), rows=self.START_ROWS)
+            html = tomllib.loads((stage / "book.toml").read_text(encoding="utf-8"))["output"][
+                "html"
+            ]
+            self.assertNotIn("redirect", html, "an absent redirect map configures no routes")
+            self.assertEqual(html["additional-css"], ["theme/animsmith.css"])
 
     def test_redirect_map_refuses_entries_that_are_not_site_routes(self) -> None:
         cases = [
@@ -965,12 +1003,44 @@ class NavigationContractTests(unittest.TestCase):
             stage = self.stage_site(
                 Path(temporary), arguments=arguments, rows=rows, site=self.theme_site()
             )
-            redirect = (stage / "book/docs/old.html").read_text(encoding="utf-8")
+            book = stage / "book"
+            redirect = (book / "docs/old.html").read_text(encoding="utf-8")
             self.assertIn('<a href="overview.html">', redirect)
-            self.assertTrue((stage / "book/docs/overview.html").is_file())
-            self.assertTrue((stage / "book/theme/animsmith.css").is_file())
-            self.assertTrue((stage / "book/fonts/fonts.css").is_file())
-            self.assertFalse((stage / "book/redirects.toml").exists())
+            self.assertTrue((book / "docs/overview.html").is_file())
+            self.assertFalse((book / "redirects.toml").exists())
+
+            # A rendered page must actually ask for the theme assets, and every
+            # asset it asks for must ship.
+            parser = StylesheetParser()
+            parser.feed((book / "docs/index.html").read_text(encoding="utf-8"))
+            requested = {
+                posixpath.normpath(posixpath.join("docs", href))
+                for href in parser.destinations
+                if "://" not in href and not href.startswith("data:")
+            }
+            for asset in [
+                "theme/animsmith.css",
+                "fonts/fonts.css",
+                "favicon.svg",
+                "favicon.png",
+            ]:
+                self.assertIn(asset, requested, f"the rendered page links {asset}")
+                self.assertTrue((book / asset).is_file(), f"{asset} ships in the artifact")
+
+            faces = [
+                target
+                for target in CSS_URL.findall(
+                    (stage / "theme/fonts/fonts.css").read_text(encoding="utf-8")
+                )
+                if "://" not in target and not target.startswith("data:")
+            ]
+            self.assertTrue(faces, "the staged font stylesheet declares at least one font file")
+            for target in faces:
+                resolved = posixpath.normpath(posixpath.join("fonts", target))
+                self.assertTrue(
+                    (book / resolved).is_file(),
+                    f"fonts.css asks for {resolved}, which the artifact must ship",
+                )
 
         with tempfile.TemporaryDirectory() as temporary:
             site = self.theme_site() | {"redirects.toml": '"/docs/old.html" = "gone.html"\n'}

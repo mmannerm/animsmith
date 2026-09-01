@@ -11,6 +11,10 @@ use std::process::Command;
 /// can distinguish them from the rows they collect.
 const GENERATED_GROUP_DIR: &str = "_generated/groups/";
 
+/// The canonical Category cell separates a part title from its group with a
+/// spaced single right-pointing angle quotation mark.
+const GROUP_SEPARATOR: &str = " \u{203a} ";
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -312,6 +316,14 @@ fn walkdir(root: &Path) -> Vec<PathBuf> {
     paths
 }
 
+/// Staging refuses a checkout with no tracked stylesheet, so every fixture
+/// carries the one asset `book.toml` wires.
+fn write_fixture_theme(root: &Path) {
+    std::fs::create_dir_all(root.join("docs/site")).expect("creates fixture theme directory");
+    std::fs::write(root.join("docs/site/animsmith.css"), "/* fixture */\n")
+        .expect("writes fixture stylesheet");
+}
+
 fn write_book_fixture(root: &Path, marker: &str, mdbook_pin: &str) {
     std::fs::create_dir_all(root.join("docs")).expect("creates fixture docs directory");
     std::fs::write(root.join(".mdbook-version"), format!("{mdbook_pin}\n"))
@@ -324,6 +336,7 @@ fn write_book_fixture(root: &Path, marker: &str, mdbook_pin: &str) {
     .expect("writes canonical fixture index");
     std::fs::write(root.join("docs/guide.md"), format!("# {marker} guide\n"))
         .expect("writes fixture guide");
+    write_fixture_theme(root);
     assert!(
         Command::new("git")
             .args(["init", "--quiet", root.to_str().unwrap()])
@@ -351,6 +364,7 @@ fn write_external_index_fixture(root: &Path, label: &str, destination: &str) {
         ),
     )
     .expect("writes external fixture index");
+    write_fixture_theme(root);
     assert!(
         Command::new("git")
             .args(["init", "--quiet", root.to_str().unwrap()])
@@ -367,10 +381,16 @@ fn write_external_index_fixture(root: &Path, label: &str, destination: &str) {
     );
 }
 
-fn write_fixture_builder(path: &Path) {
+fn write_fixture_builder(path: &Path, builder: &str) {
+    std::fs::create_dir_all(
+        path.parent()
+            .expect("fixture builder has a parent directory"),
+    )
+    .expect("creates fixture builder directory");
     std::fs::write(
         path,
-        r#"import argparse
+        format!(
+            r#"import argparse
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
@@ -385,9 +405,11 @@ args = parser.parse_args()
 marker = (args.source / "README.md").read_text(encoding="utf-8")
 pin = (args.source / ".mdbook-version").read_text(encoding="utf-8")
 (args.stage / "book" / "index.html").write_text(
-    f"{marker}mdbook={args.mdbook.name}\npin={pin}source-ref={args.source_ref}\n", encoding="utf-8"
+    f"{{marker}}builder={builder}\nmdbook={{args.mdbook.name}}\npin={{pin}}source-ref={{args.source_ref}}\n",
+    encoding="utf-8",
 )
-"#,
+"#
+        ),
     )
     .expect("writes deterministic fixture builder");
 }
@@ -405,7 +427,7 @@ fn git(root: &Path, arguments: &[&str]) {
     );
 }
 
-fn canonical_index_category_links(markdown: &str) -> Vec<(String, String)> {
+fn canonical_index_rows(markdown: &str) -> Vec<(String, String, String)> {
     let mut in_table = false;
     let mut in_head = false;
     let mut first_header = None;
@@ -413,6 +435,7 @@ fn canonical_index_category_links(markdown: &str) -> Vec<(String, String)> {
     let mut is_index = false;
     let mut cell = 0usize;
     let mut row_link = None;
+    let mut row_label = String::new();
     let mut row_category = String::new();
     let mut rows = Vec::new();
 
@@ -444,17 +467,22 @@ fn canonical_index_category_links(markdown: &str) -> Vec<(String, String)> {
             Event::Start(Tag::TableRow) if is_index => {
                 cell = 0;
                 row_link = None;
+                row_label.clear();
                 row_category.clear();
             }
             Event::Start(Tag::TableCell) if is_index && !in_head => cell += 1,
             Event::Start(Tag::Link { dest_url, .. }) if is_index && !in_head && cell == 1 => {
                 row_link = Some(dest_url.into_string());
             }
+            Event::Text(text) | Event::Code(text) if is_index && !in_head && cell == 1 => {
+                row_label.push_str(&text);
+            }
             Event::Text(text) if is_index && !in_head && cell == 3 => {
                 row_category.push_str(&text);
             }
             Event::End(TagEnd::TableRow) if is_index => rows.push((
                 row_category.trim().to_owned(),
+                row_label.trim().to_owned(),
                 row_link.take().expect("index Document cell has a link"),
             )),
             Event::End(TagEnd::Table) if in_table => break,
@@ -550,7 +578,7 @@ fn summary_category_links(markdown: &str) -> Vec<(String, String)> {
             }
             2 => {
                 if let Some(group) = group.as_deref() {
-                    rows.push((format!("{part} \u{203a} {group}"), destination));
+                    rows.push((format!("{part}{GROUP_SEPARATOR}{group}"), destination));
                 }
             }
             _ => {}
@@ -733,16 +761,19 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
     write_book_fixture(&main, "MAIN DEVELOPMENT", "0.4.52");
 
     let output = temp.path().join("site");
-    let builder = temp.path().join("fixture-builder.py");
+    // The release build script is not passed: composition must find it inside the
+    // release checkout, the way the Pages workflow invokes it.
+    let development_builder = temp.path().join("development-builder.py");
     let release_mdbook = temp.path().join("release-mdbook");
     let development_mdbook = temp.path().join("development-mdbook");
-    write_fixture_builder(&builder);
+    write_fixture_builder(&release.join("scripts/build-docs-site.py"), "release");
+    write_fixture_builder(&development_builder, "development");
     assert!(
         Command::new("python3")
             .arg(root.join("scripts/compose-pages-site.py"))
             .args([
-                "--builder",
-                builder.to_str().unwrap(),
+                "--development-builder",
+                development_builder.to_str().unwrap(),
                 "--release-source",
                 release.to_str().unwrap(),
                 "--main-source",
@@ -770,11 +801,13 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
         strict_lines(&release_root),
         [
             "# RELEASE ROOT",
+            "builder=release",
             "mdbook=release-mdbook",
             "pin=0.4.51",
             "source-ref=vfixture"
         ],
-        "the Pages root uses the selected release checkout and its mdBook pin:\n{release_root}"
+        "the Pages root is built by the release checkout's own build script and mdBook pin, so a \
+         later site shape never rewrites a released tree:\n{release_root}"
     );
     let development_root =
         std::fs::read_to_string(output.join("dev/index.html")).expect("reads development subtree");
@@ -782,6 +815,7 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
         strict_lines(&development_root),
         [
             "# MAIN DEVELOPMENT",
+            "builder=development",
             "mdbook=development-mdbook",
             "pin=0.4.52",
             "source-ref=main"
@@ -949,21 +983,40 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
         expected_report_links,
         "every report/evidence pair is nested in canonical table order so mdBook publishes it"
     );
-    let (next_destination, next_depth) = generated_links
-        .get(report_links_end)
-        .expect("a chapter follows the complete report pair sequence");
-    assert!(
-        next_destination.starts_with(GENERATED_GROUP_DIR) && *next_depth == 1,
-        "the next top-level group chapter follows immediately after the complete report pair \
-         sequence, so no pair is orphaned: {next_destination} at depth {next_depth}"
-    );
-
     let index =
         std::fs::read_to_string(root.join("docs/README.md")).expect("reads canonical index");
-    let index_rows = canonical_index_category_links(&index);
+    let index_rows = canonical_index_rows(&index);
+
+    // The report block ends exactly where the canonical table says it does: the
+    // next chapter is the following row, or the group chapter that row opens.
+    let reports_row = index_rows
+        .iter()
+        .position(|(_, _, destination)| destination == "reports/README.md")
+        .expect("the canonical index rows the reports index");
+    let (next_category, next_label, _) = index_rows
+        .get(reports_row + 1)
+        .expect("a canonical row follows the reports index");
+    let group_of = |category: &str| {
+        category
+            .split_once(GROUP_SEPARATOR)
+            .map(|(_, group)| group.to_owned())
+    };
+    let expected_next = match group_of(next_category) {
+        Some(group) if Some(&group) != group_of(&index_rows[reports_row].0).as_ref() => (group, 1),
+        Some(_) => (next_label.clone(), 2),
+        None => (next_label.clone(), 1),
+    };
+    let (_, next_chapter, _, next_depth) = &summary_chapters(&first_summary)[report_links_end];
+    assert_eq!(
+        (next_chapter.clone(), *next_depth),
+        expected_next,
+        "the chapter after the complete report pair sequence is exactly the canonical table's \
+         next entry, so no pair is orphaned"
+    );
+
     let expected: Vec<(String, String)> = index_rows
         .iter()
-        .map(|(category, destination)| {
+        .map(|(category, _, destination)| {
             let destination = if destination.contains("://") {
                 destination.clone()
             } else {
@@ -1022,15 +1075,11 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
         );
     }
 
-    let headings: BTreeSet<String> = Parser::new_ext(&first_summary, options())
-        .filter_map(|event| match event {
-            Event::Text(text) => Some(text.into_string()),
-            _ => None,
-        })
-        .collect();
-    for part in ["Start", "Symptoms", "Workflows", "More"] {
-        assert!(headings.contains(part), "SUMMARY.md has the {part} part");
-    }
+    assert_eq!(
+        rendered_headings(&first_summary),
+        ["Summary", "Start", "Symptoms", "Workflows", "More"],
+        "the generated parts are exactly the canonical ones, in canonical order"
+    );
 }
 
 /// A generated group chapter and the sidebar members nested under it.
@@ -1057,9 +1106,10 @@ fn every_generated_group_chapter_publishes_exactly_its_canonical_members() {
     let summary =
         std::fs::read_to_string(staged.join("SUMMARY.md")).expect("reads generated summary");
 
+    let chapters = summary_chapters(&summary);
     let mut groups: Vec<GroupChapter> = Vec::new();
     let mut open = None;
-    for (_, label, destination, depth) in summary_chapters(&summary) {
+    for (_, label, destination, depth) in chapters.clone() {
         match depth {
             1 if destination.starts_with(GENERATED_GROUP_DIR) => {
                 open = Some(groups.len());
@@ -1078,10 +1128,61 @@ fn every_generated_group_chapter_publishes_exactly_its_canonical_members() {
             _ => {}
         }
     }
-    assert!(
-        !groups.is_empty(),
-        "the canonical index uses at least one Part \u{203a} Group category"
+    assert_eq!(
+        groups
+            .iter()
+            .map(|group| group.title.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Engine profiles",
+            "Advanced workflows",
+            "Reference",
+            "Pack evaluations",
+            "Rust integration",
+            "Project and contributing",
+        ],
+        "the generated group chapters are exactly the canonical groups, in canonical order"
     );
+
+    // Report pairs are navigation detail: they must sit inside the Pack
+    // evaluations group and be nested, so level-0 folding hides them by default.
+    let expected_pairs = canonical_report_pair_links(
+        &std::fs::read_to_string(root.join("docs/reports/README.md"))
+            .expect("reads canonical reports index"),
+    )
+    .len();
+    let pack = chapters
+        .iter()
+        .position(|(_, label, destination, depth)| {
+            label == "Pack evaluations"
+                && destination.starts_with(GENERATED_GROUP_DIR)
+                && *depth == 1
+        })
+        .expect("the summary opens a Pack evaluations group chapter");
+    let group_end = chapters[pack + 1..]
+        .iter()
+        .position(|(_, _, _, depth)| *depth == 1)
+        .map_or(chapters.len(), |offset| pack + 1 + offset);
+    let pairs: Vec<usize> = chapters
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, _, destination, _))| {
+            destination.starts_with("docs/reports/") && destination != "docs/reports/README.md"
+        })
+        .map(|(position, _)| position)
+        .collect();
+    assert_eq!(
+        pairs.len(),
+        expected_pairs,
+        "every canonical report and evidence page is published as a chapter"
+    );
+    for position in pairs {
+        let (_, _, destination, depth) = &chapters[position];
+        assert!(
+            position > pack && position < group_end && *depth >= 2,
+            "{destination} is nested at depth {depth} inside the Pack evaluations group"
+        );
+    }
 
     for GroupChapter {
         title,
@@ -1115,6 +1216,69 @@ fn every_generated_group_chapter_publishes_exactly_its_canonical_members() {
             published, expected,
             "the {title} group page lists exactly its sidebar members, in order, \
              pointing at the same staged pages"
+        );
+    }
+}
+
+/// Extract every `url(...)` target from a stylesheet without adding a dependency.
+fn css_urls(css: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut rest = css;
+    while let Some(start) = rest.find("url(") {
+        rest = &rest[start + "url(".len()..];
+        let Some(end) = rest.find(')') else { break };
+        targets.push(
+            rest[..end]
+                .trim()
+                .trim_matches(|character| character == '"' || character == '\'')
+                .to_owned(),
+        );
+        rest = &rest[end + 1..];
+    }
+    targets
+}
+
+/// The published book must not fetch anything from a third party: the theme is
+/// tracked in full, so a reader's browser only ever asks the Pages origin.
+#[test]
+fn the_tracked_theme_references_no_external_resources() {
+    let site = repo_root().join("docs/site");
+    for relative in ["animsmith.css", "fonts/fonts.css"] {
+        let css = std::fs::read_to_string(site.join(relative)).expect("reads tracked stylesheet");
+        let compact: String = css.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            !compact.contains("@import"),
+            "{relative} imports another stylesheet"
+        );
+        for external in [
+            "url(http",
+            "url(\"http",
+            "url('http",
+            "url(//",
+            "url(\"//",
+            "url('//",
+        ] {
+            assert!(
+                !compact.contains(external),
+                "{relative} fetches an external resource: {external}"
+            );
+        }
+    }
+
+    let fonts = site.join("fonts/fonts.css");
+    let targets = css_urls(&std::fs::read_to_string(&fonts).expect("reads font stylesheet"));
+    assert!(
+        !targets.is_empty(),
+        "the tracked font stylesheet declares at least one font file"
+    );
+    for target in targets {
+        assert!(
+            fonts
+                .parent()
+                .expect("fonts.css has a directory")
+                .join(&target)
+                .is_file(),
+            "fonts.css names {target}, which must ship next to it"
         );
     }
 }
@@ -1185,9 +1349,8 @@ fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
     ] {
         assert!(book.contains(key), "book.toml carries {key:?}: {book}");
     }
-    assert_eq!(
+    assert!(
         book.contains("additional-css = [\"theme/animsmith.css\"]"),
-        expected.contains("theme/animsmith.css"),
-        "the stylesheet is wired exactly when the checkout tracks it: {book}"
+        "book.toml wires the tracked stylesheet: {book}"
     );
 }

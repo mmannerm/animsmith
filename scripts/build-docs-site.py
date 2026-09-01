@@ -116,6 +116,8 @@ def markdown_link(cell: str, context: str) -> tuple[str, str]:
     label, destination = cell[1:-1].split("](", 1)
     if not label or not destination:
         raise ValueError(f"{context} link label and destination are required")
+    if destination.startswith("#"):
+        raise ValueError(f"{context} destination must be a page, not a bare fragment: {destination}")
     validate_text(label, "label")
     return label, destination
 
@@ -161,12 +163,21 @@ def validate_text(value: str, what: str) -> None:
         raise ValueError(f"index {what} contains control or non-printable characters")
 
 
+def is_plain_text(value: str, forbidden: str = "") -> bool:
+    """Whether text embeds verbatim: no controls, no whitespace, nothing forbidden."""
+    return (
+        not has_non_printable(value)
+        and not any(character.isspace() for character in value)
+        and not any(character in forbidden for character in value)
+    )
+
+
 def validate_source_ref(source_ref: str) -> None:
     if not source_ref:
         raise ValueError("source ref is required")
     if len(source_ref.encode("utf-8")) > MAX_SOURCE_REF_BYTES:
         raise ValueError("source ref exceeds the GitHub URL bound")
-    if has_non_printable(source_ref) or any(character.isspace() for character in source_ref):
+    if not is_plain_text(source_ref):
         raise ValueError("source ref contains whitespace or control characters")
 
 
@@ -190,7 +201,7 @@ def external_proxy(source: Path, label: str, destination: str, proxies: dict[Pat
         raise ValueError("external index label exceeds the generated Markdown bound")
     if len(destination.encode("utf-8")) > MAX_EXTERNAL_URL_BYTES:
         raise ValueError("external index destination exceeds the generated Markdown bound")
-    if has_non_printable(destination) or any(character.isspace() for character in destination):
+    if not is_plain_text(destination):
         raise ValueError(f"external index destination contains whitespace or control characters: {destination}")
     # Angle-bracket destinations are the only Markdown form that keeps query
     # delimiters literal, but raw angle brackets and backslashes would end or
@@ -263,8 +274,12 @@ def relocate_links(description: str, page: Path) -> str:
 
     def relocate(match: re.Match[str]) -> str:
         destination = match["destination"]
-        if not destination or destination.startswith("#") or is_external(destination):
+        if not destination or is_external(destination):
             return match[0]
+        if destination.startswith("#"):
+            # A description is written on the index page, so its same-page
+            # anchors point back at that page from a generated one.
+            destination = INDEX.name + destination
         return f"]({page_relative(local_summary_destination(destination), page)})"
 
     return INLINE_LINK.sub(relocate, description)
@@ -333,8 +348,6 @@ def chapter_destination(source: Path, row: Row, proxies: dict[Path, str]) -> str
     """
     if is_external(row.destination):
         return external_proxy(source, row.label, row.destination, proxies)
-    if row.destination.startswith("#"):
-        return row.destination
     return local_summary_destination(row.destination)
 
 
@@ -356,14 +369,13 @@ def report_chapters(depth: int, destination: str, reports: list[tuple[str, str, 
     return lines
 
 
-def write_group_page(source: Path, group: Group, proxies: dict[Path, str]) -> str:
+def write_group_page(source: Path, group: Group, destinations: list[str]) -> str:
     """Publish a generated group chapter derived from its member rows."""
     relative = GENERATED_GROUP_DIR / f"{group_slug(group.name)}.md"
     members = [
-        f"- [{markdown_text(row.label)}]"
-        f"({page_relative(chapter_destination(source, row, proxies), relative)})"
+        f"- [{markdown_text(row.label)}]({page_relative(destination, relative)})"
         f" — {relocate_links(row.description, relative)}"
-        for row in group.rows
+        for row, destination in zip(group.rows, destinations)
     ]
     write_generated_page(
         source,
@@ -383,12 +395,13 @@ def summary_markdown(
     for part in parts:
         summary.extend(["", f"# {part.title}"])
         for group in part.groups:
+            destinations = [chapter_destination(source, row, proxies) for row in group.rows]
             depth = 0
             if group.name:
-                summary.append(chapter(0, group.name, write_group_page(source, group, proxies)))
+                page = write_group_page(source, group, destinations)
+                summary.append(chapter(0, group.name, page))
                 depth = 1
-            for row in group.rows:
-                destination = chapter_destination(source, row, proxies)
+            for row, destination in zip(group.rows, destinations):
                 summary.append(chapter(depth, row.label, destination))
                 summary.extend(report_chapters(depth + 1, destination, reports))
     return "\n".join(summary) + "\n"
@@ -406,11 +419,7 @@ def redirect_entries(path: Path) -> dict[str, str]:
         if not isinstance(target, str):
             raise ValueError(f"{path}: redirect target must be a string: {route}")
         for value in (route, target):
-            if (
-                has_non_printable(value)
-                or any(character.isspace() for character in value)
-                or any(character in '":\\' for character in value)
-            ):
+            if not is_plain_text(value, '":\\'):
                 raise ValueError(f"{path}: redirect entry is not a plain site path: {route}")
         if not route.startswith("/") or not route.endswith(".html"):
             raise ValueError(
@@ -421,12 +430,8 @@ def redirect_entries(path: Path) -> dict[str, str]:
     return entries
 
 
-def book_toml(site_url: str, theme_css: bool, redirects: dict[str, str]) -> str:
-    """Render book.toml, wiring only the theme assets the checkout tracks.
-
-    Release-tag checkouts predating docs/site have no theme to override, so
-    additional-css is emitted exactly when the staged theme provides it.
-    """
+def book_toml(site_url: str, redirects: dict[str, str]) -> str:
+    """Render book.toml for the staged book."""
     lines = [
         "[book]",
         'title = "AnimSmith documentation"',
@@ -441,10 +446,12 @@ def book_toml(site_url: str, theme_css: bool, redirects: dict[str, str]) -> str:
         'default-theme = "light"',
         'preferred-dark-theme = "navy"',
         "no-section-label = true",
+        f'additional-css = ["theme/{THEME_CSS}"]',
+        "",
+        "[output.html.fold]",
+        "enable = true",
+        "level = 0",
     ]
-    if theme_css:
-        lines.append(f'additional-css = ["theme/{THEME_CSS}"]')
-    lines.extend(["", "[output.html.fold]", "enable = true", "level = 0"])
     if redirects:
         lines.extend(["", "[output.html.redirect]"])
         lines.extend(f'"{route}" = "{target}"' for route, target in redirects.items())
@@ -478,6 +485,8 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
             )
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(original, target)
+        if not (theme / THEME_CSS).is_file():
+            raise ValueError(f"{(SITE / THEME_CSS).as_posix()} must be tracked to style the book")
         rows = index_rows(source / INDEX)
         reports = (
             report_rows(source / REPORT_INDEX)
@@ -488,11 +497,7 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
             summary_markdown(staged_source, navigation(rows), reports), encoding="utf-8"
         )
         (temporary / "book.toml").write_text(
-            book_toml(
-                site_url,
-                (theme / THEME_CSS).is_file(),
-                redirect_entries(source / REDIRECTS),
-            ),
+            book_toml(site_url, redirect_entries(source / REDIRECTS)),
             encoding="utf-8",
         )
         if destination.exists():

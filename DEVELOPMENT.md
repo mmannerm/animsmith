@@ -196,9 +196,10 @@ that table below itself. Chapters with children start collapsed
 
 Tracked `docs/site` files stage as mdBook's `theme/` override directory instead
 of as book source, so the stylesheet, fonts, and favicons style the site without
-becoming pages; `docs/site/animsmith.css` is wired as `additional-css` when the
-checkout tracks it. `docs/site/redirects.toml` is configuration rather than a
-page: each `"/route.html" = "relative/target.html"` entry becomes an
+becoming pages. `docs/site/animsmith.css` is required and wired as
+`additional-css`; staging refuses a checkout that does not track it rather than
+publishing an unstyled book. `docs/site/redirects.toml` is configuration rather
+than a page: each `"/route.html" = "relative/target.html"` entry becomes an
 `[output.html.redirect]` route, and the build fails when a redirect target is
 missing from the artifact. Built `README.md` chapters receive compatibility
 routes because mdBook renders them as `index.html`. Generated links to
