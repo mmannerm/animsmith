@@ -269,17 +269,53 @@ if [[ -n "${RELEASE_PLZ_BIN:-}" ]]; then
   [[ -x "$RELEASE_PLZ_BIN" ]] || fail "RELEASE_PLZ_BIN is not executable"
   "$RELEASE_PLZ_BIN" --version | grep -Fq 'release-plz 0.3.160' \
     || fail "release-plz traversal probe must use version 0.3.160"
+
+  # The traversal proof is specifically for the repaired 0.9.0 -> 0.10.0
+  # history. Running it from the moving PR head becomes time-dependent after
+  # 0.10.0 is published: release-plz correctly sees the current crates on the
+  # registry and proposes no update. Anchor the probe at the immutable release
+  # branch and its pinned pre-release base instead.
+  probe_release_commit='db91d8dda3326f97f581d4d62104d928caec383f'
+  probe_registry_commit='8c24253d775f5172a71690cb4a087d0f0b7a2a17'
+  git cat-file -e "${probe_release_commit}^{commit}" \
+    || fail "release-plz traversal probe release commit is missing"
+  git cat-file -e "${probe_registry_commit}^{commit}" \
+    || fail "release-plz traversal probe registry commit is missing"
+  [[ "$(git show "$probe_release_commit:Cargo.toml" | \
+    "$python" -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["workspace"]["package"]["version"])')" == \
+    "0.10.0" ]] \
+    || fail "release-plz traversal probe release does not contain workspace version 0.10.0"
+  probe_base='8268eac39a8c7336ec1ebe245325b00f6b8eb39f'
+  git cat-file -e "${probe_base}^{commit}" \
+    || fail "release-plz traversal probe pre-release commit is missing"
+  git merge-base --is-ancestor "$probe_base" "$probe_release_commit" \
+    || fail "release-plz traversal probe release does not descend from its pinned base"
+  git merge-base --is-ancestor "$probe_registry_commit" "$probe_base" \
+    || fail "release-plz traversal probe base does not descend from its pinned registry commit"
+  [[ "$(git show "$probe_registry_commit:Cargo.toml" | \
+    "$python" -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["workspace"]["package"]["version"])')" == \
+    "0.9.0" ]] \
+    || fail "release-plz traversal probe registry commit is not workspace version 0.9.0"
+  [[ "$(git show "$probe_base:Cargo.toml" | \
+    "$python" -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["workspace"]["package"]["version"])')" == \
+    "0.9.0" ]] \
+    || fail "release-plz traversal probe base is not workspace version 0.9.0"
+
   release_plz_repo="$work/release-plz-repo"
+  release_plz_registry="$work/release-plz-registry"
   git clone --quiet --no-hardlinks . "$release_plz_repo"
-  cp scripts/prepare-release-plz-history.sh \
-    "$release_plz_repo/scripts/prepare-release-plz-history.sh"
+  git clone --quiet --no-hardlinks . "$release_plz_registry"
+  git -C "$release_plz_registry" checkout --quiet --detach "$probe_registry_commit"
   (
     cd "$release_plz_repo"
-    git switch --quiet -c release-plz-history-probe
+    git switch --quiet -c release-plz-history-probe "$probe_base"
+    cp "$repo_root/scripts/prepare-release-plz-history.sh" \
+      scripts/prepare-release-plz-history.sh
     git update-ref refs/remotes/origin/release-plz-history-probe HEAD
     git branch --quiet --set-upstream-to=origin/release-plz-history-probe
     bash scripts/prepare-release-plz-history.sh
-    "$RELEASE_PLZ_BIN" update --config release-plz.toml
+    "$RELEASE_PLZ_BIN" update --config release-plz.toml \
+      --registry-manifest-path "$release_plz_registry/Cargo.toml"
     bash scripts/prepare-release-plz-history.sh --remove >/dev/null
   ) >"$work/release-plz-update.out"
   for package in \
