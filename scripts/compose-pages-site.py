@@ -146,7 +146,7 @@ def compose(
     copy_tree(development_stage / "book", output / "dev")
     (output / "BUILD-INFO.txt").write_text(
         f"Release root: {release_tag}\nDevelopment subtree: main\n",
-        encoding="utf-8",
+        encoding="utf-8", newline="\n",
     )
 
 

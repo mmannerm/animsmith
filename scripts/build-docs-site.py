@@ -235,7 +235,7 @@ def write_generated_page(source: Path, relative: Path, text: str, kind: str) -> 
     if page.exists():
         raise ValueError(f"generated {kind} path is reserved: {relative}")
     page.parent.mkdir(parents=True, exist_ok=True)
-    page.write_text(text, encoding="utf-8")
+    page.write_text(text, encoding="utf-8", newline="\n")
 
 
 def local_summary_destination(destination: str, base: str = "docs") -> str:
@@ -494,11 +494,11 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
             else []
         )
         (staged_source / "SUMMARY.md").write_text(
-            summary_markdown(staged_source, navigation(rows), reports), encoding="utf-8"
+            summary_markdown(staged_source, navigation(rows), reports), encoding="utf-8", newline="\n"
         )
         (temporary / "book.toml").write_text(
             book_toml(site_url, redirect_entries(source / REDIRECTS)),
-            encoding="utf-8",
+            encoding="utf-8", newline="\n",
         )
         if destination.exists():
             shutil.rmtree(destination)
@@ -642,7 +642,7 @@ def publish_source_redirects(
             f"<title>AnimSmith source reference: {escaped_source}</title>\n"
             f'<p>This reference is maintained in the source tree. '
             f'<a href="{escaped_url}">Open {escaped_source} on GitHub</a>.</p>\n',
-            encoding="utf-8",
+            encoding="utf-8", newline="\n",
         )
 
 
