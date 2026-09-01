@@ -200,7 +200,7 @@ pub fn write_docs_visuals(
 /// Cut one figure's `<svg>` out of a rendered report as a standalone file.
 ///
 /// The element is kept verbatim — `viewBox`, `role` and `aria-label`
-/// included — with three changes: the SVG namespace an unparented
+/// included — with three changes: the SVG namespace a standalone
 /// document needs, [`CHART_STYLE`] as the first child, and the playhead
 /// removed, because a still picture has no frame selection. An absent
 /// figure or an absent expected class is an error rather than a silently

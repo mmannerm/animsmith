@@ -139,7 +139,10 @@ fn fixture_checkout() -> tempfile::TempDir {
         .prefix("animsmith-start-docs-")
         .tempdir()
         .expect("creates temp dir");
-    copy_tree(&repo_root().join("examples"), &temporary.path().join("examples"));
+    copy_tree(
+        &repo_root().join("examples"),
+        &temporary.path().join("examples"),
+    );
     temporary
 }
 
