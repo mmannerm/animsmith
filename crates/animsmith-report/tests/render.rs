@@ -23,6 +23,18 @@ fn comparison_fixture(name: &str) -> PathBuf {
         .join(format!("report-comparison-{name}.glb"))
 }
 
+/// A full report: sampled poses embedded, the historical default.
+fn full() -> animsmith_report::ReportOptions {
+    animsmith_report::ReportOptions::default()
+}
+
+/// A report that keeps the evidence and leaves the motion out.
+fn evidence_only() -> animsmith_report::ReportOptions {
+    animsmith_report::ReportOptions {
+        evidence_only: true,
+    }
+}
+
 fn report_data(html: &str) -> Value {
     embedded_json(html, "report-data")
 }
@@ -122,8 +134,9 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
         &config,
         "acceptance-matrix",
     );
-    let first = animsmith_report::render_comparison(before, after).expect("comparison renders");
-    let second = animsmith_report::render_comparison(before, after)
+    let first =
+        animsmith_report::render_comparison(before, after, full()).expect("comparison renders");
+    let second = animsmith_report::render_comparison(before, after, full())
         .expect("comparison renders deterministically");
 
     assert_eq!(first, second);
@@ -178,8 +191,9 @@ fn comparison_refuses_incompatible_named_hierarchy_before_rendering() {
     let before_doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let mut after_doc = before_doc.clone();
     after_doc.skeleton.bones[1].parent = None;
-    let error = animsmith_report::preflight_comparison(&before_doc, "walk", &after_doc, "walk")
-        .expect_err("different named parent must refuse");
+    let error =
+        animsmith_report::preflight_comparison(&before_doc, "walk", &after_doc, "walk", full())
+            .expect_err("different named parent must refuse");
     assert!(matches!(
         error,
         animsmith_report::ComparisonError::IncompatibleSkeleton { .. }
@@ -196,7 +210,8 @@ fn comparison_public_preflight_refuses_normalized_document_clip_ambiguity() {
             &before,
             "acceptance-matrix",
             &after,
-            "acceptance-matrix"
+            "acceptance-matrix",
+            full(),
         ),
         Err(animsmith_report::ComparisonError::AmbiguousClip { side: "before", .. })
     ));
@@ -223,6 +238,7 @@ fn comparison_public_input_text_boundary_accepts_max_and_refuses_n_plus_one() {
         "acceptance-matrix",
         &after,
         "acceptance-matrix",
+        full(),
     )
     .expect("exact input-text limit is admitted");
     before.skeleton.bones[0].name.push('x');
@@ -232,7 +248,8 @@ fn comparison_public_input_text_boundary_accepts_max_and_refuses_n_plus_one() {
             &before,
             "acceptance-matrix",
             &after,
-            "acceptance-matrix"
+            "acceptance-matrix",
+            full(),
         ),
         Err(animsmith_report::ComparisonError::InputTextWorkExceeded {
             side: "before",
@@ -254,6 +271,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &baseline,
                 "acceptance-matrix",
+                full(),
             )
         } else {
             animsmith_report::preflight_comparison(
@@ -261,6 +279,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &duplicate,
                 "acceptance-matrix",
+                full(),
             )
         };
         assert!(
@@ -275,6 +294,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &baseline,
                 "acceptance-matrix",
+                full(),
             )
         } else {
             animsmith_report::preflight_comparison(
@@ -282,6 +302,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &later_parent,
                 "acceptance-matrix",
+                full(),
             )
         };
         assert!(
@@ -296,6 +317,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &baseline,
                 "acceptance-matrix",
+                full(),
             )
         } else {
             animsmith_report::preflight_comparison(
@@ -303,6 +325,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &invalid_parent,
                 "acceptance-matrix",
+                full(),
             )
         };
         assert!(
@@ -317,6 +340,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &baseline,
                 "acceptance-matrix",
+                full(),
             )
         } else {
             animsmith_report::preflight_comparison(
@@ -324,6 +348,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
                 "acceptance-matrix",
                 &unavailable,
                 "acceptance-matrix",
+                full(),
             )
         };
         assert!(
@@ -338,7 +363,8 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
             &baseline,
             "acceptance-matrix",
             &reordered,
-            "acceptance-matrix"
+            "acceptance-matrix",
+            full(),
         ),
         Err(animsmith_report::ComparisonError::IncompatibleSkeleton { .. })
     ));
@@ -348,7 +374,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
 fn comparison_refuses_the_same_complete_loader_authority() {
     let source = animsmith_gltf::load_source(&fixture()).expect("fixture loads");
     assert_eq!(
-        animsmith_report::preflight_comparison_sources(&source, "walk", &source, "idle"),
+        animsmith_report::preflight_comparison_sources(&source, "walk", &source, "idle", full()),
         Err(animsmith_report::ComparisonError::IdenticalAuthorities)
     );
 }
@@ -398,6 +424,7 @@ fn comparison_binds_equal_primary_bytes_to_changed_sidecar_closures() {
     let html = animsmith_report::render_comparison(
         comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
         comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        full(),
     )
     .unwrap();
     let data = embedded_json(&html, "comparison-report-data");
@@ -450,6 +477,7 @@ fn comparison_projects_node_only_finding_subjects_from_exact_source_authority() 
             "walk",
         ),
         comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        full(),
     )
     .unwrap();
     let data = embedded_json(&html, "comparison-report-data");
@@ -489,6 +517,7 @@ fn identical_findings_get_side_and_occurrence_unique_navigation_anchors() {
             &config,
             "acceptance-matrix",
         ),
+        full(),
     )
     .unwrap();
     let data = embedded_json(&html, "comparison-report-data");
@@ -531,6 +560,7 @@ fn comparison_public_boundary_admits_finding_max_and_refuses_n_plus_one() {
                 &config,
                 "acceptance-matrix",
             ),
+            full(),
         )
     };
     render(LIMIT).expect("the exact finding limit renders");
@@ -574,6 +604,7 @@ fn comparison_public_report_text_boundary_counts_repeated_arbitrary_check_ids() 
                 clip,
             ),
             comparison_side(&after_source, &after_grids, &roles, &[], &config, clip),
+            full(),
         )
     };
     render(exact_id_bytes).expect("exact aggregate report-text limit is admitted");
@@ -625,6 +656,7 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
                 &config,
                 "acceptance-matrix",
             ),
+            full(),
         )
     };
     assert_eq!(
@@ -725,6 +757,7 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
                 &config,
                 "walk",
             ),
+            full(),
         );
         if frames == CONTEXT_LIMIT - 2 {
             result.expect("the exact diagnostic-context work limit renders");
@@ -824,6 +857,7 @@ fn comparison_matrix_projects_typed_visual_acceptance_context() {
             &config,
             "acceptance-matrix",
         ),
+        full(),
     )
     .expect("matrix comparison renders");
     let data = embedded_json(&html, "comparison-report-data");
@@ -1093,6 +1127,7 @@ fn comparison_binds_prediction_provenance_to_each_exact_side() {
                 after_provenance,
                 "acceptance-matrix",
             ),
+            full(),
         )
     };
     render(
@@ -1238,6 +1273,7 @@ fn comparison_filters_scoped_gaps_and_prediction_facets_to_selected_clip() {
             &config,
             "acceptance-matrix",
         ),
+        full(),
     )
     .unwrap();
     let data = embedded_json(&html, "comparison-report-data");
@@ -1266,7 +1302,7 @@ fn render_embeds_pose_grid_and_uses_no_external_urls() {
     let roles = ResolvedRoles::default();
     let checks = Vec::new();
 
-    let html = animsmith_report::render(&grids, &roles, &checks, None, None);
+    let html = animsmith_report::render(&grids, &roles, &checks, None, None, full());
     assert_self_contained(&html);
     let data = report_data(&html);
     let clips = data["clips"].as_array().expect("clips array");
@@ -1312,7 +1348,7 @@ fn render_self_contained_with_roles_findings_and_charts() {
             .time(0.5),
     ]);
 
-    let html = animsmith_report::render(&grids, &roles, &checks, None, None);
+    let html = animsmith_report::render(&grids, &roles, &checks, None, None, full());
     assert_self_contained(&html);
     assert!(
         html.contains(r#"data-kind="gait""#),
@@ -1352,7 +1388,7 @@ fn render_respects_clip_filter() {
     let roles = ResolvedRoles::default();
     let checks = Vec::new();
 
-    let html = animsmith_report::render(&grids, &roles, &checks, None, Some("missing"));
+    let html = animsmith_report::render(&grids, &roles, &checks, None, Some("missing"), full());
     assert_self_contained(&html);
     let data = report_data(&html);
     assert_eq!(
@@ -1362,7 +1398,7 @@ fn render_respects_clip_filter() {
     );
 
     for name in ["walk", "idle"] {
-        let html = animsmith_report::render(&grids, &roles, &checks, None, Some(name));
+        let html = animsmith_report::render(&grids, &roles, &checks, None, Some(name), full());
         let data = report_data(&html);
         let clips = data["clips"].as_array().expect("clips array");
         assert_eq!(clips.len(), 1);
@@ -1407,7 +1443,8 @@ fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
             prediction_check(&provenance, available, unavailable),
             gap_check,
         ];
-        let html = animsmith_report::render(&grids, &roles, &checks, Some(&provenance), None);
+        let html =
+            animsmith_report::render(&grids, &roles, &checks, Some(&provenance), None, full());
         let data = report_data(&html);
         let states = data["predictions"][0]["prediction"]["facets"]
             .as_array()
@@ -1427,5 +1464,1372 @@ fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
         assert!(html.contains("required prediction unavailable"));
         assert!(html.contains("available"));
         assert!(html.contains("Coverage gaps"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generated-document contracts: one token set, one shared runtime, charts that
+// survive extraction, and an evidence-only form that carries no motion.
+// ---------------------------------------------------------------------------
+
+/// Token names in the order both value tables use.
+const TOKEN_NAMES: [&str; 11] = [
+    "ground", "surface", "raised", "ink", "muted", "line", "accent", "error", "warning", "pass",
+    "note",
+];
+const DARK_TOKENS: [&str; 11] = [
+    "#17171f", "#1e1e2a", "#232331", "#d5d9e5", "#9099b2", "#3a3a4e", "#7aa2f7", "#f7768e",
+    "#e0af68", "#9ece6a", "#bb9af7",
+];
+const LIGHT_TOKENS: [&str; 11] = [
+    "#f4f5f9", "#ffffff", "#eef0f6", "#1a1e2c", "#5b6382", "#d9deea", "#3b67d6", "#cf3f5b",
+    "#946414", "#287a3b", "#6b7390",
+];
+
+/// Everything the browser executes or styles: the embedded JSON payload is
+/// asset-derived text, not part of the document's own paint.
+fn document_code(html: &str) -> String {
+    let mut kept = String::new();
+    let mut rest = html;
+    while let Some(open) = rest.find("<script type=\"application/json\"") {
+        kept.push_str(&rest[..open]);
+        let close = rest[open..].find("</script>").expect("data script closes") + open;
+        rest = &rest[close..];
+    }
+    kept.push_str(rest);
+    kept
+}
+
+/// Every colour literal, in any CSS hex form. Short and alpha forms are
+/// reported as themselves so a `#abc` or `#rrggbbaa` cannot slip past a
+/// six-digit comparison by being invisible to it.
+fn hex_colours(source: &str) -> std::collections::BTreeSet<String> {
+    let bytes = source.as_bytes();
+    let mut found = std::collections::BTreeSet::new();
+    for (index, _) in source.match_indices('#') {
+        let digits = bytes[index + 1..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_hexdigit())
+            .count();
+        if [3, 4, 6, 8].contains(&digits) {
+            found.insert(source[index..index + 1 + digits].to_ascii_lowercase());
+        }
+    }
+    found
+}
+
+/// The `{ … }` body of the first rule whose selector contains `selector`,
+/// with the byte range it occupies in `code`.
+fn rule_block(code: &str, selector: &str) -> (usize, usize) {
+    let at = code
+        .find(selector)
+        .unwrap_or_else(|| panic!("stylesheet declares {selector}"));
+    let open = code[at..].find('{').expect("rule opens") + at;
+    let mut depth = 0usize;
+    for (offset, byte) in code[open..].bytes().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (at, open + offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("rule {selector} never closes");
+}
+
+/// Stylesheet text with its `/* … */` comments removed, so prose about a
+/// rule cannot be read as part of the rule.
+fn without_block_comments(source: &str) -> String {
+    let mut kept = String::new();
+    let mut rest = source;
+    while let Some(open) = rest.find("/*") {
+        kept.push_str(&rest[..open]);
+        let close = rest[open..]
+            .find("*/")
+            .map_or(rest.len(), |at| open + at + 2);
+        rest = &rest[close..];
+    }
+    kept.push_str(rest);
+    kept
+}
+
+/// The opening tag carrying `id`, plus any text up to its closing tag.
+fn element_with_id(html: &str, id: &str) -> String {
+    let key = format!("id=\"{id}\"");
+    let at = html
+        .find(&key)
+        .unwrap_or_else(|| panic!("no element carries id {id}"));
+    let start = html[..at].rfind('<').expect("tag opens");
+    let end = html[start..].find('>').expect("tag closes") + start + 1;
+    let tail = &html[end..];
+    let text = tail.find('<').unwrap_or(0);
+    format!("{}{}", &html[start..end], &tail[..text])
+}
+
+fn has_id(html: &str, id: &str) -> bool {
+    html.contains(&format!("id=\"{id}\""))
+}
+
+fn chart_roles_fixture() -> animsmith_core::Document {
+    let mut doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
+    let mut right_foot = doc.skeleton.bones[2].clone();
+    right_foot.name = "right_foot".into();
+    doc.skeleton.bones.push(right_foot);
+    doc
+}
+
+fn comparison_documents(options: animsmith_report::ReportOptions) -> String {
+    let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
+    let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    animsmith_report::render_comparison(
+        comparison_side(
+            &before_source,
+            &before_grids,
+            &roles,
+            &[],
+            &config,
+            "acceptance-matrix",
+        ),
+        comparison_side(
+            &after_source,
+            &after_grids,
+            &roles,
+            &[],
+            &config,
+            "acceptance-matrix",
+        ),
+        options,
+    )
+    .expect("comparison renders")
+}
+
+fn themed_documents() -> Vec<(&'static str, String)> {
+    let doc = chart_roles_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    vec![
+        (
+            "single-clip",
+            animsmith_report::render(&grids, &roles, &[], None, None, full()),
+        ),
+        ("comparison", comparison_documents(full())),
+    ]
+}
+
+#[test]
+fn both_reports_paint_only_from_the_shared_token_set() {
+    let expected: std::collections::BTreeSet<String> = DARK_TOKENS
+        .iter()
+        .chain(LIGHT_TOKENS.iter())
+        .map(|value| (*value).to_owned())
+        .collect();
+    for (kind, html) in themed_documents() {
+        assert_eq!(
+            hex_colours(&document_code(&html)),
+            expected,
+            "{kind} report must resolve every colour through the shared tokens"
+        );
+    }
+}
+
+#[test]
+fn the_runtime_fallback_palette_is_emitted_from_the_stylesheet() {
+    // The viewers paint through the tokens, but a browser that cannot resolve
+    // a custom property falls back to a table inside the runtime. That table
+    // is not written twice: the report substitutes the stylesheet's own dark
+    // values into the runtime as it emits the document.
+    for (kind, html) in themed_documents() {
+        let code = document_code(&html);
+        assert!(
+            !code.contains("__ANIMSMITH_DARK_TOKENS__"),
+            "{kind}: the fallback placeholder is always substituted"
+        );
+        let start = code
+            .find("ANIMSMITH_DEFAULT_PALETTE = ")
+            .expect("runtime declares its fallback palette")
+            + "ANIMSMITH_DEFAULT_PALETTE = ".len();
+        let end = code[start..].find(";\n").expect("declaration ends") + start;
+        let fallback: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(&code[start..end]).expect("the fallback palette is a JS object");
+
+        let (dark_start, dark_end) = rule_block(&code, ":root {");
+        let declared: std::collections::BTreeMap<String, String> = code[dark_start..dark_end]
+            .split_once('{')
+            .expect("rule opens")
+            .1
+            .split(';')
+            .filter_map(|declaration| declaration.split_once(':'))
+            .filter_map(|(name, value)| {
+                Some((
+                    name.trim().strip_prefix("--")?.to_owned(),
+                    value.trim().to_owned(),
+                ))
+            })
+            .collect();
+        assert_eq!(
+            fallback, declared,
+            "{kind}: the runtime falls back to exactly the stylesheet's dark tokens"
+        );
+        assert_eq!(
+            declared.len(),
+            TOKEN_NAMES.len(),
+            "{kind}: every token has a dark value"
+        );
+        for (name, value) in TOKEN_NAMES.iter().zip(DARK_TOKENS) {
+            assert_eq!(
+                declared.get(*name).map(String::as_str),
+                Some(value),
+                "--{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn light_values_live_only_in_the_two_guarded_blocks() {
+    for (kind, html) in themed_documents() {
+        let code = document_code(&html);
+        let (_, bare_end) = rule_block(&code, ":root {");
+        let (media_start, media_end) = rule_block(&code, "@media (prefers-color-scheme: light)");
+        let (pinned_start, pinned_end) = rule_block(&code, ":root[data-theme=\"light\"]");
+        assert!(
+            bare_end <= media_start && media_end <= pinned_start,
+            "{kind}: dark defaults, then the scheme query, then the explicit pin"
+        );
+        assert!(
+            code[media_start..media_end].contains(":root:not([data-theme=\"dark\"])"),
+            "{kind}: a document pinned to dark ignores a light system scheme"
+        );
+        for (name, light) in TOKEN_NAMES.iter().zip(LIGHT_TOKENS) {
+            let declaration = format!("--{name}: {light}");
+            let places: Vec<usize> = code.match_indices(&declaration).map(|(at, _)| at).collect();
+            assert_eq!(places.len(), 2, "{kind}: --{name} is set light twice");
+            assert!(
+                (media_start..media_end).contains(&places[0])
+                    && (pinned_start..pinned_end).contains(&places[1]),
+                "{kind}: --{name}'s light value only ever appears inside the two guarded blocks"
+            );
+        }
+    }
+}
+
+#[test]
+fn embed_hides_the_same_chrome_in_both_documents_and_hides_no_evidence() {
+    for (kind, html) in themed_documents() {
+        let code = without_block_comments(&document_code(&html));
+        let mut hidden: Vec<String> = Vec::new();
+        let mut rest = code.as_str();
+        while let Some(at) = rest.find("[data-embed]") {
+            let selector_start = rest[..at].rfind('}').map_or(0, |end| end + 1);
+            let (_, block_end) = rule_block(&rest[selector_start..], "[data-embed]");
+            let rule = &rest[selector_start..selector_start + block_end];
+            let (selectors, body) = rule.split_once('{').expect("rule opens");
+            for evidence in [
+                "findings",
+                "gaps",
+                "predictions",
+                "chart",
+                "notice",
+                "side",
+                "disclosure",
+                "warning",
+            ] {
+                assert!(
+                    !selectors.contains(evidence),
+                    "{kind}: `#embed=1` must not touch {evidence}: {selectors}"
+                );
+            }
+            if body.contains("display: none") || body.contains("display:none") {
+                hidden.extend(
+                    selectors
+                        .split(',')
+                        .map(|one| one.trim().replace(":root[data-embed] ", "")),
+                );
+            }
+            rest = &rest[selector_start + block_end..];
+        }
+        hidden.sort();
+        assert_eq!(
+            hidden,
+            vec![".hint".to_owned(), "header".to_owned()],
+            "{kind}: `#embed=1` hides the running title and the hint, and nothing else"
+        );
+
+        // The rule only means something if the documents are shaped for it.
+        let header_start = html
+            .find("<header>")
+            .unwrap_or_else(|| panic!("{kind}: the document has a header to hide"));
+        let header_end = html[header_start..]
+            .find("</header>")
+            .expect("header closes")
+            + header_start;
+        for evidence in ["<main", "id=\"findings\"", "class=\"disclosure\""] {
+            if let Some(at) = html.find(evidence) {
+                assert!(
+                    at > header_end,
+                    "{kind}: {evidence} must sit outside the header the embed rule hides"
+                );
+            }
+        }
+    }
+
+    // The hint is single-clip chrome: the comparison has no interaction hint
+    // to hide, and its phase mapping and evidence caveats live in the
+    // disclosure section instead, which the embed rule leaves alone.
+    let documents = themed_documents();
+    assert!(
+        documents[0].1.contains("class=\"hint\""),
+        "the single-clip report has a hint"
+    );
+    assert!(
+        !documents[1].1.contains("class=\"hint\""),
+        "the comparison has none"
+    );
+    assert!(
+        documents[1].1.contains("<section class=\"disclosure\">"),
+        "the comparison keeps its disclosures outside the header"
+    );
+}
+
+/// Every colour-bearing declaration in the emitted stylesheets, as
+/// (property, value). Custom properties are the token definitions themselves
+/// and are pinned by the token tests instead.
+fn colour_declarations(code: &str) -> Vec<(String, String)> {
+    const PROPERTIES: [&str; 8] = [
+        "color",
+        "background",
+        "background-color",
+        "fill",
+        "stroke",
+        "border-color",
+        "outline-color",
+        "box-shadow",
+    ];
+    let mut found = Vec::new();
+    let mut rest = code;
+    while let Some(open) = rest.find("<style>") {
+        let close = rest[open..].find("</style>").expect("style closes") + open;
+        let sheet = without_block_comments(&rest[open + "<style>".len()..close]);
+        for declaration in sheet.split([';', '{', '}']) {
+            let Some((property, value)) = declaration.split_once(':') else {
+                continue;
+            };
+            let (property, value) = (property.trim(), value.trim());
+            if PROPERTIES.contains(&property) {
+                found.push((property.to_owned(), value.to_owned()));
+            }
+        }
+        rest = &rest[close + "</style>".len()..];
+    }
+    found
+}
+
+#[test]
+fn both_reports_spell_colour_one_way() {
+    // A colour written as rgb()/hsl() would sit outside the token set without
+    // any hex literal for the token test to catch, so the syntax itself is
+    // pinned: declarations resolve to a token reference or a keyword, and the
+    // documents contain no colour-function spelling at all.
+    for (kind, html) in themed_documents() {
+        let code = document_code(&html);
+        for function in ["rgb(", "rgba(", "hsl(", "hsla("] {
+            assert!(
+                !code.contains(function),
+                "{kind}: a colour is spelled {function}…), which no token can express"
+            );
+        }
+        let declarations = colour_declarations(&code);
+        assert!(
+            declarations.len() >= 8,
+            "{kind}: the sheets must actually declare colours: {declarations:?}"
+        );
+        for (property, value) in declarations {
+            let resolved = value.starts_with("var(--")
+                || ["none", "transparent", "currentColor", "inherit"].contains(&value.as_str())
+                || hex_colours(&value).len() == 1;
+            assert!(
+                resolved,
+                "{kind}: {property}: {value} is neither a token reference, a hex literal, \
+                 nor a colour keyword"
+            );
+        }
+    }
+}
+
+#[test]
+fn evidence_rows_and_controls_sit_on_the_raised_token() {
+    // A row or control on --ground reads as a hole cut through its panel;
+    // these two use sites are why the token exists.
+    for (kind, html) in themed_documents() {
+        let code = without_block_comments(&document_code(&html));
+        let (start, end) = rule_block(&code, ".finding {");
+        assert!(
+            code[start..end].contains("background: var(--raised)"),
+            "{kind}: evidence rows sit on --raised"
+        );
+    }
+    let single = &themed_documents()[0].1;
+    let code = without_block_comments(&document_code(single));
+    let (start, end) = rule_block(&code, "#controls select, #controls button");
+    assert!(
+        code[start..end].contains("background: var(--raised)"),
+        "single-clip: controls sit on --raised"
+    );
+}
+
+#[test]
+fn both_reports_embed_one_shared_fragment_runtime() {
+    for (kind, html) in themed_documents() {
+        let code = document_code(&html);
+        assert_eq!(
+            code.matches("function animsmithFragmentOptions(").count(),
+            1,
+            "{kind}: exactly one fragment parser is embedded"
+        );
+        assert_eq!(
+            code.matches("// animsmith report shared runtime").count(),
+            1,
+            "{kind}: the shared runtime is embedded once"
+        );
+        // That the viewer actually applies those options is a behaviour, and
+        // the browser harness executes it; nothing is pinned by spelling here.
+    }
+}
+
+/// Each `<figure class="chart">` block, which is the unit the documentation
+/// site lifts out of a report.
+fn chart_figures(html: &str) -> Vec<String> {
+    let mut figures = Vec::new();
+    let mut rest = html;
+    while let Some(open) = rest.find("<figure class=\"chart\"") {
+        let close = rest[open..].find("</figure>").expect("figure closes") + open + 9;
+        figures.push(rest[open..close].to_owned());
+        rest = &rest[close..];
+    }
+    figures
+}
+
+fn attribute(source: &str, name: &str) -> String {
+    attribute_values(source, name)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("{name} attribute is present"))
+}
+
+fn attribute_values(source: &str, name: &str) -> Vec<String> {
+    let key = format!("{name}=\"");
+    let mut values = Vec::new();
+    let mut rest = source;
+    while let Some(at) = rest.find(&key) {
+        let start = at + key.len();
+        let end = rest[start..].find('"').expect("attribute closes") + start;
+        values.push(rest[start..end].to_owned());
+        rest = &rest[end..];
+    }
+    values
+}
+
+/// The text content of every element carrying `class`.
+fn class_texts(source: &str, class: &str) -> Vec<String> {
+    let key = format!("class=\"{class}\"");
+    let mut texts = Vec::new();
+    let mut rest = source;
+    while let Some(at) = rest.find(&key) {
+        let open = rest[at..].find('>').expect("tag closes") + at + 1;
+        let close = rest[open..].find('<').unwrap_or(0) + open;
+        texts.push(rest[open..close].to_owned());
+        rest = &rest[close..];
+    }
+    texts
+}
+
+/// Every `<tag …>` in a fragment, so a test can ask about one element
+/// instead of about every attribute in the figure.
+fn tags(source: &str) -> Vec<String> {
+    source
+        .split('<')
+        .skip(1)
+        .filter_map(|rest| rest.split_once('>').map(|(tag, _)| tag.to_owned()))
+        .collect()
+}
+
+/// The box every legend entry occupies: swatch lines carry a series class,
+/// labels carry `class="legend"`. The playhead is a line but not a legend.
+fn legend_bounds(figure: &str) -> (f64, f64, f64, f64) {
+    let (mut min_x, mut max_x) = (f64::MAX, f64::MIN);
+    let (mut min_y, mut max_y) = (f64::MAX, f64::MIN);
+    for tag in tags(figure) {
+        let Some(class) = attribute_values(&tag, "class").into_iter().next() else {
+            continue;
+        };
+        if class != "legend" && !(tag.starts_with("line") && class != "playhead") {
+            continue;
+        }
+        for name in ["x", "x1", "x2"] {
+            for value in attribute_values(&tag, name) {
+                if let Ok(at) = value.parse::<f64>() {
+                    min_x = min_x.min(at);
+                    max_x = max_x.max(at);
+                }
+            }
+        }
+        for name in ["y", "y1", "y2"] {
+            for value in attribute_values(&tag, name) {
+                if let Ok(at) = value.parse::<f64>() {
+                    min_y = min_y.min(at);
+                    max_y = max_y.max(at);
+                }
+            }
+        }
+    }
+    assert!(min_x <= max_x && min_y <= max_y, "the chart has a legend");
+    (min_x, max_x, min_y, max_y)
+}
+
+fn number(source: &str, name: &str) -> f64 {
+    attribute(source, name)
+        .parse()
+        .unwrap_or_else(|_| panic!("{name} is numeric"))
+}
+
+#[test]
+fn charts_keep_their_sync_hooks_and_describe_themselves() {
+    let doc = chart_roles_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let html = animsmith_report::render(&grids, &roles, &[], None, Some("walk"), full());
+    assert_self_contained(&html);
+
+    let figures = chart_figures(&html);
+    let kinds: Vec<String> = figures
+        .iter()
+        .map(|figure| attribute(figure, "data-kind"))
+        .collect();
+    assert_eq!(kinds, vec!["gait", "rootpath"]);
+
+    for figure in &figures {
+        let kind = attribute(figure, "data-kind");
+        assert_eq!(attribute(figure, "data-clip"), "walk", "{kind}");
+        assert_eq!(attribute(figure, "role"), "img", "{kind}");
+        let view_box: Vec<f64> = attribute(figure, "viewBox")
+            .split_whitespace()
+            .map(|part| part.parse().expect("viewBox number"))
+            .collect();
+        assert_eq!(view_box.len(), 4, "{kind}: a scalable viewBox");
+        let (width, height) = (view_box[2], view_box[3]);
+        assert!(width > 0.0 && height > 0.0, "{kind}");
+
+        let described = attribute(figure, "aria-label");
+        assert!(
+            described.starts_with("walk — ") && described.contains(" m"),
+            "{kind}: the label names the clip and states its unit: {described}"
+        );
+        assert!(figure.contains("<title>walk — "), "{kind}: titled");
+        let axis = class_texts(figure, "axis");
+        assert!(
+            axis.iter().all(|label| !label.trim().is_empty()),
+            "{kind}: every axis label says something"
+        );
+        assert!(
+            axis.iter().filter(|label| label.ends_with(" m")).count() >= 2,
+            "{kind}: the unit is in the label a reader sees, not only in the \
+             aria description: {axis:?}"
+        );
+
+        // Colour comes from the classes alone, so an extracted figure keeps
+        // its meaning under an injected style block.
+        assert!(
+            !figure.contains("style="),
+            "{kind}: no inline style overrides the classes"
+        );
+        assert!(
+            !figure.contains("stroke=\""),
+            "{kind}: stroke comes from a class"
+        );
+        for fill in attribute_values(figure, "fill") {
+            assert_eq!(fill, "none", "{kind}: the only fill attribute is none");
+        }
+
+        // Every label sits inside the box it describes, and the legend
+        // inside the plot it labels.
+        for tag in tags(figure) {
+            for name in ["x", "x2", "cx"] {
+                for value in attribute_values(&tag, name) {
+                    if let Ok(at) = value.parse::<f64>() {
+                        assert!(
+                            (0.0..=width).contains(&at),
+                            "{kind}: {name}={at} escapes the {width}-wide viewBox"
+                        );
+                    }
+                }
+            }
+        }
+        let (legend_min_x, legend_max_x, legend_min_y, legend_max_y) = legend_bounds(figure);
+        assert!(
+            legend_min_x >= 0.0
+                && legend_max_x <= width
+                && legend_min_y >= 0.0
+                && legend_max_y <= height,
+            "{kind}: the legend stays inside the {width}x{height} chart on every side: \
+             x {legend_min_x}..{legend_max_x}, y {legend_min_y}..{legend_max_y}"
+        );
+    }
+
+    let gait = &figures[0];
+    for class in ["series-left", "series-right", "series-diff"] {
+        assert!(gait.contains(&format!("class=\"{class}\"")), "{class}");
+    }
+    // The viewer places the playhead at `data-pad + data-plotw * phase`, so
+    // those two numbers must describe a real rectangle inside the chart and
+    // the playhead must start at its origin.
+    let pad = number(gait, "data-pad");
+    let plot_width = number(gait, "data-plotw");
+    let width: f64 = attribute(gait, "viewBox")
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(pad > 0.0, "the plot leaves room for its y-axis labels");
+    assert!(plot_width > 0.0, "the plot has width");
+    assert!(pad + plot_width <= width, "the plot fits its viewBox");
+    let playhead = gait
+        .split_once("class=\"playhead\"")
+        .expect("playhead line")
+        .1;
+    assert_eq!(number(playhead, "x1"), pad, "playhead starts at the origin");
+    assert_eq!(number(playhead, "x2"), pad);
+    let (gait_min_x, gait_max_x, gait_min_y, gait_max_y) = legend_bounds(gait);
+    assert!(
+        gait_min_x >= pad && gait_max_x <= pad + plot_width,
+        "the legend fits the plot rectangle horizontally: {gait_min_x}..{gait_max_x} \
+         within {pad}..{}",
+        pad + plot_width
+    );
+    let playhead_top = number(playhead, "y1");
+    assert!(
+        gait_max_y <= playhead_top,
+        "the legend sits above the plot it labels: {gait_max_y} vs {playhead_top}"
+    );
+    assert!(gait_min_y > 0.0, "and inside the chart: {gait_min_y}");
+
+    let path = &figures[1];
+    assert!(path.contains("class=\"root-path\""));
+    assert!(path.contains("class=\"pathdot\""));
+    assert!(path.contains("<template class=\"pathpoints\">"));
+}
+
+#[test]
+fn the_root_path_chart_plots_x_and_z_on_one_scale() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    // Two metres along +X, then one metre along +Z. Per-axis normalization
+    // would draw both legs the same length; one shared scale draws the X leg
+    // exactly twice as long.
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![Clip {
+            name: "corner".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![
+                    Vec3::ZERO,
+                    Vec3::new(2.0, 0.0, 0.0),
+                    Vec3::new(2.0, 0.0, 1.0),
+                ]),
+            }],
+        }],
+        ..Document::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+
+    let figure = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+    let points = figure
+        .split_once("<template class=\"pathpoints\">")
+        .expect("plotted points")
+        .1
+        .split_once("</template>")
+        .expect("points close")
+        .0;
+    let plotted: Vec<(f64, f64)> = points
+        .split(';')
+        .map(|point| {
+            let (x, y) = point.split_once(',').expect("x,y point");
+            (x.parse().expect("x"), y.parse().expect("y"))
+        })
+        .collect();
+    let extent = |values: Vec<f64>| {
+        values.iter().copied().fold(f64::MIN, f64::max)
+            - values.iter().copied().fold(f64::MAX, f64::min)
+    };
+    let width = extent(plotted.iter().map(|point| point.0).collect());
+    let height = extent(plotted.iter().map(|point| point.1).collect());
+    assert!(width > 1.0, "the X leg is plotted");
+    assert!(
+        (width - 2.0 * height).abs() <= 0.2,
+        "two metres of X must plot twice as long as one metre of Z: {width} vs {height}"
+    );
+}
+
+/// Maximal runs of base64 characters over one alphabet's two extra symbols.
+/// Sixteen characters is the shortest run that could carry the twelve bytes
+/// of one sampled position.
+fn encodable_runs<'a>(source: &'a str, extra: &[u8]) -> Vec<&'a str> {
+    let encodable =
+        |byte: u8| byte.is_ascii_alphanumeric() || byte == b'=' || extra.contains(&byte);
+    let bytes = source.as_bytes();
+    let mut runs = Vec::new();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !encodable(bytes[start]) {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < bytes.len() && encodable(bytes[end]) {
+            end += 1;
+        }
+        if end - start >= 16 {
+            runs.push(&source[start..end]);
+        }
+        start = end;
+    }
+    runs
+}
+
+/// Every base64-looking run in a source, decoded. The search deliberately
+/// does not trust the key a sample was stored under, nor the alphabet it was
+/// spelled with: standard and URL-safe runs are scanned separately, each with
+/// its own engine and with or without padding.
+fn decoded_runs(source: &str) -> Vec<Vec<u8>> {
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+    let mut runs = Vec::new();
+    for text in encodable_runs(source, b"+/") {
+        if let Ok(decoded) = STANDARD
+            .decode(text)
+            .or_else(|_| STANDARD_NO_PAD.decode(text))
+        {
+            runs.push(decoded);
+        }
+    }
+    for text in encodable_runs(source, b"-_") {
+        if let Ok(decoded) = URL_SAFE
+            .decode(text)
+            .or_else(|_| URL_SAFE_NO_PAD.decode(text))
+        {
+            runs.push(decoded);
+        }
+    }
+    runs
+}
+
+/// Every string value in the document's embedded JSON, unescaped, so a
+/// spelling hidden behind `\u` escapes is still read as its characters.
+fn json_strings(html: &str, id: &str) -> Vec<String> {
+    fn walk(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(text) => out.push(text.clone()),
+            Value::Object(map) => map.values().for_each(|item| walk(item, out)),
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut strings = Vec::new();
+    walk(&embedded_json(html, id), &mut strings);
+    strings
+}
+
+/// Every payload a document carries, whatever key it sits under: base64 runs
+/// anywhere in the markup, plus base64 inside any embedded JSON string.
+fn document_payloads(html: &str, id: &str) -> Vec<Vec<u8>> {
+    let mut payloads = decoded_runs(html);
+    for value in json_strings(html, id) {
+        payloads.extend(decoded_runs(&value));
+    }
+    payloads
+}
+
+/// Whether any payload carries this exact four-byte sample.
+fn payloads_carry(payloads: &[Vec<u8>], needle: &[u8; 4]) -> bool {
+    payloads
+        .iter()
+        .any(|payload| payload.windows(needle.len()).any(|slice| slice == needle))
+}
+
+/// Every sampled pose byte the document embeds, from any clip or any side.
+fn embedded_pose_bytes(html: &str, id: &str) -> Vec<u8> {
+    fn walk(value: &Value, out: &mut Vec<u8>) {
+        match value {
+            Value::Object(map) => {
+                for (key, item) in map {
+                    if key == "positions" {
+                        let encoded = item.as_str().expect("positions is base64 text");
+                        out.extend(
+                            base64::engine::general_purpose::STANDARD
+                                .decode(encoded)
+                                .expect("positions decode"),
+                        );
+                    }
+                    walk(item, out);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut bytes = Vec::new();
+    walk(&embedded_json(html, id), &mut bytes);
+    bytes
+}
+
+#[test]
+fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
+    let doc = chart_roles_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let checks = evaluations(vec![
+        Finding::new("fixture-check", Severity::Warning, "fixture finding")
+            .clip("walk")
+            .bone("hips")
+            .time(0.5),
+    ]);
+
+    let full_html = animsmith_report::render(&grids, &roles, &checks, None, None, full());
+    let html = animsmith_report::render(&grids, &roles, &checks, None, None, evidence_only());
+    assert_self_contained(&html);
+
+    let full_data = report_data(&full_html);
+    let data = report_data(&html);
+    assert_eq!(full_data["evidence_only"], false);
+    assert_eq!(data["evidence_only"], true);
+    assert!(
+        embedded_pose_bytes(&html, "report-data").is_empty(),
+        "an evidence-only report embeds no sampled motion"
+    );
+    assert!(!embedded_pose_bytes(&full_html, "report-data").is_empty());
+    // The single-clip form has no identity block to keep — its provenance is
+    // the source path and the resolved profile — which is what the docs claim
+    // for it; the comparison's per-side identities are asserted separately.
+    let keys: Vec<&String> = data
+        .as_object()
+        .expect("report data object")
+        .keys()
+        .collect();
+    assert!(
+        keys.iter().all(|key| !key.contains("identity")),
+        "the single-clip payload carries no identity block: {keys:?}"
+    );
+    assert!(
+        data["file"].is_string() && data["profile"].is_string(),
+        "it carries the file path and profile instead: {keys:?}"
+    );
+    for clip in data["clips"].as_array().expect("clips array") {
+        assert!(
+            clip.get("positions").is_none(),
+            "the key is absent, not empty"
+        );
+        assert!(clip["frames"].as_u64().expect("frame count") > 0);
+    }
+    for key in [
+        "file",
+        "profile",
+        "bones",
+        "findings",
+        "gaps",
+        "predictions",
+        "prediction_provenance",
+    ] {
+        assert_eq!(data[key], full_data[key], "{key} is unchanged");
+    }
+    let figures = chart_figures(&html);
+    assert!(
+        !figures.is_empty(),
+        "the fixture must really render charts for this to mean anything"
+    );
+    assert_eq!(
+        figures,
+        chart_figures(&full_html),
+        "the single-clip charts are the same evidence"
+    );
+
+    // The document, not the viewer, decides there is no pose view.
+    assert!(!has_id(&html, "gl"), "no canvas is rendered");
+    assert!(
+        element_with_id(&html, "gl-notice").contains("Pose playback omitted"),
+        "a notice stands where the pose view would be"
+    );
+    assert!(
+        element_with_id(&html, "play").contains("disabled"),
+        "playback is disabled"
+    );
+    assert!(has_id(&full_html, "gl"), "a full report keeps its canvas");
+    assert!(
+        !element_with_id(&full_html, "play").contains("disabled"),
+        "a full report can play"
+    );
+    assert!(
+        html.len() < full_html.len(),
+        "omitting the pose grid must shrink the document"
+    );
+}
+
+#[test]
+fn an_evidence_only_report_carries_no_unplotted_sample() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    // A bone that is neither the root nor a foot never reaches a chart, so
+    // this whole coordinate triple exists only inside the sampled pose grid.
+    const WITNESS: [f32; 3] = [123.456, 234.567, 345.678];
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![
+                Bone {
+                    name: "root".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+                Bone {
+                    name: "spine".into(),
+                    parent: Some(0),
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                },
+            ],
+        },
+        clips: vec![Clip {
+            name: "witness".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 1,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::from_array(WITNESS); 3]),
+            }],
+        }],
+        ..Document::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+    let full_html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, evidence_only());
+
+    // Every payload the document carries, not only the field the pose grid
+    // used to occupy.
+    let channels: Vec<[u8; 4]> = WITNESS
+        .iter()
+        .map(|channel| channel.to_le_bytes())
+        .collect();
+    let spelled: Vec<String> = WITNESS
+        .iter()
+        .flat_map(|channel| [format!("{channel}"), format!("{channel:.2}")])
+        .collect();
+
+    let full_payloads = document_payloads(&full_html, "report-data");
+    let payloads = document_payloads(&html, "report-data");
+    for needle in &channels {
+        assert!(
+            payloads_carry(&full_payloads, needle),
+            "the fixture must really be a witness in a full report"
+        );
+        assert!(
+            !payloads_carry(&payloads, needle),
+            "an evidence-only report carries a sampled coordinate in some encoded field"
+        );
+    }
+    for spelling in &spelled {
+        assert!(
+            !html.contains(spelling.as_str()),
+            "the evidence-only document still spells {spelling}"
+        );
+        for value in json_strings(&html, "report-data") {
+            assert!(
+                !value.contains(spelling.as_str()),
+                "an embedded JSON string still spells {spelling}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_evidence_only_comparison_drops_both_pose_grids() {
+    let full_html = comparison_documents(full());
+    let html = comparison_documents(evidence_only());
+    assert_self_contained(&html);
+
+    let full_data = embedded_json(&full_html, "comparison-report-data");
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(full_data["evidence_only"], false);
+    assert_eq!(data["evidence_only"], true);
+    assert!(
+        embedded_pose_bytes(&html, "comparison-report-data").is_empty(),
+        "neither side embeds sampled motion"
+    );
+    assert!(!embedded_pose_bytes(&full_html, "comparison-report-data").is_empty());
+    for side in ["before", "after"] {
+        assert!(data[side]["clip"].get("positions").is_none(), "{side}");
+        assert!(
+            data[side]["clip"]["times"].is_array(),
+            "{side}: judged frame times remain"
+        );
+        for key in [
+            "identity",
+            "dependency_closure_identity",
+            "findings",
+            "gaps",
+            "contexts",
+            "predictions",
+            "prediction_provenance",
+        ] {
+            assert_eq!(data[side][key], full_data[side][key], "{side} {key}");
+        }
+    }
+    assert_eq!(data["correspondence"], full_data["correspondence"]);
+
+    // Every comparison panel is drawn by the viewer from the pose grid — the
+    // two canvases, the shared root chart, and both sides' trajectory and
+    // gait panels — so all of them are replaced by the notice rather than
+    // left as boxes that could never be filled. The shared phase then has
+    // nothing left to scrub.
+    assert!(
+        chart_figures(&html).is_empty() && chart_figures(&full_html).is_empty(),
+        "a comparison has no Rust-rendered chart figures in either form"
+    );
+    assert!(
+        !html.contains("<svg id="),
+        "no comparison chart surface survives without its poses"
+    );
+    for surface in [
+        "before-gl",
+        "after-gl",
+        "comparison-root-path",
+        "before-path",
+        "after-path",
+        "before-gait",
+        "after-gait",
+    ] {
+        assert!(!has_id(&html, surface), "{surface} is not rendered");
+        assert!(
+            element_with_id(&html, &format!("{surface}-notice")).contains("Pose playback omitted"),
+            "{surface} is replaced by a notice"
+        );
+        assert!(
+            has_id(&full_html, surface),
+            "{surface} stands in a full report"
+        );
+    }
+    assert!(element_with_id(&html, "scrub").contains("disabled"));
+    assert!(!element_with_id(&full_html, "scrub").contains("disabled"));
+    assert!(html.len() < full_html.len());
+}
+
+#[test]
+fn an_evidence_only_comparison_is_not_bound_by_the_embedded_pose_budget() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    // 300 bones over 10,000 judged frames is ~36 MiB of pose grid, past the
+    // embedded-pose budget. An evidence-only report embeds none of it, so
+    // that budget must not decide which pairs it can describe.
+    const BONES: usize = 300;
+    const FRAMES: usize = 10_000;
+    const {
+        assert!(
+            BONES * FRAMES * 12 > animsmith_report::MAX_COMPARISON_POSE_BYTES,
+            "the fixture must exceed the budget it is testing"
+        )
+    };
+    let bones = (0..BONES)
+        .map(|index| Bone {
+            name: format!("bone{index}"),
+            parent: index.checked_sub(1),
+            rest: Transform::IDENTITY,
+            inverse_bind: None,
+        })
+        .collect();
+    let doc = Document {
+        skeleton: Skeleton { bones },
+        clips: vec![Clip {
+            name: "walk".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: (0..FRAMES)
+                    .map(|frame| frame as f32 / FRAMES as f32)
+                    .collect(),
+                values: TrackValues::Vec3s(vec![Vec3::ZERO; FRAMES]),
+            }],
+        }],
+        ..Document::default()
+    };
+
+    let refused = animsmith_report::preflight_comparison(&doc, "walk", &doc, "walk", full())
+        .expect_err("a full report would have to embed the grid");
+    assert!(
+        matches!(
+            refused,
+            animsmith_report::ComparisonError::PoseWorkExceeded { .. }
+        ),
+        "{refused:?}"
+    );
+    animsmith_report::preflight_comparison(&doc, "walk", &doc, "walk", evidence_only())
+        .expect("an evidence-only comparison embeds no grid, so the budget does not apply");
+}
+
+/// A before/after pair whose *declared* pose grid is larger than the embedded
+/// budget: `bones` nodes and `frames` judged keys on each side, with distinct
+/// authorities. Only the key count and the node count matter here; the
+/// sampled values are zero.
+fn oversized_pair(directory: &std::path::Path, bones: usize, frames: usize) -> Vec<PathBuf> {
+    let mut json: Value = serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    let mut bytes = Vec::with_capacity(frames * 16);
+    for frame in 0..frames {
+        bytes.extend_from_slice(&(frame as f32).to_le_bytes());
+    }
+    let output_offset = bytes.len();
+    bytes.resize(output_offset + frames * 12, 0);
+    json["buffers"][0]["uri"] = format!(
+        "data:application/octet-stream;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    )
+    .into();
+    json["buffers"][0]["byteLength"] = bytes.len().into();
+    json["bufferViews"] = serde_json::json!([
+        {"buffer":0,"byteOffset":0,"byteLength":output_offset},
+        {"buffer":0,"byteOffset":output_offset,"byteLength":frames * 12}
+    ]);
+    json["accessors"] = serde_json::json!([
+        {"bufferView":0,"componentType":5126,"count":frames,"type":"SCALAR","min":[0.0],"max":[(frames - 1) as f32]},
+        {"bufferView":1,"componentType":5126,"count":frames,"type":"VEC3"}
+    ]);
+    json["animations"] = serde_json::json!([{
+        "name":"walk",
+        "samplers":[{"input":0,"output":1,"interpolation":"LINEAR"}],
+        "channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}]
+    }]);
+    let nodes = json["nodes"].as_array_mut().expect("fixture nodes");
+    let scene_roots: Vec<Value> = (nodes.len()..bones).map(Value::from).collect();
+    for index in nodes.len()..bones {
+        nodes.push(serde_json::json!({"name": format!("bone{index}")}));
+    }
+    let roots = json["scenes"][0]["nodes"]
+        .as_array_mut()
+        .expect("fixture scene");
+    roots.extend(scene_roots);
+
+    let mut paths = Vec::new();
+    for marker in ["before", "after"] {
+        json["asset"]["extras"] = serde_json::json!({"authority": marker});
+        let path = directory.join(format!("{marker}.gltf"));
+        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        paths.push(path);
+    }
+    paths
+}
+
+#[test]
+fn an_evidence_only_comparison_renders_past_the_embedded_pose_budget() {
+    // The budget bounds what a document embeds. A full report of this pair
+    // would have to carry the grid and is refused; the evidence-only report
+    // carries none of it and must render — through `render_comparison`, not
+    // only through the preflight it also calls.
+    const BONES: usize = 400;
+    const FRAMES: usize = 7_200;
+    const {
+        assert!(
+            BONES * FRAMES * 12 > animsmith_report::MAX_COMPARISON_POSE_BYTES,
+            "the fixture must exceed the budget it is testing"
+        )
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let paths = oversized_pair(directory.path(), BONES, FRAMES);
+    let before_source = animsmith_gltf::load_source(&paths[0]).unwrap();
+    let after_source = animsmith_gltf::load_source(&paths[1]).unwrap();
+    assert_eq!(before_source.document().skeleton.bones.len(), BONES);
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let sides = || {
+        (
+            comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
+            comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        )
+    };
+
+    let (before, after) = sides();
+    let refused = animsmith_report::render_comparison(before, after, full())
+        .expect_err("a full comparison would have to embed the grid");
+    assert!(
+        matches!(
+            refused,
+            animsmith_report::ComparisonError::PoseWorkExceeded { .. }
+        ),
+        "{refused:?}"
+    );
+
+    let (before, after) = sides();
+    let html = animsmith_report::render_comparison(before, after, evidence_only())
+        .expect("an evidence-only comparison embeds no grid, so the budget does not apply");
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(data["evidence_only"], true);
+    assert_eq!(data["before"]["clip"]["frames"], FRAMES);
+    assert!(
+        embedded_pose_bytes(&html, "comparison-report-data").is_empty(),
+        "and it really embeds none of it"
+    );
+}
+
+/// A before/after pair carrying a distinctive rest coordinate on a bone that
+/// no comparison panel plots and no track animates, so that coordinate can
+/// only reach a document through the sampled pose grid.
+fn witness_pair(directory: &std::path::Path, witness: [f32; 3]) -> Vec<PathBuf> {
+    let mut json: Value = serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    let index = json["nodes"].as_array().expect("fixture nodes").len();
+    json["nodes"]
+        .as_array_mut()
+        .expect("fixture nodes")
+        .push(serde_json::json!({
+            "name": "witness",
+            "translation": [witness[0] as f64, witness[1] as f64, witness[2] as f64],
+        }));
+    json["scenes"][0]["nodes"]
+        .as_array_mut()
+        .expect("fixture scene")
+        .push(Value::from(index));
+    let mut paths = Vec::new();
+    for marker in ["before", "after"] {
+        json["asset"]["extras"] = serde_json::json!({"authority": marker});
+        let path = directory.join(format!("{marker}.gltf"));
+        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        paths.push(path);
+    }
+    paths
+}
+
+#[test]
+fn an_evidence_only_comparison_carries_no_unplotted_sample() {
+    // The same key-agnostic search the single-clip form gets: a comparison
+    // embeds two pose grids, so it has two chances to leak one.
+    const WITNESS: [f32; 3] = [123.456, 234.567, 345.678];
+    let directory = tempfile::tempdir().unwrap();
+    let paths = witness_pair(directory.path(), WITNESS);
+    let before_source = animsmith_gltf::load_source(&paths[0]).unwrap();
+    let after_source = animsmith_gltf::load_source(&paths[1]).unwrap();
+    assert!(
+        before_source
+            .document()
+            .skeleton
+            .bones
+            .iter()
+            .any(|bone| bone.name == "witness"),
+        "the witness bone must reach the loaded skeleton"
+    );
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let sides = || {
+        (
+            comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
+            comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        )
+    };
+    let (before, after) = sides();
+    let full_html = animsmith_report::render_comparison(before, after, full()).unwrap();
+    let (before, after) = sides();
+    let html = animsmith_report::render_comparison(before, after, evidence_only()).unwrap();
+
+    let full_payloads = document_payloads(&full_html, "comparison-report-data");
+    let payloads = document_payloads(&html, "comparison-report-data");
+    for channel in WITNESS {
+        let needle = channel.to_le_bytes();
+        assert!(
+            payloads_carry(&full_payloads, &needle),
+            "the fixture must really be a witness in a full comparison"
+        );
+        assert!(
+            !payloads_carry(&payloads, &needle),
+            "an evidence-only comparison carries a sampled coordinate in some encoded field"
+        );
+        for spelling in [format!("{channel}"), format!("{channel:.2}")] {
+            assert!(
+                !html.contains(spelling.as_str()),
+                "the evidence-only comparison still spells {spelling}"
+            );
+            for value in json_strings(&html, "comparison-report-data") {
+                assert!(
+                    !value.contains(spelling.as_str()),
+                    "an embedded JSON string still spells {spelling}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_payload_search_reads_both_base64_alphabets() {
+    // The two alphabets differ only in the characters for the 6-bit values 62
+    // and 63, so a payload that produces them is the case a standard-only
+    // scan cannot recover: it splits the run at every `-` and `_`.
+    // At least twelve bytes, so every spelling clears the run-length floor
+    // the scan uses.
+    let mut payload = vec![0xFB, 0xEF, 0xBE, 0xFB, 0xEF, 0xBE];
+    payload.extend(123.456f32.to_le_bytes());
+    payload.extend([0xFB, 0xEF, 0xBE, 0xFB, 0xEF, 0xBE]);
+    let url_safe = base64::engine::general_purpose::URL_SAFE.encode(&payload);
+    assert!(
+        url_safe.contains('-') || url_safe.contains('_'),
+        "the fixture must exercise the alphabet difference: {url_safe}"
+    );
+
+    for encoded in [
+        base64::engine::general_purpose::STANDARD.encode(&payload),
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(&payload),
+        url_safe.clone(),
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&payload),
+    ] {
+        let document = format!("<p data-sample=\"{encoded}\"></p>");
+        assert!(
+            decoded_runs(&document)
+                .iter()
+                .any(|run| run.as_slice() == payload.as_slice()),
+            "the search must recover a payload spelled {encoded}"
+        );
     }
 }

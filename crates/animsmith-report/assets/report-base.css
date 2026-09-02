@@ -1,0 +1,17 @@
+/* Shared by both generated documents: the page ground, the evidence-row and
+   notice surfaces, and the `#embed=1` chrome rules. Layout stays in
+   viewer.css and comparison.css so this sheet says the same thing in both. */
+* { box-sizing: border-box }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 14px/1.5 system-ui, sans-serif }
+/* Evidence rows sit on --raised so they read as elements lifted off their
+   panel rather than holes cut through it. */
+.finding { background: var(--raised); border-radius: 5px; cursor: pointer }
+.finding:hover { background: var(--line) }
+.selected { outline: 2px solid var(--accent) }
+.notice { background: var(--raised); border: 1px dashed var(--line); border-radius: 6px; color: var(--muted); padding: 2rem 1rem; text-align: center }
+/* `#embed=1`: drop the running title and the interaction hint so the
+   document sits inside an iframe without a second title bar or an outer
+   margin. Findings, coverage, charts, identities, and both evidence
+   disclosures stay: an embedded report must carry its own caveats. */
+:root[data-embed] header, :root[data-embed] .hint { display: none }
+:root[data-embed] main { padding: 0 }

@@ -17,10 +17,59 @@
 //!     checks: &[animsmith_core::CheckEvaluation],
 //! ) -> std::io::Result<()> {
 //!     let grids = animsmith_core::MetricGrids::new(doc);
-//!     let html = animsmith_report::render(&grids, roles, checks, None, None);
+//!     let options = animsmith_report::ReportOptions::default();
+//!     let html = animsmith_report::render(&grids, roles, checks, None, None, options);
 //!     std::fs::write("report.html", html)
 //! }
 //! ```
+//!
+//! # Sharing a report without the motion
+//!
+//! [`ReportOptions::evidence_only`] leaves the sampled pose grid out of both
+//! report forms. The grid *is* the motion: it is the model-space joint
+//! position of every bone on every judged frame, so a full report of a
+//! licensed clip carries that clip. An evidence-only report keeps the
+//! findings, coverage gaps and engine predictions — [`render_comparison`]
+//! also keeping both sides' input identities, and [`render`] its profile and
+//! source path when the document has one — and can therefore be attached to
+//! an issue, published, or sent to a vendor where the source asset itself may
+//! not go (see the
+//! [licensed-asset policy]).
+//!
+//! The boundary is the pose grid, and it is worth stating exactly. [`render`]
+//! draws its charts here, on the Rust side, so an evidence-only single-clip
+//! report keeps them: they retain the root's X/Z path and the two foot-height
+//! series relative to the hips plus their difference, and nothing else per
+//! bone. [`render_comparison`]'s panels are viewer drawings made from the pose
+//! grid, so an evidence-only comparison replaces every one of them — both
+//! trajectory panels, both gait panels, and the shared root chart — with the
+//! omission notice; findings, gaps, predictions, identities, clip metadata,
+//! and contexts stay as the full comparison embeds them. What neither form
+//! carries is the per-frame grid a viewer could re-export as animation.
+//!
+//! [licensed-asset policy]: https://github.com/mmannerm/animsmith/blob/main/DEVELOPMENT.md#golden-tests
+//!
+//! # Deep links and embedding
+//!
+//! Both documents read their URL fragment as `&`-separated `key=value` pairs
+//! and never write it back: neither viewer, nor the runtime they share,
+//! contains an assignment to `location.hash`. `theme=light|dark` pins the
+//! palette that otherwise follows `prefers-color-scheme`, `embed=1` hides the
+//! running title and the interaction hint and nothing else, so the document
+//! fits an `<iframe>` with its evidence in place, and `frame=N` scrubs. [`render`]'s
+//! document also takes `clip=NAME` and `finding=INDEX`; [`render_comparison`]'s
+//! addresses a finding through the `#finding-<side>-<anchor>` links its own
+//! panels carry.
+//!
+//! A key that is absent leaves that state alone. A key that is present is
+//! applied as far as the document allows: a syntactically valid frame beyond
+//! the clip is clamped to its last frame, and a clip the document does not
+//! contain selects the first one. A value the parser cannot read restores that
+//! state's default instead — an unparsable frame restores frame 0, an
+//! unparsable clip the first clip, and an unaddressable finding index clears
+//! the selection. Unknown keys and malformed pairs are ignored, and no
+//! fragment changes the findings, coverage gaps, predictions, or charts the
+//! document carries.
 //!
 //! # Build and API status
 //!
@@ -50,9 +99,24 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 
+/// The colour authority both generated documents resolve through — every
+/// colour literal either one carries belongs to this set: dark by default,
+/// light under `prefers-color-scheme`, and either one pinned by a `#theme=`
+/// fragment.
+const TOKENS_CSS: &str = include_str!("../assets/tokens.css");
+/// Surfaces both documents share: the page ground, evidence rows, the
+/// omission notice, and the `#embed=1` chrome rules.
+const BASE_CSS: &str = include_str!("../assets/report-base.css");
+/// Pure helpers shared by both viewers. The runtime's fallback palette is a
+/// placeholder here and is filled in from [`TOKENS_CSS`] at render time, so
+/// the stylesheet stays the only place a token value is written.
+const SHARED_JS: &str = include_str!("../assets/shared.js");
+/// Replaced by the dark token object before the runtime is emitted.
+const DARK_TOKEN_PLACEHOLDER: &str = "\"__ANIMSMITH_DARK_TOKENS__\"";
 const VIEWER_JS: &str = include_str!("../assets/viewer.js");
 const VIEWER_CSS: &str = include_str!("../assets/viewer.css");
 const COMPARISON_VIEWER_JS: &str = include_str!("../assets/comparison.js");
+const COMPARISON_CSS: &str = include_str!("../assets/comparison.css");
 
 /// Maximum pose-data bytes embedded by one side of a comparison report.
 ///
@@ -88,6 +152,34 @@ pub struct ComparisonPreflight {
     pub before_frames: usize,
     /// Exact after metric frame count.
     pub after_frames: usize,
+}
+
+/// Presentation choices shared by [`render`] and [`render_comparison`].
+///
+/// Clip selection is an input rather than an option: the single-clip form
+/// takes its `clip_filter` argument and each [`ComparisonSide`] declares its
+/// own clip.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReportOptions {
+    /// Omit the sampled pose grid from the embedded data and mark the report
+    /// `evidence_only`.
+    ///
+    /// The grid is the motion — every bone's model-space position on every
+    /// judged frame — so a full report of a licensed clip carries that clip.
+    /// With this set the document renders a notice where each pose view would
+    /// be and playback is disabled, while findings, coverage gaps and engine
+    /// predictions are unchanged — as are the comparison's per-side input
+    /// identities and the single-clip report's profile and source path, when
+    /// it has one — so the evidence can be shared where the source asset cannot.
+    ///
+    /// [`render`]'s charts are drawn here and survive, retaining root X/Z and
+    /// foot heights relative to the hips: the omission is the pose grid
+    /// itself, not every number derived from it. [`render_comparison`]'s
+    /// panels are viewer drawings from that grid, so they are replaced by the
+    /// notice instead. A comparison rendered this way also stops being bounded
+    /// by [`MAX_COMPARISON_POSE_BYTES`], which limits what a document embeds
+    /// rather than what it may describe.
+    pub evidence_only: bool,
 }
 
 /// One explicit input to [`render_comparison`].
@@ -261,6 +353,7 @@ pub fn preflight_comparison(
     before_clip_name: &str,
     after: &animsmith_core::Document,
     after_clip_name: &str,
+    options: ReportOptions,
 ) -> Result<ComparisonPreflight, ComparisonError> {
     validate_skeletons(before, after)?;
     input_text_bytes(before, "before")?;
@@ -278,8 +371,13 @@ pub fn preflight_comparison(
             side: "after",
             clip: after_clip_name.to_owned(),
         })?;
-    comparison_pose_bytes(before_frames, before.skeleton.bones.len(), "before")?;
-    comparison_pose_bytes(after_frames, after.skeleton.bones.len(), "after")?;
+    // The pose budget bounds what the document will embed. An evidence-only
+    // report embeds no poses, so the pair it can describe is not limited by
+    // a grid it will never carry; every other bound still applies.
+    if !options.evidence_only {
+        comparison_pose_bytes(before_frames, before.skeleton.bones.len(), "before")?;
+        comparison_pose_bytes(after_frames, after.skeleton.bones.len(), "after")?;
+    }
     Ok(ComparisonPreflight {
         before_clip_index: before_clip.0,
         after_clip_index: after_clip.0,
@@ -299,12 +397,14 @@ pub fn preflight_comparison_sources(
     before_clip_name: &str,
     after: &LoadedSource,
     after_clip_name: &str,
+    options: ReportOptions,
 ) -> Result<ComparisonPreflight, ComparisonError> {
     let preflight = preflight_comparison(
         before.document(),
         before_clip_name,
         after.document(),
         after_clip_name,
+        options,
     )?;
     let before_identity = complete_source_closure_identity(before, "before")?;
     let after_identity = complete_source_closure_identity(after, "after")?;
@@ -327,13 +427,19 @@ pub fn preflight_comparison_sources(
 pub fn render_comparison(
     before: ComparisonSide<'_>,
     after: ComparisonSide<'_>,
+    options: ReportOptions,
 ) -> Result<String, ComparisonError> {
     let before_doc = before.grids.document();
     let after_doc = after.grids.document();
     validate_side_authority(before, "before")?;
     validate_side_authority(after, "after")?;
-    let preflight =
-        preflight_comparison_sources(before.source, before.clip, after.source, after.clip)?;
+    let preflight = preflight_comparison_sources(
+        before.source,
+        before.clip,
+        after.source,
+        after.clip,
+        options,
+    )?;
     let before_report = preflight_side_report_work(before, before.clip, "before")?;
     let after_report = preflight_side_report_work(after, after.clip, "after")?;
     preflight_report_allocation(
@@ -342,6 +448,7 @@ pub fn render_comparison(
         preflight,
         before_report,
         after_report,
+        options,
     )?;
     let before_clip = &before_doc.clips[preflight.before_clip_index];
     let after_clip = &after_doc.clips[preflight.after_clip_index];
@@ -367,6 +474,7 @@ pub fn render_comparison(
         before_clip.duration_s,
         before_grid.as_ref(),
         "before",
+        options,
     )?;
     let after_side = comparison_side_json(
         after,
@@ -374,6 +482,7 @@ pub fn render_comparison(
         after_clip.duration_s,
         after_grid.as_ref(),
         "after",
+        options,
     )?;
     let data = json!({
         "kind": "animsmith-comparison-v1",
@@ -385,6 +494,7 @@ pub fn render_comparison(
             "disclosure": "Panels synchronize by normalized sampled-frame phase. Source times remain separate; this is not an authored time warp.",
         },
         "bones": bones,
+        "evidence_only": options.evidence_only,
         "before": before_side,
         "after": after_side,
     });
@@ -393,23 +503,35 @@ pub fn render_comparison(
     let data = data.replace('<', "\\u003c");
     let before_clip_anchor = semantic_anchor("clip", before.clip);
     let after_clip_anchor = semantic_anchor("clip", after.clip);
+    let before_pose = pose_surface("before-gl", options.evidence_only);
+    let after_pose = pose_surface("after-gl", options.evidence_only);
+    let shared_pose = pose_panel("comparison-root-path", "0 0 720 220", options.evidence_only);
+    let before_trails = pose_panel("before-path", "0 0 360 180", options.evidence_only);
+    let after_trails = pose_panel("after-path", "0 0 360 180", options.evidence_only);
+    let before_gait = pose_panel("before-gait", "0 0 360 180", options.evidence_only);
+    let after_gait = pose_panel("after-gait", "0 0 360 180", options.evidence_only);
+    let shared_js = shared_runtime();
+    // Every comparison panel is drawn from the pose grid, so an
+    // evidence-only document has no shared phase left to scrub.
+    let scrub_state = if options.evidence_only {
+        " disabled"
+    } else {
+        ""
+    };
     Ok(format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>animsmith — visual comparison</title><style>{COMPARISON_CSS}</style></head>\n\
-         <body><header><h1>animsmith visual comparison</h1><p id=\"mapping\"></p>\n\
-         <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></header>\n\
-         <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"></label><span id=\"times\"></span></section>\n\
-         <section class=\"shared-chart\"><h2>Before/after root trajectory</h2><svg id=\"comparison-root-path\" viewBox=\"0 0 720 220\"></svg></section>\n\
-         <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><canvas id=\"before-gl\"></canvas><p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"before-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"before-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
-         <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><canvas id=\"after-gl\"></canvas><p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3><svg id=\"after-path\" viewBox=\"0 0 360 180\"></svg><h3>Gait and sampled stance</h3><svg id=\"after-gait\" viewBox=\"0 0 360 180\"></svg><h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
-         <script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
+         <title>animsmith — visual comparison</title><style>{TOKENS_CSS}{BASE_CSS}{COMPARISON_CSS}</style></head>\n\
+         <body><header><h1>animsmith visual comparison</h1></header>\n\
+         <section class=\"disclosure\"><p id=\"mapping\"></p>\n\
+         <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>\n\
+         <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
+         <section class=\"shared-chart\"><h2>Before/after root trajectory</h2>{shared_pose}</section>\n\
+         <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
+         <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
+         <script>{shared_js}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
     ))
 }
-
-const COMPARISON_CSS: &str = r#"
-:root{--bg:#17171f;--panel:#1e1e2a;--text:#d5d9e5;--muted:#aab1c5;--accent:#7aa2f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}header,.sync,.shared-chart{padding:.8rem 1rem}h1,h2,h3{color:var(--accent)}h1{font-size:1.1rem}.warning{color:#f0cb83}.sync{background:#20202c;display:flex;gap:1rem;align-items:center}.sync input{min-width:20rem}.shared-chart{margin:0 1rem;background:var(--panel);border-radius:8px}.shared-chart h2{font-size:1rem;margin:.2rem 0}main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;padding:1rem}@media(max-width:900px){main{grid-template-columns:1fr}.sync input{min-width:10rem}}.side{background:var(--panel);border-radius:8px;padding:.8rem}canvas{width:100%;aspect-ratio:4/3;background:#12121a;border-radius:5px}svg{width:100%;background:#12121a;border-radius:5px;margin-top:.6rem}ul{padding-left:1.3rem;max-height:13rem;overflow:auto}.finding{cursor:pointer;padding:.3rem;margin:.2rem 0;background:#272738;border-radius:4px}.finding:hover{background:#34344a}.context-label,.context{color:var(--muted)}.structural{border-left:3px solid #bb9af7;padding-left:.5rem}pre{white-space:pre-wrap;word-break:break-word;color:var(--muted)}.selected{outline:2px solid #f0cb83}
-"#;
 
 fn select_clip<'a>(
     doc: &'a animsmith_core::Document,
@@ -744,21 +866,29 @@ fn preflight_report_allocation(
     preflight: ComparisonPreflight,
     before_report: SideReportPreflight,
     after_report: SideReportPreflight,
+    options: ReportOptions,
 ) -> Result<(), ComparisonError> {
-    let before_pose = comparison_pose_bytes(
-        preflight.before_frames,
-        before.skeleton.bones.len(),
-        "before",
-    )?;
-    let after_pose =
-        comparison_pose_bytes(preflight.after_frames, after.skeleton.bones.len(), "after")?;
-    let base64_bytes = [before_pose, after_pose]
-        .into_iter()
-        .try_fold(0u128, |total, bytes| {
-            let encoded = bytes.checked_add(2)?.checked_div(3)?.checked_mul(4)?;
-            total.checked_add(encoded)
-        })
-        .unwrap_or(u128::MAX);
+    // The pose budget and the base64 it would occupy in the JSON both bound
+    // an embedded grid. An evidence-only document embeds none, so neither
+    // applies to it; every other allowance below still does.
+    let base64_bytes = if options.evidence_only {
+        0
+    } else {
+        let before_pose = comparison_pose_bytes(
+            preflight.before_frames,
+            before.skeleton.bones.len(),
+            "before",
+        )?;
+        let after_pose =
+            comparison_pose_bytes(preflight.after_frames, after.skeleton.bones.len(), "after")?;
+        [before_pose, after_pose]
+            .into_iter()
+            .try_fold(0u128, |total, bytes| {
+                let encoded = bytes.checked_add(2)?.checked_div(3)?.checked_mul(4)?;
+                total.checked_add(encoded)
+            })
+            .unwrap_or(u128::MAX)
+    };
     // JSON f64 spellings are at most 24 bytes for finite values in serde's
     // shortest-roundtrip representation. Six bytes per source-name byte is
     // the worst JSON Unicode/control escape expansion. The fixed allowance
@@ -906,17 +1036,21 @@ fn comparison_side_json(
     duration_s: f64,
     grid: &PoseGrid,
     side_name: &'static str,
+    options: ReportOptions,
 ) -> Result<Value, ComparisonError> {
     let frames = grid.frame_count();
     let bones = side.grids.document().skeleton.bones.len();
-    let bytes = comparison_pose_bytes(frames, bones, side_name)?;
-    let mut positions = Vec::with_capacity(bytes as usize);
-    for frame in 0..frames {
-        for bone in 0..bones {
-            let point = grid.model_position(frame, bone);
-            positions.extend_from_slice(&point.x.to_le_bytes());
-            positions.extend_from_slice(&point.y.to_le_bytes());
-            positions.extend_from_slice(&point.z.to_le_bytes());
+    let mut positions = Vec::new();
+    if !options.evidence_only {
+        let bytes = comparison_pose_bytes(frames, bones, side_name)?;
+        positions.reserve_exact(bytes as usize);
+        for frame in 0..frames {
+            for bone in 0..bones {
+                let point = grid.model_position(frame, bone);
+                positions.extend_from_slice(&point.x.to_le_bytes());
+                positions.extend_from_slice(&point.y.to_le_bytes());
+                positions.extend_from_slice(&point.z.to_le_bytes());
+            }
         }
     }
     let trails: Value = [
@@ -974,6 +1108,10 @@ fn comparison_side_json(
             })
         })
         .collect::<Vec<_>>();
+    let mut clip = json!({"anchor":semantic_anchor("clip", clip_name),"name":clip_name,"duration":duration_s,"frames":frames,"times":grid.times,"trails":trails});
+    if let Some(encoded) = encoded_positions(options, || positions) {
+        clip["positions"] = json!(encoded);
+    }
     let primary = side.source.dependency_closure().primary_input();
     let closure_identity = side
         .source
@@ -983,10 +1121,20 @@ fn comparison_side_json(
     Ok(json!({
         "identity": {"sha256": primary.sha256(), "bytes": primary.bytes()},
         "dependency_closure_identity": closure_identity,
-        "clip": {"anchor":semantic_anchor("clip", clip_name),"name":clip_name,"duration":duration_s,"frames":frames,"times":grid.times,"positions":base64::engine::general_purpose::STANDARD.encode(positions),"trails":trails},
+        "clip": clip,
         "contexts": comparison_contexts(side, clip_name, grid, &anchored_findings),
         "findings":findings,"gaps":gaps,"prediction_provenance":side.prediction_provenance,"predictions":predictions,
     }))
+}
+
+/// The sampled pose grid as base64, or nothing at all for an evidence-only
+/// report. The key is then absent rather than empty, so a consumer cannot
+/// mistake an omitted grid for a zero-length take.
+fn encoded_positions(
+    options: ReportOptions,
+    positions: impl FnOnce() -> Vec<u8>,
+) -> Option<String> {
+    (!options.evidence_only).then(|| base64::engine::general_purpose::STANDARD.encode(positions()))
 }
 
 fn comparison_contexts(
@@ -1330,18 +1478,78 @@ fn esc(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// The shared runtime with its fallback palette resolved from the
+/// stylesheet's own dark values.
+fn shared_runtime() -> String {
+    SHARED_JS.replace(DARK_TOKEN_PLACEHOLDER, &dark_token_object())
+}
+
+/// The `--name: value` declarations of the bare `:root` block of
+/// [`TOKENS_CSS`], as a JS object. Parsing our own asset keeps one authority
+/// for the palette; a malformed block yields an empty object rather than a
+/// panic, and the emitted document is asserted against the stylesheet.
+fn dark_token_object() -> String {
+    let mut tokens = serde_json::Map::new();
+    if let Some(block) = TOKENS_CSS
+        .split_once(":root {")
+        .and_then(|(_, rest)| rest.split_once('}'))
+        .map(|(block, _)| block)
+    {
+        for declaration in block.split(';') {
+            let Some((name, value)) = declaration.split_once(':') else {
+                continue;
+            };
+            let (name, value) = (name.trim(), value.trim());
+            if let Some(token) = name.strip_prefix("--") {
+                tokens.insert(token.to_owned(), Value::String(value.to_owned()));
+            }
+        }
+    }
+    Value::Object(tokens).to_string()
+}
+
+/// Shown where a pose view would be when the sampled grid was deliberately
+/// left out of the document.
+const POSE_OMITTED_NOTICE: &str = "Pose playback omitted: evidence-only report";
+
+/// The pose view for one panel: a canvas, or the notice that replaces it in
+/// an evidence-only report. Emitting the difference here rather than in the
+/// viewer keeps it in the document itself, with no canvas to flash first.
+fn pose_surface(id: &str, evidence_only: bool) -> String {
+    if evidence_only {
+        format!("<p class=\"notice\" id=\"{id}-notice\">{POSE_OMITTED_NOTICE}</p>")
+    } else {
+        format!("<canvas id=\"{id}\"></canvas>")
+    }
+}
+
+/// A comparison panel drawn from the sampled poses: its `<svg>`, or the same
+/// notice when the document carries no grid to draw from. Unlike the
+/// single-clip charts, which the Rust side renders once and an evidence-only
+/// report keeps, these panels exist only as viewer drawings.
+fn pose_panel(id: &str, view_box: &str, evidence_only: bool) -> String {
+    if evidence_only {
+        pose_surface(id, true)
+    } else {
+        format!("<svg id=\"{id}\" viewBox=\"{view_box}\"></svg>")
+    }
+}
+
 /// Render report HTML from shared metric pose grids.
 ///
-/// `clip_filter` restricts the report to one clip name when present. The
-/// function performs no filesystem I/O and cannot report write errors;
-/// callers choose where to store or serve the returned self-contained HTML
-/// string.
+/// `clip_filter` restricts the report to one clip name when present, and
+/// `options` carries the presentation choices — see
+/// [`ReportOptions::evidence_only`] for a report that omits the sampled
+/// motion. The function performs no filesystem I/O and cannot report write
+/// errors; callers choose where to store or serve the returned
+/// self-contained HTML string.
 pub fn render(
     grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
     checks: &[CheckEvaluation],
     prediction_provenance: Option<&PredictionProvenanceV1>,
     clip_filter: Option<&str>,
+    options: ReportOptions,
 ) -> String {
     let doc = grids.document();
     let bones: Vec<Value> = doc
@@ -1369,27 +1577,33 @@ pub fn render(
         };
         let frames = grid.frame_count();
         let nb = doc.skeleton.bones.len();
-        let mut positions = Vec::with_capacity(frames * nb * 3 * 4);
-        for f in 0..frames {
-            for b in 0..nb {
-                let p = grid.model_position(f, b);
-                positions.extend_from_slice(&p.x.to_le_bytes());
-                positions.extend_from_slice(&p.y.to_le_bytes());
-                positions.extend_from_slice(&p.z.to_le_bytes());
+        let sampled_positions = || {
+            let mut positions = Vec::with_capacity(frames * nb * 3 * 4);
+            for f in 0..frames {
+                for b in 0..nb {
+                    let p = grid.model_position(f, b);
+                    positions.extend_from_slice(&p.x.to_le_bytes());
+                    positions.extend_from_slice(&p.y.to_le_bytes());
+                    positions.extend_from_slice(&p.z.to_le_bytes());
+                }
             }
-        }
+            positions
+        };
         let trails: Value = trail_roles
             .iter()
             .filter_map(|&(role, name)| roles.get(role).map(|id| (name.to_string(), json!(id))))
             .collect::<serde_json::Map<_, _>>()
             .into();
-        clips_json.push(json!({
+        let mut clip_json = json!({
             "name": clip.name,
             "duration": clip.duration_s,
             "frames": frames,
-            "positions": base64::engine::general_purpose::STANDARD.encode(&positions),
             "trails": trails,
-        }));
+        });
+        if let Some(encoded) = encoded_positions(options, sampled_positions) {
+            clip_json["positions"] = json!(encoded);
+        }
+        clips_json.push(clip_json);
         charts_html.push_str(&clip_charts(&clip.name, grid.as_ref(), roles));
     }
 
@@ -1439,6 +1653,7 @@ pub fn render(
     let data = json!({
         "file": doc.source.path,
         "profile": roles.profile,
+        "evidence_only": options.evidence_only,
         "bones": bones,
         "clips": clips_json,
         "findings": findings_json,
@@ -1447,6 +1662,21 @@ pub fn render(
         "predictions": predictions_json,
     });
 
+    let pose = pose_surface("gl", options.evidence_only);
+    let shared_js = shared_runtime();
+    // The scrub still moves the chart playhead without a pose grid, so only
+    // playback itself is disabled.
+    let play_state = if options.evidence_only {
+        " disabled"
+    } else {
+        ""
+    };
+    let hint = if options.evidence_only {
+        "sampled poses were omitted · findings, coverage, and charts are the evidence \
+         this report carries"
+    } else {
+        "drag to orbit · wheel to zoom · frames shown are exactly the grid the checks judged"
+    };
     let title = esc(doc
         .source
         .path
@@ -1460,19 +1690,18 @@ pub fn render(
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>animsmith — {title}</title>\n<style>{VIEWER_CSS}</style>\n</head>\n<body>\n\
+         <title>animsmith — {title}</title>\n<style>{TOKENS_CSS}{BASE_CSS}{VIEWER_CSS}</style>\n</head>\n<body>\n\
          <header><h1>animsmith report</h1><span id=\"file\"></span></header>\n\
          <main>\n\
          <section id=\"viewer-panel\">\n\
            <div id=\"controls\">\n\
              <select id=\"clip-select\"></select>\n\
-             <button id=\"play\">▶</button>\n\
+             <button id=\"play\"{play_state}>▶</button>\n\
              <input type=\"range\" id=\"scrub\" min=\"0\" value=\"0\" step=\"1\">\n\
              <span id=\"time\"></span>\n\
            </div>\n\
-           <canvas id=\"gl\"></canvas>\n\
-           <p class=\"hint\">drag to orbit · wheel to zoom · frames shown are exactly the \
-           grid the checks judged</p>\n\
+           {pose}\n\
+           <p class=\"hint\">{hint}</p>\n\
          </section>\n\
          <section id=\"side\">\n\
            <h2>Findings</h2>\n<ul id=\"findings\"></ul>\n\
@@ -1481,6 +1710,7 @@ pub fn render(
            <h2>Charts</h2>\n<div id=\"charts\">{charts_html}</div>\n\
          </section>\n\
          </main>\n\
+         <script>{shared_js}</script>\n\
          <script type=\"application/json\" id=\"report-data\">{data}</script>\n\
          <script>{VIEWER_JS}</script>\n</body>\n</html>\n"
     )
@@ -1533,9 +1763,16 @@ q('evaluation').textContent=JSON.stringify(d.evaluation,null,2);
     )
 }
 
-/// SVG metric charts for one clip: gait signal (L/R foot heights and
-/// their difference) and the top-down root path. Rust-rendered; a JS
-/// playhead line is moved across them in sync with the 3D view.
+/// SVG metric charts for one clip: the gait signal (L/R foot heights and
+/// their difference) and the top-down root path.
+///
+/// The charts are Rust-rendered and legible on their own: each carries a
+/// `<title>`, a legend, axis labels with units, `role="img"`, and an
+/// `aria-label`, and takes its paint from stable series classes rather than
+/// per-element attributes, so a `<figure>` lifted out of the report keeps its
+/// meaning under an injected copy of the report tokens. The `data-*` hooks and
+/// the `.playhead`/`.pathdot` elements the viewer syncs are part of that
+/// contract too.
 fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> String {
     let mut out = String::new();
     let frames = grid.frame_count();
@@ -1553,8 +1790,24 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
         out.push_str(&line_chart(
             clip_name,
             "gait",
-            "foot height rel hips (m) — L blue · R orange · L−R grey",
-            &[("#7aa2f7", &l), ("#e0af68", &r), ("#9099b2", &d)],
+            "foot height relative to hips",
+            &[
+                Series {
+                    class: "series-left",
+                    label: "L foot",
+                    values: &l,
+                },
+                Series {
+                    class: "series-right",
+                    label: "R foot",
+                    values: &r,
+                },
+                Series {
+                    class: "series-diff",
+                    label: "L−R",
+                    values: &d,
+                },
+            ],
         ));
     }
 
@@ -1566,50 +1819,205 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
         let zs: Vec<f64> = (0..frames)
             .map(|f| grid.model_position(f, root).z as f64)
             .collect();
-        out.push_str(&path_chart(clip_name, "root path (top-down, m)", &xs, &zs));
+        out.push_str(&path_chart(clip_name, "root path (top-down)", &xs, &zs));
     }
     out
 }
 
-const W: f64 = 360.0;
-const H: f64 = 120.0;
-const PAD: f64 = 8.0;
+/// One plotted series: the stable class the stylesheet and any chart
+/// extractor targets, its legend label, and the samples.
+struct Series<'a> {
+    class: &'static str,
+    label: &'static str,
+    values: &'a [f64],
+}
 
-fn line_chart(clip: &str, kind: &str, label: &str, series: &[(&str, &Vec<f64>)]) -> String {
-    let clip = &esc(clip);
-    let all: Vec<f64> = series.iter().flat_map(|(_, v)| v.iter().copied()).collect();
+/// One axis label, placed in a chart's gutters.
+struct AxisLabel {
+    x: f64,
+    y: f64,
+    /// Right-aligned labels sit against the plot's right edge.
+    end_anchored: bool,
+    text: String,
+}
+
+/// The shell every chart shares: the `<figure>` and its `<svg>`, the title,
+/// the legend, and the axis labels. A caller contributes only the geometry it
+/// plots and the words that describe it, so the two chart kinds cannot drift
+/// apart on the parts a reader — or the documentation site's extractor —
+/// depends on.
+struct Chart<'a> {
+    clip: &'a str,
+    kind: &'static str,
+    title: &'static str,
+    /// Tail of the `aria-label`, after the clip name.
+    description: String,
+    legend: &'a [(&'static str, &'static str)],
+    axis: Vec<AxisLabel>,
+    /// Publishes the plot rectangle the viewer's playhead is placed in.
+    plot_hooks: bool,
+    body: String,
+    /// Anything the figure carries outside its `<svg>`.
+    trailer: String,
+}
+
+impl Chart<'_> {
+    fn render(&self) -> String {
+        let clip = esc(self.clip);
+        let caption = format!("{clip} — {}", esc(self.title));
+        let mut legend = String::new();
+        let mut cursor = PAD_LEFT;
+        for (class, label) in self.legend {
+            let text_x = cursor + 13.0;
+            legend.push_str(&format!(
+                "<line class=\"{class}\" x1=\"{cursor:.1}\" x2=\"{:.1}\" y1=\"{LEGEND_Y}\" \
+                 y2=\"{LEGEND_Y}\"/><text class=\"legend\" x=\"{text_x:.1}\" y=\"{:.1}\">{}</text>",
+                cursor + 10.0,
+                LEGEND_Y + 3.0,
+                esc(label)
+            ));
+            cursor = text_x + label.chars().count() as f64 * LEGEND_CHAR_W + 10.0;
+        }
+        let axis: String = self
+            .axis
+            .iter()
+            .map(|label| {
+                let anchor = if label.end_anchored {
+                    " text-anchor=\"end\""
+                } else {
+                    ""
+                };
+                format!(
+                    "<text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\"{anchor}>{}</text>",
+                    label.x,
+                    label.y,
+                    esc(&label.text)
+                )
+            })
+            .collect();
+        let hooks = if self.plot_hooks {
+            format!(" data-pad=\"{PAD_LEFT}\" data-plotw=\"{PLOT_W}\"")
+        } else {
+            String::new()
+        };
+        format!(
+            "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"{}\"{hooks}>\
+             <figcaption>{caption}</figcaption>\
+             <svg viewBox=\"0 0 {W} {H}\" width=\"100%\" role=\"img\" \
+             aria-label=\"{clip} — {}\"><title>{caption}</title>{legend}{}{axis}</svg>{}</figure>",
+            self.kind,
+            esc(&self.description),
+            self.body,
+            self.trailer,
+        )
+    }
+}
+
+const W: f64 = 360.0;
+const H: f64 = 150.0;
+/// Gutters for the y-axis labels, the legend row, and the x-axis labels. The
+/// plot rectangle between them is what `data-pad`/`data-plotw` describe.
+const PAD_LEFT: f64 = 34.0;
+const PAD_RIGHT: f64 = 8.0;
+const PAD_TOP: f64 = 18.0;
+const PAD_BOTTOM: f64 = 16.0;
+const PLOT_W: f64 = W - PAD_LEFT - PAD_RIGHT;
+const PLOT_H: f64 = H - PAD_TOP - PAD_BOTTOM;
+/// Every chart plots metres; the unit is stated in the axis labels rather
+/// than left to the caption.
+const UNIT: &str = "m";
+const LEGEND_Y: f64 = 9.0;
+/// Advance per legend entry: a swatch, a gap, and an 8px label. Approximate
+/// on purpose — the entries only have to stay inside the plot width.
+const LEGEND_CHAR_W: f64 = 4.6;
+
+fn line_chart(
+    clip: &str,
+    kind: &'static str,
+    title: &'static str,
+    series: &[Series<'_>],
+) -> String {
+    let all: Vec<f64> = series
+        .iter()
+        .flat_map(|s| s.values.iter().copied())
+        .collect();
     if all.is_empty() {
         return String::new();
     }
     let min = all.iter().copied().fold(f64::MAX, f64::min);
     let max = all.iter().copied().fold(f64::MIN, f64::max);
     let span = (max - min).max(1e-6);
-    let n = series[0].1.len().max(2);
-    let x = |i: usize| PAD + (W - 2.0 * PAD) * i as f64 / (n - 1) as f64;
-    let y = |v: f64| H - PAD - (H - 2.0 * PAD) * (v - min) / span;
-    let mut paths = String::new();
-    for (color, values) in series {
-        let d: Vec<String> = values
+    let frames = series[0].values.len();
+    let n = frames.max(2);
+    let last_frame = frames.saturating_sub(1);
+    let x = |i: usize| PAD_LEFT + PLOT_W * i as f64 / (n - 1) as f64;
+    let y = |v: f64| H - PAD_BOTTOM - PLOT_H * (v - min) / span;
+
+    let mut body = String::new();
+    for entry in series {
+        let d: Vec<String> = entry
+            .values
             .iter()
             .enumerate()
             .map(|(i, &v)| format!("{}{:.1},{:.1}", if i == 0 { "M" } else { "L" }, x(i), y(v)))
             .collect();
-        paths.push_str(&format!(
-            "<path d=\"{}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"1.5\"/>",
+        body.push_str(&format!(
+            "<path class=\"{}\" d=\"{}\" fill=\"none\"/>",
+            entry.class,
             d.join("")
         ));
     }
-    format!(
-        "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"{kind}\" data-pad=\"{PAD}\" \
-         data-plotw=\"{}\"><figcaption>{clip} — {label}</figcaption>\
-         <svg viewBox=\"0 0 {W} {H}\" width=\"100%\">{paths}\
-         <line class=\"playhead\" x1=\"{PAD}\" x2=\"{PAD}\" y1=\"0\" y2=\"{H}\"/></svg></figure>",
-        W - 2.0 * PAD
-    )
+    body.push_str(&format!(
+        "<line class=\"playhead\" x1=\"{PAD_LEFT}\" x2=\"{PAD_LEFT}\" y1=\"{PAD_TOP}\" y2=\"{:.1}\"/>",
+        H - PAD_BOTTOM
+    ));
+    let labels: Vec<&str> = series.iter().map(|entry| entry.label).collect();
+    Chart {
+        clip,
+        kind,
+        title,
+        description: format!(
+            "{title}: {} over frames 0 to {last_frame}, {min:.2} to {max:.2} {UNIT}",
+            labels.join(", ")
+        ),
+        legend: &series
+            .iter()
+            .map(|entry| (entry.class, entry.label))
+            .collect::<Vec<_>>(),
+        axis: vec![
+            AxisLabel {
+                x: 2.0,
+                y: PAD_TOP + 3.0,
+                end_anchored: false,
+                text: format!("{max:.2} {UNIT}"),
+            },
+            AxisLabel {
+                x: 2.0,
+                y: H - PAD_BOTTOM,
+                end_anchored: false,
+                text: format!("{min:.2} {UNIT}"),
+            },
+            AxisLabel {
+                x: PAD_LEFT,
+                y: H - 4.0,
+                end_anchored: false,
+                text: "frame 0".to_owned(),
+            },
+            AxisLabel {
+                x: W - PAD_RIGHT,
+                y: H - 4.0,
+                end_anchored: true,
+                text: format!("frame {last_frame}"),
+            },
+        ],
+        plot_hooks: true,
+        body,
+        trailer: String::new(),
+    }
+    .render()
 }
 
-fn path_chart(clip: &str, label: &str, xs: &[f64], zs: &[f64]) -> String {
-    let clip = &esc(clip);
+fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String {
     if xs.is_empty() {
         return String::new();
     }
@@ -1621,38 +2029,62 @@ fn path_chart(clip: &str, label: &str, xs: &[f64], zs: &[f64]) -> String {
         zs.iter().copied().fold(f64::MAX, f64::min),
         zs.iter().copied().fold(f64::MIN, f64::max),
     );
+    // One metres scale for both axes: a top-down path that is squashed in Z
+    // would misdescribe the trajectory it is evidence for.
     let span = (max_x - min_x).max(max_z - min_z).max(1e-3);
-    let x = |v: f64| PAD + (W - 2.0 * PAD) * (v - min_x) / span;
-    let y = |v: f64| H - PAD - (H - 2.0 * PAD) * (v - min_z) / span;
-    let d: Vec<String> = xs
+    let scale = PLOT_W.min(PLOT_H) / span;
+    let center_x = PAD_LEFT + PLOT_W / 2.0;
+    let center_y = PAD_TOP + PLOT_H / 2.0;
+    let x = |v: f64| center_x + (v - (min_x + max_x) / 2.0) * scale;
+    let y = |v: f64| center_y - (v - (min_z + max_z) / 2.0) * scale;
+    let points: Vec<String> = xs
         .iter()
         .zip(zs)
-        .enumerate()
-        .map(|(i, (&px, &pz))| {
-            format!(
-                "{}{:.1},{:.1}",
-                if i == 0 { "M" } else { "L" },
-                x(px),
-                y(pz)
-            )
-        })
+        .map(|(&px, &pz)| format!("{:.1},{:.1}", x(px), y(pz)))
         .collect();
-    format!(
-        "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"rootpath\">\
-         <figcaption>{clip} — {label}</figcaption>\
-         <svg viewBox=\"0 0 {W} {H}\" width=\"100%\">\
-         <path d=\"{}\" fill=\"none\" stroke=\"#9ece6a\" stroke-width=\"1.5\"/>\
-         <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/></svg>\
-         <template class=\"pathpoints\">{}</template></figure>",
-        d.join(""),
-        x(xs[0]),
-        y(zs[0]),
-        xs.iter()
-            .zip(zs)
-            .map(|(&px, &pz)| format!("{:.1},{:.1}", x(px), y(pz)))
-            .collect::<Vec<_>>()
-            .join(";")
-    )
+    let d: Vec<String> = points
+        .iter()
+        .enumerate()
+        .map(|(i, point)| format!("{}{point}", if i == 0 { "M" } else { "L" }))
+        .collect();
+    Chart {
+        clip,
+        kind: "rootpath",
+        title,
+        description: format!(
+            "{title}: X {min_x:.2} to {max_x:.2} {UNIT}, Z {min_z:.2} to {max_z:.2} {UNIT}, \
+             {} frames on one uniform scale",
+            xs.len()
+        ),
+        legend: &[("root-path", "root")],
+        axis: vec![
+            AxisLabel {
+                x: 2.0,
+                y: H - 4.0,
+                end_anchored: false,
+                text: format!("X {min_x:.2}…{max_x:.2} {UNIT}"),
+            },
+            AxisLabel {
+                x: W - PAD_RIGHT,
+                y: H - 4.0,
+                end_anchored: true,
+                text: format!("Z {min_z:.2}…{max_z:.2} {UNIT}"),
+            },
+        ],
+        plot_hooks: false,
+        body: format!(
+            "<path class=\"root-path\" d=\"{}\" fill=\"none\"/>\
+             <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",
+            d.join(""),
+            x(xs[0]),
+            y(zs[0])
+        ),
+        trailer: format!(
+            "<template class=\"pathpoints\">{}</template>",
+            points.join(";")
+        ),
+    }
+    .render()
 }
 
 #[cfg(test)]
@@ -1728,11 +2160,19 @@ mod tests {
         let config = Config::default();
         let checks = Vec::new();
 
-        let fresh = render(&MetricGrids::new(&doc), &roles, &checks, None, None);
+        let options = ReportOptions::default();
+        let fresh = render(
+            &MetricGrids::new(&doc),
+            &roles,
+            &checks,
+            None,
+            None,
+            options,
+        );
         let grids = MetricGrids::new(&doc);
         let ctx = CheckCtx::new(&grids, &roles, &config);
         assert!(ctx.grid(0).is_some());
-        let shared = render(&grids, &roles, &checks, None, None);
+        let shared = render(&grids, &roles, &checks, None, None, options);
 
         assert_eq!(fresh, shared);
         assert!(shared.contains(r#"data-kind="rootpath""#));

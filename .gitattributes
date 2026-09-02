@@ -4,3 +4,6 @@ crates/animsmith/testdata/collection-spike/source/*.gltf text eol=lf
 .agents/skills/evaluate-animation-packs/fixtures/*.json text eol=lf
 docs/site/fonts/*.woff2 binary
 docs/site/*.png binary
+# The report embeds these files byte for byte (include_str!), so every checkout
+# must hold the same bytes: a CRLF checkout would change every generated document.
+crates/animsmith-report/assets/* text eol=lf

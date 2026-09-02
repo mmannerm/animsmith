@@ -5531,6 +5531,39 @@ fn help_matches_compiled_feature_set() {
         "{out}"
     );
 
+    // The report's own flag inventory is part of the CLI contract wherever
+    // the feature is compiled in.
+    #[cfg(feature = "report")]
+    {
+        let report = animsmith()
+            .args(["report", "--help"])
+            .output()
+            .expect("runs report help");
+        assert!(report.status.success(), "stderr:\n{}", stderr(&report));
+        let report = stdout(&report);
+        for flag in [
+            "--clip",
+            "--compare-after",
+            "--before-clip",
+            "--after-clip",
+            "--evidence-only",
+        ] {
+            assert!(report.contains(flag), "{flag} is offered: {report}");
+        }
+        // Line wrapping is clap's business; the sentences are the contract.
+        let flat = report.split_whitespace().collect::<Vec<_>>().join(" ");
+        for phrase in [
+            "Omit the sampled pose grid",
+            "single-clip report's charts",
+            "comparison's pose-derived panels become notices",
+        ] {
+            assert!(
+                flat.contains(phrase),
+                "--evidence-only states {phrase:?}: {report}"
+            );
+        }
+    }
+
     let transform = animsmith()
         .args(["transform", "--help"])
         .output()

@@ -160,7 +160,7 @@ enum Cmd {
     },
     /// Render a self-contained offline HTML report.
     #[command(
-        long_about = "Render a self-contained offline HTML report: WebGL skeleton playback of the exact frames the checks judged, metric charts, and the findings list."
+        long_about = "Render a self-contained offline HTML report: WebGL skeleton playback of the exact frames the checks judged, metric charts, and the findings list. --evidence-only omits the sampled poses, leaving a report that can be shared where the source motion cannot: a single-clip report keeps its Rust-rendered charts, while a comparison's panels are drawn from those poses and become notices."
     )]
     #[cfg(feature = "report")]
     Report {
@@ -181,6 +181,11 @@ enum Cmd {
         /// Exact after clip in comparison mode; no correspondence is inferred.
         #[arg(long, value_name = "CLIP")]
         after_clip: Option<String>,
+        /// Omit the sampled pose grid: findings, coverage, predictions, and
+        /// identities remain, as do a single-clip report's charts, while a
+        /// comparison's pose-derived panels become notices.
+        #[arg(long)]
+        evidence_only: bool,
     },
     /// Apply mechanical clip transforms.
     #[command(
@@ -1945,7 +1950,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             compare_after,
             before_clip,
             after_clip,
+            evidence_only,
         } => {
+            let report_options = animsmith_report::ReportOptions { evidence_only };
             let loaded_config = load_config(cli.config.as_deref())?;
             full_check_ids()?;
             let loaded = load_with_config(&file, &loaded_config)?;
@@ -1965,6 +1972,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     before_name,
                     &after_loaded.source,
                     after_name,
+                    report_options,
                 )
                 .map_err(|error| error.to_string())?;
                 let mut comparison_inputs = vec![
@@ -2024,6 +2032,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     &evaluations,
                     prediction_provenance.as_ref(),
                     clip.as_deref(),
+                    report_options,
                 ),
                 Some(after_loaded) => {
                     let before_clip = before_clip
@@ -2079,6 +2088,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             prediction_provenance: after_prediction_provenance.as_ref(),
                             clip: &after_clip,
                         },
+                        report_options,
                     )
                     .map_err(|error| error.to_string())?;
                     let finding_count = finding_count

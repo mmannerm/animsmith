@@ -886,7 +886,11 @@ asset before committing the migration.
 `convert` normalizes an FBX (or glTF) export into a clean glTF, and
 `report` renders a self-contained HTML report with skeleton playback and
 metric charts. Both are in the default build; a `--no-default-features`
-binary omits them.
+binary omits them. `report --evidence-only` writes the same findings,
+coverage gaps and engine predictions without the sampled pose grid — keeping
+the charts in a single-clip report, though not in a comparison, whose panels
+are drawn from that grid — for sharing evidence where the clip itself cannot
+travel.
 
 ```console
 $ animsmith convert export.fbx -o clip.glb
