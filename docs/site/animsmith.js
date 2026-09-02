@@ -14,10 +14,11 @@
 "use strict";
 
 (function () {
-  // mdBook's five built-in themes. Anything unknown is left to the report's
-  // own system-scheme default rather than guessed at.
-  var DARK = { navy: 1, coal: 1, ayu: 1 };
-  var LIGHT = { light: 1, rust: 1 };
+  // mdBook's five built-in themes, as lists rather than lookup objects so a
+  // class name can never reach Object.prototype. Anything unknown is left to
+  // the report's own system-scheme default rather than guessed at.
+  var DARK = ["navy", "coal", "ayu"];
+  var LIGHT = ["light", "rust"];
 
   // Fragment keys the report understands. `theme` is rewritten; the rest are
   // the reader's own deep link and are preserved exactly as written.
@@ -26,8 +27,8 @@
   function bookTheme(root) {
     var names = String(root.className || "").split(/\s+/);
     for (var i = 0; i < names.length; i += 1) {
-      if (DARK[names[i]]) return "dark";
-      if (LIGHT[names[i]]) return "light";
+      if (DARK.indexOf(names[i]) !== -1) return "dark";
+      if (LIGHT.indexOf(names[i]) !== -1) return "light";
     }
     return null;
   }
