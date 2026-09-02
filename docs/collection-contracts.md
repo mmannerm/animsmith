@@ -213,9 +213,9 @@ non-monotone.
 
 Independent output proof first requires the expected and freshly detected
 `(side, edge)` sequence in absolute phase-zero chronological order to match.
-It may then use the cyclic left-onset order for circular numeric error, but a
-complete left/right role swap is a topology failure even at the maximum
-allowed boundary-error tolerance.
+It then compares those phase-zero-paired boundary phases with circular numeric
+distance, but a complete left/right role swap is a topology failure even at
+the maximum allowed boundary-error tolerance.
 
 For matching signatures, corresponding source onsets/releases map to the
 reference phases. Simultaneous source boundaries are admitted only when all

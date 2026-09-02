@@ -4145,7 +4145,7 @@ phase spread, and separate source/output/combined work totals for the later
 evidence and publication transaction. Its contact proof independently repeats
 the per-side marker/disjointness validation, seam coalescing, logical-count and
 cyclic-onset checks, and deterministic true-boundary ordering rather than
-calling planner internals. Before its cyclic error comparison, proof also
+calling planner internals. Before its circular numeric error comparison, proof also
 requires the expected and independently detected `(side, edge)` signature in
 absolute phase-zero chronological order to match, so a complete left/right
 role swap remains a topology failure at every numeric error tolerance. It
