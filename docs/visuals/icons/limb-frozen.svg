@@ -1,16 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="A figure swinging one arm while the other stays locked out in a T-pose">
+<svg xmlns="http://www.w3.org/2000/svg" id="icon-limb-frozen" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="A figure swinging one arm while the other stays locked out in a T-pose">
   <title>A limb is T-posed, or a bone never moves</title>
   <style>
-    :root { --body: #3b67d6; --stuck: #cf3f5b; --hint: #b9c1d6; }
-    @media (prefers-color-scheme: dark) { :root { --body: #7aa2f7; --stuck: #f7768e; --hint: #3d3d52; } }
-    .body { stroke: var(--body); stroke-width: 5; stroke-linecap: round; fill: none; }
-    .head { fill: var(--body); }
-    .stuck { stroke: var(--stuck); stroke-width: 5; stroke-linecap: round; }
-    .pin { fill: var(--stuck); }
-    .hint { fill: none; stroke: var(--hint); stroke-width: 2; stroke-dasharray: 3 3; }
-    .swing { transform-origin: 60px 50px; animation: swing 2.4s ease-in-out infinite; }
+    /* Every colour resolves through the documentation theme's own token,
+       so an inlined icon follows the page's light or dark choice; the
+       fallbacks are for a file opened on its own, where no token exists.
+       Every rule is scoped to this icon's id, so nothing here reaches the
+       page that inlines it or another picture beside it. */
+    #icon-limb-frozen { --body: var(--as-accent, #3b67d6); --stuck: var(--as-error, #cf3f5b); --hint: var(--as-line-strong, #b9c1d6); }
+    @media (prefers-color-scheme: dark) { #icon-limb-frozen { --body: var(--as-accent, #7aa2f7); --stuck: var(--as-error, #f7768e); --hint: var(--as-line-strong, #3d3d52); } }
+    #icon-limb-frozen .body { stroke: var(--body); stroke-width: 5; stroke-linecap: round; fill: none; }
+    #icon-limb-frozen .head { fill: var(--body); }
+    #icon-limb-frozen .stuck { stroke: var(--stuck); stroke-width: 5; stroke-linecap: round; }
+    #icon-limb-frozen .pin { fill: var(--stuck); }
+    #icon-limb-frozen .hint { fill: none; stroke: var(--hint); stroke-width: 2; stroke-dasharray: 3 3; }
+    #icon-limb-frozen .swing { transform-origin: 60px 50px; animation: swing 2.4s ease-in-out infinite; }
     @keyframes swing { 0%, 100% { transform: rotate(-26deg); } 50% { transform: rotate(24deg); } }
-    @media (prefers-reduced-motion: reduce) { .swing { animation: none; transform: rotate(24deg); } }
+    @media (prefers-reduced-motion: reduce) { #icon-limb-frozen .swing { animation: none; transform: rotate(24deg); } }
   </style>
   <circle class="head" cx="60" cy="24" r="9"/>
   <line class="body" x1="60" y1="33" x2="60" y2="72"/>

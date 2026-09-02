@@ -283,7 +283,7 @@ function decodePositions(b64) {
 // The document itself says whether poses are available: an evidence-only
 // report renders a notice in place of the canvas, so an absent canvas means
 // there is nothing to decode, play back, or draw. Findings, coverage gaps,
-// charts, and identities are unchanged either way.
+// charts, and the source path are unchanged either way.
 const canvas = document.getElementById("gl");
 for (const clip of data.clips) clip.pos = canvas ? decodePositions(clip.positions) : null;
 

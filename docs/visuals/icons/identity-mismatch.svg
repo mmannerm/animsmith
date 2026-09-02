@@ -1,15 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Two different files each carrying a clip labelled with the same name">
+<svg xmlns="http://www.w3.org/2000/svg" id="icon-identity-mismatch" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Two different files each carrying a clip labelled with the same name">
   <title>Files disagree about skeleton or clip identity</title>
   <style>
-    :root { --card: #b9c1d6; --ink: #3b67d6; --clash: #cf3f5b; }
-    @media (prefers-color-scheme: dark) { :root { --card: #3d3d52; --ink: #7aa2f7; --clash: #f7768e; } }
-    .card { fill: none; stroke: var(--card); stroke-width: 3; }
-    .line { stroke: var(--ink); stroke-width: 4; stroke-linecap: round; }
-    .tag { fill: var(--clash); }
-    .clash { fill: none; stroke: var(--clash); stroke-width: 2.5; stroke-dasharray: 4 4; }
-    .blink { animation: blink 2.2s ease-in-out infinite; }
+    /* Every colour resolves through the documentation theme's own token,
+       so an inlined icon follows the page's light or dark choice; the
+       fallbacks are for a file opened on its own, where no token exists.
+       Every rule is scoped to this icon's id, so nothing here reaches the
+       page that inlines it or another picture beside it. */
+    #icon-identity-mismatch { --card: var(--as-line-strong, #b9c1d6); --ink: var(--as-accent, #3b67d6); --clash: var(--as-error, #cf3f5b); }
+    @media (prefers-color-scheme: dark) { #icon-identity-mismatch { --card: var(--as-line-strong, #3d3d52); --ink: var(--as-accent, #7aa2f7); --clash: var(--as-error, #f7768e); } }
+    #icon-identity-mismatch .card { fill: none; stroke: var(--card); stroke-width: 3; }
+    #icon-identity-mismatch .line { stroke: var(--ink); stroke-width: 4; stroke-linecap: round; }
+    #icon-identity-mismatch .tag { fill: var(--clash); }
+    #icon-identity-mismatch .clash { fill: none; stroke: var(--clash); stroke-width: 2.5; stroke-dasharray: 4 4; }
+    #icon-identity-mismatch .blink { animation: blink 2.2s ease-in-out infinite; }
     @keyframes blink { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
-    @media (prefers-reduced-motion: reduce) { .blink { animation: none; opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { #icon-identity-mismatch .blink { animation: none; opacity: 1; } }
   </style>
   <rect class="card" x="10" y="16" width="42" height="54" rx="6"/>
   <rect class="card" x="68" y="16" width="42" height="54" rx="6"/>

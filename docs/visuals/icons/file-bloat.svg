@@ -1,14 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="A track packed with identical keyframes that never move the value it stores">
+<svg xmlns="http://www.w3.org/2000/svg" id="icon-file-bloat" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="A track packed with identical keyframes that never move the value it stores">
   <title>The file is bloated, or the retargeter chokes</title>
   <style>
-    :root { --rule: #b9c1d6; --key: #3b67d6; --flat: #cf3f5b; }
-    @media (prefers-color-scheme: dark) { :root { --rule: #3d3d52; --key: #7aa2f7; --flat: #f7768e; } }
-    .rule { stroke: var(--rule); stroke-width: 2; }
-    .key { fill: var(--key); }
-    .flat { fill: none; stroke: var(--flat); stroke-width: 3; }
-    .heap { animation: heap 2.6s ease-in-out infinite; }
+    /* Every colour resolves through the documentation theme's own token,
+       so an inlined icon follows the page's light or dark choice; the
+       fallbacks are for a file opened on its own, where no token exists.
+       Every rule is scoped to this icon's id, so nothing here reaches the
+       page that inlines it or another picture beside it. */
+    #icon-file-bloat { --rule: var(--as-line-strong, #b9c1d6); --key: var(--as-accent, #3b67d6); --flat: var(--as-error, #cf3f5b); }
+    @media (prefers-color-scheme: dark) { #icon-file-bloat { --rule: var(--as-line-strong, #3d3d52); --key: var(--as-accent, #7aa2f7); --flat: var(--as-error, #f7768e); } }
+    #icon-file-bloat .rule { stroke: var(--rule); stroke-width: 2; }
+    #icon-file-bloat .key { fill: var(--key); }
+    #icon-file-bloat .flat { fill: none; stroke: var(--flat); stroke-width: 3; }
+    #icon-file-bloat .heap { animation: heap 2.6s ease-in-out infinite; }
     @keyframes heap { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
-    @media (prefers-reduced-motion: reduce) { .heap { animation: none; opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { #icon-file-bloat .heap { animation: none; opacity: 1; } }
   </style>
   <line class="rule" x1="10" y1="96" x2="110" y2="96"/>
   <line class="flat" x1="14" y1="52" x2="106" y2="52"/>
