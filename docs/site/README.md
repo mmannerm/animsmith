@@ -8,7 +8,8 @@ documentation itself.
 `scripts/build-docs-site.py` stages the tracked files here as mdBook's
 theme-override directory (`<stage>/theme/`) and registers
 [`animsmith.css`](animsmith.css) as `additional-css`, so it loads after
-mdBook's own `variables.css`, `general.css` and `chrome.css`. mdBook
+mdBook's own `variables.css`, `general.css` and `chrome.css`, plus
+[`animsmith.js`](animsmith.js) as `additional-js`. mdBook
 copies `fonts/*` to `book/fonts/` and links `fonts/fonts.css` on every
 page; it copies `favicon.svg` and `favicon.png`, but it does **not**
 copy files it does not recognise, which is why `logo.svg` is also
@@ -19,6 +20,7 @@ commands live in
 | File | What it is |
 | --- | --- |
 | [`animsmith.css`](animsmith.css) | The theme: tokens, mdBook variable mapping, typography, chrome and content styling |
+| [`animsmith.js`](animsmith.js) | The theme bridge: pins an embedded report's theme to the book's |
 | [`fonts/fonts.css`](fonts/fonts.css) | `@font-face` rules for the self-hosted subsets |
 | [`logo.svg`](logo.svg) | Mark plus "AnimSmith" wordmark, wordmark converted to outlines |
 | [`favicon.svg`](favicon.svg) | Mark on a light chip, so it reads in light and dark tab bars |
@@ -58,6 +60,22 @@ The mark is the letter A drawn the way the report viewer draws a rig:
 two bone strokes from the apex to the base, an accent crossbar, hollow
 joints at the base and crossbar, and a filled accent keyframe diamond at
 the apex.
+
+## The theme bridge
+
+A generated AnimSmith report is a whole document inside an `<iframe>`, so it
+cannot see the book's theme: on its own it follows the reader's system colour
+scheme, and a navy page ends up framing a white report. The report viewers
+already accept `theme=light|dark` in their URL fragment and re-apply it on
+`hashchange`, so [`animsmith.js`](animsmith.js) only has to keep that one key
+in step with the theme class mdBook writes on `<html>`.
+
+On load, and on every change of that class, it rewrites the fragment of each
+`<iframe>` whose `src` names a report under `docs/visuals/`: `theme=dark` for
+`navy`, `coal` and `ayu`, `theme=light` for `light` and `rust`, with `embed`,
+`clip`, `frame` and `finding` preserved in the order the page wrote them. It
+never reads into the frame's document, so a `file://` preview behaves like the
+published origin, and it fetches nothing.
 
 ## Design tokens
 

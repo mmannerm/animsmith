@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" id="icon-wrong-length" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Three channel bars on one timeline; the middle one stops early and is held flat to the end">
+  <title>The clip is the wrong length or freezes at the end</title>
+  <style>
+    /* Every colour resolves through the documentation theme's own token,
+       so an inlined icon follows the page's light or dark choice; the
+       fallbacks are for a file opened on its own, where no token exists.
+       Every rule is scoped to this icon's id, so nothing here reaches the
+       page that inlines it or another picture beside it. */
+    #icon-wrong-length { --rule: var(--as-line-strong, #b9c1d6); --track: var(--as-accent, #3b67d6); --held: var(--as-error, #cf3f5b); }
+    @media (prefers-color-scheme: dark) { #icon-wrong-length { --rule: var(--as-line-strong, #3d3d52); --track: var(--as-accent, #7aa2f7); --held: var(--as-error, #f7768e); } }
+    #icon-wrong-length .rule { stroke: var(--rule); stroke-width: 2; }
+    #icon-wrong-length .track { fill: var(--track); }
+    #icon-wrong-length .held { fill: none; stroke: var(--held); stroke-width: 3; stroke-dasharray: 5 4; }
+    #icon-wrong-length .end { stroke: var(--held); stroke-width: 2.5; }
+    #icon-wrong-length .pulse { animation: pulse 2.2s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { #icon-wrong-length .pulse { animation: none; opacity: 1; } }
+  </style>
+  <line class="rule" x1="16" y1="24" x2="16" y2="100"/>
+  <line class="rule" x1="104" y1="24" x2="104" y2="100"/>
+  <rect class="track" x="16" y="32" width="88" height="12" rx="6"/>
+  <rect class="track" x="16" y="54" width="52" height="12" rx="6"/>
+  <line class="held pulse" x1="68" y1="60" x2="104" y2="60"/>
+  <rect class="track" x="16" y="76" width="88" height="12" rx="6"/>
+  <line class="end" x1="68" y1="48" x2="68" y2="72"/>
+</svg>

@@ -6,7 +6,7 @@
 
 use animsmith_testkit::docs_markdown::fenced_blocks;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -89,11 +89,14 @@ fn headings(markdown: &str) -> Vec<String> {
     headings
 }
 
-/// One rendered table cell: its text and the destinations it links to.
+/// One rendered table cell: its text, the destinations it links to, and
+/// its code spans, which are how a cell names a check id rather than
+/// merely mentioning a word.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Cell {
     text: String,
     links: Vec<String>,
+    codes: Vec<String>,
 }
 
 fn linked_tables(markdown: &str) -> Vec<Vec<Vec<Cell>>> {
@@ -112,7 +115,13 @@ fn linked_tables(markdown: &str) -> Vec<Vec<Vec<Cell>>> {
                     cell.links.push(dest_url.into_string());
                 }
             }
-            Event::Text(text) | Event::Code(text) => {
+            Event::Code(code) => {
+                if let Some(cell) = cell.as_mut() {
+                    cell.text.push_str(&code);
+                    cell.codes.push(code.into_string());
+                }
+            }
+            Event::Text(text) => {
                 if let Some(cell) = cell.as_mut() {
                     cell.text.push_str(&text);
                 }
@@ -354,9 +363,12 @@ fn has_version_history_account(markdown: &str) -> bool {
 fn workflows_are_obvious_navigation_entry_points_with_canonical_routes() {
     let index_links = rendered_links(&markdown("docs/README.md"));
     for required in [
-        ("Animation-author workflow", "animation-author-workflow.md"),
         (
-            "Game-developer intake workflow",
+            "For artists: from export to handoff",
+            "animation-author-workflow.md",
+        ),
+        (
+            "For game developers: from pack to engine gate",
             "game-developer-intake-workflow.md",
         ),
         ("Animation troubleshooting", "animation-troubleshooting.md"),
@@ -377,7 +389,8 @@ fn workflows_are_obvious_navigation_entry_points_with_canonical_routes() {
     for target in [
         "configuration-reference.md",
         "built-in-checks.md",
-        "game-ready-clips.md#from-symptom-to-command",
+        // The complete check-to-symptom table lives in the symptom index.
+        "symptoms/README.md",
     ] {
         assert!(
             troubleshooting
@@ -694,80 +707,240 @@ fn documented_command_fences_and_bevy_config_execute_exactly_as_rendered() {
     );
 }
 
+/// Every symptom page, read from the directory rather than from a list a
+/// gate keeps, so a tenth page is gated the moment it is committed.
+/// `start_docs.rs` reads the same directory for the same reason.
+fn symptom_pages() -> BTreeSet<String> {
+    let pages: BTreeSet<String> = std::fs::read_dir(repo("docs/symptoms"))
+        .expect("lists the symptom pages")
+        .filter_map(|entry| {
+            let name = entry.expect("directory entry").file_name();
+            let name = name.into_string().expect("utf-8 page name");
+            (name.ends_with(".md") && name != "README.md").then_some(name)
+        })
+        .collect();
+    assert!(
+        !pages.is_empty(),
+        "docs/symptoms/ must publish symptom pages"
+    );
+    pages
+}
+
+/// The rendered text of the one paragraph that opens with `Who fixes it:`.
+///
+/// Reading everything after that phrase would let a later paragraph
+/// contradict the ownership this one states and still satisfy the gate.
+fn ownership_paragraph(page: &str) -> String {
+    let markdown = markdown(page);
+    let mut found: Option<String> = None;
+    let mut current: Option<String> = None;
+    for event in Parser::new_ext(&markdown, options()) {
+        match event {
+            Event::Start(Tag::Paragraph) => current = Some(String::new()),
+            Event::Text(text) | Event::Code(text) => {
+                if let Some(paragraph) = current.as_mut() {
+                    paragraph.push_str(&text);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some(paragraph) = current.as_mut() {
+                    paragraph.push(' ');
+                }
+            }
+            Event::End(TagEnd::Paragraph) => {
+                if let Some(paragraph) = current.take()
+                    && paragraph.trim_start().starts_with("Who fixes it:")
+                {
+                    assert!(
+                        found.is_none(),
+                        "{page} must carry exactly one `Who fixes it` paragraph"
+                    );
+                    found = Some(paragraph);
+                }
+            }
+            _ => {}
+        }
+    }
+    let paragraph = found.unwrap_or_else(|| panic!("{page} must carry a `Who fixes it` paragraph"));
+    paragraph.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Ownership and closing evidence live on the symptom page that opens
+/// with the symptom, not in a separate matrix a reader has to correlate
+/// with it. Each page's "Who fixes it" paragraph must name the owner it
+/// routes to and the evidence that closes its gate — inside that
+/// paragraph, so a later one cannot contradict it and still pass.
 #[test]
-fn troubleshooting_pins_each_symptom_to_inspection_owner_and_closing_evidence() {
-    let tables = tables(&markdown("docs/animation-troubleshooting.md"));
-    let table = tables.first().expect("troubleshooting table");
+fn every_symptom_page_names_its_owner_and_the_evidence_that_closes_its_gate() {
+    let expected = [
+        (
+            "pose-flickers.md",
+            "the DCC owns the data",
+            "re-lints clean",
+        ),
+        (
+            "wrong-length.md",
+            "the pipeline",
+            "the engine plays the whole range",
+        ),
+        ("loop-pops.md", "DCC work", "target engine's graph"),
+        (
+            "character-glides.md",
+            "gameplay decides ownership",
+            "an engine trial proves exactly one",
+        ),
+        (
+            "blend-skate.md",
+            "project work",
+            "a playback capture covers the transitions",
+        ),
+        ("feet-slide.md", "DCC and runtime work", "the actual blend"),
+        (
+            "limb-frozen.md",
+            "the artist repairs the source rig",
+            "required bones visibly move on the target character",
+        ),
+        (
+            "identity-mismatch.md",
+            "the pack owner and the pipeline that ingests it",
+            "recorded source-to-target mapping",
+        ),
+        (
+            "file-bloat.md",
+            "the artist or the exporter settings",
+            "the target engine's own scale, attachment and visual observation",
+        ),
+    ];
+    assert_eq!(
+        expected
+            .iter()
+            .map(|(page, _, _)| (*page).to_owned())
+            .collect::<BTreeSet<String>>(),
+        symptom_pages(),
+        "every symptom page states its owner and closing evidence here"
+    );
+
+    for (page, owner, closing_evidence) in expected {
+        let page = format!("docs/symptoms/{page}");
+        let ownership = ownership_paragraph(&page);
+        assert!(
+            ownership.contains(owner),
+            "{page} must route ownership to {owner:?}: {ownership}"
+        );
+        assert!(
+            ownership.contains(closing_evidence),
+            "{page} must state the evidence that closes its gate ({closing_evidence:?}): \
+             {ownership}"
+        );
+    }
+}
+
+/// The troubleshooting page is a router: every symptom page has a row
+/// that reaches it, and the runtime problems with no symptom page — the
+/// two that are not findings about a clip, and Bevy's silent loader drop
+/// — are answered on the page itself.
+#[test]
+fn troubleshooting_routes_every_symptom_to_its_page_or_answers_it_in_place() {
+    let page = markdown("docs/animation-troubleshooting.md");
+    let tables = tables(&page);
+    let table = tables.first().expect("troubleshooting routing table");
     assert_eq!(
         table.first(),
-        Some(&vec![
-            "Symptom".to_owned(),
-            "Inspect and current diagnostic example".to_owned(),
-            "Safe remediation vs owner".to_owned(),
-            "Gate-closing evidence".to_owned(),
-        ])
+        Some(&vec!["What you see".to_owned(), "Where to go".to_owned()])
     );
+
+    let destinations: BTreeSet<String> = rendered_links(&page)
+        .into_iter()
+        .map(|(_, destination)| destination)
+        .collect();
+    let pages = symptom_pages();
+    for symptom in &pages {
+        let route = format!("symptoms/{symptom}");
+        assert!(
+            destinations.contains(&route),
+            "troubleshooting must route to {route}: {destinations:?}"
+        );
+    }
+    let rows: Vec<&Vec<String>> = table.iter().skip(1).collect();
+    assert_eq!(
+        rows.len(),
+        pages.len() + 1,
+        "one routing row per symptom page, plus the Bevy loader gate answered in place: {table:?}"
+    );
+    for row in rows {
+        assert!(
+            row.len() == 2 && !row[0].is_empty() && !row[1].is_empty(),
+            "every routing row names what the reader sees and where to go: {row:?}"
+        );
+    }
+
+    let prose = rendered_text(&page);
     for (symptom, inspection, ownership, closure) in [
         (
-            "Loader error or an AnimSmith refusal",
+            "A loader error or an AnimSmith refusal",
             "engine-addressability",
-            "engine project",
-            "engine-observed load",
-        ),
-        (
-            "Unexpected scale or rest/bind behavior",
-            "rest-world-scale",
-            "DCC/export",
-            "target-engine scale",
-        ),
-        (
-            "A loop pops",
-            "loop-closure",
-            "DCC",
-            "observed loop playback",
-        ),
-        ("Feet slide", "foot-slide", "DCC/runtime", "actual blend"),
-        (
-            "Double or missing root motion",
-            "movement_owner_",
-            "importer/controller",
-            "engine trial",
-        ),
-        (
-            "Missing or frozen bones",
-            "frozen-bone",
-            "DCC",
-            "plays with the required moving bones",
-        ),
-        (
-            "Skeleton or retarget mismatch",
-            "rig-role resolution",
-            "DCC/engine",
-            "source-to-target mapping",
-        ),
-        (
-            "Mask or contact breaks",
-            "sync-group",
-            "project work",
-            "project playback capture",
+            "belong to the engine project",
+            "engine-observed load evidence",
         ),
         (
             "A clip exists but cannot be addressed in-engine",
             "generate addressability",
-            "engine code",
+            "are engine code",
             "resolved runtime asset",
         ),
+        (
+            "Animations vanish in Bevy with no lint error",
+            "no content finding exists",
+            "load_animations",
+            "revision-3 gate",
+        ),
     ] {
-        let row = table
-            .iter()
-            .skip(1)
-            .find(|row| row.first().is_some_and(|cell| cell == symptom))
-            .unwrap_or_else(|| panic!("missing troubleshooting symptom: {symptom}"));
-        assert_eq!(row.len(), 4, "troubleshooting row shape for {symptom}");
-        assert!(row[1].contains(inspection), "{symptom} inspection contract");
-        assert!(row[2].contains(ownership), "{symptom} ownership route");
-        assert!(row[3].contains(closure), "{symptom} closing evidence");
+        assert!(prose.contains(symptom), "{symptom} keeps its own answer");
+        for required in [inspection, ownership, closure] {
+            assert!(
+                prose.contains(required),
+                "{symptom} must keep {required:?}: {prose}"
+            );
+        }
     }
+}
+
+/// Every registered check id, so a backticked word that is not a check —
+/// a command, a config table — cannot be mistaken for one.
+fn registered_check_ids() -> BTreeSet<String> {
+    animsmith_core::all_checks()
+        .iter()
+        .map(|check| check.id().to_owned())
+        .collect()
+}
+
+/// The symptom index is one table, so a check belongs to exactly one
+/// symptom in it: two rows claiming the same check is the reader-visible
+/// contradiction the split tables used to hide. Completeness — that every
+/// registered check appears at all — is `check_catalog_docs.rs`.
+#[test]
+fn no_check_is_claimed_by_two_symptoms_in_the_index() {
+    let catalog = registered_check_ids();
+    let table = table_headed_by(&markdown("docs/symptoms/README.md"), "Symptom");
+    let mut owner: BTreeMap<String, String> = BTreeMap::new();
+    let mut claimed = 0usize;
+    for row in table.iter().skip(1) {
+        let symptom = row[0].text.trim().to_owned();
+        for code in &row[1].codes {
+            if !catalog.contains(code) {
+                continue;
+            }
+            if let Some(first) = owner.insert(code.clone(), symptom.clone()) {
+                panic!("{code} is claimed by both {first:?} and {symptom:?}");
+            }
+            claimed += 1;
+        }
+    }
+    assert_eq!(
+        claimed,
+        catalog.len(),
+        "every registered check is claimed exactly once: {owner:?}"
+    );
 }
 
 #[test]

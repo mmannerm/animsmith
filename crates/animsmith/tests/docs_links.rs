@@ -249,10 +249,12 @@ fn split_fragment(url: &str) -> (&str, Option<&str>) {
 /// README routes that must appear as rendered links. A fragment does
 /// not change the route: the previous shell assertions intentionally
 /// accepted links such as `docs/cli.md#install`.
-fn required_readme_link_routes() -> [String; 7] {
+fn required_readme_link_routes() -> [String; 9] {
     [
         "https://mmannerm.github.io/animsmith/".to_owned(),
         "https://mmannerm.github.io/animsmith/dev/".to_owned(),
+        "https://mmannerm.github.io/animsmith/docs/symptoms/".to_owned(),
+        "https://mmannerm.github.io/animsmith/docs/game-ready-clips.html".to_owned(),
         "https://mmannerm.github.io/animsmith/docs/cli.html".to_owned(),
         "https://mmannerm.github.io/animsmith/docs/embedding.html".to_owned(),
         format!("{REPO_BLOB_URL}CONTRIBUTING.md"),
@@ -620,6 +622,8 @@ fn root_readme_renders_required_routing_links_and_decoys_do_not_count() {
         [
             "https://mmannerm.github.io/animsmith/".to_owned(),
             "https://mmannerm.github.io/animsmith/dev/".to_owned(),
+            "https://mmannerm.github.io/animsmith/docs/symptoms/".to_owned(),
+            "https://mmannerm.github.io/animsmith/docs/game-ready-clips.html".to_owned(),
             "https://mmannerm.github.io/animsmith/docs/cli.html".to_owned(),
             "https://mmannerm.github.io/animsmith/docs/embedding.html".to_owned(),
             "https://github.com/mmannerm/animsmith/blob/main/CONTRIBUTING.md".to_owned(),

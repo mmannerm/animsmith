@@ -170,6 +170,9 @@ report-browser:
     target/debug/animsmith report crates/animsmith-report/testdata/rig.gltf --output "${report_multi}"
     node scripts/test-report-viewers.js "${comparison}" "${comparison_evidence}" \
       "${report}" "${report_evidence}" "${report_multi}"
+    # The documentation site's theme bridge drives those same viewers through
+    # their fragment, so its rewrite rule is executed in the same harness step.
+    node scripts/test-theme-bridge.js
 
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package

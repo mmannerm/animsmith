@@ -16,6 +16,9 @@ const GENERATED_GROUP_DIR: &str = "_generated/groups/";
 /// spaced single right-pointing angle quotation mark.
 const GROUP_SEPARATOR: &str = " \u{203a} ";
 
+/// The tracked theme bridge that pins an embedded report to the book theme.
+const THEME_SCRIPT: &str = "animsmith.js";
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -1383,6 +1386,13 @@ fn css_urls(css: &str) -> Vec<String> {
 #[test]
 fn the_tracked_theme_references_no_external_resources() {
     let site = repo_root().join("docs/site");
+    let script = std::fs::read_to_string(site.join(THEME_SCRIPT)).expect("reads theme bridge");
+    for external in ["http://", "https://", "//cdn", "import(", "importScripts"] {
+        assert!(
+            !script.contains(external),
+            "{THEME_SCRIPT} reaches outside the published origin: {external}"
+        );
+    }
     for relative in ["animsmith.css", "fonts/fonts.css"] {
         let css = std::fs::read_to_string(site.join(relative)).expect("reads tracked stylesheet");
         let compact: String = css.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1499,5 +1509,127 @@ fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
     assert!(
         book.contains("additional-css = [\"theme/animsmith.css\"]"),
         "book.toml wires the tracked stylesheet: {book}"
+    );
+    assert!(
+        book.contains("additional-js = [\"theme/animsmith.js\"]"),
+        "book.toml wires the tracked theme bridge: {book}"
+    );
+    assert!(
+        temp.path().join("theme").join(THEME_SCRIPT).is_file(),
+        "the theme bridge is staged beside the stylesheet"
+    );
+}
+
+/// The bridge's own selector, mirrored here so the pages and the script
+/// cannot drift apart: a report document under `docs/visuals/`, in either
+/// the relative spelling the Markdown carries or the site-absolute one
+/// staging rewrites it to.
+fn selects_report(source: &str) -> bool {
+    let path = source.split('#').next().unwrap_or_default();
+    path.ends_with(".html")
+        && (path.contains("/docs/visuals/")
+            || path.starts_with("visuals/")
+            || path.contains("/visuals/"))
+}
+
+/// The theme bridge is a tracked asset like the stylesheet, so the staged
+/// theme carries it and a published page never needs an inline script.
+///
+/// What the bridge *does* to a fragment is executed rather than read:
+/// `scripts/test-theme-bridge.js` runs it against a synthetic page under
+/// `just report-browser`, beside the generated viewers it drives. This test
+/// keeps the asset, its selector and that wiring in place.
+#[test]
+fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
+    let root = repo_root();
+    let recipes = std::fs::read_to_string(root.join("justfile")).expect("reads the recipes");
+    assert!(
+        recipes.contains("node scripts/test-theme-bridge.js"),
+        "the browser harness recipe must execute the theme bridge's contract"
+    );
+    let listed = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "--", "docs/site/animsmith.js"])
+        .output()
+        .expect("lists the tracked theme bridge");
+    assert!(listed.status.success(), "git ls-files succeeds");
+    assert_eq!(
+        String::from_utf8_lossy(&listed.stdout).trim(),
+        "docs/site/animsmith.js",
+        "the theme bridge must be tracked for the build to stage it"
+    );
+
+    let script =
+        std::fs::read_to_string(root.join("docs/site").join(THEME_SCRIPT)).expect("reads bridge");
+    for required in [
+        // The book's theme classes it maps, both directions.
+        "navy",
+        "coal",
+        "ayu",
+        "light",
+        "rust",
+        // The fragment key the report viewers read, and the observer that
+        // re-applies it when mdBook swaps the class on <html>.
+        "theme",
+        "MutationObserver",
+        "attributeFilter",
+    ] {
+        assert!(
+            script.contains(required),
+            "{THEME_SCRIPT} must keep {required:?}"
+        );
+    }
+    assert!(
+        !script.contains("contentDocument") && !script.contains("contentWindow"),
+        "{THEME_SCRIPT} rewrites its own src rather than reading into the frame"
+    );
+
+    // Every page that embeds a report must be reachable by the bridge's own
+    // rule, in both spellings a frame source is ever written in: the
+    // relative one the repository Markdown carries, and the site-absolute
+    // one staging rewrites it to for the published page.
+    for spelling in [
+        "../visuals/walk.report.html",
+        "/animsmith/docs/visuals/walk.report.html",
+    ] {
+        assert!(
+            selects_report(spelling),
+            "{THEME_SCRIPT} must select a frame written as {spelling}"
+        );
+    }
+    assert!(
+        !selects_report("/animsmith/docs/cli.html") && !selects_report("../visuals/walk.svg"),
+        "{THEME_SCRIPT} selects report documents only"
+    );
+
+    let mut embedded = 0usize;
+    for page in markdown_files(&root.join("docs")) {
+        let markdown = std::fs::read_to_string(&page).expect("reads documentation page");
+        let mut rest = markdown.as_str();
+        while let Some(offset) = rest.find("<iframe src=\"") {
+            rest = &rest[offset + "<iframe src=\"".len()..];
+            let source = &rest[..rest.find('"').expect("iframe src is quoted")];
+            let path = source.split('#').next().unwrap_or_default();
+            assert!(
+                selects_report(path),
+                "{} embeds {source}, which the theme bridge would not recognise",
+                page.display()
+            );
+            for root in ["/animsmith/docs/", "/animsmith/dev/docs/"] {
+                let staged = format!("{root}{}", path.trim_start_matches("../"));
+                assert!(
+                    selects_report(&staged),
+                    "{} embeds {source}, which the bridge would lose once staging writes \
+                     it as {staged}",
+                    page.display()
+                );
+            }
+            embedded += 1;
+        }
+    }
+    assert!(
+        embedded >= 9,
+        "the symptom pages must keep embedding their reports, found {embedded}"
     );
 }

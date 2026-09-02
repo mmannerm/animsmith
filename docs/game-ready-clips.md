@@ -9,17 +9,22 @@ errors — the file is spec-conformant — they are *content* problems that
 only surface after the slowest step of the pipeline: engine import, a
 bake, a playtest.
 
-This document defines what "game-ready" means here — the
+This document defines what "game-ready" means here. The
 [readiness ladder](#the-readiness-ladder) below stages the evidence
-from file-ready data to shipped acceptance — and then describes the
-checkable characteristics, organized by the runtime symptom you see
-when one is violated. Each symptom section explains the mechanics and
-maps them to the animsmith checks, repairs, and configuration that
-address them. If you want runnable commands, each symptom links into
-the [examples cookbook](../examples/README.md); if you want the
-current per-check reference for IDs, default findings, prerequisites,
-config keys, coverage gaps, and remediation boundaries, see the
-[built-in check reference](built-in-checks.md); if you want the
+from file-ready data to shipped acceptance and says who owns each
+level, and the [symptom table](#from-symptom-to-command) at the end
+routes every runtime symptom — and the narrower presentations of one —
+to the page that walks it. The checks, repairs and config surfaces
+themselves live in the [symptom index](symptoms/README.md), which
+carries every registered check id in one table.
+
+Each symptom has its own page under [symptoms](symptoms/README.md):
+what you see in the engine, what AnimSmith measured, the finding, the
+repair, and the precise contract one click down. If you want runnable
+commands, use the [examples cookbook](../examples/README.md); if you
+want the current per-check reference for IDs, default findings,
+prerequisites, config keys, coverage gaps, and remediation boundaries,
+see the [built-in check reference](built-in-checks.md); if you want the
 reasoning behind the tool itself — why it exists and what it is worth
 to your team — see [why animsmith](why-animsmith.md).
 
@@ -175,74 +180,19 @@ consuming pipeline.
 
 ## The pose flickers, spins, or explodes
 
-Rotation in a clip is stored as quaternions, and engines are strict
-about the math even when exporters are not.
-
-- **A non-finite value anywhere poisons everything.** A single NaN or
-  Inf in a key time or value poisons interpolation and, in most
-  engines, the whole pose — one bad float turns a character into
-  visual noise. The `nan` check treats this as an error, always;
-  there is no safe automatic repair for a value that carries no
-  information.
-- **Non-unit quaternions skew skinning.** Rotation keys must be unit
-  quaternions. Engines renormalize inconsistently (or not at all); a
-  non-unit key skews blend weights and skinning. The `quat-norm` check
-  catches it, and `animsmith fix` repairs it losslessly — scaling a
-  finite, non-zero quaternion back to unit length preserves the
-  rotation it represents.
-- **Hemisphere flips spin the long way around.** A quaternion and its
-  negation represent the same rotation, but interpolation between them
-  does not: adjacent keys on opposite hemispheres (`dot < 0`) make
-  engines that slerp without neighborhood correction take the long way
-  — a visible 360°-minus-θ spin between two keys. The `quat-flip`
-  check catches it; `animsmith fix` repairs it losslessly by negating
-  keys until each track is hemisphere-consistent.
-- **Key times must move forward.** glTF requires strictly increasing
-  key times, and engines misbehave without them. A first key that
-  starts late is its own hazard: the engine clamp-holds an unauthored
-  pose for the gap. The `time-monotonic` check covers both.
-
-Workflow: [a first CLI gate](../examples/README.md#1-a-first-cli-gate)
-detects these; [repairing an
-asset](../examples/README.md#2-repairing-an-asset) walks the
-`fix --dry-run` → `fix` → verify loop. The repairs are byte-surgical:
-meshes, skins, materials, and textures pass through byte-identical.
+This symptom now has its own page:
+[the pose flickers, spins, or explodes](symptoms/pose-flickers.md) opens with
+what a reader sees in the engine, shows the two repairable quaternion defects
+on a synthetic clip, and keeps the precise contract — non-finite values,
+unit quaternions, hemisphere flips and key times — one click down.
 
 ## The clip is the wrong length or freezes at the end
 
-- **Channels that end at different times mean a partial export.** When
-  one bone's track is shorter than the clip, the engine clamp-holds the
-  shorter channel — a limb freezes while the rest of the body keeps
-  moving. The `duration-sanity` check flags degenerate durations and
-  mismatched channel ends.
-- **A valid-looking clip can still be one frame too short.** Export slicing,
-  inclusive-vs-exclusive frame ranges, and endpoint removal can produce a
-  positive duration whose channels agree but which no longer matches the
-  gameplay or animation manifest. Declare
-  `duration_s = { value = 1.033, tolerance = 0.02 }` for the clip and
-  `duration-sanity` reports the measured and expected seconds when that pin
-  is missed. The value must be finite and positive, and the tolerance finite
-  and non-negative; invalid pins are errors instead of silently disabling the
-  contract. The tolerance absorbs harmless exporter rounding. Linting only
-  reports the mismatch; it does not repair or resample the clip. Re-export
-  when the authored range is wrong, or use the explicit slice/hold transforms
-  below when the source is intentionally being edited.
-- **Keys off the frame grid mean a retiming step drifted.** A clip with
-  a declared frame rate should keep its keys on that rate's time grid
-  and span a whole number of frames. Off-grid keys mean a resample or
-  retiming step drifted; a fractional frame count means a slice cut
-  mid-frame — and engines care: Unreal, for example, documents that
-  [animations with non-whole end frames do not import
-  correctly](https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-sequences-in-unreal-engine). The
-  `fps` check verifies both once the config declares a rate.
-
-When the wrong length is the *input* problem — a capture with garbage
-at the head, a one-shot that should hold its final pose — the
-`transform` command does the mechanical edit:
-`--slice` cuts a window on the frame grid and retimes it to start at
-zero, and `--hold-extend` appends a linear hold of the final pose
-(charge and block poses). See [editing a
-clip](../examples/README.md#3-editing-a-clip).
+This symptom now has its own page:
+[the clip is the wrong length or freezes at the end](symptoms/wrong-length.md)
+opens with the limb that stops before the rest of the body, shows the measured
+channel-end spread, and keeps the precise contract — declared durations, the
+frame grid, and the slice/hold transforms — one click down.
 
 ## The loop pops
 
@@ -254,149 +204,20 @@ split — one click down.
 
 ## The character glides or runs in place
 
-Locomotion clips carry a travel contract between the asset and the
-runtime, and nothing inside the file can verify it alone.
-
-- **Movement ownership.** Declare XZ, Y, and yaw independently as
-  `"gameplay"` (the entity/controller owns that component) or `"animation"`
-  (extracted root motion owns it). An in-place/treadmill clip normally uses XZ
-  gameplay ownership; a travelling root-motion clip uses XZ animation
-  ownership. The `in-place` check compares only declared XZ ownership against
-  measured horizontal root motion. Missing axes remain unspecified and are
-  never inferred from another axis, a filename, or measured magnitude.
-- **Declared speed drift.** Runtimes scale playback by a clip's
-  declared locomotion speed to keep foot plants locked to world
-  velocity; a stale speed pin plays the clip visibly too fast or too
-  slow. The `root-motion-speed` check compares the declared `speed_mps`
-  against the measured horizontal root displacement. Use
-  `animsmith measure` to obtain the ground-truth number before pinning
-  it.
-
-Both checks need a resolvable root: they use the rig profile's root
-role, falling back to the hips role when no dedicated root bone
-exists. That fallback matters in practice — the built-in `mixamo`
-profile resolves `mixamorig:*` bone names but has no root role (Mixamo
-rigs have no dedicated root bone), so root-motion checks on Mixamo
-assets judge the hips track.
+This symptom now has its own page:
+[the character glides or runs in place](symptoms/character-glides.md) opens
+with the slide a reader sees, shows the measured root path of a travelling
+cycle against an in-place one, and keeps the precise contract — per-component
+movement ownership, the declared speed pin, and the root-role fallback — one
+click down.
 
 ## Feet skate when clips blend
 
-A directional locomotion set — run forward, back, left, right — is
-blended at runtime, and blending is only seamless when every member
-strides in phase. If one cycle's left foot plants at t=0 and another's
-at mid-cycle, every blend between them skates the feet.
-
-The `gait-group` check holds a declared blend ring to a shared gait
-phase (the stride anchor measured from the left−right foot-height
-fundamental). Members with too little left/right alternation are
-excluded from the spread — their phase is noise — and a member whose
-gait cannot be measured at all is an error, so the group's coherence is
-never silently unverified. Declare the ring in config:
-
-```toml
-[gait_groups.run-ring]
-clips = ["run_forward", "run_backward", "run_left", "run_right"]
-max_gait_phase_spread = 0.15
-```
-
-`transform --gait-anchor` is the matching repair-by-transform: it
-rotates a cyclic clip so its stride anchor lands at t=0, aligning the
-set member by member. Selecting it explicitly declares the clip in-place.
-AnimSmith verifies the Root role (or Hips fallback) before rewriting and
-refuses missing/non-finite evidence, horizontal endpoint displacement above 1
-cm, or yaw accumulation above 1°. No interior step is subtracted as an
-allowance. Every nonconstant channel the operation would rotate must contain
-exactly one key at each declared whole-frame sample over the clip duration, at
-the exact representable f32 `key / fps` time and period endpoint. Sparse,
-differently framed, duplicate-time, or off-grid evidence refuses, as do
-duplicate `(bone, property)` channels (including constant channels). Verification
-samples those exact times and mutation uses an integer key-index permutation;
-exempt constant-track endpoints cannot influence the period or shift. The whole
-skeleton, roles, and track shapes are validated before declared frames ×
-skeleton bones, declared frames × tracks, and maximum authored keys × skeleton
-bones are independently bounded at an inclusive 1,000,000 samples. Yaw uses
-f64 first/final headings plus counted full-turn crossings. At sample zero it
-selects the local `+Z`, `+Y`, or `+X` basis axis with the greatest finite
-horizontal projection, in that tie order, and retains it for the whole proof.
-This accepts different source-axis conventions without switching axes later to
-hide yaw; loss of the selected horizontal projection refuses. The calculation
-avoids segment-count-dependent accumulation error. Four f32 successors at the
-inclusive 1 cm and 1° caps cover only authored endpoint
-translation/quaternion quantization. Do not apply it to
-authored root motion: retain that trajectory, use
-runtime phase offsets, or use a separately designed trajectory-preserving
-operation. Gait anchoring does not convert root motion to in-place motion.
-
-### A blend pair is time-complementary
-
-A pair can be individually clean yet unsuitable for a runtime that samples
-both clips at the same normalized time. One clip's left/right gait signal may
-align much better with the other at one minus normalized cycle time than at
-the same cycle time; blending them together then mixes different stride
-moments. Unity's
-[Blend Tree guidance](https://docs.unity3d.com/Manual/class-BlendTree.html)
-similarly calls for blended movements and foot contacts to occur at matching
-normalized times, while Godot documents explicit
-[cyclic sync modes](https://docs.godotengine.org/en/stable/tutorials/animation/animation_tree.html#sync-mode)
-for keeping blend-space phases aligned.
-
-Enable the pair diagnostic on a declared same-time group:
-
-```toml
-[sync_groups.run-ring]
-clips = ["run_forward", "run_backward", "run_left", "run_right"]
-max_duration_delta_s = 0.001
-max_frame_count_delta = 0
-max_fps_delta = 0.01
-
-[sync_groups.run-ring.time_complement]
-min_reflected_time_advantage = 0.25
-min_lr_amplitude_m = 0.03
-```
-
-`time-complement` compares every unordered pair using the existing
-left-minus-right foot-height fundamental. It reports same-time and
-reflected-time similarity on `[0, 1]` (higher is closer) and warns only when
-the reflected score wins by more than the configured advantage. An exact-zero
-left-minus-right swing has no phase subject even when the configured floor is
-zero. Positive signals below the amplitude floor are coverage gaps, not
-findings: near-idle or noisy motion does not carry enough phase evidence to
-classify.
-
-This warning belongs to the declared same-time/absolute-sync contract, not to
-either animation in isolation. For a declared in-place ring that satisfies the
-V1 contact-topology, root-trajectory, track, and proof constraints,
-[`collection transform-foot-cycle`](collection-contracts.md#foot-cycle-generation-v1-18)
-can retime every member to one explicit reference member's contact phases and
-publish the independently proved generation. Unsupported rings remain
-unchanged and need aligned contacts from the DCC, explicit contact/phase
-markers, or a phase-remap strategy in the runtime. animsmith does not reverse
-clips, choose the runtime strategy, rewrite root motion, or claim that
-full-body motion is identical under time reflection.
-
-## Directional blend members travel at different speeds
-
-Equal cycle duration does not imply equal travel. If two root-motion members
-have the same duration but different measured horizontal speeds, they cover
-different distances per cycle: their authored stride lengths differ. A
-diagonal faster than forward may be intentional, but a controller that assigns
-one gait-wide speed or normalizes diagonal input can then produce visibly
-faster diagonal travel or direction-dependent foot sliding.
-
-Compare `animsmith measure` speed results across every declared directional
-member and record the project's movement policy. Valid policies include
-preserving per-direction authored velocities, scaling controller motion or
-playback per member, or deliberately accepting the variation. If the project
-requires uniform authored travel, re-time or re-author in the DCC and recheck
-contacts, phase, and loop seams. Gait anchoring changes phase; it does not make
-stride lengths coherent and must not be used to rewrite accumulating root
-trajectories.
-
-Speed variation alone is not a defect because the intended controller policy
-does not live in the file. AnimSmith currently checks a clip against a declared
-`speed_mps` but does not compare a runtime set against a declared cross-member
-speed/stride policy; [#411](https://github.com/mmannerm/animsmith/issues/411)
-tracks that evidence gap.
+This symptom now has its own page:
+[feet skate when clips blend](symptoms/blend-skate.md) opens with the blend
+that skates, shows the stride anchors of a four-member ring, and keeps the
+precise contract — the gait-group spread, gait anchoring's refusals,
+time-complementary pairs, and per-direction travel speed — one click down.
 
 ## Feet slide within one clip
 
@@ -408,275 +229,60 @@ why this check is a warning — one click down.
 
 ## A limb is T-posed, or a bone never moves
 
-Four related rig-integrity failures, in increasing subtlety:
-
-- **A structural rig bone is absent or ambiguous.** Runtime sockets, IK
-  targets, mask bones, and attachment points can be intentionally static, so
-  they do not belong in a per-clip motion rule. Put their exact names in
-  `[rig] required_bones = ["weapon_socket", "ik_hand_l"]`.
-  `required-bones` passes a present static bone, errors for a missing name,
-  and refuses to guess if duplicate skeleton names make the declaration
-  ambiguous. It also reports an empty or absent skeleton as unable to meet a
-  nonempty structural contract. This check does not create bones, rename an
-  export, retarget a rig, or validate engine-side socket use: repair the source
-  rig in the DCC and re-export.
-
-- **A declared bone is missing entirely.** Bones the clip is declared
-  to animate (via `animates_bones` in the config) must exist in the
-  skeleton and carry at least one keyframed track. The `missing-bones`
-  check catches slices that accidentally dropped a channel — leaving a
-  limb static — and exports against the wrong rig.
-- **A bone has keys but never moves.** A required bone whose rotation
-  never exceeds a floor is frozen: a T-posed limb, a wrong-source
-  slice, or a masked-out channel that a presence-only check would
-  pass. Real motion moves required bones tens of degrees; the
-  `frozen-bone` check's default 1° floor catches truly static bones
-  without flagging subtle idle sway.
-- **The clip was authored against a different bind.** A clip whose
-  first frame deviates wildly from the skeleton's rest pose was almost
-  certainly authored against a different bind — wrong seed rig, wrong
-  export skeleton — and will deform incorrectly when retargeted onto
-  this one. Small deviations are normal (few clips start exactly at
-  rest); the `bind-pose` check fires only on a large mean deviation
-  across the animated bones.
+This symptom now has its own page:
+[a limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) opens with
+the arm that never moves, shows a declared bone that is absent and one that is
+keyed but frozen, and keeps the precise contract — the four rig-integrity
+failures and what each refuses to guess — one click down.
 
 ## Files disagree about skeleton or clip identity
 
-Two collection-level contracts are easy to confuse with single-clip rig
-health:
-
-- **Skeleton/retarget identity.** Different bone hierarchies or rest/bind
-  signatures are not exact-skeleton interchangeable. An engine humanoid or
-  retarget profile may still make them compatible, but only after every
-  required chain maps and target-character deformation, transitions, masks,
-  sockets, and root ownership pass in the intended runtime. A copied-avatar or
-  skeleton-reference hierarchy mismatch means the referenced mapping is not
-  evidence for that file; use a compatible individual asset or obtain an
-  authoritative re-export instead of forcing the reference.
-- **File-scoped clip identity.** Marketplace packs commonly put one clip in
-  each file while reusing an embedded name such as `Take 001`. A runtime-set
-  member must then preserve the exact source file/path plus embedded clip name;
-  normalized display names are not reproducible identifiers. Reconcile report
-  members against the retained manifest and state separately when a bundled
-  animation list uses different spelling, casing, or ranges.
-
-AnimSmith's gait and sync groups still resolve clips inside one loaded
-document. The file-scoped collection identity and cross-file set contract are
-recorded in [DESIGN.md Appendix F](../DESIGN.md#appendix-f--decision-record-file-scoped-clip-identity-and-collections)
-and emitted by the explicit collection command. The
-[contact-fragment](collection-contracts.md#contact-fragments-147) and
-[transition-family](collection-contracts.md#transition-families-148) additions
-are interchange declarations. The strict contact-fragment producer now emits
-one manifest-witnessed sidecar after reloading that source; it does not make
-ordinary checks cross-file or infer membership, and it adds no transform or
-runtime policy. Keep per-file evidence
-and the collection manifest authoritative; do not merge, rename, or infer set
-membership merely to make a check run.
+This symptom now has its own page:
+[files disagree about skeleton or clip identity](symptoms/identity-mismatch.md)
+opens with the pack whose clips all claim the same name, shows what
+`animsmith inspect` and a collection manifest retain, and keeps the precise
+contract — skeleton identity, file-scoped clip identity, and what stays per
+file — one click down.
 
 ## The file is bloated, or the retargeter chokes
 
-Export hygiene problems rarely break playback outright, which is why
-they accumulate:
-
-- **Constant tracks are export bloat.** A multi-key track whose values
-  never move comes from unbaked rig channels, baked controls, or "key
-  everything" exports. It is harmless motion-wise but costs disk space and
-  work in every blend the runtime evaluates — the `constant-track` check
-  reports it as a note, and the opt-in transform can remove candidates that
-  are constant within the clip. Removal preserves that clip's standalone pose
-  but makes its `(bone, property)` coverage sparse; leave tracks intact when a
-  runtime transition does not explicitly reset omitted properties.
-
-### Attachment nodes and inherited rest-world scale
-
-A node's local scale is not its effective scale. The
-[glTF node hierarchy](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#nodes-and-hierarchy)
-composes every ancestor transform, so a socket with local scale `(1,1,1)` can
-still have rest-world scale `0.01` under a unit-conversion helper. Skinning may
-look correct because inverse-bind matrices compensate when deforming mesh
-vertices; an ordinary effect, collision shape, or weapon parented to that
-socket does not automatically receive the same skinning compensation. It
-usually inherits the node hierarchy, including the non-unit scale. This is the
-same parent-scale failure mode described by Unity's
-[Transform documentation](https://docs.unity3d.com/6000.1/Documentation/Manual/class-Transform.html#non-uniform-scaling),
-although the exact runtime consequences remain engine-specific.
-
-Declare only source nodes your runtime contract cares about. The shared policy
-also supplies future engine-unit-scale evaluation; `rest-world-scale` consumes
-the same resolved set:
-
-```toml
-[runtime_nodes]
-selectors = ["weapon_socket", "ik_*_target"]
-
-[checks.rest-world-scale]
-expected_uniform_scale = 1.0
-uniform_scale_tolerance = 0.0001
-```
-
-Each exact name or `*` glob must resolve to one named source node. A miss or
-multiple matches is reported as a coverage gap, not guessed. A finding carries
-an ancestor path with source indices and reports either the measured uniform
-factor or the distinct non-uniform, sheared, reflected, or singular affine
-class. The tolerance is inclusive for uniform factors. Unavailable/non-finite
-rest evidence remains a coverage gap.
-
-The older `[checks.rest-world-scale].node_selectors` field remains a
-compatibility alias. Do not declare it together with `[runtime_nodes]`.
-
-### Bevy animation loading is a separate gate
-
-The current Bevy revision 3 profile pins the stock 0.19.0
-`gltf-asset-loader` path and records the `bevy_animation` feature state and
-`load_animations` setting, including their explicit/default origins. The
-compiled feature gate has precedence: a disabled feature predicts dropped
-animation/channel rows even if `load_animations` is true. A false
-`load_animations` setting predicts the same kind of negative loader outcome
-when the feature is enabled. These outcomes are not content findings and do
-not claim that any positive runtime asset or target survived.
-
-The prediction binds bounded raw animation rows and independent channel
-coverage from the same load. Complete-empty inventory is not applicable. A
-partial or unavailable inventory emits exactly one subjectless,
-unsuppressible required-unavailable inventory facet, with no retained-prefix
-prediction; N+1 overflow is therefore not mistaken for complete coverage. If
-both gates allow loading, the required result is a stable runtime-survival
-`required_prediction_unavailable` facet. Extensions and other animation
-constructs are outside this slice. See the
-[Bevy profile reference](engine-profile-bevy.md#revision-3-animationchannel-gate-support).
-
-Fix an unintended result in the source hierarchy or exporter, then rerun lint
-against the exported asset. AnimSmith does not rescale the file, decide which
-node names your project uses, infer units from mesh height, or predict a
-runtime's whole attachment system. Animation-channel scale remains under
-`scale-keys`, `non-uniform-scale`, and `constant-nonunit-scale`; this check
-judges the static inherited rest domain only.
-
-### Why scale animation deserves its own review
-
-A transform scale is a three-component value `(x, y, z)`. A value of
-`(1, 1, 1)` preserves the authored size, a uniform value such as `(2, 2, 2)`
-doubles every axis, and a non-uniform value such as `(1, 2, 1)` stretches one
-axis. The [glTF animation model](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#animations)
-allows a node's scale to be keyframed with STEP, LINEAR, or CUBICSPLINE
-interpolation. Blender's
-[keyframe guide](https://docs.blender.org/manual/en/latest/animation/keyframes/introduction.html)
-explains the artist-facing version of the same idea: keys store property values
-and interpolation curves determine every value between them.
-
-Scale animation is not automatically invalid. It may be an intentional
-squash-and-stretch effect, visibility technique, or gameplay deformation.
-Unreal, for example, explicitly
-[supports non-uniform scale animation](https://dev.epicgames.com/documentation/en-us/unreal-engine/non-uniform-scale-animation?application_version=4.27)
-and stores scale only for animations that need it. The warning exists because
-unintentional scale curves are also a common export artifact and because
-runtime consequences are project- and engine-dependent. Unity documents that
-[non-uniform parent scale](https://docs.unity3d.com/6000.1/Documentation/Manual/class-Transform.html#non-uniform-scaling)
-can skew rotated children and disagree with some collider shapes.
-
-animsmith separates five facts so a team can make that policy decision without
-conflating them:
-
-| Check | Literal fact | Typical source | Why review it |
-|---|---|---|---|
-| `scale-keys` | At least one scale component changes over time after interpolation. | Intentional squash/stretch; constraint or retarget bake; unit-conversion keys; exporter-created curves. | It can change proportions, child placement, blending, physics assumptions, and animation storage. Confirm the motion is intentional in the target engine. |
-| `non-uniform-scale` | X, Y, and Z differ somewhere on the evaluated trajectory. | Stretching one bone axis; unapplied object scale; cubic interpolation overshoot between apparently harmless keys. | Parent/child hierarchies, normals, colliders, and engine components may treat non-uniform scale differently from uniform scale. |
-| `constant-nonunit-scale` | A scale channel or single-key pin stays away from `(1, 1, 1)`. Disabled by default. | Unit conversion; a deliberately resized character; an unapplied static transform that survived into the rig. | Often harmless, sometimes a pipeline-policy violation. Enable it only when the project expects unit scale in animation channels. |
-| `rest-world-scale` | A selected source node's inherited rest-world affine scale differs from its configured uniform policy. Quiet until node selectors are supplied. | Unit-conversion ancestor; non-uniform or reflected helper hierarchy; unapplied object scale. | Runtime attachments can inherit this scale even when inverse binds make the skinned mesh look correct. |
-| `constant-track` | A multi-key track stores repeated values and never changes. | "Key everything" export, baked controls, or importer-generated constant curves. | It is redundant data even when its value is valid. Unity exposes a corresponding importer option to [remove constant scale curves](https://docs.unity3d.com/ScriptReference/ModelImporter-removeConstantScaleCurves.html). |
-
-Examples:
-
-- Keys `(1,1,1) → (1.1,1.1,1.1) → (1,1,1)` trigger `scale-keys` but not
-  `non-uniform-scale`: the character grows uniformly and returns.
-- A constant `(1,1.2,1)` channel triggers `non-uniform-scale`, and triggers
-  `constant-nonunit-scale` only when that opt-in check is enabled. Multiple
-  repeated keys also trigger `constant-track`.
-- Dense `(1,1,1)` keys trigger `constant-track`, not `scale-keys`; there is no
-  temporal scale motion.
-- Equal CUBICSPLINE key values can still trigger `scale-keys` when their
-  tangents move the curve between keys. Inspect the curve, not only the key
-  diamonds.
-
-To opt into a unit-scale policy:
-
-```toml
-[checks.constant-nonunit-scale]
-severity = "note" # or "warn" / "error" for your project
-```
-
-### Fix the source, then verify the exported result
-
-For an unintentional finding, inspect scale channels in the DCC's Graph Editor,
-identify whether the curve belongs to a deform bone, control, helper, or object,
-and remove or rebake only the unwanted channel. Check exporter options that key
-all transforms or resample the FBX transform stack. Blender's
-[Apply transforms](https://docs.blender.org/manual/en/latest/scene_layout/object/editing/apply.html)
-can move object-level scale into object data before rigging, but its manual
-explicitly warns that applying an armature object transform does not rewrite
-pose animation curves or constraints. Do not treat `Ctrl-A` as a universal fix
-for an already animated rig.
-
-Re-export, rerun `animsmith lint`, and preview the result in the target engine.
-The desired end state depends on intent:
-
-- deliberate scale motion remains and is accepted by project policy;
-- unnecessary dense keys are removed while the evaluated pose stays the same;
-- accidental scale motion or non-uniformity is removed at its authoring source;
-- a constant non-unit pin remains only when the rig/import contract requires it.
-
-After the `constant-track` note identifies redundant multi-key data,
-`transform --prune-constant-tracks` can remove flat
-translation, rotation, or scale tracks (vector tolerance `1e-4`,
-sign-invariant rotation tolerance `1e-3` radians). This is useful when a DCC
-keys every property or bakes controls into dense holds: the resulting clip has
-the same standalone modeled motion with fewer evaluated channels and less
-animation data. As above, the sparser `(bone, property)` coverage can change
-runtime transition behavior when omitted properties are not explicitly reset.
-It prints each exact original track index so you can compare the source and
-result; review transition coverage, then re-lint and preview in the target
-engine.
-
-The transform refuses candidate tracks on `animates_bones` targets, when
-removal changes sampled local TRS or model-space position/rotation, or when
-removal would empty the clip. Single-key pins, malformed data, and cubic tangents that create
-motion above tolerance are not candidates and remain unchanged. These cases
-can carry semantics AnimSmith cannot safely erase. It does not model or remove
-custom curves, judge a non-rest constant pin, reduce changing keys, rewrite
-cubic tangents, perform DCC cleanup, flatten skeletal scale into mesh geometry,
-retarget the clip, or decide whether an effect is artistically correct. Those
-operations can change deformation and must stay in the DCC or an engine-aware
-retarget/import pipeline. The checks turn exported facts into a reviewable work
-order; they are not general animation cleanup.
+This symptom now has its own page:
+[the file is bloated, or the retargeter chokes](symptoms/file-bloat.md) opens
+with the clip that costs more than the motion in it, shows the constant channel
+a transform can remove beside the authored scale it must not, and keeps the
+precise contract — inherited rest-world scale, the five separated scale facts,
+and the pruning boundary — one click down.
 
 ---
 
 ## From symptom to command
 
-| Symptom | Check(s) | Repair / transform | Config surface | Workflow |
-|---|---|---|---|---|
-| Pose flickers, spins, or explodes | `nan`, `quat-norm`, `quat-flip`, `time-monotonic` | `fix` (quat repairs, lossless) | — | [First gate](../examples/README.md#1-a-first-cli-gate), [Repair](../examples/README.md#2-repairing-an-asset) |
-| Wrong length, freezes at the end | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] duration_s`, `fps` | [Editing a clip](../examples/README.md#3-editing-a-clip) |
-| The loop pops or pulses at the wrap | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam-rot`, `loop-seam` | drop a strict duplicated endpoint with `transform --drop-duplicate-loop-endpoint`; otherwise re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]`, `[checks.loop-seam-rot]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] movement_owner_xz`, `speed_mps` (`in_place` remains a legacy XZ alias) | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Feet skate across blends | `gait-group` | `transform --gait-anchor` for explicitly in-place cycles; runtime phase offsets for root motion | `[gait_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Directional travel speed or foot slide changes by direction | per-member AnimSmith measurement and `root-motion-speed`; no cross-member check yet ([#411](https://github.com/mmannerm/animsmith/issues/411)) | preserve per-direction velocities, tune runtime/playback, or re-time in DCC | per-clip `speed_mps`; declared-set policy is future work | [Directional blend speeds](#directional-blend-members-travel-at-different-speeds) |
-| Same-time blend members drift or pop | `sync-group` | re-slice or re-time at source | `[sync_groups.<name>]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Same-time pair looks mirrored or swaps footfall timing | `time-complement` | `collection transform-foot-cycle` for a declared supported in-place ring; otherwise align contacts in DCC, add markers, or phase-remap in the runtime | `[sync_groups.<name>.time_complement]`; strict collection manifest and foot-cycle parameterization for the transform | [A blend pair is time-complementary](#a-blend-pair-is-time-complementary) |
-| Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [Structural rig contract](../examples/README.md#keeping-the-exported-rig-shape-stable) |
-| Attachment, socket, or helper imports at the wrong size | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[runtime_nodes] selectors`; `[checks.rest-world-scale] expected_uniform_scale`, `uniform_scale_tolerance` | [Attachment nodes and inherited rest-world scale](#attachment-nodes-and-inherited-rest-world-scale) |
-| T-posed limb, static bone, wrong bind | `missing-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [Contract config](../examples/README.md#4-a-project-contract-config) |
-| Skeleton signatures or cross-file clip identities disagree | per-file structural inspection and measurement; collection identity and member binding are documented, while retargeting remains separate | configure and test the retarget path; retain exact `(file, clip)` manifest identities | `[rig]`; collection identity is in Appendix F, while cross-file checks remain future work | [Skeleton and clip identity](#files-disagree-about-skeleton-or-clip-identity) |
-| Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | inspect `constant-track`, then use `transform --prune-constant-tracks` only after reviewing transition coverage; otherwise clean/re-export in DCC | `[checks.<id>]` severity; `[clips.<name>] animates_bones` protects declared motion tracks | [Editing a clip](../examples/README.md#3-editing-a-clip) |
+| Symptom | Page |
+|---|---|
+| The pose flickers, spins, or explodes | [The pose flickers, spins, or explodes](symptoms/pose-flickers.md) |
+| The clip is the wrong length or freezes at the end | [The clip is the wrong length or freezes at the end](symptoms/wrong-length.md) |
+| The loop pops or pulses at the wrap | [The loop pops](symptoms/loop-pops.md) |
+| The character glides or runs in place | [The character glides or runs in place](symptoms/character-glides.md) |
+| Feet skate when clips blend | [Feet skate when clips blend](symptoms/blend-skate.md) |
+| Directional travel speed or foot slide changes by direction | [Directional blend speeds](symptoms/blend-skate.md#directional-blend-members-travel-at-different-speeds) |
+| Same-time blend members drift or pop | [Feet skate when clips blend](symptoms/blend-skate.md) |
+| Same-time pair looks mirrored or swaps footfall timing | [A blend pair is time-complementary](symptoms/blend-skate.md#a-blend-pair-is-time-complementary) |
+| Feet slide within a clip | [Feet slide within a clip](symptoms/feet-slide.md) |
+| Missing runtime socket or IK target | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) |
+| Attachment, socket, or helper imports at the wrong size | [Attachment nodes and inherited rest-world scale](symptoms/file-bloat.md#attachment-nodes-and-inherited-rest-world-scale) |
+| A limb is T-posed, or a bone never moves | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) |
+| Files disagree about skeleton or clip identity | [Files disagree about skeleton or clip identity](symptoms/identity-mismatch.md) |
+| The file is bloated, or the retargeter chokes | [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) |
 
-Where the repair column says *re-export*, that is deliberate: animsmith
-rewrites a clip only in ways whose within-clip correctness its own checks can
-verify. Runtime integration caveats, including sparse transition coverage,
-still apply. Lossless quaternion repairs and mechanical edits (slice,
-hold-extend, in-place gait-anchor, duplicate-loop-endpoint removal, constant-track pruning, FBX→glTF conversion) qualify; artistic
-transformation — retargeting, motion editing — is DCC work and stays
-out of scope.
+Each page names the checks, the repair and the config surface for its
+symptom; the [symptom index](symptoms/README.md) carries all of them in one
+table. Where a repair is *re-export*, that is deliberate: animsmith rewrites a
+clip only in ways whose within-clip correctness its own checks can verify.
+Runtime integration caveats, including sparse transition coverage, still
+apply. Lossless quaternion repairs and mechanical edits (slice, hold-extend,
+in-place gait-anchor, duplicate-loop-endpoint removal, constant-track pruning,
+FBX→glTF conversion) qualify; artistic transformation — retargeting, motion
+editing — is DCC work and stays out of scope.
 
 The gait and root-motion checks (`loop-seam`, `in-place`,
 `root-motion-speed`, `gait-group`, `time-complement`, `foot-slide`) additionally need a
@@ -693,7 +299,7 @@ The positioning case — what animsmith is, why nothing else fills this
 role, and what it is worth to each role on a team — lives in
 [why animsmith](why-animsmith.md).
 
-Everything else — runnable workflows for the symptoms above, pipeline
-scenarios, the CLI reference, embedding, and the dated engine survey
-behind this guide's contract — is routed from the
+Everything else — the symptom pages themselves, runnable workflows,
+pipeline scenarios, the CLI reference, embedding, and the dated engine
+survey behind this guide's contract — is routed from the
 [documentation index](README.md).

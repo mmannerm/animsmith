@@ -10,12 +10,12 @@ $ animsmith lint walk.glb
 
 - **Artists and animators** — catch a bad export while the DCC is still open.
   [Install](install.md), [first lint in 60 seconds](first-lint.md),
-  [your first report](first-report.md), then the
-  [animation-author workflow](animation-author-workflow.md).
+  [your first report](first-report.md), then
+  [from export to handoff](animation-author-workflow.md).
 - **Game developers** — know what a pack really contains and gate every
   re-export. [Install](install.md), [first lint in 60 seconds](first-lint.md),
-  [your first report](first-report.md), then the
-  [game-developer intake workflow](game-developer-intake-workflow.md).
+  [your first report](first-report.md), then
+  [from pack to engine gate](game-developer-intake-workflow.md).
 
 Something specific already looks wrong in the engine? Start from the
 [symptoms](symptoms/README.md).
@@ -34,19 +34,26 @@ this table and the site sidebar carry the same structure in the same order.
 | [Your first report](first-report.md) | Turn findings into skeleton playback, charts and one shareable HTML file, including the before/after comparison and the evidence-only form. | Start |
 | [Mixamo tutorial](mixamo-tutorial.md) | Take a real Mixamo download end-to-end — download, convert, inspect, lint, fix, and grow a contract config with the built-in `mixamo` rig profile. | Start |
 | [Symptom index](symptoms/README.md) | Start from what you see in the engine and route it to the page, check, repair and config that address it. | Symptoms |
+| [The pose flickers, spins, or explodes](symptoms/pose-flickers.md) | Repair the rotation representation itself: non-unit keys, hemisphere flips, non-finite values, and what `fix` restores losslessly. | Symptoms |
+| [The clip is the wrong length or freezes at the end](symptoms/wrong-length.md) | Find the channel that stopped early or the export range that drifted, and pin the duration and frame grid the clip owes you. | Symptoms |
 | [The loop pops](symptoms/loop-pops.md) | Fix a looping clip that jumps or hitches at the wrap: what the seam checks measure, the before/after evidence, and the loop contract. | Symptoms |
+| [The character glides or runs in place](symptoms/character-glides.md) | Settle whether gameplay or the animation owns horizontal movement, and hold the clip's measured travel to that decision. | Symptoms |
+| [Feet skate when clips blend](symptoms/blend-skate.md) | Hold a directional set to one stride phase and one timing surface, and know which member is out. | Symptoms |
 | [Feet slide within a clip](symptoms/feet-slide.md) | Fix a planted foot that skates during stance: the sampled stance intervals, the declared speed, and who owns the repair. | Symptoms |
-| [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder) and what animsmith validates at each level — and why a check fires: every runtime failure mode, mapped to the checks, repairs, and config that address it. | Symptoms |
-| [Animation troubleshooting](animation-troubleshooting.md) | Triage visible runtime symptoms to the right check, report evidence, and owner without duplicating the config or check contracts. | Symptoms |
-| [Animation-author workflow](animation-author-workflow.md) | Take an authored export from immutable source through evidence-backed candidate handoff, without treating a safe mechanical edit as artistic approval. | Workflows |
-| [Game-developer intake workflow](game-developer-intake-workflow.md) | Take a pack or collection from inventory through an exact engine profile and an engine-observed gate; includes the complete Bevy 0.19.0 path. | Workflows |
+| [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) | Separate a bone that is absent from one that is keyed but frozen, and both from a clip authored against another bind. | Symptoms |
+| [Files disagree about skeleton or clip identity](symptoms/identity-mismatch.md) | Keep the exact `(file, clip)` identity of a pack instead of trusting a repeated display name, and decide what a retarget still owes you. | Symptoms |
+| [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) | Decide what is redundant exported data and what is authored scale, then remove only the part a transform can prove. | Symptoms |
+| [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder), who owns each level, and the table that routes every runtime symptom to the page above that walks it. | Symptoms |
+| [Animation troubleshooting](animation-troubleshooting.md) | Route a visible runtime symptom to the page that owns it, and answer the two that are not about a clip: a loader refusal and an unaddressable clip. | Symptoms |
+| [For artists: from export to handoff](animation-author-workflow.md) | Take an authored export from immutable source through evidence-backed candidate handoff, without treating a safe mechanical edit as artistic approval. | Workflows |
+| [For game developers: from pack to engine gate](game-developer-intake-workflow.md) | Take a pack or collection from inventory through an exact engine profile and an engine-observed gate; includes the complete Bevy 0.19.0 path. | Workflows |
 | [Pipeline scenario guide](pipeline-scenarios.md) | Plan a raw-to-game-ready asset process — marketplace intake, mocap cleanup, outsourced acceptance, CI gating, and artifact storage. | Workflows |
-| [Examples cookbook](../examples/README.md) | Do the work, copy-paste style — gate exports in CI, repair a broken export, trim or re-anchor a clip, encode a project contract config, migrate FBX/Mixamo exports, embed the checks in Rust. | Workflows |
 | [Unity 6000.3 profile guide](engine-profile-unity.md) | Configure the exact Unity Generic/Humanoid profiles, importer advice, root-motion choices, and scale boundary. | Workflows › Engine profiles |
 | [Unreal Engine 5.8 profile guide](engine-profile-unreal.md) | Map FBX animation, Skeleton, frame, unit, root-motion, and scale concerns to AnimSmith evidence without inventing importer settings. | Workflows › Engine profiles |
 | [Godot 4.7 profile guide](engine-profile-godot.md) | Plan scene import, retargeting, animation slicing, root scale, and the current profile's explicit prediction boundary. | Workflows › Engine profiles |
 | [Bevy 0.19.0 profile guide](engine-profile-bevy.md) | Generate exact `Animation{i}` selector evidence and keep runtime loading, graph, target, and scale responsibilities explicit. | Workflows › Engine profiles |
 | [glTF and generic runtime guide](engine-profile-gltf-runtime.md) | Use the engine-neutral contract for custom runtimes, glTF units, source identity, scale repair, and downstream validation. | Workflows › Engine profiles |
+| [Examples cookbook](../examples/README.md) | Do the work, copy-paste style — gate exports in CI, repair a broken export, trim or re-anchor a clip, encode a project contract config, migrate FBX/Mixamo exports, embed the checks in Rust. | Workflows |
 | [Static asset workflow guide](static-asset-workflows.md) | Diagnose bounds and transform domains, preserve normal maps, bake supported static placement, attach explicit textures, and understand what still needs engine validation. | Workflows › Advanced workflows |
 | [Scaling glTF safely](scale.md) | Choose whole-document unit conversion or rest/bind reparameterization, understand the exact-source rewrite/proof transaction, and interpret its support boundary. | Workflows › Advanced workflows |
 | [Material texture recipes](material-texture-recipes.md) | Attach explicit BaseColor, normal, metallic-roughness, and occlusion images during conversion with deterministic resizing and provenance evidence. | Workflows › Advanced workflows |

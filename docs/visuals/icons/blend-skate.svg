@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" id="icon-blend-skate" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Two stride cycles running around one ring a quarter turn out of phase with each other">
+  <title>Feet skate when clips blend</title>
+  <style>
+    /* Every colour resolves through the documentation theme's own token,
+       so an inlined icon follows the page's light or dark choice; the
+       fallbacks are for a file opened on its own, where no token exists.
+       Every rule is scoped to this icon's id, so nothing here reaches the
+       page that inlines it or another picture beside it. */
+    #icon-blend-skate { --ring: var(--as-line-strong, #b9c1d6); --a: var(--as-accent, #3b67d6); --b: var(--as-error, #cf3f5b); }
+    @media (prefers-color-scheme: dark) { #icon-blend-skate { --ring: var(--as-line-strong, #3d3d52); --a: var(--as-accent, #7aa2f7); --b: var(--as-error, #f7768e); } }
+    #icon-blend-skate .ring { fill: none; stroke: var(--ring); stroke-width: 3; }
+    #icon-blend-skate .spread { fill: none; stroke: var(--b); stroke-width: 3; }
+    #icon-blend-skate .a { fill: var(--a); }
+    #icon-blend-skate .b { fill: var(--b); }
+    #icon-blend-skate .orbit { transform-origin: 60px 60px; animation: orbit 3.4s linear infinite; }
+    #icon-blend-skate .lag { transform-origin: 60px 60px; animation: orbit 3.4s linear infinite; }
+    @keyframes orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { #icon-blend-skate .orbit, #icon-blend-skate .lag { animation: none; } }
+  </style>
+  <circle class="ring" cx="60" cy="60" r="42"/>
+  <path class="spread" d="M60 18 A42 42 0 0 0 18 60"/>
+  <g class="orbit"><circle class="a" cx="60" cy="18" r="7"/></g>
+  <g class="lag"><circle class="b" cx="18" cy="60" r="7"/></g>
+</svg>

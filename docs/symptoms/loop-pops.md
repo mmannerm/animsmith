@@ -68,10 +68,11 @@ examples/assets/walk.glb:
    `animsmith transform --drop-duplicate-loop-endpoint` turns the clip into an
    open cycle losslessly.
 
-Who fixes it: the artist, in the DCC. Loop policy (which clips loop, how
-strict the caps are) is a project decision recorded in the config. The gate
-closes when the declared closure and seam checks pass and the loop plays
-cleanly in the target engine's graph.
+Who fixes it: the artist, in the DCC. Only a strict redundant endpoint can be
+removed mechanically; pose, tangent and contact repair is DCC work, and loop
+policy (which clips loop, how strict the caps are) is a project decision
+recorded in the config. The gate closes when the declared closure and seam
+checks pass and the loop plays cleanly in the target engine's graph.
 
 ## Config
 

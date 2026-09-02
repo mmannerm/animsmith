@@ -62,7 +62,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   float is undefined. Re-export or correct the source in the DCC/export step.
 - Runtime and references: one poisoned float can explode, freeze, or otherwise
   corrupt the pose in-engine. See [The pose flickers, spins, or
-  explodes](game-ready-clips.md#the-pose-flickers-spins-or-explodes) and
+  explodes](symptoms/pose-flickers.md) and
   [API: `Nan`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/nan/struct.Nan.html).
 
 ### `time-monotonic`
@@ -82,7 +82,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   key ordering.
 - Runtime and references: late starts can hold an unauthored pose; bad ordering
   is a hard data defect. See [The pose flickers, spins, or
-  explodes](game-ready-clips.md#the-pose-flickers-spins-or-explodes) and
+  explodes](symptoms/pose-flickers.md) and
   [API: `TimeMonotonic`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/time_monotonic/struct.TimeMonotonic.html).
 
 ### `quat-norm`
@@ -99,7 +99,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   correct that upstream.
 - Runtime and references: non-unit rotations skew interpolation, skinning, and
   blends. See [The pose flickers, spins, or
-  explodes](game-ready-clips.md#the-pose-flickers-spins-or-explodes), [CLI
+  explodes](symptoms/pose-flickers.md), [CLI
   repairs](cli.md#repairs), and
   [API: `QuatNorm`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/quat_norm/struct.QuatNorm.html).
 
@@ -118,7 +118,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   emitting unstable signs.
 - Runtime and references: the visible symptom is a sudden long-way spin between
   keys. See [The pose flickers, spins, or
-  explodes](game-ready-clips.md#the-pose-flickers-spins-or-explodes), [CLI
+  explodes](symptoms/pose-flickers.md), [CLI
   repairs](cli.md#repairs), and
   [API: `QuatFlip`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/quat_flip/struct.QuatFlip.html).
 
@@ -142,7 +142,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   repairs.
 - Runtime and references: bad duration contracts freeze shorter channels or
   desync gameplay timing. See [The clip is the wrong length or freezes at the
-  end](game-ready-clips.md#the-clip-is-the-wrong-length-or-freezes-at-the-end)
+  end](symptoms/wrong-length.md)
   and [API:
   `DurationSanity`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/duration_sanity/struct.DurationSanity.html).
 
@@ -159,7 +159,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   choice that downstream runtime and retargeter owners must explicitly accept.
 - Runtime and references: many rigs and retargeters mishandle animated scale.
   See [The file is bloated, or the retargeter
-  chokes](game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) and
+  chokes](symptoms/file-bloat.md) and
   [API:
   `ScaleKeys`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/scale_keys/struct.ScaleKeys.html).
 
@@ -177,7 +177,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   the non-uniform scale.
 - Runtime and references: non-uniform scale is a common retargeting and rig
   failure source. See [The file is bloated, or the retargeter
-  chokes](game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) and
+  chokes](symptoms/file-bloat.md) and
   [API:
   `NonUniformScale`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/non_uniform_scale/struct.NonUniformScale.html).
 
@@ -197,7 +197,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Runtime and references: constant non-unit scale can still affect import,
   attachment, and retargeting expectations. See [The file is bloated, or the
   retargeter
-  chokes](game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes) and
+  chokes](symptoms/file-bloat.md) and
   [API:
   `ConstantNonunitScale`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/constant_nonunit_scale/struct.ConstantNonunitScale.html).
 
@@ -216,7 +216,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Runtime and references: constant multi-key tracks are usually export bloat,
   but removing them still needs contract review for transition and required
   motion evidence. See [The file is bloated, or the retargeter
-  chokes](game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes),
+  chokes](symptoms/file-bloat.md),
   [Editing a clip](../examples/README.md#3-editing-a-clip), and
   [API:
   `ConstantTrack`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/constant_track/struct.ConstantTrack.html).
@@ -240,7 +240,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Runtime and references: missing sockets, IK targets, or mask bones break
   downstream binding even if no clip animates them. See [A limb is T-posed, or
   a bone never
-  moves](game-ready-clips.md#a-limb-is-t-posed-or-a-bone-never-moves) and
+  moves](symptoms/limb-frozen.md) and
   [API:
   `RequiredBones`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/required_bones/struct.RequiredBones.html).
 
@@ -285,7 +285,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   source clip and rig in the DCC/export path.
 - Runtime and references: declared motion that never reaches the file reads as
   a static or wrong-rig limb at runtime. See [A limb is T-posed, or a bone
-  never moves](game-ready-clips.md#a-limb-is-t-posed-or-a-bone-never-moves)
+  never moves](symptoms/limb-frozen.md)
   and [API:
   `MissingBones`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/missing_bones/struct.MissingBones.html).
 
@@ -306,7 +306,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Runtime and references: the visible symptom is a limb that stays pinned,
   T-posed, or otherwise fails to animate even though the clip says it should.
   See [A limb is T-posed, or a bone never
-  moves](game-ready-clips.md#a-limb-is-t-posed-or-a-bone-never-moves) and
+  moves](symptoms/limb-frozen.md) and
   [API:
   `FrozenBone`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/frozen_bone/struct.FrozenBone.html).
 
@@ -434,7 +434,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   suggestion from AnimSmith.
 - Runtime and references: stale speed pins make motion-scaled playback slide or
   moonwalk. See [The character glides or runs in
-  place](game-ready-clips.md#the-character-glides-or-runs-in-place) and [API:
+  place](symptoms/character-glides.md) and [API:
   `RootMotionSpeed`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/root_motion_speed/struct.RootMotionSpeed.html).
 
 ### `gait-group`
@@ -458,7 +458,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Runtime and references: phase drift between directional blends shows up as
   sliding or popping feet when clips crossfade. See [Directional blend members
   travel at different
-  speeds](game-ready-clips.md#directional-blend-members-travel-at-different-speeds)
+  speeds](symptoms/blend-skate.md#directional-blend-members-travel-at-different-speeds)
   and [API:
   `GaitGroup`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/gait_group/struct.GaitGroup.html).
 
@@ -483,7 +483,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   does not choose a runtime retiming strategy.
 - Runtime and references: mismatched same-time clips blend or switch at
   different semantic moments. See [Feet skate when clips
-  blend](game-ready-clips.md#feet-skate-when-clips-blend) and [API:
+  blend](symptoms/blend-skate.md) and [API:
   `SyncGroupCheck`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/sync_group/struct.SyncGroupCheck.html).
 
 ### `time-complement`
@@ -506,7 +506,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   runtime review, not as proof that time reflection is the right runtime fix.
 - Runtime and references: a warning means same-time pairing may be working
   against the measured gait evidence. See [Feet skate when clips
-  blend](game-ready-clips.md#feet-skate-when-clips-blend) and [API:
+  blend](symptoms/blend-skate.md) and [API:
   `TimeComplement`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/time_complement/struct.TimeComplement.html).
 
 ### `in-place`
@@ -528,7 +528,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   transform target.
 - Runtime and references: a mismatch becomes visible gliding or running in
   place. See [The character glides or runs in
-  place](game-ready-clips.md#the-character-glides-or-runs-in-place) and [API:
+  place](symptoms/character-glides.md) and [API:
   `InPlace`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/in_place/struct.InPlace.html).
 
 ### `fps`
@@ -547,7 +547,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   frame-aligned cut, not for arbitrary resampling drift.
 - Runtime and references: off-grid keys and fractional frame counts are common
   importer pain points. See [The clip is the wrong length or freezes at the
-  end](game-ready-clips.md#the-clip-is-the-wrong-length-or-freezes-at-the-end)
+  end](symptoms/wrong-length.md)
   and [API:
   `Fps`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/fps/struct.Fps.html).
 
@@ -568,7 +568,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   source in the DCC/export path. This is not a rest-bind scale rewrite.
 - Runtime and references: a mismatched bind often presents as the wrong base
   pose or wrong-skeleton clip. See [Files disagree about skeleton or clip
-  identity](game-ready-clips.md#files-disagree-about-skeleton-or-clip-identity)
+  identity](symptoms/identity-mismatch.md)
   and [API:
   `BindPose`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/bind_pose/struct.BindPose.html).
 

@@ -1,10 +1,16 @@
-# Animation-author workflow
+# For artists: from export to handoff
 
-Use this workflow when you own an export, a cleanup pass, or the evidence that
-will travel with a candidate asset. It keeps the original immutable, makes
-mechanical changes reviewable, and leaves artistic approval where it belongs.
-For the meaning of the stages, start with [why AnimSmith](why-animsmith.md)
-and the [readiness ladder](game-ready-clips.md#the-readiness-ladder).
+You have exported a clip, or cleaned one up, and somebody downstream has to
+trust it. This page is the order to do that in: keep the file you exported
+from, check what you actually shipped, make only the changes a tool can prove,
+and hand over the evidence with the asset instead of a verbal "it's fine".
+
+It keeps the original immutable, makes mechanical changes reviewable, and
+leaves artistic approval where it belongs. For the meaning of the stages,
+start with [why AnimSmith](why-animsmith.md) and the
+[readiness ladder](game-ready-clips.md#the-readiness-ladder). When something
+already looks wrong in the engine, start from the
+[symptoms](symptoms/README.md) instead and come back here to hand it off.
 
 ## Outcome and boundary
 
