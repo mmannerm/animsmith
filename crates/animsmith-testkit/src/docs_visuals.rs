@@ -24,22 +24,120 @@ pub const WORKING_DIR: &str = "examples/assets";
 /// Directory the committed visuals live in, relative to the repository root.
 pub const OUTPUT_DIR: &str = "docs/visuals";
 
-/// Styling injected into every extracted chart.
+/// One painted element of a chart: the class the report gives it, the
+/// property that carries its colour, the documentation-site token that
+/// colour belongs to, and the values a file opened on its own falls back
+/// to in each scheme.
+pub struct ChartColour {
+    /// The element or class the report's own markup uses.
+    pub selector: &'static str,
+    /// The SVG presentation property this colour paints.
+    pub property: &'static str,
+    /// The `--as-*` custom property the documentation theme defines.
+    pub token: &'static str,
+    /// The standalone value in a light context.
+    pub light: &'static str,
+    /// The standalone value in a dark context.
+    pub dark: &'static str,
+}
+
+/// Every colour an extracted chart paints.
+///
+/// The values are the report's own design tokens, and each names the
+/// documentation theme's equivalent: the two palettes were chosen to
+/// match, so an embedded report and a chart cut out of it read as one
+/// picture.
+pub const CHART_COLOURS: &[ChartColour] = &[
+    ChartColour {
+        selector: ".series-left",
+        property: "stroke",
+        token: "--as-accent",
+        light: "#3b67d6",
+        dark: "#7aa2f7",
+    },
+    ChartColour {
+        selector: ".series-right",
+        property: "stroke",
+        token: "--as-warning",
+        light: "#946414",
+        dark: "#e0af68",
+    },
+    ChartColour {
+        selector: ".series-diff",
+        property: "stroke",
+        token: "--as-muted",
+        light: "#5b6382",
+        dark: "#9099b2",
+    },
+    ChartColour {
+        selector: ".root-path",
+        property: "stroke",
+        token: "--as-pass",
+        light: "#287a3b",
+        dark: "#9ece6a",
+    },
+    ChartColour {
+        selector: ".pathdot",
+        property: "fill",
+        token: "--as-error",
+        light: "#cf3f5b",
+        dark: "#f7768e",
+    },
+    ChartColour {
+        selector: "text",
+        property: "fill",
+        token: "--as-muted",
+        light: "#5b6382",
+        dark: "#9099b2",
+    },
+];
+
+/// The id a standalone chart's root element carries, derived from its
+/// file name: `walk.foot-height.svg` becomes `chart-walk-foot-height`.
+///
+/// Every rule the extractor injects is written under this id, so a page
+/// that inlines several charts keeps each one's styling to itself.
+pub fn chart_scope(output: &str) -> String {
+    format!(
+        "chart-{}",
+        output.trim_end_matches(".svg").replace('.', "-")
+    )
+}
+
+/// The styling injected into one extracted chart, scoped to its own id.
 ///
 /// A report styles its charts from `assets/tokens.css`, which a
-/// standalone file loaded through `<img>` cannot reach: an `<img>`
-/// document gets no parent stylesheet and no script. These are the same
-/// token values (light first, dark under `prefers-color-scheme`), inlined
-/// so one file reads correctly in both site themes and on GitHub.
-pub const CHART_STYLE: &str = "\
-.series-left,.series-right,.series-diff,.root-path{fill:none;stroke-width:1.5}\
-.series-left{stroke:#3b67d6}.series-right{stroke:#946414}\
-.series-diff{stroke:#5b6382;opacity:.6}.root-path{stroke:#287a3b}\
-.pathdot{fill:#cf3f5b}text{fill:#5b6382;font:8.5px ui-monospace,monospace}\
-@media (prefers-color-scheme:dark){\
-.series-left{stroke:#7aa2f7}.series-right{stroke:#e0af68}\
-.series-diff{stroke:#9099b2}.root-path{stroke:#9ece6a}\
-.pathdot{fill:#f7768e}text{fill:#9099b2}}";
+/// standalone file cannot reach: an `<img>` document gets no parent
+/// stylesheet and no script. So every colour resolves through the
+/// documentation theme's own token with the standalone value as its
+/// fallback. Inlined into a page, the page's theme wins — including an
+/// explicit light/dark choice that differs from the operating system,
+/// which `prefers-color-scheme` alone would get wrong. Opened on its own,
+/// on GitHub or in a browser tab, the fallbacks apply: light first, dark
+/// under `prefers-color-scheme`.
+pub fn chart_style(scope: &str) -> String {
+    let colours = |dark: bool| -> String {
+        CHART_COLOURS
+            .iter()
+            .map(|colour| {
+                let value = if dark { colour.dark } else { colour.light };
+                format!(
+                    "#{scope} {}{{{}:var({},{value})}}",
+                    colour.selector, colour.property, colour.token
+                )
+            })
+            .collect()
+    };
+    format!(
+        "#{scope} .series-left,#{scope} .series-right,#{scope} .series-diff,\
+         #{scope} .root-path{{fill:none;stroke-width:1.5}}\
+         #{scope} .series-diff{{opacity:.6}}\
+         #{scope} text{{font:8.5px ui-monospace,monospace}}{}\
+         @media (prefers-color-scheme:dark){{{}}}",
+        colours(false),
+        colours(true),
+    )
+}
 
 /// The SVG namespace a standalone chart needs and an embedded one does not.
 const SVG_NAMESPACE: &str = " xmlns=\"http://www.w3.org/2000/svg\"";
@@ -200,11 +298,11 @@ pub fn write_docs_visuals(
 /// Cut one figure's `<svg>` out of a rendered report as a standalone file.
 ///
 /// The element is kept verbatim — `viewBox`, `role` and `aria-label`
-/// included — with three changes: the SVG namespace a standalone
-/// document needs, [`CHART_STYLE`] as the first child, and the playhead
-/// removed, because a still picture has no frame selection. An absent
-/// figure or an absent expected class is an error rather than a silently
-/// unstyled file.
+/// included — with four changes: the SVG namespace a standalone document
+/// needs, the [`chart_scope`] id every injected rule is written under,
+/// [`chart_style`] as the first child, and the playhead removed, because
+/// a still picture has no frame selection. An absent figure or an absent
+/// expected class is an error rather than a silently unstyled file.
 pub fn standalone_chart(report_html: &str, chart: &DocsChart) -> Result<String, String> {
     let figure = figure_body(report_html, chart.kind)?;
     let svg = element(figure, "<svg", "</svg>")
@@ -229,12 +327,15 @@ pub fn standalone_chart(report_html: &str, chart: &DocsChart) -> Result<String, 
         return Err("report <svg> uses xlink, which this extractor does not declare".to_owned());
     }
 
-    let mut standalone = String::with_capacity(svg.len() + CHART_STYLE.len() + 64);
+    let scope = chart_scope(chart.output);
+    let style = chart_style(&scope);
+    let mut standalone = String::with_capacity(svg.len() + style.len() + 64);
     standalone.push_str("<svg");
     standalone.push_str(SVG_NAMESPACE);
+    standalone.push_str(&format!(" id=\"{scope}\""));
     standalone.push_str(&svg["<svg".len()..=open_end]);
     standalone.push_str("<style>");
-    standalone.push_str(CHART_STYLE);
+    standalone.push_str(&style);
     standalone.push_str("</style>");
     standalone.push_str(&remove_playheads(&svg[open_end + 1..]));
     standalone.push('\n');
@@ -317,15 +418,60 @@ mod tests {
     fn extraction_keeps_the_element_verbatim_minus_the_playhead() {
         let svg = standalone_chart(FIXTURE, &gait(&["series-left", "series-right"]))
             .expect("extracts the gait figure");
+        let style = chart_style("chart-fixture");
         assert_eq!(
             svg,
             format!(
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 360 150\" \
-                 width=\"100%\" role=\"img\" aria-label=\"walk\"><style>{CHART_STYLE}</style>\
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" id=\"chart-fixture\" \
+                 viewBox=\"0 0 360 150\" width=\"100%\" role=\"img\" aria-label=\"walk\">\
+                 <style>{style}</style>\
                  <title>walk</title><path class=\"series-left\" d=\"M0,0\"/>\
                  <path class=\"series-right\" d=\"M0,0\"/></svg>\n"
             )
         );
+    }
+
+    /// Every colour a chart paints resolves through the documentation
+    /// theme's token, so an inlined chart follows the page's own light or
+    /// dark choice; the standalone fallbacks stay for a file opened on its
+    /// own, and every rule is scoped to that chart alone.
+    #[test]
+    fn chart_styles_prefer_the_page_token_and_stay_scoped_to_one_chart() {
+        assert_eq!(
+            chart_scope("walk-dirty.foot-height.svg"),
+            "chart-walk-dirty-foot-height"
+        );
+        let style = chart_style("chart-one");
+        for colour in CHART_COLOURS {
+            assert!(
+                style.contains(&format!(
+                    "#chart-one {}{{{}:var({},{})}}",
+                    colour.selector, colour.property, colour.token, colour.light
+                )),
+                "the light fallback is the standalone value: {style}"
+            );
+            assert!(
+                style.contains(&format!(
+                    "#chart-one {}{{{}:var({},{})}}",
+                    colour.selector, colour.property, colour.token, colour.dark
+                )),
+                "the dark fallback stays under the media query: {style}"
+            );
+        }
+        assert!(
+            style.contains("@media (prefers-color-scheme:dark){#chart-one "),
+            "the dark fallbacks are the media query's whole content: {style}"
+        );
+        for rule in style.split('}').filter(|rule| rule.contains('{')) {
+            let selectors = rule.rsplit('{').next_back().expect("a rule has a selector");
+            for selector in selectors.split(',') {
+                let selector = selector.trim();
+                assert!(
+                    selector.starts_with("#chart-one ") || selector.starts_with("@media"),
+                    "every rule is scoped to the chart: {selector:?} in {style}"
+                );
+            }
+        }
     }
 
     #[test]

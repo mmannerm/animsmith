@@ -193,6 +193,11 @@ html {
     font-family: var(--as-sans-font);
     font-feature-settings: "kern" 1;
     text-rendering: optimizeLegibility;
+    /* mdBook applies this from general.css, which the hand-authored front
+       door does not load: without it a navy front door keeps light form
+       controls and scrollbars.  Repeating it here is harmless on a book
+       page, which sets the same value from the same token. */
+    color-scheme: var(--color-scheme);
 }
 
 body {

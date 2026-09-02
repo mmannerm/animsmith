@@ -38,10 +38,13 @@ tag's copy of the build script for the release root, and this
 checkout's for `/dev/` — so `/dev/` shows the front door as soon as
 this page is tracked, while the release root keeps the chapter index
 until a release tag carrying both the page and the publishing step is
-cut. Nothing in the page is rewritten: its links, images and frames
-are resolved against the built artifact by the
-same validation every rendered page goes through, so paths are written
-from the artifact root (`docs/first-lint.html`, `theme/animsmith.css`).
+cut. The page is published as written, with one exception it shares with
+every chapter: an `<img>` naming a tracked drawing under `docs/visuals`
+becomes the drawing itself, so it reads the theme tokens below rather
+than guessing light or dark from the operating system. Its links, images
+and frames are resolved against the built artifact by the same validation
+every rendered page goes through, so paths are written from the artifact
+root (`docs/first-lint.html`, `theme/animsmith.css`).
 Because a root `README.md` chapter is rendered to that same
 `book/index.html`, the canonical index must not row it; the build
 refuses the pair rather than silently replacing one with the other.

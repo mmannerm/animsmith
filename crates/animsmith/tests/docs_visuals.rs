@@ -182,3 +182,73 @@ fn reports_identify_every_fixture_input_and_embed_no_checkout_path() {
         }
     }
 }
+
+/// Every colour a committed picture paints resolves through the
+/// documentation theme's `--as-*` token, with the standalone value as its
+/// fallback.
+///
+/// The site chooses light or dark by a class on the page, which an SVG's
+/// own `prefers-color-scheme` cannot see: a reader who picks a theme
+/// different from the operating system's would otherwise get a dark chart
+/// on a light page. The build inlines these files into the pages that
+/// show them, so the page's token wins there and the fallback still reads
+/// correctly on GitHub or in a browser tab.
+#[test]
+fn every_committed_picture_paints_through_a_theme_token() {
+    let visuals = repo_root().join(docs_visuals::OUTPUT_DIR);
+    let mut checked = 0usize;
+    for directory in [visuals.clone(), visuals.join("icons")] {
+        for entry in std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("lists {}: {error}", directory.display()))
+        {
+            let path = entry.expect("directory entry").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("svg") {
+                continue;
+            }
+            let svg = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("reads {}: {error}", path.display()));
+            let name = path.file_name().expect("a picture has a name").display();
+            assert!(
+                svg.contains("var(--as-"),
+                "{name} paints nothing through a theme token"
+            );
+            assert_eq!(
+                untokenized_colours(&svg),
+                Vec::<String>::new(),
+                "{name} paints a colour the page's theme cannot reach"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 6,
+        "every committed picture is checked, saw {checked}"
+    );
+}
+
+/// Every colour literal in `svg` that is not the fallback of an `--as-*`
+/// token, in document order.
+fn untokenized_colours(svg: &str) -> Vec<String> {
+    let mut loose = Vec::new();
+    for (offset, _) in svg.match_indices('#') {
+        let hex: String = svg[offset + 1..]
+            .chars()
+            .take_while(char::is_ascii_hexdigit)
+            .collect();
+        // `#chart-…` and `#icon-…` are selectors, not colours: a colour
+        // is three, four, six or eight hexadecimal digits.
+        if !matches!(hex.len(), 3 | 4 | 6 | 8) {
+            continue;
+        }
+        let token = svg[..offset]
+            .trim_end()
+            .strip_suffix(',')
+            .and_then(|head| head.rsplit_once("var(").map(|(_, token)| token));
+        if !token.is_some_and(|token| {
+            token.starts_with("--as-") && !token.contains(['(', ')', ',', ' '])
+        }) {
+            loose.push(format!("#{hex}"));
+        }
+    }
+    loose
+}
