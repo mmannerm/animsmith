@@ -65,9 +65,10 @@ sets the exit code.
 $ animsmith inspect examples/assets/clip.glb
 examples/assets/clip.glb
 rig profile: none detected
-skeleton: 2 bones
+skeleton: 3 bones
   root
     spine
+      chest
 materials: 0
 mesh instances: 0
 clips: 1
@@ -230,13 +231,17 @@ Slice a sub-window (retimed to start at 0):
 ```console
 $ animsmith transform examples/assets/clip.glb -o sliced.glb --slice 0.5:1.0
   sliced 'swing' to [0.5:1]s (3 keys max)
-wrote sliced.glb (2 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))
+wrote sliced.glb (3 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))
 
 $ animsmith diff examples/assets/clip.glb sliced.glb
   swing duration_s: moved 1.0000 -> 0.5000
   swing frame_count: moved 5.0000 -> 3.0000
+  swing loop_continuity.bones[1].rotation_delta_deg: moved 22.9183 -> 11.4592
+  swing loop_continuity.bones[2].position_delta_m: moved 0.1987 -> 0.0998
+  swing loop_continuity.bones[2].rotation_delta_deg: moved 22.9183 -> 11.4592
+  swing loop_continuity.bones[2].seam_velocity_delta_mps: moved 0.0598 -> 0.0200
   swing bone_rotation_range_deg[spine]: moved 22.9183 -> 11.4591
-3 significant change(s)                       # exits 1
+7 significant change(s)                       # exits 1
 ```
 
 Extend the final pose (useful for hold frames at the end of a one-shot):
@@ -244,7 +249,7 @@ Extend the final pose (useful for hold frames at the end of a one-shot):
 ```console
 $ animsmith transform examples/assets/clip.glb -o held.glb --hold-extend 0.5
   hold-extended 'swing' by 0.5s
-wrote held.glb (2 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))
+wrote held.glb (3 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))
 ```
 
 Other transforms: `--gait-anchor` rotates a cyclic clip so its stride

@@ -234,7 +234,7 @@ fn cookbook_transform() {
     assert_eq!(
         out,
         format!(
-            "  sliced 'swing' to [0.5:1]s (3 keys max)\nwrote {sliced} (2 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))\n"
+            "  sliced 'swing' to [0.5:1]s (3 keys max)\nwrote {sliced} (3 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))\n"
         ),
         "slice transcript matches the cookbook"
     );
@@ -251,7 +251,7 @@ fn cookbook_transform() {
     assert_eq!(
         out,
         format!(
-            "  hold-extended 'swing' by 0.5s\nwrote {held} (2 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))\n"
+            "  hold-extended 'swing' by 0.5s\nwrote {held} (3 node(s), 1 clip(s), 0 mesh(es) / 0 position(s), 0 material(s))\n"
         ),
         "hold transcript matches the cookbook"
     );
