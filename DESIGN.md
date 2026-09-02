@@ -3975,17 +3975,27 @@ collection source/take witness. Missing, ambiguous, malformed, or non-finite roo
 refuses. It retains signed endpoint X/Z displacement and signed accumulated
 unwrapped yaw, while the unchanged admission applies binary64 horizontal
 `hypot(X, Z)` at 0.01 m and absolute yaw at 1 degree; this pure slice does not
-derive those source measurements. It requires positive bilateral
-windows with one marker each and one identical cyclic alternating boundary
-signature, indexed from each member's first left onset. It pairs boundaries
-positionally, maps them to the reference's authored phases, adds `(0,0)` and
-`(1,1)`, and returns bounded duration-preserving `time_warp` operations with
-exact contact input bindings. All members must use one exact detector contact
+derive those source measurements. It partitions positive windows and markers
+by side, requires one marker per physical window and strictly disjoint
+same-side runs, and preserves those physical rows. A distinct same-side first
+run beginning at `0` and last run ending at `1` coalesce into one logical
+cyclic stance whose artificial seam edges do not enter correspondence; a full
+`[0,1]` stance refuses. Opposite-side overlap and touch are valid. Logical
+left/right counts must be equal and nonzero, with alternating onsets around the
+cycle. The planner builds the true logical boundaries in deterministic cyclic
+chronological order, rotates correspondence (not phases) to a true left onset,
+and requires one identical boundary signature across members. It pairs
+boundaries positionally and maps them to the reference's authored phases.
+Simultaneous boundary groups must agree on both source and reference instants;
+identical map pairs collapse before `(0,0)` and `(1,1)` are included and the
+retained 4,096-knot cap is checked. It returns bounded duration-preserving
+`time_warp` operations with exact contact input bindings. All members must use one exact detector contact
 height because that policy determines the compared boundaries. The whole ring
 admits at most 16,384 contact events and 32 MiB of canonical fragment bytes
 before topology retention and repeated canonicalization, and marker/window
-validation is ordered rather than cross-product work. Only the topology is circularly normalized:
-phase zero is not rotated, so a correspondence that cannot remain strictly
+validation is ordered rather than cross-product work. Only the correspondence
+topology is circularly normalized: phase zero is not rotated, so incompatible
+wrap/non-wrap correspondence or any other mapping that cannot remain strictly
 monotone and endpoint preserving refuses. This slice does not load or mutate
 animation assets, transform fragments, derive its required typed in-place
 Root/Hips evidence, serialize candidates, prove output, or publish the
@@ -4132,7 +4142,14 @@ facts are compared to retained signed source facts under the fixed 0.01 m and
 per-clip/check/default tolerance resolution. The result retains exact artifacts,
 closures, completed transforms, independently detected contacts, proof facts,
 phase spread, and separate source/output/combined work totals for the later
-evidence and publication transaction. It defines no public evidence schema,
+evidence and publication transaction. Its contact proof independently repeats
+the per-side marker/disjointness validation, seam coalescing, logical-count and
+cyclic-onset checks, and deterministic true-boundary ordering rather than
+calling planner internals. Before its circular numeric error comparison, proof also
+requires the expected and independently detected `(side, edge)` signature in
+absolute phase-zero chronological order to match, so a complete left/right
+role swap remains a topology failure at every numeric error tolerance. It
+defines no public evidence schema,
 filesystem layout, publication, or CLI behavior.
 
 ### F.10G Foot-cycle generation producer V1 (#18)
