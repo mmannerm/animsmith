@@ -2090,9 +2090,8 @@ fn line_chart(
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let scale = |axis: Side, (min, max): (f64, f64)| {
-        format!("{} {min:.2} to {max:.2} {UNIT}", named(axis))
-    };
+    let scale =
+        |axis: Side, (min, max): (f64, f64)| format!("{} {min:.2} to {max:.2} {UNIT}", named(axis));
     let described = match right {
         None => scale(Side::Left, left),
         Some(right) => format!(

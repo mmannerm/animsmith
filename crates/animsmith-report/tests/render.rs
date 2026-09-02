@@ -2135,7 +2135,7 @@ fn series_band(figure: &str, class: &str) -> (f64, f64) {
         .1;
     let d = path.split_once('"').expect("the path data closes").0;
     let ys: Vec<f64> = d
-        .split(|c| c == 'M' || c == 'L')
+        .split(['M', 'L'])
         .filter(|point| !point.is_empty())
         .map(|point| {
             point
