@@ -1520,6 +1520,51 @@ fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
     );
 }
 
+/// The front door is a hand-authored page at the artifact root that no
+/// chapter links, so without the tracked script a reader who follows the
+/// sidebar into the book has no way back to it. The script is what supplies
+/// that link, in the sidebar and on the title in the top bar, and the
+/// stylesheet is what keeps the title's link usable once the logo is drawn
+/// over its text.
+///
+/// What the script *does* to a page is executed rather than read:
+/// `scripts/test-theme-bridge.js` builds mdBook's own chrome and asserts the
+/// sidebar gains exactly one Home entry resolving through `path_to_root`.
+/// This test keeps the asset, its wiring and its stylesheet in place.
+#[test]
+fn the_site_script_gives_every_page_a_link_back_to_the_front_door() {
+    let root = repo_root();
+    let script =
+        std::fs::read_to_string(root.join("docs/site").join(THEME_SCRIPT)).expect("reads script");
+    for required in [
+        // mdBook's own site-root prefix, which is what makes one href work
+        // from every depth, and the front door it resolves to.
+        "path_to_root",
+        "index.html",
+        // The two places the link is written, and the label a reader reads.
+        ".sidebar .chapter",
+        ".menu-title",
+        "\"Home\"",
+        // The class both links carry, which is how the script recognises its
+        // own work and how the stylesheet finds it.
+        "as-home",
+    ] {
+        assert!(
+            script.contains(required),
+            "{THEME_SCRIPT} must keep {required:?}"
+        );
+    }
+
+    let stylesheet =
+        std::fs::read_to_string(root.join("docs/site/animsmith.css")).expect("reads stylesheet");
+    for required in [".menu-title a.as-home", ".chapter li.as-home-item"] {
+        assert!(
+            stylesheet.contains(required),
+            "the tracked stylesheet must style {required:?}"
+        );
+    }
+}
+
 /// The bridge's own selector, mirrored here so the pages and the script
 /// cannot drift apart: a report document under `docs/visuals/`, in either
 /// the relative spelling the Markdown carries or the site-absolute one

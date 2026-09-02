@@ -365,6 +365,24 @@ body {
     }
 }
 
+/* The site script turns the title into a link home.  It inherits the
+   heading's colour so the plain-text fallback still reads as a title, and
+   when the logo is drawn the text sits outside the visible box -- so the
+   link reclaims that box with an overlay.  The logo pseudo-elements paint
+   above it and take no pointer events, so the whole mark stays clickable. */
+.menu-title a.as-home {
+    color: inherit;
+    text-decoration: none;
+}
+
+@supports (mask-image: url("")) or (-webkit-mask-image: url("")) {
+    .menu-title a.as-home::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+    }
+}
+
 .right-buttons a,
 .right-buttons .icon-button {
     color: var(--icons);
@@ -383,6 +401,13 @@ body {
 
 .chapter {
     line-height: 1.5;
+}
+
+/* Home is written above every part, so it carries the separation a part
+   title would otherwise give it. */
+.chapter li.as-home-item {
+    margin-block-end: 0.6em;
+    font-weight: 600;
 }
 
 .chapter li.part-title {
