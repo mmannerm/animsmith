@@ -31,9 +31,15 @@ commands live in
 `landing.html` is a hand-authored page, not a chapter. After the mdBook
 build, `scripts/build-docs-site.py` copies it over `book/index.html` —
 the extra copy mdBook publishes of the book's first chapter — so the
-release root and `/dev/` each get their own front door and the book's
-own home stays `docs/index.html`. Nothing in the page is rewritten: its
-links, images and frames are resolved against the built artifact by the
+site gets its own front door and the book's own home stays
+`docs/index.html`. Each published snapshot is built by its own
+checkout's tooling — `scripts/compose-pages-site.py` runs the release
+tag's copy of the build script for the release root, and this
+checkout's for `/dev/` — so `/dev/` shows the front door as soon as
+this page is tracked, while the release root keeps the chapter index
+until a release tag carrying both the page and the publishing step is
+cut. Nothing in the page is rewritten: its links, images and frames
+are resolved against the built artifact by the
 same validation every rendered page goes through, so paths are written
 from the artifact root (`docs/first-lint.html`, `theme/animsmith.css`).
 Because a root `README.md` chapter is rendered to that same

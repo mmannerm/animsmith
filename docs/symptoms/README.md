@@ -24,7 +24,7 @@ authorities.
 | Feet skate across blends | `gait-group`, `sync-group`, `time-complement` | `transform --gait-anchor` for explicitly in-place cycles; runtime phase offsets for root motion | `[gait_groups.<name>]`, `[sync_groups.<name>]` | Technical animator declares the ring |
 | [Feet slide within a clip](feet-slide.md) | `foot-slide` | re-author in the DCC | `[clips.<name>] speed_mps` | Artist; contact cleanup is DCC work |
 | T-posed limb, static bone, wrong bind | `missing-bones`, `required-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig] required_bones` | Artist repairs the source rig |
-| Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, `rest-world-scale` | `transform --prune-constant-tracks` after reviewing transition coverage | `[checks.<id>] severity`, `[runtime_nodes] selectors` | Artist or exporter settings |
+| Bloat, retargeter breakage | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | `transform --prune-constant-tracks` after reviewing transition coverage | `[checks.<id>] severity`, `[clips.<name>] animates_bones` | Artist or exporter settings |
 
 The remaining rows keep their full treatment in the
 [game-ready clips guide](../game-ready-clips.md), whose
