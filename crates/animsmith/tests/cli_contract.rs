@@ -5550,10 +5550,18 @@ fn help_matches_compiled_feature_set() {
         ] {
             assert!(report.contains(flag), "{flag} is offered: {report}");
         }
-        assert!(
-            report.contains("Omit the sampled pose grid"),
-            "--evidence-only says what it omits: {report}"
-        );
+        // Line wrapping is clap's business; the sentences are the contract.
+        let flat = report.split_whitespace().collect::<Vec<_>>().join(" ");
+        for phrase in [
+            "Omit the sampled pose grid",
+            "single-clip report's charts",
+            "comparison's pose-derived panels become notices",
+        ] {
+            assert!(
+                flat.contains(phrase),
+                "--evidence-only states {phrase:?}: {report}"
+            );
+        }
     }
 
     let transform = animsmith()

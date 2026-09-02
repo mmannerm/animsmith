@@ -56,7 +56,7 @@ class Node {
   get classList(){const c=this.classes;return {add:x=>c.add(x),remove:x=>c.delete(x),contains:x=>c.has(x)}}
   getContext(kind){
     if (kind === "webgl2") { if (!this.gl) this.gl=webgl(); return this.gl; }
-    if (!this.context) this.context={arcs:[],fillStyle:null,setTransform(){},clearRect(){this.arcs=[]},beginPath(){},moveTo(){},lineTo(){},stroke(){},arc(...args){this.arcs.push({args,fillStyle:this.fillStyle})},fill(){}};
+    if (!this.context) this.context={arcs:[],strokes:[],fillStyle:null,strokeStyle:null,setTransform(){},clearRect(){this.arcs=[];this.strokes=[]},beginPath(){},moveTo(){},lineTo(){},stroke(){this.strokes.push(this.strokeStyle)},arc(...args){this.arcs.push({args,fillStyle:this.fillStyle})},fill(){}};
     return this.context;
   }
   scrollIntoView(){this.scrolled=true}
@@ -254,7 +254,9 @@ const schemeComparison = run(generated, "comparison-report-data", html, data, {s
 for (const side of ["before", "after"]) {
   if (!canvasFills(schemeComparison, side).includes("#123456")) throw new Error(`the ${side} canvas did not paint its joints with the ink token`);
 }
-if (!svgPaint(schemeComparison, "before-path").includes("#445566")) throw new Error("the trail panel did not paint with the muted token");
+for (const panel of ["before-path", "after-path"]) {
+  if (!svgPaint(schemeComparison, panel).includes("#445566")) throw new Error(`${panel} did not paint with the muted token`);
+}
 if (typeof schemeComparison.media.change !== "function") throw new Error("the comparison viewer does not listen for a system theme change");
 schemeComparison.settings.styles = comparisonTokens("#654321", "#778899");
 schemeComparison.media.change();
@@ -262,9 +264,59 @@ for (const side of ["before", "after"]) {
   const fills = canvasFills(schemeComparison, side);
   if (!fills.includes("#654321") || fills.includes("#123456")) throw new Error(`a system theme change did not repaint the ${side} canvas with the new tokens`);
 }
-const repaintedTrails = svgPaint(schemeComparison, "before-path");
-if (!repaintedTrails.includes("#778899") || repaintedTrails.includes("#445566")) throw new Error("a system theme change did not repaint the trail panel with the new tokens");
+for (const panel of ["before-path", "after-path"]) {
+  const repainted = svgPaint(schemeComparison, panel);
+  if (!repainted.includes("#778899") || repainted.includes("#445566")) throw new Error(`a system theme change did not repaint ${panel} with the new tokens`);
+}
 assertNoHashWrites(schemeComparison, "a comparison theme change");
+
+// Every colour any comparison surface paints must come from the document's
+// tokens: driving eleven distinct values and requiring each surface's paint
+// to be a subset of them rejects a literal hard-coded anywhere in the viewer.
+const distinctTokens = {
+  ground: "#010101", surface: "#020202", raised: "#030303", ink: "#040404",
+  muted: "#050505", line: "#060606", accent: "#070707", error: "#080808",
+  warning: "#090909", pass: "#0a0a0a", note: "#0b0b0b",
+};
+const tokenValues = new Set(Object.values(distinctTokens));
+const sourcing = run(generated, "comparison-report-data", html, data, {styles: tokenStyles(distinctTokens)});
+// A selected finding brings the subject highlight and the stance shading into
+// the drawing as well.
+sourcing.nodes["before-findings"].children[seamIndex].listeners.click();
+for (const surface of ["before-gl", "after-gl"]) {
+  const context = sourcing.nodes[surface].context;
+  if (!context) throw new Error(`${surface} was never drawn`);
+  const painted = [...context.arcs.map((arc) => arc.fillStyle), ...context.strokes].filter(Boolean);
+  if (!painted.length) throw new Error(`${surface} painted nothing to check`);
+  for (const colour of painted) {
+    if (!tokenValues.has(colour)) throw new Error(`${surface} painted ${colour}, which is not one of the document's tokens`);
+  }
+}
+for (const surface of ["before-path", "after-path", "before-gait", "after-gait"]) {
+  const painted = svgPaint(sourcing, surface).filter((colour) => colour !== "none");
+  if (!painted.length) throw new Error(`${surface} painted nothing to check`);
+  for (const colour of painted) {
+    if (!tokenValues.has(colour)) throw new Error(`${surface} painted ${colour}, which is not one of the document's tokens`);
+  }
+}
+if (!sourcing.nodes["before-gl"].context.arcs.some((arc) => arc.args[2] === 6 && arc.fillStyle === distinctTokens.error)) {
+  throw new Error("the selected finding's subject highlight is not painted from the error token");
+}
+assertNoHashWrites(sourcing, "painting every comparison surface");
+
+// A comparison finding is reachable two ways, and both must leave the same
+// drawing behind — the same frame and the same highlighted subject bone.
+const clickedFinding = run(generated, "comparison-report-data", html, data);
+clickedFinding.nodes["before-findings"].children[seamIndex].listeners.click();
+const clickedArcs = JSON.stringify(clickedFinding.nodes["before-gl"].context.arcs);
+const followedAnchor = run(generated, "comparison-report-data", html, data);
+followedAnchor.hash.value = `#finding-before-${seamFinding.anchor.replace(/^finding-/, "")}`;
+followedAnchor.listeners.hashchange();
+if (followedAnchor.nodes.scrub.value !== clickedFinding.nodes.scrub.value) throw new Error("the anchor link and the click disagree on the selected frame");
+if (JSON.stringify(followedAnchor.nodes["before-gl"].context.arcs) !== clickedArcs) throw new Error("the anchor link and the click disagree on the drawn pose, subject-bone highlight included");
+if (!clickedFinding.nodes["before-gl"].context.arcs.some((arc) => arc.args[2] === 6)) throw new Error("clicking a finding must highlight its subject bone for the comparison to mean anything");
+assertNoHashWrites(clickedFinding, "clicking a comparison finding");
+assertNoHashWrites(followedAnchor, "following a comparison anchor");
 
 // A non-finite sampled range must degrade the drawing, not abort navigation
 // or hide the already-rendered findings and coverage lists.
@@ -457,6 +509,9 @@ function observableSelection(state, index) {
     selected: rows[index].classes.has("selected"),
     onlyOneSelected: rows.filter((row) => row.classes.has("selected")).length,
     playhead: gaitOf(state).query[".playhead"].attrs.x1,
+    // What the 3D view actually drew, so the two paths agree on the pose and
+    // its trail colours as well as on the panel state.
+    drawn: JSON.stringify(state.nodes.gl.gl.buffers[state.nodes.gl.gl.buffers.length - 1] || []),
   };
 }
 function selectionsAgree(index, why) {
@@ -602,5 +657,30 @@ schemeRun.media.change();
 const repainted = schemeRun.nodes.gl.gl.clears[schemeRun.nodes.gl.gl.clears.length - 1];
 if (Math.abs(repainted[0] - 0xfd / 255) > 1e-6) throw new Error("a system theme change did not repaint the 3D view with the new ground token");
 assertNoHashWrites(schemeRun, "a system theme change");
+
+// Selecting a clip and using the transport are viewer actions as much as a
+// click on a finding is: none of them may write the fragment either.
+const actions = runMulti();
+actions.nodes["clip-select"].value = secondClip.name;
+actions.nodes["clip-select"].listeners.change();
+if (actions.nodes["clip-select"].value !== secondClip.name) throw new Error("changing the clip select did not select that clip");
+if (Number(actions.nodes.scrub.value) !== 0) throw new Error("selecting another clip did not return to its first frame");
+actions.nodes.play.listeners.click();
+if (actions.nodes.play.textContent !== "⏸") throw new Error("the play button did not start playback");
+actions.nodes.play.listeners.click();
+if (actions.nodes.play.textContent !== "▶") throw new Error("the play button did not pause");
+actions.nodes.scrub.value = "1";
+actions.nodes.scrub.listeners.input();
+if (Number(actions.nodes.scrub.value) !== 1) throw new Error("scrubbing did not move the viewer");
+assertNoHashWrites(actions, "selecting a clip, playing, pausing and scrubbing");
+
+// The counters above cover the actions this harness drives; this covers the
+// rest, including orbit and zoom: neither viewer nor the shared runtime
+// contains an assignment to the fragment at all.
+for (const [name, source] of [
+  ["single-clip", single.viewer], ["comparison", generated.viewer], ["shared runtime", single.shared],
+]) {
+  if (/location\s*\.\s*hash\s*=[^=]/.test(source)) throw new Error(`the ${name} source assigns to location.hash`);
+}
 
 console.log("report viewer harness passed");

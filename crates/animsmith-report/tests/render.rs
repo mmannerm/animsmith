@@ -1898,22 +1898,37 @@ fn tags(source: &str) -> Vec<String> {
         .collect()
 }
 
-/// The right-most edge any legend entry reaches: swatch lines carry a series
-/// class, labels carry `class="legend"`.
-fn legend_right_edge(figure: &str) -> f64 {
-    tags(figure)
-        .iter()
-        .filter_map(|tag| {
-            let class = attribute_values(tag, "class").into_iter().next()?;
-            if class == "legend" {
-                attribute_values(tag, "x").first()?.parse().ok()
-            } else if tag.starts_with("line") {
-                attribute_values(tag, "x2").first()?.parse().ok()
-            } else {
-                None
+/// The box every legend entry occupies: swatch lines carry a series class,
+/// labels carry `class="legend"`. The playhead is a line but not a legend.
+fn legend_bounds(figure: &str) -> (f64, f64, f64, f64) {
+    let (mut min_x, mut max_x) = (f64::MAX, f64::MIN);
+    let (mut min_y, mut max_y) = (f64::MAX, f64::MIN);
+    for tag in tags(figure) {
+        let Some(class) = attribute_values(&tag, "class").into_iter().next() else {
+            continue;
+        };
+        if class != "legend" && !(tag.starts_with("line") && class != "playhead") {
+            continue;
+        }
+        for name in ["x", "x1", "x2"] {
+            for value in attribute_values(&tag, name) {
+                if let Ok(at) = value.parse::<f64>() {
+                    min_x = min_x.min(at);
+                    max_x = max_x.max(at);
+                }
             }
-        })
-        .fold(f64::MIN, f64::max)
+        }
+        for name in ["y", "y1", "y2"] {
+            for value in attribute_values(&tag, name) {
+                if let Ok(at) = value.parse::<f64>() {
+                    min_y = min_y.min(at);
+                    max_y = max_y.max(at);
+                }
+            }
+        }
+    }
+    assert!(min_x <= max_x && min_y <= max_y, "the chart has a legend");
+    (min_x, max_x, min_y, max_y)
 }
 
 fn number(source: &str, name: &str) -> f64 {
@@ -1994,9 +2009,14 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
                 }
             }
         }
+        let (legend_min_x, legend_max_x, legend_min_y, legend_max_y) = legend_bounds(figure);
         assert!(
-            legend_right_edge(figure) < width,
-            "{kind}: the legend stays inside the chart"
+            legend_min_x >= 0.0
+                && legend_max_x <= width
+                && legend_min_y >= 0.0
+                && legend_max_y <= height,
+            "{kind}: the legend stays inside the {width}x{height} chart on every side: \
+             x {legend_min_x}..{legend_max_x}, y {legend_min_y}..{legend_max_y}"
         );
     }
 
@@ -2024,12 +2044,19 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
         .1;
     assert_eq!(number(playhead, "x1"), pad, "playhead starts at the origin");
     assert_eq!(number(playhead, "x2"), pad);
+    let (gait_min_x, gait_max_x, gait_min_y, gait_max_y) = legend_bounds(gait);
     assert!(
-        legend_right_edge(gait) <= pad + plot_width,
-        "the legend fits the plot rectangle: {} vs {}",
-        legend_right_edge(gait),
+        gait_min_x >= pad && gait_max_x <= pad + plot_width,
+        "the legend fits the plot rectangle horizontally: {gait_min_x}..{gait_max_x} \
+         within {pad}..{}",
         pad + plot_width
     );
+    let playhead_top = number(playhead, "y1");
+    assert!(
+        gait_max_y <= playhead_top,
+        "the legend sits above the plot it labels: {gait_max_y} vs {playhead_top}"
+    );
+    assert!(gait_min_y > 0.0, "and inside the chart: {gait_min_y}");
 
     let path = &figures[1];
     assert!(path.contains("class=\"root-path\""));
@@ -2108,13 +2135,12 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
     );
 }
 
-/// Every base64-looking run in a source, decoded. The search deliberately
-/// does not trust the key a sample was stored under: a run is a run wherever
-/// it sits, in a JSON value, an attribute, or the markup between them.
-fn decoded_runs(source: &str) -> Vec<Vec<u8>> {
-    fn encodable(byte: u8) -> bool {
-        byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/' || byte == b'='
-    }
+/// Maximal runs of base64 characters over one alphabet's two extra symbols.
+/// Sixteen characters is the shortest run that could carry the twelve bytes
+/// of one sampled position.
+fn encodable_runs<'a>(source: &'a str, extra: &[u8]) -> Vec<&'a str> {
+    let encodable =
+        |byte: u8| byte.is_ascii_alphanumeric() || byte == b'=' || extra.contains(&byte);
     let bytes = source.as_bytes();
     let mut runs = Vec::new();
     let mut start = 0;
@@ -2127,15 +2153,36 @@ fn decoded_runs(source: &str) -> Vec<Vec<u8>> {
         while end < bytes.len() && encodable(bytes[end]) {
             end += 1;
         }
-        // Sixteen characters is the shortest run that could carry the twelve
-        // bytes of one sampled position.
-        if end - start >= 16
-            && let Ok(decoded) =
-                base64::engine::general_purpose::STANDARD.decode(&source[start..end])
+        if end - start >= 16 {
+            runs.push(&source[start..end]);
+        }
+        start = end;
+    }
+    runs
+}
+
+/// Every base64-looking run in a source, decoded. The search deliberately
+/// does not trust the key a sample was stored under, nor the alphabet it was
+/// spelled with: standard and URL-safe runs are scanned separately, each with
+/// its own engine and with or without padding.
+fn decoded_runs(source: &str) -> Vec<Vec<u8>> {
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+    let mut runs = Vec::new();
+    for text in encodable_runs(source, b"+/") {
+        if let Ok(decoded) = STANDARD
+            .decode(text)
+            .or_else(|_| STANDARD_NO_PAD.decode(text))
         {
             runs.push(decoded);
         }
-        start = end;
+    }
+    for text in encodable_runs(source, b"-_") {
+        if let Ok(decoded) = URL_SAFE
+            .decode(text)
+            .or_else(|_| URL_SAFE_NO_PAD.decode(text))
+        {
+            runs.push(decoded);
+        }
     }
     runs
 }
@@ -2673,5 +2720,37 @@ fn an_evidence_only_comparison_carries_no_unplotted_sample() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn the_payload_search_reads_both_base64_alphabets() {
+    // The two alphabets differ only in the characters for the 6-bit values 62
+    // and 63, so a payload that produces them is the case a standard-only
+    // scan cannot recover: it splits the run at every `-` and `_`.
+    // At least twelve bytes, so every spelling clears the run-length floor
+    // the scan uses.
+    let mut payload = vec![0xFB, 0xEF, 0xBE, 0xFB, 0xEF, 0xBE];
+    payload.extend(123.456f32.to_le_bytes());
+    payload.extend([0xFB, 0xEF, 0xBE, 0xFB, 0xEF, 0xBE]);
+    let url_safe = base64::engine::general_purpose::URL_SAFE.encode(&payload);
+    assert!(
+        url_safe.contains('-') || url_safe.contains('_'),
+        "the fixture must exercise the alphabet difference: {url_safe}"
+    );
+
+    for encoded in [
+        base64::engine::general_purpose::STANDARD.encode(&payload),
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(&payload),
+        url_safe.clone(),
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&payload),
+    ] {
+        let document = format!("<p data-sample=\"{encoded}\"></p>");
+        assert!(
+            decoded_runs(&document)
+                .iter()
+                .any(|run| run.as_slice() == payload.as_slice()),
+            "the search must recover a payload spelled {encoded}"
+        );
     }
 }
