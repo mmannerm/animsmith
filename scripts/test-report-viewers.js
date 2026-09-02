@@ -236,6 +236,24 @@ main.hash.value="#theme=dark"; windowListeners.hashchange();
 if(nodes.scrub.value != 800) throw new Error("a fragment without a frame moved the shared phase");
 assertNoHashWrites(main, "the comparison viewer");
 
+// The comparison's panels are canvas drawings, so nothing but this callback
+// repaints them when the reader's system theme changes: the palette has to be
+// re-resolved and the panels redrawn with it.
+const comparisonTokens = (ink) => tokenStyles({
+  ground: "#101010", surface: "#1e1e2a", raised: "#232331", ink, muted: "#445566",
+  line: "#3a3a4e", accent: "#0a0b0c", error: "#202122", warning: "#101112",
+  pass: "#010203", note: "#6b7390",
+});
+const schemeComparison = run(generated, "comparison-report-data", html, data, {styles: comparisonTokens("#123456")});
+const fillsOf = (state) => state.nodes["before-gl"].context.arcs.map((arc) => arc.fillStyle);
+if (!fillsOf(schemeComparison).includes("#123456")) throw new Error("the comparison viewer did not paint its joints with the ink token");
+if (typeof schemeComparison.media.change !== "function") throw new Error("the comparison viewer does not listen for a system theme change");
+schemeComparison.settings.styles = comparisonTokens("#654321");
+schemeComparison.media.change();
+const repaintedFills = fillsOf(schemeComparison);
+if (!repaintedFills.includes("#654321") || repaintedFills.includes("#123456")) throw new Error("a system theme change did not repaint the comparison canvases with the new tokens");
+assertNoHashWrites(schemeComparison, "a comparison theme change");
+
 // A non-finite sampled range must degrade the drawing, not abort navigation
 // or hide the already-rendered findings and coverage lists.
 const cleanBefore = data.before.clip.positions, cleanAfter = data.after.clip.positions;
@@ -376,7 +394,14 @@ function runSingle(parts, html, payload, settings) {
   return run(parts, "report-data", html, payload, settings);
 }
 // The chart the viewer syncs comes from the document, so its plot rectangle
-// is read off the figure the report actually rendered.
+// is read off the figure the report actually rendered — and every assertion
+// observes that same figure, selected by kind rather than by position.
+const gaitOf = (state) => {
+  const chart = state.charts.find((figure) => figure.dataset.kind === "gait");
+  if (!chart) throw new Error("the run has no gait chart to observe");
+  return chart;
+};
+const playheadOf = (state) => Number(gaitOf(state).query[".playhead"].attrs.x1);
 const gaitChart = documentCharts(singleHtml).find((chart) => chart.dataset.kind === "gait");
 if (!gaitChart) throw new Error("the single-clip document carries no gait chart to sync");
 const chartPad = Number(gaitChart.dataset.pad), chartPlotW = Number(gaitChart.dataset.plotw);
@@ -409,29 +434,45 @@ for (const required of ["muted", "ink"]) {
   if (![...uploadedColours].some(colour => tokenColours.get(colour) === required)) throw new Error(`bone and joint colours must come from the tokens; --${required} was never uploaded`);
 }
 
-// A deep link selects exactly what the equivalent click selects.
-const deep = runSingle(single, singleHtml, singlePayload, {hash:`#finding=${findingIndex}`});
-const clicked = runSingle(single, singleHtml, singlePayload);
-clicked.nodes.findings.children[findingIndex].listeners.click();
-const observable = run => ({
-  frame: String(run.nodes.scrub.value),
-  time: run.nodes.time.textContent,
-  selected: run.nodes.findings.children[findingIndex].classes.has("selected"),
-  playhead: run.charts[0].query[".playhead"].attrs.x1,
-});
-const viaFragment = observable(deep), viaClick = observable(clicked);
-for (const key of Object.keys(viaFragment)) {
-  if (viaFragment[key] !== viaClick[key]) throw new Error(`#finding=${findingIndex} and clicking row ${findingIndex} disagree on ${key}: ${viaFragment[key]} vs ${viaClick[key]}`);
+// A deep link selects exactly what the equivalent click selects — for a
+// finding in the middle of the list as well as the last one, so the
+// equivalence cannot be an artefact of the index the harness appended.
+function observableSelection(state, index) {
+  const rows = state.nodes.findings.children;
+  return {
+    frame: String(state.nodes.scrub.value),
+    time: state.nodes.time.textContent,
+    selected: rows[index].classes.has("selected"),
+    onlyOneSelected: rows.filter((row) => row.classes.has("selected")).length,
+    playhead: gaitOf(state).query[".playhead"].attrs.x1,
+  };
 }
-if (!viaClick.selected) throw new Error("selecting a finding does not mark its row");
-assertNoHashWrites(clicked, "clicking a finding");
-assertNoHashWrites(deep, "a deep-linked finding");
+function selectionsAgree(index, why) {
+  const deep = runSingle(single, singleHtml, singlePayload, {hash: `#finding=${index}`});
+  const clicked = runSingle(single, singleHtml, singlePayload);
+  clicked.nodes.findings.children[index].listeners.click();
+  const viaFragment = observableSelection(deep, index), viaClick = observableSelection(clicked, index);
+  for (const key of Object.keys(viaFragment)) {
+    if (viaFragment[key] !== viaClick[key]) throw new Error(`${why}: #finding=${index} and clicking row ${index} disagree on ${key}: ${viaFragment[key]} vs ${viaClick[key]}`);
+  }
+  if (!viaClick.selected || viaClick.onlyOneSelected !== 1) throw new Error(`${why}: selecting a finding must mark its row and only its row`);
+  assertNoHashWrites(clicked, `clicking ${why}`);
+  assertNoHashWrites(deep, `deep-linking ${why}`);
+  return viaFragment;
+}
+if (singlePayload.findings.length < 3) throw new Error("the equivalence needs a list with a middle to address");
+const middleIndex = 1;
+const middleSelection = selectionsAgree(middleIndex, "a finding in the middle of the list");
+const lastSelection = selectionsAgree(findingIndex, "the last finding");
+if (middleSelection.frame === lastSelection.frame && middleSelection.playhead === lastSelection.playhead) {
+  throw new Error("the two findings must land somewhere different for the comparison to mean anything");
+}
 
 // The playhead spans exactly the rectangle the chart publishes.
 const atStart = runSingle(single, singleHtml, singlePayload, {hash:"#frame=0"});
-if (Number(atStart.charts[0].query[".playhead"].attrs.x1) !== chartPad) throw new Error("frame 0 does not place the playhead at the plot origin");
+if (playheadOf(atStart) !== chartPad) throw new Error("frame 0 does not place the playhead at the plot origin");
 const atEnd = runSingle(single, singleHtml, singlePayload, {hash:`#frame=${lastFrame}`});
-if (Math.abs(Number(atEnd.charts[0].query[".playhead"].attrs.x1) - (chartPad + chartPlotW)) > 1e-6) throw new Error("the last judged frame does not place the playhead at the plot's right edge");
+if (Math.abs(playheadOf(atEnd) - (chartPad + chartPlotW)) > 1e-6) throw new Error("the last judged frame does not place the playhead at the plot's right edge");
 
 // The three ways a frame arrives: honoured, past the end (clamped to the last
 // judged frame, because a reader asking for a position wants the nearest one
@@ -439,7 +480,7 @@ if (Math.abs(Number(atEnd.charts[0].query[".playhead"].attrs.x1) - (chartPad + c
 if (Number(runSingle(single, singleHtml, singlePayload, {hash:`#frame=${Math.min(2, lastFrame)}`}).nodes.scrub.value) !== Math.min(2, lastFrame)) throw new Error("a frame inside the clip was not honoured");
 const clampedFrame = runSingle(single, singleHtml, singlePayload, {hash:"#frame=999999999"});
 if (Number(clampedFrame.nodes.scrub.value) !== lastFrame) throw new Error("a frame past the end of the clip was not clamped to its last judged frame");
-if (Math.abs(Number(clampedFrame.charts[0].query[".playhead"].attrs.x1) - (chartPad + chartPlotW)) > 1e-6) throw new Error("a clamped frame did not move the chart playhead to the plot's right edge");
+if (Math.abs(playheadOf(clampedFrame) - (chartPad + chartPlotW)) > 1e-6) throw new Error("a clamped frame did not move the chart playhead to the plot's right edge");
 if (Number(runSingle(single, singleHtml, singlePayload, {hash:"#frame=1.5"}).nodes.scrub.value) !== 0) throw new Error("an unreadable frame did not restore frame 0");
 
 // Embed and theme reach the document; an unknown clip, an out-of-range
@@ -476,7 +517,7 @@ if (evidenceSingle.nodes.findings.children.length !== evidenceSinglePayload.find
 const evidenceLast = evidenceSinglePayload.clips[0].frames - 1;
 evidenceSingle.nodes.scrub.value = String(evidenceLast);
 evidenceSingle.nodes.scrub.listeners.input();
-const evidencePlayhead = Number(evidenceSingle.charts[0].query[".playhead"].attrs.x1);
+const evidencePlayhead = playheadOf(evidenceSingle);
 if (Math.abs(evidencePlayhead - (chartPad + chartPlotW)) > 1e-6) throw new Error("scrubbing an evidence-only report does not move the chart playhead");
 if (!evidenceSingle.nodes.time.textContent.includes("frame")) throw new Error("an evidence-only report stopped reporting the selected frame");
 const evidenceDeep = runSingle(singleEvidence, singleEvidenceHtml, evidenceSinglePayload, {omitted: ["gl"], hash: `#finding=${evidenceSinglePayload.findings.length - 1}&theme=light`});

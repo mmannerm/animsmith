@@ -2108,6 +2108,54 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
     );
 }
 
+/// Every base64-looking run in a source, decoded. The search deliberately
+/// does not trust the key a sample was stored under: a run is a run wherever
+/// it sits, in a JSON value, an attribute, or the markup between them.
+fn decoded_runs(source: &str) -> Vec<Vec<u8>> {
+    fn encodable(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/' || byte == b'='
+    }
+    let bytes = source.as_bytes();
+    let mut runs = Vec::new();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !encodable(bytes[start]) {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < bytes.len() && encodable(bytes[end]) {
+            end += 1;
+        }
+        // Sixteen characters is the shortest run that could carry the twelve
+        // bytes of one sampled position.
+        if end - start >= 16
+            && let Ok(decoded) =
+                base64::engine::general_purpose::STANDARD.decode(&source[start..end])
+        {
+            runs.push(decoded);
+        }
+        start = end;
+    }
+    runs
+}
+
+/// Every string value in the document's embedded JSON, unescaped, so a
+/// spelling hidden behind `\u` escapes is still read as its characters.
+fn json_strings(html: &str, id: &str) -> Vec<String> {
+    fn walk(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(text) => out.push(text.clone()),
+            Value::Object(map) => map.values().for_each(|item| walk(item, out)),
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut strings = Vec::new();
+    walk(&embedded_json(html, id), &mut strings);
+    strings
+}
+
 /// Every sampled pose byte the document embeds, from any clip or any side.
 fn embedded_pose_bytes(html: &str, id: &str) -> Vec<u8> {
     fn walk(value: &Value, out: &mut Vec<u8>) {
@@ -2254,15 +2302,22 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
     let full_html = animsmith_report::render(&grids, &roles, &[], None, None, full());
     let html = animsmith_report::render(&grids, &roles, &[], None, None, evidence_only());
 
-    // Three ways the same sample could survive: as the raw bytes of a pose
-    // grid, as the decimals a caller wrote, or as the two-decimal spelling
-    // the charts use.
-    let sampled = |html: &str| {
-        let bytes = embedded_pose_bytes(html, "report-data");
-        WITNESS.iter().all(|channel| {
-            let needle = channel.to_le_bytes();
-            bytes.windows(needle.len()).any(|slice| slice == needle)
-        })
+    // Every payload the document carries, not only the field the pose grid
+    // used to occupy: base64 runs anywhere in the markup, plus base64 inside
+    // any JSON string value.
+    let payloads = |html: &str| {
+        let mut payloads = decoded_runs(html);
+        for value in json_strings(html, "report-data") {
+            payloads.extend(decoded_runs(&value));
+        }
+        payloads
+    };
+    let channels: Vec<[u8; 4]> = WITNESS
+        .iter()
+        .map(|channel| channel.to_le_bytes())
+        .collect();
+    let carries = |payload: &[u8], needle: &[u8; 4]| {
+        payload.windows(needle.len()).any(|slice| slice == needle)
     };
     let spelled: Vec<String> = WITNESS
         .iter()
@@ -2270,18 +2325,30 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
         .collect();
 
     assert!(
-        sampled(&full_html),
+        payloads(&full_html)
+            .iter()
+            .any(|payload| channels.iter().all(|needle| carries(payload, needle))),
         "the fixture must really be a witness in a full report"
     );
-    assert!(
-        !sampled(&html),
-        "no sampled coordinate survives in an evidence-only report"
-    );
+    for payload in payloads(&html) {
+        for needle in &channels {
+            assert!(
+                !carries(&payload, needle),
+                "an evidence-only report carries a sampled coordinate in some encoded field"
+            );
+        }
+    }
     for spelling in &spelled {
         assert!(
             !html.contains(spelling.as_str()),
             "the evidence-only document still spells {spelling}"
         );
+        for value in json_strings(&html, "report-data") {
+            assert!(
+                !value.contains(spelling.as_str()),
+                "an embedded JSON string still spells {spelling}"
+            );
+        }
     }
 }
 
