@@ -16,6 +16,23 @@ plays back exactly those frames in a small hand-written WebGL viewer.
 There is no CDN, no three.js dependency, and no JavaScript resampling;
 when a finding names a frame, the viewer scrubs to that judged frame.
 
+`ReportOptions::evidence_only` omits the sampled pose grid from either report
+form, for sharing evidence where the motion itself cannot travel; the
+[CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#commands)
+describes exactly what it keeps and drops.
+
+Every colour in a generated document resolves through one set of design
+tokens: dark by default, light under `prefers-color-scheme`, and either one
+pinned by a `#theme=light|dark` URL fragment, which one bounded parser reads
+along with the `embed`, `clip`, `frame`, and `finding` options. Each chart is
+a self-describing `<figure>` — `viewBox`, `role="img"`, an `aria-label` naming
+the plotted series and their units, an in-chart legend, and axis labels —
+whose paint comes from stable series classes (`series-left`, `series-right`,
+`series-diff`, `root-path`) rather than per-element attributes, so a figure
+lifted out of the report keeps its meaning. The `data-clip`, `data-kind`,
+`data-pad`, and `data-plotw` hooks the playhead uses are part of that
+contract.
+
 `render_comparison` is the deliberately narrow before/after companion. Call
 `preflight_comparison_sources` on the two exact `LoadedSource` authorities
 before evaluating checks, then pass two explicit clip names and the exact
