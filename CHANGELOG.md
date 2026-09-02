@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/mmannerm/animsmith/compare/v0.10.0...v0.11.0) - 2026-09-02
+
+### Added
+
+- *(report)* add --evidence-only reports without the sampled motion
+- *(report)* make the metric charts legible on their own
+- *(report)* honour URL fragment options in both viewers
+- *(report)* theme every report surface from one token set
+
+### Fixed
+
+- *(report)* unify the document surfaces and unbind evidence-only work
+- *(report)* free evidence-only comparisons from the embedded pose budget
+- *(report)* restore documented defaults and notice every omitted panel
+- *(report)* keep pinned switches and read every fragment pair
+
 ## [0.10.0](https://github.com/mmannerm/animsmith/compare/v0.9.0...v0.10.0) - 2026-09-01
 
 ### Added
