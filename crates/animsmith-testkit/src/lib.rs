@@ -580,8 +580,8 @@ pub fn comparison_report_before_doc() -> Document {
 /// track dropped.
 ///
 /// Nothing else differs. The two documents share one skeleton and one
-/// root track ([`COMPARISON_ROOT_SWAY`]), so every difference a reader
-/// sees in the comparison report is the repair.
+/// root track, so every difference a reader sees in the comparison
+/// report is the repair.
 pub fn comparison_report_after_doc() -> Document {
     comparison_document(true)
 }
