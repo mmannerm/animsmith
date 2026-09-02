@@ -1520,6 +1520,18 @@ fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
     );
 }
 
+/// The bridge's own selector, mirrored here so the pages and the script
+/// cannot drift apart: a report document under `docs/visuals/`, in either
+/// the relative spelling the Markdown carries or the site-absolute one
+/// staging rewrites it to.
+fn selects_report(source: &str) -> bool {
+    let path = source.split('#').next().unwrap_or_default();
+    path.ends_with(".html")
+        && (path.contains("/docs/visuals/")
+            || path.starts_with("visuals/")
+            || path.contains("/visuals/"))
+}
+
 /// The theme bridge is a tracked asset like the stylesheet, so the staged
 /// theme carries it and a published page never needs an inline script.
 #[test]
@@ -1564,7 +1576,23 @@ fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
     );
 
     // Every page that embeds a report must be reachable by the bridge's own
-    // rule: a relative src below visuals/ ending in .html.
+    // rule, in both spellings a frame source is ever written in: the
+    // relative one the repository Markdown carries, and the site-absolute
+    // one staging rewrites it to for the published page.
+    for spelling in [
+        "../visuals/walk.report.html",
+        "/animsmith/docs/visuals/walk.report.html",
+    ] {
+        assert!(
+            selects_report(spelling),
+            "{THEME_SCRIPT} must select a frame written as {spelling}"
+        );
+    }
+    assert!(
+        !selects_report("/animsmith/docs/cli.html") && !selects_report("../visuals/walk.svg"),
+        "{THEME_SCRIPT} selects report documents only"
+    );
+
     let mut embedded = 0usize;
     for page in markdown_files(&root.join("docs")) {
         let markdown = std::fs::read_to_string(&page).expect("reads documentation page");
@@ -1574,8 +1602,17 @@ fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
             let source = &rest[..rest.find('"').expect("iframe src is quoted")];
             let path = source.split('#').next().unwrap_or_default();
             assert!(
-                path.contains("visuals/") && path.ends_with(".html"),
+                selects_report(path),
                 "{} embeds {source}, which the theme bridge would not recognise",
+                page.display()
+            );
+            assert!(
+                selects_report(&format!(
+                    "/animsmith/docs/{}",
+                    path.trim_start_matches("../")
+                )),
+                "{} embeds {source}, which the bridge would lose once staging makes it \
+                 site-absolute",
                 page.display()
             );
             embedded += 1;

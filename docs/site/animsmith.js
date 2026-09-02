@@ -33,12 +33,16 @@
     return null;
   }
 
-  // A same-origin report under docs/visuals/, addressed relatively by every
-  // page that embeds one. The path is tested before the fragment, so a
-  // deep-linked frame is recognised too.
+  // A report document under docs/visuals/. Staging rewrites every frame
+  // source to a site-absolute path (`/animsmith/docs/visuals/…`), which is
+  // the only spelling a published page carries; the relative spelling the
+  // repository Markdown is written in is accepted too, so the rule holds
+  // wherever the page is read. The path is tested before the fragment, so a
+  // deep-linked frame is recognised as well.
   function isReport(source) {
     var path = String(source).split("#")[0];
-    return path.indexOf("visuals/") !== -1 && /\.html$/.test(path);
+    if (!/\.html$/.test(path)) return false;
+    return path.indexOf("/docs/visuals/") !== -1 || /(^|\/)visuals\//.test(path);
   }
 
   // `path#a=1&b=2` with `theme` replaced by `value` and every other pair kept
