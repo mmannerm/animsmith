@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/mmannerm/animsmith/compare/v0.11.0...v0.11.1) - 2026-09-02
+
+### Fixed
+
+- *(test)* match config identifiers whole instead of by prefix
+- *(docs)* repair the contract page's examples and pin what the review found
+- *(report)* hide the playhead dot on a frame with no sampled position
+- *(report)* plot the root path from jointly finite samples
+- *(report)* sample deterministically, and read captions from the document
+- *(report)* make the comparison panels legible and their pairs distinct
+- *(report)* scale the gait chart's two signals on their own axes
+
 ## [0.11.0](https://github.com/mmannerm/animsmith/compare/v0.10.0...v0.11.0) - 2026-09-02
 
 ### Added
