@@ -265,17 +265,19 @@ function drawRootComparison(palette, phase) {
     const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": style.width, opacity: style.opacity, "data-root-side": name };
     if (style.dash) path["stroke-dasharray"] = style.dash;
     svg.append(svgElement("path", path));
-    // The two ends of the track, so a clip that walks out and never returns
-    // is not the same picture as one that comes back over its own line.
-    const ends = trackEnds(points);
-    if (ends) {
-      const [first, last] = [map(ends[0]), map(ends[1])];
-      if (finitePoint(first)) svg.append(svgElement("circle", { cx: first[0], cy: first[1], r: 5, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, "data-root-marker": `${name}-start` }));
-      if (finitePoint(last)) svg.append(svgElement("rect", { x: last[0] - 3.5, y: last[1] - 3.5, width: 7, height: 7, fill: style.color, opacity: style.opacity, "data-root-marker": `${name}-end` }));
-    }
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-root-dot": name }));
+    // The two ends of the track, so a clip that walks out and never returns
+    // is not the same picture as one that comes back over its own line. They
+    // are drawn after the phase dot and the start ring is wider than it: on
+    // a closed loop at frame 0 all three land on one coordinate, and a mark
+    // under the dot would say nothing there.
+    const ends = trackEnds(points);
+    if (!ends) continue;
+    const [first, last] = [map(ends[0]), map(ends[1])];
+    if (finitePoint(first)) svg.append(svgElement("circle", { cx: first[0], cy: first[1], r: style.radius + 3, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, "data-root-marker": `${name}-start` }));
+    if (finitePoint(last)) svg.append(svgElement("rect", { x: last[0] - 3.5, y: last[1] - 3.5, width: 7, height: 7, fill: style.color, opacity: style.opacity, "data-root-marker": `${name}-end` }));
   }
   const rootState = (side) => {
     const points = rootTrack(side);

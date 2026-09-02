@@ -356,6 +356,12 @@ for (const side of ["before", "after"]) {
   if (!circle || !square) throw new Error(`the ${side} root track is not marked at both ends`);
   if (circle.tag !== "circle" || square.tag !== "rect") throw new Error(`the ${side} track's two ends are not drawn as two different shapes`);
   if (circle.attrs.fill !== "none") throw new Error(`the ${side} start mark is filled, so the phase dot standing on it at frame 0 disappears into it`);
+  // On a closed loop at frame 0 the start mark, the end mark and the phase
+  // dot are one coordinate, so a ring no wider than the dot says nothing.
+  const dot = nodes["comparison-root-path"].children.find((child) => child.attrs["data-root-dot"] === side);
+  if (!(Number(circle.attrs.r) > Number(dot.attrs.r))) throw new Error(`the ${side} start ring (r ${circle.attrs.r}) does not stand outside its own phase dot (r ${dot.attrs.r})`);
+  const drawnAfterDot = nodes["comparison-root-path"].children.indexOf(dot) < nodes["comparison-root-path"].children.indexOf(square);
+  if (!drawnAfterDot) throw new Error(`the ${side} end mark is drawn under the phase dot, which hides it wherever a track closes on itself`);
   const start = rootMap(metres[0]), end = rootMap(metres[metres.length - 1]);
   if (Math.abs(circle.attrs.cx - start[0]) > 1e-6 || Math.abs(circle.attrs.cy - start[1]) > 1e-6) throw new Error(`the ${side} start mark is at ${circle.attrs.cx},${circle.attrs.cy} rather than the first sampled frame's ${start}`);
   if (Math.abs(square.attrs.x + square.attrs.width / 2 - end[0]) > 1e-6 || Math.abs(square.attrs.y + square.attrs.height / 2 - end[1]) > 1e-6) throw new Error(`the ${side} end mark is not centred on the last sampled frame's ${end}`);
