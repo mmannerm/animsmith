@@ -1799,6 +1799,71 @@ fn embed_hides_the_same_chrome_in_both_documents_and_hides_no_evidence() {
     );
 }
 
+/// Every colour-bearing declaration in the emitted stylesheets, as
+/// (property, value). Custom properties are the token definitions themselves
+/// and are pinned by the token tests instead.
+fn colour_declarations(code: &str) -> Vec<(String, String)> {
+    const PROPERTIES: [&str; 8] = [
+        "color",
+        "background",
+        "background-color",
+        "fill",
+        "stroke",
+        "border-color",
+        "outline-color",
+        "box-shadow",
+    ];
+    let mut found = Vec::new();
+    let mut rest = code;
+    while let Some(open) = rest.find("<style>") {
+        let close = rest[open..].find("</style>").expect("style closes") + open;
+        let sheet = without_block_comments(&rest[open + "<style>".len()..close]);
+        for declaration in sheet.split([';', '{', '}']) {
+            let Some((property, value)) = declaration.split_once(':') else {
+                continue;
+            };
+            let (property, value) = (property.trim(), value.trim());
+            if PROPERTIES.contains(&property) {
+                found.push((property.to_owned(), value.to_owned()));
+            }
+        }
+        rest = &rest[close + "</style>".len()..];
+    }
+    found
+}
+
+#[test]
+fn both_reports_spell_colour_one_way() {
+    // A colour written as rgb()/hsl() would sit outside the token set without
+    // any hex literal for the token test to catch, so the syntax itself is
+    // pinned: declarations resolve to a token reference or a keyword, and the
+    // documents contain no colour-function spelling at all.
+    for (kind, html) in themed_documents() {
+        let code = document_code(&html);
+        for function in ["rgb(", "rgba(", "hsl(", "hsla("] {
+            assert!(
+                !code.contains(function),
+                "{kind}: a colour is spelled {function}…), which no token can express"
+            );
+        }
+        let declarations = colour_declarations(&code);
+        assert!(
+            declarations.len() >= 8,
+            "{kind}: the sheets must actually declare colours: {declarations:?}"
+        );
+        for (property, value) in declarations {
+            let resolved = value.starts_with("var(--")
+                || ["none", "transparent", "currentColor", "inherit"].contains(&value.as_str())
+                || hex_colours(&value).len() == 1;
+            assert!(
+                resolved,
+                "{kind}: {property}: {value} is neither a token reference, a hex literal, \
+                 nor a colour keyword"
+            );
+        }
+    }
+}
+
 #[test]
 fn evidence_rows_and_controls_sit_on_the_raised_token() {
     // A row or control on --ground reads as a hole cut through its panel;
@@ -1834,10 +1899,8 @@ fn both_reports_embed_one_shared_fragment_runtime() {
             1,
             "{kind}: the shared runtime is embedded once"
         );
-        assert!(
-            code.contains("animsmithApplyDocument(animsmithFragmentOptions(location.hash))"),
-            "{kind}: the viewer applies the fragment's document switches"
-        );
+        // That the viewer actually applies those options is a behaviour, and
+        // the browser harness executes it; nothing is pinned by spelling here.
     }
 }
 
