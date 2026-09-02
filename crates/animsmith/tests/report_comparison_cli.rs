@@ -350,20 +350,42 @@ fn development_guide_names_the_evidence_only_flag_the_cli_offers() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../DEVELOPMENT.md"),
     )
     .expect("DEVELOPMENT.md");
-    assert!(
-        guide.contains("`animsmith report --evidence-only`"),
-        "DEVELOPMENT.md names the evidence-only report as the publishable form of a licensed clip"
-    );
+    // The policy sentence itself names the command, so a guide that kept the
+    // flag in unrelated prose while pointing the policy at something else
+    // would fail here: the command is read out of that sentence.
+    const POLICY: &str = "The artifact form that satisfies this rule is `";
+    let prose = guide.split_whitespace().collect::<Vec<_>>().join(" ");
+    let start = prose.find(POLICY).expect(
+        "DEVELOPMENT.md states which artifact form satisfies the published-derivative rule",
+    ) + POLICY.len();
+    let end = prose[start..]
+        .find('`')
+        .expect("the policy sentence closes its command span")
+        + start;
+    let command: Vec<&str> = prose[start..end].split_whitespace().collect();
+    assert_eq!(command.first(), Some(&"animsmith"), "{command:?}");
+    let subcommand = command.get(1).expect("the policy names a subcommand");
+    let flags: Vec<&str> = command[2..]
+        .iter()
+        .copied()
+        .filter(|word| word.starts_with("--"))
+        .collect();
+    assert_eq!(flags, ["--evidence-only"], "{command:?}");
 
     let output = animsmith()
-        .args(["report", "--help"])
+        .args([subcommand, "--help"])
         .output()
-        .expect("runs report --help");
+        .expect("runs the policy's subcommand with --help");
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let help = String::from_utf8_lossy(&output.stdout);
-    assert!(help.contains("--evidence-only"), "{help}");
+    for flag in flags {
+        assert!(
+            help.lines().any(|line| line.trim_start().starts_with(flag)),
+            "`animsmith {subcommand} --help` offers {flag}:\n{help}"
+        );
+    }
 }
