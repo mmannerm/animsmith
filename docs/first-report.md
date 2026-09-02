@@ -41,7 +41,7 @@ $ animsmith --config examples/report-comparison.animsmith.toml report \
     --compare-after examples/assets/report-comparison-after.glb \
     --before-clip acceptance-matrix --after-clip acceptance-matrix \
     -o comparison.html
-wrote comparison.html (1 clip(s), 5 finding(s), 0.0 MB)   # exits 0
+wrote comparison.html (1 clip(s), 5 finding(s), 0.1 MB)   # exits 0
 ```
 
 [Open the comparison](visuals/foot-slide.comparison.html). Press play beside
