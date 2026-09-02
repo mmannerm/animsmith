@@ -2462,6 +2462,47 @@ fn path_dot(figure: &str) -> &str {
     &figure[start..end]
 }
 
+/// One element's attributes, by name.
+///
+/// Substring checks on the raw markup cannot say what an element does not
+/// carry: `display="none"` is satisfied by markup that also carries a
+/// `style="display:block"` overriding it, and "no `cx=`" is satisfied by a
+/// `transform` that moves the element instead.
+fn element_attributes(element: &str) -> std::collections::BTreeMap<String, String> {
+    let mut attributes = std::collections::BTreeMap::new();
+    let mut rest = element;
+    while let Some(equals) = rest.find("=\"") {
+        let name = rest[..equals]
+            .rsplit([' ', '<'])
+            .next()
+            .expect("an attribute has a name")
+            .to_owned();
+        let start = equals + 2;
+        let end = rest[start..].find('"').expect("the value closes") + start;
+        attributes.insert(name, rest[start..end].to_owned());
+        rest = &rest[end + 1..];
+    }
+    attributes
+}
+
+/// The points of a root-path figure's plotted `d`, in plot coordinates.
+fn plotted_points(figure: &str) -> Vec<(f64, f64)> {
+    figure
+        .split_once("class=\"root-path\" d=\"")
+        .expect("the root path is plotted")
+        .1
+        .split_once('"')
+        .expect("the path data closes")
+        .0
+        .split(['M', 'L'])
+        .filter(|part| !part.is_empty())
+        .map(|point| {
+            let (x, y) = point.split_once(',').expect("an x,y point");
+            (x.parse().expect("x"), y.parse().expect("y"))
+        })
+        .collect()
+}
+
 /// The `pathpoints` entries of a root-path figure, in frame order.
 fn path_points(figure: &str) -> Vec<String> {
     figure
@@ -2519,39 +2560,63 @@ fn an_unavailable_frame_carries_no_position_rather_than_a_neighbours() {
 
     // The dot the renderer writes into the markup is what an extracted
     // chart, or a document whose script has not run, shows. Frame 0 has no
-    // position, so that dot must be hidden and name no coordinate at all —
-    // not placed at the first frame that does have one.
-    let dot = path_dot(&figure);
-    assert!(
-        dot.contains("display=\"none\""),
-        "a document opening on a frame with no position hides its dot: {dot}"
+    // position, so that dot must be hidden and name no position by any
+    // route — the attribute set is pinned exactly, because a `style` can
+    // override `display` and a `transform` can move an element that names
+    // no `cx`/`cy` at all.
+    let hidden = element_attributes(path_dot(&figure));
+    for named in ["style", "cx", "cy", "transform", "x", "y"] {
+        assert!(
+            !hidden.contains_key(named),
+            "a hidden dot carries no {named}: {hidden:?}"
+        );
+    }
+    assert_eq!(
+        hidden.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["class", "display", "r"],
+        "and nothing else at all: {hidden:?}"
     );
-    assert!(
-        !dot.contains("cx=") && !dot.contains("cy="),
-        "a hidden dot names no position: {dot}"
-    );
+    assert_eq!(hidden["display"], "none", "{hidden:?}");
+    assert_eq!(hidden["class"], "pathdot", "{hidden:?}");
 
     // The other side of the same contract: a document whose frame 0 does
     // have a position opens with the dot visible, at that frame's own
     // coordinate.
-    let available = root_path_figure(vec![
-        at(0.0, 0.0),
-        at(1.0, 0.0),
-        at(2.0, 0.0),
-        at(3.0, 1.0),
-        at(4.0, 1.0),
-    ]);
-    let visible = path_dot(&available);
-    assert!(
-        !visible.contains("display="),
-        "a frame with a position shows its dot: {visible}"
+    //
+    // The expectation comes from the fixture rather than from the template
+    // the same renderer wrote: frames 1 and 2 are placed symmetrically
+    // about frame 0 in model space, and the projection is affine with one
+    // scale for both axes, so frame 0's plotted point is exactly the
+    // midpoint of theirs. A renderer that wrote frame 1's coordinate into
+    // the dot puts it at an end of that segment instead of its middle.
+    let available = root_path_figure(vec![at(0.0, 0.0), at(-1.0, -1.0), at(1.0, 1.0)]);
+    let visible = element_attributes(path_dot(&available));
+    assert_eq!(
+        visible.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["class", "cx", "cy", "r"],
+        "a visible dot names its position and nothing else: {visible:?}"
     );
-    let first = path_points(&available)[0].clone();
-    let (cx, cy) = first.split_once(',').expect("frame 0 carries a coordinate");
-    assert!(
-        visible.contains(&format!("cx=\"{cx}\"")) && visible.contains(&format!("cy=\"{cy}\"")),
-        "the dot opens on frame 0's own coordinate {first}: {visible}"
+    let dot = (
+        visible["cx"].parse::<f64>().expect("cx"),
+        visible["cy"].parse::<f64>().expect("cy"),
     );
+    let plotted = plotted_points(&available);
+    assert_eq!(plotted.len(), 3, "the fixture plots its three frames");
+    let midpoint = (
+        (plotted[1].0 + plotted[2].0) / 2.0,
+        (plotted[1].1 + plotted[2].1) / 2.0,
+    );
+    assert!(
+        (dot.0 - midpoint.0).abs() < 0.05 && (dot.1 - midpoint.1).abs() < 0.05,
+        "the dot opens on frame 0, the midpoint of the symmetric frames \
+         either side of it: {dot:?} against {midpoint:?} of {plotted:?}"
+    );
+    for (frame, point) in [(1, plotted[1]), (2, plotted[2])] {
+        assert!(
+            (dot.0 - point.0).abs() > 1.0 || (dot.1 - point.1).abs() > 1.0,
+            "the dot is frame 0's position, not frame {frame}'s: {dot:?} against {point:?}"
+        );
+    }
 }
 
 /// The no-position marker sits on exactly the frames that have no
