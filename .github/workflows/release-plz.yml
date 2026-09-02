@@ -4,8 +4,8 @@ name: release-plz
 # version-computation + version-alignment flow removed from main.yml
 # (see #37).
 #
-# Release automation has two deliberately separate trigger paths and one
-# downstream binary job:
+# Release automation has two deliberately separate trigger paths and two
+# downstream publication jobs:
 #   - workflow_dispatch: after the shared checks pass, release-pr opens/updates
 #     a release PR that bumps the shared workspace version, propagates the
 #     internal animsmith-* dependency versions, and updates CHANGELOG.md
@@ -16,6 +16,9 @@ name: release-plz
 #   - release-binaries: when release-plz reports a release for the CLI
 #     package, calls release-binaries.yml to attach CLI archives and checksums
 #     to that GitHub Release.
+#   - release_pages: when release-plz reports a release, dispatches
+#     docs-pages.yml on main so the Pages root moves to the tag just
+#     published (see the job comment and RELEASING.md).
 #
 # crates.io publishing uses Trusted Publishing (GitHub OIDC): the release
 # job holds `id-token: write` and release-plz mints a short-lived token
@@ -106,6 +109,25 @@ jobs:
     uses: ./.github/workflows/release-binaries.yml
     with:
       tag: ${{ needs.release.outputs.release_tag }}
+
+  # Move the Pages root to the tag just published. GitHub creates no workflow
+  # run for an event produced with the repository GITHUB_TOKEN, so this
+  # dispatch — not docs-pages.yml's own `release: published` trigger — is what
+  # composes the release root (#652). `--repo` is needed because the job checks
+  # nothing out. RELEASING.md, "GitHub Pages documentation", holds the full
+  # rationale, the run ordering, and the manual recovery command.
+  release_pages:
+    name: dispatch Pages documentation
+    needs: [release]
+    if: ${{ needs.release.outputs.releases_created == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # dispatch docs-pages.yml on main
+    steps:
+      - name: Dispatch the Pages documentation workflow on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs-pages.yml --ref main --repo "${GITHUB_REPOSITORY}"
 
   release-pr:
     name: release-plz release-pr

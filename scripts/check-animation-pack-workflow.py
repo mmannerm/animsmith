@@ -6,9 +6,12 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
 
-import yaml
+from workflow_contract import (
+    WorkflowContractError,
+    load_workflow,
+    require_mapping,
+)
 
 
 CHECKOUT = "actions/checkout@v7"
@@ -23,62 +26,6 @@ VALIDATOR_RUN = (
 JOB_CONTROLS = {"if", "continue-on-error", "strategy", "needs", "defaults"}
 CHECKOUT_KEYS = {"uses", "with"}
 VALIDATOR_KEYS = {"name", "run"}
-
-
-class WorkflowContractError(ValueError):
-    """A workflow failed the animation-pack job contract."""
-
-
-class UniqueSafeLoader(yaml.SafeLoader):
-    """SafeLoader variant that rejects duplicate keys after merge expansion."""
-
-
-def construct_unique_mapping(
-    loader: UniqueSafeLoader, node: yaml.MappingNode, deep: bool = False
-) -> dict[Any, Any]:
-    loader.flatten_mapping(node)
-    mapping: dict[Any, Any] = {}
-    for key_node, value_node in node.value:
-        key = loader.construct_object(key_node, deep=deep)
-        try:
-            duplicate = key in mapping
-        except TypeError as exc:
-            raise yaml.constructor.ConstructorError(
-                "while constructing a mapping",
-                node.start_mark,
-                "unhashable key",
-                key_node.start_mark,
-            ) from exc
-        if duplicate:
-            raise yaml.constructor.ConstructorError(
-                "while constructing a mapping",
-                node.start_mark,
-                f"found duplicate key {key!r}",
-                key_node.start_mark,
-            )
-        mapping[key] = loader.construct_object(value_node, deep=deep)
-    return mapping
-
-
-UniqueSafeLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_unique_mapping
-)
-
-
-def load_workflow(text: str, source: str) -> dict[str, Any]:
-    try:
-        document = yaml.load(text, Loader=UniqueSafeLoader)
-    except yaml.YAMLError as exc:
-        raise WorkflowContractError(f"{source}: invalid YAML: {exc}") from exc
-    if not isinstance(document, dict):
-        raise WorkflowContractError(f"{source}: workflow root must be a mapping")
-    return document
-
-
-def require_mapping(value: object, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise WorkflowContractError(f"{description} must be a mapping")
-    return value
 
 
 def check_workflow_text(text: str, source: str) -> None:
