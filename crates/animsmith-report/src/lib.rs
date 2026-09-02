@@ -1795,16 +1795,19 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
                 Series {
                     class: "series-left",
                     label: "L foot",
+                    axis: Side::Left,
                     values: &l,
                 },
                 Series {
                     class: "series-right",
                     label: "R foot",
+                    axis: Side::Left,
                     values: &r,
                 },
                 Series {
                     class: "series-diff",
                     label: "L−R",
+                    axis: Side::Right,
                     values: &d,
                 },
             ],
@@ -1824,20 +1827,48 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
     out
 }
 
+/// Which of a line chart's two value axes a series is plotted against,
+/// and which gutter a label is aligned to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
 /// One plotted series: the stable class the stylesheet and any chart
-/// extractor targets, its legend label, and the samples.
+/// extractor targets, its legend label, the value axis it is scaled
+/// against, and the samples.
 struct Series<'a> {
     class: &'static str,
     label: &'static str,
+    axis: Side,
     values: &'a [f64],
+}
+
+/// Where a text label is anchored horizontally.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Anchor {
+    Start,
+    Middle,
+    End,
+}
+
+impl Anchor {
+    /// The SVG attribute, omitted for the `start` default.
+    fn attribute(self) -> &'static str {
+        match self {
+            Anchor::Start => "",
+            Anchor::Middle => " text-anchor=\"middle\"",
+            Anchor::End => " text-anchor=\"end\"",
+        }
+    }
 }
 
 /// One axis label, placed in a chart's gutters.
 struct AxisLabel {
     x: f64,
     y: f64,
-    /// Right-aligned labels sit against the plot's right edge.
-    end_anchored: bool,
+    anchor: Anchor,
     text: String,
 }
 
@@ -1852,7 +1883,7 @@ struct Chart<'a> {
     title: &'static str,
     /// Tail of the `aria-label`, after the clip name.
     description: String,
-    legend: &'a [(&'static str, &'static str)],
+    legend: &'a [(&'static str, &'a str)],
     axis: Vec<AxisLabel>,
     /// Publishes the plot rectangle the viewer's playhead is placed in.
     plot_hooks: bool,
@@ -1882,15 +1913,11 @@ impl Chart<'_> {
             .axis
             .iter()
             .map(|label| {
-                let anchor = if label.end_anchored {
-                    " text-anchor=\"end\""
-                } else {
-                    ""
-                };
                 format!(
-                    "<text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\"{anchor}>{}</text>",
+                    "<text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\"{}>{}</text>",
                     label.x,
                     label.y,
+                    label.anchor.attribute(),
                     esc(&label.text)
                 )
             })
@@ -1918,7 +1945,9 @@ const H: f64 = 150.0;
 /// Gutters for the y-axis labels, the legend row, and the x-axis labels. The
 /// plot rectangle between them is what `data-pad`/`data-plotw` describe.
 const PAD_LEFT: f64 = 34.0;
-const PAD_RIGHT: f64 = 8.0;
+/// As wide as the left gutter: a line chart labels a second value axis
+/// there, and the top-down path chart keeps the plot centred.
+const PAD_RIGHT: f64 = 34.0;
 const PAD_TOP: f64 = 18.0;
 const PAD_BOTTOM: f64 = 16.0;
 const PLOT_W: f64 = W - PAD_LEFT - PAD_RIGHT;
@@ -1930,36 +1959,72 @@ const LEGEND_Y: f64 = 9.0;
 /// Advance per legend entry: a swatch, a gap, and an 8px label. Approximate
 /// on purpose — the entries only have to stay inside the plot width.
 const LEGEND_CHAR_W: f64 = 4.6;
+/// Extent below which a top-down path is reported as stationary rather
+/// than plotted: a millimetre, which is finer than any clip an engine
+/// distinguishes from standing still.
+const STATIC_PATH_M: f64 = 0.001;
 
+/// The finite value range of one axis' series, if it has any samples.
+fn axis_range(series: &[Series<'_>], axis: Side) -> Option<(f64, f64)> {
+    let values = series
+        .iter()
+        .filter(|entry| entry.axis == axis)
+        .flat_map(|entry| entry.values.iter().copied());
+    values.fold(None, |range, value| {
+        Some(match range {
+            None => (value, value),
+            Some((min, max)) => (min.min(value), max.max(value)),
+        })
+    })
+}
+
+/// A line chart of one or two independently scaled value axes.
+///
+/// Series that share an axis share a scale, so they can be read against
+/// each other; series on the other axis get their own, so a signal
+/// orders of magnitude larger cannot flatten the rest. The gait chart
+/// needs exactly that: both feet swing within about ten centimetres of
+/// each other a metre below the hips, while their difference swings
+/// about zero. On one shared scale the two foot curves collapse into a
+/// line at the bottom of the plot — the picture stops showing the thing
+/// the reader came for.
 fn line_chart(
     clip: &str,
     kind: &'static str,
     title: &'static str,
     series: &[Series<'_>],
 ) -> String {
-    let all: Vec<f64> = series
-        .iter()
-        .flat_map(|s| s.values.iter().copied())
-        .collect();
-    if all.is_empty() {
+    let Some(left) = axis_range(series, Side::Left) else {
         return String::new();
-    }
-    let min = all.iter().copied().fold(f64::MAX, f64::min);
-    let max = all.iter().copied().fold(f64::MIN, f64::max);
-    let span = (max - min).max(1e-6);
+    };
+    let right = axis_range(series, Side::Right);
     let frames = series[0].values.len();
     let n = frames.max(2);
     let last_frame = frames.saturating_sub(1);
     let x = |i: usize| PAD_LEFT + PLOT_W * i as f64 / (n - 1) as f64;
-    let y = |v: f64| H - PAD_BOTTOM - PLOT_H * (v - min) / span;
+    let y = |(min, max): (f64, f64), v: f64| {
+        H - PAD_BOTTOM - PLOT_H * (v - min) / (max - min).max(1e-6)
+    };
 
     let mut body = String::new();
     for entry in series {
+        let range = match entry.axis {
+            Side::Left => left,
+            // An axis with a series on it has a range by construction.
+            Side::Right => right.unwrap_or(left),
+        };
         let d: Vec<String> = entry
             .values
             .iter()
             .enumerate()
-            .map(|(i, &v)| format!("{}{:.1},{:.1}", if i == 0 { "M" } else { "L" }, x(i), y(v)))
+            .map(|(i, &v)| {
+                format!(
+                    "{}{:.1},{:.1}",
+                    if i == 0 { "M" } else { "L" },
+                    x(i),
+                    y(range, v)
+                )
+            })
             .collect();
         body.push_str(&format!(
             "<path class=\"{}\" d=\"{}\" fill=\"none\"/>",
@@ -1971,45 +2036,82 @@ fn line_chart(
         "<line class=\"playhead\" x1=\"{PAD_LEFT}\" x2=\"{PAD_LEFT}\" y1=\"{PAD_TOP}\" y2=\"{:.1}\"/>",
         H - PAD_BOTTOM
     ));
-    let labels: Vec<&str> = series.iter().map(|entry| entry.label).collect();
+
+    // Each axis states its own range in its own gutter, and the legend
+    // says which series is read against the right-hand one, so two scales
+    // on one plot cannot be mistaken for one.
+    let mut axis = Vec::with_capacity(6);
+    for (side, (min, max)) in [(Side::Left, Some(left)), (Side::Right, right)]
+        .into_iter()
+        .filter_map(|(side, range)| range.map(|range| (side, range)))
+    {
+        let (at, anchor) = match side {
+            Side::Left => (2.0, Anchor::Start),
+            Side::Right => (W - 2.0, Anchor::End),
+        };
+        axis.push(AxisLabel {
+            x: at,
+            y: PAD_TOP + 3.0,
+            anchor,
+            text: format!("{max:.2} {UNIT}"),
+        });
+        axis.push(AxisLabel {
+            x: at,
+            y: H - PAD_BOTTOM,
+            anchor,
+            text: format!("{min:.2} {UNIT}"),
+        });
+    }
+    axis.push(AxisLabel {
+        x: PAD_LEFT,
+        y: H - 4.0,
+        anchor: Anchor::Start,
+        text: "frame 0".to_owned(),
+    });
+    axis.push(AxisLabel {
+        x: W - PAD_RIGHT,
+        y: H - 4.0,
+        anchor: Anchor::End,
+        text: format!("frame {last_frame}"),
+    });
+
+    let legend_labels: Vec<String> = series
+        .iter()
+        .map(|entry| match entry.axis {
+            Side::Left => entry.label.to_owned(),
+            Side::Right => format!("{} (right axis)", entry.label),
+        })
+        .collect();
+    let named = |axis: Side| -> String {
+        series
+            .iter()
+            .filter(|entry| entry.axis == axis)
+            .map(|entry| entry.label)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let scale = |axis: Side, (min, max): (f64, f64)| {
+        format!("{} {min:.2} to {max:.2} {UNIT}", named(axis))
+    };
+    let described = match right {
+        None => scale(Side::Left, left),
+        Some(right) => format!(
+            "{}; {} on its own right-hand axis",
+            scale(Side::Left, left),
+            scale(Side::Right, right)
+        ),
+    };
     Chart {
         clip,
         kind,
         title,
-        description: format!(
-            "{title}: {} over frames 0 to {last_frame}, {min:.2} to {max:.2} {UNIT}",
-            labels.join(", ")
-        ),
+        description: format!("{title} over frames 0 to {last_frame}: {described}"),
         legend: &series
             .iter()
-            .map(|entry| (entry.class, entry.label))
+            .zip(&legend_labels)
+            .map(|(entry, label)| (entry.class, label.as_str()))
             .collect::<Vec<_>>(),
-        axis: vec![
-            AxisLabel {
-                x: 2.0,
-                y: PAD_TOP + 3.0,
-                end_anchored: false,
-                text: format!("{max:.2} {UNIT}"),
-            },
-            AxisLabel {
-                x: 2.0,
-                y: H - PAD_BOTTOM,
-                end_anchored: false,
-                text: format!("{min:.2} {UNIT}"),
-            },
-            AxisLabel {
-                x: PAD_LEFT,
-                y: H - 4.0,
-                end_anchored: false,
-                text: "frame 0".to_owned(),
-            },
-            AxisLabel {
-                x: W - PAD_RIGHT,
-                y: H - 4.0,
-                end_anchored: true,
-                text: format!("frame {last_frame}"),
-            },
-        ],
+        axis,
         plot_hooks: true,
         body,
         trailer: String::new(),
@@ -2047,30 +2149,59 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
         .enumerate()
         .map(|(i, point)| format!("{}{point}", if i == 0 { "M" } else { "L" }))
         .collect();
+
+    // An in-place clip plots one dot, and an empty square captioned
+    // `X 0.00…0.00 m` reads as a chart that failed rather than as the
+    // measurement it is. Say what the plot shows in words, and keep both
+    // range labels so the unit and the numbers stay where a reader of any
+    // other root path already looks for them.
+    let mut axis = Vec::with_capacity(3);
+    let stationary = (max_x - min_x).max(max_z - min_z) < STATIC_PATH_M;
+    if stationary {
+        let at_origin = min_x.abs().max(min_z.abs()) < STATIC_PATH_M;
+        axis.push(AxisLabel {
+            x: W / 2.0,
+            y: center_y - 10.0,
+            anchor: Anchor::Middle,
+            text: if at_origin {
+                "root stays at the origin".to_owned()
+            } else {
+                format!("root stays at X {min_x:.2} {UNIT}, Z {min_z:.2} {UNIT}")
+            },
+        });
+    }
+    axis.push(AxisLabel {
+        x: 2.0,
+        y: H - 4.0,
+        anchor: Anchor::Start,
+        text: format!("X {min_x:.2}…{max_x:.2} {UNIT}"),
+    });
+    axis.push(AxisLabel {
+        x: W - 2.0,
+        y: H - 4.0,
+        anchor: Anchor::End,
+        text: format!("Z {min_z:.2}…{max_z:.2} {UNIT}"),
+    });
+
     Chart {
         clip,
         kind: "rootpath",
         title,
-        description: format!(
-            "{title}: X {min_x:.2} to {max_x:.2} {UNIT}, Z {min_z:.2} to {max_z:.2} {UNIT}, \
-             {} frames on one uniform scale",
-            xs.len()
-        ),
+        description: if stationary {
+            format!(
+                "{title}: the root does not move, staying at X {min_x:.2} {UNIT}, \
+                 Z {min_z:.2} {UNIT} for all {} frames",
+                xs.len()
+            )
+        } else {
+            format!(
+                "{title}: X {min_x:.2} to {max_x:.2} {UNIT}, Z {min_z:.2} to {max_z:.2} {UNIT}, \
+                 {} frames on one uniform scale",
+                xs.len()
+            )
+        },
         legend: &[("root-path", "root")],
-        axis: vec![
-            AxisLabel {
-                x: 2.0,
-                y: H - 4.0,
-                end_anchored: false,
-                text: format!("X {min_x:.2}…{max_x:.2} {UNIT}"),
-            },
-            AxisLabel {
-                x: W - PAD_RIGHT,
-                y: H - 4.0,
-                end_anchored: true,
-                text: format!("Z {min_z:.2}…{max_z:.2} {UNIT}"),
-            },
-        ],
+        axis,
         plot_hooks: false,
         body: format!(
             "<path class=\"root-path\" d=\"{}\" fill=\"none\"/>\

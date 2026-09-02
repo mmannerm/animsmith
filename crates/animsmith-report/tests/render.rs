@@ -2127,6 +2127,210 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
     assert!(path.contains("<template class=\"pathpoints\">"));
 }
 
+/// The vertical band one plotted series occupies, in viewBox units.
+fn series_band(figure: &str, class: &str) -> (f64, f64) {
+    let path = figure
+        .split_once(&format!("class=\"{class}\" d=\""))
+        .unwrap_or_else(|| panic!("{class} is plotted"))
+        .1;
+    let d = path.split_once('"').expect("the path data closes").0;
+    let ys: Vec<f64> = d
+        .split(|c| c == 'M' || c == 'L')
+        .filter(|point| !point.is_empty())
+        .map(|point| {
+            point
+                .split_once(',')
+                .expect("x,y point")
+                .1
+                .parse()
+                .expect("y")
+        })
+        .collect();
+    (
+        ys.iter().copied().fold(f64::MAX, f64::min),
+        ys.iter().copied().fold(f64::MIN, f64::max),
+    )
+}
+
+/// The vertical extent of the band `classes` occupy together.
+fn shared_extent(figure: &str, classes: &[&str]) -> f64 {
+    let bands: Vec<(f64, f64)> = classes
+        .iter()
+        .map(|class| series_band(figure, class))
+        .collect();
+    bands.iter().map(|band| band.1).fold(f64::MIN, f64::max)
+        - bands.iter().map(|band| band.0).fold(f64::MAX, f64::min)
+}
+
+/// A hips-plus-two-feet rig whose feet swing five centimetres a metre
+/// below the hips. Their difference swings ten centimetres about zero, so
+/// the two signals live an order of magnitude apart: on one shared scale
+/// the foot curves collapse into 4% of the plot height.
+fn squashed_gait_fixture() -> animsmith_core::Document {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+    let foot = |name: &str, x: f32| Bone {
+        name: name.into(),
+        parent: Some(0),
+        rest: Transform {
+            translation: Vec3::new(x, -1.0, 0.0),
+            ..Transform::IDENTITY
+        },
+        inverse_bind: None,
+    };
+    let swing = |bone: usize, x: f32, sign: f32| Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Vec3s(vec![
+            Vec3::new(x, -1.0, 0.0),
+            Vec3::new(x, -1.0 + sign * 0.05, 0.0),
+            Vec3::new(x, -1.0, 0.0),
+        ]),
+    };
+    Document {
+        skeleton: Skeleton {
+            bones: vec![
+                Bone {
+                    name: "hips".into(),
+                    parent: None,
+                    rest: Transform {
+                        translation: Vec3::Y,
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                },
+                foot("foot", 0.1),
+                foot("right_foot", -0.1),
+            ],
+        },
+        clips: vec![Clip {
+            name: "walk".into(),
+            duration_s: 1.0,
+            tracks: vec![swing(1, 0.1, 1.0), swing(2, -0.1, -1.0)],
+        }],
+        ..Document::default()
+    }
+}
+
+/// Both foot curves stay readable next to a difference series that lives
+/// an order of magnitude away from them.
+///
+/// The three series once shared one scale, so a metre of hips-relative
+/// offset set the range and both feet were drawn as a flat pair of lines
+/// along the bottom of every gait chart in the documentation. Each axis
+/// is now scaled on its own, and the chart says which series is read
+/// against the right-hand one.
+#[test]
+fn the_gait_chart_scales_its_two_value_axes_independently() {
+    let doc = squashed_gait_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let gait = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait")
+        .expect("gait chart");
+
+    // The plot is 116 units tall. On one shared scale the two feet
+    // together covered 10 of them and each foot 5; the difference filled
+    // the rest. The feet keep sharing a scale — they are only comparable
+    // that way — but that scale is now theirs alone.
+    let feet = shared_extent(&gait, &["series-left", "series-right"]);
+    assert!(
+        feet > 100.0,
+        "the two foot curves fill the plot they share: {feet} units"
+    );
+    for class in ["series-left", "series-right"] {
+        let (top, bottom) = series_band(&gait, class);
+        assert!(
+            bottom - top > 50.0,
+            "{class} is drawn across the plot rather than squashed into a \
+             corner of it: {} units",
+            bottom - top
+        );
+    }
+    let difference = shared_extent(&gait, &["series-diff"]);
+    assert!(
+        difference > 100.0,
+        "and the difference fills its own axis: {difference} units"
+    );
+    let axis = class_texts(&gait, "axis");
+    // The feet share one axis spanning both their swings; the difference
+    // has its own, spanning only its own.
+    for expected in ["-0.95 m", "-1.05 m", "0.10 m", "0.00 m"] {
+        assert!(
+            axis.iter().any(|label| label == expected),
+            "each axis states its own range: {expected:?} missing from {axis:?}"
+        );
+    }
+    let legend = class_texts(&gait, "legend");
+    assert_eq!(
+        legend,
+        vec!["L foot", "R foot", "L−R (right axis)"],
+        "the legend says which series is read against the second axis"
+    );
+    assert!(
+        attribute(&gait, "aria-label").contains("on its own right-hand axis"),
+        "and so does the description a screen reader gets"
+    );
+}
+
+/// An in-place clip's root path says the root does not move, instead of
+/// leaving an empty square captioned `X 0.00…0.00 m`.
+#[test]
+fn a_stationary_root_path_says_so_in_words() {
+    let doc = squashed_gait_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "hips".to_string())]);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let path = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+
+    let axis = class_texts(&path, "axis");
+    assert!(
+        axis.iter().any(|label| label == "root stays at the origin"),
+        "{axis:?}"
+    );
+    assert!(
+        axis.iter().filter(|label| label.ends_with(" m")).count() >= 2,
+        "the ranges and their unit stay where every other root path puts \
+         them: {axis:?}"
+    );
+    assert!(
+        attribute(&path, "aria-label").contains("the root does not move"),
+        "{}",
+        attribute(&path, "aria-label")
+    );
+    // The figure keeps the classes the documentation extractor pins.
+    assert!(path.contains("class=\"root-path\"") && path.contains("class=\"pathdot\""));
+
+    // A root that travels keeps the plotted ranges and gains no sentence.
+    let travelled = animsmith_report::render(
+        &MetricGrids::new(&chart_roles_fixture()),
+        &chart_roles(&chart_roles_fixture()),
+        &[],
+        None,
+        None,
+        full(),
+    );
+    let moving = chart_figures(&travelled)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+    assert!(
+        !class_texts(&moving, "axis")
+            .iter()
+            .any(|label| label.starts_with("root stays")),
+        "a moving root is plotted, not narrated"
+    );
+}
+
 #[test]
 fn the_root_path_chart_plots_x_and_z_on_one_scale() {
     use animsmith_core::glam::Vec3;

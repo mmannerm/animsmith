@@ -33,7 +33,10 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 .series-left, .series-right, .series-diff, .root-path { fill: none; stroke-width: 1.5; }
 .series-left { stroke: var(--accent); }
 .series-right { stroke: var(--warning); }
-.series-diff { stroke: var(--muted); }
+/* The difference series is read against its own right-hand axis, so it is
+   dashed: a linear rescaling of an antiphase gait's L-R signal lands exactly
+   on top of one foot curve, and a solid line there would simply disappear. */
+.series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
 .axis, .legend { fill: var(--muted); font-size: 8px; }
 .playhead { stroke: var(--error); stroke-width: 1; }

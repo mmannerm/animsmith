@@ -113,7 +113,10 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 .series-left, .series-right, .series-diff, .root-path { fill: none; stroke-width: 1.5; }
 .series-left { stroke: var(--accent); }
 .series-right { stroke: var(--warning); }
-.series-diff { stroke: var(--muted); }
+/* The difference series is read against its own right-hand axis, so it is
+   dashed: a linear rescaling of an antiphase gait's L-R signal lands exactly
+   on top of one foot curve, and a solid line there would simply disappear. */
+.series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
 .axis, .legend { fill: var(--muted); font-size: 8px; }
 .playhead { stroke: var(--error); stroke-width: 1; }
@@ -258,7 +261,7 @@ function animsmithApplyDocument(options) {
   return options;
 }
 </script>
-<script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"spine","parent":0}],"clips":[{"duration":1.0,"frames":5,"name":"swing","positions":"AAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA","trails":{}}],"evidence_only":false,"file":"clip-dirty.glb","findings":[{"bone":"spine","check":"quat-norm","clip":"swing","message":"non-unit rotation key (worst at key 2)","node":null,"severity":"error","time":0.5},{"bone":"spine","check":"quat-flip","clip":"swing","message":"2 hemisphere flip(s) between adjacent rotation keys (first between keys 2 and 3) — engines without neighborhood correction will spin the long way","node":null,"severity":"warning","time":0.75}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"swing"}}],"prediction_provenance":null,"predictions":[],"profile":"unknown"}</script>
+<script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"spine","parent":0},{"name":"chest","parent":1}],"clips":[{"duration":1.0,"frames":5,"name":"swing","positions":"AAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAdnVMvUxcfz8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA92/LvdJyfT8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAbU4XvndIej8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA12FHvlTldT8AAAAA","trails":{}}],"evidence_only":false,"file":"clip-dirty.glb","findings":[{"bone":"spine","check":"quat-norm","clip":"swing","message":"non-unit rotation key (worst at key 2)","node":null,"severity":"error","time":0.5},{"bone":"spine","check":"quat-flip","clip":"swing","message":"2 hemisphere flip(s) between adjacent rotation keys (first between keys 2 and 3) — engines without neighborhood correction will spin the long way","node":null,"severity":"warning","time":0.75}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"swing"}}],"prediction_provenance":null,"predictions":[],"profile":"unknown"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
 // Renders exactly the pose-grid frames the checks judged; no animation
 // sampling happens here.
