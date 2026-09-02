@@ -159,9 +159,12 @@ retargeting acceptance verdict.
 `--evidence-only` omits the sampled pose grid from either report form and
 sets `"evidence_only": true` in the embedded data. The grid is the motion —
 every bone's model-space position on every judged frame — so a full report of a
-licensed clip carries that clip. Both forms keep their findings, coverage gaps,
-engine predictions, and input identities, show a notice where each pose view
-would be, and disable playback, so the document can be attached to an issue,
+licensed clip carries that clip. Both forms keep their findings, coverage gaps
+and engine predictions; the comparison also keeps both sides' input identities,
+and the single-clip report its profile and source path (when the document
+has one). Both show a notice where each pose view would be and disable
+playback, so the document can be attached
+to an issue,
 published, or sent to a vendor where the source asset itself may not go (see the
 [licensed-asset policy](../DEVELOPMENT.md#golden-tests)). Nothing else about the
 run changes: the same checks evaluate the same frames.
@@ -172,8 +175,9 @@ retain exactly the root's X/Z path and the two foot-height series relative to
 the hips plus their difference — nothing per bone. Every comparison panel is a
 viewer drawing made from the pose grid — both role-trajectory panels, both gait
 panels, and the shared root chart — so an evidence-only comparison replaces all
-of them with the same notice and retains only its findings, coverage gaps,
-prediction provenance, and identities. Rendering those panels on the Rust side
+of them with the same notice. Everything else the full comparison embeds stays:
+findings, coverage gaps, prediction provenance, identities, clip metadata, and
+the contexts each side was judged in. Rendering those panels on the Rust side
 is tracked as follow-up work and would restore them.
 
 Both report forms follow the reader's `prefers-color-scheme` and read a URL
@@ -181,8 +185,7 @@ fragment of `&`-separated `key=value` options, so one generated file can be
 deep-linked or embedded without regenerating it. Both honour `theme=light` and
 `theme=dark`, which pin the palette; `embed=1`, whose rules hide the running
 title and the interaction hint and nothing else, so the document fits an
-`<iframe>` with its findings, charts, identities, and evidence disclosures in
-place; and `frame=N`, which scrubs to a judged frame. `clip=NAME` and
+`<iframe>` with its findings, charts, and evidence disclosures in place; and `frame=N`, which scrubs to a judged frame. `clip=NAME` and
 `finding=INDEX` are single-clip options — they land where clicking that clip
 or finding lands, on the same selected row, frame, chart playhead, and 3D view
 — while the comparison addresses a finding through the

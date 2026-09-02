@@ -390,52 +390,63 @@ evidenceRun.listeners.hashchange();
 if (evidenceRun.root.attrs["data-theme"] !== "light") throw new Error("an evidence-only comparison stopped honouring the theme option");
 
 // ---- fragment parser ---------------------------------------------------
-// One parser serves both documents, so it is exercised once, directly, with
-// valid, invalid, and hostile fragments. Nothing here may throw, and a key
-// that never appears must stay absent so navigation cannot silently reset a
-// switch the reader pinned.
-const parse = context.animsmithFragmentOptions;
-const KEYS = ["embed", "theme", "clip", "frame", "finding"];
-function expectOptions(hash, expected, why) {
-  let actual;
-  try { actual = parse(hash); } catch (error) { throw new Error(`fragment ${JSON.stringify(String(hash).slice(0,40))} threw: ${error}`); }
-  for (const key of KEYS) {
-    const want = Object.prototype.hasOwnProperty.call(expected, key) ? expected[key] : undefined;
-    if (!Object.is(actual[key], want)) throw new Error(`${why}: ${key} was ${JSON.stringify(actual[key])}, expected ${JSON.stringify(want)}`);
+// One parser serves both documents, so the same matrix runs against each
+// document's own embedded copy, with valid, invalid, and hostile fragments.
+// Nothing here may throw, and a key that never appears must stay absent so
+// navigation cannot silently reset a switch the reader pinned.
+function runParserMatrix(parse, document_) {
+  const KEYS = ["embed", "theme", "clip", "frame", "finding"];
+  function expectOptions(hash, expected, why) {
+    let actual;
+    try { actual = parse(hash); } catch (error) { throw new Error(`fragment ${JSON.stringify(String(hash).slice(0,40))} threw: ${error}`); }
+    for (const key of KEYS) {
+      const want = Object.prototype.hasOwnProperty.call(expected, key) ? expected[key] : undefined;
+      if (!Object.is(actual[key], want)) throw new Error(`${document_}, ${why}: ${key} was ${JSON.stringify(actual[key])}, expected ${JSON.stringify(want)}`);
+    }
   }
+  expectOptions("#embed=1&theme=dark&clip=walk&frame=7&finding=2", {embed:true,theme:"dark",clip:"walk",frame:7,finding:2}, "every documented option");
+  expectOptions("embed=true&theme=light", {embed:true,theme:"light"}, "a fragment without its leading hash");
+  expectOptions("#clip=walk%20cycle%2F01", {clip:"walk cycle/01"}, "percent-encoded clip names");
+  expectOptions("#unknown=1&x&=2&clip", {}, "unknown keys and malformed pairs stay absent");
+  expectOptions("#finding-before-abcdef0123456789", {}, "the document's own anchor form changes nothing");
+  expectOptions("#", {}, "an empty fragment");
+  expectOptions("", {}, "no fragment at all");
+  // A key that appears with a value this report cannot honour returns that
+  // state to its default; a key that never appears stays absent.
+  expectOptions("#theme=%3Cscript%3E", {theme:null}, "a hostile theme");
+  expectOptions("#theme=LIGHT", {theme:null}, "an upper-case theme");
+  expectOptions("#theme=", {theme:null}, "an empty theme");
+  expectOptions("#embed=yes", {embed:false}, "an unusable embed value");
+  expectOptions("#frame=-1&finding=NaN", {frame:null,finding:null}, "non-integer indices");
+  expectOptions("#frame=1.5", {frame:null}, "a fractional frame");
+  expectOptions("#clip=%E0%A4%A", {clip:null}, "a malformed percent escape");
+  expectOptions("#frame=999999999", {frame:999999999}, "a large but exact index");
+  if (parse("#frame=" + "9".repeat(400)).frame !== Infinity) throw new Error("an unbounded index must survive as one the caller clamps");
+  for (const wrongType of [null, undefined, 0, {}, [], () => {}]) expectOptions(wrongType, {}, "a non-string fragment");
+  // Every pair inside the length bound is read, however many there are.
+  expectOptions("#" + "pad=1&".repeat(400) + "theme=dark", {theme:"dark"}, "a fragment with hundreds of pairs");
+  const manyPairs = "#" + "p=&".repeat(1300) + "theme=dark";
+  if (manyPairs.length > 4096) throw new Error("the many-pair fragment must stay inside the length bound");
+  expectOptions(manyPairs, {theme:"dark"}, "a fragment with more than a thousand pairs");
+  // The most pairs the length cap can hold, with the meaningful one last: any
+  // cap on the number of pairs, however high, drops it.
+  const meaningful = "frame=7";
+  const fillers = Math.floor((4096 - 1 - meaningful.length) / 3);
+  const capPairs = "#" + "p=&".repeat(fillers) + meaningful;
+  if (capPairs.length > 4096) throw new Error(`the maximal fragment is ${capPairs.length} characters`);
+  if (4096 - capPairs.length >= 3) throw new Error("the maximal fragment must leave no room for another pair");
+  expectOptions(capPairs, {frame:7}, `a fragment of ${fillers + 1} pairs, the most the length bound admits`);
+  // The length bound itself: the last accepted character and the first
+  // rejected one.
+  const tail = "&theme=light";
+  const filler = "#" + "p=1&".repeat(200);
+  const accepted = filler + "x=" + "y".repeat(4096 - filler.length - tail.length - 2) + tail;
+  if (accepted.length !== 4096) throw new Error(`harness built a ${accepted.length}-character boundary fragment`);
+  expectOptions(accepted, {theme:"light"}, "a fragment at the exact length bound");
+  expectOptions("x" + accepted, {}, "a fragment one character past the bound");
 }
-expectOptions("#embed=1&theme=dark&clip=walk&frame=7&finding=2", {embed:true,theme:"dark",clip:"walk",frame:7,finding:2}, "every documented option");
-expectOptions("embed=true&theme=light", {embed:true,theme:"light"}, "a fragment without its leading hash");
-expectOptions("#clip=walk%20cycle%2F01", {clip:"walk cycle/01"}, "percent-encoded clip names");
-expectOptions("#unknown=1&x&=2&clip", {}, "unknown keys and malformed pairs stay absent");
-expectOptions("#finding-before-abcdef0123456789", {}, "the document's own anchor form changes nothing");
-expectOptions("#", {}, "an empty fragment");
-expectOptions("", {}, "no fragment at all");
-// A key that appears with a value this report cannot honour returns that
-// state to its default; a key that never appears stays absent.
-expectOptions("#theme=%3Cscript%3E", {theme:null}, "a hostile theme");
-expectOptions("#theme=LIGHT", {theme:null}, "an upper-case theme");
-expectOptions("#theme=", {theme:null}, "an empty theme");
-expectOptions("#embed=yes", {embed:false}, "an unusable embed value");
-expectOptions("#frame=-1&finding=NaN", {frame:null,finding:null}, "non-integer indices");
-expectOptions("#frame=1.5", {frame:null}, "a fractional frame");
-expectOptions("#clip=%E0%A4%A", {clip:null}, "a malformed percent escape");
-expectOptions("#frame=999999999", {frame:999999999}, "a large but exact index");
-if (parse("#frame=" + "9".repeat(400)).frame !== Infinity) throw new Error("an unbounded index must survive as one the caller clamps");
-for (const wrongType of [null, undefined, 0, {}, [], () => {}]) expectOptions(wrongType, {}, "a non-string fragment");
-// Every pair inside the length bound is read, however many there are.
-expectOptions("#" + "pad=1&".repeat(400) + "theme=dark", {theme:"dark"}, "a fragment with hundreds of pairs");
-const manyPairs = "#" + "p=&".repeat(1300) + "theme=dark";
-if (manyPairs.length > 4096) throw new Error("the many-pair fragment must stay inside the length bound");
-expectOptions(manyPairs, {theme:"dark"}, "a fragment with more than a thousand pairs");
-// The length bound itself: the last accepted character and the first
-// rejected one.
-const tail = "&theme=light";
-const filler = "#" + "p=1&".repeat(200);
-const accepted = filler + "x=" + "y".repeat(4096 - filler.length - tail.length - 2) + tail;
-if (accepted.length !== 4096) throw new Error(`harness built a ${accepted.length}-character boundary fragment`);
-expectOptions(accepted, {theme:"light"}, "a fragment at the exact length bound");
-expectOptions("x" + accepted, {}, "a fragment one character past the bound");
+
+runParserMatrix(context.animsmithFragmentOptions, "the comparison runtime");
 
 // ---- single-clip viewer ------------------------------------------------
 function singleReportParts(source) {
@@ -472,6 +483,8 @@ const chartPad = Number(gaitChart.dataset.pad), chartPlotW = Number(gaitChart.da
 if (!(chartPad > 0) || !(chartPlotW > 0)) throw new Error("the gait chart does not publish its plot rectangle");
 
 const plain = runSingle(single, singleHtml, singlePayload);
+// The same matrix against this document's own copy of the runtime.
+runParserMatrix(plain.context.animsmithFragmentOptions, "the single-clip runtime");
 if (!plain.nodes.file.textContent.includes(singlePayload.file || "")) throw new Error("the viewer did not disclose its source file");
 if (plain.nodes.findings.children.length !== singlePayload.findings.length) throw new Error("the findings panel dropped rows");
 if (!plain.nodes.findings.children.map(row => row.children.map(part => part.textContent).join("|")).some(text => text.includes("<img src=x>"))) throw new Error("untrusted finding text was not carried as text");
@@ -570,6 +583,27 @@ for (const hostile of [
   const frame = Number(hostileRun.nodes.scrub.value);
   if (!Number.isInteger(frame) || frame < 0 || frame > lastFrame) throw new Error(`fragment ${JSON.stringify(hostile.slice(0,24))} left frame ${frame} outside the judged grid`);
   if (hostileRun.nodes.findings.children.length !== singlePayload.findings.length) throw new Error("a hostile fragment changed the findings panel");
+}
+
+// Not just the row count: the rendered evidence is identical to a load with
+// no fragment at all.
+function serialize(node) {
+  if (!node) return "";
+  const attrs = Object.keys(node.attrs).sort().map((name) => ` ${name}="${node.attrs[name]}"`).join("");
+  const classes = [...node.classes].sort().join(" ");
+  return `<${node.tag || "el"}${node.id ? ` id="${node.id}"` : ""}${classes ? ` class="${classes}"` : ""}${attrs}>${node.textContent}${node.children.map(serialize).join("")}</>`;
+}
+const plainEvidence = runSingle(single, singleHtml, singlePayload);
+const hostileEvidence = runSingle(single, singleHtml, singlePayload, {
+  hash: "#theme=%3Cimg%3E&clip=%E0%A4%A&finding=999999999&frame=-1&embed=maybe&unknown=1",
+});
+for (const id of ["gaps", "predictions", "findings"]) {
+  if (serialize(hostileEvidence.nodes[id]) !== serialize(plainEvidence.nodes[id])) {
+    throw new Error(`a hostile fragment changed the rendered #${id}`);
+  }
+}
+if (hostileEvidence.charts.map(serialize).join("") !== plainEvidence.charts.map(serialize).join("")) {
+  throw new Error("a hostile fragment changed the rendered charts");
 }
 
 // ---- evidence-only single-clip report, as generated --------------------
@@ -680,10 +714,32 @@ assertNoHashWrites(actions, "selecting a clip, playing, pausing and scrubbing");
 // The counters above cover the actions this harness drives; this covers the
 // rest, including orbit and zoom: neither viewer nor the shared runtime
 // contains an assignment to the fragment at all.
+const navigationWrites = [
+  [/location\s*\.\s*hash\s*=[^=]/, "location.hash ="],
+  [/location\s*\[\s*['"]hash['"]\s*\]/, "location['hash']"],
+  [/location\s*\.\s*href/, "location.href"],
+  [/location\s*\.\s*(assign|replace)\s*\(/, "location.assign/replace("],
+  [/history\s*\.\s*(push|replace)State\s*\(/, "history.pushState/replaceState("],
+  [/window\s*\.\s*location\s*=[^=]/, "window.location ="],
+  [/\.\s*hash\s*=[^=]/, "a .hash assignment on any alias"],
+];
 for (const [name, source] of [
   ["single-clip", single.viewer], ["comparison", generated.viewer], ["shared runtime", single.shared],
 ]) {
-  if (/location\s*\.\s*hash\s*=[^=]/.test(source)) throw new Error(`the ${name} source assigns to location.hash`);
+  for (const [pattern, spelling] of navigationWrites) {
+    if (pattern.test(source)) throw new Error(`the ${name} source contains ${spelling}`);
+  }
 }
+
+// Orbit and zoom are the actions the counters could not reach through a
+// listener the harness drives by name.
+const pointer = runSingle(single, singleHtml, singlePayload);
+const drawnBefore = pointer.nodes.gl.gl.clears.length;
+pointer.nodes.gl.listeners.mousedown({clientX: 10, clientY: 20});
+pointer.listeners.mousemove({clientX: 48, clientY: 61});
+pointer.listeners.mouseup();
+pointer.nodes.gl.listeners.wheel({deltaY: 120, preventDefault() {}});
+if (pointer.nodes.gl.gl.clears.length <= drawnBefore) throw new Error("orbiting and zooming did not redraw the 3D view");
+assertNoHashWrites(pointer, "orbiting and zooming");
 
 console.log("report viewer harness passed");
