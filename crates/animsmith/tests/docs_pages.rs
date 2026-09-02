@@ -1534,9 +1534,19 @@ fn selects_report(source: &str) -> bool {
 
 /// The theme bridge is a tracked asset like the stylesheet, so the staged
 /// theme carries it and a published page never needs an inline script.
+///
+/// What the bridge *does* to a fragment is executed rather than read:
+/// `scripts/test-theme-bridge.js` runs it against a synthetic page under
+/// `just report-browser`, beside the generated viewers it drives. This test
+/// keeps the asset, its selector and that wiring in place.
 #[test]
 fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
     let root = repo_root();
+    let recipes = std::fs::read_to_string(root.join("justfile")).expect("reads the recipes");
+    assert!(
+        recipes.contains("node scripts/test-theme-bridge.js"),
+        "the browser harness recipe must execute the theme bridge's contract"
+    );
     let listed = Command::new("git")
         .arg("-C")
         .arg(&root)
