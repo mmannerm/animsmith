@@ -53,8 +53,10 @@ be expected evidence that a candidate materially differs.
 
 2. **Declare only project facts.** Add loop, movement-owner, speed, rig-role,
    required-bone, and set membership declarations only after the team agrees
-   they are true. The [configuration reference](configuration-reference.md)
-   owns every key and precedence rule; the [contract-config cookbook](../examples/README.md#4-a-project-contract-config)
+   they are true — [who writes what](declaring-the-contract.md) says which of
+   those you can settle alone and which need the game developer. The
+   [configuration reference](configuration-reference.md) owns every key and
+   precedence rule; the [contract-config cookbook](../examples/README.md#4-a-project-contract-config)
    is the runnable starting shape.
 
 3. **Lint and report the baseline.** Treat a finding as a precise work order:

@@ -11,12 +11,19 @@
 //!    transcripts are pinned verbatim because they include the complete
 //!    written-artifact summary.
 
+use animsmith_testkit::docs_markdown::fenced_blocks;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
+}
+
+fn repo_path(relative: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(relative)
 }
 
 /// A committed cookbook asset under `examples/assets/`.
@@ -390,14 +397,37 @@ fn cookbook_config_steering() {
     );
 }
 
+/// The contract page shows one complete `animsmith.toml`, and a reader is
+/// meant to copy it. It is therefore not retyped prose but the committed
+/// contract this suite already runs against both walk fixtures, quoted
+/// exactly: a page that drifts from the file would hand that reader a
+/// config no gate has ever executed.
+#[test]
+fn contract_page_quotes_the_committed_walk_config_exactly() {
+    let page = std::fs::read_to_string(repo_path("docs/declaring-the-contract.md"))
+        .expect("reads the contract page");
+    let quoted = fenced_blocks(&page, "toml");
+    assert_eq!(
+        quoted.len(),
+        1,
+        "the page shows exactly one complete contract"
+    );
+    let committed = std::fs::read_to_string(repo_path("examples/walk.animsmith.toml"))
+        .expect("reads the committed walk contract");
+    assert_eq!(
+        quoted[0].trim_end_matches('\n'),
+        committed.trim_end_matches('\n'),
+        "the quoted contract must be examples/walk.animsmith.toml, byte for byte"
+    );
+}
+
 #[test]
 fn cookbook_semantic_contract() {
     let walk = asset("walk.glb");
     let walk = walk.to_str().unwrap();
     let dirty = asset("walk-dirty.glb");
     let dirty = dirty.to_str().unwrap();
-    let config =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/walk.animsmith.toml");
+    let config = repo_path("examples/walk.animsmith.toml");
     let config = config.to_str().unwrap();
 
     // The rig's bone names resolve a built-in profile with no config.

@@ -28,7 +28,9 @@ faster than a full intake pass.
 
 3. **Make movement ownership explicit.** For each locomotion clip, decide
    whether gameplay/controller code or extracted animation owns XZ, Y, and
-   yaw movement. Declare that contract, then inspect `in-place`,
+   yaw movement. This is one of the surfaces only your project can settle;
+   [who writes what](declaring-the-contract.md) has the rest. Declare that
+   contract, then inspect `in-place`,
    `root-motion-speed`, and any applicable engine prediction. Do not apply
    extracted root motion and controller movement twice, or omit both.
 
