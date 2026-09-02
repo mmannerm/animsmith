@@ -14,6 +14,7 @@
 use animsmith_testkit::docs_markdown::fenced_blocks;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -507,20 +508,15 @@ fn every_config_key_the_contract_table_names_exists_in_the_reference() {
         "the surface table must name the config surface of every row: {named:?}"
     );
 
+    let known = identifiers(&reference);
     let mut checked = 0usize;
     for (row, codes) in named.iter().enumerate() {
         for code in codes {
-            // Every identifier the span spells, so `[clips."<name>"] loop`
-            // asks after `clips`, `name` and `loop` separately and a suffix
-            // shorthand such as `_yaw` is found inside the full key.
-            for token in code.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
-                if token.is_empty() || token.chars().all(|c| c.is_ascii_digit()) {
-                    continue;
-                }
+            for token in identifiers(code) {
                 assert!(
-                    reference.contains(token),
-                    "row {} names {code:?}, whose {token:?} is absent from \
-                     docs/configuration-reference.md",
+                    known.contains(&token),
+                    "row {} names {code:?}, whose {token:?} is not an identifier \
+                     docs/configuration-reference.md spells",
                     row + 1
                 );
                 checked += 1;
@@ -530,6 +526,47 @@ fn every_config_key_the_contract_table_names_exists_in_the_reference() {
     assert!(
         checked >= 20,
         "every identifier the surface column spells is looked up, found {checked}"
+    );
+}
+
+/// Every complete identifier `text` spells: a run of ASCII letters, digits and
+/// underscores, with a bare number dropped.
+///
+/// The same rule runs over both sides, which is the whole point. Asking
+/// whether the reference *contains* a key matched any prefix of one, so
+/// `movement_owner_x` — a key no config would take — passed on the strength
+/// of the real `movement_owner_xz`, and the page could have shipped it.
+fn identifiers(text: &str) -> BTreeSet<String> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|token| !token.is_empty() && !token.chars().all(|c| c.is_ascii_digit()))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The boundary rule is what makes that lookup mean anything, so it is proved
+/// on a fixture rather than trusted: a prefix of a real key is a different
+/// identifier, and both sides tokenise alike.
+#[test]
+fn an_identifier_that_merely_prefixes_a_real_key_is_not_found() {
+    let reference = "| `clips.<selector>.movement_owner_xz` | optional enum; omitted |\n";
+    let known = identifiers(reference);
+    assert!(
+        known.contains("movement_owner_xz"),
+        "the real key is found: {known:?}"
+    );
+    for truncated in ["movement_owner_x", "movement_owner", "movement"] {
+        assert!(
+            !known.contains(truncated),
+            "{truncated:?} is a prefix, not the key: {known:?}"
+        );
+    }
+    assert_eq!(
+        identifiers("[clips.\"<name>\"] movement_owner_xz"),
+        ["clips", "name", "movement_owner_xz"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>(),
+        "the page side spells the same identifiers the reference side does"
     );
 }
 
