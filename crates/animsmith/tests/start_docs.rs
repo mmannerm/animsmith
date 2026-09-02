@@ -21,9 +21,9 @@
 
 use animsmith_testkit::docs_markdown::fenced_blocks;
 use animsmith_testkit::docs_transcripts::{
-    Documented, EXITS, documented_commands, misdocumented_line,
+    Documented, EXITS, copy_tree, documented_commands, misdocumented_line,
 };
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 /// The Start pages whose transcripts this gate pins. Every symptom page
@@ -89,19 +89,6 @@ fn fixture_checkout() -> tempfile::TempDir {
         copy_tree(&repo_root().join(tree), &temporary.path().join(tree));
     }
     temporary
-}
-
-fn copy_tree(source: &Path, destination: &Path) {
-    std::fs::create_dir_all(destination).expect("creates fixture directory");
-    for entry in std::fs::read_dir(source).expect("lists fixture directory") {
-        let entry = entry.expect("directory entry");
-        let target = destination.join(entry.file_name());
-        if entry.file_type().expect("file type").is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).expect("copies fixture");
-        }
-    }
 }
 
 #[test]

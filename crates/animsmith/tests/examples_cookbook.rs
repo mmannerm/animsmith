@@ -542,21 +542,8 @@ fn named_inputs(command: &str) -> Vec<&str> {
 fn cookbook_checkout() -> tempfile::TempDir {
     let temporary = unique_temp_dir("readme");
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    copy_tree(&source, &temporary.path().join("examples"));
+    animsmith_testkit::docs_transcripts::copy_tree(&source, &temporary.path().join("examples"));
     temporary
-}
-
-fn copy_tree(source: &std::path::Path, destination: &std::path::Path) {
-    std::fs::create_dir_all(destination).expect("creates fixture directory");
-    for entry in std::fs::read_dir(source).expect("lists fixture directory") {
-        let entry = entry.expect("directory entry");
-        let target = destination.join(entry.file_name());
-        if entry.file_type().expect("file type").is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).expect("copies fixture");
-        }
-    }
 }
 
 /// The cookbook's console transcripts are real output, and this runs them.

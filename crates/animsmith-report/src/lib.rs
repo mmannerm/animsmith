@@ -2003,25 +2003,49 @@ fn is_flat((min, max): (f64, f64)) -> bool {
     (max - min).abs() < f64::EPSILON
 }
 
-/// The polyline through `values`, skipping the samples that are not
-/// finite: a gap starts a new subpath rather than poisoning the whole
-/// `d` attribute. Empty when nothing is plottable.
-fn polyline(values: &[f64], x: impl Fn(usize) -> f64, y: impl Fn(f64) -> f64) -> String {
+/// The polyline through `count` plotted points, where `at` yields the one
+/// at an index or `None` when that index has nothing to plot.
+///
+/// A gap starts a new subpath. Dropping the unplottable points and joining
+/// what is left would draw a straight segment between the samples either
+/// side of the hole — a stretch of trajectory the reader is being shown as
+/// measured evidence, and which no frame recorded. Empty when nothing is
+/// plottable at all.
+fn polyline(count: usize, at: impl Fn(usize) -> Option<(f64, f64)>) -> String {
     let mut path = String::new();
     let mut drawing = false;
-    for (index, &value) in values.iter().enumerate() {
-        let (at, height) = (x(index), y(value));
-        if !value.is_finite() || !at.is_finite() || !height.is_finite() {
+    for index in 0..count {
+        let Some((x, y)) = at(index).filter(|(x, y)| x.is_finite() && y.is_finite()) else {
             drawing = false;
             continue;
-        }
-        path.push_str(&format!(
-            "{}{at:.1},{height:.1}",
-            if drawing { "L" } else { "M" }
-        ));
+        };
+        path.push_str(&format!("{}{x:.1},{y:.1}", if drawing { "L" } else { "M" }));
         drawing = true;
     }
     path
+}
+
+/// The `(x, z)` root sample at `frame`, when both coordinates are finite.
+///
+/// A trajectory point needs both: a frame finite in X but not in Z has no
+/// position to plot. Taking the two extents separately instead lets a
+/// track that alternates between them look plottable when not one frame
+/// is — which is a shape a malformed file reaches, not a theoretical one.
+fn joint_sample(xs: &[f64], zs: &[f64], frame: usize) -> Option<(f64, f64)> {
+    let (x, z) = (*xs.get(frame)?, *zs.get(frame)?);
+    (x.is_finite() && z.is_finite()).then_some((x, z))
+}
+
+/// The X and Z extents of a set of jointly finite trajectory points.
+fn joint_extent(points: &[(f64, f64)]) -> Option<((f64, f64), (f64, f64))> {
+    points.iter().fold(None, |extent, &(x, z)| {
+        Some(match extent {
+            None => ((x, x), (z, z)),
+            Some(((min_x, max_x), (min_z, max_z))) => {
+                ((min_x.min(x), max_x.max(x)), (min_z.min(z), max_z.max(z)))
+            }
+        })
+    })
 }
 
 /// A line chart of one or two independently scaled value axes.
@@ -2072,7 +2096,10 @@ fn line_chart(
         }) else {
             continue;
         };
-        let d = polyline(entry.values, x, |v| y(range, v));
+        let d = polyline(entry.values.len(), |index| {
+            let value = entry.values[index];
+            value.is_finite().then(|| (x(index), y(range, value)))
+        });
         if d.is_empty() {
             continue;
         }
@@ -2190,40 +2217,33 @@ fn line_chart(
     .render()
 }
 
-/// The min and max of the finite values of `values`, or `None` when it
-/// has none.
-fn finite_extent(values: &[f64]) -> Option<(f64, f64)> {
-    values
-        .iter()
-        .copied()
-        .filter(|value| value.is_finite())
-        .fold(None, |extent, value| {
-            Some(match extent {
-                None => (value, value),
-                Some((min, max)) => (min.min(value), max.max(value)),
-            })
-        })
-}
-
 fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String {
     if xs.is_empty() {
         return String::new();
     }
-    // Every sampled frame can be non-finite — that is what the `nan` check
-    // reports. Folding those against `f64::MAX`/`f64::MIN` seeds leaves the
-    // seeds in place, and the resulting negative span reads as stationary:
-    // the chart then claims the root "stays at X 179769313486231570000… m".
-    // Say the samples are unavailable instead, the way the comparison
-    // viewer's root panel does.
-    let (Some((min_x, max_x)), Some((min_z, max_z))) = (finite_extent(xs), finite_extent(zs))
+    // A position needs a finite X *and* Z on the same frame, so the plot,
+    // its extents and its first point all come from the frames that have
+    // both. Sampled frames can be non-finite — that is what the `nan` check
+    // reports — and taking the two extents per coordinate instead let a
+    // track finite in X on one frame and in Z on the next look plottable
+    // when no single frame was, leaving no first point to place the dot at.
+    // A run with no plottable frame at all says so, the way the comparison
+    // viewer's root panel does, rather than folding `f64::MAX`/`f64::MIN`
+    // seeds into a negative span that reads as a stationary root parked at
+    // "X 179769313486231570000…00 m".
+    let plotted: Vec<(f64, f64)> = (0..xs.len())
+        .filter_map(|frame| joint_sample(xs, zs, frame))
+        .collect();
+    let (Some(&(first_x, first_z)), Some(((min_x, max_x), (min_z, max_z)))) =
+        (plotted.first(), joint_extent(&plotted))
     else {
         return Chart {
             clip,
             kind: "rootpath",
             title,
             description: format!(
-                "{title}: unavailable — every one of the {} sampled root positions is \
-                 non-finite; findings and coverage remain listed",
+                "{title}: unavailable — not one of the {} sampled root frames has a finite \
+                 X and Z together; findings and coverage remain listed",
                 xs.len()
             ),
             legend: &[("root-path", "root")],
@@ -2247,25 +2267,22 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
     let center_y = PAD_TOP + PLOT_H / 2.0;
     let x = |v: f64| center_x + (v - (min_x + max_x) / 2.0) * scale;
     let y = |v: f64| center_y - (v - (min_z + max_z) / 2.0) * scale;
-    // A run of finite samples either side of a non-finite one is two
-    // subpaths, not one line drawn through a hole.
-    let points: Vec<String> = xs
-        .iter()
-        .zip(zs)
-        .filter(|(px, pz)| px.is_finite() && pz.is_finite())
-        .map(|(&px, &pz)| format!("{:.1},{:.1}", x(px), y(pz)))
+    let d = polyline(xs.len(), |frame| {
+        joint_sample(xs, zs, frame).map(|(px, pz)| (x(px), y(pz)))
+    });
+    // The playhead dot is placed by frame index, so this template keeps one
+    // entry per frame. A frame with no position to plot holds the last one
+    // that had a position rather than being dropped, which would shift every
+    // later frame's dot onto the wrong sample.
+    let mut held = (x(first_x), y(first_z));
+    let points: Vec<String> = (0..xs.len())
+        .map(|frame| {
+            if let Some((px, pz)) = joint_sample(xs, zs, frame) {
+                held = (x(px), y(pz));
+            }
+            format!("{:.1},{:.1}", held.0, held.1)
+        })
         .collect();
-    let d: Vec<String> = points
-        .iter()
-        .enumerate()
-        .map(|(i, point)| format!("{}{point}", if i == 0 { "M" } else { "L" }))
-        .collect();
-    let (first_x, first_z) = xs
-        .iter()
-        .zip(zs)
-        .find(|(px, pz)| px.is_finite() && pz.is_finite())
-        .map(|(&px, &pz)| (px, pz))
-        .expect("a finite extent means at least one finite sample");
 
     // An in-place clip plots one dot, and an empty square captioned
     // `X 0.00…0.00 m` reads as a chart that failed rather than as the
@@ -2323,7 +2340,7 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
         body: format!(
             "<path class=\"root-path\" d=\"{}\" fill=\"none\"/>\
              <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",
-            d.join(""),
+            d,
             x(first_x),
             y(first_z)
         ),

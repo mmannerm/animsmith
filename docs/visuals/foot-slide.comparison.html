@@ -344,12 +344,12 @@ function panelCaption(id, message) {
   const caption = q(`${id}-caption`);
   if (caption) caption.textContent = message;
 }
-// One type scale for every label this viewer draws, matching the 8-unit
-// size `comparison.css` sets on panel text. `advance` is the average glyph
-// width at that size and `gap` the space between legend entries; both are
-// only used to lay entries out left to right, so an approximation that
-// tracks the size is enough.
-const CHART_TYPE = { size: 8, advance: 4.6, gap: 16 };
+// The legend metrics for the type scale `comparison.css` sets on panel
+// text through `--chart-type`: `advance` is the average glyph width at
+// that size and `gap` the space between entries. Both only lay entries out
+// left to right, so an approximation is enough — the size itself lives in
+// the stylesheet, which is what actually draws the glyphs.
+const CHART_TYPE = { advance: 4.6, gap: 16 };
 const legendAdvance = (label) => label.length * CHART_TYPE.advance + CHART_TYPE.gap;
 function topDownMap(bounds, width, height, pad) {
   const spanX = Math.max(.001, bounds.x[1] - bounds.x[0]);

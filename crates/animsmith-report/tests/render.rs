@@ -2341,14 +2341,152 @@ fn non_finite_samples_are_reported_as_unavailable_rather_than_plotted() {
         );
     }
     assert!(
-        attribute(&path, "aria-label").contains(
-            "every one of the 3 sampled root positions is \
-                                                 non-finite"
-        ),
+        attribute(&path, "aria-label")
+            .contains("not one of the 3 sampled root frames has a finite X and Z together"),
         "{}",
         attribute(&path, "aria-label")
     );
     assert!(!path.contains("NaN"), "no NaN reaches the markup: {path}");
+}
+
+/// A root track whose keyed samples carry the given `(x, y, z)` values.
+fn root_path_document(values: Vec<animsmith_core::glam::Vec3>) -> animsmith_core::Document {
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+    let times = (0..values.len())
+        .map(|index| index as f32 / (values.len() - 1) as f32)
+        .collect();
+    Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![Clip {
+            name: "trajectory".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times,
+                values: TrackValues::Vec3s(values),
+            }],
+        }],
+        ..Document::default()
+    }
+}
+
+/// The root-path figure of a document whose root carries `values`.
+fn root_path_figure(values: Vec<animsmith_core::glam::Vec3>) -> String {
+    let doc = root_path_document(values);
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart")
+}
+
+/// A gap in the sampled trajectory breaks the path, rather than being
+/// bridged by a straight line the clip never travelled.
+///
+/// Dropping the unplottable frames and then joining what is left with `L`
+/// draws a segment between the last sample before the hole and the first
+/// one after it — a trajectory the reader is being shown as measured
+/// evidence, and which no frame recorded.
+#[test]
+fn a_gap_in_the_root_path_starts_a_new_subpath_rather_than_being_bridged() {
+    use animsmith_core::glam::Vec3;
+    let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+    // One non-finite key in the middle of nine. Linear interpolation against
+    // a non-finite key also poisons the sample before it, so the plottable
+    // frames are the first four and the last four: two runs long enough to
+    // draw, with a hole between them.
+    let figure = root_path_figure(vec![
+        at(0.0, 0.0),
+        at(1.0, 0.0),
+        at(2.0, 0.0),
+        at(3.0, 0.0),
+        at(f32::NAN, f32::NAN),
+        at(5.0, 1.0),
+        at(6.0, 1.0),
+        at(7.0, 1.0),
+        at(8.0, 1.0),
+    ]);
+    let d = figure
+        .split_once("class=\"root-path\" d=\"")
+        .expect("the root path is plotted")
+        .1
+        .split_once('"')
+        .expect("the path data closes")
+        .0;
+    assert!(!d.contains("NaN"), "no NaN reaches the path data: {d:?}");
+    let subpaths: Vec<&str> = d.split('M').filter(|part| !part.is_empty()).collect();
+    assert_eq!(
+        subpaths.len(),
+        2,
+        "each run of plottable frames is its own subpath, rather than one \
+         line drawn through the hole: {d:?}"
+    );
+    for subpath in &subpaths {
+        assert!(subpath.contains('L'), "each subpath draws its run: {d:?}");
+    }
+    // The bridge the previous drawing invented: a segment from the last
+    // sample before the hole straight to the first one after it.
+    let last_before = subpaths[0]
+        .rsplit('L')
+        .next()
+        .expect("the run before the hole ends somewhere");
+    let first_after = subpaths[1]
+        .split('L')
+        .next()
+        .expect("the run after the hole starts somewhere");
+    assert!(
+        !d.contains(&format!("{last_before}L{first_after}")),
+        "the runs either side of the hole must not be joined: {d:?}"
+    );
+}
+
+/// A root that is never jointly finite renders as unavailable instead of
+/// panicking, even when each coordinate on its own has finite samples.
+///
+/// The extents were taken per coordinate, so a track finite in X on one
+/// frame and in Z on the next produced a finite range for both — and then
+/// the first jointly finite sample the plot needs did not exist. An
+/// `expect` on that is a panic on untrusted input: a malformed GLB is
+/// exactly where alternating non-finite components come from.
+#[test]
+fn alternating_finite_coordinates_render_unavailable_without_panicking() {
+    use animsmith_core::glam::Vec3;
+    let nan = f32::NAN;
+    let figure = root_path_figure(vec![
+        Vec3::new(0.0, 0.0, nan),
+        Vec3::new(nan, 0.0, 1.0),
+        Vec3::new(2.0, 0.0, nan),
+        Vec3::new(nan, 0.0, 3.0),
+    ]);
+    let axis = class_texts(&figure, "axis");
+    assert!(
+        axis.iter()
+            .any(|label| label == "root path unavailable: sampled positions are non-finite"),
+        "{axis:?}"
+    );
+    assert!(
+        !figure.contains("NaN"),
+        "no NaN reaches the markup: {figure}"
+    );
+    for label in &axis {
+        assert!(
+            !label.contains("root stays"),
+            "a root with no jointly finite sample is not a stationary one: {label:?}"
+        );
+    }
 }
 
 /// A series that is non-finite on every frame is not plotted, and the

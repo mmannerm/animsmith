@@ -138,3 +138,23 @@ pub fn misdocumented_line(documented: &[String], printed: &[&str]) -> Option<usi
     }
     None
 }
+
+/// Copy a committed tree into a throwaway checkout.
+///
+/// A documented command names its inputs the way a reader's own checkout
+/// holds them (`examples/assets/clip.glb`), so a gate that runs one has to
+/// stage those trees somewhere its outputs can land without touching this
+/// repository. Both transcript gates stage the same way, so the copy lives
+/// beside the parser they share.
+pub fn copy_tree(source: &std::path::Path, destination: &std::path::Path) {
+    std::fs::create_dir_all(destination).expect("creates fixture directory");
+    for entry in std::fs::read_dir(source).expect("lists fixture directory") {
+        let entry = entry.expect("directory entry");
+        let target = destination.join(entry.file_name());
+        if entry.file_type().expect("file type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copies fixture");
+        }
+    }
+}
