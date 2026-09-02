@@ -149,13 +149,11 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 // drift apart on theming or on how a URL fragment is read.
 "use strict";
 
-// The design tokens of tokens.css. These dark values are also the fallback
-// whenever a token cannot be resolved.
-const ANIMSMITH_DEFAULT_PALETTE = {
-  ground: "#17171f", surface: "#1e1e2a", raised: "#232331", ink: "#d5d9e5",
-  muted: "#9099b2", line: "#3a3a4e", accent: "#7aa2f7", error: "#f7768e",
-  warning: "#e0af68", pass: "#9ece6a", note: "#bb9af7",
-};
+// The fallback palette used whenever a token cannot be resolved from the
+// document. The report crate substitutes the dark values of tokens.css for
+// this placeholder as it emits the runtime, so a token value is written in
+// exactly one place; this asset is a template rather than standalone JS.
+const ANIMSMITH_DEFAULT_PALETTE = {"accent":"#7aa2f7","error":"#f7768e","ground":"#17171f","ink":"#d5d9e5","line":"#3a3a4e","muted":"#9099b2","note":"#bb9af7","pass":"#9ece6a","raised":"#232331","surface":"#1e1e2a","warning":"#e0af68"};
 
 // Live token values from the root element, so the WebGL and canvas pose views
 // paint with the same palette as the CSS. Anything that is not an exact
@@ -187,8 +185,11 @@ function animsmithRgb(hex) {
 //
 // Each option has three states, because a fragment is navigated as well as
 // loaded: `undefined` when the key never appeared (leave that state alone),
-// `null`/`false` when the key appeared with a value this report will not
-// honour (return that state to its default), and the value otherwise.
+// `null`/`false` when the value cannot be read at all (return that state to
+// its default), and the value otherwise. A value that reads but overshoots is
+// the caller's to place: a frame past the end of a clip is clamped to its last
+// frame, not discarded, because a reader who asks for a position wants the
+// nearest one the document can show.
 // Unknown keys, pairs without a key, and malformed percent escapes are
 // ignored rather than thrown, and the fragment is read but never written, so
 // no fragment can raise an exception or drive a loop. The work is bounded by
@@ -227,6 +228,15 @@ function animsmithDecoded(value) {
 // count, so no separate length rule is needed here.
 function animsmithIndex(value) {
   return /^[0-9]+$/.test(value) ? Number(value) : null;
+}
+
+// Repaint hook for a reader who switches their system theme with the report
+// open: the CSS follows on its own, the canvas views need the new palette.
+function animsmithOnSchemeChange(repaint) {
+  if (typeof matchMedia !== "function") return;
+  const scheme = matchMedia("(prefers-color-scheme: light)");
+  if (!scheme || typeof scheme.addEventListener !== "function") return;
+  scheme.addEventListener("change", repaint);
 }
 
 // The two document-wide switches, applied to the root element so every visual
@@ -543,8 +553,10 @@ const findingItems = [];
 // the judged frame and mark the row.
 function selectFinding(index) {
   const f = data.findings[index], item = findingItems[index];
-  if (!f || !item) return;
   for (const other of findingItems) other.classList.remove("selected");
+  // An index this document cannot honour leaves nothing selected, which is
+  // the default state, rather than keeping a previous selection.
+  if (!f || !item) return;
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -616,25 +628,30 @@ for (const row of data.predictions) {
   }
 }
 
-// Fragment selection runs once the clip list, charts, and findings exist,
-// so a deep link lands exactly where the equivalent click would. Every
-// value is bounded by this document's own data: an unknown clip name is
-// ignored, a finding index must address an emitted row, and setFrame
-// clamps to the judged frame grid.
+// Fragment selection runs once the clip list, charts, and findings exist, so
+// a deep link lands exactly where the equivalent click would. Each option that
+// appears is applied in order — clip, then finding, then frame — as far as
+// this document allows: setFrame clamps a frame past the end to the last
+// judged frame, and a clip name the document does not carry selects the first
+// clip. A value the parser could not read restores that state's default
+// instead: frame 0, the first clip, no selected finding. An option that does
+// not appear is left alone.
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
-  if (options.clip != null && data.clips.some((c) => c.name === options.clip))
-    selectClip(options.clip);
-  if (options.finding != null && options.finding < data.findings.length)
-    selectFinding(options.finding);
-  else if (options.frame != null)
-    setFrame(options.frame);
+  if (options.clip !== undefined && data.clips.length) {
+    const known = data.clips.some((c) => c.name === options.clip);
+    selectClip(known ? options.clip : data.clips[0].name);
+    setFrame(0);
+  }
+  if (options.finding !== undefined) selectFinding(options.finding);
+  if (options.frame !== undefined) setFrame(options.frame == null ? 0 : options.frame);
   draw();
 }
 
 window.addEventListener("resize", draw);
 window.addEventListener("hashchange", applyFragment);
+animsmithOnSchemeChange(() => { palette = animsmithPalette(); draw(); });
 if (clip) { selectClip(clip.name); setFrame(0); }
 applyFragment();
 </script>
