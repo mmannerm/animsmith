@@ -103,8 +103,8 @@ fn rotation_chain_skeleton(joints: &[&str]) -> Skeleton {
     }
 }
 
-/// A [`rotation_chain_skeleton`] with one 1 s rotation clip on its second
-/// joint, keyed on [`FIVE_KEY_TIMES`].
+/// A straight chain of `joints` with one 1 s rotation clip on its second
+/// joint, keyed on the five-key grid the rotation fixtures share.
 ///
 /// `with_translation` adds a root translation track (some fix tests assert
 /// it survives a repair byte-identically); the rotation track is emitted
