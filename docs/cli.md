@@ -161,8 +161,9 @@ sets `"evidence_only": true` in the embedded data. The grid is the motion —
 every bone's model-space position on every judged frame — so a full report of a
 licensed clip carries that clip. Both forms keep their findings, coverage gaps
 and engine predictions; the comparison also keeps both sides' input identities,
-and the single-clip report its file path and profile. Both show a notice where
-each pose view would be and disable playback, so the document can be attached
+and the single-clip report its profile and source path (when the document
+has one). Both show a notice where each pose view would be and disable
+playback, so the document can be attached
 to an issue,
 published, or sent to a vendor where the source asset itself may not go (see the
 [licensed-asset policy](../DEVELOPMENT.md#golden-tests)). Nothing else about the
