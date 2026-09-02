@@ -595,7 +595,9 @@ class ExternalProxyContractTests(unittest.TestCase):
             (staged / "docs/README.md").write_text("# Docs\n", encoding="utf-8")
             (staged / "unpublished/README.md").write_text("# Hidden\n", encoding="utf-8")
             (staged / "SUMMARY.md").write_text(
-                "# Summary\n\n- [Root](README.md)\n- [Docs](docs/README.md)\n",
+                # An escaped bracket in a canonical label must not hide the
+                # chapter it carries.
+                "# Summary\n\n- [Root \\[1\\]](README.md)\n- [Docs](docs/README.md)\n",
                 encoding="utf-8",
             )
             (book / "index.html").write_text("root output\n", encoding="utf-8")

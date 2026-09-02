@@ -70,8 +70,8 @@ shipping is riskier than changing.
    cargo test -p animsmith --test examples_cookbook
    ```
 
-   The committed documentation visuals are rendered from those same assets,
-   so regenerate and commit them in the same step:
+   The committed [documentation visuals](docs/visuals/README.md) are rendered
+   from those same assets, so regenerate and commit them in the same step:
 
    ```console
    cargo run -p animsmith --example gen_docs_visuals

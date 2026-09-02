@@ -532,7 +532,11 @@ def validate_artifact_paths(book: Path) -> None:
         raise RuntimeError(f"rendered Pages artifact has invalid path characters: {invalid}")
 
 
-SUMMARY_CHAPTER = re.compile(r"^\s*-\s+\[[^\]]*\]\((?P<destination>[^)]*)\)\s*$", re.MULTILINE)
+# A generated chapter line.  Labels are canonical index text with `[`, `]`
+# and `\` escaped, so the destination is what follows the *last* `](`.
+SUMMARY_CHAPTER = re.compile(
+    r"^\s*-\s+\[.*\]\((?P<destination>[^()\s]*)\)\s*$", re.MULTILINE
+)
 
 
 def summary_chapters(staged_source: Path) -> set[str]:
