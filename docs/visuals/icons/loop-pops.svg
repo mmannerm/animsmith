@@ -1,15 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="A dot travelling around a ring jumps back at the seam every cycle">
+<svg xmlns="http://www.w3.org/2000/svg" id="icon-loop-pops" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="A dot travelling around a ring jumps back at the seam every cycle">
   <title>The loop pops</title>
   <style>
-    :root { --ring: #b9c1d6; --dot: #3b67d6; --seam: #cf3f5b; }
-    @media (prefers-color-scheme: dark) { :root { --ring: #3d3d52; --dot: #7aa2f7; --seam: #f7768e; } }
-    .ring { fill: none; stroke: var(--ring); stroke-width: 3; }
-    .gap { fill: none; stroke: var(--seam); stroke-width: 3; stroke-dasharray: 4 4; }
-    .seam { stroke: var(--seam); stroke-width: 2.5; }
-    .dot { fill: var(--dot); }
-    .orbit { transform-origin: 60px 60px; animation: orbit 2.6s linear infinite; }
+    /* Every colour resolves through the documentation theme's own token,
+       so an inlined icon follows the page's light or dark choice; the
+       fallbacks are for a file opened on its own, where no token exists.
+       Every rule is scoped to this icon's id, so nothing here reaches the
+       page that inlines it or another picture beside it. */
+    #icon-loop-pops { --ring: var(--as-line-strong, #b9c1d6); --dot: var(--as-accent, #3b67d6); --seam: var(--as-error, #cf3f5b); }
+    @media (prefers-color-scheme: dark) { #icon-loop-pops { --ring: var(--as-line-strong, #3d3d52); --dot: var(--as-accent, #7aa2f7); --seam: var(--as-error, #f7768e); } }
+    #icon-loop-pops .ring { fill: none; stroke: var(--ring); stroke-width: 3; }
+    #icon-loop-pops .gap { fill: none; stroke: var(--seam); stroke-width: 3; stroke-dasharray: 4 4; }
+    #icon-loop-pops .seam { stroke: var(--seam); stroke-width: 2.5; }
+    #icon-loop-pops .dot { fill: var(--dot); }
+    #icon-loop-pops .orbit { transform-origin: 60px 60px; animation: orbit 2.6s linear infinite; }
     @keyframes orbit { from { transform: rotate(0deg); } to { transform: rotate(318deg); } }
-    @media (prefers-reduced-motion: reduce) { .orbit { animation: none; transform: rotate(318deg); } }
+    @media (prefers-reduced-motion: reduce) { #icon-loop-pops .orbit { animation: none; transform: rotate(318deg); } }
   </style>
   <circle class="ring" cx="60" cy="60" r="44"/>
   <path class="gap" d="M60 16 A44 44 0 0 0 30.6 27.2"/>

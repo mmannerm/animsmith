@@ -1,29 +1,28 @@
 //! Drift gate for the documentation index: every top-level page in
 //! `docs/` must be linked from a row of the Document index table in
 //! `docs/README.md`, so adding a doc page means adding an index-table
-//! row. The table is located by parsing the markdown with
-//! `pulldown-cmark` (the parser rustdoc uses) rather than by pattern
-//! matching, so fenced or indented decoy tables, delimiter-less fake
-//! headers, and malformed link fragments cannot satisfy the gate.
+//! row. The table is read with the shared parser-backed reader
+//! (`animsmith_testkit::docs_markdown`) rather than by pattern matching,
+//! so fenced or indented decoy tables, delimiter-less fake headers, and
+//! malformed link fragments cannot satisfy the gate; that reader owns
+//! the mutation catalog proving it.
 //! Link *targets* and `#anchor`s are covered by the sibling gate
 //! `docs_links.rs`. Nested dirs (research/, schemas/, visuals/) are
 //! outside the top-level indexed set, and preventing a second routing
 //! list elsewhere is review policy, not something a gate can prove.
 //!
 //! A nested directory that publishes customer pages carries the same
-//! rule one level down: `docs/symptoms/` owns a sub-index, and
-//! `every_symptom_page_has_a_sub_index_row` holds it to the same
-//! completeness the top-level index has.
+//! rule one level down: `docs/symptoms/` owns a sub-index, held to the
+//! same completeness by the same helper.
 //!
 //! Forward constraint for a generated docs site (GitHub Pages/mdBook):
 //! its navigation (e.g. SUMMARY.md) must be derived from this index
 //! table or a shared manifest — never a second hand-maintained routing
-//! list. Note the index also rows pages outside docs/ (../README.md,
-//! ../examples/README.md); a site build must decide link-vs-include
-//! for those rather than assume the set is docs/*.md.
+//! list. Note the index also rows pages outside docs/
+//! (../examples/README.md, ../CONTRIBUTING.md); a site build must decide
+//! link-vs-include for those rather than assume the set is docs/*.md.
 
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-use std::collections::BTreeSet;
+use animsmith_testkit::docs_markdown::document_index_targets;
 use std::path::PathBuf;
 
 fn repo_path(rel: &str) -> PathBuf {
@@ -32,70 +31,22 @@ fn repo_path(rel: &str) -> PathBuf {
         .join(rel)
 }
 
-/// Link destinations (fragments stripped) in the **Document column** —
-/// the first cell of each body row — of the first table whose leading
-/// header cell is exactly `Document`. A link in a description cell is
-/// not a row for that page, and text that merely looks like a link
-/// never produces a `Tag::Link` event.
-fn document_index_link_targets(markdown: &str) -> BTreeSet<String> {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_TABLES);
-
-    let mut targets = BTreeSet::new();
-    let mut in_head = false;
-    let mut head_first_cell: Option<String> = None;
-    let mut collecting_first_cell = false;
-    let mut is_index_table = false;
-    let mut body_cell_index = 0usize;
-
-    for event in Parser::new_ext(markdown, options) {
-        match event {
-            Event::Start(Tag::Table(_)) => {
-                is_index_table = false;
-                head_first_cell = None;
-            }
-            Event::Start(Tag::TableHead) => in_head = true,
-            Event::End(TagEnd::TableHead) => {
-                in_head = false;
-                is_index_table = head_first_cell.as_deref() == Some("Document");
-            }
-            Event::Start(Tag::TableCell) if in_head && head_first_cell.is_none() => {
-                collecting_first_cell = true;
-                head_first_cell = Some(String::new());
-            }
-            Event::End(TagEnd::TableCell) => collecting_first_cell = false,
-            Event::Text(text) if collecting_first_cell => {
-                if let Some(cell) = head_first_cell.as_mut() {
-                    cell.push_str(&text);
-                }
-            }
-            Event::Start(Tag::TableRow) if is_index_table => body_cell_index = 0,
-            Event::Start(Tag::TableCell) if is_index_table && !in_head => {
-                body_cell_index += 1;
-            }
-            Event::Start(Tag::Link { dest_url, .. })
-                if is_index_table && !in_head && body_cell_index == 1 =>
-            {
-                let target = dest_url.split('#').next().unwrap_or_default();
-                targets.insert(target.to_owned());
-            }
-            Event::End(TagEnd::Table) if is_index_table => break,
-            _ => {}
-        }
-    }
-    targets
-}
-
-#[test]
-fn every_top_level_docs_page_has_an_index_table_row() {
-    let index = std::fs::read_to_string(repo_path("docs/README.md")).expect("reads docs index");
-    let targets = document_index_link_targets(&index);
+/// Hold one index to its directory: every `.md` page beside it, except
+/// the index itself, must have a Document-column row. Returns how many
+/// pages were checked, so a caller can prove the directory is not empty.
+fn every_page_beside_the_index_has_a_row(index_path: &str, directory: &str) -> usize {
+    let index = std::fs::read_to_string(repo_path(index_path))
+        .unwrap_or_else(|error| panic!("reads {index_path}: {error}"));
+    let targets = document_index_targets(&index);
     assert!(
         !targets.is_empty(),
-        "docs/README.md must carry the Document index table"
+        "{index_path} must carry the Document index table"
     );
 
-    for entry in std::fs::read_dir(repo_path("docs")).expect("lists docs/") {
+    let mut pages = 0usize;
+    for entry in std::fs::read_dir(repo_path(directory))
+        .unwrap_or_else(|error| panic!("lists {directory}: {error}"))
+    {
         let path = entry.expect("directory entry").path();
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
@@ -110,10 +61,18 @@ fn every_top_level_docs_page_has_an_index_table_row() {
         }
         assert!(
             targets.contains(&name),
-            "docs/README.md must carry an index-table row linking {name}; \
+            "{index_path} must carry an index-table row linking {name}; \
              table links: {targets:?}"
         );
+        pages += 1;
     }
+    pages
+}
+
+#[test]
+fn every_top_level_docs_page_has_an_index_table_row() {
+    let pages = every_page_beside_the_index_has_a_row("docs/README.md", "docs");
+    assert!(pages > 0, "docs/ must publish documentation pages");
 }
 
 /// A sub-index owns its directory the way `docs/README.md` owns
@@ -122,79 +81,6 @@ fn every_top_level_docs_page_has_an_index_table_row() {
 /// navigation the build derives from it.
 #[test]
 fn every_symptom_page_has_a_sub_index_row() {
-    let index =
-        std::fs::read_to_string(repo_path("docs/symptoms/README.md")).expect("reads symptom index");
-    let targets = document_index_link_targets(&index);
-    assert!(
-        !targets.is_empty(),
-        "docs/symptoms/README.md must carry the Document index table"
-    );
-
-    let mut pages = 0usize;
-    for entry in std::fs::read_dir(repo_path("docs/symptoms")).expect("lists docs/symptoms/") {
-        let path = entry.expect("directory entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .expect("utf-8 doc name")
-            .to_owned();
-        if name == "README.md" {
-            continue;
-        }
-        assert!(
-            targets.contains(&name),
-            "docs/symptoms/README.md must carry an index-table row linking {name}; \
-             table links: {targets:?}"
-        );
-        pages += 1;
-    }
+    let pages = every_page_beside_the_index_has_a_row("docs/symptoms/README.md", "docs/symptoms");
     assert!(pages > 0, "docs/symptoms/ must publish symptom pages");
-}
-
-/// The mutation catalog the shell oracle accumulated across audit
-/// rounds, now pinned against the parser: only rendered links inside
-/// the Document table count.
-#[test]
-fn oracle_counts_only_rendered_links_inside_the_document_table() {
-    let fixture = "# Documentation\n\n\
-        ```text\n\
-        | Document | Use it to… |\n\
-        |---|---|\n\
-        | [backtick-fenced.md](backtick-fenced.md) | fenced decoy |\n\
-        ```\n\n\
-        ~~~text\n\
-        | Document | Use it to… |\n\
-        |---|---|\n\
-        | [tilde-fenced.md](tilde-fenced.md) | fenced decoy |\n\
-        ~~~\n\n\
-        A paragraph, then an indented code block:\n\n\
-        \x20   | Document | Use it to… |\n\
-        \x20   |---|---|\n\
-        \x20   | [indented.md](indented.md) | indented decoy |\n\n\
-        | Document | this header has no delimiter row, so it is prose |\n\
-        with [delimiterless.md](delimiterless.md) linked right after.\n\n\
-        | Other | Column |\n\
-        |---|---|\n\
-        | [other-table.md](other-table.md) | wrong table |\n\n\
-        | Document | Use it to… |\n\
-        |---|---|\n\
-        | [real.md](real.md) | a genuine row |\n\
-        | [fragment.md](fragment.md#section) | anchor stripped |\n\
-        | [real.md](real.md) | see also [wrong-column.md](wrong-column.md), which has no row |\n\
-        | malformed ](broken.md) cell without an opening bracket |\n\n\
-        Prose with a loose [prose.md](prose.md) link.\n\n\
-        | standalone pipe line with [loose.md](loose.md) outside any table |\n";
-
-    let targets = document_index_link_targets(fixture);
-    let expected: BTreeSet<String> = ["real.md", "fragment.md"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    assert_eq!(
-        targets, expected,
-        "only rendered links in the Document column count"
-    );
 }

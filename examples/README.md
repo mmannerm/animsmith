@@ -866,8 +866,8 @@ $ animsmith lint --config demote.toml examples/assets/clip-dirty.glb
 1 error(s), 0 warning(s), 1 note(s), 0 coverage gap(s)   # exits 1
 ```
 
-See the [README configuration section](../README.md#configuration) for
-the full key reference.
+See the [configuration reference](../docs/configuration-reference.md)
+for the full key reference.
 
 ---
 

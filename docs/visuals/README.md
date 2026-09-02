@@ -51,14 +51,26 @@ The reports are rendered from the fixture directory, so each one names
 its input by basename: no checkout path, no timestamp, and no absolute
 path is embedded, and two machines produce the same bytes.
 
-An extracted chart is the report's own `<svg>` element with three
-changes: the SVG namespace a standalone document needs, the series
-colours inlined as a `<style>` (light values, dark under
-`prefers-color-scheme`, both taken from the report's design tokens),
-and the playhead removed, because a still picture has no frame
-selection. Charts are embedded with `<img>`; whole reports are embedded
-with `<iframe>` and always followed by a plain link, because GitHub
-renders the link and strips the frame.
+An extracted chart is the report's own `<svg>` element with four
+changes: the SVG namespace a standalone document needs, an id that keeps
+its styling to itself when a page inlines several pictures, the series
+colours inlined as a `<style>`, and the playhead removed, because a still
+picture has no frame selection.
+
+Every colour in a committed picture resolves through the documentation
+theme's own `--as-*` token, with the report's design token as the
+fallback (light first, dark under `prefers-color-scheme`). The site build
+inlines these drawings into the pages that show them, so the page's own
+theme paints them — including an explicit light or dark choice that
+differs from the operating system, which `prefers-color-scheme` alone
+gets wrong — while GitHub and a standalone open use the fallbacks.
+
+Pages reference a chart with `<img>` and a whole report with `<iframe>`
+followed by a plain link, because GitHub renders the link and strips the
+frame. Building the site rewrites both: an `<img>` naming a tracked
+picture here becomes the picture itself, and a frame becomes a
+site-absolute path, which is the one spelling that resolves both on the
+chapter page and on mdBook's aggregated print page.
 
 A report of more than one clip carries one figure per clip, so a chart
 cut out of it names the clip as well as the figure kind; an ambiguous
@@ -74,9 +86,22 @@ findings list or the judged pose grid rather than one curve.
 ## Hand-authored files
 
 `icons/` holds one hand-drawn mark per symptom page — a few shapes and a
-CSS animation each, with a `prefers-reduced-motion` still frame and
-light/dark colours. They illustrate a symptom; they are not evidence,
-and no measurement is taken from them.
+CSS animation each, with a `prefers-reduced-motion` still frame, an id that
+scopes their rules, and the same token-with-fallback colours the generated
+charts use. They illustrate a symptom; they are not evidence, and no
+measurement is taken from them.
+
+| Drawing | Page it opens |
+| --- | --- |
+| `icons/pose-flickers.svg` | [the pose flickers, spins, or explodes](../symptoms/pose-flickers.md) |
+| `icons/wrong-length.svg` | [the clip is the wrong length or freezes at the end](../symptoms/wrong-length.md) |
+| `icons/loop-pops.svg` | [the loop pops](../symptoms/loop-pops.md) |
+| `icons/character-glides.svg` | [the character glides or runs in place](../symptoms/character-glides.md) |
+| `icons/blend-skate.svg` | [feet skate when clips blend](../symptoms/blend-skate.md) |
+| `icons/feet-slide.svg` | [feet slide within a clip](../symptoms/feet-slide.md) |
+| `icons/limb-frozen.svg` | [a limb is T-posed, or a bone never moves](../symptoms/limb-frozen.md) |
+| `icons/identity-mismatch.svg` | [files disagree about skeleton or clip identity](../symptoms/identity-mismatch.md) |
+| `icons/file-bloat.svg` | [the file is bloated, or the retargeter chokes](../symptoms/file-bloat.md) |
 
 ## Releases
 

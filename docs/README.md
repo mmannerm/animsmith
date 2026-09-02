@@ -9,10 +9,11 @@ $ animsmith lint walk.glb
 ```
 
 - **Artists and animators** — catch a bad export while the DCC is still open.
-  [Install](install.md), then [first lint in 60 seconds](first-lint.md), then
+  [Install](install.md), [first lint in 60 seconds](first-lint.md),
+  [your first report](first-report.md), then
   [from export to handoff](animation-author-workflow.md).
 - **Game developers** — know what a pack really contains and gate every
-  re-export. [Install](install.md), then
+  re-export. [Install](install.md), [first lint in 60 seconds](first-lint.md),
   [your first report](first-report.md), then
   [from pack to engine gate](game-developer-intake-workflow.md).
 

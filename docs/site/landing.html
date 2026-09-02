@@ -45,7 +45,9 @@
   .btn.primary { background: var(--as-accent); border-color: var(--as-accent); color: var(--as-ground); }
   .card { background: var(--as-surface); border: 1px solid var(--as-line); border-radius: 8px; padding: 16px 18px; }
   .chartcard .lab { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-family: var(--mono-font); font-size: 12px; color: var(--as-muted); margin: 0 0 6px; }
-  .chartcard img { width: 100%; height: auto; display: block; background: var(--as-ground); border-radius: 4px; }
+  /* The build inlines these charts, so the same box applies to the drawing
+     itself as to the `<img>` this page is written with. */
+  .chartcard img, .chartcard svg { width: 100%; height: auto; display: block; background: var(--as-ground); border-radius: 4px; }
   .chartcard .find { font-family: var(--mono-font); font-size: 12px; margin-top: 12px; line-height: 1.45; color: var(--as-muted); }
   .chip { display: inline-block; white-space: nowrap; font-family: var(--mono-font); font-size: 11.5px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--as-line-strong); color: var(--as-muted); }
   .chip.err { color: var(--as-error); border-color: var(--as-error); }
@@ -55,7 +57,7 @@
   .door h2 { font-family: var(--as-display-font); font-size: 22px; margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
   .door p { margin: 0; color: var(--as-muted); font-size: 15px; line-height: 1.5; }
   .strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 14px; counter-reset: strip; }
-  .strip span { position: relative; font-size: 13px; line-height: 1.3; padding: 7px 8px 7px 26px; border: 1px solid var(--as-line); border-radius: 4px; background: var(--as-ground); }
+  .strip span { position: relative; font-size: 13px; line-height: 1.3; padding: 7px 8px 7px 26px; border: 1px solid var(--as-line); border-radius: 4px; background: var(--as-ground); overflow-wrap: break-word; }
   .strip span::before { content: counter(strip); counter-increment: strip; position: absolute; left: 9px; top: 7px; font-family: var(--mono-font); font-size: 11px; color: var(--as-accent-ink); }
   .door .ex { margin-top: 12px; font-size: 13.5px; color: var(--as-muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .door .go { display: inline-block; margin-top: 12px; font-weight: 600; text-decoration: none; color: var(--as-accent-ink); }
@@ -65,9 +67,12 @@
   .step b { display: block; font-family: var(--as-display-font); font-size: 18px; margin: 2px 0 4px; }
   .step b a { color: var(--as-ink); text-decoration: none; }
   .step span { font-size: 14px; color: var(--as-muted); }
+  .then { margin: 16px 0 0; font-size: 15px; color: var(--as-muted); max-width: 70ch; }
   .not { margin: 28px 0 0; font-size: 15px; color: var(--as-muted); max-width: 70ch; }
   .icon { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
   @media (max-width: 760px) { .hero, .doors { grid-template-columns: 1fr; } .steps { grid-template-columns: 1fr 1fr; } }
+  /* Three step pills plus their numerals do not fit a phone: stack them. */
+  @media (max-width: 480px) { .strip { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -96,7 +101,7 @@ $ animsmith lint walk.glb</code></pre>
       <img src="docs/visuals/walk-dirty.foot-height.svg" alt="Foot height chart of a popped loop: the curves end away from where they started" width="360" height="150">
       <div class="lab" style="margin-top:12px"><span>walk.glb · same rig, closed cycle</span><span class="chip pass">0 errors</span></div>
       <img src="docs/visuals/walk.foot-height.svg" alt="Foot height chart of a closed loop: the curves return to their start" width="360" height="150">
-      <div class="find">error[loop-closure] clip 'walk' bone 'foot_r' @1.000s: loop does not close in position: 0.1581 m from its first-frame pose (cap 0.0100 m)</div>
+      <div class="find">error[loop-closure] clip 'walk' bone 'foot_r' @1.000s: loop does not close in position: bone 'foot_r' is 0.1581 m from its first-frame model-space position (cap 0.0100 m) (measured 0.1581, expected 0.0100)</div>
     </div>
   </section>
 
@@ -125,6 +130,7 @@ $ animsmith lint walk.glb</code></pre>
     <div class="step"><span class="n">03</span><b><a href="docs/first-report.html">Open the report</a></b><span>Skeleton playback at the exact judged frame.</span></div>
     <div class="step"><span class="n">04</span><b><a href="docs/mixamo-tutorial.html">Declare and fix</a></b><span>Say which clips loop, then repair or re-export.</span></div>
   </section>
+  <p class="then">Then the workflow for your seat: <a href="docs/animation-author-workflow.html">the animation-author workflow</a> for artists and animators, <a href="docs/game-developer-intake-workflow.html">the game-developer intake workflow</a> for game developers.</p>
 
   <p class="not">Not a converter, an editor or a retargeter. AnimSmith sits between glTF-Validator and your engine importer and checks the content semantics neither of them sees. <a href="docs/why-animsmith.html">Why AnimSmith exists</a> · <a href="docs/index.html">Every page</a></p>
 </div>
