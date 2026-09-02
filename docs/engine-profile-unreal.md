@@ -19,7 +19,7 @@ hierarchy, conversion result, or runtime root-motion policy.
 
 ## AnimSmith checks and thresholds
 
-The normal [check catalog](../README.md#checks) is engine-neutral. Prioritize:
+The normal [check catalog](built-in-checks.md) is engine-neutral. Prioritize:
 
 | Check id | Exact default boundary | Unreal-facing use |
 |---|---|---|

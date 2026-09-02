@@ -205,6 +205,13 @@ pointing at `docs/reports/README.md` nests the report and evidence pairs from
 that table below itself. Chapters with children start collapsed
 (`[output.html.fold]` at level 0).
 
+Staging also resolves the media a page embeds: an `<img>` naming a tracked
+drawing under `docs/visuals` becomes that drawing's own markup, so it reads the
+page's theme tokens instead of guessing light or dark from the operating
+system, and an `<iframe src>` becomes a site-absolute path, which mdBook never
+rewrites and which the aggregated print page therefore needs. The repository
+Markdown keeps the plain references GitHub renders.
+
 Tracked `docs/site` files stage as mdBook's `theme/` override directory instead
 of as book source, so the stylesheet, fonts, and favicons style the site without
 becoming pages. `docs/site/animsmith.css` is required and wired as

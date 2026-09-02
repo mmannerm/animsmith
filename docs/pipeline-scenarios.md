@@ -82,7 +82,7 @@ canonical config shape, use the
 [project contract config cookbook](../examples/README.md#4-a-project-contract-config),
 the committed
 [`examples/character.animsmith.toml`](../examples/character.animsmith.toml),
-and the [configuration reference](../README.md#configuration).
+and the [configuration reference](configuration-reference.md).
 
 ## Cookbook routing
 

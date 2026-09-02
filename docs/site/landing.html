@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en" class="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnimSmith: is this clip game-ready?</title>
+<meta name="description" content="AnimSmith lints skeletal animation clips for the problems that only show up after engine import: popped loops, sliding feet, drifting root motion, T-posed limbs.">
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="theme/animsmith.css">
+<script>
+  // Follow the book's theme choice (mdBook stores it under "mdbook-theme").
+  // The `js` class is mdBook's too: the stylesheet's light tokens are the
+  // no-script fallback, so a dark theme only applies once it is set.
+  try {
+    var stored = localStorage.getItem("mdbook-theme");
+    var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var theme = stored === "light" ? "light" : stored === "navy" || stored === "coal" || stored === "ayu" ? "navy" : (dark ? "navy" : "light");
+    document.documentElement.className = theme + " js";
+  } catch (e) {}
+</script>
+<style>
+  /* Landing layout only; colours and type come from theme/animsmith.css
+     tokens. The book's stylesheet sizes body copy in rem against mdBook's
+     62.5% root, so this page sets the same root scale. */
+  html { font-size: 62.5%; }
+  html, body { margin: 0; }
+  body { background: var(--as-ground); color: var(--as-ink); }
+  a { color: var(--as-accent-ink); }
+  code, pre { font-family: var(--mono-font); }
+  pre { background: var(--as-code-bg); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font-size: 13.5px; line-height: 1.5; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px 72px; }
+  .mast { display: flex; align-items: center; gap: 18px; padding: 16px 0; border-bottom: 1px solid var(--as-line); flex-wrap: wrap; }
+  .mast .word { display: flex; align-items: center; gap: 10px; font-family: var(--as-display-font); font-weight: 700; font-size: 22px; color: var(--as-ink); text-decoration: none; }
+  .mast nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 15px; margin-left: 8px; }
+  .mast nav a { color: var(--as-muted); text-decoration: none; }
+  .mast nav a:hover { color: var(--as-accent-ink); }
+  .hero { display: grid; grid-template-columns: 1.1fr 1fr; gap: 32px; padding: 44px 0 28px; align-items: start; }
+  .hero > div { min-width: 0; }
+  .hero h1 { font-family: var(--as-display-font); font-size: clamp(36px, 5vw, 52px); line-height: 1.05; margin: 0 0 14px; text-wrap: balance; }
+  .hero p { font-size: 18px; line-height: 1.5; max-width: 48ch; margin: 0 0 16px; }
+  .hero pre { margin: 0 0 14px; }
+  .ctas { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 9px 15px; border-radius: 5px; font-weight: 600; text-decoration: none; border: 1px solid var(--as-line-strong); color: var(--as-ink); background: var(--as-surface); }
+  .btn.primary { background: var(--as-accent); border-color: var(--as-accent); color: var(--as-ground); }
+  .card { background: var(--as-surface); border: 1px solid var(--as-line); border-radius: 8px; padding: 16px 18px; }
+  .chartcard .lab { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-family: var(--mono-font); font-size: 12px; color: var(--as-muted); margin: 0 0 6px; }
+  /* The build inlines these charts, so the same box applies to the drawing
+     itself as to the `<img>` this page is written with. */
+  .chartcard img, .chartcard svg { width: 100%; height: auto; display: block; background: var(--as-ground); border-radius: 4px; }
+  .chartcard .find { font-family: var(--mono-font); font-size: 12px; margin-top: 12px; line-height: 1.45; color: var(--as-muted); }
+  .chip { display: inline-block; white-space: nowrap; font-family: var(--mono-font); font-size: 11.5px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--as-line-strong); color: var(--as-muted); }
+  .chip.err { color: var(--as-error); border-color: var(--as-error); }
+  .chip.pass { color: var(--as-pass); border-color: var(--as-pass); }
+  .sect { font-family: var(--mono-font); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--as-muted); margin: 28px 0 10px; }
+  .doors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .door h2 { font-family: var(--as-display-font); font-size: 22px; margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
+  .door p { margin: 0; color: var(--as-muted); font-size: 15px; line-height: 1.5; }
+  .strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 14px; counter-reset: strip; }
+  .strip span { position: relative; font-size: 13px; line-height: 1.3; padding: 7px 8px 7px 26px; border: 1px solid var(--as-line); border-radius: 4px; background: var(--as-ground); overflow-wrap: break-word; }
+  .strip span::before { content: counter(strip); counter-increment: strip; position: absolute; left: 9px; top: 7px; font-family: var(--mono-font); font-size: 11px; color: var(--as-accent-ink); }
+  .door .ex { margin-top: 12px; font-size: 13.5px; color: var(--as-muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .door .go { display: inline-block; margin-top: 12px; font-weight: 600; text-decoration: none; color: var(--as-accent-ink); }
+  .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .step { border-top: 2px solid var(--as-line-strong); padding-top: 10px; }
+  .step .n { font-family: var(--mono-font); font-size: 11px; color: var(--as-accent-ink); letter-spacing: .06em; }
+  .step b { display: block; font-family: var(--as-display-font); font-size: 18px; margin: 2px 0 4px; }
+  .step b a { color: var(--as-ink); text-decoration: none; }
+  .step span { font-size: 14px; color: var(--as-muted); }
+  .then { margin: 16px 0 0; font-size: 15px; color: var(--as-muted); max-width: 70ch; }
+  .not { margin: 28px 0 0; font-size: 15px; color: var(--as-muted); max-width: 70ch; }
+  .icon { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  @media (max-width: 760px) { .hero, .doors { grid-template-columns: 1fr; } .steps { grid-template-columns: 1fr 1fr; } }
+  /* Three step pills plus their numerals do not fit a phone: stack them. */
+  @media (max-width: 480px) { .strip { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="mast">
+    <a class="word" href="docs/index.html"><svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 12 L13 54 M32 12 L51 54" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" fill="none"/><path d="M20 40 L44 40" stroke="var(--as-accent)" stroke-width="5.5" stroke-linecap="round"/><circle cx="13" cy="54" r="4.5" fill="var(--as-surface)" stroke="currentColor" stroke-width="3"/><circle cx="51" cy="54" r="4.5" fill="var(--as-surface)" stroke="currentColor" stroke-width="3"/><circle cx="20" cy="40" r="4" fill="var(--as-surface)" stroke="currentColor" stroke-width="3"/><circle cx="44" cy="40" r="4" fill="var(--as-surface)" stroke="currentColor" stroke-width="3"/><path d="M32 3 L40 12 L32 21 L24 12 Z" fill="var(--as-accent)"/></svg>AnimSmith</a>
+    <nav aria-label="Site">
+      <a href="docs/first-lint.html">Start</a>
+      <a href="docs/symptoms/index.html">Symptoms</a>
+      <a href="docs/animation-author-workflow.html">Workflows</a>
+      <a href="docs/cli.html">Reference</a>
+      <a href="https://github.com/mmannerm/animsmith">GitHub</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div>
+      <h1>Is this clip game-ready?</h1>
+      <p>AnimSmith lints skeletal animation clips for the problems that only show up after import: popped loops, sliding feet, drifting root motion, T-posed limbs. Point it at a glTF or FBX export and get frame- and bone-level evidence in seconds: on the command line while the DCC is still open, or in CI and as a Rust library once the contract is declared.</p>
+      <pre><code>$ cargo install animsmith
+$ animsmith lint walk.glb</code></pre>
+      <div class="ctas"><a class="btn primary" href="docs/first-lint.html">First lint in 60 seconds</a><a class="btn" href="docs/first-report.html">See a report</a></div>
+    </div>
+    <div class="card chartcard">
+      <div class="lab"><span>walk-dirty.glb · foot height vs hips</span><span class="chip err">loop-closure</span></div>
+      <img src="docs/visuals/walk-dirty.foot-height.svg" alt="Foot height chart of a popped loop: the curves end away from where they started" width="360" height="150">
+      <div class="lab" style="margin-top:12px"><span>walk.glb · same rig, closed cycle</span><span class="chip pass">0 errors</span></div>
+      <img src="docs/visuals/walk.foot-height.svg" alt="Foot height chart of a closed loop: the curves return to their start" width="360" height="150">
+      <div class="find">error[loop-closure] clip 'walk' bone 'foot_r' @1.000s: loop does not close in position: bone 'foot_r' is 0.1581 m from its first-frame model-space position (cap 0.0100 m) (measured 0.1581, expected 0.0100)</div>
+    </div>
+  </section>
+
+  <div class="sect">Two doors</div>
+  <section class="doors">
+    <div class="card door">
+      <h2><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18"/><path d="M12 7l5 5-5 5-5-5z"/></svg>Artists and animators</h2>
+      <p>Catch the loop pop or the wrong rig seconds after export, while the DCC is still open, with a finding that names the clip, the bone and the frame and a hint that maps to a DCC action.</p>
+      <div class="strip"><span>Export from the DCC</span><span>Lint and open the report</span><span>Fix in the DCC, re-export</span></div>
+      <div class="ex"><span class="chip err">loop-closure</span> example: <a href="docs/symptoms/loop-pops.html">the loop pops</a></div>
+      <a class="go" href="docs/animation-author-workflow.html">Start as an artist ›</a>
+    </div>
+    <div class="card door">
+      <h2><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="18" rx="4"/><path d="M16 12h5m-2-2 2 2-2 2"/></svg>Game developers</h2>
+      <p>Know what a pack or an outsourced delivery really contains, declare the contract your character controller expects, and gate every re-export in CI before it reaches a playtest.</p>
+      <div class="strip"><span>Inventory the pack</span><span>Declare loops, speeds, rings</span><span>Gate in CI and the engine</span></div>
+      <div class="ex"><span class="chip err">foot-slide</span> example: <a href="docs/symptoms/feet-slide.html">feet slide within a clip</a></div>
+      <a class="go" href="docs/game-developer-intake-workflow.html">Start as a developer ›</a>
+    </div>
+  </section>
+
+  <div class="sect">Start in ten minutes</div>
+  <section class="steps">
+    <div class="step"><span class="n">01</span><b><a href="docs/install.html">Install</a></b><span>Prebuilt binaries or <code>cargo install</code>.</span></div>
+    <div class="step"><span class="n">02</span><b><a href="docs/first-lint.html">Lint a clip</a></b><span>Mechanical checks need no config.</span></div>
+    <div class="step"><span class="n">03</span><b><a href="docs/first-report.html">Open the report</a></b><span>Skeleton playback at the exact judged frame.</span></div>
+    <div class="step"><span class="n">04</span><b><a href="docs/mixamo-tutorial.html">Declare and fix</a></b><span>Say which clips loop, then repair or re-export.</span></div>
+  </section>
+  <p class="then">Then the workflow for your seat: <a href="docs/animation-author-workflow.html">the animation-author workflow</a> for artists and animators, <a href="docs/game-developer-intake-workflow.html">the game-developer intake workflow</a> for game developers.</p>
+
+  <p class="not">Not a converter, an editor or a retargeter. AnimSmith sits between glTF-Validator and your engine importer and checks the content semantics neither of them sees. <a href="docs/why-animsmith.html">Why AnimSmith exists</a> · <a href="docs/index.html">Every page</a></p>
+</div>
+</body>
+</html>

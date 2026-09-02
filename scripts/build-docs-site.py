@@ -8,9 +8,11 @@ animation-report pairs from docs/reports/README.md as sub-chapters.  A
 Category cell is either a part name or "Part <separator> Group"; parts become
 mdBook part titles and groups become generated chapter pages that collect
 their member rows.  Tracked docs/site files are staged as mdBook's theme
-override directory rather than as publishable source.  The script
-deliberately never writes into the source tree, refuses symbolic links in the
-staged input, and validates that every rendered local link resolves inside the
+override directory rather than as publishable source.  The tracked landing page
+replaces the artifact's root index after the build, so the book's own home
+remains docs/index.html.  The script deliberately never writes into the
+source tree, refuses symbolic links in the staged input, and validates that
+every rendered local link, image, and embedded frame resolves inside the
 built artifact.
 """
 
@@ -38,13 +40,23 @@ INDEX = Path("docs/README.md")
 REPORT_INDEX = Path("docs/reports/README.md")
 REPORT_INDEX_ROW = REPORT_INDEX.relative_to(INDEX.parent).as_posix()
 SITE = Path("docs/site")
+VISUALS = Path("docs/visuals")
 REDIRECTS = SITE / "redirects.toml"
+LANDING = SITE / "landing.html"
 THEME_CSS = "animsmith.css"
 PIN = Path(".mdbook-version")
 GENERATED_EXTERNAL_DIR = Path("_generated/external")
 GENERATED_GROUP_DIR = Path("_generated/groups")
 GROUP_SEPARATOR = " › "
 INLINE_LINK = re.compile(r"\]\((?P<destination>[^()\s]*)\)")
+IMAGE_TAG = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
+FRAME_SOURCE = re.compile(
+    r"""(?P<head><iframe\b[^>]*?\bsrc\s*=\s*")(?P<destination>[^"]*)(?P<tail>")""",
+    re.IGNORECASE,
+)
+HTML_ATTRIBUTE = re.compile(
+    r"""(?P<name>[^\s=/<>]+)\s*=\s*(?P<quote>["'])(?P<value>[^"']*)(?P=quote)"""
+)
 MAX_EXTERNAL_URL_BYTES = 2048
 MAX_LABEL_BYTES = 256
 MAX_SOURCE_REF_BYTES = 255
@@ -458,6 +470,108 @@ def book_toml(site_url: str, redirects: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def html_attributes(tag: str) -> dict[str, str]:
+    """The quoted attributes of one start tag, names lower-cased."""
+    return {
+        match["name"].lower(): match["value"] for match in HTML_ATTRIBUTE.finditer(tag)
+    }
+
+
+def local_media_target(destination: str, page_dir: str) -> str | None:
+    """The staged-root path a page's local media reference names."""
+    if not destination or is_external(destination) or destination.startswith(("/", "#")):
+        return None
+    target = posixpath.normpath(posixpath.join(page_dir, destination.partition("#")[0]))
+    if target.startswith("../") or target == "..":
+        raise ValueError(f"media reference escapes the source tree: {destination}")
+    return target
+
+
+def present_inlined_svg(svg: str, image: dict[str, str]) -> str:
+    """Give an inlined drawing the box and flow its `<img>` asked for.
+
+    The tag's `width`/`height` win over the file's own, and a dimension
+    the tag leaves out is dropped so the viewBox supplies it rather than
+    the file's fixed one.  `align` becomes the float it means, because an
+    `<svg>` element is laid out by CSS rather than by that attribute.
+    """
+    end = svg.index(">")
+    head, body = svg[:end], svg[end:]
+    carried = {name: image[name] for name in ("width", "height") if name in image}
+    if carried:
+        head = HTML_ATTRIBUTE.sub(
+            lambda match: "" if match["name"].lower() in ("width", "height") else match[0],
+            head,
+        )
+    if image.get("align", "").lower() in ("left", "right"):
+        carried["style"] = f"float:{image['align'].lower()}"
+    for name, value in carried.items():
+        head = f'{head} {name}="{escape(value, quote=True)}"'
+    return " ".join(head.split()) + body
+
+
+def inline_visual_drawings(
+    text: str, page_dir: str, source: Path, tracked: set[Path]
+) -> str:
+    """Replace `<img>` references to tracked docs/visuals drawings with the
+    drawing itself.
+
+    A drawing loaded through `<img>` is an isolated document: it cannot
+    read the page's theme tokens, so it can only guess light or dark from
+    the operating system and gets an explicit theme choice wrong.  Inlined,
+    the same file reads the page's own tokens, and the fallbacks it keeps
+    still serve GitHub and a standalone open.  Only tracked SVG under
+    docs/visuals is inlined; every other reference stays a link the
+    rendered-reference validation resolves.
+    """
+
+    def inline(match: re.Match[str]) -> str:
+        image = html_attributes(match[0])
+        target = local_media_target(image.get("src", ""), page_dir)
+        if target is None or not target.endswith(".svg"):
+            return match[0]
+        relative = Path(target)
+        if not relative.is_relative_to(VISUALS) or relative not in tracked:
+            return match[0]
+        drawing = (source / relative).read_text(encoding="utf-8").strip()
+        if not drawing.startswith("<svg"):
+            raise ValueError(f"{target} is not a standalone <svg> drawing")
+        return present_inlined_svg(drawing, image)
+
+    return IMAGE_TAG.sub(inline, text)
+
+
+def absolute_frame_sources(text: str, page_dir: str, site_url: str) -> str:
+    """Rewrite embedded-report frames to site-absolute paths.
+
+    mdBook rewrites Markdown links and raw-HTML `<img src>` per page, but
+    never an `<iframe src>`, and its print page re-hosts every chapter's
+    body at the book root: a relative frame source is then resolved from
+    the wrong directory and the frame is empty.  A site-absolute path is
+    the one spelling that resolves from the chapter page and from the
+    aggregation alike, and the rendered-reference validation checks it on
+    both.
+    """
+
+    def rewrite(match: re.Match[str]) -> str:
+        destination = match["destination"]
+        target = local_media_target(destination, page_dir)
+        if target is None:
+            return match[0]
+        _, separator, fragment = destination.partition("#")
+        absolute = f"{site_url}{target}" + (f"#{fragment}" if separator else "")
+        return f"{match['head']}{escape(absolute, quote=True)}{match['tail']}"
+
+    return FRAME_SOURCE.sub(rewrite, text)
+
+
+def staged_page(text: str, page_dir: str, source: Path, tracked: set[Path], site_url: str) -> str:
+    """One page's embedded media, resolved for the built site."""
+    return absolute_frame_sources(
+        inline_visual_drawings(text, page_dir, source, tracked), page_dir, site_url
+    )
+
+
 def stage(source: Path, destination: Path, site_url: str) -> None:
     source = source.resolve()
     destination = destination.resolve()
@@ -468,15 +582,17 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
     try:
         staged_source = temporary / "src"
         theme = temporary / "theme"
-        for relative in tracked_files(source):
+        tracked = set(tracked_files(source))
+        for relative in sorted(tracked):
             original = source / relative
             if original.is_symlink():
                 raise ValueError(f"refusing symbolic link in Pages source: {relative}")
             if not original.is_file():
                 continue
             # docs/site holds mdBook's theme override rather than publishable
-            # source, and its redirect map is configuration rather than an asset.
-            if relative == REDIRECTS:
+            # source; its redirect map is configuration and its landing page is
+            # published by this script rather than rendered as a chapter.
+            if relative in (REDIRECTS, LANDING):
                 continue
             target = (
                 theme / relative.relative_to(SITE)
@@ -484,7 +600,16 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
                 else staged_source / relative
             )
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(original, target)
+            text = original.read_text(encoding="utf-8") if relative.suffix == ".md" else None
+            if text is not None and ("<img" in text.lower() or "<iframe" in text.lower()):
+                target.write_text(
+                    staged_page(
+                        text, relative.parent.as_posix(), source, tracked, site_url
+                    ),
+                    encoding="utf-8", newline="\n",
+                )
+            else:
+                shutil.copy2(original, target)
         if not (theme / THEME_CSS).is_file():
             raise ValueError(f"{(SITE / THEME_CSS).as_posix()} must be tracked to style the book")
         rows = index_rows(source / INDEX)
@@ -528,29 +653,120 @@ def validate_artifact_paths(book: Path) -> None:
         raise RuntimeError(f"rendered Pages artifact has invalid path characters: {invalid}")
 
 
-def publish_readme_aliases(staged_source: Path, book: Path) -> None:
-    """Keep mdBook's rewritten README.html links valid for index chapters."""
+# A generated chapter line.  Labels are canonical index text with `[`, `]`
+# and `\` escaped, so the destination is what follows the *last* `](`.
+SUMMARY_CHAPTER = re.compile(
+    r"^\s*-\s+\[.*\]\((?P<destination>[^()\s]*)\)\s*$", re.MULTILINE
+)
+
+
+def summary_chapters(staged_source: Path) -> set[str]:
+    """Every page the generated navigation publishes, staged-root relative.
+
+    A `#fragment` selects a heading inside a chapter rather than another
+    page, so it is dropped: a row pointing at `../README.md#install`
+    still publishes `README.md`, and the callers ask which pages exist.
+    """
+    summary = (staged_source / "SUMMARY.md").read_text(encoding="utf-8")
+    return {
+        match["destination"].partition("#")[0]
+        for match in SUMMARY_CHAPTER.finditer(summary)
+    }
+
+
+def publish_readme_aliases(staged_source: Path, book: Path, chapters: set[str]) -> None:
+    """Keep mdBook's rewritten README.html links valid for index chapters.
+
+    mdBook renders a README chapter to its directory's index.html, and also
+    publishes the book's first chapter a second time at the artifact root.
+    Only a published chapter earns an alias: a staged README that navigation
+    does not carry would otherwise alias whatever page happens to occupy that
+    index.html.
+    """
     for readme in sorted(staged_source.rglob("README.md")):
-        relative_directory = readme.relative_to(staged_source).parent
-        index = book / relative_directory / "index.html"
+        relative = readme.relative_to(staged_source)
+        if relative.as_posix() not in chapters:
+            continue
+        index = book / relative.parent / "index.html"
         if not index.is_file():
             continue
-        alias = book / relative_directory / "README.html"
+        alias = book / relative.parent / "README.html"
         if alias.exists():
             raise RuntimeError(f"README compatibility alias already exists: {alias.relative_to(book)}")
         shutil.copy2(index, alias)
 
 
-class LocalAnchorParser(HTMLParser):
+def publish_landing_page(source: Path, book: Path, chapters: set[str]) -> None:
+    """Publish the tracked landing page as the artifact's root index.
+
+    mdBook publishes its first chapter twice: at its own route and again as
+    the artifact root.  The site's front door is a hand-authored page rather
+    than a chapter, so it takes that root copy and the book's own home stays
+    docs/index.html.  Its links and frames are published as written and
+    resolved by the same rendered-reference validation every built page goes
+    through; only its docs/visuals drawings are inlined, exactly as a
+    chapter's are, so they read the page's theme.  Like every other
+    published byte the page comes from the tracked file set and never from a
+    symbolic link, so an untracked or symlinked file publishes nothing — a
+    checkout that does not track the page, every release tag predating it,
+    publishes the chapter copy unchanged.
+
+    A root README chapter is the one page mdBook renders *only* to that root,
+    and whose navigation links point there, so it cannot share the route.
+    """
+    tracked = set(tracked_files(source))
+    landing = source / LANDING
+    if LANDING not in tracked or not landing.is_file():
+        return
+    if landing.is_symlink():
+        raise ValueError(f"refusing symbolic link in Pages source: {LANDING.as_posix()}")
+    if "README.md" in chapters:
+        raise ValueError(
+            f"{LANDING.as_posix()} and a root README chapter both claim book/index.html; "
+            "the canonical index must not row ../README.md"
+        )
+    # The page is written from the artifact root, so its media references
+    # are resolved from there — the same inlining every chapter gets.
+    (book / "index.html").write_text(
+        inline_visual_drawings(
+            landing.read_text(encoding="utf-8"), "", source, tracked
+        ),
+        encoding="utf-8", newline="\n",
+    )
+
+
+# Every rendered reference a reader can follow or the browser must fetch
+# to see the page as written: links, embedded charts, embedded reports,
+# and the stylesheets, icons and scripts the page pulls in.  The front
+# door is hand-authored HTML whose theme, font and favicon links nothing
+# else validates, so they are checked here with everything else.
+REFERENCE_ATTRIBUTES = {
+    "a": "href",
+    "link": "href",
+    "img": "src",
+    "iframe": "src",
+    "script": "src",
+}
+# mdBook's print page is an aggregation: it re-hosts every chapter's body at
+# the book root.  It rewrites the Markdown links it parsed and the raw-HTML
+# `<img src>` it finds, but never an `<iframe src>` — which is why staging
+# writes those as site-absolute paths, so every page's frames resolve here
+# too and nothing has to be exempted from validation.
+
+
+class LocalReferenceParser(HTMLParser):
+    """Collect every rendered link, image, and frame destination."""
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.destinations: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "a":
+        attribute = REFERENCE_ATTRIBUTES.get(tag)
+        if attribute is None:
             return
         for name, value in attrs:
-            if name == "href" and value is not None:
+            if name == attribute and value is not None:
                 self.destinations.append(value)
 
 
@@ -579,9 +795,9 @@ def rendered_local_links(book: Path, site_url: str) -> list[tuple[Path, str, Pat
 
     links = []
     for page in sorted(book.rglob("*.html")):
-        parser = LocalAnchorParser()
-        parser.feed(page.read_text(encoding="utf-8"))
         relative_page = page.relative_to(book)
+        parser = LocalReferenceParser()
+        parser.feed(page.read_text(encoding="utf-8"))
         for destination in parser.destinations:
             parsed = urlsplit(destination)
             if parsed.scheme or parsed.netloc:
@@ -671,7 +887,9 @@ def build(
     validate_source_ref(source_ref)
     required_mdbook(source, mdbook)
     subprocess.run([mdbook, "build", "-d", "book"], cwd=destination, check=True)
-    publish_readme_aliases(destination / "src", destination / "book")
+    chapters = summary_chapters(destination / "src")
+    publish_readme_aliases(destination / "src", destination / "book", chapters)
+    publish_landing_page(source, destination / "book", chapters)
     # mdBook renders each configured redirect as a page linking its target, so
     # the rendered-link inventory also proves every redirect resolves.
     links = rendered_local_links(destination / "book", site_url)

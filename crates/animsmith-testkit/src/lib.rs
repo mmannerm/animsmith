@@ -10,6 +10,17 @@
 //! assets. The analytic walk plays the same role for the semantic
 //! checks: `walk.glb` is the clean cycle, and each symptom fixture is
 //! that cycle plus exactly one authored defect.
+//!
+//! [`docs_visuals`] carries the same discipline one step further: it
+//! names the committed documentation pictures under `docs/visuals/` and
+//! the CLI invocations that produce them. [`docs_html`] and
+//! [`docs_markdown`] complete the set for the documentation gates: one
+//! reader each for the raw HTML the pages embed and the Markdown they
+//! are written in, so no two gates can disagree about what a page says.
+
+pub mod docs_html;
+pub mod docs_markdown;
+pub mod docs_visuals;
 
 use animsmith_core::model::*;
 use glam::{Quat, Vec3};

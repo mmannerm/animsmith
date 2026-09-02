@@ -37,7 +37,7 @@ support, or proof that a runtime asset exists.
 | `loop-closure` | `0.01 m` and `1.0°` | Checks declared loops before graph playback. |
 | `in-place` | XZ speed at least `0.5 m/s` counts as travelling | Makes gameplay versus animation movement ownership explicit. |
 
-The rest of the [check catalog](../README.md#checks) is unchanged by the
+The rest of the [check catalog](built-in-checks.md) is unchanged by the
 profile.
 
 For scale, [#267](https://github.com/mmannerm/animsmith/issues/267) owns the

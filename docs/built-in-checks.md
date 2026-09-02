@@ -2,7 +2,7 @@
 
 This is the customer-facing reference for every registered built-in check in
 AnimSmith's current catalog. It complements the concise [README check
-catalog](../README.md#checks), the symptom-first [game-ready clips
+catalog](../README.md), the symptom-first [game-ready clips
 guide](game-ready-clips.md), and the exact Rust API on
 [docs.rs](https://docs.rs/animsmith-core).
 
@@ -328,7 +328,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   still need authored review or a different transform.
 - Runtime and references: redundant inclusive endpoints are a common DCC export
   artifact and can affect downstream loop handling. See [The loop
-  pops](game-ready-clips.md#the-loop-pops), [Editing a
+  pops](symptoms/loop-pops.md), [Editing a
   clip](../examples/README.md#3-editing-a-clip), and [API:
   `DuplicateLoopEndpoint`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/duplicate_loop_endpoint/struct.DuplicateLoopEndpoint.html).
 
@@ -350,7 +350,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Remediation and boundary: re-author, reslice, or re-export the loop in the
   DCC. This is a diagnosis, not an automatic loop repair.
 - Runtime and references: a failed closure produces an obvious pose jump at the
-  wrap. See [The loop pops](game-ready-clips.md#the-loop-pops) and [API:
+  wrap. See [The loop pops](symptoms/loop-pops.md) and [API:
   `LoopClosure`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/loop_closure/struct.LoopClosure.html).
 
 ### `loop-seam`
@@ -370,7 +370,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Remediation and boundary: fix the loop cut or cycle in the DCC. AnimSmith
   intentionally reports the seam evidence rather than inventing a repair.
 - Runtime and references: the symptom is a once-per-cycle pop even when the raw
-  file is format-valid. See [The loop pops](game-ready-clips.md#the-loop-pops)
+  file is format-valid. See [The loop pops](symptoms/loop-pops.md)
   and [API:
   `LoopSeam`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/loop_seam/struct.LoopSeam.html).
 
@@ -391,7 +391,7 @@ only after an explicit `note`, `warn`, or `error` severity.
   the DCC; there is no built-in automatic velocity repair.
 - Runtime and references: this is the once-per-cycle hitch where the clip hits
   the right pose but changes speed abruptly at the seam. See [The loop
-  pops](game-ready-clips.md#the-loop-pops) and [API:
+  pops](symptoms/loop-pops.md) and [API:
   `LoopSeamVelocity`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/loop_seam_vel/struct.LoopSeamVelocity.html).
 
 ### `loop-seam-rot`
@@ -410,7 +410,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Remediation and boundary: correct the authored wrap or export timing in the
   DCC; there is no built-in automatic angular-velocity repair.
 - Runtime and references: this is the rotational version of a loop hitch or
-  pulse at the seam. See [The loop pops](game-ready-clips.md#the-loop-pops) and
+  pulse at the seam. See [The loop pops](symptoms/loop-pops.md) and
   [API:
   `LoopSeamRotation`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/loop_seam_rot/struct.LoopSeamRotation.html).
 
@@ -593,5 +593,5 @@ only after an explicit `note`, `warn`, or `error` severity.
   movement ownership.
 - Runtime and references: failed stance motion shows up as skating or slipping
   feet in motion or blends. See [Feet slide within one
-  clip](game-ready-clips.md#feet-slide-within-one-clip) and [API:
+  clip](symptoms/feet-slide.md) and [API:
   `FootSlide`](https://docs.rs/animsmith-core/latest/animsmith_core/checks/foot_slide/struct.FootSlide.html).

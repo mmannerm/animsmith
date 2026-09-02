@@ -31,7 +31,7 @@ still provides exact source contracts:
 | `loop-seam-vel` / `loop-seam-rot` | `0.1 m/s` / `5.0°/s` | Finds wrap velocity discontinuity. |
 | `in-place` | XZ speed at least `0.5 m/s` counts as travelling | Enforces declared movement ownership. |
 
-Use the complete [check catalog](../README.md#checks) for structural rig,
+Use the complete [check catalog](built-in-checks.md) for structural rig,
 duration, FPS, gait, sync, foot-slide, and bind-pose contracts. Do not select
 `engine-addressability`; it is defined only for the exact Bevy tuple.
 

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" id="icon-feet-slide" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="A planted foot drifts away from where it should stay during stance">
+  <title>Feet slide within a clip</title>
+  <style>
+    /* Every colour resolves through the documentation theme's own token,
+       so an inlined icon follows the page's light or dark choice; the
+       fallbacks are for a file opened on its own, where no token exists.
+       Every rule is scoped to this icon's id, so nothing here reaches the
+       page that inlines it or another picture beside it. */
+    #icon-feet-slide { --ground: var(--as-line-strong, #b9c1d6); --foot: var(--as-accent, #3b67d6); --ghost: var(--as-error, #cf3f5b); }
+    @media (prefers-color-scheme: dark) { #icon-feet-slide { --ground: var(--as-line-strong, #3d3d52); --foot: var(--as-accent, #7aa2f7); --ghost: var(--as-error, #f7768e); } }
+    #icon-feet-slide .ground { stroke: var(--ground); stroke-width: 3; stroke-linecap: round; }
+    #icon-feet-slide .ghost { fill: none; stroke: var(--ghost); stroke-width: 2; stroke-dasharray: 4 3; }
+    #icon-feet-slide .foot { fill: var(--foot); }
+    #icon-feet-slide .slide { animation: slide 2.4s ease-in-out infinite; }
+    @keyframes slide { 0%, 15% { transform: translateX(0); } 55%, 70% { transform: translateX(28px); } 100% { transform: translateX(0); } }
+    @media (prefers-reduced-motion: reduce) { #icon-feet-slide .slide { animation: none; transform: translateX(28px); } }
+  </style>
+  <line class="ground" x1="12" y1="84" x2="108" y2="84"/>
+  <rect class="ghost" x="30" y="62" width="40" height="18" rx="7"/>
+  <g class="slide"><rect class="foot" x="30" y="62" width="40" height="18" rx="7"/><rect class="foot" x="58" y="40" width="12" height="26" rx="5"/></g>
+</svg>
