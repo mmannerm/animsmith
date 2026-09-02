@@ -49,6 +49,18 @@ require_animation_pack_workflow() {
   python3 scripts/check-animation-pack-workflow.py --self-test
 }
 
+# A release published with the repository GITHUB_TOKEN creates no workflow run,
+# so the Pages root only follows the new tag while release-plz.yml dispatches
+# docs-pages.yml itself. Validate that path structurally, after YAML decoding.
+require_pages_release_trigger() {
+  require_file .github/workflows/release-plz.yml
+  require_file .github/workflows/docs-pages.yml
+  python3 scripts/check-pages-release-trigger.py \
+    --release-workflow .github/workflows/release-plz.yml \
+    --pages-workflow .github/workflows/docs-pages.yml
+  python3 scripts/check-pages-release-trigger.py --self-test
+}
+
 # Dependabot treats a version-shaped action ref as a tag to bump, so
 # `dtolnay/rust-toolchain@1.88` gets silently rewritten to whatever number
 # looks newest -- it once proposed `@1.100`, a nightly number, for the MSRV
@@ -188,6 +200,10 @@ require_literal .github/PULL_REQUEST_TEMPLATE.md "just package-inventory" "packa
 # another leg of the platform test matrix. Keep its invocation anchored in the
 # reusable workflow so removal cannot silently erase exact-head evidence.
 require_animation_pack_workflow
+
+# The Pages root tracks the latest published release and /dev/ tracks main, so
+# a successful publication must reach the Pages workflow (#652).
+require_pages_release_trigger
 
 require_literal SUPPORT.md "GitHub Discussions are" "support discussion routing"
 require_literal SUPPORT.md "not enabled" "support discussion routing"
