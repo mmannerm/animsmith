@@ -343,3 +343,49 @@ fn evidence_only_publishes_both_report_forms_without_their_sampled_motion() {
         );
     }
 }
+
+#[test]
+fn development_guide_names_the_evidence_only_flag_the_cli_offers() {
+    let guide = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../DEVELOPMENT.md"),
+    )
+    .expect("DEVELOPMENT.md");
+    // The policy sentence itself names the command, so a guide that kept the
+    // flag in unrelated prose while pointing the policy at something else
+    // would fail here: the command is read out of that sentence.
+    const POLICY: &str = "The artifact form that satisfies this rule is `";
+    let prose = guide.split_whitespace().collect::<Vec<_>>().join(" ");
+    let start = prose.find(POLICY).expect(
+        "DEVELOPMENT.md states which artifact form satisfies the published-derivative rule",
+    ) + POLICY.len();
+    let end = prose[start..]
+        .find('`')
+        .expect("the policy sentence closes its command span")
+        + start;
+    let command: Vec<&str> = prose[start..end].split_whitespace().collect();
+    assert_eq!(command.first(), Some(&"animsmith"), "{command:?}");
+    let subcommand = command.get(1).expect("the policy names a subcommand");
+    let flags: Vec<&str> = command[2..]
+        .iter()
+        .copied()
+        .filter(|word| word.starts_with("--"))
+        .collect();
+    assert_eq!(flags, ["--evidence-only"], "{command:?}");
+
+    let output = animsmith()
+        .args([subcommand, "--help"])
+        .output()
+        .expect("runs the policy's subcommand with --help");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let help = String::from_utf8_lossy(&output.stdout);
+    for flag in flags {
+        assert!(
+            help.lines().any(|line| line.trim_start().starts_with(flag)),
+            "`animsmith {subcommand} --help` offers {flag}:\n{help}"
+        );
+    }
+}

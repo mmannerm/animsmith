@@ -5,6 +5,17 @@ the current Mixamo and Protofactor technical-report/evidence-appendix pairs.
 They are scoped technical snapshots of authorized inputs, not redistribution
 advice, a license opinion, or approval for a different target game.
 
+## Who these reports are for
+
+The pairs exist to prove the tool on real deliveries: every claim in them comes
+from running AnimSmith over a pack as a developer actually receives it. A
+developer deciding whether to buy a pack should read the
+[scorecard](reports/README.md#scorecard) first, which gives every maintained
+pack its verdict, completeness, and confidence in one row, and then read the
+**Technical decision** and **Technical issue register** of the single pair that
+matters. The reports assess delivered files, not a purchase: no per-pack
+buyer's note exists, and none is implied.
+
 ## Read a pair in order
 
 1. Read the **Technical decision** for the scoped verdict and its conditions.
