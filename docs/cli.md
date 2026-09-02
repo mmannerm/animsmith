@@ -1181,7 +1181,7 @@ the stable source-node path and ancestry so attachment/import policies can be
 traced back to the source projection. For glTF that projection is authored
 node state; for FBX it is ufbx-normalized metre/Y-up, adjusted/inheritance-
 compensated state rather than the raw FBX transform stack. See the
-[selected-node scale workflow](game-ready-clips.md#attachment-nodes-and-inherited-rest-world-scale).
+[selected-node scale workflow](symptoms/file-bloat.md#attachment-nodes-and-inherited-rest-world-scale).
 
 `convert --format json` emits conversion evidence v2, with immutable identity
 `urn:animsmith:schema:conversion-evidence:2`; see [output.md](output.md) and

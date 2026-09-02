@@ -196,10 +196,10 @@ walking.glb:
 ```
 
 Of the clip's 156 tracks, 103 never move — pure
-[export bloat](game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes)
+[export bloat](symptoms/file-bloat.md)
 — and the hips carry a scale track worth checking before retargeting.
 Nothing here is broken motion; the serious mechanical defects —
-[flicker-inducing quaternion problems](game-ready-clips.md#the-pose-flickers-spins-or-explodes)
+[flicker-inducing quaternion problems](symptoms/pose-flickers.md)
 — tend to creep in later, after the asset has been through your DCC, a
 retargeter, or an exporter plugin.
 
@@ -214,7 +214,7 @@ $ animsmith fix walking.glb --dry-run
 (One summary line per default repair — `quat-norm`, then `quat-flip`.)
 `fix` applies only repairs that are provably lossless: `quat-norm` and
 `quat-flip`, the representation defects behind
-[the pose flickers, spins, or explodes](game-ready-clips.md#the-pose-flickers-spins-or-explodes).
+[the pose flickers, spins, or explodes](symptoms/pose-flickers.md).
 That makes it safe to run unconditionally; on a clean export it is a
 no-op, as here. When a re-export does pick up defects:
 
@@ -342,7 +342,7 @@ here.) The numbers become the contract:
 near-zero per-bone loop deltas and `loop_seam_ratio` say the cycle closes in
 pose, velocity, and locomotion phase; `speed_mps` of zero confirms the In Place
 download, and the gait numbers seed a
-[blend-ring group](game-ready-clips.md#feet-skate-when-clips-blend)
+[blend-ring group](symptoms/blend-skate.md)
 once you have more than one direction. Declare what must stay true by
 saving this as `animsmith.toml` next to your clip — animsmith
 auto-loads it from the working directory:

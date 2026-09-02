@@ -25,9 +25,21 @@ const PAGES: &[&str] = &[
     "docs/install.md",
     "docs/first-lint.md",
     "docs/first-report.md",
+    "docs/symptoms/pose-flickers.md",
+    "docs/symptoms/wrong-length.md",
     "docs/symptoms/loop-pops.md",
+    "docs/symptoms/character-glides.md",
+    "docs/symptoms/blend-skate.md",
     "docs/symptoms/feet-slide.md",
+    "docs/symptoms/limb-frozen.md",
+    "docs/symptoms/identity-mismatch.md",
+    "docs/symptoms/file-bloat.md",
 ];
+
+/// Committed trees the documented commands name, copied into every
+/// page's throwaway checkout so a relative path in a transcript resolves
+/// exactly as it does in a reader's own checkout.
+const FIXTURE_TREES: &[&str] = &["examples", "crates/animsmith/testdata/collection-spike"];
 
 /// A trimmed line: the reader is told the rest was cut, so only the
 /// prefix is promised.
@@ -131,7 +143,7 @@ fn documented_commands(block: &str, page: &str) -> Vec<Documented> {
     commands
 }
 
-/// A temporary checkout-shaped directory: the committed `examples/` tree
+/// A temporary checkout-shaped directory: the committed [`FIXTURE_TREES`]
 /// and nothing else, so a documented command's relative paths resolve and
 /// its outputs land outside this repository.
 fn fixture_checkout() -> tempfile::TempDir {
@@ -139,10 +151,9 @@ fn fixture_checkout() -> tempfile::TempDir {
         .prefix("animsmith-start-docs-")
         .tempdir()
         .expect("creates temp dir");
-    copy_tree(
-        &repo_root().join("examples"),
-        &temporary.path().join("examples"),
-    );
+    for tree in FIXTURE_TREES {
+        copy_tree(&repo_root().join(tree), &temporary.path().join(tree));
+    }
     temporary
 }
 
@@ -211,7 +222,7 @@ fn every_documented_start_command_still_behaves_as_the_page_claims() {
         assert!(ran > 0, "{page} documents no runnable animsmith command");
     }
     assert!(
-        total >= 10,
+        total >= 25,
         "the Start and symptom pages must keep documenting their commands, found {total}"
     );
 }

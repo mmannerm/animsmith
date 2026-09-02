@@ -161,7 +161,7 @@ The step's exit code is the gate: 1 fails the job, 0 passes it.
 
 Use repair when a clip plays as a sudden flicker, spin, or explosion,
 but the authored motion is still recoverable. The symptoms in
-[the pose flickers, spins, or explodes](../docs/game-ready-clips.md#the-pose-flickers-spins-or-explodes)
+[the pose flickers, spins, or explodes](../docs/symptoms/pose-flickers.md)
 are often quaternion representation problems, so `fix --dry-run` lets a
 gate report the exact lossless repairs before writing anything.
 
@@ -215,7 +215,7 @@ alone should fail CI.
 Use editing when the animation content is right but the pipeline cut is
 wrong: a capture has junk at the head, a one-shot needs a final hold, or
 a loop's stride anchor lands in the wrong place. Those are the cases in
-[the clip is the wrong length or freezes at the end](../docs/game-ready-clips.md#the-clip-is-the-wrong-length-or-freezes-at-the-end)
+[the clip is the wrong length or freezes at the end](../docs/symptoms/wrong-length.md)
 and [the loop pops](../docs/symptoms/loop-pops.md), where a
 mechanical transform can make the clip conform without touching
 geometry.
@@ -297,8 +297,8 @@ target engine before replacing the export.
 
 Use a contract config when the failure depends on what your game expects,
 not on file validity alone. [The character glides or runs in
-place](../docs/game-ready-clips.md#the-character-glides-or-runs-in-place),
-[feet skate when clips blend](../docs/game-ready-clips.md#feet-skate-when-clips-blend),
+place](../docs/symptoms/character-glides.md),
+[feet skate when clips blend](../docs/symptoms/blend-skate.md),
 and [feet slide within one
 clip](../docs/symptoms/feet-slide.md) all need
 declared locomotion or blend assumptions before animsmith can judge
@@ -877,9 +877,9 @@ Use this workflow when a DCC or marketplace export reaches your importer
 but brings bloated constant tracks, stray scale keys, or a rig the
 retargeter cannot trust. That is the hygiene side of [the file is
 bloated, or the retargeter
-chokes](../docs/game-ready-clips.md#the-file-is-bloated-or-the-retargeter-chokes)
+chokes](../docs/symptoms/file-bloat.md)
 and the rig-contract side of [a limb is T-posed, or a bone never
-moves](../docs/game-ready-clips.md#a-limb-is-t-posed-or-a-bone-never-moves):
+moves](../docs/symptoms/limb-frozen.md):
 convert to glTF, measure/lint/report, then compare against the previous
 asset before committing the migration.
 
