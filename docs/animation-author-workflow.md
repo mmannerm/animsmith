@@ -1,5 +1,7 @@
 # For artists: from export to handoff
 
+Where you are: **[Artist export](animation-author-workflow.md)** → [Contract](declaring-the-contract.md) → [Developer intake](game-developer-intake-workflow.md) → [CI gate](pipeline-scenarios.md#scenario-ci-gating-on-animation-changes) → [Engine check](game-developer-intake-workflow.md#other-engine-routes)
+
 You have exported a clip, or cleaned one up, and somebody downstream has to
 trust it. This page is the order to do that in: keep the file you exported
 from, check what you actually shipped, make only the changes a tool can prove,
@@ -85,6 +87,10 @@ be expected evidence that a candidate materially differs.
    work. A source delivery defect or missing contractual clip goes back to the
    vendor/source owner.
 
+   **Handed over:** the finding as a work order, and a new candidate export
+   back — the immutable source never moves. That round trip is the
+   [mocap cleanup gate](pipeline-scenarios.md#scenario-mocap-cleanup-gate).
+
 5. **Diff the candidate against the accepted baseline.** A binary rewrite is
    not review evidence. Compare the measured effects and hand off the output
    with the candidate.
@@ -100,6 +106,11 @@ be expected evidence that a candidate materially differs.
    any generated report. State the remaining engine, gameplay, and visual
    gates instead of converting unknowns into a pass.
 
+   **Handed over:** the candidate plus that evidence bundle, to whoever
+   accepts it — the receiving side runs the same contract, which is what
+   [outsourced-asset acceptance](pipeline-scenarios.md#scenario-outsourced-asset-acceptance)
+   makes a two-sided gate rather than a request.
+
 ## When to stop and route
 
 | Evidence says | Next owner |
@@ -107,7 +118,7 @@ be expected evidence that a candidate materially differs.
 | A lossless quaternion repair or documented mechanical transform resolves the finding and the diff is understood. | AnimSmith workflow; re-lint and submit the candidate. |
 | Pose, contacts, timing, retargeting, rig mapping, or authored scale must change. | DCC/animation author; export a new candidate. |
 | The asset is mechanically sound but importer settings, masks, graph wiring, root-motion application, or target lookup fails. | Engine/project integrator; follow the [game-developer workflow](game-developer-intake-workflow.md). |
-| The delivered source cannot satisfy the agreed contract or is incomplete. | Vendor/source owner. |
+| The delivered source cannot satisfy the agreed contract or is incomplete. | Vendor/source owner; return it with the evidence, as in [outsourced-asset acceptance](pipeline-scenarios.md#scenario-outsourced-asset-acceptance). |
 | Runtime feel, readability, or style remains disputed after the technical evidence is clean. | Gameplay/art direction; perform project-owned visual acceptance. |
 
 ## Next step

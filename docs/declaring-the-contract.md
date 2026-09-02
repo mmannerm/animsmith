@@ -1,5 +1,7 @@
 # Declaring the contract: who writes what
 
+Where you are: [Artist export](animation-author-workflow.md) → **[Contract](declaring-the-contract.md)** → [Developer intake](game-developer-intake-workflow.md) → [CI gate](pipeline-scenarios.md#scenario-ci-gating-on-animation-changes) → [Engine check](game-developer-intake-workflow.md#other-engine-routes)
+
 `animsmith.toml` is where a team writes down what a clip is *supposed* to
 do. Mechanical checks need none of it — they run on any file. Everything
 else waits for a declaration: with no `loop = true`, the seam checks have

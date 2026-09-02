@@ -1,5 +1,7 @@
 # For game developers: from pack to engine gate
 
+Where you are: [Artist export](animation-author-workflow.md) → [Contract](declaring-the-contract.md) → **[Developer intake](game-developer-intake-workflow.md)** → [CI gate](pipeline-scenarios.md#scenario-ci-gating-on-animation-changes) → [Engine check](game-developer-intake-workflow.md#other-engine-routes)
+
 A pack has landed, and somebody has to say whether it can ship in your game.
 This page is the order to find out in: inventory what the delivery really
 contains, pin the engine you are judging it against, settle who moves the
@@ -19,6 +21,13 @@ faster than a full intake pass.
    masked overlays, contacts, and interaction chains. A collection manifest
    can retain that physical-to-logical binding; see
    [collection contracts](collection-contracts.md).
+
+   **Handed over:** the untouched delivery, with its licence and vendor
+   metadata, into an immutable raw location —
+   [marketplace-pack intake](pipeline-scenarios.md#scenario-marketplace-pack-intake)
+   is the sorting pass that follows, and
+   [raw vs transformed artifact storage](pipeline-scenarios.md#scenario-raw-vs-transformed-artifact-storage)
+   is where each artifact lives.
 
 2. **Choose the engine tuple before interpreting an engine check.** An engine
    profile identifies one documented importer boundary. It does not select a
@@ -45,6 +54,12 @@ faster than a full intake pass.
    intended clip, test skeleton/retarget mapping, blend/transition timing,
    masks and contacts, root-motion application, target lookup, and a visual
    gameplay scene. This is the gate that establishes engine-observed evidence.
+
+   **Handed over:** the exact emitted artifact and its evidence, to the
+   project that will ship it. Once it is accepted there, every later
+   re-export is judged by
+   [CI gating on animation changes](pipeline-scenarios.md#scenario-ci-gating-on-animation-changes)
+   against this same contract.
 
 ## Worked path: Bevy 0.19.0, profile revision 3
 
