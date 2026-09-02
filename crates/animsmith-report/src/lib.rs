@@ -29,9 +29,12 @@
 //! report forms. The grid *is* the motion: it is the model-space joint
 //! position of every bone on every judged frame, so a full report of a
 //! licensed clip carries that clip. An evidence-only report keeps the
-//! findings, coverage gaps, engine predictions, and input identities and can
-//! therefore be attached to an issue, published, or sent to a vendor where the
-//! source asset itself may not go (see the [licensed-asset policy]).
+//! findings, coverage gaps and engine predictions — [`render_comparison`]
+//! also keeping both sides' input identities, and [`render`] its profile and
+//! source path when the document has one — and can therefore be attached to
+//! an issue, published, or sent to a vendor where the source asset itself may
+//! not go (see the
+//! [licensed-asset policy]).
 //!
 //! The boundary is the pose grid, and it is worth stating exactly. [`render`]
 //! draws its charts here, on the Rust side, so an evidence-only single-clip
@@ -40,9 +43,9 @@
 //! bone. [`render_comparison`]'s panels are viewer drawings made from the pose
 //! grid, so an evidence-only comparison replaces every one of them — both
 //! trajectory panels, both gait panels, and the shared root chart — with the
-//! omission notice, and retains findings, gaps, predictions, and identities
-//! alone. What neither form carries is the per-frame grid a viewer could
-//! re-export as animation.
+//! omission notice; findings, gaps, predictions, identities, clip metadata,
+//! and contexts stay as the full comparison embeds them. What neither form
+//! carries is the per-frame grid a viewer could re-export as animation.
 //!
 //! [licensed-asset policy]: https://github.com/mmannerm/animsmith/blob/main/DEVELOPMENT.md#golden-tests
 //!
@@ -164,9 +167,10 @@ pub struct ReportOptions {
     /// The grid is the motion — every bone's model-space position on every
     /// judged frame — so a full report of a licensed clip carries that clip.
     /// With this set the document renders a notice where each pose view would
-    /// be and playback is disabled, while findings, coverage gaps, engine
-    /// predictions, and input identities are unchanged, so the evidence can be
-    /// shared where the source asset cannot.
+    /// be and playback is disabled, while findings, coverage gaps and engine
+    /// predictions are unchanged — as are the comparison's per-side input
+    /// identities and the single-clip report's profile and source path, when
+    /// it has one — so the evidence can be shared where the source asset cannot.
     ///
     /// [`render`]'s charts are drawn here and survive, retaining root X/Z and
     /// foot heights relative to the hips: the omission is the pose grid
@@ -1668,8 +1672,8 @@ pub fn render(
         ""
     };
     let hint = if options.evidence_only {
-        "sampled poses were omitted · findings, coverage, charts, and identities are the \
-         evidence this report carries"
+        "sampled poses were omitted · findings, coverage, and charts are the evidence \
+         this report carries"
     } else {
         "drag to orbit · wheel to zoom · frames shown are exactly the grid the checks judged"
     };
