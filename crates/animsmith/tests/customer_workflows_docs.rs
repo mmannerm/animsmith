@@ -4,7 +4,8 @@
 //! lines: navigation and canonical links must survive normal Markdown syntax,
 //! and the runnable examples must continue to agree with the current CLI.
 
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use animsmith_testkit::docs_markdown::fenced_blocks;
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -60,32 +61,6 @@ fn rendered_text(markdown: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn fenced_blocks(markdown: &str, language: &str) -> Vec<String> {
-    let mut blocks = Vec::new();
-    let mut active = None;
-    for event in Parser::new_ext(markdown, options()) {
-        match event {
-            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))
-                if info.as_ref() == language =>
-            {
-                active = Some(String::new());
-            }
-            Event::Text(text) | Event::Code(text) => {
-                if let Some(block) = active.as_mut() {
-                    block.push_str(&text);
-                }
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                if let Some(block) = active.take() {
-                    blocks.push(block);
-                }
-            }
-            _ => {}
-        }
-    }
-    blocks
 }
 
 fn stderr(output: &Output) -> String {

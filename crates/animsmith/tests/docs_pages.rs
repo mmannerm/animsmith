@@ -2,6 +2,7 @@
 //! parse the canonical index mechanically, but staged Markdown is validated
 //! with pulldown-cmark so the check covers what a renderer actually sees.
 
+use animsmith_testkit::docs_html;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -1220,49 +1221,16 @@ fn every_generated_group_chapter_publishes_exactly_its_canonical_members() {
     }
 }
 
-/// Every `(tag, attribute value)` reference in a page's raw HTML, for the
-/// attributes a browser follows or fetches.
-fn html_references(html: &str) -> Vec<(String, String)> {
-    let mut references = Vec::new();
-    for (tag, attribute) in [
-        ("<a", "href"),
-        ("<link", "href"),
-        ("<img", "src"),
-        ("<iframe", "src"),
-        ("<script", "src"),
-    ] {
-        let mut rest = html;
-        while let Some(start) = rest.find(tag) {
-            let after = &rest[start + tag.len()..];
-            let end = after.find('>').unwrap_or(after.len());
-            if after.starts_with([' ', '\t', '\n', '\r', '/', '>'])
-                && let Some(value) = quoted_attribute(&after[..end], attribute)
-            {
-                references.push((tag[1..].to_owned(), value));
-            }
-            rest = &after[end..];
-        }
-    }
-    references
-}
-
-/// One double-quoted attribute value from a start tag's body.
-fn quoted_attribute(tag_body: &str, name: &str) -> Option<String> {
-    let needle = format!("{name}=\"");
-    let at = tag_body.find(&needle)?;
-    let boundary = at == 0
-        || tag_body[..at]
-            .chars()
-            .next_back()
-            .is_some_and(char::is_whitespace);
-    boundary.then(|| {
-        tag_body[at + needle.len()..]
-            .split('"')
-            .next()
-            .unwrap_or_default()
-            .to_owned()
-    })
-}
+/// Every reference the landing page asks a browser to follow or fetch:
+/// its navigation and body links, the theme and font stylesheets, the
+/// favicon, the charts, and any script it loads.
+const LANDING_REFERENCES: [(&str, &str); 5] = [
+    ("a", "href"),
+    ("link", "href"),
+    ("img", "src"),
+    ("iframe", "src"),
+    ("script", "src"),
+];
 
 /// The tracked repository file a landing-page reference resolves to, given
 /// that the page is published as the artifact root: `docs/<page>.html` is a
@@ -1310,7 +1278,7 @@ fn the_tracked_landing_page_takes_the_root_index_and_every_reference_resolves() 
 
     let landing =
         std::fs::read_to_string(root.join("docs/site/landing.html")).expect("reads landing page");
-    let references = html_references(&landing);
+    let references = docs_html::html_references(&landing, &LANDING_REFERENCES);
     assert!(
         references.len() >= 15,
         "the landing page routes the site: {references:#?}"

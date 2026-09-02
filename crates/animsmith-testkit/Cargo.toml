@@ -1,6 +1,6 @@
 [package]
 name = "animsmith-testkit"
-description = "Internal fixture builders shared by animsmith's tests and the example asset generator (not published)."
+description = "Internal test support shared by animsmith's tests and the example asset generator: fixture builders and documentation-source readers (not published)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,3 +18,6 @@ glam = { workspace = true }
 # fixtures builder as its sine so the committed example assets regenerate
 # byte-for-byte on Linux / macOS / Windows.
 libm = { workspace = true }
+# The documentation gates read rendered Markdown, never source lines, so
+# a code-shaped decoy cannot satisfy a promise.
+pulldown-cmark = { workspace = true }

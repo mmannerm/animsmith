@@ -141,6 +141,7 @@ dependencies = [
  "base64",
  "glam",
  "libm",
+ "pulldown-cmark",
 ]
 
 [[package]]

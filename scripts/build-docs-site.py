@@ -593,8 +593,17 @@ def publish_landing_page(source: Path, book: Path, chapters: set[str]) -> None:
 
 
 # Every rendered reference a reader can follow or the browser must fetch
-# to see the page as written: links, embedded charts, and embedded reports.
-REFERENCE_ATTRIBUTES = {"a": "href", "img": "src", "iframe": "src"}
+# to see the page as written: links, embedded charts, embedded reports,
+# and the stylesheets, icons and scripts the page pulls in.  The front
+# door is hand-authored HTML whose theme, font and favicon links nothing
+# else validates, so they are checked here with everything else.
+REFERENCE_ATTRIBUTES = {
+    "a": "href",
+    "link": "href",
+    "img": "src",
+    "iframe": "src",
+    "script": "src",
+}
 # mdBook's print page is an aggregation: it re-hosts every chapter's body at
 # the book root and rewrites the Markdown links it parsed, but a raw-HTML
 # `src` is passed through as the chapter wrote it.  Those media references

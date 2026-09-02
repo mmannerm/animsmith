@@ -22,6 +22,7 @@
 //! wherever it sits. Positional completeness claims (every docs page
 //! has a Document-column index row) live in `docs_index.rs`.
 
+use animsmith_testkit::docs_html;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -164,10 +165,10 @@ fn rendered_link_or_image_destinations(markdown: &str) -> Vec<String> {
     rendered_destinations(markdown, true)
 }
 
-/// Raw-HTML start tags whose `src` is a local reference to validate.
+/// Raw-HTML references whose destination is a local target to validate.
 /// `<img>` carries the generated charts and `<iframe>` the embedded
 /// reports; both are raw HTML because Markdown can express neither.
-const RAW_HTML_MEDIA_TAGS: [&str; 2] = ["<img", "<iframe"];
+const RAW_HTML_MEDIA: [(&str, &str); 2] = [("img", "src"), ("iframe", "src")];
 
 /// `src` destinations of every `<img>` and `<iframe>` in the raw HTML
 /// blocks and spans a Markdown page contains. HTML inside fenced or
@@ -177,55 +178,14 @@ fn raw_html_media_destinations(markdown: &str) -> Vec<String> {
     let mut destinations = Vec::new();
     for event in Parser::new_ext(markdown, gfm_options()) {
         if let Event::Html(html) | Event::InlineHtml(html) = event {
-            collect_media_sources(&html, &mut destinations);
+            destinations.extend(
+                docs_html::html_references(&html, &RAW_HTML_MEDIA)
+                    .into_iter()
+                    .map(|(_, destination)| destination),
+            );
         }
     }
     destinations
-}
-
-/// Append the `src` of every [`RAW_HTML_MEDIA_TAGS`] start tag in one
-/// raw-HTML fragment. Attribute values are taken literally: a character
-/// reference in a local path would be a bug in the page, not a target
-/// this gate should resolve.
-fn collect_media_sources(html: &str, destinations: &mut Vec<String>) {
-    for tag in RAW_HTML_MEDIA_TAGS {
-        let mut rest = html;
-        while let Some(start) = rest.find(tag) {
-            let after = &rest[start + tag.len()..];
-            let end = after.find('>').unwrap_or(after.len());
-            // `<img` must not also match `<image`: a start tag's name
-            // ends at whitespace or at the tag itself.
-            if after.starts_with([' ', '\t', '\n', '\r', '/', '>'])
-                && let Some(source) = attribute_value(&after[..end], "src")
-            {
-                destinations.push(source);
-            }
-            rest = &after[end..];
-        }
-    }
-}
-
-/// One double- or single-quoted attribute value from a start tag's body.
-fn attribute_value(tag_body: &str, name: &str) -> Option<String> {
-    let mut rest = tag_body;
-    loop {
-        let at = rest.find(name)?;
-        let before_is_boundary = at == 0
-            || rest[..at]
-                .chars()
-                .next_back()
-                .is_some_and(char::is_whitespace);
-        let after = rest[at + name.len()..].trim_start();
-        if before_is_boundary && let Some(value) = after.strip_prefix('=') {
-            let value = value.trim_start();
-            let quote = value.chars().next()?;
-            if quote == '"' || quote == '\'' {
-                return value[1..].split(quote).next().map(str::to_owned);
-            }
-            return None;
-        }
-        rest = &rest[at + name.len()..];
-    }
 }
 
 /// GitHub's heading-anchor slug: lowercase, drop everything but

@@ -16,7 +16,7 @@
 //! `-o fixed.glb` writes where the reader's own checkout would put it
 //! without touching this one.
 
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use animsmith_testkit::docs_markdown::fenced_blocks;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -48,35 +48,6 @@ struct Documented {
     command: String,
     output: Vec<String>,
     exit: Option<i32>,
-}
-
-/// Every `console` block of one page, in document order. Only rendered
-/// fenced blocks count, so an indented or differently tagged sample is
-/// not mistaken for a promise.
-fn console_blocks(markdown: &str) -> Vec<String> {
-    let mut blocks = Vec::new();
-    let mut current: Option<String> = None;
-    for event in Parser::new_ext(markdown, Options::empty()) {
-        match event {
-            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(language)))
-                if language.as_ref() == "console" =>
-            {
-                current = Some(String::new());
-            }
-            Event::Text(text) => {
-                if let Some(block) = current.as_mut() {
-                    block.push_str(&text);
-                }
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                if let Some(block) = current.take() {
-                    blocks.push(block);
-                }
-            }
-            _ => {}
-        }
-    }
-    blocks
 }
 
 /// Split one block into its documented commands.
@@ -168,7 +139,7 @@ fn every_documented_start_command_still_behaves_as_the_page_claims() {
         let checkout = fixture_checkout();
         let mut ran = 0usize;
 
-        for block in console_blocks(&markdown) {
+        for block in fenced_blocks(&markdown, "console") {
             for documented in documented_commands(&block, page) {
                 assert!(
                     !documented.command.contains(['"', '\'']),
@@ -254,18 +225,5 @@ fn the_transcript_parser_reads_commands_output_and_exit_claims() {
             exit: None,
         }],
         "a non-animsmith line is read but claims nothing"
-    );
-}
-
-/// Only fenced `console` blocks are promises: a differently tagged block
-/// is illustration, and an indented one is not a rendered fence at all.
-#[test]
-fn only_console_fences_are_read_as_promises() {
-    let markdown = "```console\n$ animsmith lint clip.glb   # exits 0\n```\n\n\
-         ```toml\n[clips.walk]\nloop = true\n```\n\n\
-         \x20   $ animsmith lint indented.glb   # exits 0\n";
-    assert_eq!(
-        console_blocks(markdown),
-        ["$ animsmith lint clip.glb   # exits 0\n"]
     );
 }
