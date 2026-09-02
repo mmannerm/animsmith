@@ -179,14 +179,15 @@ is tracked as follow-up work and would restore them.
 Both report forms follow the reader's `prefers-color-scheme` and read a URL
 fragment of `&`-separated `key=value` options, so one generated file can be
 deep-linked or embedded without regenerating it. Both honour `theme=light` and
-`theme=dark`, which pin the palette; `embed=1`, which drops the running title
-and the interaction hint so the document fits an `<iframe>` while every
-finding, chart, identity, and evidence disclosure stays; and `frame=N`, which
-scrubs to a judged frame. `clip=NAME` and `finding=INDEX` are single-clip
-options — they select exactly what clicking that clip or finding would — while
-the comparison addresses a finding through the `#finding-<side>-<anchor>` link
-its own panels carry, because its clip correspondence is declared by the two
-inputs rather than chosen in the viewer.
+`theme=dark`, which pin the palette; `embed=1`, whose rules hide the running
+title and the interaction hint and nothing else, so the document fits an
+`<iframe>` with its findings, charts, identities, and evidence disclosures in
+place; and `frame=N`, which scrubs to a judged frame. `clip=NAME` and
+`finding=INDEX` are single-clip options — they land where clicking that clip
+or finding lands, on the same selected row, frame, chart playhead, and 3D view
+— while the comparison addresses a finding through the
+`#finding-<side>-<anchor>` link its own panels carry, because its clip
+correspondence is declared by the two inputs rather than chosen in the viewer.
 
 A key that is absent leaves that state as it is, so following one of those
 anchors inside an embedded, theme-pinned report does not un-pin it. A key that
@@ -197,7 +198,8 @@ position wants the nearest one the report can show. A value the parser cannot
 read at all restores that state's default instead — an unparsable `frame`
 restores frame 0, an unparsable `clip` the first clip, and a `finding` index
 the document cannot address clears the selection. Unknown keys and malformed
-pairs are ignored, and no option changes what the report measured.
+pairs are ignored, no option changes the findings, coverage, or charts the
+document carries, and no viewer writes the fragment back.
 
 The checked-in [synthetic comparison walkthrough](../examples/README.md#5-converting-exports-and-generating-reports-default-features-only)
 demonstrates seam endpoints, sampled stance and foot trajectories, shared-scale

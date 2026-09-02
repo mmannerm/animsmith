@@ -49,9 +49,11 @@
 //! # Deep links and embedding
 //!
 //! Both documents read their URL fragment as `&`-separated `key=value` pairs
-//! and never write it back. `theme=light|dark` pins the palette that otherwise
-//! follows `prefers-color-scheme`, `embed=1` drops the running title and the
-//! interaction hint for an `<iframe>`, and `frame=N` scrubs. [`render`]'s
+//! and never write it back: neither viewer, nor the runtime they share,
+//! contains an assignment to `location.hash`. `theme=light|dark` pins the
+//! palette that otherwise follows `prefers-color-scheme`, `embed=1` hides the
+//! running title and the interaction hint and nothing else, so the document
+//! fits an `<iframe>` with its evidence in place, and `frame=N` scrubs. [`render`]'s
 //! document also takes `clip=NAME` and `finding=INDEX`; [`render_comparison`]'s
 //! addresses a finding through the `#finding-<side>-<anchor>` links its own
 //! panels carry.
@@ -62,8 +64,9 @@
 //! contain selects the first one. A value the parser cannot read restores that
 //! state's default instead — an unparsable frame restores frame 0, an
 //! unparsable clip the first clip, and an unaddressable finding index clears
-//! the selection. Unknown keys and malformed pairs are ignored, and nothing in
-//! a fragment can change what the report measured.
+//! the selection. Unknown keys and malformed pairs are ignored, and no
+//! fragment changes the findings, coverage gaps, predictions, or charts the
+//! document carries.
 //!
 //! # Build and API status
 //!
@@ -93,9 +96,10 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 
-/// The one colour authority for every generated document: dark by default,
-/// light under `prefers-color-scheme`, and either one pinned by a
-/// `#theme=` fragment.
+/// The colour authority both generated documents resolve through — every
+/// colour literal either one carries belongs to this set: dark by default,
+/// light under `prefers-color-scheme`, and either one pinned by a `#theme=`
+/// fragment.
 const TOKENS_CSS: &str = include_str!("../assets/tokens.css");
 /// Surfaces both documents share: the page ground, evidence rows, the
 /// omission notice, and the `#embed=1` chrome rules.

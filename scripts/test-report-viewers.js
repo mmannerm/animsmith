@@ -292,7 +292,7 @@ for (const surface of ["before-gl", "after-gl"]) {
     if (!tokenValues.has(colour)) throw new Error(`${surface} painted ${colour}, which is not one of the document's tokens`);
   }
 }
-for (const surface of ["before-path", "after-path", "before-gait", "after-gait"]) {
+for (const surface of ["comparison-root-path", "before-path", "after-path", "before-gait", "after-gait"]) {
   const painted = svgPaint(sourcing, surface).filter((colour) => colour !== "none");
   if (!painted.length) throw new Error(`${surface} painted nothing to check`);
   for (const colour of painted) {
@@ -533,6 +533,9 @@ const middleSelection = selectionsAgree(middleIndex, "a finding in the middle of
 const lastSelection = selectionsAgree(findingIndex, "the last finding");
 if (middleSelection.frame === lastSelection.frame && middleSelection.playhead === lastSelection.playhead) {
   throw new Error("the two findings must land somewhere different for the comparison to mean anything");
+}
+if (middleSelection.drawn === lastSelection.drawn) {
+  throw new Error("two findings on different frames must upload different vertices, or the equality proves nothing");
 }
 
 // The playhead spans exactly the rectangle the chart publishes.
