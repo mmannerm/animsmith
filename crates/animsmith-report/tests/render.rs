@@ -2156,6 +2156,23 @@ fn json_strings(html: &str, id: &str) -> Vec<String> {
     strings
 }
 
+/// Every payload a document carries, whatever key it sits under: base64 runs
+/// anywhere in the markup, plus base64 inside any embedded JSON string.
+fn document_payloads(html: &str, id: &str) -> Vec<Vec<u8>> {
+    let mut payloads = decoded_runs(html);
+    for value in json_strings(html, id) {
+        payloads.extend(decoded_runs(&value));
+    }
+    payloads
+}
+
+/// Whether any payload carries this exact four-byte sample.
+fn payloads_carry(payloads: &[Vec<u8>], needle: &[u8; 4]) -> bool {
+    payloads
+        .iter()
+        .any(|payload| payload.windows(needle.len()).any(|slice| slice == needle))
+}
+
 /// Every sampled pose byte the document embeds, from any clip or any side.
 fn embedded_pose_bytes(html: &str, id: &str) -> Vec<u8> {
     fn walk(value: &Value, out: &mut Vec<u8>) {
@@ -2303,40 +2320,27 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
     let html = animsmith_report::render(&grids, &roles, &[], None, None, evidence_only());
 
     // Every payload the document carries, not only the field the pose grid
-    // used to occupy: base64 runs anywhere in the markup, plus base64 inside
-    // any JSON string value.
-    let payloads = |html: &str| {
-        let mut payloads = decoded_runs(html);
-        for value in json_strings(html, "report-data") {
-            payloads.extend(decoded_runs(&value));
-        }
-        payloads
-    };
+    // used to occupy.
     let channels: Vec<[u8; 4]> = WITNESS
         .iter()
         .map(|channel| channel.to_le_bytes())
         .collect();
-    let carries = |payload: &[u8], needle: &[u8; 4]| {
-        payload.windows(needle.len()).any(|slice| slice == needle)
-    };
     let spelled: Vec<String> = WITNESS
         .iter()
         .flat_map(|channel| [format!("{channel}"), format!("{channel:.2}")])
         .collect();
 
-    assert!(
-        payloads(&full_html)
-            .iter()
-            .any(|payload| channels.iter().all(|needle| carries(payload, needle))),
-        "the fixture must really be a witness in a full report"
-    );
-    for payload in payloads(&html) {
-        for needle in &channels {
-            assert!(
-                !carries(&payload, needle),
-                "an evidence-only report carries a sampled coordinate in some encoded field"
-            );
-        }
+    let full_payloads = document_payloads(&full_html, "report-data");
+    let payloads = document_payloads(&html, "report-data");
+    for needle in &channels {
+        assert!(
+            payloads_carry(&full_payloads, needle),
+            "the fixture must really be a witness in a full report"
+        );
+        assert!(
+            !payloads_carry(&payloads, needle),
+            "an evidence-only report carries a sampled coordinate in some encoded field"
+        );
     }
     for spelling in &spelled {
         assert!(
@@ -2583,4 +2587,91 @@ fn an_evidence_only_comparison_renders_past_the_embedded_pose_budget() {
         embedded_pose_bytes(&html, "comparison-report-data").is_empty(),
         "and it really embeds none of it"
     );
+}
+
+/// A before/after pair carrying a distinctive rest coordinate on a bone that
+/// no comparison panel plots and no track animates, so that coordinate can
+/// only reach a document through the sampled pose grid.
+fn witness_pair(directory: &std::path::Path, witness: [f32; 3]) -> Vec<PathBuf> {
+    let mut json: Value = serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    let index = json["nodes"].as_array().expect("fixture nodes").len();
+    json["nodes"]
+        .as_array_mut()
+        .expect("fixture nodes")
+        .push(serde_json::json!({
+            "name": "witness",
+            "translation": [witness[0] as f64, witness[1] as f64, witness[2] as f64],
+        }));
+    json["scenes"][0]["nodes"]
+        .as_array_mut()
+        .expect("fixture scene")
+        .push(Value::from(index));
+    let mut paths = Vec::new();
+    for marker in ["before", "after"] {
+        json["asset"]["extras"] = serde_json::json!({"authority": marker});
+        let path = directory.join(format!("{marker}.gltf"));
+        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        paths.push(path);
+    }
+    paths
+}
+
+#[test]
+fn an_evidence_only_comparison_carries_no_unplotted_sample() {
+    // The same key-agnostic search the single-clip form gets: a comparison
+    // embeds two pose grids, so it has two chances to leak one.
+    const WITNESS: [f32; 3] = [123.456, 234.567, 345.678];
+    let directory = tempfile::tempdir().unwrap();
+    let paths = witness_pair(directory.path(), WITNESS);
+    let before_source = animsmith_gltf::load_source(&paths[0]).unwrap();
+    let after_source = animsmith_gltf::load_source(&paths[1]).unwrap();
+    assert!(
+        before_source
+            .document()
+            .skeleton
+            .bones
+            .iter()
+            .any(|bone| bone.name == "witness"),
+        "the witness bone must reach the loaded skeleton"
+    );
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let sides = || {
+        (
+            comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
+            comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        )
+    };
+    let (before, after) = sides();
+    let full_html = animsmith_report::render_comparison(before, after, full()).unwrap();
+    let (before, after) = sides();
+    let html = animsmith_report::render_comparison(before, after, evidence_only()).unwrap();
+
+    let full_payloads = document_payloads(&full_html, "comparison-report-data");
+    let payloads = document_payloads(&html, "comparison-report-data");
+    for channel in WITNESS {
+        let needle = channel.to_le_bytes();
+        assert!(
+            payloads_carry(&full_payloads, &needle),
+            "the fixture must really be a witness in a full comparison"
+        );
+        assert!(
+            !payloads_carry(&payloads, &needle),
+            "an evidence-only comparison carries a sampled coordinate in some encoded field"
+        );
+        for spelling in [format!("{channel}"), format!("{channel:.2}")] {
+            assert!(
+                !html.contains(spelling.as_str()),
+                "the evidence-only comparison still spells {spelling}"
+            );
+            for value in json_strings(&html, "comparison-report-data") {
+                assert!(
+                    !value.contains(spelling.as_str()),
+                    "an embedded JSON string still spells {spelling}"
+                );
+            }
+        }
+    }
 }

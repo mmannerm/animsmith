@@ -239,19 +239,31 @@ assertNoHashWrites(main, "the comparison viewer");
 // The comparison's panels are canvas drawings, so nothing but this callback
 // repaints them when the reader's system theme changes: the palette has to be
 // re-resolved and the panels redrawn with it.
-const comparisonTokens = (ink) => tokenStyles({
-  ground: "#101010", surface: "#1e1e2a", raised: "#232331", ink, muted: "#445566",
+const comparisonTokens = (ink, muted) => tokenStyles({
+  ground: "#101010", surface: "#1e1e2a", raised: "#232331", ink, muted,
   line: "#3a3a4e", accent: "#0a0b0c", error: "#202122", warning: "#101112",
   pass: "#010203", note: "#6b7390",
 });
-const schemeComparison = run(generated, "comparison-report-data", html, data, {styles: comparisonTokens("#123456")});
-const fillsOf = (state) => state.nodes["before-gl"].context.arcs.map((arc) => arc.fillStyle);
-if (!fillsOf(schemeComparison).includes("#123456")) throw new Error("the comparison viewer did not paint its joints with the ink token");
+const canvasFills = (state, side) => {
+  const canvas = state.nodes[`${side}-gl`];
+  if (!canvas || !canvas.context) throw new Error(`the ${side} canvas was never drawn`);
+  return canvas.context.arcs.map((arc) => arc.fillStyle);
+};
+const svgPaint = (state, id) => state.nodes[id].children.flatMap((child) => [child.attrs.fill, child.attrs.stroke]).filter(Boolean);
+const schemeComparison = run(generated, "comparison-report-data", html, data, {styles: comparisonTokens("#123456", "#445566")});
+for (const side of ["before", "after"]) {
+  if (!canvasFills(schemeComparison, side).includes("#123456")) throw new Error(`the ${side} canvas did not paint its joints with the ink token`);
+}
+if (!svgPaint(schemeComparison, "before-path").includes("#445566")) throw new Error("the trail panel did not paint with the muted token");
 if (typeof schemeComparison.media.change !== "function") throw new Error("the comparison viewer does not listen for a system theme change");
-schemeComparison.settings.styles = comparisonTokens("#654321");
+schemeComparison.settings.styles = comparisonTokens("#654321", "#778899");
 schemeComparison.media.change();
-const repaintedFills = fillsOf(schemeComparison);
-if (!repaintedFills.includes("#654321") || repaintedFills.includes("#123456")) throw new Error("a system theme change did not repaint the comparison canvases with the new tokens");
+for (const side of ["before", "after"]) {
+  const fills = canvasFills(schemeComparison, side);
+  if (!fills.includes("#654321") || fills.includes("#123456")) throw new Error(`a system theme change did not repaint the ${side} canvas with the new tokens`);
+}
+const repaintedTrails = svgPaint(schemeComparison, "before-path");
+if (!repaintedTrails.includes("#778899") || repaintedTrails.includes("#445566")) throw new Error("a system theme change did not repaint the trail panel with the new tokens");
 assertNoHashWrites(schemeComparison, "a comparison theme change");
 
 // A non-finite sampled range must degrade the drawing, not abort navigation
