@@ -3894,6 +3894,16 @@ fn the_comparison_orders_its_panels_pose_root_trails_gait() {
             "{side}: its own trails come before its own gait"
         );
     }
+
+    // The panel is as tall as the region the viewer draws into, and no
+    // taller: captions are the HTML paragraph beside a panel, so a strip
+    // reserved for one inside the box is empty space in what was already
+    // the largest panel of the document.
+    assert!(
+        element_with_id(&html, "comparison-root-path").contains("viewBox=\"0 0 720 180\""),
+        "{}",
+        element_with_id(&html, "comparison-root-path")
+    );
 }
 
 /// The shared phase is playable as well as scrubbable.

@@ -244,9 +244,10 @@ function drawRootComparison(palette, phase) {
   if (!svg) return;
   svg.replaceChildren();
   if (!sharedRootBounds) { svgMessage("comparison-root-path", svg, palette, "root trajectories unavailable: no input has finite resolved Root samples"); return; }
-  // Drawn at the role panels' metres scale rather than fitted to this panel,
-  // and mapped into the upper 180 of the 220-tall box so the caption below
-  // has room for its own lines.
+  // Drawn at the role panels' metres scale rather than fitted to this panel.
+  // 180 is the panel's whole height: the role scale can never map a root
+  // extent taller than 132 units, so a drawing centred here clears the
+  // legend row whatever the two inputs travel.
   const scale = topDownScale(sharedTrailBounds || sharedRootBounds, TRAIL_PANEL.width, TRAIL_PANEL.height, TRAIL_PANEL.pad);
   const map = topDownMapAt(sharedRootBounds, ROOT_PANEL.width, ROOT_PANEL.height, scale);
   // A repair that leaves the root alone draws the two trajectories on top of

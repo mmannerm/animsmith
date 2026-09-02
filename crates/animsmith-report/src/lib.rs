@@ -505,7 +505,11 @@ pub fn render_comparison(
     let after_clip_anchor = semantic_anchor("clip", after.clip);
     let before_pose = pose_surface("before-gl", options.evidence_only);
     let after_pose = pose_surface("after-gl", options.evidence_only);
-    let shared_pose = pose_panel("comparison-root-path", "0 0 720 220", options.evidence_only);
+    // The panel is exactly as tall as the region the viewer draws into. It
+    // used to reserve a strip below that for its caption, which is now the
+    // HTML paragraph beside it, so the strip was empty space in the largest
+    // panel of the document.
+    let shared_pose = pose_panel("comparison-root-path", "0 0 720 180", options.evidence_only);
     let before_trails = pose_panel("before-path", "0 0 360 180", options.evidence_only);
     let after_trails = pose_panel("after-path", "0 0 360 180", options.evidence_only);
     let before_gait = pose_panel("before-gait", "0 0 360 180", options.evidence_only);

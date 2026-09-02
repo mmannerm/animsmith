@@ -123,7 +123,7 @@ pre { white-space: pre-wrap; word-break: break-word; color: var(--muted) }
 <section class="sync"><button id="play">▶</button><label>Shared phase <input id="scrub" type="range" min="0" max="1000" value="0"></label><span id="times"></span></section>
 <main><section class="side" id="before-panel"><span id="before-clip-99b66f0b76b27794"></span><h2 id="clip-before">Before</h2><p id="before-identity"></p><h3>Judged pose at the shared phase</h3><canvas id="before-gl"></canvas><p id="before-pose-context" class="context-label"></p></section>
 <section class="side" id="after-panel"><span id="after-clip-99b66f0b76b27794"></span><h2 id="clip-after">After</h2><p id="after-identity"></p><h3>Judged pose at the shared phase</h3><canvas id="after-gl"></canvas><p id="after-pose-context" class="context-label"></p></section>
-<section class="side shared-chart" id="root-panel"><h2>Before/after root trajectory</h2><svg id="comparison-root-path" viewBox="0 0 720 220"></svg><p id="comparison-root-path-caption" class="context-label"></p></section>
+<section class="side shared-chart" id="root-panel"><h2>Before/after root trajectory</h2><svg id="comparison-root-path" viewBox="0 0 720 180"></svg><p id="comparison-root-path-caption" class="context-label"></p></section>
 <section class="side" id="before-evidence"><h2>Before evidence</h2><h3>Role trajectories</h3><svg id="before-path" viewBox="0 0 360 180"></svg><p id="before-path-caption" class="context-label"></p><h3>Gait and sampled stance</h3><svg id="before-gait" viewBox="0 0 360 180"></svg><p id="before-gait-caption" class="context-label"></p><h3>Acceptance context</h3><ul id="before-contexts"></ul><h3>Findings</h3><ul id="before-findings"></ul><h3>Coverage gaps</h3><ul id="before-gaps"></ul><h3>Prediction provenance</h3><pre id="before-predictions"></pre></section>
 <section class="side" id="after-evidence"><h2>After evidence</h2><h3>Role trajectories</h3><svg id="after-path" viewBox="0 0 360 180"></svg><p id="after-path-caption" class="context-label"></p><h3>Gait and sampled stance</h3><svg id="after-gait" viewBox="0 0 360 180"></svg><p id="after-gait-caption" class="context-label"></p><h3>Acceptance context</h3><ul id="after-contexts"></ul><h3>Findings</h3><ul id="after-findings"></ul><h3>Coverage gaps</h3><ul id="after-gaps"></ul><h3>Prediction provenance</h3><pre id="after-predictions"></pre></section></main>
 <script>// animsmith report shared runtime — the pure helpers both generated viewers
@@ -485,9 +485,10 @@ function drawRootComparison(palette, phase) {
   if (!svg) return;
   svg.replaceChildren();
   if (!sharedRootBounds) { svgMessage("comparison-root-path", svg, palette, "root trajectories unavailable: no input has finite resolved Root samples"); return; }
-  // Drawn at the role panels' metres scale rather than fitted to this panel,
-  // and mapped into the upper 180 of the 220-tall box so the caption below
-  // has room for its own lines.
+  // Drawn at the role panels' metres scale rather than fitted to this panel.
+  // 180 is the panel's whole height: the role scale can never map a root
+  // extent taller than 132 units, so a drawing centred here clears the
+  // legend row whatever the two inputs travel.
   const scale = topDownScale(sharedTrailBounds || sharedRootBounds, TRAIL_PANEL.width, TRAIL_PANEL.height, TRAIL_PANEL.pad);
   const map = topDownMapAt(sharedRootBounds, ROOT_PANEL.width, ROOT_PANEL.height, scale);
   // A repair that leaves the root alone draws the two trajectories on top of
