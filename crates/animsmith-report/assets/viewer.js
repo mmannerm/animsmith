@@ -292,8 +292,10 @@ const findingItems = [];
 // the judged frame and mark the row.
 function selectFinding(index) {
   const f = data.findings[index], item = findingItems[index];
-  if (!f || !item) return;
   for (const other of findingItems) other.classList.remove("selected");
+  // An index this document cannot honour leaves nothing selected, which is
+  // the default state, rather than keeping a previous selection.
+  if (!f || !item) return;
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -365,24 +367,29 @@ for (const row of data.predictions) {
   }
 }
 
-// Fragment selection runs once the clip list, charts, and findings exist,
-// so a deep link lands exactly where the equivalent click would. Every
-// value is bounded by this document's own data: an unknown clip name is
-// ignored, a finding index must address an emitted row, and setFrame
-// clamps to the judged frame grid.
+// Fragment selection runs once the clip list, charts, and findings exist, so
+// a deep link lands exactly where the equivalent click would. Each option that
+// appears is applied in order — clip, then finding, then frame — as far as
+// this document allows: setFrame clamps a frame past the end to the last
+// judged frame, and a clip name the document does not carry selects the first
+// clip. A value the parser could not read restores that state's default
+// instead: frame 0, the first clip, no selected finding. An option that does
+// not appear is left alone.
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
-  if (options.clip != null && data.clips.some((c) => c.name === options.clip))
-    selectClip(options.clip);
-  if (options.finding != null && options.finding < data.findings.length)
-    selectFinding(options.finding);
-  else if (options.frame != null)
-    setFrame(options.frame);
+  if (options.clip !== undefined && data.clips.length) {
+    const known = data.clips.some((c) => c.name === options.clip);
+    selectClip(known ? options.clip : data.clips[0].name);
+    setFrame(0);
+  }
+  if (options.finding !== undefined) selectFinding(options.finding);
+  if (options.frame !== undefined) setFrame(options.frame == null ? 0 : options.frame);
   draw();
 }
 
 window.addEventListener("resize", draw);
 window.addEventListener("hashchange", applyFragment);
+animsmithOnSchemeChange(() => { palette = animsmithPalette(); draw(); });
 if (clip) { selectClip(clip.name); setFrame(0); }
 applyFragment();

@@ -1641,27 +1641,55 @@ fn both_reports_paint_only_from_the_shared_token_set() {
 }
 
 #[test]
-fn the_shared_runtime_falls_back_to_the_stylesheet_dark_values() {
+fn the_runtime_fallback_palette_is_emitted_from_the_stylesheet() {
     // The viewers paint through the tokens, but a browser that cannot resolve
     // a custom property falls back to a table inside the runtime. That table
-    // is only right if it is the stylesheet's own dark set.
-    let code = document_code(&themed_documents()[0].1);
-    let (dark_start, dark_end) = rule_block(&code, ":root {");
-    let dark = &code[dark_start..dark_end];
-    let fallback_start = code
-        .find("ANIMSMITH_DEFAULT_PALETTE = {")
-        .expect("runtime declares its fallback palette");
-    let fallback_end = code[fallback_start..].find("};").expect("palette closes") + fallback_start;
-    let fallback = &code[fallback_start..fallback_end];
-    for (name, value) in TOKEN_NAMES.iter().zip(DARK_TOKENS) {
+    // is not written twice: the report substitutes the stylesheet's own dark
+    // values into the runtime as it emits the document.
+    for (kind, html) in themed_documents() {
+        let code = document_code(&html);
         assert!(
-            dark.contains(&format!("--{name}: {value}")),
-            "bare :root sets --{name} to {value}"
+            !code.contains("__ANIMSMITH_DARK_TOKENS__"),
+            "{kind}: the fallback placeholder is always substituted"
         );
-        assert!(
-            fallback.contains(&format!("{name}: \"{value}\"")),
-            "the runtime falls back to the stylesheet's --{name}"
+        let start = code
+            .find("ANIMSMITH_DEFAULT_PALETTE = ")
+            .expect("runtime declares its fallback palette")
+            + "ANIMSMITH_DEFAULT_PALETTE = ".len();
+        let end = code[start..].find(";\n").expect("declaration ends") + start;
+        let fallback: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(&code[start..end]).expect("the fallback palette is a JS object");
+
+        let (dark_start, dark_end) = rule_block(&code, ":root {");
+        let declared: std::collections::BTreeMap<String, String> = code[dark_start..dark_end]
+            .split_once('{')
+            .expect("rule opens")
+            .1
+            .split(';')
+            .filter_map(|declaration| declaration.split_once(':'))
+            .filter_map(|(name, value)| {
+                Some((
+                    name.trim().strip_prefix("--")?.to_owned(),
+                    value.trim().to_owned(),
+                ))
+            })
+            .collect();
+        assert_eq!(
+            fallback, declared,
+            "{kind}: the runtime falls back to exactly the stylesheet's dark tokens"
         );
+        assert_eq!(
+            declared.len(),
+            TOKEN_NAMES.len(),
+            "{kind}: every token has a dark value"
+        );
+        for (name, value) in TOKEN_NAMES.iter().zip(DARK_TOKENS) {
+            assert_eq!(
+                declared.get(*name).map(String::as_str),
+                Some(value),
+                "--{name}"
+            );
+        }
     }
 }
 
@@ -1734,7 +1762,62 @@ fn embed_hides_the_same_chrome_in_both_documents_and_hides_no_evidence() {
             vec![".hint".to_owned(), "header".to_owned()],
             "{kind}: `#embed=1` hides the running title and the hint, and nothing else"
         );
+
+        // The rule only means something if the documents are shaped for it.
+        let header_start = html
+            .find("<header>")
+            .unwrap_or_else(|| panic!("{kind}: the document has a header to hide"));
+        let header_end = html[header_start..]
+            .find("</header>")
+            .expect("header closes")
+            + header_start;
+        for evidence in ["<main", "id=\"findings\"", "class=\"disclosure\""] {
+            if let Some(at) = html.find(evidence) {
+                assert!(
+                    at > header_end,
+                    "{kind}: {evidence} must sit outside the header the embed rule hides"
+                );
+            }
+        }
     }
+
+    // The hint is single-clip chrome: the comparison has no interaction hint
+    // to hide, and its phase mapping and evidence caveats live in the
+    // disclosure section instead, which the embed rule leaves alone.
+    let documents = themed_documents();
+    assert!(
+        documents[0].1.contains("class=\"hint\""),
+        "the single-clip report has a hint"
+    );
+    assert!(
+        !documents[1].1.contains("class=\"hint\""),
+        "the comparison has none"
+    );
+    assert!(
+        documents[1].1.contains("<section class=\"disclosure\">"),
+        "the comparison keeps its disclosures outside the header"
+    );
+}
+
+#[test]
+fn evidence_rows_and_controls_sit_on_the_raised_token() {
+    // A row or control on --ground reads as a hole cut through its panel;
+    // these two use sites are why the token exists.
+    for (kind, html) in themed_documents() {
+        let code = without_block_comments(&document_code(&html));
+        let (start, end) = rule_block(&code, ".finding {");
+        assert!(
+            code[start..end].contains("background: var(--raised)"),
+            "{kind}: evidence rows sit on --raised"
+        );
+    }
+    let single = &themed_documents()[0].1;
+    let code = without_block_comments(&document_code(single));
+    let (start, end) = rule_block(&code, "#controls select, #controls button");
+    assert!(
+        code[start..end].contains("background: var(--raised)"),
+        "single-clip: controls sit on --raised"
+    );
 }
 
 #[test]
@@ -1791,6 +1874,20 @@ fn attribute_values(source: &str, name: &str) -> Vec<String> {
     values
 }
 
+/// The text content of every element carrying `class`.
+fn class_texts(source: &str, class: &str) -> Vec<String> {
+    let key = format!("class=\"{class}\"");
+    let mut texts = Vec::new();
+    let mut rest = source;
+    while let Some(at) = rest.find(&key) {
+        let open = rest[at..].find('>').expect("tag closes") + at + 1;
+        let close = rest[open..].find('<').unwrap_or(0) + open;
+        texts.push(rest[open..close].to_owned());
+        rest = &rest[close..];
+    }
+    texts
+}
+
 /// Every `<tag …>` in a fragment, so a test can ask about one element
 /// instead of about every attribute in the figure.
 fn tags(source: &str) -> Vec<String> {
@@ -1801,22 +1898,37 @@ fn tags(source: &str) -> Vec<String> {
         .collect()
 }
 
-/// The right-most edge any legend entry reaches: swatch lines carry a series
-/// class, labels carry `class="legend"`.
-fn legend_right_edge(figure: &str) -> f64 {
-    tags(figure)
-        .iter()
-        .filter_map(|tag| {
-            let class = attribute_values(tag, "class").into_iter().next()?;
-            if class == "legend" {
-                attribute_values(tag, "x").first()?.parse().ok()
-            } else if tag.starts_with("line") {
-                attribute_values(tag, "x2").first()?.parse().ok()
-            } else {
-                None
+/// The box every legend entry occupies: swatch lines carry a series class,
+/// labels carry `class="legend"`. The playhead is a line but not a legend.
+fn legend_bounds(figure: &str) -> (f64, f64, f64, f64) {
+    let (mut min_x, mut max_x) = (f64::MAX, f64::MIN);
+    let (mut min_y, mut max_y) = (f64::MAX, f64::MIN);
+    for tag in tags(figure) {
+        let Some(class) = attribute_values(&tag, "class").into_iter().next() else {
+            continue;
+        };
+        if class != "legend" && !(tag.starts_with("line") && class != "playhead") {
+            continue;
+        }
+        for name in ["x", "x1", "x2"] {
+            for value in attribute_values(&tag, name) {
+                if let Ok(at) = value.parse::<f64>() {
+                    min_x = min_x.min(at);
+                    max_x = max_x.max(at);
+                }
             }
-        })
-        .fold(f64::MIN, f64::max)
+        }
+        for name in ["y", "y1", "y2"] {
+            for value in attribute_values(&tag, name) {
+                if let Ok(at) = value.parse::<f64>() {
+                    min_y = min_y.min(at);
+                    max_y = max_y.max(at);
+                }
+            }
+        }
+    }
+    assert!(min_x <= max_x && min_y <= max_y, "the chart has a legend");
+    (min_x, max_x, min_y, max_y)
 }
 
 fn number(source: &str, name: &str) -> f64 {
@@ -1858,7 +1970,16 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
             "{kind}: the label names the clip and states its unit: {described}"
         );
         assert!(figure.contains("<title>walk — "), "{kind}: titled");
-        assert!(figure.contains("class=\"axis\""), "{kind}: has axis labels");
+        let axis = class_texts(figure, "axis");
+        assert!(
+            axis.iter().all(|label| !label.trim().is_empty()),
+            "{kind}: every axis label says something"
+        );
+        assert!(
+            axis.iter().filter(|label| label.ends_with(" m")).count() >= 2,
+            "{kind}: the unit is in the label a reader sees, not only in the \
+             aria description: {axis:?}"
+        );
 
         // Colour comes from the classes alone, so an extracted figure keeps
         // its meaning under an injected style block.
@@ -1888,9 +2009,14 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
                 }
             }
         }
+        let (legend_min_x, legend_max_x, legend_min_y, legend_max_y) = legend_bounds(figure);
         assert!(
-            legend_right_edge(figure) < width,
-            "{kind}: the legend stays inside the chart"
+            legend_min_x >= 0.0
+                && legend_max_x <= width
+                && legend_min_y >= 0.0
+                && legend_max_y <= height,
+            "{kind}: the legend stays inside the {width}x{height} chart on every side: \
+             x {legend_min_x}..{legend_max_x}, y {legend_min_y}..{legend_max_y}"
         );
     }
 
@@ -1918,12 +2044,19 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
         .1;
     assert_eq!(number(playhead, "x1"), pad, "playhead starts at the origin");
     assert_eq!(number(playhead, "x2"), pad);
+    let (gait_min_x, gait_max_x, gait_min_y, gait_max_y) = legend_bounds(gait);
     assert!(
-        legend_right_edge(gait) <= pad + plot_width,
-        "the legend fits the plot rectangle: {} vs {}",
-        legend_right_edge(gait),
+        gait_min_x >= pad && gait_max_x <= pad + plot_width,
+        "the legend fits the plot rectangle horizontally: {gait_min_x}..{gait_max_x} \
+         within {pad}..{}",
         pad + plot_width
     );
+    let playhead_top = number(playhead, "y1");
+    assert!(
+        gait_max_y <= playhead_top,
+        "the legend sits above the plot it labels: {gait_max_y} vs {playhead_top}"
+    );
+    assert!(gait_min_y > 0.0, "and inside the chart: {gait_min_y}");
 
     let path = &figures[1];
     assert!(path.contains("class=\"root-path\""));
@@ -2002,6 +2135,91 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
     );
 }
 
+/// Maximal runs of base64 characters over one alphabet's two extra symbols.
+/// Sixteen characters is the shortest run that could carry the twelve bytes
+/// of one sampled position.
+fn encodable_runs<'a>(source: &'a str, extra: &[u8]) -> Vec<&'a str> {
+    let encodable =
+        |byte: u8| byte.is_ascii_alphanumeric() || byte == b'=' || extra.contains(&byte);
+    let bytes = source.as_bytes();
+    let mut runs = Vec::new();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !encodable(bytes[start]) {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < bytes.len() && encodable(bytes[end]) {
+            end += 1;
+        }
+        if end - start >= 16 {
+            runs.push(&source[start..end]);
+        }
+        start = end;
+    }
+    runs
+}
+
+/// Every base64-looking run in a source, decoded. The search deliberately
+/// does not trust the key a sample was stored under, nor the alphabet it was
+/// spelled with: standard and URL-safe runs are scanned separately, each with
+/// its own engine and with or without padding.
+fn decoded_runs(source: &str) -> Vec<Vec<u8>> {
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+    let mut runs = Vec::new();
+    for text in encodable_runs(source, b"+/") {
+        if let Ok(decoded) = STANDARD
+            .decode(text)
+            .or_else(|_| STANDARD_NO_PAD.decode(text))
+        {
+            runs.push(decoded);
+        }
+    }
+    for text in encodable_runs(source, b"-_") {
+        if let Ok(decoded) = URL_SAFE
+            .decode(text)
+            .or_else(|_| URL_SAFE_NO_PAD.decode(text))
+        {
+            runs.push(decoded);
+        }
+    }
+    runs
+}
+
+/// Every string value in the document's embedded JSON, unescaped, so a
+/// spelling hidden behind `\u` escapes is still read as its characters.
+fn json_strings(html: &str, id: &str) -> Vec<String> {
+    fn walk(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(text) => out.push(text.clone()),
+            Value::Object(map) => map.values().for_each(|item| walk(item, out)),
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut strings = Vec::new();
+    walk(&embedded_json(html, id), &mut strings);
+    strings
+}
+
+/// Every payload a document carries, whatever key it sits under: base64 runs
+/// anywhere in the markup, plus base64 inside any embedded JSON string.
+fn document_payloads(html: &str, id: &str) -> Vec<Vec<u8>> {
+    let mut payloads = decoded_runs(html);
+    for value in json_strings(html, id) {
+        payloads.extend(decoded_runs(&value));
+    }
+    payloads
+}
+
+/// Whether any payload carries this exact four-byte sample.
+fn payloads_carry(payloads: &[Vec<u8>], needle: &[u8; 4]) -> bool {
+    payloads
+        .iter()
+        .any(|payload| payload.windows(needle.len()).any(|slice| slice == needle))
+}
+
 /// Every sampled pose byte the document embeds, from any clip or any side.
 fn embedded_pose_bytes(html: &str, id: &str) -> Vec<u8> {
     fn walk(value: &Value, out: &mut Vec<u8>) {
@@ -2071,10 +2289,15 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
     ] {
         assert_eq!(data[key], full_data[key], "{key} is unchanged");
     }
+    let figures = chart_figures(&html);
+    assert!(
+        !figures.is_empty(),
+        "the fixture must really render charts for this to mean anything"
+    );
     assert_eq!(
-        chart_figures(&html),
+        figures,
         chart_figures(&full_html),
-        "the metric charts are the same evidence"
+        "the single-clip charts are the same evidence"
     );
 
     // The document, not the viewer, decides there is no pose view.
@@ -2106,8 +2329,8 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
     };
 
     // A bone that is neither the root nor a foot never reaches a chart, so
-    // this coordinate exists only inside the sampled pose grid.
-    const WITNESS: f32 = 123.456;
+    // this whole coordinate triple exists only inside the sampled pose grid.
+    const WITNESS: [f32; 3] = [123.456, 234.567, 345.678];
     let doc = Document {
         skeleton: Skeleton {
             bones: vec![
@@ -2133,11 +2356,7 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
                 property: Property::Translation,
                 interpolation: Interpolation::Linear,
                 times: vec![0.0, 0.5, 1.0],
-                values: TrackValues::Vec3s(vec![
-                    Vec3::new(WITNESS, 0.0, 0.0),
-                    Vec3::new(WITNESS, 0.0, 0.0),
-                    Vec3::new(WITNESS, 0.0, 0.0),
-                ]),
+                values: TrackValues::Vec3s(vec![Vec3::from_array(WITNESS); 3]),
             }],
         }],
         ..Document::default()
@@ -2147,20 +2366,41 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
     let full_html = animsmith_report::render(&grids, &roles, &[], None, None, full());
     let html = animsmith_report::render(&grids, &roles, &[], None, None, evidence_only());
 
-    let witness = WITNESS.to_le_bytes();
-    let carries = |bytes: &[u8]| bytes.windows(witness.len()).any(|slice| slice == witness);
-    assert!(
-        carries(&embedded_pose_bytes(&full_html, "report-data")),
-        "the fixture must really be a witness in a full report"
-    );
-    assert!(
-        !carries(&embedded_pose_bytes(&html, "report-data")),
-        "no sampled coordinate survives in an evidence-only report"
-    );
-    assert!(
-        !html.contains("123.456"),
-        "and none survives in the document's own text"
-    );
+    // Every payload the document carries, not only the field the pose grid
+    // used to occupy.
+    let channels: Vec<[u8; 4]> = WITNESS
+        .iter()
+        .map(|channel| channel.to_le_bytes())
+        .collect();
+    let spelled: Vec<String> = WITNESS
+        .iter()
+        .flat_map(|channel| [format!("{channel}"), format!("{channel:.2}")])
+        .collect();
+
+    let full_payloads = document_payloads(&full_html, "report-data");
+    let payloads = document_payloads(&html, "report-data");
+    for needle in &channels {
+        assert!(
+            payloads_carry(&full_payloads, needle),
+            "the fixture must really be a witness in a full report"
+        );
+        assert!(
+            !payloads_carry(&payloads, needle),
+            "an evidence-only report carries a sampled coordinate in some encoded field"
+        );
+    }
+    for spelling in &spelled {
+        assert!(
+            !html.contains(spelling.as_str()),
+            "the evidence-only document still spells {spelling}"
+        );
+        for value in json_strings(&html, "report-data") {
+            assert!(
+                !value.contains(spelling.as_str()),
+                "an embedded JSON string still spells {spelling}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -2198,9 +2438,28 @@ fn an_evidence_only_comparison_drops_both_pose_grids() {
     }
     assert_eq!(data["correspondence"], full_data["correspondence"]);
 
-    // Every pose surface is replaced by its own notice, and the shared phase
-    // has nothing left to scrub.
-    for surface in ["before-gl", "after-gl", "comparison-root-path"] {
+    // Every comparison panel is drawn by the viewer from the pose grid — the
+    // two canvases, the shared root chart, and both sides' trajectory and
+    // gait panels — so all of them are replaced by the notice rather than
+    // left as boxes that could never be filled. The shared phase then has
+    // nothing left to scrub.
+    assert!(
+        chart_figures(&html).is_empty() && chart_figures(&full_html).is_empty(),
+        "a comparison has no Rust-rendered chart figures in either form"
+    );
+    assert!(
+        !html.contains("<svg id="),
+        "no comparison chart surface survives without its poses"
+    );
+    for surface in [
+        "before-gl",
+        "after-gl",
+        "comparison-root-path",
+        "before-path",
+        "after-path",
+        "before-gait",
+        "after-gait",
+    ] {
         assert!(!has_id(&html, surface), "{surface} is not rendered");
         assert!(
             element_with_id(&html, &format!("{surface}-notice")).contains("Pose playback omitted"),
@@ -2271,4 +2530,227 @@ fn an_evidence_only_comparison_is_not_bound_by_the_embedded_pose_budget() {
     );
     animsmith_report::preflight_comparison(&doc, "walk", &doc, "walk", evidence_only())
         .expect("an evidence-only comparison embeds no grid, so the budget does not apply");
+}
+
+/// A before/after pair whose *declared* pose grid is larger than the embedded
+/// budget: `bones` nodes and `frames` judged keys on each side, with distinct
+/// authorities. Only the key count and the node count matter here; the
+/// sampled values are zero.
+fn oversized_pair(directory: &std::path::Path, bones: usize, frames: usize) -> Vec<PathBuf> {
+    let mut json: Value = serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    let mut bytes = Vec::with_capacity(frames * 16);
+    for frame in 0..frames {
+        bytes.extend_from_slice(&(frame as f32).to_le_bytes());
+    }
+    let output_offset = bytes.len();
+    bytes.resize(output_offset + frames * 12, 0);
+    json["buffers"][0]["uri"] = format!(
+        "data:application/octet-stream;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    )
+    .into();
+    json["buffers"][0]["byteLength"] = bytes.len().into();
+    json["bufferViews"] = serde_json::json!([
+        {"buffer":0,"byteOffset":0,"byteLength":output_offset},
+        {"buffer":0,"byteOffset":output_offset,"byteLength":frames * 12}
+    ]);
+    json["accessors"] = serde_json::json!([
+        {"bufferView":0,"componentType":5126,"count":frames,"type":"SCALAR","min":[0.0],"max":[(frames - 1) as f32]},
+        {"bufferView":1,"componentType":5126,"count":frames,"type":"VEC3"}
+    ]);
+    json["animations"] = serde_json::json!([{
+        "name":"walk",
+        "samplers":[{"input":0,"output":1,"interpolation":"LINEAR"}],
+        "channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}]
+    }]);
+    let nodes = json["nodes"].as_array_mut().expect("fixture nodes");
+    let scene_roots: Vec<Value> = (nodes.len()..bones).map(Value::from).collect();
+    for index in nodes.len()..bones {
+        nodes.push(serde_json::json!({"name": format!("bone{index}")}));
+    }
+    let roots = json["scenes"][0]["nodes"]
+        .as_array_mut()
+        .expect("fixture scene");
+    roots.extend(scene_roots);
+
+    let mut paths = Vec::new();
+    for marker in ["before", "after"] {
+        json["asset"]["extras"] = serde_json::json!({"authority": marker});
+        let path = directory.join(format!("{marker}.gltf"));
+        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        paths.push(path);
+    }
+    paths
+}
+
+#[test]
+fn an_evidence_only_comparison_renders_past_the_embedded_pose_budget() {
+    // The budget bounds what a document embeds. A full report of this pair
+    // would have to carry the grid and is refused; the evidence-only report
+    // carries none of it and must render — through `render_comparison`, not
+    // only through the preflight it also calls.
+    const BONES: usize = 400;
+    const FRAMES: usize = 7_200;
+    const {
+        assert!(
+            BONES * FRAMES * 12 > animsmith_report::MAX_COMPARISON_POSE_BYTES,
+            "the fixture must exceed the budget it is testing"
+        )
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let paths = oversized_pair(directory.path(), BONES, FRAMES);
+    let before_source = animsmith_gltf::load_source(&paths[0]).unwrap();
+    let after_source = animsmith_gltf::load_source(&paths[1]).unwrap();
+    assert_eq!(before_source.document().skeleton.bones.len(), BONES);
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let sides = || {
+        (
+            comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
+            comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        )
+    };
+
+    let (before, after) = sides();
+    let refused = animsmith_report::render_comparison(before, after, full())
+        .expect_err("a full comparison would have to embed the grid");
+    assert!(
+        matches!(
+            refused,
+            animsmith_report::ComparisonError::PoseWorkExceeded { .. }
+        ),
+        "{refused:?}"
+    );
+
+    let (before, after) = sides();
+    let html = animsmith_report::render_comparison(before, after, evidence_only())
+        .expect("an evidence-only comparison embeds no grid, so the budget does not apply");
+    let data = embedded_json(&html, "comparison-report-data");
+    assert_eq!(data["evidence_only"], true);
+    assert_eq!(data["before"]["clip"]["frames"], FRAMES);
+    assert!(
+        embedded_pose_bytes(&html, "comparison-report-data").is_empty(),
+        "and it really embeds none of it"
+    );
+}
+
+/// A before/after pair carrying a distinctive rest coordinate on a bone that
+/// no comparison panel plots and no track animates, so that coordinate can
+/// only reach a document through the sampled pose grid.
+fn witness_pair(directory: &std::path::Path, witness: [f32; 3]) -> Vec<PathBuf> {
+    let mut json: Value = serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    let index = json["nodes"].as_array().expect("fixture nodes").len();
+    json["nodes"]
+        .as_array_mut()
+        .expect("fixture nodes")
+        .push(serde_json::json!({
+            "name": "witness",
+            "translation": [witness[0] as f64, witness[1] as f64, witness[2] as f64],
+        }));
+    json["scenes"][0]["nodes"]
+        .as_array_mut()
+        .expect("fixture scene")
+        .push(Value::from(index));
+    let mut paths = Vec::new();
+    for marker in ["before", "after"] {
+        json["asset"]["extras"] = serde_json::json!({"authority": marker});
+        let path = directory.join(format!("{marker}.gltf"));
+        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        paths.push(path);
+    }
+    paths
+}
+
+#[test]
+fn an_evidence_only_comparison_carries_no_unplotted_sample() {
+    // The same key-agnostic search the single-clip form gets: a comparison
+    // embeds two pose grids, so it has two chances to leak one.
+    const WITNESS: [f32; 3] = [123.456, 234.567, 345.678];
+    let directory = tempfile::tempdir().unwrap();
+    let paths = witness_pair(directory.path(), WITNESS);
+    let before_source = animsmith_gltf::load_source(&paths[0]).unwrap();
+    let after_source = animsmith_gltf::load_source(&paths[1]).unwrap();
+    assert!(
+        before_source
+            .document()
+            .skeleton
+            .bones
+            .iter()
+            .any(|bone| bone.name == "witness"),
+        "the witness bone must reach the loaded skeleton"
+    );
+    let before_grids = MetricGrids::new(before_source.document());
+    let after_grids = MetricGrids::new(after_source.document());
+    let roles = ResolvedRoles::default();
+    let config = animsmith_core::Config::default();
+    let sides = || {
+        (
+            comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
+            comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        )
+    };
+    let (before, after) = sides();
+    let full_html = animsmith_report::render_comparison(before, after, full()).unwrap();
+    let (before, after) = sides();
+    let html = animsmith_report::render_comparison(before, after, evidence_only()).unwrap();
+
+    let full_payloads = document_payloads(&full_html, "comparison-report-data");
+    let payloads = document_payloads(&html, "comparison-report-data");
+    for channel in WITNESS {
+        let needle = channel.to_le_bytes();
+        assert!(
+            payloads_carry(&full_payloads, &needle),
+            "the fixture must really be a witness in a full comparison"
+        );
+        assert!(
+            !payloads_carry(&payloads, &needle),
+            "an evidence-only comparison carries a sampled coordinate in some encoded field"
+        );
+        for spelling in [format!("{channel}"), format!("{channel:.2}")] {
+            assert!(
+                !html.contains(spelling.as_str()),
+                "the evidence-only comparison still spells {spelling}"
+            );
+            for value in json_strings(&html, "comparison-report-data") {
+                assert!(
+                    !value.contains(spelling.as_str()),
+                    "an embedded JSON string still spells {spelling}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_payload_search_reads_both_base64_alphabets() {
+    // The two alphabets differ only in the characters for the 6-bit values 62
+    // and 63, so a payload that produces them is the case a standard-only
+    // scan cannot recover: it splits the run at every `-` and `_`.
+    // At least twelve bytes, so every spelling clears the run-length floor
+    // the scan uses.
+    let mut payload = vec![0xFB, 0xEF, 0xBE, 0xFB, 0xEF, 0xBE];
+    payload.extend(123.456f32.to_le_bytes());
+    payload.extend([0xFB, 0xEF, 0xBE, 0xFB, 0xEF, 0xBE]);
+    let url_safe = base64::engine::general_purpose::URL_SAFE.encode(&payload);
+    assert!(
+        url_safe.contains('-') || url_safe.contains('_'),
+        "the fixture must exercise the alphabet difference: {url_safe}"
+    );
+
+    for encoded in [
+        base64::engine::general_purpose::STANDARD.encode(&payload),
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(&payload),
+        url_safe.clone(),
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&payload),
+    ] {
+        let document = format!("<p data-sample=\"{encoded}\"></p>");
+        assert!(
+            decoded_runs(&document)
+                .iter()
+                .any(|run| run.as_slice() == payload.as_slice()),
+            "the search must recover a payload spelled {encoded}"
+        );
+    }
 }
