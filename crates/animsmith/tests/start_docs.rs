@@ -20,7 +20,10 @@
 //! without touching this one.
 
 use animsmith_testkit::docs_markdown::fenced_blocks;
-use std::path::{Path, PathBuf};
+use animsmith_testkit::docs_transcripts::{
+    Documented, EXITS, copy_tree, documented_commands, misdocumented_line,
+};
+use std::path::PathBuf;
 use std::process::Command;
 
 /// The Start pages whose transcripts this gate pins. Every symptom page
@@ -42,13 +45,6 @@ const SYMPTOMS_DIR: &str = "docs/symptoms";
 /// page's throwaway checkout so a relative path in a transcript resolves
 /// exactly as it does in a reader's own checkout.
 const FIXTURE_TREES: &[&str] = &["examples", "crates/animsmith/testdata/collection-spike"];
-
-/// A trimmed line: the reader is told the rest was cut, so only the
-/// prefix is promised.
-const TRIM: &str = "...";
-
-/// The exit-code claim every documented `animsmith` command must carry.
-const EXITS: &str = "# exits ";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -81,123 +77,6 @@ fn gated_pages() -> Vec<String> {
     pages
 }
 
-/// One documented command: what it runs, what it prints, and what it
-/// claims to return. Only `animsmith` commands must carry a claim; the
-/// pages also show `cargo` and shell lines this gate does not run.
-#[derive(Debug, PartialEq, Eq)]
-struct Documented {
-    command: String,
-    output: Vec<String>,
-    exit: Option<i32>,
-}
-
-/// Take the one `# exits N` claim out of a segment, wherever the page
-/// wrote it: at the end of the command line for a command that prints
-/// nothing, or at the end of its last output line. The marker is removed
-/// from the line it sat on, so it never reaches the binary as an
-/// argument, and a segment that claims twice is ambiguous rather than
-/// silently resolved.
-fn take_exit_claim(segment: &mut [&str], page: &str) -> Option<i32> {
-    let mut claim = None;
-    for line in segment.iter_mut() {
-        let original = *line;
-        let Some((text, code)) = original.split_once(EXITS) else {
-            continue;
-        };
-        let code = code
-            .trim()
-            .parse()
-            .unwrap_or_else(|error| panic!("{page}: unreadable exit claim {original:?}: {error}"));
-        assert!(
-            claim.is_none(),
-            "{page}: one `{EXITS}N` claim per command, found another in {original:?}"
-        );
-        claim = Some(code);
-        *line = text.trim_end();
-    }
-    claim
-}
-
-/// Split one block into its documented commands.
-fn documented_commands(block: &str, page: &str) -> Vec<Documented> {
-    let mut commands = Vec::new();
-    let mut segments: Vec<Vec<&str>> = Vec::new();
-    for line in block.lines() {
-        if line.starts_with("$ ") {
-            segments.push(vec![line]);
-        } else if let Some(segment) = segments.last_mut() {
-            segment.push(line);
-        }
-    }
-
-    for mut segment in segments {
-        while segment.last().is_some_and(|line| line.trim().is_empty()) {
-            segment.pop();
-        }
-        let exit = take_exit_claim(&mut segment, page);
-
-        // A `\` continues the command onto the next line; everything after
-        // the command's last line is its output.
-        let mut command = String::new();
-        let mut lines = segment.into_iter();
-        for line in lines.by_ref() {
-            let line = line.trim();
-            command.push(' ');
-            match line.strip_suffix('\\') {
-                Some(head) => command.push_str(head.trim_end()),
-                None => {
-                    command.push_str(line);
-                    break;
-                }
-            }
-        }
-        let output = lines
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| {
-                assert!(
-                    line.strip_suffix(TRIM)
-                        .is_none_or(|prefix| !prefix.trim().is_empty()),
-                    "{page}: a trimmed line must promise something before its `{TRIM}`: {line:?}"
-                );
-                line.to_owned()
-            })
-            .collect();
-        commands.push(Documented {
-            command: command.trim().trim_start_matches("$ ").trim().to_owned(),
-            output,
-            exit,
-        });
-    }
-    commands
-}
-
-/// Whether one documented line still describes an actual output line. A
-/// trailing `...` promises only the prefix before it.
-fn documents(line: &str, actual: &str) -> bool {
-    match line.strip_suffix(TRIM) {
-        Some(prefix) => actual.starts_with(prefix),
-        None => actual == line,
-    }
-}
-
-/// The first documented line the output no longer shows where the page
-/// shows it. A transcript is read top to bottom, so each quoted line must
-/// match a printed line below the previous one's match: a page may quote
-/// part of the output, but not a rearrangement of it.
-fn misdocumented_line(documented: &[String], printed: &[&str]) -> Option<usize> {
-    let mut next = 0usize;
-    for (index, line) in documented.iter().enumerate() {
-        match printed[next..]
-            .iter()
-            .position(|actual| documents(line, actual))
-        {
-            Some(offset) => next += offset + 1,
-            None => return Some(index),
-        }
-    }
-    None
-}
-
 /// A temporary checkout-shaped directory: the committed [`FIXTURE_TREES`]
 /// and nothing else, so a documented command's relative paths resolve and
 /// its outputs land outside this repository.
@@ -210,19 +89,6 @@ fn fixture_checkout() -> tempfile::TempDir {
         copy_tree(&repo_root().join(tree), &temporary.path().join(tree));
     }
     temporary
-}
-
-fn copy_tree(source: &Path, destination: &Path) {
-    std::fs::create_dir_all(destination).expect("creates fixture directory");
-    for entry in std::fs::read_dir(source).expect("lists fixture directory") {
-        let entry = entry.expect("directory entry");
-        let target = destination.join(entry.file_name());
-        if entry.file_type().expect("file type").is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).expect("copies fixture");
-        }
-    }
 }
 
 #[test]

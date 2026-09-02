@@ -14,7 +14,7 @@ the CLI reports.
 
 | File | What it is | Fires | Config |
 |------|------------|-------|--------|
-| `clip.glb` | A clean two-bone rig (`root` → `spine`) with one 1 s rotation clip named `swing`. | nothing (exit 0) | none |
+| `clip.glb` | A clean three-bone chain (`root` → `spine` → `chest`) with one 1 s rotation clip named `swing`, turning `spine` about Z. A bone's own rotation moves its children, so the rotated joint needs the `chest` tip — and an axis the tip does not lie on — for the swing to move anything a report can draw. | nothing (exit 0) | none |
 | `clip-dirty.glb` | The same clip with two deliberate, repairable defects: one non-unit rotation key and one sign-flipped key. Everything else is identical, so `fix` restores it exactly and `diff` reports no measurement drift. | `quat-norm`, `quat-flip` | none |
 | `walk.glb` | A hips + two-foot rig (`pelvis` / `foot_l` / `foot_r`, resolving the `ue-mannequin` profile) with a 1 s walk cycle that closes exactly. The clean control the symptom fixtures below are mutations of. | nothing (exit 0) | [`walk.animsmith.toml`](../walk.animsmith.toml) |
 | `walk-dirty.glb` | The same walk cut a quarter-cycle short, so the feet don't return to their first-frame pose — a popped loop seam. | `loop-closure`, `loop-seam`, `loop-seam-vel` | [`walk.animsmith.toml`](../walk.animsmith.toml) |
@@ -24,7 +24,7 @@ the CLI reports.
 | `walk-frozen-arm.glb` | The walk rig plus an `arm_l` whose rotation channel is keyed at five identical values. There is no `arm_r` at all — that is the channel the export dropped. | `frozen-bone` (`arm_l`), `missing-bones` (`arm_r`), `constant-track` (`arm_l`) | [`walk-frozen-arm.animsmith.toml`](../walk-frozen-arm.animsmith.toml) |
 | `walk-scaled.glb` | The walk with a pelvis scale track stretching Y to 1.2 and back, plus a five-key `weapon_socket` translation channel that never moves — the one track `transform --prune-constant-tracks` removes. | `scale-keys`, `non-uniform-scale` (`pelvis`), `constant-track` (`weapon_socket`) | none; the checks are mechanical |
 | `report-comparison-before.glb` | A five-bone synthetic gait with a left-foot endpoint seam, sampled stance slide, a closed root path, and a redundant constant quaternion track. | `loop-closure`, `loop-seam-vel`, `foot-slide`, `constant-track` | [`report-comparison.animsmith.toml`](../report-comparison.animsmith.toml) |
-| `report-comparison-after.glb` | The paired synthetic gait with closed foot endpoints, corrected stance trajectories, a distinct closed root path, and the redundant quaternion track removed. | nothing (exit 0) | [`report-comparison.animsmith.toml`](../report-comparison.animsmith.toml) |
+| `report-comparison-after.glb` | The same gait with exactly those defects repaired: closed foot endpoints, corrected stance trajectories, and the redundant quaternion track removed. The skeleton and the root path are identical to the before side, so every difference the comparison report shows is the repair. | nothing (exit 0) | [`report-comparison.animsmith.toml`](../report-comparison.animsmith.toml) |
 
 `clip-dirty.glb` is a `.glb` (not `.gltf`) on purpose: `fix` is
 byte-surgical over a GLB binary chunk and skips the data-URI buffers a

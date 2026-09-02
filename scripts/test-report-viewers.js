@@ -201,6 +201,83 @@ if(!nodes["comparison-root-path"].children.some(child=>child.textContent==="befo
 if(!nodes["before-path"].children.some(child=>child.attrs["data-role"]==="left_foot") || !nodes["before-path"].children.some(child=>child.attrs["data-role"]==="right_foot")) throw new Error("role trail chart omits foot trajectories");
 if(!nodes["before-gait"].children.some(child=>child.attrs["data-stance-side"]==="left")) throw new Error("gait chart omits typed stance interval");
 assertNoBareSvgText(nodes, comparisonSvgs, "drawn comparison");
+
+// Every panel says what it is. These captions are the only thing telling a
+// reader that the trajectory panel covers the whole clip while the dot and
+// the pose panes show one shared phase, and which shaded band belongs to
+// which foot, so they are part of the document's contract rather than
+// decoration.
+// Captions live in the HTML paragraph beside each panel, so the browser
+// reflows them at whatever width the reader has and this reads them the
+// same way a reader does — off the element, not off the drawing.
+const panelCaption = (id) => nodes[`${id}-caption`].textContent;
+for (const [id, phrase] of [
+  ["comparison-root-path", "the root's top-down path over the whole clip"],
+  ["comparison-root-path", "the dot marks the shared phase"],
+  ["comparison-root-path", "after dashed, before solid"],
+  ["comparison-root-path", "one shared uniform metres scale"],
+  ["before-path", "shared scale across both inputs"],
+  ["after-path", "shared scale across both inputs"],
+  ["before-gait", "shaded runs are sampled foot-slide stance evidence"],
+  ["before-gait", "left in the upper band, right in the lower"],
+  ["after-gait", "left in the upper band, right in the lower"],
+]) {
+  if (!panelCaption(id).includes(phrase)) throw new Error(`${id} lost its caption: ${JSON.stringify(phrase)}`);
+}
+// Nothing drawn inside a panel may be a caption: SVG does not wrap, so a
+// sentence drawn there is cut at the panel edge on a narrow column.
+for (const id of comparisonSvgs) {
+  for (const child of nodes[id].children) {
+    if (child.tag !== "text" || !child.textContent) continue;
+    if (child.textContent.split(" ").length > 6) throw new Error(`${id} draws the sentence ${JSON.stringify(child.textContent)} into the picture, where a narrow panel cuts it off; captions belong in the panel's caption element`);
+  }
+}
+// Each pose pane carries its own heading, so a document that labelled only
+// one of them fails on the side it left unlabelled.
+for (const side of ["before", "after"]) {
+  const panel = html.split(`id="${side}-panel"`)[1];
+  if (!panel) throw new Error(`the generated document has no ${side} panel`);
+  const untilNextPanel = panel.split("<section class=\"side\"")[0];
+  if (!untilNextPanel.includes("<h3>Judged pose at the shared phase</h3>")) throw new Error(`the ${side} pose pane is unlabelled: its panel carries no "Judged pose at the shared phase" heading`);
+}
+
+// Two root trajectories that coincide stay two visible paths. Both sides
+// here carry the same pose grid, so a solid `after` drawn over a solid
+// `before` would leave the panel showing one input while its legend named
+// two — which is what a repair that does not touch the root produces.
+const rootPaths = nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-side"]);
+if (rootPaths.length !== 2) throw new Error("the shared root chart plots both sides");
+if (rootPaths.filter((path) => path.attrs["stroke-dasharray"]).length !== 1) throw new Error("two coincident root paths are drawn identically, so one hides the other");
+const rootDots = nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-dot"]);
+if (new Set(rootDots.map((dot) => dot.attrs.r)).size !== 2) throw new Error("two coincident shared-phase dots are drawn identically");
+
+// Two stance windows at the same frames stay two visible bands. The left
+// and right shading are semi-transparent, so drawing them over each other
+// cancels them into one grey block belonging to neither side — which is
+// exactly what a repaired clip whose feet plant together produced.
+const coincident = JSON.parse(JSON.stringify(data));
+if (coincident.before.contexts.stances.length !== 2) throw new Error("the fixture needs a left and a right stance to coincide");
+for (const row of coincident.before.contexts.stances) row.runs = [{start_frame: 200, end_frame: 900, start_s: 0.2, end_s: 0.9}];
+const coincidentRun = run(generated, "comparison-report-data", html, coincident);
+const bands = coincidentRun.nodes["before-gait"].children.filter((child) => child.attrs["data-stance-side"]);
+if (new Set(bands.map((band) => band.attrs["data-stance-side"])).size !== 2) throw new Error("both stance sides must be shaded");
+if (new Set(bands.map((band) => `${band.attrs.y}+${band.attrs.height}`)).size !== 2) throw new Error("two coincident stance windows drew one band on top of the other");
+
+// One camera across both pose panes: a skeleton half the size renders half
+// the size. Fitting each side to its own extent draws two skeletons the
+// repair left identical at the same size whatever their real extents are.
+const scaledSides = JSON.parse(JSON.stringify(data));
+const halved = Buffer.from(data.after.clip.positions, "base64");
+for (let offset = 0; offset < halved.length; offset += 4) halved.writeFloatLE(halved.readFloatLE(offset) * 0.5, offset);
+scaledSides.after.clip.positions = halved.toString("base64");
+const oneCamera = run(generated, "comparison-report-data", html, scaledSides);
+const drawnSpread = (side) => {
+  const arcs = oneCamera.nodes[`${side}-gl`].context.arcs.map((arc) => arc.args);
+  if (!arcs.length) throw new Error(`the ${side} pose pane drew nothing`);
+  const extent = (index) => Math.max(...arcs.map((arc) => arc[index])) - Math.min(...arcs.map((arc) => arc[index]));
+  return Math.max(extent(0), extent(1));
+};
+if (!(drawnSpread("after") < drawnSpread("before") * 0.75)) throw new Error(`the pose panes do not share one camera: a half-size skeleton drew at ${drawnSpread("after")} against ${drawnSpread("before")}`);
 const seamIndex = data.before.findings.indexOf(seamFinding), structuralIndex = data.before.findings.indexOf(structuralFinding), afterIndex = data.after.findings.indexOf(afterFinding);
 nodes["before-findings"].children[seamIndex].listeners.click();
 if(nodes.scrub.value != 1501 || !nodes["before-pose-context"].textContent.includes("first 0.000s") || !nodes["before-pose-context"].textContent.includes(`affected ${seam.subject_bone_name}`)) throw new Error("seam finding did not select exact frame and endpoint/subject context");
@@ -239,10 +316,14 @@ assertNoHashWrites(main, "the comparison viewer");
 // The comparison's panels are canvas drawings, so nothing but this callback
 // repaints them when the reader's system theme changes: the palette has to be
 // re-resolved and the panels redrawn with it.
-const comparisonTokens = (ink, muted) => tokenStyles({
-  ground: "#101010", surface: "#1e1e2a", raised: "#232331", ink, muted,
-  line: "#3a3a4e", accent: "#0a0b0c", error: "#202122", warning: "#101112",
-  pass: "#010203", note: "#6b7390",
+// `pass` is the root trail's token, and the trajectory panels draw that
+// trail. A panel whose only muted element was a caption now says nothing
+// about the theme, because captions moved to the HTML the stylesheet
+// colours; the trail is what the viewer still paints itself.
+const comparisonTokens = (ink, pass) => tokenStyles({
+  ground: "#101010", surface: "#1e1e2a", raised: "#232331", ink,
+  muted: "#9099b2", line: "#3a3a4e", accent: "#0a0b0c", error: "#202122",
+  warning: "#101112", pass, note: "#6b7390",
 });
 const canvasFills = (state, side) => {
   const canvas = state.nodes[`${side}-gl`];
@@ -255,7 +336,7 @@ for (const side of ["before", "after"]) {
   if (!canvasFills(schemeComparison, side).includes("#123456")) throw new Error(`the ${side} canvas did not paint its joints with the ink token`);
 }
 for (const panel of ["before-path", "after-path"]) {
-  if (!svgPaint(schemeComparison, panel).includes("#445566")) throw new Error(`${panel} did not paint with the muted token`);
+  if (!svgPaint(schemeComparison, panel).includes("#445566")) throw new Error(`${panel} did not paint the root trail with the pass token`);
 }
 if (typeof schemeComparison.media.change !== "function") throw new Error("the comparison viewer does not listen for a system theme change");
 schemeComparison.settings.styles = comparisonTokens("#654321", "#778899");
@@ -323,20 +404,23 @@ assertNoHashWrites(followedAnchor, "following a comparison anchor");
 const cleanBefore = data.before.clip.positions, cleanAfter = data.after.clip.positions;
 const execute = payload => run(generated, "comparison-report-data", html, payload).nodes;
 const svgText = (node) => node.children.map(child => child.textContent).join(" ");
+// A panel's disclosures are its caption, which is the HTML paragraph beside
+// it rather than text drawn into the picture.
+const captionOf = (state, id) => state[`${id}-caption`].textContent;
 const invalid = Buffer.from(data.before.clip.positions, "base64");
 for (let offset = 0; offset < invalid.length; offset += 4) invalid.writeFloatLE(Number.NaN, offset);
 data.before.clip.positions = invalid.toString("base64");
 data.after.clip.positions = cleanAfter;
 const isolatedNodes = execute(data);
 const rootLabels = isolatedNodes["comparison-root-path"].children.map(child=>child.textContent);
-const beforeTrailText = svgText(isolatedNodes["before-path"]);
-const afterTrailText = svgText(isolatedNodes["after-path"]);
-if (!isolatedNodes["before-pose-context"].textContent.includes("non-finite") || !svgText(isolatedNodes["before-gait"]).includes("non-finite") || !isolatedNodes["after-pose-context"].textContent.includes("exact judged") || !rootLabels.includes("before root unavailable") || !rootLabels.includes("after root path") || !beforeTrailText.includes("unavailable:") || !beforeTrailText.includes("non-finite") || afterTrailText.includes("non-finite") || isolatedNodes["before-findings"].children.length !== data.before.findings.length) throw new Error("before-side non-finite pose/gait/root/trail evidence was mislabeled, hidden, or threw");
+const beforeTrailText = captionOf(isolatedNodes, "before-path");
+const afterTrailText = captionOf(isolatedNodes, "after-path");
+if (!isolatedNodes["before-pose-context"].textContent.includes("non-finite") || !captionOf(isolatedNodes, "before-gait").includes("non-finite") || !isolatedNodes["after-pose-context"].textContent.includes("exact judged") || !rootLabels.includes("before root unavailable") || !rootLabels.includes("after root path") || !beforeTrailText.includes("unavailable:") || !beforeTrailText.includes("non-finite") || afterTrailText.includes("non-finite") || isolatedNodes["before-findings"].children.length !== data.before.findings.length) throw new Error("before-side non-finite pose/gait/root/trail evidence was mislabeled, hidden, or threw");
 assertNoBareSvgText(isolatedNodes, comparisonSvgs, "non-finite before side");
 
 data.before.clip.positions = cleanBefore; data.after.clip.positions = invalid.toString("base64");
 const reverseNodes = execute(data);
-const reverseTrailText = svgText(reverseNodes["after-path"]);
+const reverseTrailText = captionOf(reverseNodes, "after-path");
 if (!reverseNodes["before-pose-context"].textContent.includes("exact judged") || !reverseNodes["after-pose-context"].textContent.includes("non-finite") || !reverseTrailText.includes("unavailable:") || !reverseTrailText.includes("non-finite")) throw new Error("after-side non-finite evidence did not remain independent of exact before evidence");
 
 // A selected mixed-finite frame also loses the exact-evidence label while
@@ -346,7 +430,7 @@ mixed.writeFloatLE(Number.NaN, (1501 * bones * 3 + 1 * 3) * 4);
 data.before.clip.positions = cleanBefore; data.after.clip.positions = mixed.toString("base64");
 const mixedNodes = execute(data);
 mixedNodes.scrub.value=1501; mixedNodes.scrub.listeners.input();
-const mixedTrailText = svgText(mixedNodes["after-path"]);
+const mixedTrailText = captionOf(mixedNodes, "after-path");
 if (!mixedNodes["after-pose-context"].textContent.includes("selected frame contains non-finite") || !mixedNodes["before-pose-context"].textContent.includes("exact judged") || !mixedTrailText.includes("incomplete non-finite samples")) throw new Error("mixed per-frame/trail availability was not evaluated independently");
 
 // Structural context must remain visible without overriding the selected
@@ -481,6 +565,51 @@ const gaitChart = documentCharts(singleHtml).find((chart) => chart.dataset.kind 
 if (!gaitChart) throw new Error("the single-clip document carries no gait chart to sync");
 const chartPad = Number(gaitChart.dataset.pad), chartPlotW = Number(gaitChart.dataset.plotw);
 if (!(chartPad > 0) || !(chartPlotW > 0)) throw new Error("the gait chart does not publish its plot rectangle");
+
+// The root-path dot is placed by frame index, and a frame the clip has no
+// sampled position for carries the no-position marker instead of a
+// coordinate. Scrubbing to such a frame must hide the dot rather than leave
+// it at some other frame's position — the invention this pins is a leading
+// run of unavailable frames showing a coordinate the clip only reaches
+// later. The document under test is finite throughout, so the hole is
+// introduced here, in the template the viewer reads.
+const rootChartOf = (state) => {
+  const chart = state.charts.find((figure) => figure.dataset.kind === "rootpath");
+  if (!chart) throw new Error("the run has no root-path chart to observe");
+  return chart;
+};
+const committedPoints = documentCharts(singleHtml)
+  .find((chart) => chart.dataset.kind === "rootpath");
+if (!committedPoints) throw new Error("the single-clip document carries no root-path chart");
+const originalPoints = committedPoints.query[".pathpoints"].innerHTML.split(";");
+if (originalPoints.length !== singleClip.frames) throw new Error(`the root-path template must carry one entry per judged frame: ${originalPoints.length} against ${singleClip.frames}`);
+if (originalPoints.some((entry) => entry.split(",").length !== 2)) throw new Error("the committed fixture is finite throughout, so every entry is a coordinate");
+// Frames 0 and 1 unavailable, everything after them as generated.
+const holed = originalPoints.slice();
+holed[0] = "-";
+holed[1] = "-";
+const holedHtml = singleHtml.replace(
+  `<template class="pathpoints">${originalPoints.join(";")}</template>`,
+  `<template class="pathpoints">${holed.join(";")}</template>`,
+);
+if (holedHtml === singleHtml) throw new Error("the harness failed to introduce a hole in the root-path template");
+const holedRun = runSingle(single, holedHtml, singlePayload, {hash: "#frame=0"});
+const dotOf = (state) => rootChartOf(state).query[".pathdot"];
+if (dotOf(holedRun).attrs.display !== "none") throw new Error("scrubbing to a frame with no sampled position left the dot visible, at another frame's coordinate");
+holedRun.nodes.scrub.value = "1";
+holedRun.nodes.scrub.listeners.input();
+if (dotOf(holedRun).attrs.display !== "none") throw new Error("the second unavailable frame left the dot visible");
+// The first available frame shows the dot at that frame's own coordinate.
+holedRun.nodes.scrub.value = "2";
+holedRun.nodes.scrub.listeners.input();
+const [availableX, availableY] = holed[2].split(",");
+if (dotOf(holedRun).attrs.display === "none") throw new Error("an available frame must show the dot");
+if (dotOf(holedRun).attrs.cx !== availableX || dotOf(holedRun).attrs.cy !== availableY) throw new Error(`the dot is placed at frame 2's own coordinate: ${dotOf(holedRun).attrs.cx},${dotOf(holedRun).attrs.cy} against ${holed[2]}`);
+// And scrubbing back into the hole hides it again.
+holedRun.nodes.scrub.value = "0";
+holedRun.nodes.scrub.listeners.input();
+if (dotOf(holedRun).attrs.display !== "none") throw new Error("scrubbing back to an unavailable frame did not hide the dot again");
+assertNoHashWrites(holedRun, "scrubbing across an unavailable frame");
 
 const plain = runSingle(single, singleHtml, singlePayload);
 // The same matrix against this document's own copy of the runtime.

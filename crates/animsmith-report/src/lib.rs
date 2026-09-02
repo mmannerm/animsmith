@@ -527,8 +527,8 @@ pub fn render_comparison(
          <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>\n\
          <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
          <section class=\"shared-chart\"><h2>Before/after root trajectory</h2>{shared_pose}</section>\n\
-         <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
-         <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
+         <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><h3>Judged pose at the shared phase</h3>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
+         <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><h3>Judged pose at the shared phase</h3>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
          <script>{shared_js}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
     ))
 }
@@ -1531,7 +1531,15 @@ fn pose_panel(id: &str, view_box: &str, evidence_only: bool) -> String {
     if evidence_only {
         pose_surface(id, true)
     } else {
-        format!("<svg id=\"{id}\" viewBox=\"{view_box}\"></svg>")
+        // The panel's caption is an HTML paragraph beside the drawing, not
+        // text inside it: SVG never wraps, so a caption drawn into the
+        // picture is cut at the panel edge on a narrow column, while the
+        // browser reflows this one for free at whatever width the reader
+        // has. The viewer fills it in as it draws.
+        format!(
+            "<svg id=\"{id}\" viewBox=\"{view_box}\"></svg>\
+             <p id=\"{id}-caption\" class=\"context-label\"></p>"
+        )
     }
 }
 
@@ -1795,16 +1803,19 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
                 Series {
                     class: "series-left",
                     label: "L foot",
+                    axis: Side::Left,
                     values: &l,
                 },
                 Series {
                     class: "series-right",
                     label: "R foot",
+                    axis: Side::Left,
                     values: &r,
                 },
                 Series {
                     class: "series-diff",
                     label: "L−R",
+                    axis: Side::Right,
                     values: &d,
                 },
             ],
@@ -1824,20 +1835,48 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
     out
 }
 
+/// Which of a line chart's two value axes a series is plotted against,
+/// and which gutter a label is aligned to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
 /// One plotted series: the stable class the stylesheet and any chart
-/// extractor targets, its legend label, and the samples.
+/// extractor targets, its legend label, the value axis it is scaled
+/// against, and the samples.
 struct Series<'a> {
     class: &'static str,
     label: &'static str,
+    axis: Side,
     values: &'a [f64],
+}
+
+/// Where a text label is anchored horizontally.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Anchor {
+    Start,
+    Middle,
+    End,
+}
+
+impl Anchor {
+    /// The SVG attribute, omitted for the `start` default.
+    fn attribute(self) -> &'static str {
+        match self {
+            Anchor::Start => "",
+            Anchor::Middle => " text-anchor=\"middle\"",
+            Anchor::End => " text-anchor=\"end\"",
+        }
+    }
 }
 
 /// One axis label, placed in a chart's gutters.
 struct AxisLabel {
     x: f64,
     y: f64,
-    /// Right-aligned labels sit against the plot's right edge.
-    end_anchored: bool,
+    anchor: Anchor,
     text: String,
 }
 
@@ -1852,7 +1891,7 @@ struct Chart<'a> {
     title: &'static str,
     /// Tail of the `aria-label`, after the clip name.
     description: String,
-    legend: &'a [(&'static str, &'static str)],
+    legend: &'a [(&'static str, &'a str)],
     axis: Vec<AxisLabel>,
     /// Publishes the plot rectangle the viewer's playhead is placed in.
     plot_hooks: bool,
@@ -1882,15 +1921,11 @@ impl Chart<'_> {
             .axis
             .iter()
             .map(|label| {
-                let anchor = if label.end_anchored {
-                    " text-anchor=\"end\""
-                } else {
-                    ""
-                };
                 format!(
-                    "<text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\"{anchor}>{}</text>",
+                    "<text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\"{}>{}</text>",
                     label.x,
                     label.y,
+                    label.anchor.attribute(),
                     esc(&label.text)
                 )
             })
@@ -1918,7 +1953,9 @@ const H: f64 = 150.0;
 /// Gutters for the y-axis labels, the legend row, and the x-axis labels. The
 /// plot rectangle between them is what `data-pad`/`data-plotw` describe.
 const PAD_LEFT: f64 = 34.0;
-const PAD_RIGHT: f64 = 8.0;
+/// As wide as the left gutter: a line chart labels a second value axis
+/// there, and the top-down path chart keeps the plot centred.
+const PAD_RIGHT: f64 = 34.0;
 const PAD_TOP: f64 = 18.0;
 const PAD_BOTTOM: f64 = 16.0;
 const PLOT_W: f64 = W - PAD_LEFT - PAD_RIGHT;
@@ -1927,89 +1964,256 @@ const PLOT_H: f64 = H - PAD_TOP - PAD_BOTTOM;
 /// than left to the caption.
 const UNIT: &str = "m";
 const LEGEND_Y: f64 = 9.0;
-/// Advance per legend entry: a swatch, a gap, and an 8px label. Approximate
-/// on purpose — the entries only have to stay inside the plot width.
+/// Average glyph advance at the shared `--chart-type` scale the
+/// stylesheets set on chart labels, in viewBox units. Approximate on
+/// purpose — it only lays legend entries out left to right, and they have
+/// only to stay inside the plot width. The comparison viewer lays its own
+/// legends out from the same number.
 const LEGEND_CHAR_W: f64 = 4.6;
+/// Extent below which a top-down path is reported as stationary rather
+/// than plotted: a millimetre, which is finer than any clip an engine
+/// distinguishes from standing still.
+const STATIC_PATH_M: f64 = 0.001;
+/// The per-frame `pathpoints` entry for a frame with no sampled position.
+/// It carries no coordinate at all, so a viewer cannot mistake it for one;
+/// `assets/viewer.js` hides the playhead dot when it reads this.
+const NO_POSITION: &str = "-";
 
+/// The value range of one axis' series, over the samples that are finite.
+///
+/// A channel can be non-finite for every frame it was sampled at — that is
+/// what the `nan` check exists to report — and a derived series inherits
+/// it, so an all-NaN right foot makes `L−R` NaN throughout. Folding those
+/// in yields a `NaN` range, which then prints `NaN m` in the gutter and
+/// plots a path of `NaN` coordinates that no renderer draws. `None` means
+/// there is nothing to scale and nothing to plot.
+fn axis_range(series: &[Series<'_>], axis: Side) -> Option<(f64, f64)> {
+    let values = series
+        .iter()
+        .filter(|entry| entry.axis == axis)
+        .flat_map(|entry| entry.values.iter().copied())
+        .filter(|value| value.is_finite());
+    values.fold(None, |range, value| {
+        Some(match range {
+            None => (value, value),
+            Some((min, max)) => (min.min(value), max.max(value)),
+        })
+    })
+}
+
+/// Whether a range is a single value: every sample on that axis is the
+/// same number, so there is no span to scale across.
+fn is_flat((min, max): (f64, f64)) -> bool {
+    (max - min).abs() < f64::EPSILON
+}
+
+/// The polyline through `count` plotted points, where `at` yields the one
+/// at an index or `None` when that index has nothing to plot.
+///
+/// A gap starts a new subpath. Dropping the unplottable points and joining
+/// what is left would draw a straight segment between the samples either
+/// side of the hole — a stretch of trajectory the reader is being shown as
+/// measured evidence, and which no frame recorded. Empty when nothing is
+/// plottable at all.
+fn polyline(count: usize, at: impl Fn(usize) -> Option<(f64, f64)>) -> String {
+    let mut path = String::new();
+    let mut drawing = false;
+    for index in 0..count {
+        let Some((x, y)) = at(index).filter(|(x, y)| x.is_finite() && y.is_finite()) else {
+            drawing = false;
+            continue;
+        };
+        path.push_str(&format!("{}{x:.1},{y:.1}", if drawing { "L" } else { "M" }));
+        drawing = true;
+    }
+    path
+}
+
+/// The `(x, z)` root sample at `frame`, when both coordinates are finite.
+///
+/// A trajectory point needs both: a frame finite in X but not in Z has no
+/// position to plot. Taking the two extents separately instead lets a
+/// track that alternates between them look plottable when not one frame
+/// is — which is a shape a malformed file reaches, not a theoretical one.
+fn joint_sample(xs: &[f64], zs: &[f64], frame: usize) -> Option<(f64, f64)> {
+    let (x, z) = (*xs.get(frame)?, *zs.get(frame)?);
+    (x.is_finite() && z.is_finite()).then_some((x, z))
+}
+
+/// The X and Z extents of a set of jointly finite trajectory points.
+fn joint_extent(points: &[(f64, f64)]) -> Option<((f64, f64), (f64, f64))> {
+    points.iter().fold(None, |extent, &(x, z)| {
+        Some(match extent {
+            None => ((x, x), (z, z)),
+            Some(((min_x, max_x), (min_z, max_z))) => {
+                ((min_x.min(x), max_x.max(x)), (min_z.min(z), max_z.max(z)))
+            }
+        })
+    })
+}
+
+/// A line chart of one or two independently scaled value axes.
+///
+/// Series that share an axis share a scale, so they can be read against
+/// each other; series on the other axis get their own, so a signal
+/// orders of magnitude larger cannot flatten the rest. The gait chart
+/// needs exactly that: both feet swing within about ten centimetres of
+/// each other a metre below the hips, while their difference swings
+/// about zero. On one shared scale the two foot curves collapse into a
+/// line at the bottom of the plot — the picture stops showing the thing
+/// the reader came for.
 fn line_chart(
     clip: &str,
     kind: &'static str,
     title: &'static str,
     series: &[Series<'_>],
 ) -> String {
-    let all: Vec<f64> = series
-        .iter()
-        .flat_map(|s| s.values.iter().copied())
-        .collect();
-    if all.is_empty() {
+    let Some(left) = axis_range(series, Side::Left) else {
         return String::new();
-    }
-    let min = all.iter().copied().fold(f64::MAX, f64::min);
-    let max = all.iter().copied().fold(f64::MIN, f64::max);
-    let span = (max - min).max(1e-6);
+    };
+    let right = axis_range(series, Side::Right);
     let frames = series[0].values.len();
     let n = frames.max(2);
     let last_frame = frames.saturating_sub(1);
     let x = |i: usize| PAD_LEFT + PLOT_W * i as f64 / (n - 1) as f64;
-    let y = |v: f64| H - PAD_BOTTOM - PLOT_H * (v - min) / span;
+    // A series that never changes has no span to scale across. Dividing by
+    // a clamped epsilon pins it to whichever gutter its own value sits at —
+    // the bottom row — and prints that one value twice, as though it were a
+    // range. Two feet exactly in phase make `L−R` identically zero, which
+    // is a real clip, so a flat series is centred instead and labelled once.
+    let y = |range: (f64, f64), v: f64| {
+        let (min, max) = range;
+        if is_flat(range) {
+            PAD_TOP + PLOT_H / 2.0
+        } else {
+            H - PAD_BOTTOM - PLOT_H * (v - min) / (max - min)
+        }
+    };
 
     let mut body = String::new();
     for entry in series {
-        let d: Vec<String> = entry
-            .values
-            .iter()
-            .enumerate()
-            .map(|(i, &v)| format!("{}{:.1},{:.1}", if i == 0 { "M" } else { "L" }, x(i), y(v)))
-            .collect();
+        // An axis with no finite sample has no range, so its series is not
+        // plotted at all rather than plotted against the other axis'.
+        let Some(range) = (match entry.axis {
+            Side::Left => Some(left),
+            Side::Right => right,
+        }) else {
+            continue;
+        };
+        let d = polyline(entry.values.len(), |index| {
+            let value = entry.values[index];
+            value.is_finite().then(|| (x(index), y(range, value)))
+        });
+        if d.is_empty() {
+            continue;
+        }
         body.push_str(&format!(
-            "<path class=\"{}\" d=\"{}\" fill=\"none\"/>",
+            "<path class=\"{}\" d=\"{d}\" fill=\"none\"/>",
             entry.class,
-            d.join("")
         ));
     }
     body.push_str(&format!(
         "<line class=\"playhead\" x1=\"{PAD_LEFT}\" x2=\"{PAD_LEFT}\" y1=\"{PAD_TOP}\" y2=\"{:.1}\"/>",
         H - PAD_BOTTOM
     ));
-    let labels: Vec<&str> = series.iter().map(|entry| entry.label).collect();
+
+    // Each axis states its own range in its own gutter, and the legend
+    // says which series is read against the right-hand one, so two scales
+    // on one plot cannot be mistaken for one.
+    let mut axis = Vec::with_capacity(6);
+    for (side, (min, max)) in [(Side::Left, Some(left)), (Side::Right, right)]
+        .into_iter()
+        .filter_map(|(side, range)| range.map(|range| (side, range)))
+    {
+        let (at, anchor) = match side {
+            Side::Left => (2.0, Anchor::Start),
+            Side::Right => (W - 2.0, Anchor::End),
+        };
+        if is_flat((min, max)) {
+            axis.push(AxisLabel {
+                x: at,
+                y: PAD_TOP + PLOT_H / 2.0 + 3.0,
+                anchor,
+                text: format!("flat {min:.2} {UNIT}"),
+            });
+            continue;
+        }
+        axis.push(AxisLabel {
+            x: at,
+            y: PAD_TOP + 3.0,
+            anchor,
+            text: format!("{max:.2} {UNIT}"),
+        });
+        axis.push(AxisLabel {
+            x: at,
+            y: H - PAD_BOTTOM,
+            anchor,
+            text: format!("{min:.2} {UNIT}"),
+        });
+    }
+    axis.push(AxisLabel {
+        x: PAD_LEFT,
+        y: H - 4.0,
+        anchor: Anchor::Start,
+        text: "frame 0".to_owned(),
+    });
+    axis.push(AxisLabel {
+        x: W - PAD_RIGHT,
+        y: H - 4.0,
+        anchor: Anchor::End,
+        text: format!("frame {last_frame}"),
+    });
+
+    let legend_labels: Vec<String> = series
+        .iter()
+        .map(|entry| match entry.axis {
+            Side::Left => entry.label.to_owned(),
+            Side::Right => format!("{} (right axis)", entry.label),
+        })
+        .collect();
+    let named = |axis: Side| -> String {
+        series
+            .iter()
+            .filter(|entry| entry.axis == axis)
+            .map(|entry| entry.label)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let scale = |axis: Side, range: (f64, f64)| {
+        let (min, max) = range;
+        if is_flat(range) {
+            format!("{} flat at {min:.2} {UNIT}", named(axis))
+        } else {
+            format!("{} {min:.2} to {max:.2} {UNIT}", named(axis))
+        }
+    };
+    let described = match right {
+        // No finite sample on the right axis: its series is named as
+        // unplottable rather than left out, so the description still
+        // accounts for every series the legend lists.
+        None if series.iter().any(|entry| entry.axis == Side::Right) => format!(
+            "{}; {} has no finite sample and is not plotted",
+            scale(Side::Left, left),
+            named(Side::Right)
+        ),
+        None => scale(Side::Left, left),
+        Some(right) => format!(
+            "{}; {} on its own right-hand axis",
+            scale(Side::Left, left),
+            scale(Side::Right, right)
+        ),
+    };
     Chart {
         clip,
         kind,
         title,
-        description: format!(
-            "{title}: {} over frames 0 to {last_frame}, {min:.2} to {max:.2} {UNIT}",
-            labels.join(", ")
-        ),
+        description: format!("{title} over frames 0 to {last_frame}: {described}"),
         legend: &series
             .iter()
-            .map(|entry| (entry.class, entry.label))
+            .zip(&legend_labels)
+            .map(|(entry, label)| (entry.class, label.as_str()))
             .collect::<Vec<_>>(),
-        axis: vec![
-            AxisLabel {
-                x: 2.0,
-                y: PAD_TOP + 3.0,
-                end_anchored: false,
-                text: format!("{max:.2} {UNIT}"),
-            },
-            AxisLabel {
-                x: 2.0,
-                y: H - PAD_BOTTOM,
-                end_anchored: false,
-                text: format!("{min:.2} {UNIT}"),
-            },
-            AxisLabel {
-                x: PAD_LEFT,
-                y: H - 4.0,
-                end_anchored: false,
-                text: "frame 0".to_owned(),
-            },
-            AxisLabel {
-                x: W - PAD_RIGHT,
-                y: H - 4.0,
-                end_anchored: true,
-                text: format!("frame {last_frame}"),
-            },
-        ],
+        axis,
         plot_hooks: true,
         body,
         trailer: String::new(),
@@ -2021,14 +2225,42 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
     if xs.is_empty() {
         return String::new();
     }
-    let (min_x, max_x) = (
-        xs.iter().copied().fold(f64::MAX, f64::min),
-        xs.iter().copied().fold(f64::MIN, f64::max),
-    );
-    let (min_z, max_z) = (
-        zs.iter().copied().fold(f64::MAX, f64::min),
-        zs.iter().copied().fold(f64::MIN, f64::max),
-    );
+    // A position needs a finite X *and* Z on the same frame, so the plot,
+    // its extents and its first point all come from the frames that have
+    // both. Sampled frames can be non-finite — that is what the `nan` check
+    // reports — and taking the two extents per coordinate instead let a
+    // track finite in X on one frame and in Z on the next look plottable
+    // when no single frame was, leaving no first point to place the dot at.
+    // A run with no plottable frame at all says so, the way the comparison
+    // viewer's root panel does, rather than folding `f64::MAX`/`f64::MIN`
+    // seeds into a negative span that reads as a stationary root parked at
+    // "X 179769313486231570000…00 m".
+    let plotted: Vec<(f64, f64)> = (0..xs.len())
+        .filter_map(|frame| joint_sample(xs, zs, frame))
+        .collect();
+    let Some(((min_x, max_x), (min_z, max_z))) = joint_extent(&plotted) else {
+        return Chart {
+            clip,
+            kind: "rootpath",
+            title,
+            description: format!(
+                "{title}: unavailable — not one of the {} sampled root frames has a finite \
+                 X and Z together; findings and coverage remain listed",
+                xs.len()
+            ),
+            legend: &[("root-path", "root")],
+            axis: vec![AxisLabel {
+                x: W / 2.0,
+                y: PAD_TOP + PLOT_H / 2.0,
+                anchor: Anchor::Middle,
+                text: "root path unavailable: sampled positions are non-finite".to_owned(),
+            }],
+            plot_hooks: false,
+            body: String::new(),
+            trailer: String::new(),
+        }
+        .render();
+    };
     // One metres scale for both axes: a top-down path that is squashed in Z
     // would misdescribe the trajectory it is evidence for.
     let span = (max_x - min_x).max(max_z - min_z).max(1e-3);
@@ -2037,47 +2269,89 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
     let center_y = PAD_TOP + PLOT_H / 2.0;
     let x = |v: f64| center_x + (v - (min_x + max_x) / 2.0) * scale;
     let y = |v: f64| center_y - (v - (min_z + max_z) / 2.0) * scale;
-    let points: Vec<String> = xs
-        .iter()
-        .zip(zs)
-        .map(|(&px, &pz)| format!("{:.1},{:.1}", x(px), y(pz)))
+    let d = polyline(xs.len(), |frame| {
+        joint_sample(xs, zs, frame).map(|(px, pz)| (x(px), y(pz)))
+    });
+    // The viewer places the playhead dot by frame index, so this template
+    // keeps one entry per frame. A frame with no sampled position carries
+    // [`NO_POSITION`] rather than a coordinate, and the viewer hides the dot
+    // for it: borrowing the nearest frame that does have one shows the
+    // reader a place the clip is not at that moment — for a leading hole, a
+    // coordinate it only reaches later.
+    let points: Vec<String> = (0..xs.len())
+        .map(|frame| match joint_sample(xs, zs, frame) {
+            Some((px, pz)) => format!("{:.1},{:.1}", x(px), y(pz)),
+            None => NO_POSITION.to_owned(),
+        })
         .collect();
-    let d: Vec<String> = points
-        .iter()
-        .enumerate()
-        .map(|(i, point)| format!("{}{point}", if i == 0 { "M" } else { "L" }))
-        .collect();
+
+    // An in-place clip plots one dot, and an empty square captioned
+    // `X 0.00…0.00 m` reads as a chart that failed rather than as the
+    // measurement it is. Say what the plot shows in words, and keep both
+    // range labels so the unit and the numbers stay where a reader of any
+    // other root path already looks for them.
+    let mut axis = Vec::with_capacity(3);
+    let stationary = (max_x - min_x).max(max_z - min_z) < STATIC_PATH_M;
+    if stationary {
+        let at_origin = min_x.abs().max(min_z.abs()) < STATIC_PATH_M;
+        axis.push(AxisLabel {
+            x: W / 2.0,
+            y: center_y - 10.0,
+            anchor: Anchor::Middle,
+            text: if at_origin {
+                "root stays at the origin".to_owned()
+            } else {
+                format!("root stays at X {min_x:.2} {UNIT}, Z {min_z:.2} {UNIT}")
+            },
+        });
+    }
+    axis.push(AxisLabel {
+        x: 2.0,
+        y: H - 4.0,
+        anchor: Anchor::Start,
+        text: format!("X {min_x:.2}…{max_x:.2} {UNIT}"),
+    });
+    axis.push(AxisLabel {
+        x: W - 2.0,
+        y: H - 4.0,
+        anchor: Anchor::End,
+        text: format!("Z {min_z:.2}…{max_z:.2} {UNIT}"),
+    });
+
     Chart {
         clip,
         kind: "rootpath",
         title,
-        description: format!(
-            "{title}: X {min_x:.2} to {max_x:.2} {UNIT}, Z {min_z:.2} to {max_z:.2} {UNIT}, \
-             {} frames on one uniform scale",
-            xs.len()
-        ),
+        description: if stationary {
+            format!(
+                "{title}: the root does not move, staying at X {min_x:.2} {UNIT}, \
+                 Z {min_z:.2} {UNIT} for all {} frames",
+                xs.len()
+            )
+        } else {
+            format!(
+                "{title}: X {min_x:.2} to {max_x:.2} {UNIT}, Z {min_z:.2} to {max_z:.2} {UNIT}, \
+                 {} frames on one uniform scale",
+                xs.len()
+            )
+        },
         legend: &[("root-path", "root")],
-        axis: vec![
-            AxisLabel {
-                x: 2.0,
-                y: H - 4.0,
-                end_anchored: false,
-                text: format!("X {min_x:.2}…{max_x:.2} {UNIT}"),
-            },
-            AxisLabel {
-                x: W - PAD_RIGHT,
-                y: H - 4.0,
-                end_anchored: true,
-                text: format!("Z {min_z:.2}…{max_z:.2} {UNIT}"),
-            },
-        ],
+        axis,
         plot_hooks: false,
+        // The dot marks the selected frame, so the document opens with it on
+        // frame 0 — or hidden, when frame 0 has no position. A static render
+        // of this figure (an extracted chart, a document with no script) then
+        // shows the same thing the viewer would.
         body: format!(
-            "<path class=\"root-path\" d=\"{}\" fill=\"none\"/>\
-             <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",
-            d.join(""),
-            x(xs[0]),
-            y(zs[0])
+            "<path class=\"root-path\" d=\"{d}\" fill=\"none\"/>{}",
+            match joint_sample(xs, zs, 0) {
+                Some((px, pz)) => format!(
+                    "<circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",
+                    x(px),
+                    y(pz)
+                ),
+                None => "<circle class=\"pathdot\" r=\"3\" display=\"none\"/>".to_owned(),
+            }
         ),
         trailer: format!(
             "<template class=\"pathpoints\">{}</template>",

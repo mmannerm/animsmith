@@ -25,7 +25,7 @@ against it.
 
 | In place: `walk.glb` | Travelling: `walk-travel.glb` |
 |---|---|
-| <img src="../visuals/walk.root-path.svg" alt="Root path of the in-place walk: a single stationary dot" width="360"> | <img src="../visuals/walk-travel.root-path.svg" alt="Root path of the travelling walk: a straight line 1.2 m long" width="360"> |
+| <img src="../visuals/walk.root-path.svg" alt="Root path of the in-place walk: one dot, captioned root stays at the origin" width="360"> | <img src="../visuals/walk-travel.root-path.svg" alt="Root path of the travelling walk: a straight line 1.2 m long" width="360"> |
 
 <iframe src="../visuals/walk-travel.report.html#embed=1&finding=0" title="AnimSmith report for walk-travel.glb under a gameplay-owned horizontal contract" width="100%" height="520" loading="lazy"></iframe>
 

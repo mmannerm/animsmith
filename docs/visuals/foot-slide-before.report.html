@@ -21,6 +21,11 @@
    warning = warning findings and the left-foot trail,
    pass = root trajectory, note = note findings and structural evidence. */
 :root {
+  /* The one type scale every chart label is drawn at, in the user units of
+     a chart's own viewBox. Both stylesheets and the Rust chart renderer
+     size their labels from this, so a panel and a chart beside it read at
+     the same size whatever width their viewBox is scaled to. */
+  --chart-type: 8px;
   --ground: #17171f;
   --surface: #1e1e2a;
   --raised: #232331;
@@ -113,9 +118,12 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 .series-left, .series-right, .series-diff, .root-path { fill: none; stroke-width: 1.5; }
 .series-left { stroke: var(--accent); }
 .series-right { stroke: var(--warning); }
-.series-diff { stroke: var(--muted); }
+/* The difference series is read against its own right-hand axis, so it is
+   dashed: a linear rescaling of an antiphase gait's L-R signal lands exactly
+   on top of one foot curve, and a solid line there would simply disappear. */
+.series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
-.axis, .legend { fill: var(--muted); font-size: 8px; }
+.axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
 </style>
@@ -141,7 +149,7 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 <h2>Engine predictions</h2>
 <ul id="predictions"></ul>
 <h2>Charts</h2>
-<div id="charts"><figure class="chart" data-clip="acceptance-matrix" data-kind="gait" data-pad="34" data-plotw="318"><figcaption>acceptance-matrix — foot height relative to hips</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — foot height relative to hips: L foot, R foot, L−R over frames 0 to 4, -0.30 to 0.30 m"><title>acceptance-matrix — foot height relative to hips</title><line class="series-left" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">L foot</text><line class="series-right" x1="84.6" x2="94.6" y1="9" y2="9"/><text class="legend" x="97.6" y="12.0">R foot</text><line class="series-diff" x1="135.2" x2="145.2" y1="9" y2="9"/><text class="legend" x="148.2" y="12.0">L−R</text><path class="series-left" d="M34.0,76.0L113.5,76.0L193.0,37.3L272.5,18.0L352.0,76.0" fill="none"/><path class="series-right" d="M34.0,76.0L113.5,18.0L193.0,76.0L272.5,76.0L352.0,76.0" fill="none"/><path class="series-diff" d="M34.0,76.0L113.5,134.0L193.0,37.3L272.5,18.0L352.0,76.0" fill="none"/><line class="playhead" x1="34" x2="34" y1="18" y2="134.0"/><text class="axis" x="2.0" y="21.0">0.30 m</text><text class="axis" x="2.0" y="134.0">-0.30 m</text><text class="axis" x="34.0" y="146.0">frame 0</text><text class="axis" x="352.0" y="146.0" text-anchor="end">frame 4</text></svg></figure><figure class="chart" data-clip="acceptance-matrix" data-kind="rootpath"><figcaption>acceptance-matrix — root path (top-down)</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — root path (top-down): X -0.02 to 0.02 m, Z 0.00 to 0.02 m, 5 frames on one uniform scale"><title>acceptance-matrix — root path (top-down)</title><line class="root-path" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">root</text><path class="root-path" d="M193.0,105.0L251.0,105.0L193.0,47.0L135.0,105.0L193.0,105.0" fill="none"/><circle class="pathdot" r="3" cx="193.0" cy="105.0"/><text class="axis" x="2.0" y="146.0">X -0.02…0.02 m</text><text class="axis" x="352.0" y="146.0" text-anchor="end">Z 0.00…0.02 m</text></svg><template class="pathpoints">193.0,105.0;251.0,105.0;193.0,47.0;135.0,105.0;193.0,105.0</template></figure></div>
+<div id="charts"><figure class="chart" data-clip="acceptance-matrix" data-kind="gait" data-pad="34" data-plotw="292"><figcaption>acceptance-matrix — foot height relative to hips</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — foot height relative to hips over frames 0 to 4: L foot, R foot 0.00 to 0.30 m; L−R -0.30 to 0.30 m on its own right-hand axis"><title>acceptance-matrix — foot height relative to hips</title><line class="series-left" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">L foot</text><line class="series-right" x1="84.6" x2="94.6" y1="9" y2="9"/><text class="legend" x="97.6" y="12.0">R foot</text><line class="series-diff" x1="135.2" x2="145.2" y1="9" y2="9"/><text class="legend" x="148.2" y="12.0">L−R (right axis)</text><path class="series-left" d="M34.0,134.0L107.0,134.0L180.0,56.7L253.0,18.0L326.0,134.0" fill="none"/><path class="series-right" d="M34.0,134.0L107.0,18.0L180.0,134.0L253.0,134.0L326.0,134.0" fill="none"/><path class="series-diff" d="M34.0,76.0L107.0,134.0L180.0,37.3L253.0,18.0L326.0,76.0" fill="none"/><line class="playhead" x1="34" x2="34" y1="18" y2="134.0"/><text class="axis" x="2.0" y="21.0">0.30 m</text><text class="axis" x="2.0" y="134.0">0.00 m</text><text class="axis" x="358.0" y="21.0" text-anchor="end">0.30 m</text><text class="axis" x="358.0" y="134.0" text-anchor="end">-0.30 m</text><text class="axis" x="34.0" y="146.0">frame 0</text><text class="axis" x="326.0" y="146.0" text-anchor="end">frame 4</text></svg></figure><figure class="chart" data-clip="acceptance-matrix" data-kind="rootpath"><figcaption>acceptance-matrix — root path (top-down)</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — root path (top-down): X -0.02 to 0.02 m, Z 0.00 to 0.02 m, 5 frames on one uniform scale"><title>acceptance-matrix — root path (top-down)</title><line class="root-path" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">root</text><path class="root-path" d="M180.0,105.0L238.0,105.0L180.0,47.0L122.0,105.0L180.0,105.0" fill="none"/><circle class="pathdot" r="3" cx="180.0" cy="105.0"/><text class="axis" x="2.0" y="146.0">X -0.02…0.02 m</text><text class="axis" x="358.0" y="146.0" text-anchor="end">Z 0.00…0.02 m</text></svg><template class="pathpoints">180.0,105.0;238.0,105.0;180.0,47.0;122.0,105.0;180.0,105.0</template></figure></div>
 </section>
 </main>
 <script>// animsmith report shared runtime — the pure helpers both generated viewers
@@ -492,11 +500,21 @@ function updateCharts() {
     const dot = fig.querySelector(".pathdot");
     const points = fig.querySelector(".pathpoints");
     if (dot && points) {
+      // One entry per judged frame, so the index is the frame. A frame the
+      // clip has no sampled position for carries no coordinate, and the dot
+      // is hidden for it rather than placed at some other frame's position.
+      // The reader would otherwise be shown a place the character is not,
+      // and before a leading gap, one it has not reached yet.
       const pts = points.innerHTML.split(";");
       const i = Math.min(pts.length - 1, Math.round(u * (pts.length - 1)));
-      const [cx, cy] = pts[i].split(",");
-      dot.setAttribute("cx", cx);
-      dot.setAttribute("cy", cy);
+      const at = pts[i].split(",");
+      if (at.length === 2) {
+        dot.setAttribute("cx", at[0]);
+        dot.setAttribute("cy", at[1]);
+        dot.removeAttribute("display");
+      } else {
+        dot.setAttribute("display", "none");
+      }
     }
   }
 }

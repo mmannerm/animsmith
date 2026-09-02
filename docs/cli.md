@@ -172,7 +172,8 @@ run changes: the same checks evaluate the same frames.
 What is left to look at differs by form, because only one of them draws its
 charts on the Rust side. The single-clip report keeps its charts, and they
 retain exactly the root's X/Z path and the two foot-height series relative to
-the hips plus their difference — nothing per bone. Every comparison panel is a
+the hips plus their difference, the last on its own right-hand axis — nothing
+per bone. Every comparison panel is a
 viewer drawing made from the pose grid — both role-trajectory panels, both gait
 panels, and the shared root chart — so an evidence-only comparison replaces all
 of them with the same notice. Everything else the full comparison embeds stays:

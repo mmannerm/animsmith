@@ -5,11 +5,14 @@
 //! argument so this crate needs no glTF-writer dependency.
 //!
 //! The single two-bone rotation clip built by [`two_bone_rotation_doc`]
-//! is the common shape behind `crates/animsmith-gltf/tests/fix.rs`,
-//! `crates/animsmith/tests/cli_contract.rs`, and the committed example
-//! assets. The analytic walk plays the same role for the semantic
-//! checks: `walk.glb` is the clean cycle, and each symptom fixture is
-//! that cycle plus exactly one authored defect.
+//! is the common shape behind `crates/animsmith-gltf/tests/fix.rs` and
+//! `crates/animsmith/tests/cli_contract.rs`. The committed `swing`
+//! example is the same idea with one bone more: its rotated joint needs
+//! a child for the rotation to move anything a report can draw, so it
+//! has its own builder rather than bending the shared test shape. The
+//! analytic walk plays the same role for the semantic checks:
+//! `walk.glb` is the clean cycle, and each symptom fixture is that cycle
+//! plus exactly one authored defect.
 //!
 //! [`docs_visuals`] carries the same discipline one step further: it
 //! names the committed documentation pictures under `docs/visuals/` and
@@ -20,6 +23,7 @@
 
 pub mod docs_html;
 pub mod docs_markdown;
+pub mod docs_transcripts;
 pub mod docs_visuals;
 
 use animsmith_core::model::*;
@@ -48,6 +52,24 @@ fn quat_from_rotation_y(angle: f32) -> Quat {
     Quat::from_xyzw(0.0, libm::sin(half) as f32, 0.0, libm::cos(half) as f32)
 }
 
+/// Unit Z-rotation keys for the given angles, in radians, on the same
+/// `libm` half-angle path as [`quats_from_angles`].
+///
+/// The committed `swing` example turns about Z rather than Y because its
+/// animated chain runs up +Y: a rotation about the axis a bone's child
+/// already lies on moves nothing, so a Y-axis swing would draw the same
+/// pose on every judged frame.
+pub fn quats_from_z_angles(angles: &[f32]) -> Vec<Quat> {
+    angles.iter().map(|&a| quat_from_rotation_z(a)).collect()
+}
+
+/// `Quat::from_rotation_z` with the same platform-deterministic trig path
+/// as [`quat_from_rotation_y`]: `(0, 0, sin(θ/2), cos(θ/2))`.
+fn quat_from_rotation_z(angle: f32) -> Quat {
+    let half = f64::from(angle) * 0.5;
+    Quat::from_xyzw(0.0, 0.0, libm::sin(half) as f32, libm::cos(half) as f32)
+}
+
 /// Scale a quaternion's components off the unit sphere. The result
 /// represents the same rotation once normalized, so it is a lossless
 /// `quat-norm` defect.
@@ -56,34 +78,53 @@ pub fn scaled_quat(q: Quat, scale: f32) -> Quat {
     Quat::from_xyzw(x * scale, y * scale, z * scale, w * scale)
 }
 
-/// The two-bone `root -> spine` skeleton the rotation fixtures animate.
-fn two_bone_skeleton() -> Skeleton {
+/// A straight `joints` chain running up +Y: the first joint is the
+/// skeleton root at the origin, and every joint after it hangs half a
+/// metre above its predecessor.
+fn rotation_chain_skeleton(joints: &[&str]) -> Skeleton {
     Skeleton {
-        bones: vec![
-            Bone {
-                name: "root".into(),
-                parent: None,
-                rest: Transform::IDENTITY,
-                inverse_bind: None,
-            },
-            Bone {
-                name: "spine".into(),
-                parent: Some(0),
-                rest: Transform {
-                    translation: Vec3::new(0.0, 0.5, 0.0),
-                    ..Transform::IDENTITY
+        bones: joints
+            .iter()
+            .enumerate()
+            .map(|(index, name)| Bone {
+                name: (*name).into(),
+                parent: index.checked_sub(1),
+                rest: if index == 0 {
+                    Transform::IDENTITY
+                } else {
+                    Transform {
+                        translation: Vec3::new(0.0, 0.5, 0.0),
+                        ..Transform::IDENTITY
+                    }
                 },
                 inverse_bind: None,
-            },
-        ],
+            })
+            .collect(),
     }
 }
 
-/// A two-bone `root -> spine` skeleton with one 1 s rotation clip on the
-/// spine. `with_translation` adds a root translation track (some fix tests
-/// assert it survives a repair byte-identically); the rotation track is
-/// emitted first either way.
-pub fn two_bone_rotation_doc(clip: &str, quats: Vec<Quat>, with_translation: bool) -> Document {
+/// A straight chain of `joints` with one 1 s rotation clip on its second
+/// joint, keyed on the five-key grid the rotation fixtures share.
+///
+/// `with_translation` adds a root translation track (some fix tests assert
+/// it survives a repair byte-identically); the rotation track is emitted
+/// first either way.
+///
+/// The chain length is a parameter because the rotated joint's own
+/// position never moves — a bone's rotation moves its children. Two joints
+/// is enough for the checks that read the track's values, and is what the
+/// rotation test fixtures use; the committed `swing` example needs a third
+/// so that a report rendered from it has something to draw.
+pub fn rotation_chain_doc(
+    clip: &str,
+    joints: &[&str],
+    quats: Vec<Quat>,
+    with_translation: bool,
+) -> Document {
+    assert!(
+        joints.len() >= 2,
+        "a rotation chain needs a joint to rotate and a parent to hang it from"
+    );
     let mut tracks = vec![Track {
         bone: 1,
         property: Property::Rotation,
@@ -101,7 +142,7 @@ pub fn two_bone_rotation_doc(clip: &str, quats: Vec<Quat>, with_translation: boo
         });
     }
     Document {
-        skeleton: two_bone_skeleton(),
+        skeleton: rotation_chain_skeleton(joints),
         clips: vec![Clip {
             name: clip.into(),
             duration_s: 1.0,
@@ -112,23 +153,53 @@ pub fn two_bone_rotation_doc(clip: &str, quats: Vec<Quat>, with_translation: boo
     }
 }
 
+/// The `root -> spine` chain the rotation fixtures animate: the shortest
+/// [`rotation_chain_doc`], and the one most of the workspace's rotation
+/// tests are written against.
+pub fn two_bone_rotation_doc(clip: &str, quats: Vec<Quat>, with_translation: bool) -> Document {
+    rotation_chain_doc(clip, &["root", "spine"], quats, with_translation)
+}
+
 /// Angles behind the committed example clip (`examples/assets/clip.glb`).
 const EXAMPLE_ANGLES: [f32; 5] = [0.0, 0.1, 0.2, 0.3, 0.4];
+
+/// The `root -> spine -> chest` chain the committed `swing` example
+/// animates.
+///
+/// A bone's own rotation moves its children, never itself: a sampled pose
+/// grid records each bone's model-space position, so turning a *leaf*
+/// `spine` leaves every judged frame identical and the report's skeleton
+/// view draws one unchanging line. The `chest` tip is what the swing
+/// actually moves, and it sits off the rotation axis (the chain runs up
+/// +Y, the swing turns about Z) so that the motion is visible rather than
+/// an axial spin. `docs/visuals/clip-dirty.report.html` is rendered from
+/// this rig, and `crates/animsmith/tests/docs_visuals.rs` fails the build
+/// if it ever goes still again.
+///
+/// The tip is deliberately named `chest` rather than `head`: `head` is a
+/// role name in every built-in profile, and a second resolved role would
+/// turn this deliberately profile-less fixture into a detected rig.
+const EXAMPLE_SWING_JOINTS: [&str; 3] = ["root", "spine", "chest"];
+
+/// The committed `swing` example's document.
+fn example_swing_doc(quats: Vec<Quat>) -> Document {
+    rotation_chain_doc("swing", &EXAMPLE_SWING_JOINTS, quats, false)
+}
 
 /// The clean committed example clip, `examples/assets/clip.glb`: a
 /// gentle `swing` with no defects.
 fn example_clean_doc() -> Document {
-    two_bone_rotation_doc("swing", quats_from_angles(&EXAMPLE_ANGLES), false)
+    example_swing_doc(quats_from_z_angles(&EXAMPLE_ANGLES))
 }
 
 /// The dirty committed example clip, `examples/assets/clip-dirty.glb`:
 /// the clean clip with two repairable defects — key 2 scaled off unit
 /// (`quat-norm`) and key 3 sign-flipped (`quat-flip`).
 fn example_dirty_doc() -> Document {
-    let mut quats = quats_from_angles(&EXAMPLE_ANGLES);
+    let mut quats = quats_from_z_angles(&EXAMPLE_ANGLES);
     quats[2] = scaled_quat(quats[2], 1.05);
     quats[3] = -quats[3];
-    two_bone_rotation_doc("swing", quats, false)
+    example_swing_doc(quats)
 }
 
 // --- Analytic walk rig (semantic checks) -----------------------------
@@ -393,29 +464,45 @@ fn comparison_translation_track(bone: usize, values: [Vec3; 5]) -> Track {
     }
 }
 
+/// The root sway both comparison sides share, in metres.
+///
+/// The pair exists to show one repair, so everything the repair does not
+/// touch has to be identical on both sides: a reader comparing the two
+/// root trajectories should see one path drawn twice, not two different
+/// shapes that invite a story about travel the fix never changed. The
+/// sway is small and non-degenerate so the shared trajectory panel still
+/// has a path to plot rather than a single dot.
+const COMPARISON_ROOT_SWAY: [Vec3; 5] = [
+    Vec3::ZERO,
+    Vec3::new(0.02, 0.0, 0.0),
+    Vec3::new(0.0, 0.0, 0.02),
+    Vec3::new(-0.02, 0.0, 0.0),
+    Vec3::ZERO,
+];
+
 fn comparison_document(after: bool) -> Document {
-    let root = if after {
-        [
-            Vec3::ZERO,
-            Vec3::new(0.04, 0.0, 0.0),
-            Vec3::new(0.0, 0.0, 0.04),
-            Vec3::new(-0.04, 0.0, 0.0),
-            Vec3::ZERO,
-        ]
-    } else {
-        [
-            Vec3::ZERO,
-            Vec3::new(0.02, 0.0, 0.0),
-            Vec3::new(0.0, 0.0, 0.02),
-            Vec3::new(-0.02, 0.0, 0.0),
-            Vec3::ZERO,
-        ]
-    };
+    let root = COMPARISON_ROOT_SWAY;
+    // The repaired feet alternate, the way a walk does: the left is
+    // planted across the loop seam while the right swings through it, and
+    // the right is planted through the middle of the cycle while the left
+    // swings. Two feet that plant and lift together — which is what the
+    // repaired side used to do — give the report's gait panel two stance
+    // windows at the same frames, and two 16%-opacity bands stacked at the
+    // same place read as one grey block rather than as a left one and a
+    // right one.
+    //
+    // Every value here is fixed by three things at once, so none of them
+    // is free: a planted foot travels 0.25 m per 0.25 s key interval,
+    // because `speed_mps` declares 1 m/s against a gameplay-owned root;
+    // the last key repeats the first, because the clip declares `loop`;
+    // and the three keys around the seam are collinear in every axis,
+    // because `loop-seam-vel` compares the incoming and outgoing
+    // model-space velocity within 0.1 m/s.
     let left = if after {
         [
             Vec3::ZERO,
             Vec3::new(-0.25, 0.0, 0.0),
-            Vec3::new(-0.5, 0.2, 0.0),
+            Vec3::new(0.0, 0.2, 0.0),
             Vec3::new(0.25, 0.0, 0.0),
             Vec3::ZERO,
         ]
@@ -430,11 +517,11 @@ fn comparison_document(after: bool) -> Document {
     };
     let right = if after {
         [
-            Vec3::ZERO,
-            Vec3::new(-0.25, 0.0, 0.0),
-            Vec3::new(0.5, 0.3, 0.0),
+            Vec3::new(0.1, 0.1, 0.0),
+            Vec3::new(0.18, 0.2, 0.0),
             Vec3::new(0.25, 0.0, 0.0),
-            Vec3::ZERO,
+            Vec3::new(0.02, 0.0, 0.0),
+            Vec3::new(0.1, 0.1, 0.0),
         ]
     } else {
         [
@@ -477,8 +564,13 @@ pub fn comparison_report_before_doc() -> Document {
     comparison_document(false)
 }
 
-/// Self-authored comparison input whose seam and stance motion are repaired
-/// and whose redundant quaternion track is removed.
+/// The same input with exactly those three defects repaired: the stance
+/// motion re-authored, the loop closed, and the redundant quaternion
+/// track dropped.
+///
+/// Nothing else differs. The two documents share one skeleton and one
+/// root track, so every difference a reader sees in the comparison
+/// report is the repair.
 pub fn comparison_report_after_doc() -> Document {
     comparison_document(true)
 }

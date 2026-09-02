@@ -2127,6 +2127,779 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
     assert!(path.contains("<template class=\"pathpoints\">"));
 }
 
+/// The vertical band one plotted series occupies, in viewBox units.
+fn series_band(figure: &str, class: &str) -> (f64, f64) {
+    let path = figure
+        .split_once(&format!("class=\"{class}\" d=\""))
+        .unwrap_or_else(|| panic!("{class} is plotted"))
+        .1;
+    let d = path.split_once('"').expect("the path data closes").0;
+    let ys: Vec<f64> = d
+        .split(['M', 'L'])
+        .filter(|point| !point.is_empty())
+        .map(|point| {
+            point
+                .split_once(',')
+                .expect("x,y point")
+                .1
+                .parse()
+                .expect("y")
+        })
+        .collect();
+    (
+        ys.iter().copied().fold(f64::MAX, f64::min),
+        ys.iter().copied().fold(f64::MIN, f64::max),
+    )
+}
+
+/// The vertical extent of the band `classes` occupy together.
+fn shared_extent(figure: &str, classes: &[&str]) -> f64 {
+    let bands: Vec<(f64, f64)> = classes
+        .iter()
+        .map(|class| series_band(figure, class))
+        .collect();
+    bands.iter().map(|band| band.1).fold(f64::MIN, f64::max)
+        - bands.iter().map(|band| band.0).fold(f64::MAX, f64::min)
+}
+
+/// A hips-plus-two-feet rig whose feet swing five centimetres a metre
+/// below the hips. Their difference swings ten centimetres about zero, so
+/// the two signals live an order of magnitude apart: on one shared scale
+/// the foot curves collapse into 4% of the plot height.
+fn squashed_gait_fixture() -> animsmith_core::Document {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+    let foot = |name: &str, x: f32| Bone {
+        name: name.into(),
+        parent: Some(0),
+        rest: Transform {
+            translation: Vec3::new(x, -1.0, 0.0),
+            ..Transform::IDENTITY
+        },
+        inverse_bind: None,
+    };
+    let swing = |bone: usize, x: f32, sign: f32| Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Vec3s(vec![
+            Vec3::new(x, -1.0, 0.0),
+            Vec3::new(x, -1.0 + sign * 0.05, 0.0),
+            Vec3::new(x, -1.0, 0.0),
+        ]),
+    };
+    Document {
+        skeleton: Skeleton {
+            bones: vec![
+                Bone {
+                    name: "hips".into(),
+                    parent: None,
+                    rest: Transform {
+                        translation: Vec3::Y,
+                        ..Transform::IDENTITY
+                    },
+                    inverse_bind: None,
+                },
+                foot("foot", 0.1),
+                foot("right_foot", -0.1),
+            ],
+        },
+        clips: vec![Clip {
+            name: "walk".into(),
+            duration_s: 1.0,
+            tracks: vec![swing(1, 0.1, 1.0), swing(2, -0.1, -1.0)],
+        }],
+        ..Document::default()
+    }
+}
+
+/// Both foot curves stay readable next to a difference series that lives
+/// an order of magnitude away from them.
+///
+/// The three series once shared one scale, so a metre of hips-relative
+/// offset set the range and both feet were drawn as a flat pair of lines
+/// along the bottom of every gait chart in the documentation. Each axis
+/// is now scaled on its own, and the chart says which series is read
+/// against the right-hand one.
+#[test]
+fn the_gait_chart_scales_its_two_value_axes_independently() {
+    let doc = squashed_gait_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let gait = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait")
+        .expect("gait chart");
+
+    // The plot is 116 units tall. On one shared scale the two feet
+    // together covered 10 of them and each foot 5; the difference filled
+    // the rest. The feet keep sharing a scale — they are only comparable
+    // that way — but that scale is now theirs alone.
+    let feet = shared_extent(&gait, &["series-left", "series-right"]);
+    assert!(
+        feet > 100.0,
+        "the two foot curves fill the plot they share: {feet} units"
+    );
+    for class in ["series-left", "series-right"] {
+        let (top, bottom) = series_band(&gait, class);
+        assert!(
+            bottom - top > 50.0,
+            "{class} is drawn across the plot rather than squashed into a \
+             corner of it: {} units",
+            bottom - top
+        );
+    }
+    let difference = shared_extent(&gait, &["series-diff"]);
+    assert!(
+        difference > 100.0,
+        "and the difference fills its own axis: {difference} units"
+    );
+    let axis = class_texts(&gait, "axis");
+    // The feet share one axis spanning both their swings; the difference
+    // has its own, spanning only its own.
+    for expected in ["-0.95 m", "-1.05 m", "0.10 m", "0.00 m"] {
+        assert!(
+            axis.iter().any(|label| label == expected),
+            "each axis states its own range: {expected:?} missing from {axis:?}"
+        );
+    }
+    let legend = class_texts(&gait, "legend");
+    assert_eq!(
+        legend,
+        vec!["L foot", "R foot", "L−R (right axis)"],
+        "the legend says which series is read against the second axis"
+    );
+    assert!(
+        attribute(&gait, "aria-label").contains("on its own right-hand axis"),
+        "and so does the description a screen reader gets"
+    );
+}
+
+/// A clip whose sampled positions are all non-finite still renders a
+/// chart, and that chart says the samples are unavailable.
+///
+/// The extents were folded from `f64::MAX`/`f64::MIN` seeds, so a channel
+/// that is NaN on every frame left the seeds in place and the resulting
+/// negative span read as "stationary": the chart claimed the root stayed
+/// at `X 179769313486231570000…000.00 m`. A non-finite channel is what the
+/// `nan` check exists to report, so it is a shape a real report reaches.
+#[test]
+fn non_finite_samples_are_reported_as_unavailable_rather_than_plotted() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+    let nan = f32::NAN;
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![Clip {
+            name: "poisoned".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::splat(nan); 3]),
+            }],
+        }],
+        ..Document::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let path = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+
+    let axis = class_texts(&path, "axis");
+    assert!(
+        axis.iter()
+            .any(|label| label == "root path unavailable: sampled positions are non-finite"),
+        "{axis:?}"
+    );
+    for label in &axis {
+        assert!(
+            !label.contains("root stays"),
+            "a non-finite root is not a stationary one: {label:?}"
+        );
+        assert!(
+            !label.contains("e30") && !label.contains("17976931"),
+            "no float seed leaks into a label: {label:?}"
+        );
+    }
+    assert!(
+        attribute(&path, "aria-label")
+            .contains("not one of the 3 sampled root frames has a finite X and Z together"),
+        "{}",
+        attribute(&path, "aria-label")
+    );
+    assert!(!path.contains("NaN"), "no NaN reaches the markup: {path}");
+}
+
+/// A root track whose keyed samples carry the given `(x, y, z)` values.
+fn root_path_document(values: Vec<animsmith_core::glam::Vec3>) -> animsmith_core::Document {
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+    let times = (0..values.len())
+        .map(|index| index as f32 / (values.len() - 1) as f32)
+        .collect();
+    Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![Clip {
+            name: "trajectory".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times,
+                values: TrackValues::Vec3s(values),
+            }],
+        }],
+        ..Document::default()
+    }
+}
+
+/// The root-path figure of a document whose root carries `values`.
+fn root_path_figure(values: Vec<animsmith_core::glam::Vec3>) -> String {
+    let doc = root_path_document(values);
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart")
+}
+
+/// A gap in the sampled trajectory breaks the path, rather than being
+/// bridged by a straight line the clip never travelled.
+///
+/// Dropping the unplottable frames and then joining what is left with `L`
+/// draws a segment between the last sample before the hole and the first
+/// one after it — a trajectory the reader is being shown as measured
+/// evidence, and which no frame recorded.
+#[test]
+fn a_gap_in_the_root_path_starts_a_new_subpath_rather_than_being_bridged() {
+    use animsmith_core::glam::Vec3;
+    let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+    // One non-finite key in the middle of nine. A frame reads
+    // `lerp(key j, key j+1, 0)`, so the non-finite key at 4 makes frames 3
+    // and 4 unplottable: the runs are frames 0-2 and 5-8, both long enough
+    // to draw, with a hole between them.
+    let figure = root_path_figure(vec![
+        at(0.0, 0.0),
+        at(1.0, 0.0),
+        at(2.0, 0.0),
+        at(3.0, 0.0),
+        at(f32::NAN, f32::NAN),
+        at(5.0, 1.0),
+        at(6.0, 1.0),
+        at(7.0, 1.0),
+        at(8.0, 1.0),
+    ]);
+    let d = figure
+        .split_once("class=\"root-path\" d=\"")
+        .expect("the root path is plotted")
+        .1
+        .split_once('"')
+        .expect("the path data closes")
+        .0;
+    assert!(!d.contains("NaN"), "no NaN reaches the path data: {d:?}");
+    let subpaths: Vec<&str> = d.split('M').filter(|part| !part.is_empty()).collect();
+    assert_eq!(
+        subpaths.len(),
+        2,
+        "each run of plottable frames is its own subpath, rather than one \
+         line drawn through the hole: {d:?}"
+    );
+    for subpath in &subpaths {
+        assert!(subpath.contains('L'), "each subpath draws its run: {d:?}");
+    }
+    // The bridge the previous drawing invented: a segment from the last
+    // sample before the hole straight to the first one after it.
+    let last_before = subpaths[0]
+        .rsplit('L')
+        .next()
+        .expect("the run before the hole ends somewhere");
+    let first_after = subpaths[1]
+        .split('L')
+        .next()
+        .expect("the run after the hole starts somewhere");
+    assert!(
+        !d.contains(&format!("{last_before}L{first_after}")),
+        "the runs either side of the hole must not be joined: {d:?}"
+    );
+}
+
+/// The `<circle class="pathdot" …/>` element of a root-path figure.
+fn path_dot(figure: &str) -> &str {
+    let start = figure
+        .find("<circle class=\"pathdot\"")
+        .expect("the figure carries its playhead dot");
+    let end = figure[start..].find("/>").expect("the dot element closes") + start + 2;
+    &figure[start..end]
+}
+
+/// One element's attributes, by name.
+///
+/// Substring checks on the raw markup cannot say what an element does not
+/// carry: `display="none"` is satisfied by markup that also carries a
+/// `style="display:block"` overriding it, and "no `cx=`" is satisfied by a
+/// `transform` that moves the element instead.
+fn element_attributes(element: &str) -> std::collections::BTreeMap<String, String> {
+    let mut attributes = std::collections::BTreeMap::new();
+    let mut rest = element;
+    while let Some(equals) = rest.find("=\"") {
+        let name = rest[..equals]
+            .rsplit([' ', '<'])
+            .next()
+            .expect("an attribute has a name")
+            .to_owned();
+        let start = equals + 2;
+        let end = rest[start..].find('"').expect("the value closes") + start;
+        attributes.insert(name, rest[start..end].to_owned());
+        rest = &rest[end + 1..];
+    }
+    attributes
+}
+
+/// The points of a root-path figure's plotted `d`, in plot coordinates.
+fn plotted_points(figure: &str) -> Vec<(f64, f64)> {
+    figure
+        .split_once("class=\"root-path\" d=\"")
+        .expect("the root path is plotted")
+        .1
+        .split_once('"')
+        .expect("the path data closes")
+        .0
+        .split(['M', 'L'])
+        .filter(|part| !part.is_empty())
+        .map(|point| {
+            let (x, y) = point.split_once(',').expect("an x,y point");
+            (x.parse().expect("x"), y.parse().expect("y"))
+        })
+        .collect()
+}
+
+/// The `pathpoints` entries of a root-path figure, in frame order.
+fn path_points(figure: &str) -> Vec<String> {
+    figure
+        .split_once("<template class=\"pathpoints\">")
+        .expect("the figure publishes its per-frame points")
+        .1
+        .split_once("</template>")
+        .expect("the template closes")
+        .0
+        .split(';')
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A frame with no sampled position carries an explicit no-position entry,
+/// and the template still holds exactly one entry per frame.
+///
+/// The viewer places the playhead dot by frame index, so the entries have
+/// to stay aligned with the frames — but an unavailable frame used to be
+/// filled in from a neighbouring frame's position, which for a leading gap
+/// meant a coordinate the clip only reaches later. Both directions are the
+/// same invention, so neither is done: the frame says it has no position
+/// and the viewer hides the dot.
+#[test]
+fn an_unavailable_frame_carries_no_position_rather_than_a_neighbours() {
+    use animsmith_core::glam::Vec3;
+    let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+    let nan = f32::NAN;
+    // The first two frames have no position; the clip only reaches x = 2
+    // later, and nothing may show that coordinate before it happens.
+    let figure = root_path_figure(vec![
+        at(nan, nan),
+        at(nan, nan),
+        at(2.0, 0.0),
+        at(3.0, 1.0),
+        at(4.0, 1.0),
+    ]);
+    let points = path_points(&figure);
+    assert_eq!(
+        points.len(),
+        5,
+        "one entry per sampled frame keeps the viewer's indexing aligned: {points:?}"
+    );
+    assert_eq!(
+        points[0], "-",
+        "a frame with no position says so: {points:?}"
+    );
+    assert_eq!(points[1], "-", "{points:?}");
+    for available in &points[2..] {
+        assert!(
+            available.contains(','),
+            "an available frame carries its own coordinate: {points:?}"
+        );
+    }
+
+    // The dot the renderer writes into the markup is what an extracted
+    // chart, or a document whose script has not run, shows. Frame 0 has no
+    // position, so that dot must be hidden and name no position by any
+    // route — the attribute set is pinned exactly, because a `style` can
+    // override `display` and a `transform` can move an element that names
+    // no `cx`/`cy` at all.
+    let hidden = element_attributes(path_dot(&figure));
+    for named in ["style", "cx", "cy", "transform", "x", "y"] {
+        assert!(
+            !hidden.contains_key(named),
+            "a hidden dot carries no {named}: {hidden:?}"
+        );
+    }
+    assert_eq!(
+        hidden.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["class", "display", "r"],
+        "and nothing else at all: {hidden:?}"
+    );
+    assert_eq!(hidden["display"], "none", "{hidden:?}");
+    assert_eq!(hidden["class"], "pathdot", "{hidden:?}");
+
+    // The other side of the same contract: a document whose frame 0 does
+    // have a position opens with the dot visible, at that frame's own
+    // coordinate.
+    //
+    // The expectation comes from the fixture rather than from the template
+    // the same renderer wrote: frames 1 and 2 are placed symmetrically
+    // about frame 0 in model space, and the projection is affine with one
+    // scale for both axes, so frame 0's plotted point is exactly the
+    // midpoint of theirs. A renderer that wrote frame 1's coordinate into
+    // the dot puts it at an end of that segment instead of its middle.
+    let available = root_path_figure(vec![at(0.0, 0.0), at(-1.0, -1.0), at(1.0, 1.0)]);
+    let visible = element_attributes(path_dot(&available));
+    assert_eq!(
+        visible.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["class", "cx", "cy", "r"],
+        "a visible dot names its position and nothing else: {visible:?}"
+    );
+    let dot = (
+        visible["cx"].parse::<f64>().expect("cx"),
+        visible["cy"].parse::<f64>().expect("cy"),
+    );
+    let plotted = plotted_points(&available);
+    assert_eq!(plotted.len(), 3, "the fixture plots its three frames");
+    let midpoint = (
+        (plotted[1].0 + plotted[2].0) / 2.0,
+        (plotted[1].1 + plotted[2].1) / 2.0,
+    );
+    assert!(
+        (dot.0 - midpoint.0).abs() < 0.05 && (dot.1 - midpoint.1).abs() < 0.05,
+        "the dot opens on frame 0, the midpoint of the symmetric frames \
+         either side of it: {dot:?} against {midpoint:?} of {plotted:?}"
+    );
+    for (frame, point) in [(1, plotted[1]), (2, plotted[2])] {
+        assert!(
+            (dot.0 - point.0).abs() > 1.0 || (dot.1 - point.1).abs() > 1.0,
+            "the dot is frame 0's position, not frame {frame}'s: {dot:?} against {point:?}"
+        );
+    }
+}
+
+/// The no-position marker sits on exactly the frames that have no
+/// position, wherever the hole is.
+///
+/// The expected indices come from the sampling rule rather than from the
+/// tool: a frame sampled exactly at key `j` reads `lerp(key j, key j+1, 0)`
+/// for any `j` before the last, so a non-finite key makes both the frame at
+/// it and the frame before it unplottable. Frame 0 and the last frame read
+/// their own key directly and are poisoned only by that key.
+#[test]
+fn the_no_position_marker_sits_on_exactly_the_unavailable_frames() {
+    use animsmith_core::glam::Vec3;
+    let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+    let nan = f32::NAN;
+    for (case, values, unavailable) in [
+        (
+            "a leading hole: key 0 is its own frame and poisons no other",
+            vec![at(nan, nan), at(1.0, 0.0), at(2.0, 0.0), at(3.0, 1.0)],
+            vec![0usize],
+        ),
+        (
+            "a hole in the middle: key 1 poisons frame 1 only, because \
+             frame 0 reads key 0 directly",
+            vec![at(0.0, 0.0), at(nan, nan), at(2.0, 0.0), at(3.0, 1.0)],
+            vec![1],
+        ),
+        (
+            "a trailing hole: the last key is read by the last frame and by \
+             the one before it",
+            vec![at(0.0, 0.0), at(1.0, 0.0), at(2.0, 0.0), at(nan, nan)],
+            vec![2, 3],
+        ),
+        (
+            "finite in one coordinate only: still no position",
+            vec![at(0.0, 0.0), at(1.0, nan), at(2.0, 0.0), at(3.0, 1.0)],
+            vec![1],
+        ),
+    ] {
+        let figure = root_path_figure(values);
+        let points = path_points(&figure);
+        assert_eq!(points.len(), 4, "{case}: {points:?}");
+        for (index, entry) in points.iter().enumerate() {
+            if unavailable.contains(&index) {
+                assert_eq!(
+                    entry, "-",
+                    "{case}: frame {index} has no position, so it carries the \
+                     marker and not a coordinate: {points:?}"
+                );
+                continue;
+            }
+            assert_ne!(
+                entry, "-",
+                "{case}: frame {index} has a position, so it must carry it: {points:?}"
+            );
+            assert!(
+                entry.split(',').count() == 2
+                    && entry.split(',').all(|part| part.parse::<f64>().is_ok()),
+                "{case}: an available frame carries a plain coordinate pair: {points:?}"
+            );
+        }
+        assert!(!figure.contains("NaN"), "{case}: no NaN reaches the markup");
+    }
+}
+
+/// A root that is never jointly finite renders as unavailable instead of
+/// panicking, even when each coordinate on its own has finite samples.
+///
+/// The extents were taken per coordinate, so a track finite in X on one
+/// frame and in Z on the next produced a finite range for both — and then
+/// the first jointly finite sample the plot needs did not exist. An
+/// `expect` on that is a panic on untrusted input: a malformed GLB is
+/// exactly where alternating non-finite components come from.
+#[test]
+fn alternating_finite_coordinates_render_unavailable_without_panicking() {
+    use animsmith_core::glam::Vec3;
+    let nan = f32::NAN;
+    let figure = root_path_figure(vec![
+        Vec3::new(0.0, 0.0, nan),
+        Vec3::new(nan, 0.0, 1.0),
+        Vec3::new(2.0, 0.0, nan),
+        Vec3::new(nan, 0.0, 3.0),
+    ]);
+    let axis = class_texts(&figure, "axis");
+    assert!(
+        axis.iter()
+            .any(|label| label == "root path unavailable: sampled positions are non-finite"),
+        "{axis:?}"
+    );
+    assert!(
+        !figure.contains("NaN"),
+        "no NaN reaches the markup: {figure}"
+    );
+    for label in &axis {
+        assert!(
+            !label.contains("root stays"),
+            "a root with no jointly finite sample is not a stationary one: {label:?}"
+        );
+    }
+}
+
+/// A series that is non-finite on every frame is not plotted, and the
+/// chart says so instead of printing `NaN m` in its gutter.
+#[test]
+fn an_all_non_finite_series_is_named_rather_than_plotted_as_nan() {
+    let mut doc = squashed_gait_fixture();
+    // The right foot is NaN throughout, so `L−R` is NaN throughout too.
+    let track = doc.clips[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.bone == 2)
+        .expect("right foot track");
+    track.values =
+        animsmith_core::model::TrackValues::Vec3s(vec![
+            animsmith_core::glam::Vec3::splat(f32::NAN);
+            3
+        ]);
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let gait = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait")
+        .expect("gait chart");
+
+    for label in class_texts(&gait, "axis") {
+        assert!(!label.contains("NaN"), "a gutter label reads {label:?}");
+    }
+    assert!(!gait.contains("NaN"), "no NaN reaches the markup: {gait}");
+    assert!(
+        attribute(&gait, "aria-label").contains("has no finite sample and is not plotted"),
+        "{}",
+        attribute(&gait, "aria-label")
+    );
+    // The left foot is still finite, so its curve is still drawn.
+    assert!(gait.contains("class=\"series-left\" d=\"M"), "{gait}");
+}
+
+/// A series that never changes is centred and labelled once, rather than
+/// pinned to the bottom row with the same number in both gutter labels.
+///
+/// Two feet exactly in phase make `L−R` identically zero, which a real
+/// clip does; the zero-span clamp turned that into a flat line along the
+/// axis captioned `0.00 m` above `0.00 m`.
+#[test]
+fn a_flat_series_is_centred_and_labelled_once() {
+    let mut doc = squashed_gait_fixture();
+    // Both feet swing together, so their difference is exactly zero.
+    let mirrored = doc.clips[0]
+        .tracks
+        .iter()
+        .find(|track| track.bone == 1)
+        .expect("left foot track")
+        .values
+        .clone();
+    let animsmith_core::model::TrackValues::Vec3s(left) = mirrored else {
+        panic!("the fixture keys translations")
+    };
+    let track = doc.clips[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.bone == 2)
+        .expect("right foot track");
+    track.values = animsmith_core::model::TrackValues::Vec3s(
+        left.iter()
+            .map(|value| animsmith_core::glam::Vec3::new(-0.1, value.y, value.z))
+            .collect(),
+    );
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let gait = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait")
+        .expect("gait chart");
+
+    let axis = class_texts(&gait, "axis");
+    assert_eq!(
+        axis.iter()
+            .filter(|label| label.starts_with("flat "))
+            .count(),
+        1,
+        "a flat axis is labelled exactly once: {axis:?}"
+    );
+    assert!(axis.iter().any(|label| label == "flat 0.00 m"), "{axis:?}");
+    // Centred, not pinned to the bottom row the unscaled clamp produced.
+    let (top, bottom) = series_band(&gait, "series-diff");
+    let centre = 18.0 + (150.0 - 18.0 - 16.0) / 2.0;
+    assert!(
+        (top - centre).abs() < 0.2 && (bottom - centre).abs() < 0.2,
+        "the flat series sits on the plot's centre line: {top}..{bottom} against {centre}"
+    );
+    assert!(
+        attribute(&gait, "aria-label").contains("flat at 0.00 m"),
+        "{}",
+        attribute(&gait, "aria-label")
+    );
+}
+
+/// An in-place clip's root path says the root does not move, instead of
+/// leaving an empty square captioned `X 0.00…0.00 m`.
+#[test]
+fn a_stationary_root_path_says_so_in_words() {
+    let doc = squashed_gait_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "hips".to_string())]);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let path = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+
+    let axis = class_texts(&path, "axis");
+    assert!(
+        axis.iter().any(|label| label == "root stays at the origin"),
+        "{axis:?}"
+    );
+    assert!(
+        axis.iter().filter(|label| label.ends_with(" m")).count() >= 2,
+        "the ranges and their unit stay where every other root path puts \
+         them: {axis:?}"
+    );
+    assert!(
+        attribute(&path, "aria-label").contains("the root does not move"),
+        "{}",
+        attribute(&path, "aria-label")
+    );
+    // The figure keeps the classes the documentation extractor pins.
+    assert!(path.contains("class=\"root-path\"") && path.contains("class=\"pathdot\""));
+
+    // A root that stands still somewhere other than the origin says where.
+    let mut parked = squashed_gait_fixture();
+    parked.skeleton.bones[0].rest.translation = animsmith_core::glam::Vec3::new(2.0, 1.0, -3.5);
+    let parked_html = animsmith_report::render(
+        &MetricGrids::new(&parked),
+        &ResolvedRoles::from_names(&parked.skeleton, [(Role::Root, "hips".to_string())]),
+        &[],
+        None,
+        None,
+        full(),
+    );
+    let parked_path = chart_figures(&parked_html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+    let parked_axis = class_texts(&parked_path, "axis");
+    assert!(
+        parked_axis
+            .iter()
+            .any(|label| label == "root stays at X 2.00 m, Z -3.50 m"),
+        "a stationary root away from the origin names where it stands: {parked_axis:?}"
+    );
+    assert!(
+        !parked_axis.iter().any(|label| label.contains("the origin")),
+        "and does not claim the origin: {parked_axis:?}"
+    );
+    assert!(
+        attribute(&parked_path, "aria-label").contains("X 2.00 m, Z -3.50 m"),
+        "{}",
+        attribute(&parked_path, "aria-label")
+    );
+
+    // A root that travels keeps the plotted ranges and gains no sentence.
+    let travelled = animsmith_report::render(
+        &MetricGrids::new(&chart_roles_fixture()),
+        &chart_roles(&chart_roles_fixture()),
+        &[],
+        None,
+        None,
+        full(),
+    );
+    let moving = chart_figures(&travelled)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+    assert!(
+        !class_texts(&moving, "axis")
+            .iter()
+            .any(|label| label.starts_with("root stays")),
+        "a moving root is plotted, not narrated"
+    );
+}
+
 #[test]
 fn the_root_path_chart_plots_x_and_z_on_one_scale() {
     use animsmith_core::glam::Vec3;

@@ -14,7 +14,14 @@ main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1re
 .side { background: var(--surface); border-radius: 8px; padding: .8rem }
 canvas { width: 100%; aspect-ratio: 4/3; background: var(--ground); border-radius: 5px }
 svg { width: 100%; background: var(--ground); border-radius: 5px; margin-top: .6rem; color: var(--muted) }
-ul { padding-left: 1.3rem; max-height: 13rem; overflow: auto }
+/* A panel's viewBox is scaled to the column it sits in, so an inherited
+   14px body size renders its labels at ~23px. They take the shared chart
+   type scale instead, the same one the Rust-rendered charts use. */
+svg text { font-size: var(--chart-type) }
+/* Findings, coverage and context lists grow: a scroll box cut rows in
+   half mid-line, and this document exists to be read and attached whole.
+   Both row counts are bounded by the renderer. */
+ul { padding-left: 1.3rem }
 .finding { padding: .3rem; margin: .2rem 0 }
 .context-label, .context { color: var(--muted) }
 .structural { border-left: 3px solid var(--note); padding-left: .5rem }

@@ -21,6 +21,11 @@
    warning = warning findings and the left-foot trail,
    pass = root trajectory, note = note findings and structural evidence. */
 :root {
+  /* The one type scale every chart label is drawn at, in the user units of
+     a chart's own viewBox. Both stylesheets and the Rust chart renderer
+     size their labels from this, so a panel and a chart beside it read at
+     the same size whatever width their viewBox is scaled to. */
+  --chart-type: 8px;
   --ground: #17171f;
   --surface: #1e1e2a;
   --raised: #232331;
@@ -113,9 +118,12 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 .series-left, .series-right, .series-diff, .root-path { fill: none; stroke-width: 1.5; }
 .series-left { stroke: var(--accent); }
 .series-right { stroke: var(--warning); }
-.series-diff { stroke: var(--muted); }
+/* The difference series is read against its own right-hand axis, so it is
+   dashed: a linear rescaling of an antiphase gait's L-R signal lands exactly
+   on top of one foot curve, and a solid line there would simply disappear. */
+.series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
-.axis, .legend { fill: var(--muted); font-size: 8px; }
+.axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
 </style>
@@ -258,7 +266,7 @@ function animsmithApplyDocument(options) {
   return options;
 }
 </script>
-<script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"spine","parent":0}],"clips":[{"duration":1.0,"frames":5,"name":"swing","positions":"AAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA","trails":{}}],"evidence_only":false,"file":"clip-dirty.glb","findings":[{"bone":"spine","check":"quat-norm","clip":"swing","message":"non-unit rotation key (worst at key 2)","node":null,"severity":"error","time":0.5},{"bone":"spine","check":"quat-flip","clip":"swing","message":"2 hemisphere flip(s) between adjacent rotation keys (first between keys 2 and 3) — engines without neighborhood correction will spin the long way","node":null,"severity":"warning","time":0.75}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"swing"}}],"prediction_provenance":null,"predictions":[],"profile":"unknown"}</script>
+<script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"spine","parent":0},{"name":"chest","parent":1}],"clips":[{"duration":1.0,"frames":5,"name":"swing","positions":"AAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAdXVMvUxcfz8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA92/LvdJyfT8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAbU4XvndIej8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA12FHvlTldT8AAAAA","trails":{}}],"evidence_only":false,"file":"clip-dirty.glb","findings":[{"bone":"spine","check":"quat-norm","clip":"swing","message":"non-unit rotation key (worst at key 2)","node":null,"severity":"error","time":0.5},{"bone":"spine","check":"quat-flip","clip":"swing","message":"2 hemisphere flip(s) between adjacent rotation keys (first between keys 2 and 3) — engines without neighborhood correction will spin the long way","node":null,"severity":"warning","time":0.75}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"swing"}}],"prediction_provenance":null,"predictions":[],"profile":"unknown"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
 // Renders exactly the pose-grid frames the checks judged; no animation
 // sampling happens here.
@@ -492,11 +500,21 @@ function updateCharts() {
     const dot = fig.querySelector(".pathdot");
     const points = fig.querySelector(".pathpoints");
     if (dot && points) {
+      // One entry per judged frame, so the index is the frame. A frame the
+      // clip has no sampled position for carries no coordinate, and the dot
+      // is hidden for it rather than placed at some other frame's position.
+      // The reader would otherwise be shown a place the character is not,
+      // and before a leading gap, one it has not reached yet.
       const pts = points.innerHTML.split(";");
       const i = Math.min(pts.length - 1, Math.round(u * (pts.length - 1)));
-      const [cx, cy] = pts[i].split(",");
-      dot.setAttribute("cx", cx);
-      dot.setAttribute("cy", cy);
+      const at = pts[i].split(",");
+      if (at.length === 2) {
+        dot.setAttribute("cx", at[0]);
+        dot.setAttribute("cy", at[1]);
+        dot.removeAttribute("display");
+      } else {
+        dot.setAttribute("display", "none");
+      }
     }
   }
 }

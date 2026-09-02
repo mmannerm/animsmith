@@ -25,6 +25,13 @@ The synthetic clip below carries one non-unit rotation key and one
 sign-flipped key on the same bone; everything else is the clean `clip.glb`.
 The report names both, with the frame each was judged at.
 
+Both defects are in the representation rather than the pose. AnimSmith
+normalizes every rotation key it samples, and a quaternion and its negation
+are the same rotation, so the judged frames below play back as the clean
+swing — the findings list is what marks the two defective keys. That is the
+point: an engine that does not normalize, or that slerps without
+neighborhood correction, is the one that flickers.
+
 <iframe src="../visuals/clip-dirty.report.html#embed=1&finding=0" title="AnimSmith report for clip-dirty.glb, scrubbed to the judged key" width="100%" height="520" loading="lazy"></iframe>
 
 [Open the interactive report](../visuals/clip-dirty.report.html) to scrub the

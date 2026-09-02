@@ -131,7 +131,7 @@ pub fn chart_style(scope: &str) -> String {
     format!(
         "#{scope} .series-left,#{scope} .series-right,#{scope} .series-diff,\
          #{scope} .root-path{{fill:none;stroke-width:1.5}}\
-         #{scope} .series-diff{{opacity:.6}}\
+         #{scope} .series-diff{{opacity:.6;stroke-dasharray:4 3}}\
          #{scope} text{{font:8.5px ui-monospace,monospace}}{}\
          @media (prefers-color-scheme:dark){{{}}}",
         colours(false),

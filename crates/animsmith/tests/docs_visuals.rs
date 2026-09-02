@@ -252,3 +252,64 @@ fn untokenized_colours(svg: &str) -> Vec<String> {
     }
     loose
 }
+
+/// Every fixture a committed report is rendered from actually moves.
+///
+/// A report's pose view is drawn from the sampled pose grid, which holds
+/// each bone's model-space position on every judged frame. A bone's own
+/// rotation moves its children, never itself, so a clip whose only
+/// animated joint is a leaf — or whose rotation turns about the axis its
+/// child already lies on — leaves that grid constant: the report reports
+/// real findings while drawing one unchanging skeleton on every frame,
+/// and a reader scrubbing it sees nothing but the time label change.
+/// `examples/assets/clip.glb` shipped in exactly that state, so the floor
+/// is pinned here rather than left to whoever next opens a document.
+///
+/// One centimetre is deliberately low: it is far below anything a fixture
+/// authored to demonstrate a symptom would move, and far above the noise
+/// of a genuinely static bone.
+///
+/// A fixture that passes this is also the kind whose committed report is
+/// sensitive to how the model matrices are multiplied, because its bone
+/// positions come from a rotation rather than from exact adds. The
+/// workspace pins `glam` to scalar arithmetic and the `libm` crate for
+/// exactly that reason — see the cross-platform determinism section of
+/// `DEVELOPMENT.md`.
+#[test]
+fn every_report_fixture_moves_a_bone_the_reader_can_see() {
+    const FLOOR_M: f32 = 0.01;
+    let fixtures = repo_root().join(docs_visuals::WORKING_DIR);
+    let inputs: BTreeSet<&str> = docs_visuals::REPORTS
+        .iter()
+        .flat_map(|report| report.arguments.iter().copied())
+        .filter(|argument| argument.ends_with(".glb"))
+        .collect();
+    assert!(!inputs.is_empty(), "the manifest names committed fixtures");
+
+    for input in inputs {
+        let document = animsmith_gltf::load(&fixtures.join(input))
+            .unwrap_or_else(|error| panic!("loads the {input} fixture: {error}"));
+        let grids = animsmith_core::metrics::MetricGrids::new(&document);
+        for (index, clip) in document.clips.iter().enumerate() {
+            let grid = grids
+                .grid(index)
+                .unwrap_or_else(|| panic!("{input} clip '{}' has a pose grid", clip.name));
+            let travel = (0..grid.bone_count())
+                .map(|bone| {
+                    let first = grid.model_position(0, bone);
+                    (1..grid.frame_count())
+                        .map(|frame| grid.model_position(frame, bone).distance(first))
+                        .fold(0.0f32, f32::max)
+                })
+                .fold(0.0f32, f32::max);
+            assert!(
+                travel >= FLOOR_M,
+                "{input} clip '{}' draws the same skeleton on every judged frame \
+                 (widest bone travel {travel:.4} m, floor {FLOOR_M} m): a report of it \
+                 shows a still picture. Animate a joint that has a child, about an axis \
+                 that child does not already lie on.",
+                clip.name,
+            );
+        }
+    }
+}
