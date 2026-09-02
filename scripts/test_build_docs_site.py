@@ -120,7 +120,8 @@ class ExternalProxyContractTests(unittest.TestCase):
             "| [Reports](reports/README.md) | Read reports. | Guides |\n"
             "| [Contributing](../CONTRIBUTING.md) | Contribute. | Reference |\n"
             "| [Assets](../examples/assets/README.md) | Inspect fixtures. | Reference |\n"
-            "| [Schemas](../schemas/) | Inspect schemas. | Reference |\n",
+            "| [Schemas](../schemas/) | Inspect schemas. | Reference |\n"
+            "| [All pages](README.md) | Find any page. | Reference |\n",
             encoding="utf-8",
         )
         (source / "docs/reports/README.md").write_text(
@@ -784,13 +785,17 @@ class NavigationContractTests(unittest.TestCase):
     """Pin the published navigation through the staged book, not internals."""
 
     INDEX_HEADER = "| Document | Use it to… | Category |\n|---|---|---|\n"
+    # The canonical index is a chapter like any other, so it rows itself and
+    # is published at docs/index.html exactly as the real one is.
+    INDEX_ROW = ("[All pages](README.md)", "Find any page.", "More")
     START_ROWS = [
         ("[Install](../README.md)", "Install it.", "Start"),
         ("[Overview](overview.md)", "Start here.", "Start"),
+        INDEX_ROW,
     ]
     # A checkout whose front door is the landing page does not also row the
     # root README: both would claim the artifact's index.html.
-    FRONT_DOOR_ROWS = [("[Overview](overview.md)", "Start here.", "Start")]
+    FRONT_DOOR_ROWS = [("[Overview](overview.md)", "Start here.", "Start"), INDEX_ROW]
 
     def fixture(
         self,
@@ -910,8 +915,6 @@ class NavigationContractTests(unittest.TestCase):
             self.assertEqual(
                 (stage / "src/SUMMARY.md").read_text(encoding="utf-8"),
                 "# Summary\n"
-                "\n"
-                "- [Documentation](docs/README.md)\n"
                 "\n"
                 "# Start\n"
                 "- [Install](README.md)\n"

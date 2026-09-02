@@ -567,13 +567,14 @@ fn summary_destination(destination: &str) -> String {
 /// paired with the Category cell that produced it: a top-level chapter that is
 /// not a generated group page, or a member nested directly under one. Report
 /// pairs sit below their index chapter and are not canonical rows.
+///
+/// Navigation carries no prefix chapter, so every chapter sits under a part
+/// heading; one that did not would be recovered with the `Summary` heading as
+/// its category and fail the comparison rather than pass unnoticed.
 fn summary_category_links(markdown: &str) -> Vec<(String, String)> {
     let mut group: Option<String> = None;
     let mut rows = Vec::new();
     for (part, label, destination, depth) in summary_chapters(markdown) {
-        if part == "Summary" {
-            continue;
-        }
         match depth {
             1 if destination.starts_with(GENERATED_GROUP_DIR) => group = Some(label),
             1 => {

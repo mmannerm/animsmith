@@ -402,9 +402,14 @@ def write_group_page(source: Path, group: Group, destinations: list[str]) -> str
 def summary_markdown(
     source: Path, parts: list[Part], reports: list[tuple[str, str, str]]
 ) -> str:
-    """Render SUMMARY.md, publishing every page the navigation generates."""
+    """Render SUMMARY.md, publishing every page the navigation generates.
+
+    Navigation opens with the first part heading rather than a prefix
+    chapter: the canonical index is a chapter like any other, rowed by its
+    own table, and the site's home is the front door at the artifact root.
+    """
     proxies: dict[Path, str] = {}
-    summary = ["# Summary", "", "- [Documentation](docs/README.md)"]
+    summary = ["# Summary"]
     for part in parts:
         summary.extend(["", f"# {part.title}"])
         for group in part.groups:

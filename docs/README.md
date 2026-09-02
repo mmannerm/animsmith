@@ -1,30 +1,12 @@
-# Documentation
+# All pages
 
-## Start here
+Every page AnimSmith publishes, one row each — each page owns one job.
+The site's front door, which routes the two reader journeys and the
+ten-minute path, is at <https://mmannerm.github.io/animsmith/>.
 
-Two doors into AnimSmith, and one command behind both:
-
-```console
-$ animsmith lint walk.glb
-```
-
-- **Artists and animators** — catch a bad export while the DCC is still open.
-  [Install](install.md), [first lint in 60 seconds](first-lint.md),
-  [your first report](first-report.md), then
-  [from export to handoff](animation-author-workflow.md).
-- **Game developers** — know what a pack really contains and gate every
-  re-export. [Install](install.md), [first lint in 60 seconds](first-lint.md),
-  [your first report](first-report.md), then
-  [from pack to engine gate](game-developer-intake-workflow.md).
-
-Something specific already looks wrong in the engine? Start from the
-[symptoms](symptoms/README.md).
-
-## Every page
-
-Find what you need by task — each page below owns one job. The Category
-column names the documentation site's part and optional `Part › Group`, so
-this table and the site sidebar carry the same structure in the same order.
+The Category column names the documentation site's part and optional
+`Part › Group`, so this table and the site sidebar carry the same
+structure in the same order.
 
 | Document | Use it to… | Category |
 |---|---|---|
@@ -75,3 +57,4 @@ this table and the site sidebar carry the same structure in the same order.
 | [DESIGN.md](../DESIGN.md) | Follow the architecture, check-catalog rationale, and roadmap. | More › Project and contributing |
 | [Scale proof calibration](scale-calibration.md) | Review the implementation-owned calibration sweep, provenance magnitudes, historical policy measurements, and reproducible command behind `appendix-d-v6`. | More › Project and contributing |
 | [research/](research/game-ready-animation-clips.md) | Read the dated research notes that inform the roadmap. | More › Project and contributing |
+| [All pages](README.md) | Find any page by the job it owns — this table, which is also where the site's navigation comes from. | More |
