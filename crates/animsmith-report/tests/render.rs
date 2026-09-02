@@ -2404,10 +2404,10 @@ fn root_path_figure(values: Vec<animsmith_core::glam::Vec3>) -> String {
 fn a_gap_in_the_root_path_starts_a_new_subpath_rather_than_being_bridged() {
     use animsmith_core::glam::Vec3;
     let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
-    // One non-finite key in the middle of nine. Linear interpolation against
-    // a non-finite key also poisons the sample before it, so the plottable
-    // frames are the first four and the last four: two runs long enough to
-    // draw, with a hole between them.
+    // One non-finite key in the middle of nine. A frame reads
+    // `lerp(key j, key j+1, 0)`, so the non-finite key at 4 makes frames 3
+    // and 4 unplottable: the runs are frames 0-2 and 5-8, both long enough
+    // to draw, with a hole between them.
     let figure = root_path_figure(vec![
         at(0.0, 0.0),
         at(1.0, 0.0),
@@ -2451,6 +2451,15 @@ fn a_gap_in_the_root_path_starts_a_new_subpath_rather_than_being_bridged() {
         !d.contains(&format!("{last_before}L{first_after}")),
         "the runs either side of the hole must not be joined: {d:?}"
     );
+}
+
+/// The `<circle class="pathdot" …/>` element of a root-path figure.
+fn path_dot(figure: &str) -> &str {
+    let start = figure
+        .find("<circle class=\"pathdot\"")
+        .expect("the figure carries its playhead dot");
+    let end = figure[start..].find("/>").expect("the dot element closes") + start + 2;
+    &figure[start..end]
 }
 
 /// The `pathpoints` entries of a root-path figure, in frame order.
@@ -2507,43 +2516,104 @@ fn an_unavailable_frame_carries_no_position_rather_than_a_neighbours() {
             "an available frame carries its own coordinate: {points:?}"
         );
     }
+
+    // The dot the renderer writes into the markup is what an extracted
+    // chart, or a document whose script has not run, shows. Frame 0 has no
+    // position, so that dot must be hidden and name no coordinate at all —
+    // not placed at the first frame that does have one.
+    let dot = path_dot(&figure);
+    assert!(
+        dot.contains("display=\"none\""),
+        "a document opening on a frame with no position hides its dot: {dot}"
+    );
+    assert!(
+        !dot.contains("cx=") && !dot.contains("cy="),
+        "a hidden dot names no position: {dot}"
+    );
+
+    // The other side of the same contract: a document whose frame 0 does
+    // have a position opens with the dot visible, at that frame's own
+    // coordinate.
+    let available = root_path_figure(vec![
+        at(0.0, 0.0),
+        at(1.0, 0.0),
+        at(2.0, 0.0),
+        at(3.0, 1.0),
+        at(4.0, 1.0),
+    ]);
+    let visible = path_dot(&available);
+    assert!(
+        !visible.contains("display="),
+        "a frame with a position shows its dot: {visible}"
+    );
+    let first = path_points(&available)[0].clone();
+    let (cx, cy) = first.split_once(',').expect("frame 0 carries a coordinate");
+    assert!(
+        visible.contains(&format!("cx=\"{cx}\"")) && visible.contains(&format!("cy=\"{cy}\"")),
+        "the dot opens on frame 0's own coordinate {first}: {visible}"
+    );
 }
 
-/// The no-position marker never carries a coordinate, wherever the hole is.
+/// The no-position marker sits on exactly the frames that have no
+/// position, wherever the hole is.
+///
+/// The expected indices come from the sampling rule rather than from the
+/// tool: a frame sampled exactly at key `j` reads `lerp(key j, key j+1, 0)`
+/// for any `j` before the last, so a non-finite key makes both the frame at
+/// it and the frame before it unplottable. Frame 0 and the last frame read
+/// their own key directly and are poisoned only by that key.
 #[test]
-fn the_no_position_marker_never_carries_a_coordinate() {
+fn the_no_position_marker_sits_on_exactly_the_unavailable_frames() {
     use animsmith_core::glam::Vec3;
     let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
     let nan = f32::NAN;
-    // A leading hole, a hole in the middle, and a trailing one.
-    for values in [
-        vec![at(nan, nan), at(1.0, 0.0), at(2.0, 0.0), at(3.0, 1.0)],
-        vec![at(0.0, 0.0), at(nan, nan), at(2.0, 0.0), at(3.0, 1.0)],
-        vec![at(0.0, 0.0), at(1.0, 0.0), at(2.0, 0.0), at(nan, nan)],
-        // Finite in one coordinate only: still no position.
-        vec![at(0.0, 0.0), at(1.0, nan), at(2.0, 0.0), at(3.0, 1.0)],
+    for (case, values, unavailable) in [
+        (
+            "a leading hole: key 0 is its own frame and poisons no other",
+            vec![at(nan, nan), at(1.0, 0.0), at(2.0, 0.0), at(3.0, 1.0)],
+            vec![0usize],
+        ),
+        (
+            "a hole in the middle: key 1 poisons frame 1 only, because \
+             frame 0 reads key 0 directly",
+            vec![at(0.0, 0.0), at(nan, nan), at(2.0, 0.0), at(3.0, 1.0)],
+            vec![1],
+        ),
+        (
+            "a trailing hole: the last key is read by the last frame and by \
+             the one before it",
+            vec![at(0.0, 0.0), at(1.0, 0.0), at(2.0, 0.0), at(nan, nan)],
+            vec![2, 3],
+        ),
+        (
+            "finite in one coordinate only: still no position",
+            vec![at(0.0, 0.0), at(1.0, nan), at(2.0, 0.0), at(3.0, 1.0)],
+            vec![1],
+        ),
     ] {
         let figure = root_path_figure(values);
         let points = path_points(&figure);
-        assert_eq!(points.len(), 4, "{points:?}");
-        for entry in &points {
-            if entry == "-" {
+        assert_eq!(points.len(), 4, "{case}: {points:?}");
+        for (index, entry) in points.iter().enumerate() {
+            if unavailable.contains(&index) {
+                assert_eq!(
+                    entry, "-",
+                    "{case}: frame {index} has no position, so it carries the \
+                     marker and not a coordinate: {points:?}"
+                );
                 continue;
             }
+            assert_ne!(
+                entry, "-",
+                "{case}: frame {index} has a position, so it must carry it: {points:?}"
+            );
             assert!(
                 entry.split(',').count() == 2
                     && entry.split(',').all(|part| part.parse::<f64>().is_ok()),
-                "every entry is either the marker or a plain coordinate pair: {points:?}"
+                "{case}: an available frame carries a plain coordinate pair: {points:?}"
             );
         }
-        assert!(
-            points.iter().any(|entry| entry == "-"),
-            "the unavailable frame is marked: {points:?}"
-        );
-        assert!(
-            !figure.contains("NaN"),
-            "no NaN reaches the markup: {figure}"
-        );
+        assert!(!figure.contains("NaN"), "{case}: no NaN reaches the markup");
     }
 }
 
