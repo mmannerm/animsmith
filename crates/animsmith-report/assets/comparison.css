@@ -1,13 +1,16 @@
 /* Before/after comparison layout. Colour lives in tokens.css and the shared
    surfaces in report-base.css; this sheet only places things. */
-header, .disclosure, .sync, .shared-chart { padding: .8rem 1rem }
+header, .disclosure, .sync { padding: .8rem 1rem }
 .disclosure p { margin: 0 0 .3rem }
 h1, h2, h3 { color: var(--accent) }
 h1 { font-size: 1.1rem }
 .warning { color: var(--warning) }
 .sync { background: var(--surface); display: flex; gap: 1rem; align-items: center }
 .sync input { min-width: 20rem }
-.shared-chart { margin: 0 1rem; background: var(--surface); border-radius: 8px }
+/* The shared root panel is one full-width row inside the same grid as the
+   panes, placed after both judged poses: it is one panel about one channel,
+   so leading with it made the least of the comparison read as the most. */
+.shared-chart { grid-column: 1 / -1 }
 .shared-chart h2 { font-size: 1rem; margin: .2rem 0 }
 main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 1rem }
 @media (max-width: 900px) { main { grid-template-columns: 1fr } .sync input { min-width: 10rem } }

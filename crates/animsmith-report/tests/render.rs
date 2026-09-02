@@ -909,7 +909,7 @@ fn comparison_matrix_projects_typed_visual_acceptance_context() {
             .unwrap()
             .is_empty()
     );
-    assert!(html.contains("one shared uniform metres scale"));
+    assert!(html.contains("drawn at the same metres scale as the role trajectory panels"));
 }
 
 #[test]
@@ -3603,6 +3603,295 @@ fn the_payload_search_reads_both_base64_alphabets() {
                 .iter()
                 .any(|run| run.as_slice() == payload.as_slice()),
             "the search must recover a payload spelled {encoded}"
+        );
+    }
+}
+
+/// The text of one figure's `<figcaption>`, which is the caption a reader
+/// sees beside the picture.
+fn figcaption(figure: &str) -> String {
+    let open = figure
+        .find("<figcaption>")
+        .expect("the figure carries a caption")
+        + "<figcaption>".len();
+    let close = figure[open..]
+        .find("</figcaption>")
+        .expect("caption closes")
+        + open;
+    figure[open..close].to_owned()
+}
+
+/// Every chart says what a reader should look for in it.
+///
+/// The report is read by the game developer or artist who owns the fix, not
+/// by whoever wrote the check, so each picture states what the sampled
+/// curves should do in the words of the clip. The sentences stay on the
+/// measured, judged facts: the single-clip gait chart shades no stance
+/// intervals, so it claims none, and the root path names only what it draws.
+#[test]
+fn every_single_clip_chart_caption_says_what_to_look_for() {
+    let doc = chart_roles_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let html = animsmith_report::render(&grids, &roles, &[], None, Some("walk"), full());
+    let figures = chart_figures(&html);
+    let caption = |kind: &str| {
+        figcaption(
+            figures
+                .iter()
+                .find(|figure| attribute(figure, "data-kind") == kind)
+                .unwrap_or_else(|| panic!("{kind} chart")),
+        )
+    };
+
+    let gait = caption("gait");
+    assert!(
+        gait.starts_with("walk — foot height relative to hips · "),
+        "the caption still names its clip and figure first: {gait}"
+    );
+    assert!(
+        gait.contains(
+            "what to look for: the two feet should alternate, one planted flat at contact \
+             height while the other swings; for a loop the curves should end where they began"
+        ),
+        "{gait}"
+    );
+    assert!(
+        !gait.contains("shaded"),
+        "the single-clip gait chart draws no stance bands, so it must not \
+         claim any: {gait}"
+    );
+
+    let root = caption("rootpath");
+    assert!(root.starts_with("walk — root path (top-down) · "), "{root}");
+    assert!(
+        root.contains(
+            "what to look for: an in-place or looping clip's root path should close on itself \
+             and stay near the origin; a travelling clip should trace a straight line ending \
+             at the declared distance; the dot is the current frame, the hollow circle where \
+             the track starts and the square where it ends"
+        ),
+        "{root}"
+    );
+    assert!(
+        root.contains(" m at its widest"),
+        "the root caption states the measured extent in metres: {root}"
+    );
+
+    // Neither sentence promises anything about how the clip will look or
+    // play: the report presents checked evidence, and an absent finding is
+    // not acceptance.
+    for (kind, text) in [("gait", &gait), ("rootpath", &root)] {
+        for word in ["acceptable", "looks good", "correct", "approved", "quality"] {
+            assert!(
+                !text.to_lowercase().contains(word),
+                "{kind} caption promises acceptance with {word:?}: {text}"
+            );
+        }
+    }
+}
+
+/// A root track is marked at both ends.
+///
+/// One line says nothing about which way it was walked: a clip that travels
+/// out and never returns and a clip that comes back over its own line draw
+/// the same picture. A hollow circle where the track starts and a filled
+/// square where it ends tell them apart, and the caption says in words
+/// whether the two coincide.
+#[test]
+fn the_root_path_marks_where_the_track_starts_and_ends() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    let track = |name: &str, values: Vec<Vec3>| Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![Clip {
+            name: name.to_owned(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: (0..values.len()).map(|at| at as f32 / 4.0).collect(),
+                values: TrackValues::Vec3s(values),
+            }],
+        }],
+        ..Document::default()
+    };
+    let render = |doc: &Document| {
+        let grids = MetricGrids::new(doc);
+        let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+        let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+        chart_figures(&html)
+            .into_iter()
+            .find(|figure| attribute(figure, "data-kind") == "rootpath")
+            .expect("root path chart")
+    };
+
+    // Out along +X and back over its own line: one line, two different ends.
+    let there_and_back = render(&track(
+        "there-and-back",
+        vec![
+            Vec3::ZERO,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.0),
+        ],
+    ));
+    let points: Vec<(f64, f64)> = there_and_back
+        .split_once("<template class=\"pathpoints\">")
+        .expect("plotted points")
+        .1
+        .split_once("</template>")
+        .expect("points close")
+        .0
+        .split(';')
+        .map(|point| {
+            let (x, y) = point.split_once(',').expect("x,y point");
+            (x.parse().expect("x"), y.parse().expect("y"))
+        })
+        .collect();
+    let start = points.first().copied().expect("a first plotted frame");
+    let end = points.last().copied().expect("a last plotted frame");
+
+    // Each mark is drawn twice: once as its legend swatch and once on the
+    // track. The legend comes first, so the plotted one is the second.
+    let marked = |class: &str| -> Vec<String> {
+        tags(&there_and_back)
+            .into_iter()
+            .filter(|tag| {
+                attribute_values(tag, "class")
+                    .iter()
+                    .any(|name| name == class)
+            })
+            .collect()
+    };
+    let mark = |class: &str| {
+        let drawn = marked(class);
+        assert_eq!(
+            drawn.len(),
+            2,
+            "{class} is drawn once in the legend and once on the track: {drawn:?}"
+        );
+        drawn.into_iter().next_back().expect("the plotted mark")
+    };
+    let circle = mark("pathstart");
+    assert!(
+        circle.starts_with("circle"),
+        "the start mark is hollow: {circle}"
+    );
+    assert_eq!((number(&circle, "cx"), number(&circle, "cy")), start);
+    let square = mark("pathend");
+    assert!(
+        square.starts_with("rect"),
+        "the end mark is a square: {square}"
+    );
+    let side = number(&square, "width");
+    assert_eq!(number(&square, "height"), side, "the end mark is square");
+    assert_eq!(
+        (
+            number(&square, "x") + side / 2.0,
+            number(&square, "y") + side / 2.0
+        ),
+        end,
+        "the end mark is centred on the last plotted frame"
+    );
+
+    // The current frame stays distinguishable from both ends: the dot is a
+    // circle like the start mark, so it must not be the same circle.
+    let dot = marked("pathdot")
+        .into_iter()
+        .next()
+        .expect("the playhead dot");
+    assert!(dot.starts_with("circle"), "{dot}");
+    assert!(
+        number(&dot, "r") != number(&circle, "r"),
+        "the playhead dot and the start mark are the same size, so a reader \
+         at frame 0 cannot tell the current frame from the track's start"
+    );
+    assert!(
+        !dot.contains("class=\"pathstart\"") && !circle.contains("class=\"pathdot\""),
+        "the dot and the start mark take their own classes, so the \
+         stylesheet paints them apart"
+    );
+
+    // Both marks are named in the legend, beside a swatch of their own shape.
+    let legend = class_texts(&there_and_back, "legend");
+    assert!(
+        legend.contains(&"start".to_owned()) && legend.contains(&"end".to_owned()),
+        "the legend names both marks: {legend:?}"
+    );
+
+    // A track that does not return says how far short it ends.
+    let travelled = render(&track(
+        "travelled",
+        vec![
+            Vec3::ZERO,
+            Vec3::new(0.5, 0.0, 0.0),
+            Vec3::new(1.5, 0.0, 0.0),
+        ],
+    ));
+    assert!(
+        figcaption(&travelled).contains("the track ends 1.500 m from its start"),
+        "{}",
+        figcaption(&travelled)
+    );
+    assert!(
+        !figcaption(&travelled).contains("closes on itself"),
+        "{}",
+        figcaption(&travelled)
+    );
+
+    // A track that comes back to where it began says so instead.
+    assert!(
+        figcaption(&there_and_back).contains("the track closes on itself"),
+        "{}",
+        figcaption(&there_and_back)
+    );
+    assert!(
+        !figcaption(&there_and_back).contains("from its start"),
+        "{}",
+        figcaption(&there_and_back)
+    );
+}
+
+/// The comparison leads with the judged poses.
+///
+/// The shared root panel is one panel about one channel, and it used to open
+/// the document at full width — so a fixture whose root sways two
+/// centimetres read as the point of the comparison. The poses come first,
+/// then the root, then the trails and the gait.
+#[test]
+fn the_comparison_orders_its_panels_pose_root_trails_gait() {
+    let html = comparison_documents(full());
+    let at = |id: &str| {
+        html.find(&format!("id=\"{id}\""))
+            .unwrap_or_else(|| panic!("the document renders #{id}"))
+    };
+    let poses = at("before-gl").max(at("after-gl"));
+    let root = at("comparison-root-path");
+    let trails = at("before-path").min(at("after-path"));
+    let gait = at("before-gait").min(at("after-gait"));
+    assert!(
+        poses < root,
+        "both judged poses come before the shared root panel"
+    );
+    assert!(root < trails, "the root panel comes before the trails");
+    assert!(trails < gait, "the trails come before the gait");
+    for side in ["before", "after"] {
+        assert!(
+            at(&format!("{side}-path")) < at(&format!("{side}-gait")),
+            "{side}: its own trails come before its own gait"
         );
     }
 }

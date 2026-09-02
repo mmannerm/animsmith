@@ -123,6 +123,13 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
    on top of one foot curve, and a solid line there would simply disappear. */
 .series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
+/* Where a top-down track starts and where it ends, in the track's own
+   colour: a hollow circle and a filled square, so a clip that walks out and
+   never returns is not the same picture as one that comes back over its own
+   line. The playhead dot keeps --error, so the current frame is never read
+   as either end. */
+.pathstart { fill: none; stroke: var(--pass); stroke-width: 1.5; }
+.pathend { fill: var(--pass); stroke: none; }
 .axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }

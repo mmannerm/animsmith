@@ -212,18 +212,33 @@ assertNoBareSvgText(nodes, comparisonSvgs, "drawn comparison");
 // same way a reader does — off the element, not off the drawing.
 const panelCaption = (id) => nodes[`${id}-caption`].textContent;
 for (const [id, phrase] of [
-  ["comparison-root-path", "the root's top-down path over the whole clip"],
-  ["comparison-root-path", "the dot marks the shared phase"],
-  ["comparison-root-path", "after dashed, before solid"],
-  ["comparison-root-path", "one shared uniform metres scale"],
+  // What a reader should look for, in the words of the clip rather than of
+  // the check that judged it. Each panel's sentence stays on what its own
+  // drawing shows: the gait panel shades stance intervals and says so, the
+  // trajectory panels do not and do not claim to.
+  ["comparison-root-path", "what to look for: an in-place or looping clip's root path should close on itself and stay near the origin; a travelling clip should trace a straight line ending at the declared distance; the dot is the shared phase, the hollow circle where a track starts and the square where it ends"],
+  ["comparison-root-path", "before solid, after dashed and translucent"],
+  ["comparison-root-path", "drawn at the same metres scale as the role trajectory panels"],
+  ["before-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails on both sides mean the repair changed only what it claims"],
+  ["after-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails on both sides mean the repair changed only what it claims"],
   ["before-path", "shared scale across both inputs"],
   ["after-path", "shared scale across both inputs"],
+  ["before-gait", "what to look for: the two feet should alternate, one planted flat at contact height while the other swings; the shaded bands are the sampled stance intervals the foot-slide check judged, and a foot that moves horizontally during its band is the slide; for a loop the curves should end where they began"],
+  ["after-gait", "what to look for: the two feet should alternate, one planted flat at contact height while the other swings; the shaded bands are the sampled stance intervals the foot-slide check judged, and a foot that moves horizontally during its band is the slide; for a loop the curves should end where they began"],
   ["before-gait", "shaded runs are sampled foot-slide stance evidence"],
   ["before-gait", "left in the upper band, right in the lower"],
   ["after-gait", "left in the upper band, right in the lower"],
 ]) {
   if (!panelCaption(id).includes(phrase)) throw new Error(`${id} lost its caption: ${JSON.stringify(phrase)}`);
 }
+// The document presents checked evidence; a caption that told a reader the
+// clip was fine would contradict the disclosure two sections above it.
+for (const id of comparisonSvgs) {
+  for (const word of ["acceptable", "looks good", "approved", "quality"]) {
+    if (panelCaption(id).toLowerCase().includes(word)) throw new Error(`${id} promises acceptance with ${JSON.stringify(word)}`);
+  }
+}
+if (!html.includes("An absent finding is not artistic, gameplay, or engine acceptance.")) throw new Error("the comparison dropped its evidence disclaimer");
 // Nothing drawn inside a panel may be a caption: SVG does not wrap, so a
 // sentence drawn there is cut at the panel edge on a narrow column.
 for (const id of comparisonSvgs) {
@@ -250,6 +265,146 @@ if (rootPaths.length !== 2) throw new Error("the shared root chart plots both si
 if (rootPaths.filter((path) => path.attrs["stroke-dasharray"]).length !== 1) throw new Error("two coincident root paths are drawn identically, so one hides the other");
 const rootDots = nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-dot"]);
 if (new Set(rootDots.map((dot) => dot.attrs.r)).size !== 2) throw new Error("two coincident shared-phase dots are drawn identically");
+
+// A coincident `after` is also thinner and translucent, so the `before` it
+// sits on stays visible through it rather than only around its gaps.
+const rootPathOf = (state, side) => state.nodes["comparison-root-path"].children.find((child) => child.attrs["data-root-side"] === side);
+const beforeStroke = rootPathOf(main, "before"), afterStroke = rootPathOf(main, "after");
+if (!(Number(afterStroke.attrs.opacity) < Number(beforeStroke.attrs.opacity))) throw new Error(`the after track is opaque (${afterStroke.attrs.opacity}), so it hides a coincident before track`);
+if (!(Number(afterStroke.attrs["stroke-width"]) < Number(beforeStroke.attrs["stroke-width"]))) throw new Error(`the after track is not drawn thinner than the before track: ${afterStroke.attrs["stroke-width"]} against ${beforeStroke.attrs["stroke-width"]}`);
+
+// ---- the shared root panel is drawn at the role panels' metres scale ----
+// It used to be fitted to its own extent, which drew a root that sways two
+// centimetres exactly as large as feet that swing half a metre: the least of
+// the comparison then read as the most. The expected geometry is recomputed
+// here from the payload, so a viewer that goes back to fitting the panel
+// fails on the numbers rather than on a spelling.
+const decodeFloats = (encoded) => {
+  const raw = Buffer.from(encoded, "base64"), out = new Array(raw.byteLength / 4);
+  for (let index = 0; index < out.length; index++) out[index] = raw.readFloatLE(index * 4);
+  return out;
+};
+function payloadTrail(payload, name, role) {
+  const side = payload[name], bone = side.clip.trails[role];
+  if (bone == null) return null;
+  const positions = decodeFloats(side.clip.positions);
+  return Array.from({length: side.clip.frames}, (_, frame) => {
+    const base = (frame * payload.bones.length + bone) * 3;
+    return [positions[base], positions[base + 2]];
+  });
+}
+function payloadBounds(payload, roles) {
+  const xs = [], zs = [];
+  for (const name of ["before", "after"]) for (const role of roles) {
+    const points = payloadTrail(payload, name, role);
+    if (!points) continue;
+    for (const point of points) { xs.push(point[0]); zs.push(point[1]); }
+  }
+  const range = (values) => {
+    let min = Infinity, max = -Infinity;
+    for (const value of values) if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); }
+    return min === Infinity ? null : [min, max];
+  };
+  const x = range(xs), z = range(zs);
+  return x && z ? {x, z} : null;
+}
+const fittedScale = (bounds, width, height, pad) => Math.min(
+  (width - 2 * pad) / Math.max(.001, bounds.x[1] - bounds.x[0]),
+  (height - 2 * pad) / Math.max(.001, bounds.z[1] - bounds.z[0]),
+);
+const trailBounds = payloadBounds(data, ["root", "hips", "left_foot", "right_foot"]);
+const rootBounds = payloadBounds(data, ["root"]);
+if (!trailBounds || !rootBounds) throw new Error("the fixture must resolve a root and its role trails");
+const roleScale = fittedScale(trailBounds, 360, 180, 24);
+if (Math.abs(roleScale - fittedScale(rootBounds, 720, 180, 28)) < 1e-6) throw new Error("the fixture's root and role extents must differ, or the two scalings cannot be told apart");
+const rootMap = (point) => [
+  720 / 2 + (point[0] - (rootBounds.x[0] + rootBounds.x[1]) / 2) * roleScale,
+  180 / 2 - (point[1] - (rootBounds.z[0] + rootBounds.z[1]) / 2) * roleScale,
+];
+const drawnPoints = (d) => d.split(/[ML]/).filter(Boolean).map((pair) => pair.split(",").map(Number));
+const spanOf = (points, axis) => Math.max(...points.map((point) => point[axis])) - Math.min(...points.map((point) => point[axis]));
+const beforeRootMetres = payloadTrail(data, "before", "root").filter((point) => point.every(Number.isFinite));
+const beforeRootDrawn = drawnPoints(beforeStroke.attrs.d);
+if (beforeRootDrawn.length !== beforeRootMetres.length) throw new Error("the root panel drew a different number of points than the clip has finite root frames");
+for (const axis of [0, 1]) {
+  const expected = spanOf(beforeRootMetres.map(rootMap), axis);
+  const drawn = spanOf(beforeRootDrawn, axis);
+  if (Math.abs(drawn - expected) > 1e-6) throw new Error(`the shared root panel is not drawn at the role panels' metres scale: ${["X", "Z"][axis]} spans ${drawn} plot units, and the role scale over that metre extent is ${expected}`);
+}
+
+// Both ends of both tracks are marked, at the coordinates the first and last
+// sampled frames map to, and the start mark is hollow so the phase dot
+// sitting on it at frame 0 is still its own thing.
+for (const side of ["before", "after"]) {
+  const metres = payloadTrail(data, side, "root").filter((point) => point.every(Number.isFinite));
+  const marker = (kind) => nodes["comparison-root-path"].children.find((child) => child.attrs["data-root-marker"] === `${side}-${kind}`);
+  const circle = marker("start"), square = marker("end");
+  if (!circle || !square) throw new Error(`the ${side} root track is not marked at both ends`);
+  if (circle.tag !== "circle" || square.tag !== "rect") throw new Error(`the ${side} track's two ends are not drawn as two different shapes`);
+  if (circle.attrs.fill !== "none") throw new Error(`the ${side} start mark is filled, so the phase dot standing on it at frame 0 disappears into it`);
+  const start = rootMap(metres[0]), end = rootMap(metres[metres.length - 1]);
+  if (Math.abs(circle.attrs.cx - start[0]) > 1e-6 || Math.abs(circle.attrs.cy - start[1]) > 1e-6) throw new Error(`the ${side} start mark is at ${circle.attrs.cx},${circle.attrs.cy} rather than the first sampled frame's ${start}`);
+  if (Math.abs(square.attrs.x + square.attrs.width / 2 - end[0]) > 1e-6 || Math.abs(square.attrs.y + square.attrs.height / 2 - end[1]) > 1e-6) throw new Error(`the ${side} end mark is not centred on the last sampled frame's ${end}`);
+}
+for (const label of ["start", "end"]) {
+  if (!nodes["comparison-root-path"].children.some((child) => child.tag === "text" && child.textContent === label)) throw new Error(`the shared root panel does not name its ${label} mark in the legend`);
+}
+// And draws each name beside a swatch of its own shape, so the words say what
+// the two shapes in the picture are rather than only that there are two.
+const legendSwatch = (tag) => nodes["comparison-root-path"].children.find((child) => child.tag === tag
+  && !child.attrs["data-root-marker"] && !child.attrs["data-root-dot"] && !child.attrs["data-root-side"]);
+if (!legendSwatch("circle") || legendSwatch("circle").attrs.fill !== "none") throw new Error("the legend names a start mark without drawing the hollow circle it means");
+if (!legendSwatch("rect") || legendSwatch("rect").attrs.fill === "none") throw new Error("the legend names an end mark without drawing the filled square it means");
+
+// The caption says what the reader would otherwise have to notice: that the
+// two tracks are the same line, and where each one ends relative to its own
+// start.
+const rootCaption = () => panelCaption("comparison-root-path");
+if (!rootCaption().includes("the before and after paths are identical")) throw new Error(`two identical root tracks are not declared identical: ${rootCaption()}`);
+const beforeGap = Math.hypot(
+  beforeRootMetres[beforeRootMetres.length - 1][0] - beforeRootMetres[0][0],
+  beforeRootMetres[beforeRootMetres.length - 1][1] - beforeRootMetres[0][1],
+);
+if (!(beforeGap > 0.001)) throw new Error("the fixture's root track must not already close on itself");
+if (!rootCaption().includes(`before ends ${beforeGap.toFixed(3)} m from its start`)) throw new Error(`the caption does not state the end-to-start distance: ${rootCaption()}`);
+if (!rootCaption().includes(` m at their widest`)) throw new Error(`the caption does not state the measured extent: ${rootCaption()}`);
+
+// A root track that returns to where it began says so instead of naming a
+// distance of zero.
+const closedRoots = JSON.parse(JSON.stringify(data));
+for (const name of ["before", "after"]) {
+  const side = closedRoots[name], bone = side.clip.trails.root;
+  const buffer = Buffer.from(side.clip.positions, "base64");
+  for (let frame = 0; frame < side.clip.frames; frame++) {
+    const base = (frame * closedRoots.bones.length + bone) * 3;
+    const angle = 2 * Math.PI * frame / (side.clip.frames - 1);
+    buffer.writeFloatLE(Math.cos(angle) * 0.01, base * 4);
+    buffer.writeFloatLE(Math.sin(angle) * 0.01, (base + 2) * 4);
+  }
+  side.clip.positions = buffer.toString("base64");
+}
+const closedRun = run(generated, "comparison-report-data", html, closedRoots);
+const closedCaption = closedRun.nodes["comparison-root-path-caption"].textContent;
+for (const side of ["before", "after"]) {
+  if (!closedCaption.includes(`${side} closes on itself`)) throw new Error(`a closed root loop is not declared closed: ${closedCaption}`);
+}
+if (closedCaption.includes("from its start")) throw new Error(`a closed root loop still names a distance: ${closedCaption}`);
+
+// ---- panel order: pose, root, trails, gait -----------------------------
+// The judged poses are what the comparison is about, so they come first and
+// the shared root panel follows them.
+const panelAt = (id) => {
+  const at = html.indexOf(`id="${id}"`);
+  if (at < 0) throw new Error(`the generated comparison renders no #${id}`);
+  return at;
+};
+if (Math.max(panelAt("before-gl"), panelAt("after-gl")) > panelAt("comparison-root-path")) throw new Error("the shared root panel is rendered before a judged pose pane");
+if (panelAt("comparison-root-path") > Math.min(panelAt("before-path"), panelAt("after-path"))) throw new Error("the shared root panel is not rendered before the role trajectories");
+if (Math.min(panelAt("before-path"), panelAt("after-path")) > Math.min(panelAt("before-gait"), panelAt("after-gait"))) throw new Error("the role trajectories are not rendered before the gait panels");
+for (const side of ["before", "after"]) {
+  if (panelAt(`${side}-path`) > panelAt(`${side}-gait`)) throw new Error(`${side}: its gait panel is rendered before its role trajectories`);
+}
+
 
 // Two stance windows at the same frames stay two visible bands. The left
 // and right shading are semi-transparent, so drawing them over each other
@@ -278,6 +433,11 @@ const drawnSpread = (side) => {
   return Math.max(extent(0), extent(1));
 };
 if (!(drawnSpread("after") < drawnSpread("before") * 0.75)) throw new Error(`the pose panes do not share one camera: a half-size skeleton drew at ${drawnSpread("after")} against ${drawnSpread("before")}`);
+// That same payload is the case where the repair did move the root, so the
+// caption must not go on claiming the two tracks are the same line.
+const scaledCaption = oneCamera.nodes["comparison-root-path-caption"].textContent;
+if (!scaledCaption.includes("the before and after paths differ")) throw new Error(`two different root tracks are not declared different: ${scaledCaption}`);
+if (scaledCaption.includes("are identical")) throw new Error(`two different root tracks are declared identical: ${scaledCaption}`);
 const seamIndex = data.before.findings.indexOf(seamFinding), structuralIndex = data.before.findings.indexOf(structuralFinding), afterIndex = data.after.findings.indexOf(afterFinding);
 nodes["before-findings"].children[seamIndex].listeners.click();
 if(nodes.scrub.value != 1501 || !nodes["before-pose-context"].textContent.includes("first 0.000s") || !nodes["before-pose-context"].textContent.includes(`affected ${seam.subject_bone_name}`)) throw new Error("seam finding did not select exact frame and endpoint/subject context");

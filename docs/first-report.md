@@ -23,7 +23,11 @@ scrubbed to the first finding:
 
 [Open it full size](visuals/walk-dirty.report.html). Drag to orbit, use the
 wheel to zoom, and click a finding to jump to its frame. The charts share a
-playhead with the 3D view.
+playhead with the 3D view, and each chart caption says what to look for in it:
+the two feet alternating, the root path closing on itself or running out to
+its declared distance. A root path is marked where the track starts (a hollow
+circle) and where it ends (a filled square), and the caption states how far
+apart the two are.
 
 ## Compare before and after
 
@@ -40,9 +44,12 @@ $ animsmith --config examples/report-comparison.animsmith.toml report \
 wrote comparison.html (1 clip(s), 5 finding(s), 0.0 MB)   # exits 0
 ```
 
-[Open the comparison](visuals/foot-slide.comparison.html). The gait panel
-shades the sampled stance intervals, and the shared root chart uses one scale
-for both sides.
+[Open the comparison](visuals/foot-slide.comparison.html). Scrub the shared
+phase to move both sides together. The judged poses come first, then the shared root trajectory — drawn at the same metre
+scale as the role-trajectory panels below it, so a two-centimetre sway looks
+like two centimetres — and then each side's trails and gait. The gait panel
+shades the sampled stance intervals, and every panel's caption says what to
+look for in it.
 
 ## Share evidence without sharing the asset
 

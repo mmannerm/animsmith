@@ -119,13 +119,31 @@ function panelCaption(id, message) {
 // the stylesheet, which is what actually draws the glyphs.
 const CHART_TYPE = { advance: 4.6, gap: 16 };
 const legendAdvance = (label) => label.length * CHART_TYPE.advance + CHART_TYPE.gap;
-function topDownMap(bounds, width, height, pad) {
+// Plot units per metre for a set of bounds fitted to a padded box.
+function topDownScale(bounds, width, height, pad) {
   const spanX = Math.max(.001, bounds.x[1] - bounds.x[0]);
   const spanZ = Math.max(.001, bounds.z[1] - bounds.z[0]);
-  const scale = Math.min((width - 2 * pad) / spanX, (height - 2 * pad) / spanZ);
+  return Math.min((width - 2 * pad) / spanX, (height - 2 * pad) / spanZ);
+}
+// The same projection at a scale the caller chooses, so two panels can draw
+// their own bounds at one shared metres scale.
+function topDownMapAt(bounds, width, height, scale) {
   const centerX = (bounds.x[0] + bounds.x[1]) / 2, centerZ = (bounds.z[0] + bounds.z[1]) / 2;
   return (point) => [width / 2 + (point[0] - centerX) * scale, height / 2 - (point[1] - centerZ) * scale];
 }
+function topDownMap(bounds, width, height, pad) {
+  return topDownMapAt(bounds, width, height, topDownScale(bounds, width, height, pad));
+}
+// The metres scale the two role-trajectory panels draw at. The shared root
+// panel borrows it, so a root that sways two centimetres is drawn two
+// centimetres wide beside feet that swing half a metre, instead of being
+// fitted to its own panel and reading as the largest thing in the document.
+const TRAIL_PANEL = { width: 360, height: 180, pad: 24 };
+const ROOT_PANEL = { width: 720, height: 180 };
+// How close a track's two ends must be to count as closing on itself: the
+// same millimetre the single-clip chart calls stationary, and finer than any
+// clip an engine distinguishes from a closed loop.
+const CLOSED_PATH_M = 0.001;
 function pathData(points, map) {
   let drawing = false, path = "";
   for (const point of points) {
@@ -192,38 +210,76 @@ function drawSide(name, palette, phase, highlighted) {
   return frame;
 }
 
+// The two root tracks a comparison draws, and the facts about them the
+// caption states: a track the reader can see the direction of, whether each
+// one comes back to where it started, and whether the repair moved the root
+// at all.
+function rootTrack(side) {
+  const bone = side.clip.trails.root;
+  return bone == null ? null : trailPoints(side, bone);
+}
+// Identical means every sampled coordinate is the same number, `Object.is`
+// so two equally non-finite tracks still count as unchanged. A repair that
+// did not touch the root produces exactly this, and the panel then draws one
+// line where the legend names two — which is the thing to say in words.
+function rootTracksIdentical() {
+  const before = rootTrack(data.before), after = rootTrack(data.after);
+  if (!before || !after || before.length !== after.length) return null;
+  return before.every((point, index) => Object.is(point[0], after[index][0]) && Object.is(point[1], after[index][1]));
+}
+function trackEnds(points) {
+  const finite = points.filter(finitePoint);
+  return finite.length ? [finite[0], finite[finite.length - 1]] : null;
+}
+function trackClosure(name) {
+  const points = rootTrack(data[name]);
+  const ends = points && trackEnds(points);
+  if (!ends) return null;
+  const gap = Math.hypot(ends[1][0] - ends[0][0], ends[1][1] - ends[0][1]);
+  return gap < CLOSED_PATH_M ? `${name} closes on itself` : `${name} ends ${gap.toFixed(3)} m from its start`;
+}
+
 function drawRootComparison(palette, phase) {
   const svg = q("comparison-root-path");
   if (!svg) return;
   svg.replaceChildren();
   if (!sharedRootBounds) { svgMessage("comparison-root-path", svg, palette, "root trajectories unavailable: no input has finite resolved Root samples"); return; }
-  // The drawing is mapped into the upper 180 of the 220-tall panel so the
-  // caption below it has room for its own lines.
-  const map = topDownMap(sharedRootBounds, 720, 180, 28);
+  // Drawn at the role panels' metres scale rather than fitted to this panel,
+  // and mapped into the upper 180 of the 220-tall box so the caption below
+  // has room for its own lines.
+  const scale = topDownScale(sharedTrailBounds || sharedRootBounds, TRAIL_PANEL.width, TRAIL_PANEL.height, TRAIL_PANEL.pad);
+  const map = topDownMapAt(sharedRootBounds, ROOT_PANEL.width, ROOT_PANEL.height, scale);
   // A repair that leaves the root alone draws the two trajectories on top of
   // each other, and a solid `after` over a solid `before` hides the before
   // entirely — the panel then reads as one input rather than as two that
-  // agree. The after path is dashed and its dot smaller, so a coincident
-  // pair still reads as two.
+  // agree. The after path is dashed, thinner and translucent, and its dot
+  // smaller, so a coincident pair still reads as two.
   const styles = {
-    before: { color: palette.accent, dash: null, radius: 6 },
-    after: { color: palette.warning, dash: "7 5", radius: 3.5 },
+    before: { color: palette.accent, dash: null, width: 3, opacity: 1, radius: 6 },
+    after: { color: palette.warning, dash: "7 5", width: 1.6, opacity: .7, radius: 3.5 },
   };
   for (const name of ["before", "after"]) {
-    const side = data[name], root = side.clip.trails.root;
-    if (root == null) continue;
-    const points = trailPoints(side, root), style = styles[name];
-    const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": 3, "data-root-side": name };
+    const points = rootTrack(data[name]), style = styles[name];
+    if (!points) continue;
+    const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": style.width, opacity: style.opacity, "data-root-side": name };
     if (style.dash) path["stroke-dasharray"] = style.dash;
     svg.append(svgElement("path", path));
+    // The two ends of the track, so a clip that walks out and never returns
+    // is not the same picture as one that comes back over its own line.
+    const ends = trackEnds(points);
+    if (ends) {
+      const [first, last] = [map(ends[0]), map(ends[1])];
+      if (finitePoint(first)) svg.append(svgElement("circle", { cx: first[0], cy: first[1], r: 5, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, "data-root-marker": `${name}-start` }));
+      if (finitePoint(last)) svg.append(svgElement("rect", { x: last[0] - 3.5, y: last[1] - 3.5, width: 7, height: 7, fill: style.color, opacity: style.opacity, "data-root-marker": `${name}-end` }));
+    }
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-root-dot": name }));
   }
   const rootState = (side) => {
-    const root = side.clip.trails.root;
-    if (root == null) return "unavailable";
-    const points = trailPoints(side, root), finite = points.filter(finitePoint).length;
+    const points = rootTrack(side);
+    if (!points) return "unavailable";
+    const finite = points.filter(finitePoint).length;
     return finite === 0 ? "unavailable" : finite === points.length ? "path" : "path incomplete";
   };
   const beforeState = rootState(data.before), afterState = rootState(data.after);
@@ -237,12 +293,29 @@ function drawRootComparison(palette, phase) {
     svg.append(svgElement("text", { x: legendX, y: 20, fill: state === "unavailable" ? palette.muted : palette[token] }, label));
     legendX += legendAdvance(label);
   }
-  panelCaption("comparison-root-path",
-    `the root's top-down path over the whole clip · the dot marks the shared phase · `
-    + `after dashed, before solid · `
-    + `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m `
-    + `· Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m `
-    + `on one shared uniform metres scale`);
+  // The two end marks are named in the legend, in the muted token because
+  // they mean the same thing on both tracks and each one is already drawn in
+  // its own track's colour.
+  svg.append(svgElement("circle", { cx: legendX + 4, cy: 16, r: 4, fill: "none", stroke: palette.muted, "stroke-width": 1.5 }));
+  svg.append(svgElement("text", { x: legendX + 12, y: 20, fill: palette.muted }, "start"));
+  legendX += legendAdvance("start") + 8;
+  svg.append(svgElement("rect", { x: legendX, y: 12, width: 7, height: 7, fill: palette.muted }));
+  svg.append(svgElement("text", { x: legendX + 12, y: 20, fill: palette.muted }, "end"));
+  const identical = rootTracksIdentical();
+  const sameness = identical === null ? [] : [identical ? "the before and after paths are identical" : "the before and after paths differ"];
+  const closures = ["before", "after"].map(trackClosure).filter(Boolean);
+  panelCaption("comparison-root-path", [
+    "what to look for: an in-place or looping clip's root path should close on itself and stay near "
+    + "the origin; a travelling clip should trace a straight line ending at the declared distance; "
+    + "the dot is the shared phase, the hollow circle where a track starts and the square where it ends",
+    "before solid, after dashed and translucent",
+    ...sameness,
+    ...closures,
+    `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m`,
+    `Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m`,
+    `the paths span ${Math.max(sharedRootBounds.x[1] - sharedRootBounds.x[0], sharedRootBounds.z[1] - sharedRootBounds.z[0]).toFixed(3)} m at their widest`,
+    "drawn at the same metres scale as the role trajectory panels",
+  ].join(" · "));
 }
 
 const TRAIL_TOKENS = {
@@ -254,7 +327,7 @@ function drawTrails(name, palette, phase) {
   if (!svg) return;
   svg.replaceChildren();
   if (!sharedTrailBounds) { svgMessage(`${name}-path`, svg, palette, "role trajectories unavailable"); return; }
-  const map = topDownMap(sharedTrailBounds, 360, 180, 24);
+  const map = topDownMap(sharedTrailBounds, TRAIL_PANEL.width, TRAIL_PANEL.height, TRAIL_PANEL.pad);
   let legendX = 8, unavailable = [], incomplete = [];
   for (const role of Object.keys(TRAIL_TOKENS)) {
     const bone = side.clip.trails[role];
@@ -273,7 +346,9 @@ function drawTrails(name, palette, phase) {
   }
   const missing = unavailable.length ? ` · unavailable: ${unavailable.join(", ")}` : "";
   const partial = incomplete.length ? ` · incomplete non-finite samples: ${incomplete.join(", ")}` : "";
-  panelCaption(`${name}-path`, `top-down X/Z metres · shared scale across both inputs${missing}${partial}`);
+  panelCaption(`${name}-path`, "what to look for: top-down trails of root, hips and feet over the whole clip; "
+    + "matching trails on both sides mean the repair changed only what it claims"
+    + ` · top-down X/Z metres · shared scale across both inputs${missing}${partial}`);
 }
 
 function drawGait(name, palette, phase) {
@@ -317,7 +392,12 @@ function drawGait(name, palette, phase) {
     legendX += legendAdvance(label);
   }
   panelCaption(`${name}-gait`, gaitFinite
-    ? "exact sampled height in metres · shaded runs are sampled foot-slide stance evidence · left in the upper band, right in the lower"
+    ? "what to look for: the two feet should alternate, one planted flat at contact height while the "
+      + "other swings; the shaded bands are the sampled stance intervals the foot-slide check judged, "
+      + "and a foot that moves horizontally during its band is the slide; for a loop the curves should "
+      + "end where they began"
+      + " · exact sampled height in metres · shaded runs are sampled foot-slide stance evidence"
+      + " · left in the upper band, right in the lower"
     : "gait drawing incomplete: non-finite sampled heights; stance and coverage evidence remain listed");
 }
 
@@ -402,6 +482,7 @@ function applyFragment() {
   selectedFrames = null; selectedContext = null;
   q("scrub").value = options.frame == null ? 0 : Math.min(options.frame, sharedFrameMax);
 }
+
 q("scrub").addEventListener("input", () => { selectedFrames = null; selectedContext = null; update(); });
 window.addEventListener("resize", update);
 animsmithOnSchemeChange(() => { documentPalette = animsmithPalette(); update(); });

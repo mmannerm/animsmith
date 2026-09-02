@@ -526,9 +526,11 @@ pub fn render_comparison(
          <section class=\"disclosure\"><p id=\"mapping\"></p>\n\
          <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>\n\
          <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
-         <section class=\"shared-chart\"><h2>Before/after root trajectory</h2>{shared_pose}</section>\n\
-         <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><h3>Judged pose at the shared phase</h3>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
-         <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><h3>Judged pose at the shared phase</h3>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
+         <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><h3>Judged pose at the shared phase</h3>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p></section>\n\
+         <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><h3>Judged pose at the shared phase</h3>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p></section>\n\
+         <section class=\"side shared-chart\" id=\"root-panel\"><h2>Before/after root trajectory</h2>{shared_pose}</section>\n\
+         <section class=\"side\" id=\"before-evidence\"><h2>Before evidence</h2><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
+         <section class=\"side\" id=\"after-evidence\"><h2>After evidence</h2><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
          <script>{shared_js}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
     ))
 }
@@ -1799,6 +1801,7 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
             clip_name,
             "gait",
             "foot height relative to hips",
+            GAIT_GUIDANCE,
             &[
                 Series {
                     class: "series-left",
@@ -1872,6 +1875,18 @@ impl Anchor {
     }
 }
 
+/// The swatch a legend entry draws beside its label.
+///
+/// A plotted series is a line, and a top-down track's two ends are the same
+/// hollow circle and filled square the plot marks them with, so the legend
+/// says what a shape in the picture means rather than only what a colour does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Swatch {
+    Line,
+    Start,
+    End,
+}
+
 /// One axis label, placed in a chart's gutters.
 struct AxisLabel {
     x: f64,
@@ -1891,7 +1906,11 @@ struct Chart<'a> {
     title: &'static str,
     /// Tail of the `aria-label`, after the clip name.
     description: String,
-    legend: &'a [(&'static str, &'a str)],
+    /// What a reader should look for in this picture, appended to the
+    /// visible caption. It is not repeated into the `aria-label`, which
+    /// already states the measured ranges the drawing is evidence for.
+    guidance: String,
+    legend: &'a [(Swatch, &'static str, &'a str)],
     axis: Vec<AxisLabel>,
     /// Publishes the plot rectangle the viewer's playhead is placed in.
     plot_hooks: bool,
@@ -1906,12 +1925,27 @@ impl Chart<'_> {
         let caption = format!("{clip} — {}", esc(self.title));
         let mut legend = String::new();
         let mut cursor = PAD_LEFT;
-        for (class, label) in self.legend {
+        for (swatch, class, label) in self.legend {
             let text_x = cursor + 13.0;
+            legend.push_str(&match swatch {
+                Swatch::Line => format!(
+                    "<line class=\"{class}\" x1=\"{cursor:.1}\" x2=\"{:.1}\" y1=\"{LEGEND_Y}\" \
+                     y2=\"{LEGEND_Y}\"/>",
+                    cursor + 10.0
+                ),
+                Swatch::Start => format!(
+                    "<circle class=\"{class}\" cx=\"{:.1}\" cy=\"{LEGEND_Y}\" r=\"{PATH_START_R}\"/>",
+                    cursor + 5.0
+                ),
+                Swatch::End => format!(
+                    "<rect class=\"{class}\" x=\"{:.1}\" y=\"{:.1}\" width=\"{PATH_END_SIDE}\" \
+                     height=\"{PATH_END_SIDE}\"/>",
+                    cursor + 5.0 - PATH_END_SIDE / 2.0,
+                    LEGEND_Y - PATH_END_SIDE / 2.0
+                ),
+            });
             legend.push_str(&format!(
-                "<line class=\"{class}\" x1=\"{cursor:.1}\" x2=\"{:.1}\" y1=\"{LEGEND_Y}\" \
-                 y2=\"{LEGEND_Y}\"/><text class=\"legend\" x=\"{text_x:.1}\" y=\"{:.1}\">{}</text>",
-                cursor + 10.0,
+                "<text class=\"legend\" x=\"{text_x:.1}\" y=\"{:.1}\">{}</text>",
                 LEGEND_Y + 3.0,
                 esc(label)
             ));
@@ -1935,9 +1969,17 @@ impl Chart<'_> {
         } else {
             String::new()
         };
+        // The caption a reader sees carries the guidance; the `<title>` stays
+        // the figure's short name, so an assistive reader hears what the
+        // picture is before the sentence about how to read it.
+        let figcaption = if self.guidance.is_empty() {
+            caption.clone()
+        } else {
+            format!("{caption} · {}", esc(&self.guidance))
+        };
         format!(
             "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"{}\"{hooks}>\
-             <figcaption>{caption}</figcaption>\
+             <figcaption>{figcaption}</figcaption>\
              <svg viewBox=\"0 0 {W} {H}\" width=\"100%\" role=\"img\" \
              aria-label=\"{clip} — {}\"><title>{caption}</title>{legend}{}{axis}</svg>{}</figure>",
             self.kind,
@@ -1963,6 +2005,18 @@ const PLOT_H: f64 = H - PAD_TOP - PAD_BOTTOM;
 /// Every chart plots metres; the unit is stated in the axis labels rather
 /// than left to the caption.
 const UNIT: &str = "m";
+/// What to look for in the foot-height chart, for the game developer or
+/// artist the report is for. It describes what the sampled curves should do,
+/// not whether a clip is acceptable: the findings list judges, the picture
+/// only shows. The single-clip chart plots no stance bands, so it claims
+/// none; the comparison's gait panel, which shades them, says so itself.
+const GAIT_GUIDANCE: &str = "what to look for: the two feet should alternate, one planted flat at \
+     contact height while the other swings; for a loop the curves should end where they began";
+/// What to look for in the top-down root path.
+const ROOT_PATH_GUIDANCE: &str = "what to look for: an in-place or looping clip's root path should \
+     close on itself and stay near the origin; a travelling clip should trace a straight line \
+     ending at the declared distance; the dot is the current frame, the hollow circle where the \
+     track starts and the square where it ends";
 const LEGEND_Y: f64 = 9.0;
 /// Average glyph advance at the shared `--chart-type` scale the
 /// stylesheets set on chart labels, in viewBox units. Approximate on
@@ -1974,6 +2028,16 @@ const LEGEND_CHAR_W: f64 = 4.6;
 /// than plotted: a millimetre, which is finer than any clip an engine
 /// distinguishes from standing still.
 const STATIC_PATH_M: f64 = 0.001;
+/// Radius of the hollow circle marking where a top-down track starts.
+const PATH_START_R: f64 = 4.0;
+/// Side of the filled square marking where a top-down track ends.
+///
+/// A track drawn as one line says nothing about which way it was walked: a
+/// clip that travels out and never returns and a clip that comes back over
+/// its own line are the same picture. Two different marks at the two ends
+/// tell them apart, and the shapes differ as well as the roles, so the pair
+/// survives a reader who cannot separate the two colours.
+const PATH_END_SIDE: f64 = 6.0;
 /// The per-frame `pathpoints` entry for a frame with no sampled position.
 /// It carries no coordinate at all, so a viewer cannot mistake it for one;
 /// `assets/viewer.js` hides the playhead dot when it reads this.
@@ -2066,6 +2130,7 @@ fn line_chart(
     clip: &str,
     kind: &'static str,
     title: &'static str,
+    guidance: &'static str,
     series: &[Series<'_>],
 ) -> String {
     let Some(left) = axis_range(series, Side::Left) else {
@@ -2208,10 +2273,11 @@ fn line_chart(
         kind,
         title,
         description: format!("{title} over frames 0 to {last_frame}: {described}"),
+        guidance: guidance.to_owned(),
         legend: &series
             .iter()
             .zip(&legend_labels)
-            .map(|(entry, label)| (entry.class, label.as_str()))
+            .map(|(entry, label)| (Swatch::Line, entry.class, label.as_str()))
             .collect::<Vec<_>>(),
         axis,
         plot_hooks: true,
@@ -2248,7 +2314,8 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
                  X and Z together; findings and coverage remain listed",
                 xs.len()
             ),
-            legend: &[("root-path", "root")],
+            guidance: ROOT_PATH_GUIDANCE.to_owned(),
+            legend: &[(Swatch::Line, "root-path", "root")],
             axis: vec![AxisLabel {
                 x: W / 2.0,
                 y: PAD_TOP + PLOT_H / 2.0,
@@ -2318,6 +2385,25 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
         text: format!("Z {min_z:.2}…{max_z:.2} {UNIT}"),
     });
 
+    // The size of the thing drawn, in the unit it was measured in: the plot
+    // is fitted to its own extent, so a two-centimetre sway and a two-metre
+    // stride fill the same square and only this number tells them apart.
+    let extent = format!(
+        "the path spans {:.3} {UNIT} at its widest",
+        (max_x - min_x).max(max_z - min_z)
+    );
+    // Where the track ends relative to where it began, which is what the two
+    // end marks show and what a loop is judged on. `STATIC_PATH_M` is the
+    // same millimetre the stationary test uses: closer than that and the two
+    // marks coincide, so the words and the picture agree.
+    let (start, end) = (plotted[0], plotted[plotted.len() - 1]);
+    let gap = ((end.0 - start.0).powi(2) + (end.1 - start.1).powi(2)).sqrt();
+    let closure = if gap < STATIC_PATH_M {
+        "the track closes on itself".to_owned()
+    } else {
+        format!("the track ends {gap:.3} {UNIT} from its start")
+    };
+
     Chart {
         clip,
         kind: "rootpath",
@@ -2335,7 +2421,12 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
                 xs.len()
             )
         },
-        legend: &[("root-path", "root")],
+        guidance: format!("{ROOT_PATH_GUIDANCE} · {extent} · {closure}"),
+        legend: &[
+            (Swatch::Line, "root-path", "root"),
+            (Swatch::Start, "pathstart", "start"),
+            (Swatch::End, "pathend", "end"),
+        ],
         axis,
         plot_hooks: false,
         // The dot marks the selected frame, so the document opens with it on
@@ -2343,7 +2434,14 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
         // of this figure (an extracted chart, a document with no script) then
         // shows the same thing the viewer would.
         body: format!(
-            "<path class=\"root-path\" d=\"{d}\" fill=\"none\"/>{}",
+            "<path class=\"root-path\" d=\"{d}\" fill=\"none\"/>\
+             <circle class=\"pathstart\" cx=\"{:.1}\" cy=\"{:.1}\" r=\"{PATH_START_R}\"/>\
+             <rect class=\"pathend\" x=\"{:.1}\" y=\"{:.1}\" width=\"{PATH_END_SIDE}\" \
+             height=\"{PATH_END_SIDE}\"/>{}",
+            x(start.0),
+            y(start.1),
+            x(end.0) - PATH_END_SIDE / 2.0,
+            y(end.1) - PATH_END_SIDE / 2.0,
             match joint_sample(xs, zs, 0) {
                 Some((px, pz)) => format!(
                     "<circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",
