@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="A figure whose feet cycle on the spot while the whole body drifts sideways across the ground">
+  <title>The character glides or runs in place</title>
+  <style>
+    :root { --ground: #b9c1d6; --body: #3b67d6; --drift: #cf3f5b; }
+    @media (prefers-color-scheme: dark) { :root { --ground: #3d3d52; --body: #7aa2f7; --drift: #f7768e; } }
+    .ground { stroke: var(--ground); stroke-width: 3; stroke-linecap: round; }
+    .body { stroke: var(--body); stroke-width: 5; stroke-linecap: round; fill: none; }
+    .head { fill: var(--body); }
+    .drift { fill: none; stroke: var(--drift); stroke-width: 2.5; stroke-dasharray: 4 4; }
+    .arrow { fill: var(--drift); }
+    .glide { animation: glide 2.8s ease-in-out infinite; }
+    @keyframes glide { 0%, 10% { transform: translateX(0); } 70%, 100% { transform: translateX(34px); } }
+    @media (prefers-reduced-motion: reduce) { .glide { animation: none; transform: translateX(34px); } }
+  </style>
+  <line class="ground" x1="10" y1="96" x2="110" y2="96"/>
+  <line class="drift" x1="34" y1="108" x2="92" y2="108"/>
+  <path class="arrow" d="M92 103 L102 108 L92 113 Z"/>
+  <g class="glide">
+    <circle class="head" cx="34" cy="26" r="9"/>
+    <line class="body" x1="34" y1="35" x2="34" y2="66"/>
+    <path class="body" d="M34 66 L22 94"/>
+    <path class="body" d="M34 66 L48 94"/>
+  </g>
+</svg>

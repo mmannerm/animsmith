@@ -30,11 +30,20 @@ generator and that test both drive.
 | `walk-dirty.report.html` | `walk-dirty.glb` | [`walk.animsmith.toml`](../../examples/walk.animsmith.toml) |
 | `walk.report.html` | `walk.glb` | [`walk.animsmith.toml`](../../examples/walk.animsmith.toml) |
 | `clip-dirty.report.html` | `clip-dirty.glb` | none — the mechanical checks need no contract |
+| `walk-short-channel.report.html` | `walk-short-channel.glb` | none — the mechanical checks need no contract |
+| `walk-travel.report.html` | `walk-travel.glb` | [`walk-travel-in-place.animsmith.toml`](../../examples/walk-travel-in-place.animsmith.toml) |
+| `run-ring.report.html` | `run-ring.glb` | [`run-ring.animsmith.toml`](../../examples/run-ring.animsmith.toml) |
+| `walk-frozen-arm.report.html` | `walk-frozen-arm.glb` | [`walk-frozen-arm.animsmith.toml`](../../examples/walk-frozen-arm.animsmith.toml) |
+| `walk-scaled.report.html` | `walk-scaled.glb` | none — the mechanical checks need no contract |
 | `foot-slide-before.report.html` | `report-comparison-before.glb` | [`report-comparison.animsmith.toml`](../../examples/report-comparison.animsmith.toml) |
 | `foot-slide-after.report.html` | `report-comparison-after.glb` | [`report-comparison.animsmith.toml`](../../examples/report-comparison.animsmith.toml) |
 | `foot-slide.comparison.html` | both `report-comparison-*.glb`, clip `acceptance-matrix` | [`report-comparison.animsmith.toml`](../../examples/report-comparison.animsmith.toml) |
 | `walk-dirty.foot-height.svg` | foot-height figure of `walk-dirty.report.html` | |
 | `walk.foot-height.svg` | foot-height figure of `walk.report.html` | |
+| `walk.root-path.svg` | root-path figure of `walk.report.html` | |
+| `walk-travel.root-path.svg` | root-path figure of `walk-travel.report.html` | |
+| `run-ring.run-forward.foot-height.svg` | foot-height figure of clip `run_forward` in `run-ring.report.html` | |
+| `run-ring.run-left.foot-height.svg` | foot-height figure of clip `run_left` in `run-ring.report.html` | |
 | `foot-slide-before.foot-height.svg` | foot-height figure of `foot-slide-before.report.html` | |
 | `foot-slide-after.foot-height.svg` | foot-height figure of `foot-slide-after.report.html` | |
 
@@ -51,17 +60,23 @@ selection. Charts are embedded with `<img>`; whole reports are embedded
 with `<iframe>` and always followed by a plain link, because GitHub
 renders the link and strips the frame.
 
-Only the foot-height figure is committed as a chart. Both walk fixtures
-declare `movement_owner_xz = "gameplay"`, so their root-path figures are
-the same stationary dot; a root-path chart earns a file once a fixture
-whose root actually travels needs one.
+A report of more than one clip carries one figure per clip, so a chart
+cut out of it names the clip as well as the figure kind; an ambiguous
+selector is an error rather than a silent first match.
+
+A chart earns a file only where a still picture carries the symptom on
+its own. `walk-travel.glb` is why the root-path figures are committed:
+it is the one fixture whose root actually travels, so its path reads as
+a line against the stationary dot the in-place `walk.glb` draws. The
+remaining reports are embedded whole, because what they show is the
+findings list or the judged pose grid rather than one curve.
 
 ## Hand-authored files
 
-`icons/loop-pops.svg` and `icons/feet-slide.svg` are drawn here — a few
-shapes and a CSS animation each, with a `prefers-reduced-motion` still
-frame and light/dark colours. They illustrate a symptom; they are not
-evidence, and no measurement is taken from them.
+`icons/` holds one hand-drawn mark per symptom page — a few shapes and a
+CSS animation each, with a `prefers-reduced-motion` still frame and
+light/dark colours. They illustrate a symptom; they are not evidence,
+and no measurement is taken from them.
 
 ## Releases
 

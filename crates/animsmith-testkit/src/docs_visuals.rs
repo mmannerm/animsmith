@@ -61,6 +61,10 @@ pub struct DocsChart {
     pub report: &'static str,
     /// The figure's `data-kind` attribute.
     pub kind: &'static str,
+    /// The figure's `data-clip` attribute, for a report of more than one
+    /// clip. `None` means the report has exactly one figure of this kind,
+    /// and two of them is an error rather than a silent first-match.
+    pub clip: Option<&'static str>,
     /// Element classes the figure must carry. The extractor refuses a
     /// report whose chart markup changed rather than emitting a file
     /// whose injected styling no longer matches it.
@@ -69,6 +73,9 @@ pub struct DocsChart {
 
 /// Classes of the foot-height figure the injected styling colours.
 const GAIT_CLASSES: &[&str] = &["series-left", "series-right", "series-diff"];
+
+/// Classes of the root-path figure the injected styling colours.
+const ROOT_PATH_CLASSES: &[&str] = &["root-path", "pathdot"];
 
 /// Every committed report, in write order.
 ///
@@ -91,6 +98,41 @@ pub const REPORTS: &[DocsReport] = &[
     DocsReport {
         output: "clip-dirty.report.html",
         arguments: &["report", "clip-dirty.glb"],
+    },
+    DocsReport {
+        output: "walk-short-channel.report.html",
+        arguments: &["report", "walk-short-channel.glb"],
+    },
+    DocsReport {
+        output: "walk-travel.report.html",
+        arguments: &[
+            "--config",
+            "../walk-travel-in-place.animsmith.toml",
+            "report",
+            "walk-travel.glb",
+        ],
+    },
+    DocsReport {
+        output: "run-ring.report.html",
+        arguments: &[
+            "--config",
+            "../run-ring.animsmith.toml",
+            "report",
+            "run-ring.glb",
+        ],
+    },
+    DocsReport {
+        output: "walk-frozen-arm.report.html",
+        arguments: &[
+            "--config",
+            "../walk-frozen-arm.animsmith.toml",
+            "report",
+            "walk-frozen-arm.glb",
+        ],
+    },
+    DocsReport {
+        output: "walk-scaled.report.html",
+        arguments: &["report", "walk-scaled.glb"],
     },
     DocsReport {
         output: "foot-slide-before.report.html",
@@ -129,33 +171,64 @@ pub const REPORTS: &[DocsReport] = &[
 
 /// Every committed standalone chart, in write order.
 ///
-/// Only the foot-height figure is committed. Both walk fixtures declare
-/// `movement_owner_xz = "gameplay"`, so their root-path figures are the
-/// same stationary dot; a root-path chart is worth committing once a
-/// fixture whose root actually travels needs one.
+/// A chart earns a file when a still picture carries the symptom on its
+/// own; the other reports are embedded whole, because what they show is
+/// the findings list or the pose grid rather than one curve.
 pub const CHARTS: &[DocsChart] = &[
     DocsChart {
         output: "walk-dirty.foot-height.svg",
         report: "walk-dirty.report.html",
         kind: "gait",
+        clip: None,
         classes: GAIT_CLASSES,
     },
     DocsChart {
         output: "walk.foot-height.svg",
         report: "walk.report.html",
         kind: "gait",
+        clip: None,
+        classes: GAIT_CLASSES,
+    },
+    DocsChart {
+        output: "walk.root-path.svg",
+        report: "walk.report.html",
+        kind: "rootpath",
+        clip: None,
+        classes: ROOT_PATH_CLASSES,
+    },
+    DocsChart {
+        output: "walk-travel.root-path.svg",
+        report: "walk-travel.report.html",
+        kind: "rootpath",
+        clip: None,
+        classes: ROOT_PATH_CLASSES,
+    },
+    DocsChart {
+        output: "run-ring.run-forward.foot-height.svg",
+        report: "run-ring.report.html",
+        kind: "gait",
+        clip: Some("run_forward"),
+        classes: GAIT_CLASSES,
+    },
+    DocsChart {
+        output: "run-ring.run-left.foot-height.svg",
+        report: "run-ring.report.html",
+        kind: "gait",
+        clip: Some("run_left"),
         classes: GAIT_CLASSES,
     },
     DocsChart {
         output: "foot-slide-before.foot-height.svg",
         report: "foot-slide-before.report.html",
         kind: "gait",
+        clip: None,
         classes: GAIT_CLASSES,
     },
     DocsChart {
         output: "foot-slide-after.foot-height.svg",
         report: "foot-slide-after.report.html",
         kind: "gait",
+        clip: None,
         classes: GAIT_CLASSES,
     },
 ];
@@ -206,7 +279,7 @@ pub fn write_docs_visuals(
 /// figure or an absent expected class is an error rather than a silently
 /// unstyled file.
 pub fn standalone_chart(report_html: &str, chart: &DocsChart) -> Result<String, String> {
-    let figure = figure_body(report_html, chart.kind)?;
+    let figure = figure_body(report_html, chart.kind, chart.clip)?;
     let svg = element(figure, "<svg", "</svg>")
         .map(|span| &figure[span])
         .ok_or_else(|| format!("figure data-kind=\"{}\" has no <svg> element", chart.kind))?;
@@ -241,9 +314,17 @@ pub fn standalone_chart(report_html: &str, chart: &DocsChart) -> Result<String, 
     Ok(standalone)
 }
 
-/// The inner markup of the one `<figure class="chart">` with this `data-kind`.
-fn figure_body<'a>(report_html: &'a str, kind: &str) -> Result<&'a str, String> {
-    let attribute = format!("data-kind=\"{kind}\"");
+/// The inner markup of the one `<figure class="chart">` selected by this
+/// `data-kind` and, for a report of more than one clip, `data-clip`.
+///
+/// Attributes are matched independently, so the selector does not depend
+/// on the order the renderer writes them in.
+fn figure_body<'a>(
+    report_html: &'a str,
+    kind: &str,
+    clip: Option<&str>,
+) -> Result<&'a str, String> {
+    let selector = figure_selector(kind, clip);
     let mut found: Option<&str> = None;
     let mut rest = report_html;
     while let Some(span) = element(rest, "<figure class=\"chart\"", "</figure>") {
@@ -251,15 +332,37 @@ fn figure_body<'a>(report_html: &'a str, kind: &str) -> Result<&'a str, String> 
         let start_tag_end = figure
             .find('>')
             .ok_or_else(|| "unterminated <figure> start tag".to_owned())?;
-        if figure[..start_tag_end].contains(&attribute) {
+        let start_tag = &figure[..start_tag_end];
+        if selector
+            .iter()
+            .all(|attribute| start_tag.contains(attribute.as_str()))
+        {
             if found.is_some() {
-                return Err(format!("report has more than one {attribute} figure"));
+                return Err(format!(
+                    "report has more than one {} figure",
+                    selector.join(" ")
+                ));
             }
             found = Some(&figure[start_tag_end + 1..]);
         }
         rest = &rest[span.end..];
     }
-    found.ok_or_else(|| format!("report has no <figure class=\"chart\" {attribute}>"))
+    found.ok_or_else(|| {
+        format!(
+            "report has no <figure class=\"chart\" {}>",
+            selector.join(" ")
+        )
+    })
+}
+
+/// The attributes a figure must carry to be this chart's source.
+fn figure_selector(kind: &str, clip: Option<&str>) -> Vec<String> {
+    let mut selector = Vec::with_capacity(2);
+    if let Some(clip) = clip {
+        selector.push(format!("data-clip=\"{clip}\""));
+    }
+    selector.push(format!("data-kind=\"{kind}\""));
+    selector
 }
 
 /// The byte range of the first `open`…`close` element of `html`, start
@@ -304,11 +407,21 @@ mod tests {
         "<path class=\"series-right\" d=\"M0,0\"/></svg></figure>",
     );
 
+    /// A second document whose two clips each carry a gait figure, so a
+    /// kind-only selector is ambiguous and a clip selector is not.
+    const TWO_CLIP_FIXTURE: &str = concat!(
+        "<figure class=\"chart\" data-clip=\"run_forward\" data-kind=\"gait\">",
+        "<svg viewBox=\"0 0 2 2\"><path class=\"series-left\" d=\"M0,0\"/></svg></figure>",
+        "<figure class=\"chart\" data-clip=\"run_left\" data-kind=\"gait\">",
+        "<svg viewBox=\"0 0 3 3\"><path class=\"series-left\" d=\"M1,1\"/></svg></figure>",
+    );
+
     fn gait(classes: &'static [&'static str]) -> DocsChart {
         DocsChart {
             output: "fixture.svg",
             report: "fixture.html",
             kind: "gait",
+            clip: None,
             classes,
         }
     }
@@ -354,6 +467,32 @@ mod tests {
         assert_eq!(
             standalone_chart(FIXTURE, &missing).unwrap_err(),
             "report has no <figure class=\"chart\" data-kind=\"absent\">"
+        );
+    }
+
+    #[test]
+    fn a_clip_selector_picks_one_figure_out_of_a_multi_clip_report() {
+        let ambiguous = standalone_chart(TWO_CLIP_FIXTURE, &gait(&["series-left"])).unwrap_err();
+        assert_eq!(
+            ambiguous, "report has more than one data-kind=\"gait\" figure",
+            "a report of two clips is not silently cut at its first figure"
+        );
+        for (clip, view_box) in [("run_forward", "0 0 2 2"), ("run_left", "0 0 3 3")] {
+            let chart = DocsChart {
+                clip: Some(clip),
+                ..gait(&["series-left"])
+            };
+            let svg = standalone_chart(TWO_CLIP_FIXTURE, &chart)
+                .unwrap_or_else(|error| panic!("extracts {clip}: {error}"));
+            assert!(svg.contains(&format!("viewBox=\"{view_box}\"")), "{svg}");
+        }
+        let absent = DocsChart {
+            clip: Some("run_right"),
+            ..gait(&["series-left"])
+        };
+        assert_eq!(
+            standalone_chart(TWO_CLIP_FIXTURE, &absent).unwrap_err(),
+            "report has no <figure class=\"chart\" data-clip=\"run_right\" data-kind=\"gait\">"
         );
     }
 

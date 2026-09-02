@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="A bone snaps the long way round between two keys instead of taking the short turn">
+  <title>The pose flickers, spins, or explodes</title>
+  <style>
+    :root { --arc: #b9c1d6; --bone: #3b67d6; --bad: #cf3f5b; }
+    @media (prefers-color-scheme: dark) { :root { --arc: #3d3d52; --bone: #7aa2f7; --bad: #f7768e; } }
+    .arc { fill: none; stroke: var(--arc); stroke-width: 3; }
+    .long { fill: none; stroke: var(--bad); stroke-width: 2.5; stroke-dasharray: 4 4; }
+    .bone { stroke: var(--bone); stroke-width: 5; stroke-linecap: round; }
+    .joint { fill: var(--bone); }
+    .spin { transform-origin: 60px 92px; animation: spin 1.9s steps(2, jump-none) infinite; }
+    @keyframes spin { from { transform: rotate(-52deg); } to { transform: rotate(52deg); } }
+    @media (prefers-reduced-motion: reduce) { .spin { animation: none; transform: rotate(52deg); } }
+  </style>
+  <path class="arc" d="M18 92 A42 42 0 0 1 102 92"/>
+  <path class="long" d="M27 116 A54 54 0 1 0 93 116"/>
+  <g class="spin"><line class="bone" x1="60" y1="92" x2="60" y2="42"/></g>
+  <circle class="joint" cx="60" cy="92" r="7"/>
+</svg>
