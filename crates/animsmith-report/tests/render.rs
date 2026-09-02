@@ -2453,6 +2453,100 @@ fn a_gap_in_the_root_path_starts_a_new_subpath_rather_than_being_bridged() {
     );
 }
 
+/// The `pathpoints` entries of a root-path figure, in frame order.
+fn path_points(figure: &str) -> Vec<String> {
+    figure
+        .split_once("<template class=\"pathpoints\">")
+        .expect("the figure publishes its per-frame points")
+        .1
+        .split_once("</template>")
+        .expect("the template closes")
+        .0
+        .split(';')
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A frame with no sampled position carries an explicit no-position entry,
+/// and the template still holds exactly one entry per frame.
+///
+/// The viewer places the playhead dot by frame index, so the entries have
+/// to stay aligned with the frames — but an unavailable frame used to be
+/// filled in from a neighbouring frame's position, which for a leading gap
+/// meant a coordinate the clip only reaches later. Both directions are the
+/// same invention, so neither is done: the frame says it has no position
+/// and the viewer hides the dot.
+#[test]
+fn an_unavailable_frame_carries_no_position_rather_than_a_neighbours() {
+    use animsmith_core::glam::Vec3;
+    let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+    let nan = f32::NAN;
+    // The first two frames have no position; the clip only reaches x = 2
+    // later, and nothing may show that coordinate before it happens.
+    let figure = root_path_figure(vec![
+        at(nan, nan),
+        at(nan, nan),
+        at(2.0, 0.0),
+        at(3.0, 1.0),
+        at(4.0, 1.0),
+    ]);
+    let points = path_points(&figure);
+    assert_eq!(
+        points.len(),
+        5,
+        "one entry per sampled frame keeps the viewer's indexing aligned: {points:?}"
+    );
+    assert_eq!(
+        points[0], "-",
+        "a frame with no position says so: {points:?}"
+    );
+    assert_eq!(points[1], "-", "{points:?}");
+    for available in &points[2..] {
+        assert!(
+            available.contains(','),
+            "an available frame carries its own coordinate: {points:?}"
+        );
+    }
+}
+
+/// The no-position marker never carries a coordinate, wherever the hole is.
+#[test]
+fn the_no_position_marker_never_carries_a_coordinate() {
+    use animsmith_core::glam::Vec3;
+    let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+    let nan = f32::NAN;
+    // A leading hole, a hole in the middle, and a trailing one.
+    for values in [
+        vec![at(nan, nan), at(1.0, 0.0), at(2.0, 0.0), at(3.0, 1.0)],
+        vec![at(0.0, 0.0), at(nan, nan), at(2.0, 0.0), at(3.0, 1.0)],
+        vec![at(0.0, 0.0), at(1.0, 0.0), at(2.0, 0.0), at(nan, nan)],
+        // Finite in one coordinate only: still no position.
+        vec![at(0.0, 0.0), at(1.0, nan), at(2.0, 0.0), at(3.0, 1.0)],
+    ] {
+        let figure = root_path_figure(values);
+        let points = path_points(&figure);
+        assert_eq!(points.len(), 4, "{points:?}");
+        for entry in &points {
+            if entry == "-" {
+                continue;
+            }
+            assert!(
+                entry.split(',').count() == 2
+                    && entry.split(',').all(|part| part.parse::<f64>().is_ok()),
+                "every entry is either the marker or a plain coordinate pair: {points:?}"
+            );
+        }
+        assert!(
+            points.iter().any(|entry| entry == "-"),
+            "the unavailable frame is marked: {points:?}"
+        );
+        assert!(
+            !figure.contains("NaN"),
+            "no NaN reaches the markup: {figure}"
+        );
+    }
+}
+
 /// A root that is never jointly finite renders as unavailable instead of
 /// panicking, even when each coordinate on its own has finite samples.
 ///

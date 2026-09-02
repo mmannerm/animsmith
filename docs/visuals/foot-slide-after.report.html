@@ -500,11 +500,21 @@ function updateCharts() {
     const dot = fig.querySelector(".pathdot");
     const points = fig.querySelector(".pathpoints");
     if (dot && points) {
+      // One entry per judged frame, so the index is the frame. A frame the
+      // clip has no sampled position for carries no coordinate, and the dot
+      // is hidden for it rather than placed at some other frame's position.
+      // The reader would otherwise be shown a place the character is not,
+      // and before a leading gap, one it has not reached yet.
       const pts = points.innerHTML.split(";");
       const i = Math.min(pts.length - 1, Math.round(u * (pts.length - 1)));
-      const [cx, cy] = pts[i].split(",");
-      dot.setAttribute("cx", cx);
-      dot.setAttribute("cy", cy);
+      const at = pts[i].split(",");
+      if (at.length === 2) {
+        dot.setAttribute("cx", at[0]);
+        dot.setAttribute("cy", at[1]);
+        dot.removeAttribute("display");
+      } else {
+        dot.setAttribute("display", "none");
+      }
     }
   }
 }

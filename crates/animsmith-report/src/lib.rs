@@ -1974,6 +1974,10 @@ const LEGEND_CHAR_W: f64 = 4.6;
 /// than plotted: a millimetre, which is finer than any clip an engine
 /// distinguishes from standing still.
 const STATIC_PATH_M: f64 = 0.001;
+/// The per-frame `pathpoints` entry for a frame with no sampled position.
+/// It carries no coordinate at all, so a viewer cannot mistake it for one;
+/// `assets/viewer.js` hides the playhead dot when it reads this.
+const NO_POSITION: &str = "-";
 
 /// The value range of one axis' series, over the samples that are finite.
 ///
@@ -2234,9 +2238,7 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
     let plotted: Vec<(f64, f64)> = (0..xs.len())
         .filter_map(|frame| joint_sample(xs, zs, frame))
         .collect();
-    let (Some(&(first_x, first_z)), Some(((min_x, max_x), (min_z, max_z)))) =
-        (plotted.first(), joint_extent(&plotted))
-    else {
+    let Some(((min_x, max_x), (min_z, max_z))) = joint_extent(&plotted) else {
         return Chart {
             clip,
             kind: "rootpath",
@@ -2270,17 +2272,16 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
     let d = polyline(xs.len(), |frame| {
         joint_sample(xs, zs, frame).map(|(px, pz)| (x(px), y(pz)))
     });
-    // The playhead dot is placed by frame index, so this template keeps one
-    // entry per frame. A frame with no position to plot holds the last one
-    // that had a position rather than being dropped, which would shift every
-    // later frame's dot onto the wrong sample.
-    let mut held = (x(first_x), y(first_z));
+    // The viewer places the playhead dot by frame index, so this template
+    // keeps one entry per frame. A frame with no sampled position carries
+    // [`NO_POSITION`] rather than a coordinate, and the viewer hides the dot
+    // for it: borrowing the nearest frame that does have one shows the
+    // reader a place the clip is not at that moment — for a leading hole, a
+    // coordinate it only reaches later.
     let points: Vec<String> = (0..xs.len())
-        .map(|frame| {
-            if let Some((px, pz)) = joint_sample(xs, zs, frame) {
-                held = (x(px), y(pz));
-            }
-            format!("{:.1},{:.1}", held.0, held.1)
+        .map(|frame| match joint_sample(xs, zs, frame) {
+            Some((px, pz)) => format!("{:.1},{:.1}", x(px), y(pz)),
+            None => NO_POSITION.to_owned(),
         })
         .collect();
 
@@ -2337,12 +2338,20 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
         legend: &[("root-path", "root")],
         axis,
         plot_hooks: false,
+        // The dot marks the selected frame, so the document opens with it on
+        // frame 0 — or hidden, when frame 0 has no position. A static render
+        // of this figure (an extracted chart, a document with no script) then
+        // shows the same thing the viewer would.
         body: format!(
-            "<path class=\"root-path\" d=\"{}\" fill=\"none\"/>\
-             <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",
-            d,
-            x(first_x),
-            y(first_z)
+            "<path class=\"root-path\" d=\"{d}\" fill=\"none\"/>{}",
+            match joint_sample(xs, zs, 0) {
+                Some((px, pz)) => format!(
+                    "<circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",
+                    x(px),
+                    y(pz)
+                ),
+                None => "<circle class=\"pathdot\" r=\"3\" display=\"none\"/>".to_owned(),
+            }
         ),
         trailer: format!(
             "<template class=\"pathpoints\">{}</template>",

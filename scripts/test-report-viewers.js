@@ -566,6 +566,51 @@ if (!gaitChart) throw new Error("the single-clip document carries no gait chart 
 const chartPad = Number(gaitChart.dataset.pad), chartPlotW = Number(gaitChart.dataset.plotw);
 if (!(chartPad > 0) || !(chartPlotW > 0)) throw new Error("the gait chart does not publish its plot rectangle");
 
+// The root-path dot is placed by frame index, and a frame the clip has no
+// sampled position for carries the no-position marker instead of a
+// coordinate. Scrubbing to such a frame must hide the dot rather than leave
+// it at some other frame's position — the invention this pins is a leading
+// run of unavailable frames showing a coordinate the clip only reaches
+// later. The document under test is finite throughout, so the hole is
+// introduced here, in the template the viewer reads.
+const rootChartOf = (state) => {
+  const chart = state.charts.find((figure) => figure.dataset.kind === "rootpath");
+  if (!chart) throw new Error("the run has no root-path chart to observe");
+  return chart;
+};
+const committedPoints = documentCharts(singleHtml)
+  .find((chart) => chart.dataset.kind === "rootpath");
+if (!committedPoints) throw new Error("the single-clip document carries no root-path chart");
+const originalPoints = committedPoints.query[".pathpoints"].innerHTML.split(";");
+if (originalPoints.length !== singleClip.frames) throw new Error(`the root-path template must carry one entry per judged frame: ${originalPoints.length} against ${singleClip.frames}`);
+if (originalPoints.some((entry) => entry.split(",").length !== 2)) throw new Error("the committed fixture is finite throughout, so every entry is a coordinate");
+// Frames 0 and 1 unavailable, everything after them as generated.
+const holed = originalPoints.slice();
+holed[0] = "-";
+holed[1] = "-";
+const holedHtml = singleHtml.replace(
+  `<template class="pathpoints">${originalPoints.join(";")}</template>`,
+  `<template class="pathpoints">${holed.join(";")}</template>`,
+);
+if (holedHtml === singleHtml) throw new Error("the harness failed to introduce a hole in the root-path template");
+const holedRun = runSingle(single, holedHtml, singlePayload, {hash: "#frame=0"});
+const dotOf = (state) => rootChartOf(state).query[".pathdot"];
+if (dotOf(holedRun).attrs.display !== "none") throw new Error("scrubbing to a frame with no sampled position left the dot visible, at another frame's coordinate");
+holedRun.nodes.scrub.value = "1";
+holedRun.nodes.scrub.listeners.input();
+if (dotOf(holedRun).attrs.display !== "none") throw new Error("the second unavailable frame left the dot visible");
+// The first available frame shows the dot at that frame's own coordinate.
+holedRun.nodes.scrub.value = "2";
+holedRun.nodes.scrub.listeners.input();
+const [availableX, availableY] = holed[2].split(",");
+if (dotOf(holedRun).attrs.display === "none") throw new Error("an available frame must show the dot");
+if (dotOf(holedRun).attrs.cx !== availableX || dotOf(holedRun).attrs.cy !== availableY) throw new Error(`the dot is placed at frame 2's own coordinate: ${dotOf(holedRun).attrs.cx},${dotOf(holedRun).attrs.cy} against ${holed[2]}`);
+// And scrubbing back into the hole hides it again.
+holedRun.nodes.scrub.value = "0";
+holedRun.nodes.scrub.listeners.input();
+if (dotOf(holedRun).attrs.display !== "none") throw new Error("scrubbing back to an unavailable frame did not hide the dot again");
+assertNoHashWrites(holedRun, "scrubbing across an unavailable frame");
+
 const plain = runSingle(single, singleHtml, singlePayload);
 // The same matrix against this document's own copy of the runtime.
 runParserMatrix(plain.context.animsmithFragmentOptions, "the single-clip runtime");
