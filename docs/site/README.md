@@ -20,7 +20,7 @@ commands live in
 | File | What it is |
 | --- | --- |
 | [`animsmith.css`](animsmith.css) | The theme: tokens, mdBook variable mapping, typography, chrome and content styling |
-| [`animsmith.js`](animsmith.js) | The theme bridge: pins an embedded report's theme to the book's |
+| [`animsmith.js`](animsmith.js) | The site script: writes the link home, and pins an embedded report's theme to the book's |
 | [`fonts/fonts.css`](fonts/fonts.css) | `@font-face` rules for the self-hosted subsets |
 | [`logo.svg`](logo.svg) | Mark plus "AnimSmith" wordmark, wordmark converted to outlines |
 | [`favicon.svg`](favicon.svg) | Mark on a light chip, so it reads in light and dark tab bars |
@@ -60,6 +60,29 @@ The mark is the letter A drawn the way the report viewer draws a rig:
 two bone strokes from the apex to the base, an accent crossbar, hollow
 joints at the base and crossbar, and a filled accent keyframe diamond at
 the apex.
+
+## The way home
+
+The front door is `landing.html`, published as the artifact root; mdBook's
+sidebar lists chapters only and its title bar is a plain heading, so nothing
+in the book linked back to it. [`animsmith.js`](animsmith.js) writes that
+link in both places on load: the first entry of the sidebar's chapter list,
+labelled "Home", and an anchor wrapped around the title in the top bar,
+which the stylesheet draws as the logo. Both resolve
+`path_to_root + "index.html"` — mdBook writes the current page's site-root
+prefix into every page, so one href is correct at every depth — and both
+check for their own class first, so loading the script twice cannot write
+either link twice. A page without that binding gets no link rather than a
+guessed one.
+
+The stylesheet pins the sidebar entry to the top of the scrollbox, because
+the sidebar restores its scroll position and scrolls the active chapter into
+view: on a page far down the list, an unpinned entry would sit above the
+visible area. It takes over the scrollbox's block-start padding so its own
+background covers the band the list would otherwise show through.
+
+`scripts/test-theme-bridge.js` executes both contracts against a synthetic
+page shaped like mdBook's chrome, and refuses each mutation that breaks one.
 
 ## The theme bridge
 
