@@ -1134,16 +1134,22 @@ class NavigationContractTests(unittest.TestCase):
             self.assertIn("docs/gone.html", result.stderr)
 
         # A root README chapter is rendered only to that same root, so the
-        # two cannot both be published there.
-        with tempfile.TemporaryDirectory() as temporary:
-            result, _ = self.build_site(
-                Path(temporary),
-                arguments=arguments,
-                rows=self.START_ROWS,
-                site=self.front_door_site(),
-            )
-            self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("both claim book/index.html", result.stderr)
+        # two cannot both be published there — however the row spells it.
+        # A `#fragment` selects a heading in that same chapter, so it does
+        # not turn the row into a different page.
+        for readme_row in [
+            ("[Install](../README.md)", "Install it.", "Start"),
+            ("[Install and quickstart](../README.md#install)", "Install it.", "Start"),
+        ]:
+            with self.subTest(row=readme_row[0]), tempfile.TemporaryDirectory() as temporary:
+                result, _ = self.build_site(
+                    Path(temporary),
+                    arguments=arguments,
+                    rows=[readme_row] + self.FRONT_DOOR_ROWS,
+                    site=self.front_door_site(),
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("both claim book/index.html", result.stderr)
 
     @unittest.skipUnless(pinned_mdbook(), "the pinned mdBook is not installed")
     def test_a_checkout_without_a_landing_page_keeps_the_chapter_root_index(self) -> None:

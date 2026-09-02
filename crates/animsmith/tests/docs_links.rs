@@ -22,7 +22,7 @@
 //! wherever it sits. Positional completeness claims (every docs page
 //! has a Document-column index row) live in `docs_index.rs`.
 
-use animsmith_testkit::docs_html;
+use animsmith_testkit::{docs_html, docs_markdown};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -139,30 +139,17 @@ fn rendered_prose_words(markdown: &str) -> String {
         .join(" ")
 }
 
-fn rendered_destinations(markdown: &str, include_images: bool) -> Vec<String> {
+/// Destinations of every link GitHub would render. Text that merely
+/// looks like a link (code blocks, code spans, images) never produces
+/// a `Tag::Link` event. README routing completeness deliberately counts
+/// links only, so it asks for this rather than the full reference set.
+fn rendered_link_destinations(markdown: &str) -> Vec<String> {
     Parser::new_ext(markdown, gfm_options())
         .filter_map(|event| match event {
             Event::Start(Tag::Link { dest_url, .. }) => Some(dest_url.into_string()),
-            Event::Start(Tag::Image { dest_url, .. }) if include_images => {
-                Some(dest_url.into_string())
-            }
             _ => None,
         })
         .collect()
-}
-
-/// Destinations of every link GitHub would render. Text that merely
-/// looks like a link (code blocks, code spans, images) never produces
-/// a `Tag::Link` event.
-fn rendered_link_destinations(markdown: &str) -> Vec<String> {
-    rendered_destinations(markdown, false)
-}
-
-/// Destinations of every rendered link and image. General validation
-/// resolves both; README routing completeness deliberately accepts
-/// links only through `rendered_link_destinations`.
-fn rendered_link_or_image_destinations(markdown: &str) -> Vec<String> {
-    rendered_destinations(markdown, true)
 }
 
 /// Raw-HTML references whose destination is a local target to validate.
@@ -170,19 +157,25 @@ fn rendered_link_or_image_destinations(markdown: &str) -> Vec<String> {
 /// reports; both are raw HTML because Markdown can express neither.
 const RAW_HTML_MEDIA: [(&str, &str); 2] = [("img", "src"), ("iframe", "src")];
 
-/// `src` destinations of every `<img>` and `<iframe>` in the raw HTML
-/// blocks and spans a Markdown page contains. HTML inside fenced or
-/// indented code is `Event::Text`, not `Event::Html`, so a code-shaped
-/// decoy stays invisible here exactly as it does for Markdown links.
-fn raw_html_media_destinations(markdown: &str) -> Vec<String> {
+/// Every destination a page publishes, in document order and in one
+/// parse: the rendered links and images, and the `src` of the raw-HTML
+/// media it embeds. HTML inside fenced or indented code is
+/// `Event::Text`, not `Event::Html`, so a code-shaped decoy stays
+/// invisible here exactly as it does for Markdown links.
+fn rendered_references(markdown: &str) -> Vec<String> {
     let mut destinations = Vec::new();
     for event in Parser::new_ext(markdown, gfm_options()) {
-        if let Event::Html(html) | Event::InlineHtml(html) = event {
-            destinations.extend(
+        match event {
+            Event::Start(Tag::Link { dest_url, .. })
+            | Event::Start(Tag::Image { dest_url, .. }) => {
+                destinations.push(dest_url.into_string());
+            }
+            Event::Html(html) | Event::InlineHtml(html) => destinations.extend(
                 docs_html::html_references(&html, &RAW_HTML_MEDIA)
                     .into_iter()
                     .map(|(_, destination)| destination),
-            );
+            ),
+            _ => {}
         }
     }
     destinations
@@ -294,6 +287,51 @@ fn cached_anchors<'a>(
     })
 }
 
+/// The Markdown pages the documentation site renders, so an anchor into
+/// one survives the trip.
+///
+/// `scripts/build-docs-site.py` publishes `docs/` and the pages the
+/// canonical index's Document column rows from elsewhere (the site's
+/// navigation is derived from that column). Every other tracked
+/// Markdown file becomes a redirect stub — a meta-refresh to the file on
+/// GitHub — and a meta-refresh carries no `#fragment`, so a reader
+/// following such a link from the site lands at the top of the file
+/// rather than at the section the link names.
+struct SitePages {
+    docs: PathBuf,
+    outside_docs: BTreeSet<PathBuf>,
+}
+
+impl SitePages {
+    /// Read the canonical index. A checkout without one (the fixture
+    /// repositories below) publishes nothing outside `docs/`.
+    fn read(root: &Path) -> Self {
+        let docs = root.join("docs");
+        let outside_docs = std::fs::read_to_string(docs.join("README.md"))
+            .map(|index| {
+                docs_markdown::document_index_targets(&index)
+                    .iter()
+                    .filter_map(|destination| docs.join(destination).canonicalize().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            docs: docs.canonicalize().unwrap_or(docs),
+            outside_docs,
+        }
+    }
+
+    /// Whether the site renders this existing target as a page of its
+    /// own. A `docs/` page that navigation does not carry fails the site
+    /// build outright rather than becoming a stub, so `docs/` counts
+    /// whole.
+    fn renders(&self, target: &Path) -> bool {
+        target.canonicalize().is_ok_and(|target| {
+            target.starts_with(&self.docs) || self.outside_docs.contains(&target)
+        })
+    }
+}
+
 /// The one anchor rule shared by the intra-file, `blob/main`, and
 /// relative branches: a `#fragment` on an existing `.md` target must
 /// name one of its headings. Fragments on non-`.md` targets (e.g.
@@ -325,6 +363,7 @@ fn validate_file(
     root: &Path,
     rel: &str,
     absolute_only: bool,
+    site: &SitePages,
     cache: &mut BTreeMap<PathBuf, BTreeSet<String>>,
     errors: &mut Vec<String>,
 ) {
@@ -337,10 +376,7 @@ fn validate_file(
         }
     };
 
-    for url in rendered_link_or_image_destinations(&content)
-        .into_iter()
-        .chain(raw_html_media_destinations(&content))
-    {
+    for url in rendered_references(&content) {
         if url.is_empty() {
             errors.push(format!("{rel}: rendered link has an empty destination"));
             continue;
@@ -388,17 +424,31 @@ fn validate_file(
             continue;
         }
         check_md_anchor(cache, &target_path, base, fragment, rel, &url, errors);
+        if fragment.is_some() && base.ends_with(".md") && !site.renders(&target_path) {
+            errors.push(format!(
+                "{rel}: the site publishes {base} as a redirect stub, which drops \
+                 the anchor in {url}"
+            ));
+        }
     }
 }
 
 /// Validate every tracked Markdown file except the explicit exclusions.
 fn validate_repo(root: &Path) -> Result<(Vec<String>, Vec<String>), String> {
+    let site = SitePages::read(root);
     let mut cache = BTreeMap::new();
     let mut errors = Vec::new();
     let files = tracked_markdown_files(root)?;
 
     for rel in &files {
-        validate_file(root, rel, is_published_readme(rel), &mut cache, &mut errors);
+        validate_file(
+            root,
+            rel,
+            is_published_readme(rel),
+            &site,
+            &mut cache,
+            &mut errors,
+        );
     }
     Ok((files, errors))
 }
@@ -500,9 +550,7 @@ fn oracle_sees_all_rendered_link_forms_and_only_those() {
         Inline `[code span](span.md)` link.\n\n\
         \x20   [indented](indented.md)\n";
 
-    let destinations: BTreeSet<String> = rendered_link_or_image_destinations(fixture)
-        .into_iter()
-        .collect();
+    let destinations: BTreeSet<String> = rendered_references(fixture).into_iter().collect();
     let expected: BTreeSet<String> = [
         "rendered.md",
         "image.png",
@@ -540,7 +588,7 @@ fn oracle_sees_raw_html_media_sources_and_only_those() {
         And an inline `<img src=\"span.svg\">` code span.\n";
 
     assert_eq!(
-        raw_html_media_destinations(fixture),
+        rendered_references(fixture),
         [
             "chart.svg",
             "report.html#embed=1&finding=0",
@@ -690,6 +738,18 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
          Body with a [self](#real-heading) link.\n",
     )
     .expect("writes guide");
+    // The canonical index is the site's navigation authority: a rowed
+    // page outside docs/ is a chapter, an unrowed one is a redirect stub.
+    std::fs::write(
+        root.join("docs/README.md"),
+        "# Documentation\n\n| Document | Use it to… |\n|---|---|\n\
+         | [Cookbook](../rowed.md) | Do the work. |\n",
+    )
+    .expect("writes canonical index");
+    std::fs::write(root.join("rowed.md"), "# Cookbook\n\n## A section\n")
+        .expect("writes rowed page");
+    std::fs::write(root.join("unrowed.md"), "# Notes\n\n## A section\n")
+        .expect("writes unrowed page");
     std::fs::write(root.join("src.rs"), "// a non-markdown link target\n").expect("writes src.rs");
     std::fs::write(root.join("report.html"), "<p>a generated report</p>\n").expect("writes report");
     std::fs::write(
@@ -698,6 +758,7 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
             "# Good\n\n\
              [anchor](docs/guide.md#real-heading), [dir](docs),\n\
              [dedupe](docs/guide.md#workflow-1),\n\
+             [chapter](rowed.md#a-section), [stub](unrowed.md),\n\
              [blob]({REPO_BLOB_URL}docs/guide.md#real-heading),\n\
              [tree]({REPO_TREE_URL}docs), and\n\
              [external](https://example.com/unchecked#whatever).\n\n\
@@ -740,6 +801,7 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
              [blob-stale]({REPO_BLOB_URL}docs/guide.md#missing-heading)\n\
              [blob-missing]({REPO_BLOB_URL}docs/nope.md)\n\
              [tree-missing]({REPO_TREE_URL}nonexistent-dir)\n\
+             [stub-anchor](unrowed.md#a-section)\n\
              [empty]()\n\n\
              Rendered position is irrelevant — table, list, and\n\
              blockquote links are validated too:\n\n\
@@ -760,15 +822,16 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     )
     .expect("writes bad2");
 
+    let site = SitePages::read(root);
     let mut cache = BTreeMap::new();
 
     let mut errors = Vec::new();
-    validate_file(root, "docs/guide.md", false, &mut cache, &mut errors);
-    validate_file(root, "good.md", false, &mut cache, &mut errors);
+    validate_file(root, "docs/guide.md", false, &site, &mut cache, &mut errors);
+    validate_file(root, "good.md", false, &site, &mut cache, &mut errors);
     assert!(errors.is_empty(), "valid fixture must pass: {errors:?}");
 
     let mut errors = Vec::new();
-    validate_file(root, "published.md", true, &mut cache, &mut errors);
+    validate_file(root, "published.md", true, &site, &mut cache, &mut errors);
     assert_eq!(
         errors,
         vec![
@@ -779,8 +842,8 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
     );
 
     let mut errors = Vec::new();
-    validate_file(root, "bad.md", false, &mut cache, &mut errors);
-    validate_file(root, "bad2.md", false, &mut cache, &mut errors);
+    validate_file(root, "bad.md", false, &site, &mut cache, &mut errors);
+    validate_file(root, "bad2.md", false, &site, &mut cache, &mut errors);
     let expected_fragments = [
         // Every linking source is named: the same stale heading is
         // reported once per file that links it.
@@ -800,6 +863,8 @@ fn fixture_repo_valid_links_pass_and_each_mutation_fails() {
         &format!("anchor in {REPO_BLOB_URL}docs/guide.md#missing-heading matches no heading"),
         &format!("links to missing repository file {REPO_BLOB_URL}docs/nope.md"),
         &format!("links to missing repository directory {REPO_TREE_URL}nonexistent-dir"),
+        "the site publishes unrowed.md as a redirect stub, which drops the anchor \
+         in unrowed.md#a-section",
         "rendered link has an empty destination",
     ];
     for fragment in expected_fragments {

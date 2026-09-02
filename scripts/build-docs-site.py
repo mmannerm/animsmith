@@ -540,9 +540,17 @@ SUMMARY_CHAPTER = re.compile(
 
 
 def summary_chapters(staged_source: Path) -> set[str]:
-    """Every page the generated navigation publishes, staged-root relative."""
+    """Every page the generated navigation publishes, staged-root relative.
+
+    A `#fragment` selects a heading inside a chapter rather than another
+    page, so it is dropped: a row pointing at `../README.md#install`
+    still publishes `README.md`, and the callers ask which pages exist.
+    """
     summary = (staged_source / "SUMMARY.md").read_text(encoding="utf-8")
-    return {match["destination"] for match in SUMMARY_CHAPTER.finditer(summary)}
+    return {
+        match["destination"].partition("#")[0]
+        for match in SUMMARY_CHAPTER.finditer(summary)
+    }
 
 
 def publish_readme_aliases(staged_source: Path, book: Path, chapters: set[str]) -> None:
