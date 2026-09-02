@@ -1008,6 +1008,7 @@ class NavigationContractTests(unittest.TestCase):
     def theme_site(self) -> dict[str, str]:
         return {
             "animsmith.css": ":root { --animsmith: 1; }\n",
+            "animsmith.js": '"use strict";\n',
             "fonts/fonts.css": (
                 "@font-face { font-family: Fixture; "
                 'src: url("fixture.woff2") format("woff2"); }\n'
@@ -1062,6 +1063,15 @@ class NavigationContractTests(unittest.TestCase):
             self.assertEqual(html["preferred-dark-theme"], "navy")
             self.assertIs(html["no-section-label"], True)
             self.assertEqual(html["additional-css"], ["theme/animsmith.css"])
+            self.assertEqual(
+                html["additional-js"],
+                ["theme/animsmith.js"],
+                "the theme bridge is wired exactly when the checkout tracks it",
+            )
+            self.assertEqual(
+                (stage / "theme/animsmith.js").read_text(encoding="utf-8"),
+                '"use strict";\n',
+            )
             self.assertEqual(html["fold"], {"enable": True, "level": 0})
             self.assertEqual(html["redirect"], {"/docs/old.html": "overview.html"})
 
@@ -1080,6 +1090,11 @@ class NavigationContractTests(unittest.TestCase):
             ]
             self.assertNotIn("redirect", html, "an absent redirect map configures no routes")
             self.assertEqual(html["additional-css"], ["theme/animsmith.css"])
+            self.assertNotIn(
+                "additional-js",
+                html,
+                "a checkout without the theme bridge wires no script",
+            )
 
     def test_redirect_map_refuses_entries_that_are_not_site_routes(self) -> None:
         cases = [

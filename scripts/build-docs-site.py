@@ -43,6 +43,7 @@ SITE = Path("docs/site")
 REDIRECTS = SITE / "redirects.toml"
 LANDING = SITE / "landing.html"
 THEME_CSS = "animsmith.css"
+THEME_JS = "animsmith.js"
 PIN = Path(".mdbook-version")
 GENERATED_EXTERNAL_DIR = Path("_generated/external")
 GENERATED_GROUP_DIR = Path("_generated/groups")
@@ -433,7 +434,7 @@ def redirect_entries(path: Path) -> dict[str, str]:
     return entries
 
 
-def book_toml(site_url: str, redirects: dict[str, str]) -> str:
+def book_toml(site_url: str, redirects: dict[str, str], theme_script: bool) -> str:
     """Render book.toml for the staged book."""
     lines = [
         "[book]",
@@ -450,6 +451,13 @@ def book_toml(site_url: str, redirects: dict[str, str]) -> str:
         'preferred-dark-theme = "navy"',
         "no-section-label = true",
         f'additional-css = ["theme/{THEME_CSS}"]',
+    ]
+    # The theme bridge keeps an embedded report's pinned theme in step with
+    # the book's. A checkout that does not track it -- every release tag
+    # predating it -- still builds, exactly as it does without a redirect map.
+    if theme_script:
+        lines.append(f'additional-js = ["theme/{THEME_JS}"]')
+    lines += [
         "",
         "[output.html.fold]",
         "enable = true",
@@ -501,7 +509,11 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
             summary_markdown(staged_source, navigation(rows), reports), encoding="utf-8", newline="\n"
         )
         (temporary / "book.toml").write_text(
-            book_toml(site_url, redirect_entries(source / REDIRECTS)),
+            book_toml(
+                site_url,
+                redirect_entries(source / REDIRECTS),
+                (theme / THEME_JS).is_file(),
+            ),
             encoding="utf-8", newline="\n",
         )
         if destination.exists():
