@@ -175,10 +175,10 @@ and records completed work scopes. This is evidence about animsmith's checks,
 not runtime certification; stricter completeness policy belongs to the
 consuming pipeline.
 
-Every runtime symptom the levels above describe has a page of its own
-under [symptoms](symptoms/README.md), whose one table routes each of them
-to the checks that measure it, the repair, the config surface, and who
-owns the fix.
+Each clip symptom the levels above describe has a page of its own under
+[symptoms](symptoms/README.md), whose one table routes it to the checks that
+measure it, the repair, the config surface, and who owns the fix; the three
+runtime problems that are not about a clip are answered on that index itself.
 
 ## Why animsmith exists
 

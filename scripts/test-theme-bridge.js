@@ -213,8 +213,14 @@ function assertHome(loaded) {
     throw new Error(`the sidebar must gain exactly one Home link, got ${entries.length}`);
   }
   const [entry] = entries;
-  if (chapters.firstChild.querySelector("a.as-home") !== entry) {
+  const item = chapters.firstChild;
+  if (item.querySelector("a.as-home") !== entry) {
     throw new Error("the Home entry must be the sidebar's very first item");
+  }
+  // The stylesheet hangs the scrollbox's top padding and the sticky pin on
+  // this class, so an item that loses it is an unpadded, scrolling list.
+  if (!matches(item, "li.chapter-item.as-home-item")) {
+    throw new Error(`the Home item must carry chapter-item as-home-item, got "${item.className}"`);
   }
   if (entry.getAttribute("href") !== expected) {
     throw new Error(`the Home entry must resolve to ${expected}, got ${entry.getAttribute("href")}`);
@@ -325,6 +331,9 @@ const MUTATIONS = [
   ["chapters.insertBefore(item, chapters.firstChild);", "chapters.appendChild(item);"],
   // Without the guard a second load stacks a second Home entry.
   ['if (chapters && !chapters.querySelector("a.as-home")) {', "if (chapters) {"],
+  // The stylesheet finds the row by this class; without it the sidebar loses
+  // its top padding and Home scrolls away with the list.
+  ['item.className = "chapter-item as-home-item";', 'item.className = "chapter-item";'],
   // Codex's case: keeping only the theme drops the reader's own deep link.
   ['return path + "#" + pairs.join("&");', 'return path + "#theme=" + value;'],
   // Keeping the old theme pair leaves two of them, and the report reads the first.

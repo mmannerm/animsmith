@@ -896,6 +896,84 @@ fn the_symptom_index_routes_every_page_and_answers_what_is_not_a_clip() {
     }
 }
 
+/// The pages that carry the shared "where you are" strip, and the stage each
+/// one is.
+const STRIP_PAGES: [(&str, &str); 4] = [
+    ("docs/animation-author-workflow.md", "Artist export"),
+    ("docs/declaring-the-contract.md", "Contract"),
+    ("docs/game-developer-intake-workflow.md", "Developer intake"),
+    ("docs/pipeline-scenarios.md", "CI gate"),
+];
+
+/// The strip as `(label, destination, is the reader's own stage)`, read from
+/// the one paragraph that opens with `Where you are:`.
+fn stage_strip(markdown: &str) -> Vec<(String, String, bool)> {
+    let (mut in_strip, mut strong, mut link) = (false, false, None);
+    let mut stages = Vec::new();
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::End(TagEnd::Paragraph) => in_strip = false,
+            Event::Text(text) if text.starts_with("Where you are:") => in_strip = true,
+            Event::Start(Tag::Strong) if in_strip => strong = true,
+            Event::End(TagEnd::Strong) if in_strip => strong = false,
+            Event::Start(Tag::Link { dest_url, .. }) if in_strip => {
+                link = Some((String::new(), dest_url.into_string(), strong));
+            }
+            Event::Text(text) => {
+                if let Some((label, _, _)) = link.as_mut() {
+                    label.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some(stage) = link.take() {
+                    stages.push(stage);
+                }
+            }
+            _ => {}
+        }
+    }
+    stages
+}
+
+/// The strip is four hand-written copies of one line, so nothing but a gate
+/// keeps them the same line. A stage pointing at a different page, a dropped
+/// stage, or a reordering is the drift that would leave a reader on the wrong
+/// map; only which stage is bold may differ, and it must be the page's own.
+#[test]
+fn the_where_you_are_strip_is_the_same_five_stages_on_every_page_that_carries_it() {
+    let canonical: Vec<(String, String)> = stage_strip(&markdown(STRIP_PAGES[0].0))
+        .into_iter()
+        .map(|(label, destination, _)| (label, destination))
+        .collect();
+    assert_eq!(
+        canonical.len(),
+        5,
+        "the strip names the five pipeline stages: {canonical:?}"
+    );
+
+    for (page, stage) in STRIP_PAGES {
+        let strip = stage_strip(&markdown(page));
+        assert_eq!(
+            strip
+                .iter()
+                .map(|(label, destination, _)| (label.clone(), destination.clone()))
+                .collect::<Vec<_>>(),
+            canonical,
+            "{page} must carry the same stages, in order, at the same targets"
+        );
+        let bold: Vec<&String> = strip
+            .iter()
+            .filter(|(_, _, current)| *current)
+            .map(|(label, _, _)| label)
+            .collect();
+        assert_eq!(
+            bold,
+            vec![&stage.to_owned()],
+            "{page} must mark exactly its own stage as the reader's place"
+        );
+    }
+}
+
 /// Every registered check id, so a backticked word that is not a check —
 /// a command, a config table — cannot be mistaken for one.
 fn registered_check_ids() -> BTreeSet<String> {

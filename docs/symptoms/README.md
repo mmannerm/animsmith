@@ -15,7 +15,7 @@ authorities.
 | A limb stops before the rest of the body, or the clip is a frame short | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] duration_s`, `fps` | Pipeline edit or re-export | [The clip is the wrong length or freezes at the end](wrong-length.md) |
 | The cycle jumps or hitches every time it wraps | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam-rot`, `loop-seam` | `transform --drop-duplicate-loop-endpoint` for a strict duplicated endpoint; otherwise re-author the endpoint pose or tangents | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]`, `[checks.loop-seam-rot]` | Artist in the DCC; loop policy is a project decision | [The loop pops](loop-pops.md) |
 | The character slides across the floor, or runs without moving | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] movement_owner_xz`, `speed_mps` | Gameplay decides ownership; artist re-exports | [The character glides or runs in place](character-glides.md) |
-| Feet skate, pop or desync when the runtime blends two clips | `gait-group`, `sync-group`, `time-complement` | `transform --gait-anchor` for explicitly in-place cycles; runtime phase offsets for root motion | `[gait_groups.<name>]`, `[sync_groups.<name>]` | Technical animator declares the ring | [Feet skate when clips blend](blend-skate.md) |
+| Feet skate, pop or desync when the runtime blends two clips — including travel speed or foot slide that changes by direction, and a same-time pair that looks mirrored or swaps footfall timing | `gait-group`, `sync-group`, `time-complement` | `transform --gait-anchor` for explicitly in-place cycles; runtime phase offsets for root motion | `[gait_groups.<name>]`, `[sync_groups.<name>]` | Technical animator declares the ring | [Feet skate when clips blend](blend-skate.md); narrower: [members travel at different speeds](blend-skate.md#directional-blend-members-travel-at-different-speeds), [a pair is time-complementary](blend-skate.md#a-blend-pair-is-time-complementary) |
 | A planted foot drifts during stance inside one clip | `foot-slide` | re-author in the DCC | `[clips.<name>] speed_mps` | Artist; contact cleanup is DCC work | [Feet slide within a clip](feet-slide.md) |
 | An arm hangs in a T-pose, or a bone never moves | `missing-bones`, `required-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig] required_bones` | Artist repairs the source rig | [A limb is T-posed, or a bone never moves](limb-frozen.md) |
 | Two files disagree about the skeleton, or a pack reuses one clip name | no per-file check; `animsmith inspect` plus a collection manifest retain identity | none — retain the exact `(file, clip)` binding | collection manifest sources, clips, and runtime sets | Pack owner and the ingesting pipeline | [Files disagree about skeleton or clip identity](identity-mismatch.md) |
@@ -24,7 +24,14 @@ authorities.
 
 Where the repair column says *re-export*, that is deliberate: AnimSmith
 rewrites a clip only in ways whose within-clip correctness its own checks can
-verify.
+verify. Those are the lossless quaternion repairs and the bounded mechanical
+edits — slice, hold-extend, in-place gait anchor, duplicate-loop-endpoint
+removal, constant-track pruning and FBX-to-glTF conversion — while artistic
+transformation stays DCC work, for the reason in
+[what animsmith is not](../why-animsmith.md#what-animsmith-is-not). A clean run
+on any row here is also still scoped evidence: runtime integration caveats
+apply after it, including the sparse transition coverage a blend or transition
+set is judged on.
 
 The table above carries every registered check id, including the narrower
 presentations of a symptom that no page of its own owns. The

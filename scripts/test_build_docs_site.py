@@ -1099,7 +1099,7 @@ class NavigationContractTests(unittest.TestCase):
             self.assertEqual(
                 html["additional-js"],
                 ["theme/animsmith.js"],
-                "the theme bridge is wired exactly when the checkout tracks it",
+                "the site script is wired exactly when the checkout tracks it",
             )
             self.assertEqual(
                 (stage / "theme/animsmith.js").read_text(encoding="utf-8"),
@@ -1126,7 +1126,7 @@ class NavigationContractTests(unittest.TestCase):
             self.assertNotIn(
                 "additional-js",
                 html,
-                "a checkout without the theme bridge wires no script",
+                "a checkout without the site script wires no script",
             )
 
     def test_redirect_map_refuses_entries_that_are_not_site_routes(self) -> None:

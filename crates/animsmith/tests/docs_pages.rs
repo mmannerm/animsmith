@@ -16,8 +16,9 @@ const GENERATED_GROUP_DIR: &str = "_generated/groups/";
 /// spaced single right-pointing angle quotation mark.
 const GROUP_SEPARATOR: &str = " \u{203a} ";
 
-/// The tracked theme bridge that pins an embedded report to the book theme.
-const THEME_SCRIPT: &str = "animsmith.js";
+/// The tracked site script: the link home, and the bridge that pins an
+/// embedded report to the book theme.
+const SITE_SCRIPT: &str = "animsmith.js";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -1387,11 +1388,11 @@ fn css_urls(css: &str) -> Vec<String> {
 #[test]
 fn the_tracked_theme_references_no_external_resources() {
     let site = repo_root().join("docs/site");
-    let script = std::fs::read_to_string(site.join(THEME_SCRIPT)).expect("reads theme bridge");
+    let script = std::fs::read_to_string(site.join(SITE_SCRIPT)).expect("reads theme bridge");
     for external in ["http://", "https://", "//cdn", "import(", "importScripts"] {
         assert!(
             !script.contains(external),
-            "{THEME_SCRIPT} reaches outside the published origin: {external}"
+            "{SITE_SCRIPT} reaches outside the published origin: {external}"
         );
     }
     for relative in ["animsmith.css", "fonts/fonts.css"] {
@@ -1513,11 +1514,11 @@ fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
     );
     assert!(
         book.contains("additional-js = [\"theme/animsmith.js\"]"),
-        "book.toml wires the tracked theme bridge: {book}"
+        "book.toml wires the tracked site script: {book}"
     );
     assert!(
-        temp.path().join("theme").join(THEME_SCRIPT).is_file(),
-        "the theme bridge is staged beside the stylesheet"
+        temp.path().join("theme").join(SITE_SCRIPT).is_file(),
+        "the site script is staged beside the stylesheet"
     );
 }
 
@@ -1536,7 +1537,7 @@ fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
 fn the_site_script_gives_every_page_a_link_back_to_the_front_door() {
     let root = repo_root();
     let script =
-        std::fs::read_to_string(root.join("docs/site").join(THEME_SCRIPT)).expect("reads script");
+        std::fs::read_to_string(root.join("docs/site").join(SITE_SCRIPT)).expect("reads script");
     for required in [
         // mdBook's own site-root prefix, which is what makes one href work
         // from every depth, and the front door it resolves to.
@@ -1547,23 +1548,82 @@ fn the_site_script_gives_every_page_a_link_back_to_the_front_door() {
         ".menu-title",
         "\"Home\"",
         // The class both links carry, which is how the script recognises its
-        // own work and how the stylesheet finds it.
+        // own work and how the stylesheet finds it, and the class on the
+        // sidebar row, which now carries the scrollbox's top padding.
         "as-home",
+        "chapter-item as-home-item",
     ] {
         assert!(
             script.contains(required),
-            "{THEME_SCRIPT} must keep {required:?}"
+            "{SITE_SCRIPT} must keep {required:?}"
         );
     }
 
+    // The stylesheet is read as declarations rather than as selector text,
+    // because the selectors are not what carries the behaviour: `position:
+    // static` on the Home row leaves it scrolling off the top the moment
+    // mdBook restores the sidebar's scroll, and `content: none` on the
+    // overlay leaves the logo unclickable, and both would satisfy a
+    // substring check. Driving a real browser would pin more (that the row
+    // is actually painted at the scrollport top, that a click on the mark
+    // navigates); this is what a stylesheet alone can promise in CI.
     let stylesheet =
         std::fs::read_to_string(root.join("docs/site/animsmith.css")).expect("reads stylesheet");
-    for required in [".menu-title a.as-home", ".chapter li.as-home-item"] {
-        assert!(
-            stylesheet.contains(required),
-            "the tracked stylesheet must style {required:?}"
-        );
+    for (selector, declarations) in [
+        // Pinned, so the one way back survives the sidebar's scroll restore,
+        // and opaque over the band it covers once pinned.
+        (
+            ".chapter li.as-home-item",
+            ["position: sticky", "top: 0", "background-color:"].as_slice(),
+        ),
+        // A box the reader can actually hit: the logo's own mask layers take
+        // no pointer events, so the link has to reclaim the title's box.
+        (
+            ".menu-title a.as-home::after",
+            ["content: \"\"", "position: absolute", "inset: 0"].as_slice(),
+        ),
+    ] {
+        let block = css_rule(&stylesheet, selector)
+            .unwrap_or_else(|| panic!("the tracked stylesheet must carry a {selector} rule"));
+        for declaration in declarations {
+            assert!(
+                block.contains(declaration),
+                "{selector} must declare {declaration:?}, which is what carries the \
+                 behaviour; it has {block:?}"
+            );
+        }
     }
+}
+
+/// The declaration block of the first rule whose selector list names
+/// `selector` exactly. Comments are stripped first, so a commented-out
+/// declaration satisfies nothing and a comment above a rule cannot hide its
+/// selector; scanning brace by brace rather than rule by rule keeps a rule
+/// nested in an `@supports` block reachable.
+fn css_rule(stylesheet: &str, selector: &str) -> Option<String> {
+    let mut stripped = String::with_capacity(stylesheet.len());
+    let mut rest = stylesheet;
+    while let Some(start) = rest.find("/*") {
+        stripped.push_str(&rest[..start]);
+        let end = rest[start..].find("*/")? + start + 2;
+        rest = &rest[end..];
+    }
+    stripped.push_str(rest);
+
+    let mut cursor = 0usize;
+    while let Some(offset) = stripped[cursor..].find('{') {
+        let open = cursor + offset;
+        let prelude = stripped[..open]
+            .rsplit(['{', '}'])
+            .next()
+            .unwrap_or_default();
+        if prelude.split(',').any(|one| one.trim() == selector) {
+            let close = open + stripped[open..].find('}')?;
+            return Some(stripped[open + 1..close].to_owned());
+        }
+        cursor = open + 1;
+    }
+    None
 }
 
 /// The bridge's own selector, mirrored here so the pages and the script
@@ -1578,7 +1638,7 @@ fn selects_report(source: &str) -> bool {
             || path.contains("/visuals/"))
 }
 
-/// The theme bridge is a tracked asset like the stylesheet, so the staged
+/// The site script is a tracked asset like the stylesheet, so the staged
 /// theme carries it and a published page never needs an inline script.
 ///
 /// What the bridge *does* to a fragment is executed rather than read:
@@ -1591,23 +1651,23 @@ fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
     let recipes = std::fs::read_to_string(root.join("justfile")).expect("reads the recipes");
     assert!(
         recipes.contains("node scripts/test-theme-bridge.js"),
-        "the browser harness recipe must execute the theme bridge's contract"
+        "the browser harness recipe must execute the site script's contracts"
     );
     let listed = Command::new("git")
         .arg("-C")
         .arg(&root)
         .args(["ls-files", "--", "docs/site/animsmith.js"])
         .output()
-        .expect("lists the tracked theme bridge");
+        .expect("lists the tracked site script");
     assert!(listed.status.success(), "git ls-files succeeds");
     assert_eq!(
         String::from_utf8_lossy(&listed.stdout).trim(),
         "docs/site/animsmith.js",
-        "the theme bridge must be tracked for the build to stage it"
+        "the site script must be tracked for the build to stage it"
     );
 
     let script =
-        std::fs::read_to_string(root.join("docs/site").join(THEME_SCRIPT)).expect("reads bridge");
+        std::fs::read_to_string(root.join("docs/site").join(SITE_SCRIPT)).expect("reads bridge");
     for required in [
         // The book's theme classes it maps, both directions.
         "navy",
@@ -1623,12 +1683,12 @@ fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
     ] {
         assert!(
             script.contains(required),
-            "{THEME_SCRIPT} must keep {required:?}"
+            "{SITE_SCRIPT} must keep {required:?}"
         );
     }
     assert!(
         !script.contains("contentDocument") && !script.contains("contentWindow"),
-        "{THEME_SCRIPT} rewrites its own src rather than reading into the frame"
+        "{SITE_SCRIPT} rewrites its own src rather than reading into the frame"
     );
 
     // Every page that embeds a report must be reachable by the bridge's own
@@ -1641,12 +1701,12 @@ fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
     ] {
         assert!(
             selects_report(spelling),
-            "{THEME_SCRIPT} must select a frame written as {spelling}"
+            "{SITE_SCRIPT} must select a frame written as {spelling}"
         );
     }
     assert!(
         !selects_report("/animsmith/docs/cli.html") && !selects_report("../visuals/walk.svg"),
-        "{THEME_SCRIPT} selects report documents only"
+        "{SITE_SCRIPT} selects report documents only"
     );
 
     let mut embedded = 0usize;
